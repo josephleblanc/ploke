@@ -32,6 +32,7 @@ the criterion language, not just to the implementation details.
 | Phase 6 `C5` | `bm25_specific_crate_scope_filters_before_top_k_truncation` in [bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs#L1006) | Builds a two-namespace in-memory BM25 corpus where the stronger out-of-scope document wins unscoped `top_k=1`, then proves `SpecificCrate(CrateId)` still returns the weaker in-scope document at `top_k=1`, which is direct evidence that scope is applied before BM25 truncation |
 | Phase 7 `C6` | `workspace_fixture_namespace_inventory_matches_crate_context_membership` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Loads `ws_fixture_01_canonical`, enumerates `crate_context` rows, builds a per-namespace inventory from `crate_context.namespace -> file_mod.namespace -> syntax_edge` descendant closure, and proves each loaded crate has a non-empty graph inventory rooted inside the committed workspace fixture |
 | Phase 7 `C6` | `workspace_fixture_namespaces_remain_distinct_in_subset_inventory` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Proves the two workspace members in `ws_fixture_01_canonical` produce distinct namespace inventories with disjoint root file modules and disjoint descendant graph ids, which is the first direct evidence that later subset operations can key off explicit namespace authority rather than crate-name or whole-DB assumptions |
+| Phase 7 `C6` | `remove_namespace_removes_only_target_namespace_and_invalidates_search_state` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Seeds dense/BM25 state for one crate namespace inside `ws_fixture_01_canonical`, removes that namespace through `Database::remove_namespace(...)`, and proves the sibling namespace survives while target `crate_context`, `workspace_metadata.members`, graph rows, vectors, BM25 rows, and HNSW registration are all reconciled to the post-mutation dataset |
 
 ## Reasoning by acceptance item
 
@@ -488,6 +489,11 @@ Current witness reasoning:
   `collect_namespace_inventory(...)`, which build a DB-side inventory from
   `crate_context.namespace`, `file_mod.namespace`, and `syntax_edge`
   descendant closure
+- [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+  now also exposes `remove_namespace(...)`, which retracts one namespace's
+  descendant graph rows, removes its `crate_context` and `file_mod` roots,
+  prunes `workspace_metadata.members`, retracts vector/BM25 rows for removed
+  node ids, and explicitly invalidates active HNSW registration
 - [2026-03-21_c6_subset_db_design_notes.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-21_c6_subset_db_design_notes.md)
   records why this is the first safe seam for `C6` and why current whole-backup
   APIs are insufficient
@@ -501,12 +507,29 @@ What a passing witness proves:
   passes, then the two crates in `ws_fixture_01_canonical` remain distinct at
   the namespace/root/descendant-id level inside the DB, which is the minimal
   precondition for later subset export/import/remove primitives
+- if `remove_namespace_removes_only_target_namespace_and_invalidates_search_state`
+  passes, then `ploke-db` can remove one explicit crate namespace from a loaded
+  multi-member workspace fixture without behaving like whole-DB replacement
+- if that `remove_namespace(...)` test passes, then the target namespace's
+  `crate_context`, `file_mod` roots, rooted graph rows,
+  `workspace_metadata.members` entry, vector rows, BM25 metadata rows, and
+  active HNSW registration are reconciled to the post-mutation dataset while
+  the sibling namespace remains intact
+- if that `remove_namespace(...)` test passes, then the operation is also
+  directly proven to act on the exact namespace inventory derived from
+  `crate_context` plus `file_mod`, because the test asserts that the returned
+  removed root modules and descendant-id set exactly match the pre-removal
+  inventory for the requested namespace
+- if all three tests pass, then `C6` now has direct evidence for namespace
+  authority plus one real namespace-scoped mutation primitive in `ploke-db`
 
 Scope note:
-- this is partial evidence only
-- it does not yet prove subset export, subset import, subset removal, conflict
-  validation, workspace membership mutation, or search-state reconciliation
-- `C6` remains `in progress` until real namespace-scoped subset mutation exists
+- this is still partial evidence only
+- it now proves one real subset removal primitive, but it does not yet prove
+  subset export, subset import, import conflict validation, or the later
+  end-to-end TUI/runtime membership update path
+- `C6` remains `in progress` until namespace-scoped subset export/import and
+  explicit conflict validation exist
 
 ## Update rule
 

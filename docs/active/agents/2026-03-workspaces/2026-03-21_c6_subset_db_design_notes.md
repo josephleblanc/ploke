@@ -96,3 +96,16 @@ This is not the full `C6` witness, but it is the first direct proof that the
 subset path is being built on namespace authority instead of crate-name or
 whole-DB assumptions.
 
+Update 2026-03-21:
+
+- `Database::remove_namespace(...)` now exists in
+  [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) as
+  the first real namespace-scoped subset mutation primitive.
+- The fixture-backed witness
+  `remove_namespace_removes_only_target_namespace_and_invalidates_search_state`
+  now proves one crate namespace can be removed from `ws_fixture_01_canonical`
+  without whole-DB replacement, while reconciling `workspace_metadata.members`,
+  descendant graph rows, vector rows, BM25 metadata rows, and active HNSW
+  availability.
+- `C6` is still not complete: subset export/import and import conflict
+  validation remain the next missing DB primitives.

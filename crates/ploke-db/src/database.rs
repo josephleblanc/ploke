@@ -15,6 +15,7 @@ use lazy_static::lazy_static;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
 use ploke_error::Error as PlokeError;
 use ploke_transform::schema::meta::Bm25MetaSchema;
+use ploke_transform::schema::assoc_nodes::MethodNodeSchema;
 use serde::{Deserialize, Serialize};
 use syn_parser::parser::nodes::{AnyNodeId, ToCozoUuid};
 use tracing::{debug, info, instrument, trace, warn};
@@ -98,6 +99,18 @@ pub struct NamespaceInventory {
     pub descendant_ids: BTreeSet<Uuid>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceRemovalResult {
+    pub removed_namespace: Uuid,
+    pub removed_crate_name: String,
+    pub removed_root_path: String,
+    pub removed_descendant_ids: BTreeSet<Uuid>,
+    pub removed_file_module_owner_ids: BTreeSet<Uuid>,
+    pub removed_workspace_member: bool,
+    pub hnsw_invalidated: bool,
+    pub bm25_invalidated: bool,
+}
+
 impl std::ops::Deref for Database {
     type Target = Db<MemStorage>;
 
@@ -142,6 +155,14 @@ pub fn to_string(val: &DataValue) -> Result<String, DbError> {
         Ok(s.to_string())
     } else {
         Err(DbError::Cozo(format!("Expected String, found {:?}", val)))
+    }
+}
+
+pub fn to_string_list(val: &DataValue) -> Result<Vec<String>, DbError> {
+    if let DataValue::List(items) = val {
+        items.iter().map(to_string).collect()
+    } else {
+        Err(DbError::Cozo(format!("Expected [String], found {:?}", val)))
     }
 }
 
@@ -199,6 +220,302 @@ pub struct FileInfo {
 }
 
 impl Database {
+    fn uuid_input_rows(ids: &BTreeSet<Uuid>) -> String {
+        ids.iter()
+            .map(|id| format!("[\"{id}\"]"))
+            .join(", ")
+    }
+
+    fn retract_relation_rows_by_id(
+        &self,
+        relation: &str,
+        key_fields: &[&str],
+        val_fields: &[&str],
+        ids: &BTreeSet<Uuid>,
+    ) -> Result<(), DbError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let input_rows = Self::uuid_input_rows(ids);
+        let lhs = key_fields
+            .iter()
+            .chain(val_fields.iter())
+            .copied()
+            .chain(std::iter::once("at"))
+            .join(", ");
+        let query_fields = key_fields
+            .iter()
+            .chain(val_fields.iter())
+            .copied()
+            .join(", ");
+        let put_keys = key_fields.join(", ");
+        let put_vals = val_fields.join(", ");
+        let key_match = key_fields
+            .iter()
+            .map(|field| format!("target[{field}]"))
+            .join(" or ");
+        let script = format!(
+            r#"
+input[id_str] <- [{input_rows}]
+target[id] := input[id_str], id = to_uuid(id_str)
+?[{lhs}] := *{relation} {{ {query_fields} }}, ({key_match}), at = 'RETRACT'
+
+:put {relation} {{ {put_keys}, at => {put_vals} }}
+"#
+        );
+        self.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(DbError::from)
+    }
+
+    fn retract_syntax_edges_for_ids(&self, ids: &BTreeSet<Uuid>) -> Result<(), DbError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let input_rows = Self::uuid_input_rows(ids);
+        let script = format!(
+            r#"
+input[id_str] <- [{input_rows}]
+target[id] := input[id_str], id = to_uuid(id_str)
+?[source_id, target_id, relation_kind, source_kind, target_kind, at] :=
+    *syntax_edge {{ source_id, target_id, relation_kind, source_kind, target_kind }},
+    (target[source_id] or target[target_id]),
+    at = 'RETRACT'
+
+:put syntax_edge {{ source_id, target_id, at => relation_kind, source_kind, target_kind }}
+"#
+        );
+        self.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(DbError::from)
+    }
+
+    fn retract_vector_rows_for_ids(
+        &self,
+        relation: &str,
+        ids: &BTreeSet<Uuid>,
+    ) -> Result<(), DbError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let input_rows = Self::uuid_input_rows(ids);
+        let script = format!(
+            r#"
+input[id_str] <- [{input_rows}]
+target[node_id] := input[id_str], node_id = to_uuid(id_str)
+?[node_id, embedding_set_id, vector, at] :=
+    *{relation} {{ node_id, embedding_set_id, vector }},
+    target[node_id],
+    at = 'RETRACT'
+
+:put {relation} {{ node_id, embedding_set_id, at => vector }}
+"#
+        );
+        self.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(DbError::from)
+    }
+
+    fn retract_bm25_doc_meta_for_ids(&self, ids: &BTreeSet<Uuid>) -> Result<(), DbError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let input_rows = Self::uuid_input_rows(ids);
+        let script = format!(
+            r#"
+input[id_str] <- [{input_rows}]
+target[id] := input[id_str], id = to_uuid(id_str)
+?[id, tracking_hash, tokenizer_version, token_length, at] :=
+    *bm25_doc_meta {{ id, tracking_hash, tokenizer_version, token_length }},
+    target[id],
+    at = 'RETRACT'
+
+:put bm25_doc_meta {{ id, at => tracking_hash, tokenizer_version, token_length }}
+"#
+        );
+        self.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(DbError::from)
+    }
+
+    fn list_embedding_vector_relations(&self) -> Result<Vec<String>, DbError> {
+        let rels = self
+            .iter_relations()
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        if !rels.into_iter().any(|r| r == "embedding_set") {
+            return Ok(Vec::new());
+        }
+
+        let rels = self.raw_query("?[rel_name] := *embedding_set { rel_name }")?;
+        rels.rows
+            .into_iter()
+            .map(|row| {
+                row.first()
+                    .ok_or_else(|| DbError::QueryExecution("missing embedding_set.rel_name".into()))
+                    .and_then(to_string)
+            })
+            .collect()
+    }
+
+    fn retract_active_embedding_set_meta_for_crate_name(
+        &self,
+        crate_name: &str,
+    ) -> Result<(), DbError> {
+        let rels = self
+            .iter_relations()
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        if !rels.into_iter().any(|r| r == ACTIVE_EMBEDDING_SET_REL) {
+            return Ok(());
+        }
+
+        let script = format!(
+            r#"
+?[crate_name, embedding_set_id, provider, model, dims, embedding_dtype, rel_name, at] :=
+    *{rel} {{ crate_name, embedding_set_id, provider, model, dims, embedding_dtype, rel_name }},
+    crate_name = "{crate_name}",
+    at = 'RETRACT'
+
+:put {rel} {{ crate_name, at => embedding_set_id, provider, model, dims, embedding_dtype, rel_name }}
+"#,
+            rel = ACTIVE_EMBEDDING_SET_REL
+        );
+        self.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(DbError::from)
+    }
+
+    fn invalidate_active_hnsw_index(&self) -> Result<bool, DbError> {
+        let active_set = self.with_active_set(|set| set.clone())?;
+        if !self.is_hnsw_index_registered(&active_set)? {
+            return Ok(false);
+        }
+
+        let script = format!("::hnsw drop {}", active_set.hnsw_rel_name());
+        self.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+        Ok(true)
+    }
+
+    fn update_workspace_metadata_after_namespace_removal(
+        &self,
+        removed_root_path: &str,
+    ) -> Result<bool, DbError> {
+        let rows = self.raw_query(
+            r#"?[id, namespace, root_path, resolver, members, exclude, package_version] :=
+*workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version @ 'NOW' }"#,
+        )?;
+
+        if rows.rows.is_empty() {
+            return Ok(false);
+        }
+        if rows.rows.len() > 1 {
+            return Err(DbError::QueryExecution(format!(
+                "expected at most one workspace_metadata row, found {}",
+                rows.rows.len()
+            )));
+        }
+
+        let row = &rows.rows[0];
+        let id = row
+            .first()
+            .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.id".into()))?
+            .clone();
+        let namespace = row
+            .get(1)
+            .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.namespace".into()))?
+            .clone();
+        let root_path = row
+            .get(2)
+            .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.root_path".into()))?
+            .clone();
+        let resolver = row
+            .get(3)
+            .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.resolver".into()))?
+            .clone();
+        let members = row
+            .get(4)
+            .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.members".into()))
+            .and_then(to_string_list)?;
+        let exclude = row
+            .get(5)
+            .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.exclude".into()))?
+            .clone();
+        let package_version = row
+            .get(6)
+            .ok_or_else(|| {
+                DbError::QueryExecution("missing workspace_metadata.package_version".into())
+            })?
+            .clone();
+
+        let updated_members = members
+            .into_iter()
+            .filter(|member| member != removed_root_path)
+            .map(DataValue::from)
+            .collect::<Vec<_>>();
+        if updated_members.len() == row
+            .get(4)
+            .and_then(|value| match value {
+                DataValue::List(items) => Some(items.len()),
+                _ => None,
+            })
+            .unwrap_or_default()
+        {
+            return Ok(false);
+        }
+
+        if updated_members.is_empty() {
+            let script = r#"
+?[id, namespace, root_path, resolver, members, exclude, package_version, at] :=
+    *workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version },
+    at = 'RETRACT'
+
+:put workspace_metadata { id, at => namespace, root_path, resolver, members, exclude, package_version }
+"#;
+            self.run_script(script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+                .map_err(DbError::from)?;
+            return Ok(true);
+        }
+
+        let mut params = BTreeMap::new();
+        params.insert("id".into(), id);
+        params.insert("namespace".into(), namespace);
+        params.insert("root_path".into(), root_path);
+        params.insert("resolver".into(), resolver);
+        params.insert("members".into(), DataValue::List(updated_members));
+        params.insert("exclude".into(), exclude);
+        params.insert("package_version".into(), package_version);
+
+        let script = r#"
+?[id, namespace, root_path, resolver, members, exclude, package_version, at] <- [[
+    $id,
+    $namespace,
+    $root_path,
+    $resolver,
+    $members,
+    $exclude,
+    $package_version,
+    'ASSERT'
+]]
+
+:put workspace_metadata {
+    id,
+    namespace,
+    root_path,
+    resolver,
+    members,
+    exclude,
+    package_version,
+    at
+}"#;
+        self.run_script(script, params, cozo::ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+        Ok(true)
+    }
+
     /// Read-only access via closure (keeps lock scope tiny).
     pub fn with_active_set<R>(&self, f: impl FnOnce(&EmbeddingSet) -> R) -> Result<R, DbError> {
         let guard = self
@@ -1225,7 +1542,7 @@ impl Database {
 
     pub fn list_crate_context_rows(&self) -> Result<Vec<CrateContextRow>, DbError> {
         let rows = self.raw_query(
-            "?[id, name, namespace, root_path] := *crate_context { id, name, namespace, root_path }",
+            "?[id, name, namespace, root_path] := *crate_context { id, name, namespace, root_path @ 'NOW' }",
         )?;
 
         rows.rows
@@ -1262,7 +1579,7 @@ impl Database {
         let namespace_lit = namespace.to_string();
         let context_rows = self.raw_query(&format!(
             r#"?[id, name, namespace, root_path] :=
-*crate_context {{ id, name, namespace, root_path }},
+*crate_context {{ id, name, namespace, root_path @ 'NOW' }},
 namespace = to_uuid("{namespace_lit}")"#
         ))?;
 
@@ -1285,7 +1602,7 @@ namespace = to_uuid("{namespace_lit}")"#
         };
 
         let root_rows = self.raw_query(&format!(
-            r#"?[owner_id] := *file_mod {{ owner_id, namespace }}, namespace = to_uuid("{namespace_lit}")"#
+            r#"?[owner_id] := *file_mod {{ owner_id, namespace @ 'NOW' }}, namespace = to_uuid("{namespace_lit}")"#
         ))?;
         let file_module_owner_ids = root_rows
             .rows
@@ -1299,7 +1616,7 @@ namespace = to_uuid("{namespace_lit}")"#
 
         let descendant_rows = self.raw_query(&format!(
             r#"
-root[id] := *file_mod {{ owner_id: id, namespace }}, namespace = to_uuid("{namespace_lit}")
+root[id] := *file_mod {{ owner_id: id, namespace @ 'NOW' }}, namespace = to_uuid("{namespace_lit}")
 parent_of[child, parent] := *syntax_edge {{ source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
 desc[id] := root[id]
 desc[id] := parent_of[id, parent], desc[parent]
@@ -1320,6 +1637,116 @@ desc[id] := parent_of[id, parent], desc[parent]
             crate_context,
             file_module_owner_ids,
             descendant_ids,
+        })
+    }
+
+    pub async fn remove_namespace(
+        &self,
+        namespace: Uuid,
+    ) -> Result<NamespaceRemovalResult, DbError> {
+        let inventory = self.collect_namespace_inventory(namespace)?;
+        let removed_root_path = inventory.crate_context.root_path.clone();
+        let removed_crate_name = inventory.crate_context.name.clone();
+
+        self.retract_syntax_edges_for_ids(&inventory.descendant_ids)?;
+
+        let mut descendant_relations = NodeType::all_variants()
+            .into_iter()
+            .filter(|ty| *ty != NodeType::SyntaxEdge)
+            .map(|ty| ty.relation_str().to_string())
+            .collect::<Vec<_>>();
+        descendant_relations.push("method".to_string());
+        descendant_relations.sort();
+        descendant_relations.dedup();
+
+        for relation in descendant_relations {
+            let node_type = NodeType::all_variants()
+                .into_iter()
+                .find(|ty| ty.relation_str() == relation)
+                .filter(|ty| *ty != NodeType::SyntaxEdge);
+            if let Some(node_type) = node_type {
+                let key_fields = node_type.keys().collect::<Vec<_>>();
+                let val_fields = node_type.vals().collect::<Vec<_>>();
+                self.retract_relation_rows_by_id(
+                    &relation,
+                    &key_fields,
+                    &val_fields,
+                    &inventory.descendant_ids,
+                )?;
+            } else if relation == "method" {
+                let key_fields = MethodNodeSchema::SCHEMA
+                    .keys()
+                    .map(|field| *field)
+                    .collect::<Vec<_>>();
+                let val_fields = MethodNodeSchema::SCHEMA
+                    .vals()
+                    .map(|field| *field)
+                    .collect::<Vec<_>>();
+                self.retract_relation_rows_by_id(
+                    &relation,
+                    &key_fields,
+                    &val_fields,
+                    &inventory.descendant_ids,
+                )?;
+            }
+        }
+
+        for relation in self.list_embedding_vector_relations()? {
+            self.retract_vector_rows_for_ids(&relation, &inventory.descendant_ids)?;
+        }
+
+        self.retract_bm25_doc_meta_for_ids(&inventory.descendant_ids)?;
+
+        let namespace_lit = namespace.to_string();
+        let file_mod_script = format!(
+            r#"
+?[owner_id, file_path, file_docs, items, namespace, at] :=
+    *file_mod {{ owner_id, file_path, file_docs, items, namespace }},
+    namespace = to_uuid("{namespace_lit}"),
+    at = 'RETRACT'
+
+:put file_mod {{ owner_id, at => file_path, file_docs, items, namespace }}
+"#
+        );
+        self.run_script(
+            &file_mod_script,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )
+        .map_err(DbError::from)?;
+
+        let crate_context_script = format!(
+            r#"
+?[id, name, version, namespace, root_path, files, at] :=
+    *crate_context {{ id, name, version, namespace, root_path, files }},
+    namespace = to_uuid("{namespace_lit}"),
+    at = 'RETRACT'
+
+:put crate_context {{ id, at => name, version, namespace, root_path, files }}
+"#
+        );
+        self.run_script(
+            &crate_context_script,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )
+        .map_err(DbError::from)?;
+
+        self.retract_active_embedding_set_meta_for_crate_name(&removed_crate_name)?;
+        let removed_workspace_member =
+            self.update_workspace_metadata_after_namespace_removal(&removed_root_path)?;
+
+        let hnsw_invalidated = self.invalidate_active_hnsw_index()?;
+
+        Ok(NamespaceRemovalResult {
+            removed_namespace: inventory.crate_context.namespace,
+            removed_crate_name,
+            removed_root_path,
+            removed_descendant_ids: inventory.descendant_ids,
+            removed_file_module_owner_ids: inventory.file_module_owner_ids,
+            removed_workspace_member,
+            hnsw_invalidated,
+            bm25_invalidated: true,
         })
     }
     pub fn get_path_info(&self, path: &str) -> Result<QueryResult, PlokeError> {
@@ -1874,8 +2301,8 @@ mod tests {
     use std::collections::{BTreeSet, HashSet};
 
     use super::*;
-    use crate::bm25_index::DocData;
     use crate::multi_embedding::db_ext::EmbeddingExt;
+    use crate::multi_embedding::hnsw_ext::HnswExt;
     use crate::multi_embedding::schema::CozoEmbeddingSetExt;
     use crate::Database;
     use crate::DbError;
@@ -1884,6 +2311,7 @@ mod tests {
     use ploke_core::embeddings::{
         EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
     };
+    use ploke_core::TrackingHash;
     use ploke_transform::schema::create_schema_all;
     use tracing::error;
     use tracing::info;
@@ -2691,6 +3119,225 @@ mod tests {
                 .descendant_ids
                 .is_disjoint(&right_inventory.descendant_ids),
             "namespace descendant inventories should stay distinct on the committed workspace fixture"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_namespace_removes_only_target_namespace_and_invalidates_search_state(
+    ) -> Result<(), PlokeError> {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let crate_contexts = db
+            .list_crate_context_rows()
+            .expect("workspace fixture should expose crate_context rows");
+        let [removed, remaining] = crate_contexts.as_slice() else {
+            panic!("expected exactly two crate contexts for ws_fixture_01");
+        };
+
+        let removed_inventory = db
+            .collect_namespace_inventory(removed.namespace)
+            .expect("removed namespace inventory should build");
+        let remaining_inventory = db
+            .collect_namespace_inventory(remaining.namespace)
+            .expect("remaining namespace inventory should build");
+        let removed_file_mods_before = db.raw_query(&format!(
+            r#"?[owner_id] := *file_mod {{ owner_id, namespace @ 'NOW' }}, namespace = to_uuid("{}")"#,
+            removed.namespace
+        ))?;
+        assert_eq!(
+            removed_file_mods_before.rows.len(),
+            removed_inventory.file_module_owner_ids.len(),
+            "namespace inventory file_mod roots should come directly from live file_mod rows"
+        );
+
+        db.setup_multi_embedding()?;
+        let active_set = db.with_active_set(|set| set.clone())?;
+        let seeded_node = *removed_inventory
+            .descendant_ids
+            .iter()
+            .next()
+            .expect("removed namespace should have at least one descendant");
+        db.update_embeddings_batch(vec![(
+            seeded_node,
+            vec![0.0_f32; active_set.dims() as usize],
+        )])?;
+        db.create_embedding_index(&active_set)?;
+        assert!(
+            db.is_hnsw_index_registered(&active_set)?,
+            "fixture setup should register hnsw before namespace removal"
+        );
+
+        let bm25_tracking_hash = TrackingHash(Uuid::new_v4());
+        let mut bm25_params = BTreeMap::new();
+        bm25_params.insert("id".into(), DataValue::Uuid(UuidWrapper(seeded_node)));
+        bm25_params.insert(
+            "tracking_hash".into(),
+            DataValue::Uuid(UuidWrapper(bm25_tracking_hash.0)),
+        );
+        bm25_params.insert(
+            "tokenizer_version".into(),
+            DataValue::Str(TOKENIZER_VERSION.into()),
+        );
+        bm25_params.insert("token_length".into(), DataValue::Num(cozo::Num::Int(3)));
+        db.run_script(
+            r#"
+?[id, tracking_hash, tokenizer_version, token_length, at] <- [[
+    $id,
+    $tracking_hash,
+    $tokenizer_version,
+    $token_length,
+    'ASSERT'
+]]
+
+:put bm25_doc_meta { id => tracking_hash, tokenizer_version, token_length, at }
+"#,
+            bm25_params,
+            ScriptMutability::Mutable,
+        )
+        .map_err(DbError::from)?;
+        let bm25_before = db
+            .raw_query(&format!(
+                r#"?[id] := *bm25_doc_meta {{ id, tracking_hash, tokenizer_version, token_length @ 'NOW' }},
+id = to_uuid("{seeded_node}")"#
+            ))?
+            .rows
+            .len();
+        assert_eq!(bm25_before, 1, "fixture setup should seed bm25 metadata");
+
+        let result = db.remove_namespace(removed.namespace).await?;
+
+        assert_eq!(result.removed_namespace, removed.namespace);
+        assert_eq!(result.removed_crate_name, removed.name);
+        assert_eq!(result.removed_root_path, removed.root_path);
+        assert_eq!(
+            result.removed_file_module_owner_ids,
+            removed_inventory.file_module_owner_ids,
+            "remove_namespace should act on the exact file_mod-root inventory for the requested namespace"
+        );
+        assert_eq!(
+            result.removed_descendant_ids,
+            removed_inventory.descendant_ids,
+            "remove_namespace should act on the exact descendant inventory derived from crate_context/file_mod authority"
+        );
+        assert!(result.removed_workspace_member);
+        assert!(result.hnsw_invalidated);
+        assert!(result.bm25_invalidated);
+
+        let remaining_contexts = db
+            .list_crate_context_rows()
+            .expect("remaining crate contexts should still query");
+        assert_eq!(
+            remaining_contexts.len(),
+            1,
+            "namespace removal must not behave like whole-db replacement"
+        );
+        assert_eq!(remaining_contexts[0], *remaining);
+        assert!(
+            db.collect_namespace_inventory(removed.namespace).is_err(),
+            "removed namespace should no longer be discoverable from crate_context"
+        );
+
+        let surviving_inventory = db
+            .collect_namespace_inventory(remaining.namespace)
+            .expect("remaining namespace should still be present");
+        assert_eq!(surviving_inventory.crate_context, *remaining);
+        assert_eq!(surviving_inventory.descendant_ids, remaining_inventory.descendant_ids);
+        let removed_file_mods_after = db.raw_query(&format!(
+            r#"?[owner_id] := *file_mod {{ owner_id, namespace @ 'NOW' }}, namespace = to_uuid("{}")"#,
+            removed.namespace
+        ))?;
+        assert!(
+            removed_file_mods_after.rows.is_empty(),
+            "removed namespace should not leave file_mod roots behind"
+        );
+
+        let workspace_rows = db.raw_query(
+            r#"?[members] := *workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version @ 'NOW' }"#,
+        )?;
+        assert_eq!(workspace_rows.rows.len(), 1, "workspace metadata should remain present");
+        let members = workspace_rows.rows[0]
+            .first()
+            .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.members".into()))
+            .and_then(to_string_list)?;
+        assert_eq!(members, vec![remaining.root_path.clone()]);
+
+        let removed_descendant_query = removed_inventory
+            .descendant_ids
+            .iter()
+            .map(|id| format!("target[id], id = to_uuid(\"{id}\")"))
+            .join(" or ");
+        let mut descendant_relations = NodeType::all_variants()
+            .into_iter()
+            .filter(|ty| *ty != NodeType::SyntaxEdge)
+            .map(|ty| ty.relation_str().to_string())
+            .collect::<Vec<_>>();
+        descendant_relations.push("method".to_string());
+        descendant_relations.sort();
+        descendant_relations.dedup();
+        for relation in descendant_relations {
+            let key_fields = NodeType::all_variants()
+                .into_iter()
+                .find(|ty| ty.relation_str() == relation)
+                .filter(|ty| *ty != NodeType::SyntaxEdge)
+                .map(|ty| ty.keys().collect::<Vec<_>>())
+                .unwrap_or_else(|| {
+                    if relation == "method" {
+                        MethodNodeSchema::SCHEMA.keys().copied().collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    }
+                });
+            let key_match = key_fields
+                .iter()
+                .map(|field| format!("target[{field}]"))
+                .join(" or ");
+            let lingering_descendants = db.raw_query(&format!(
+                r#"
+target[id] := {}
+?[hit] := *{relation} {{ {keys} @ 'NOW' }}, ({key_match}), hit = "present"
+"#,
+                removed_descendant_query,
+                keys = key_fields.join(", ")
+            ))?;
+            assert!(
+                lingering_descendants.rows.is_empty(),
+                "removed namespace descendant ids should not remain in relation {relation}"
+            );
+        }
+
+        let lingering_edges = db.raw_query(&format!(
+            r#"
+target[id] := {}
+?[source_id, target_id] := *syntax_edge {{ source_id, target_id, relation_kind @ 'NOW' }}, (target[source_id] or target[target_id])
+"#,
+            removed_descendant_query
+        ))?;
+        assert!(
+            lingering_edges.rows.is_empty(),
+            "removed namespace should not leave syntax_edge rows behind"
+        );
+
+        let vector_rows = db.raw_query(&format!(
+            r#"?[node_id] := *{} {{ node_id, embedding_set_id, vector @ 'NOW' }}, node_id = to_uuid("{seeded_node}")"#,
+            active_set.rel_name()
+        ))?;
+        assert!(
+            vector_rows.rows.is_empty(),
+            "removed namespace vectors should be retracted from the active embedding relation"
+        );
+        assert!(
+            !db.is_hnsw_index_registered(&active_set)?,
+            "namespace removal should invalidate hnsw registration until rebuild"
+        );
+
+        let bm25_after = db.raw_query(&format!(
+            r#"?[id] := *bm25_doc_meta {{ id, tracking_hash, tokenizer_version, token_length @ 'NOW' }},
+id = to_uuid("{seeded_node}")"#
+        ))?;
+        assert!(
+            bm25_after.rows.is_empty(),
+            "removed namespace should retract bm25 metadata for removed nodes"
         );
 
         Ok(())
