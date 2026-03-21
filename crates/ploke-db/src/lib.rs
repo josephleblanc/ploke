@@ -20,7 +20,11 @@ pub mod tool_query;
 pub mod multi_embedding;
 
 pub use database::RestoredEmbeddingSet;
-pub use database::{to_usize, to_uuid, Database, QueryContext, TypedEmbedData};
+pub use database::{
+    CrateContextRow, Database, NamespaceExportArtifact, NamespaceImportConflictReport,
+    NamespaceImportError, NamespaceImportResult, NamespaceRemovalResult, QueryContext,
+    TypedEmbedData, to_usize, to_uuid,
+};
 pub use error::DbError;
 pub use index::hnsw::{
     create_index, create_index_for_set, create_index_primary, create_index_primary_with_index,

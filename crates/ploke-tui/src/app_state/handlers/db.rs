@@ -137,6 +137,19 @@ pub async fn workspace_update(state: &Arc<AppState>, event_bus: &Arc<EventBus>) 
         });
 }
 
+pub async fn workspace_remove(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    crate_ref: String,
+) {
+    let _ = database::workspace_remove(state, event_bus, crate_ref)
+        .await
+        .inspect_err(|e| {
+            e.emit_error();
+            tracing::error!("Error in WorkspaceRemove:\n{e}");
+        });
+}
+
 pub async fn scan_for_change(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,

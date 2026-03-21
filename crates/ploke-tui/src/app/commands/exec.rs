@@ -242,6 +242,9 @@ pub fn execute(app: &mut App, command: Command) {
         Command::WorkspaceUpdate => {
             app.send_cmd(StateCommand::WorkspaceUpdate);
         }
+        Command::WorkspaceRemove(crate_ref) => {
+            app.send_cmd(StateCommand::WorkspaceRemove { crate_ref });
+        }
         Command::EditApprove(id) => {
             app.send_cmd(StateCommand::ApproveEdits { request_id: id });
         }

@@ -9,8 +9,8 @@ use itertools::Itertools;
 use ploke_core::{CrateId, CrateInfo, EmbeddingData, FileData, NodeId, RetrievalScope, WorkspaceInfo};
 use ploke_error::DomainError;
 use ploke_db::{
-    EmbedDataVerbose, NodeType, RestoredEmbeddingSet, SimilarArgs,
-    multi_embedding::schema::EmbeddingSetExt, search_similar_args,
+    CrateContextRow, EmbedDataVerbose, NamespaceRemovalResult, NodeType, RestoredEmbeddingSet,
+    SimilarArgs, multi_embedding::schema::EmbeddingSetExt, search_similar_args,
 };
 use ploke_embed::config::OpenRouterConfig;
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
@@ -86,7 +86,7 @@ fn restored_workspace_members_from_db(
     db: &ploke_db::Database,
 ) -> Result<Option<(PathBuf, Vec<PathBuf>)>, ploke_error::Error> {
     let db_res = db.raw_query(
-        "?[root_path, members] := *workspace_metadata { root_path, members }",
+        "?[root_path, members] := *workspace_metadata { root_path, members @ 'NOW' }",
     )?;
     let Some(row) = db_res.rows.first() else {
         return Ok(None);
@@ -129,7 +129,9 @@ fn restored_workspace_members_from_db(
 fn restored_crate_context_rows(
     db: &ploke_db::Database,
 ) -> Result<Vec<(String, PathBuf)>, ploke_error::Error> {
-    let db_res = db.raw_query("?[name, root_path] := *crate_context { name, root_path }")?;
+    let db_res = db.raw_query(
+        "?[name, root_path] := *crate_context { name, root_path @ 'NOW' }",
+    )?;
     db_res
         .rows
         .into_iter()
@@ -570,125 +572,163 @@ async fn current_workspace_registry_entry(
     })
 }
 
-// NOTE: Consider refactoring to avoid using explicit control flow and use error handling to
-// achieve the same results more clearly
-pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
-    let dir_res = dirs::config_local_dir().ok_or_else(|| {
+fn default_snapshot_file_for_entry(
+    entry: &WorkspaceRegistryEntry,
+) -> Result<PathBuf, ploke_error::Error> {
+    let config_dir = dirs::config_local_dir().ok_or_else(|| {
         ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
             msg: "Could not locate default config directory on system",
         })
-    });
-
-    let default_dir = match dir_res {
-        Ok(dir) => dir.join("ploke").join("data"),
-        Err(e) => {
-            e.emit_warning();
-            event_bus.send(AppEvent::System(SystemEvent::BackupDb {
-                file_dir: "<none>".into(),
-                is_success: false,
-                error: Some(e.to_string()),
-            }));
-            return;
-        }
-    };
-    if let Err(e) = tokio::fs::create_dir_all(&default_dir).await {
-        let msg = format!(
-            "Error:\nCould not create directory at default location: {}\nEncountered error while finding or creating directory: {}",
-            default_dir.display(),
-            e
-        );
-        error!(msg);
-        event_bus.send(AppEvent::System(SystemEvent::BackupDb {
-            file_dir: format!("{}", default_dir.display()),
-            is_success: false,
-            error: Some(msg),
-        }));
-    }
-    let registry_entry = match current_workspace_registry_entry(state).await {
-        Ok(entry) => entry,
-        Err(e) => {
-            let msg = format!("{e}");
-            handlers::chat::add_msg_immediate(
-                state,
-                event_bus,
-                Uuid::new_v4(),
-                msg,
-                chat_history::MessageKind::SysInfo,
-            )
-            .await;
-            return;
-        }
-    };
-
-    let snapshot_file = default_dir.join(format!(
+    })?;
+    Ok(config_dir.join("ploke").join("data").join(format!(
         "{}_{}.sqlite",
-        registry_entry.workspace_name, registry_entry.workspace_id
-    ));
-    let registry_entry = WorkspaceRegistryEntry {
-        snapshot_file: snapshot_file.clone(),
-        ..registry_entry
-    };
-    debug!(
-        save_workspace = %registry_entry.workspace_name,
-        workspace_id = %registry_entry.workspace_id
-    );
+        entry.workspace_name, entry.workspace_id
+    )))
+}
 
-    if snapshot_file.exists() {
-        let _ = std::fs::remove_file(&snapshot_file).inspect_err(|_| {
-            error!(
-                "Error removing previous database file {}",
-                snapshot_file.display()
-            );
-        });
+async fn persist_current_workspace_snapshot(
+    state: &Arc<AppState>,
+) -> Result<WorkspaceRegistryEntry, ploke_error::Error> {
+    let mut registry_entry = current_workspace_registry_entry(state).await?;
+    let mut registry = load_workspace_registry()?;
+
+    registry_entry.snapshot_file = registry
+        .entries
+        .iter()
+        .find(|entry| entry.workspace_id == registry_entry.workspace_id)
+        .map(|entry| entry.snapshot_file.clone())
+        .unwrap_or(default_snapshot_file_for_entry(&registry_entry)?);
+
+    if let Some(parent) = registry_entry.snapshot_file.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|err| {
+            ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "Could not create workspace snapshot directory '{}': {err}",
+                    parent.display()
+                ),
+            })
+        })?;
     }
 
-    if let Ok(active_set) = state.db.with_active_set(|set| set.clone())
-        && let Err(e) = state
+    if registry_entry.snapshot_file.exists() {
+        std::fs::remove_file(&registry_entry.snapshot_file).map_err(|err| {
+            ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "Failed to replace previous workspace snapshot '{}': {err}",
+                    registry_entry.snapshot_file.display()
+                ),
+            })
+        })?;
+    }
+
+    if let Ok(active_set) = state.db.with_active_set(|set| set.clone()) {
+        state
             .db
             .put_active_embedding_set_meta(&registry_entry.workspace_id, &active_set)
-    {
-        error!("Failed to persist active embedding set for backup: {e}");
+            .map_err(ploke_error::Error::from)?;
     }
 
-    let mut registry = match load_workspace_registry() {
-        Ok(registry) => registry,
-        Err(e) => {
-            e.emit_warning();
-            event_bus.send(AppEvent::System(SystemEvent::BackupDb {
-                file_dir: format!("{}", snapshot_file.display()),
-                is_success: false,
-                error: Some(e.to_string()),
-            }));
-            return;
-        }
-    };
+    state
+        .db
+        .backup_db(registry_entry.snapshot_file.clone())
+        .map_err(|err| {
+            ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "Failed to persist workspace snapshot '{}': {err}",
+                    registry_entry.snapshot_file.display()
+                ),
+            })
+        })?;
 
-    match state.db.backup_db(snapshot_file.clone()) {
-        Ok(()) => {
-            registry.upsert(registry_entry);
-            if let Err(e) = save_workspace_registry(&registry) {
-                e.emit_warning();
-                event_bus.send(AppEvent::System(SystemEvent::BackupDb {
-                    file_dir: format!("{}", snapshot_file.display()),
-                    is_success: false,
-                    error: Some(e.to_string()),
-                }));
-                return;
-            }
+    registry.upsert(registry_entry.clone());
+    save_workspace_registry(&registry)?;
+    Ok(registry_entry)
+}
+
+async fn publish_loaded_workspace_snapshot(
+    state: &Arc<AppState>,
+    snapshot: &RestoredWorkspaceSnapshot,
+) {
+    let policy = {
+        let mut system_guard = state.system.write().await;
+        system_guard.set_loaded_workspace(
+            snapshot.workspace.root_path.clone(),
+            snapshot.member_roots.clone(),
+            Some(snapshot.focused_root.clone()),
+        );
+        system_guard.derive_path_policy(&[])
+    };
+    if let Some(policy) = policy {
+        state
+            .io_handle
+            .update_roots(Some(policy.roots), Some(policy.symlink_policy))
+            .await;
+    }
+}
+
+fn resolve_loaded_crate_for_remove(
+    loaded_rows: &[CrateContextRow],
+    crate_ref: &str,
+) -> Result<CrateContextRow, ploke_error::Error> {
+    let root_matches = loaded_rows
+        .iter()
+        .filter(|row| row.root_path == crate_ref)
+        .cloned()
+        .collect::<Vec<_>>();
+    if let [row] = root_matches.as_slice() {
+        return Ok(row.clone());
+    }
+
+    let name_matches = loaded_rows
+        .iter()
+        .filter(|row| row.name == crate_ref)
+        .cloned()
+        .collect::<Vec<_>>();
+    match name_matches.as_slice() {
+        [row] => Ok(row.clone()),
+        [] => Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "No loaded crate matched '{crate_ref}'. Use an exact loaded crate name or exact root path."
+            ),
+        })),
+        _ => Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "Workspace remove target '{crate_ref}' is ambiguous across multiple loaded crates; use the exact root path instead."
+            ),
+        })),
+    }
+}
+
+// NOTE: Consider refactoring to avoid using explicit control flow and use error handling to
+// achieve the same results more clearly
+pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
+    match persist_current_workspace_snapshot(state).await {
+        Ok(registry_entry) => {
+            debug!(
+                save_workspace = %registry_entry.workspace_name,
+                workspace_id = %registry_entry.workspace_id
+            );
             event_bus.send(AppEvent::System(SystemEvent::BackupDb {
-                file_dir: format!("{}", snapshot_file.display()),
+                file_dir: registry_entry.snapshot_file.display().to_string(),
                 is_success: true,
                 error: None,
             }));
         }
         Err(e) => {
+            let file_dir = current_workspace_registry_entry(state)
+                .await
+                .ok()
+                .and_then(|entry| default_snapshot_file_for_entry(&entry).ok())
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<none>".to_string());
+            e.emit_warning();
             event_bus.send(AppEvent::System(SystemEvent::BackupDb {
-                file_dir: format!("{}", snapshot_file.display()),
+                file_dir,
                 is_success: false,
                 error: Some(e.to_string()),
             }));
         }
-    };
+    }
 }
 
 /// Loads a previously saved database backup into the application.
@@ -1041,6 +1081,15 @@ pub async fn workspace_update_for_test(
     event_bus: &Arc<EventBus>,
 ) -> Result<(), ploke_error::Error> {
     workspace_update(state, event_bus).await
+}
+
+#[cfg(feature = "test_harness")]
+pub async fn workspace_remove_for_test(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    crate_ref: String,
+) -> Result<(), ploke_error::Error> {
+    workspace_remove(state, event_bus, crate_ref).await
 }
 
 async fn scan_for_change_target(
@@ -1529,6 +1578,101 @@ pub(super) async fn workspace_update(
         chat_history::MessageKind::SysInfo,
     )
     .await;
+    Ok(())
+}
+
+pub(super) async fn workspace_remove(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    crate_ref: String,
+) -> Result<(), ploke_error::Error> {
+    let (workspace_root, member_roots, focused_root) = {
+        let guard = state.system.read().await;
+        (
+            guard.loaded_workspace_root(),
+            guard.loaded_workspace_member_roots(),
+            guard.focused_crate_root(),
+        )
+    };
+
+    let Some(workspace_root) = workspace_root else {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "No loaded workspace is available to mutate.".to_string(),
+        }));
+    };
+    if member_roots.len() <= 1 {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "Removing the last loaded crate is not yet supported; load another crate or workspace instead.".to_string(),
+        }));
+    }
+
+    let loaded_root_set = member_roots.iter().cloned().collect::<BTreeSet<_>>();
+    let loaded_rows = state
+        .db
+        .list_crate_context_rows()
+        .map_err(ploke_error::Error::from)?
+        .into_iter()
+        .filter(|row| loaded_root_set.contains(&PathBuf::from(&row.root_path)))
+        .collect::<Vec<_>>();
+
+    let target = resolve_loaded_crate_for_remove(&loaded_rows, &crate_ref)?;
+    let target_root = PathBuf::from(&target.root_path);
+    let preferred_focus = focused_root
+        .as_ref()
+        .filter(|root| **root != target_root)
+        .cloned();
+
+    let NamespaceRemovalResult {
+        removed_namespace,
+        hnsw_invalidated,
+        bm25_invalidated,
+        ..
+    } = state
+        .db
+        .remove_namespace(target.namespace)
+        .await
+        .map_err(ploke_error::Error::from)?;
+
+    let restored_snapshot = restored_workspace_snapshot_from_db(&state.db, preferred_focus.as_deref())?;
+    publish_loaded_workspace_snapshot(state, &restored_snapshot).await;
+    let registry_entry = persist_current_workspace_snapshot(state).await?;
+
+    handlers::chat::add_msg_immediate(
+        state,
+        event_bus,
+        Uuid::new_v4(),
+        format!(
+            "Removed workspace crate '{}' ({removed_namespace}) and refreshed loaded membership.",
+            target.name
+        ),
+        chat_history::MessageKind::SysInfo,
+    )
+    .await;
+
+    if hnsw_invalidated || bm25_invalidated {
+        handlers::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            "Workspace subset mutation invalidated active search state; rebuild embeddings or BM25 before relying on code search.".to_string(),
+            chat_history::MessageKind::SysInfo,
+        )
+        .await;
+    }
+
+    handlers::chat::add_msg_immediate(
+        state,
+        event_bus,
+        Uuid::new_v4(),
+        format!(
+            "Workspace snapshot metadata updated at '{}' for surviving members under '{}'.",
+            registry_entry.snapshot_file.display(),
+            workspace_root.display()
+        ),
+        chat_history::MessageKind::SysInfo,
+    )
+    .await;
+
     Ok(())
 }
 

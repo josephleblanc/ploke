@@ -282,6 +282,9 @@ pub async fn state_manager(
             StateCommand::WorkspaceUpdate => {
                 handlers::db::workspace_update(&state, &event_bus).await;
             }
+            StateCommand::WorkspaceRemove { crate_ref } => {
+                handlers::db::workspace_remove(&state, &event_bus, crate_ref).await;
+            }
             StateCommand::ScanForChange { scan_tx } => {
                 handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
             }

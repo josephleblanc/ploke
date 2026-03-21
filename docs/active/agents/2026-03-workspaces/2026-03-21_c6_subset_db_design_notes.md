@@ -135,3 +135,26 @@ Update 2026-03-21 (later):
   next missing layer is TUI/runtime subset command wiring so loaded membership,
   focus, IO roots, registry/snapshot metadata, and search availability update
   end to end.
+
+Update 2026-03-21 (later still):
+
+- `ploke-tui` now has the first end-to-end subset command path:
+  `workspace rm <crate-name-or-exact-root>`.
+- The runtime path is wired through structured command parsing/execution,
+  `StateCommand::WorkspaceRemove`, the dispatcher, `handlers::db`, and
+  `app_state::database::workspace_remove(...)`.
+- `workspace_remove(...)` now reuses `Database::remove_namespace(...)` and
+  then republishes loaded workspace membership, focus, and IO roots from the
+  live DB snapshot rather than from pre-mutation state.
+- The TUI-side restore helpers now query `workspace_metadata` and
+  `crate_context` with `@ 'NOW'`; this turned out to be necessary because
+  subset mutation correctness otherwise leaked historical rows back into the
+  post-mutation runtime snapshot.
+- The fixture-backed witness
+  `workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata`
+  now proves one subset remove command updates surviving membership, focus,
+  derived path policy, registry/snapshot metadata, and explicit search
+  invalidation messaging together.
+- `C6` still remains incomplete overall: subset import/export command wiring is
+  still missing even though the DB primitives already exist and the first
+  remove command path is now end to end.

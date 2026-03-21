@@ -28,6 +28,7 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     load workspace &lt;name-or-id&gt; - Load a saved workspace snapshot by exact registry name or id
     load crate &lt;name-or-id&gt; - Legacy alias for loading a saved workspace snapshot
     save db | sd - Save the active workspace snapshot and registry entry
+    workspace rm &lt;crate-name-or-exact-root&gt; - Remove one loaded crate namespace from the current workspace
     query load | ql - Load default query from default.dl
     query load &lt;query_name&gt; &lt;file_name&gt; - Load a named query from a file
     batch [prompt_file] [out_file] [max_hits] [threshold] - Run batch prompt search

@@ -153,6 +153,9 @@ pub enum StateCommand {
     },
     WorkspaceStatus,
     WorkspaceUpdate,
+    WorkspaceRemove {
+        crate_ref: String,
+    },
     ScanForChange {
         scan_tx: oneshot::Sender<Option<Vec<PathBuf>>>,
     },
@@ -273,6 +276,7 @@ impl StateCommand {
             LoadDb { .. } => "LoadDb",
             WorkspaceStatus => "WorkspaceStatus",
             WorkspaceUpdate => "WorkspaceUpdate",
+            WorkspaceRemove { .. } => "WorkspaceRemove",
             BatchPromptSearch { .. } => "BatchPromptSearch",
             Bm25Rebuild => "Bm25Rebuild",
             Bm25Search { .. } => "Bm25Search",
