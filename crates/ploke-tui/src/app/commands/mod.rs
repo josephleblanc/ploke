@@ -16,8 +16,9 @@ use crate::app::App;
 /// Shared help text for commands
 #[doc = "User-visible help covering supported commands and keybindings."]
 pub const HELP_COMMANDS: &str = r#"Available commands:
-    index start [directory] - Run workspace indexing on specified directory
-                              (defaults to current dir)
+    index start [path] - Run indexing for the most specific Cargo target:
+                         crate if the path is a crate root, otherwise the nearest
+                         ancestor workspace if one is found
     index pause - Pause indexing
     index resume - Resume indexing
     index cancel - Cancel indexing
@@ -128,7 +129,7 @@ pub struct CommandEntry {
 pub const COMMAND_ENTRIES: &[CommandEntry] = &[
     CommandEntry {
         command: "index start",
-        completion: "index start [directory]",
+        completion: "index start [path]",
         description: "TODO: add description",
     },
     CommandEntry {

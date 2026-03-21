@@ -1717,6 +1717,8 @@ mod test {
         tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
         // setup target file:
+        let mut initial_bg_rx = event_bus.subscribe(EventPriority::Background);
+        let mut initial_index_rx = event_bus.index_subscriber();
 
         cmd_tx
             .send(StateCommand::IndexWorkspace {
@@ -1724,23 +1726,42 @@ mod test {
                 needs_parse: false,
             })
             .await?;
-        let mut app_rx = event_bus.index_subscriber();
-        while let Ok(event) = app_rx.recv().await {
-            match event {
-                IndexingStatus {
-                    status: IndexStatus::Running,
-                    ..
-                } => {
-                    trace!(target: TUI_SCAN_TARGET, "IndexStatus Running");
+        loop {
+            tokio::select! {
+                result = initial_bg_rx.recv() => {
+                    if let Ok(AppEvent::Error(err)) = result {
+                        return Err(color_eyre::eyre::eyre!(
+                            "initial IndexWorkspace emitted AppEvent::Error before completion: {}",
+                            err.message
+                        ));
+                    }
                 }
-                IndexingStatus {
-                    status: IndexStatus::Completed,
-                    ..
-                } => {
-                    trace!(target: TUI_SCAN_TARGET, "IndexStatus Completed, breaking loop");
-                    break;
+                result = initial_index_rx.recv() => {
+                    let event = match result {
+                        Ok(event) => event,
+                        Err(err) => {
+                            return Err(color_eyre::eyre::eyre!(
+                                "initial IndexWorkspace index status channel closed before completion: {err}"
+                            ));
+                        }
+                    };
+                    match event {
+                        IndexingStatus {
+                            status: IndexStatus::Running,
+                            ..
+                        } => {
+                            trace!(target: TUI_SCAN_TARGET, "IndexStatus Running");
+                        }
+                        IndexingStatus {
+                            status: IndexStatus::Completed,
+                            ..
+                        } => {
+                            trace!(target: TUI_SCAN_TARGET, "IndexStatus Completed, breaking loop");
+                            break;
+                        }
+                        _ => {}
+                    }
                 }
-                _ => {}
             }
         }
 
@@ -2033,29 +2054,50 @@ mod test {
         use tracing::Level;
         is_embedding_info_before.tracing_print_all(Level::DEBUG);
         db_handle.debug_print_counts_active();
+        let mut second_bg_rx = event_bus.subscribe(EventPriority::Background);
+        let mut second_index_rx = event_bus.index_subscriber();
         cmd_tx
             .send(StateCommand::IndexWorkspace {
                 workspace: workspace.to_string(),
                 needs_parse: false,
             })
             .await?;
-        let mut app_rx = event_bus.index_subscriber();
-        while let Ok(event) = app_rx.recv().await {
-            match event {
-                IndexingStatus {
-                    status: IndexStatus::Running,
-                    ..
-                } => {
-                    trace!(target: TUI_SCAN_TARGET, "IndexStatus Running");
+        loop {
+            tokio::select! {
+                result = second_bg_rx.recv() => {
+                    if let Ok(AppEvent::Error(err)) = result {
+                        return Err(color_eyre::eyre::eyre!(
+                            "second IndexWorkspace emitted AppEvent::Error before completion: {}",
+                            err.message
+                        ));
+                    }
                 }
-                IndexingStatus {
-                    status: IndexStatus::Completed,
-                    ..
-                } => {
-                    trace!(target: TUI_SCAN_TARGET, "IndexStatus Completed, breaking loop");
-                    break;
+                result = second_index_rx.recv() => {
+                    let event = match result {
+                        Ok(event) => event,
+                        Err(err) => {
+                            return Err(color_eyre::eyre::eyre!(
+                                "second IndexWorkspace index status channel closed before completion: {err}"
+                            ));
+                        }
+                    };
+                    match event {
+                        IndexingStatus {
+                            status: IndexStatus::Running,
+                            ..
+                        } => {
+                            trace!(target: TUI_SCAN_TARGET, "IndexStatus Running");
+                        }
+                        IndexingStatus {
+                            status: IndexStatus::Completed,
+                            ..
+                        } => {
+                            trace!(target: TUI_SCAN_TARGET, "IndexStatus Completed, breaking loop");
+                            break;
+                        }
+                        _ => {}
+                    }
                 }
-                _ => {}
             }
         }
         let is_embedding_info_after = db_handle.is_embedding_info_all(&embedding_set)?;

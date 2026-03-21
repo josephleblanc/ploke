@@ -9,7 +9,7 @@ use crate::app_state::{AppState, handlers};
 use crate::chat_history::MessageKind;
 use crate::error::ErrorSeverity;
 use crate::event_bus::ErrorEvent;
-use crate::parser::run_parse;
+use crate::parser::{resolve_index_target, run_parse_resolved};
 use crate::utils::parse_errors::format_parse_failure;
 use crate::{AppEvent, EventBus};
 
@@ -49,54 +49,42 @@ pub async fn index_workspace(
         )
     };
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
-    let target_dir = {
-        let focused_root = { state.system.read().await.focused_crate_root() };
-        match focused_root {
-            Some(path) => path,
-            None => match std::env::current_dir() {
-                Ok(current_dir) => {
-                    let mut pwd = current_dir;
-                    pwd.push(&workspace);
-                    pwd
-                }
-                Err(e) => {
-                    tracing::error!("Error resolving current dir: {e}");
-                    return;
-                }
-            },
+    let raw_target = if workspace.trim().is_empty() {
+        None
+    } else {
+        Some(std::path::PathBuf::from(&workspace))
+    };
+    let resolved = match resolve_index_target(raw_target) {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            let msg = err.to_string();
+            {
+                let mut system_guard = state.system.write().await;
+                system_guard.record_parse_failure(std::path::PathBuf::from(&workspace), msg.clone());
+            }
+            add_msg_shortcut(&msg).await;
+            event_bus.send(AppEvent::Error(ErrorEvent {
+                message: msg,
+                severity: ErrorSeverity::Error,
+            }));
+            return;
         }
     };
 
-    // Set crate focus to the resolved target directory and update IO roots
-    let policy = {
-        let mut system_guard = state.system.write().await;
-        system_guard.set_focus_from_root(target_dir.clone());
-        system_guard.derive_path_policy(&[])
-    };
-    if let Some(policy) = policy {
-        state
-            .io_handle
-            .update_roots(Some(policy.roots), Some(policy.symlink_policy))
-            .await;
-    }
-
     if needs_parse {
-        match run_parse(Arc::clone(&state.db), Some(target_dir.clone())) {
+        match run_parse_resolved(Arc::clone(&state.db), &resolved) {
             Ok(_) => {
-                {
-                    let mut system_guard = state.system.write().await;
-                    system_guard.record_parse_success();
-                }
                 tracing::info!(
-                    "Parse of target workspace {} successful",
-                    &target_dir.display()
+                    "Parse of target {} successful",
+                    resolved.workspace_root.display()
                 );
             }
             Err(e) => {
-                let msg = format_parse_failure(&target_dir, &e);
+                let msg = format_parse_failure(&resolved.focused_root, &e);
                 {
                     let mut system_guard = state.system.write().await;
-                    system_guard.record_parse_failure(target_dir.clone(), msg.clone());
+                    system_guard
+                        .record_parse_failure(resolved.requested_path.clone(), msg.clone());
                 }
                 event_bus.send(AppEvent::Error(ErrorEvent {
                     message: msg,
@@ -106,6 +94,23 @@ pub async fn index_workspace(
                 return;
             }
         }
+    }
+
+    let policy = {
+        let mut system_guard = state.system.write().await;
+        system_guard.set_loaded_workspace(
+            resolved.workspace_root.clone(),
+            resolved.member_roots.clone(),
+            Some(resolved.focused_root.clone()),
+        );
+        system_guard.record_parse_success();
+        system_guard.derive_path_policy(&[])
+    };
+    if let Some(policy) = policy {
+        state
+            .io_handle
+            .update_roots(Some(policy.roots), Some(policy.symlink_policy))
+            .await;
     }
     tracing::info!("end parse");
 

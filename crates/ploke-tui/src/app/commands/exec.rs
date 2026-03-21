@@ -482,7 +482,7 @@ fn show_topic_help(app: &App, topic_prefix: &str) {
         .to_string()
     } else if t.starts_with("index") {
         r#"Indexing commands:
-  index start [directory]            - Run workspace indexing (defaults to current dir)
+  index start [path]                 - Index a crate root, or else the nearest ancestor workspace
   index pause/resume/cancel          - Pause, resume, or cancel indexing
 "#
         .to_string()
@@ -856,34 +856,15 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             } else {
                 ".".to_string()
             };
-
-            match std::fs::metadata(&workspace) {
-                Ok(metadata) if metadata.is_dir() => {
-                    app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Indexing requested for '{}'", workspace),
-                        kind: MessageKind::SysInfo,
-                        new_msg_id: Uuid::new_v4(),
-                    });
-                    app.send_cmd(StateCommand::IndexWorkspace {
-                        workspace,
-                        needs_parse: true,
-                    });
-                }
-                Ok(_) => {
-                    app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Error: '{}' is not a directory", workspace),
-                        kind: MessageKind::SysInfo,
-                        new_msg_id: Uuid::new_v4(),
-                    });
-                }
-                Err(e) => {
-                    app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Error accessing directory '{}': {}", workspace, e),
-                        kind: MessageKind::SysInfo,
-                        new_msg_id: Uuid::new_v4(),
-                    });
-                }
-            }
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: format!("Indexing requested for '{}'", workspace),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+            app.send_cmd(StateCommand::IndexWorkspace {
+                workspace,
+                needs_parse: true,
+            });
         }
         "index pause" => {
             app.send_cmd(StateCommand::AddMessageImmediate {

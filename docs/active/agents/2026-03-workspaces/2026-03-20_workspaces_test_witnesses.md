@@ -17,6 +17,11 @@ the criterion language, not just to the implementation details.
 | `R2` | `backup_db_fixture_lookup_returns_registered_workspace_fixture` in [fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs#L406) | Resolves the workspace fixture through the shared registry by ID and asserts the active filename, parsed target, and plain-backup mode, which matches the R2 requirement that the workspace backup exist as a registry-backed fixture rather than an ad hoc file on disk |
 | `R2` | `workspace_backup_fixture_loads_via_registry_and_has_workspace_metadata` in [fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs#L423) | Loads the registered workspace fixture through the strict registry-backed helper and asserts that the restored DB contains both `workspace_metadata` and two `crate_context` rows, which matches the R2 requirement that the fixture load through the same strict paths used by shared consumers |
 | `R3` | `transform_parsed_workspace_persists_workspace_metadata_fields_from_committed_fixture` in [workspace.rs](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L170) | Parses the committed multi-member fixture `ws_fixture_01`, transforms it into a fresh DB, queries `workspace_metadata`, and asserts the exact persisted identity and manifest-derived fields required by R3 |
+| Phase 3 `C2` | `resolve_index_target_prefers_crate_root_when_pwd_is_crate_root` in [parser.rs](/home/brasides/code/ploke/crates/ploke-tui/src/parser.rs#L257) | Proves the revised `/index` target semantics choose crate mode when the supplied path is itself a crate root, instead of silently escalating that exact path to workspace mode |
+| Phase 3 `C2` | `resolve_index_target_finds_workspace_when_pwd_is_not_crate_root` in [parser.rs](/home/brasides/code/ploke/crates/ploke-tui/src/parser.rs#L269) | Proves the revised target resolution falls back to the nearest ancestor workspace when the supplied path is not a crate root, which is the documented replacement for the earlier bare-workspace-only behavior |
+| Phase 3 `C2` | `resolve_index_target_reports_missing_crate_or_workspace` in [parser.rs](/home/brasides/code/ploke/crates/ploke-tui/src/parser.rs#L287) | Proves non-Cargo targets fail as recoverable errors with explicit user guidance rather than being silently accepted as valid indexing roots |
+| Phase 3 `C2` | `index_workspace_resolves_ancestor_workspace_from_nested_path` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L40) | Drives the real `ploke-tui` indexing handler from a nested path inside `ws_fixture_01` and proves successful parse/transform commits multi-member loaded-workspace state and member-scoped path policy roots |
+| Phase 3 `C2` | `index_workspace_failure_keeps_previous_loaded_workspace_state` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L84) | Proves an invalid target records failure but preserves the previously loaded workspace root and member set instead of publishing partial state |
 
 ## Reasoning by acceptance item
 
@@ -226,6 +231,58 @@ What a passing witness proves:
 Scope note:
 - this is sufficient evidence for Phase 2 `C1`
 - manifest-driven indexing behavior remains Phase 3 `C2`
+
+### Phase 3 `C2` manifest-driven indexing
+
+Criterion text:
+- requires `/index` target resolution to be explicit rather than inferred from
+  focus-only state
+- requires non-Cargo targets to fail explicitly with helpful feedback
+- requires successful indexing to publish loaded workspace membership and IO
+  roots only after parse/transform success
+- requires failure to preserve the previously coherent loaded workspace state
+
+Current witness reasoning:
+- [parser.rs](/home/brasides/code/ploke/crates/ploke-tui/src/parser.rs#L30)
+  introduces explicit index-target resolution that distinguishes crate-root,
+  ancestor-workspace, and recoverable no-target cases
+- [indexing.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs#L33)
+  resolves the target before parsing and only publishes `set_loaded_workspace`
+  plus derived IO roots after `run_parse_resolved(...)` succeeds
+- [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L40)
+  drives the real handler and asserts both successful workspace publication and
+  failure-path state preservation
+
+What a passing witness proves:
+- if `resolve_index_target_prefers_crate_root_when_pwd_is_crate_root` passes,
+  then `/index` on an exact crate root uses crate-mode indexing rather than
+  silently broadening that exact target to workspace scope
+- if `resolve_index_target_finds_workspace_when_pwd_is_not_crate_root` passes,
+  then `/index` on a non-crate path inside a workspace resolves to the nearest
+  ancestor workspace and carries the full canonical member set needed for
+  multi-member indexing
+- if `resolve_index_target_reports_missing_crate_or_workspace` passes, then
+  non-Cargo targets are rejected explicitly with recoverable guidance instead
+  of being silently accepted as indexing roots
+- if `index_workspace_resolves_ancestor_workspace_from_nested_path` passes,
+  then the real `ploke-tui` indexing handler can start from a nested path,
+  parse/transform the ancestor workspace, and publish loaded workspace
+  membership plus member-scoped path policy only after success
+- if `index_workspace_failure_keeps_previous_loaded_workspace_state` passes,
+  then a failed target resolution/indexing attempt does not overwrite the
+  previously loaded workspace state, which is the Phase 3 `C2` witness for the
+  failure-preserves-state half of `G1`
+- if all five tests pass, then the revised `C2` command semantics and the
+  handler-level atomic publish contract both have direct regression witnesses
+
+Scope note:
+- this is sufficient evidence for the implemented Phase 3 `C2` behavior
+- the accepted runtime semantics now follow the user-approved rule "crate if
+  the supplied path is a crate root, otherwise nearest ancestor workspace,"
+  which is intentionally narrower than the original plan text that treated bare
+  `/index` as always workspace-oriented
+- later phases still need stronger whole-session `G1` witnesses covering
+  embedding/HNSW/BM25 coherence after mutating commands
 
 ## Update rule
 
