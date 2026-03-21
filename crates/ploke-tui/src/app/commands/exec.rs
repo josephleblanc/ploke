@@ -236,6 +236,30 @@ pub fn execute(app: &mut App, command: Command) {
             });
         }
         Command::Update => spawn_update(app),
+        Command::LoadWorkspace(workspace_ref) => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: format!("Attempting to load workspace snapshot for {workspace_ref}..."),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+            app.send_cmd(StateCommand::LoadDb { workspace_ref });
+        }
+        Command::LoadWorkspaceCrates {
+            workspace_ref,
+            crate_ref,
+        } => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: format!(
+                    "Attempting to load crate subset '{crate_ref}' from workspace snapshot '{workspace_ref}'..."
+                ),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+            app.send_cmd(StateCommand::LoadWorkspaceCrates {
+                workspace_ref,
+                crate_ref,
+            });
+        }
         Command::WorkspaceStatus => {
             app.send_cmd(StateCommand::WorkspaceStatus);
         }

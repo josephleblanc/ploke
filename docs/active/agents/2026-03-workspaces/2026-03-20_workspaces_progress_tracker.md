@@ -13,8 +13,8 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 
 ## Current summary
 
-- Overall status: `Phase 7 in progress`
-- Current gate: readiness and Phases 1-6 are complete; Phase 7 `C6` now has DB-side remove/export/import primitives plus the first end-to-end TUI/runtime subset remove command, but subset import/export command wiring is still missing
+- Overall status: `Phase 7 complete`
+- Current gate: readiness and Phases 1-7 are complete; the next implementation gate is Phase 8 `C7` workspace-aware tools with strict edit safety
 - Cross-phase obligations to keep in view: `G1` coherent session state, `G2`
   explicit membership authority and manifest drift handling
 
@@ -44,8 +44,8 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 | Phase 4 `C3` workspace status and update | `done` | Added per-loaded-crate freshness tracking plus `/workspace status` and `/workspace update` command wiring in `ploke-tui`; committed-fixture witnesses prove multi-member status, update convergence, and manifest-drift surfacing, and broader `cargo test -p ploke-tui --tests -- --nocapture` passed via sub-agent |
 | Phase 5 `C4` workspace save/load registry | `done` | `/save db` now writes a registry-backed workspace snapshot, `/load` resolves exact workspace name/id through the registry, restore rejects `FirstPopulated` fallback, and explicit tests cover registry creation, no-prefix lookup, metadata mismatch failure, and embedding-set metadata restore |
 | Phase 6 `C5` shared retrieval scope model | `done` | Shared `RetrievalScope` is now enforced across BM25, dense, hybrid, and `get_context(...)`; `ploke_db_primary` was refreshed; targeted `ploke-db`/`ploke-rag` witnesses passed; and broader `cargo test -p ploke-tui --tests -- --nocapture` passed via sub-agent |
-| Phase 7 `C6` namespace-scoped subset DB operations | `in progress` | `ploke-db` now has fixture-backed `remove_namespace(...)`, `export_namespace(...)`, and `import_namespace(...)`; `ploke-tui` now wires `/workspace rm <crate>` through `remove_namespace(...)` and republishes loaded membership, focus, IO roots, search invalidation messaging, and registry/snapshot metadata; next step is wiring subset import/export commands through the same runtime path |
-| Phase 8 `C7` workspace-aware tools with strict edit safety | `not started` | Expand read/context behavior without widening edit permissions |
+| Phase 7 `C6` namespace-scoped subset DB operations | `done` | `ploke-db` has fixture-backed `remove_namespace(...)`, `export_namespace(...)`, and `import_namespace(...)`; `ploke-tui` now wires `/workspace rm <crate>` plus `load crates <workspace> <crate>` through those primitives and republishes loaded membership, focus, IO roots, search invalidation messaging, and registry/snapshot metadata coherently |
+| Phase 8 `C7` workspace-aware tools with strict edit safety | `not started` | Expand read/context behavior without widening edit permissions; next step is workspace-aware prompt/context/tool gating on top of the completed workspace/session model |
 
 ## Test matrix
 
@@ -61,7 +61,7 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 | Phase 4 `C3` workspace status and update | `done` | `workspace_status_and_update_operate_per_loaded_crate`; `workspace_status_reports_workspace_member_drift` | Verified by sub-agent runs of the new `workspace_status_update` integration test plus broader `cargo test -p ploke-tui --tests -- --nocapture`; test harness still logs handled `Cozo embeddings not implemented` noise from the mock-backed index path |
 | Phase 5 `C4` workspace save/load registry | `done` | `load_db_restores_saved_embedding_set_and_index`; `load_db_requires_workspace_registry_entry_instead_of_prefix_lookup`; `load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads`; `load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot` | Verified by sub-agent runs of the targeted C4 tests plus broader `cargo test -p ploke-tui --tests -- --nocapture`; exact registry lookup now replaces filename-prefix restore |
 | Phase 6 `C5` shared retrieval scope model | `done` | `bm25_specific_crate_scope_filters_before_top_k_truncation`; `search_similar_for_set_specific_crate_scope_filters_before_limit`; `hybrid_specific_crate_scope_excludes_out_of_scope_candidates_before_fusion`; `get_context_specific_crate_scope_does_not_materialize_out_of_scope_ids` | Targeted `ploke-db` and `ploke-rag` witness runs passed, `ploke_db_primary` was refreshed to clear the earlier freshness blocker, and broader `cargo test -p ploke-tui --tests -- --nocapture` passed via sub-agent |
-| Phase 7 `C6` namespace-scoped subset DB operations | `in progress` | `workspace_fixture_namespace_inventory_matches_crate_context_membership`; `workspace_fixture_namespaces_remain_distinct_in_subset_inventory`; `remove_namespace_removes_only_target_namespace_and_invalidates_search_state`; `export_namespace_artifact_contains_only_target_namespace_rows`; `import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state`; `import_namespace_reports_duplicate_namespace_name_and_root_conflicts`; `workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata` | Partial evidence only: DB-side namespace inventory plus real subset removal/export/import primitives now exist in `ploke-db`, and `ploke-tui` now has one end-to-end subset remove witness; targeted `workspace_subset_remove` and broader `cargo test -p ploke-tui --tests -- --nocapture` passed via sub-agent, but subset import/export command wiring is still missing |
+| Phase 7 `C6` namespace-scoped subset DB operations | `done` | `workspace_fixture_namespace_inventory_matches_crate_context_membership`; `workspace_fixture_namespaces_remain_distinct_in_subset_inventory`; `remove_namespace_removes_only_target_namespace_and_invalidates_search_state`; `export_namespace_artifact_contains_only_target_namespace_rows`; `import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state`; `import_namespace_reports_duplicate_namespace_name_and_root_conflicts`; `workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata`; `workspace_load_crates_restores_removed_member_and_snapshot_metadata`; `workspace_load_crates_conflict_preserves_runtime_state` | `ploke-db` has direct namespace-scoped remove/export/import/conflict witnesses, `ploke-tui` now has end-to-end subset remove and subset import/conflict witnesses, and both targeted `workspace_subset_remove` plus broader `cargo test -p ploke-tui --tests -- --nocapture` passed via sub-agent |
 
 ## Handoff Notes
 
@@ -69,21 +69,19 @@ Use this section only for compact-handoff context that should survive a
 conversation compaction. Keep it short and replace it wholesale when it is
 updated.
 
-- Current implementation state: readiness and Phases 1-6 are complete; Phase 7
-  `C6` is `in progress`.
+- Current implementation state: readiness and Phases 1-7 are complete; the
+  next gate is Phase 8 `C7`.
 - `C6` now has DB-side groundwork plus real subset remove/export/import
   primitives in
   [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs):
   `list_crate_context_rows(...)`, `collect_namespace_inventory(...)`,
   `remove_namespace(...)`, `export_namespace(...)`, and
   `import_namespace(...)`.
-- `ploke-tui` now also has the first end-to-end subset command path:
-  `workspace rm <crate-name-or-exact-root>` wired through
-  `StateCommand::WorkspaceRemove` to
-  [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs),
-  where it removes one loaded namespace, republishes loaded membership and
-  focus, narrows IO roots, rewrites registry/snapshot metadata, and reports
-  search invalidation explicitly.
+- `ploke-tui` now has end-to-end subset command paths for both
+  `workspace rm <crate-name-or-exact-root>` and
+  `load crates <workspace-name-or-id> <crate-name-or-exact-root>`, both wired
+  through namespace-scoped `ploke-db` primitives and both republishing loaded
+  membership, focus, IO roots, and registry/snapshot metadata coherently.
 - The committed workspace fixture `ws_fixture_01_canonical` is now used to
   prove that `ploke-db` can derive two distinct per-crate namespace inventories
   and distinct descendant graph-id sets from persisted DB authority.
@@ -98,7 +96,9 @@ updated.
   `import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state`
   and `import_namespace_reports_duplicate_namespace_name_and_root_conflicts`,
   plus
-  `workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata`.
+  `workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata`,
+  plus `workspace_load_crates_restores_removed_member_and_snapshot_metadata`
+  and `workspace_load_crates_conflict_preserves_runtime_state`.
 - Validation for this checkpoint passed via sub-agent:
   `cargo test -p ploke-db export_namespace_artifact_contains_only_target_namespace_rows -- --nocapture`,
   `cargo test -p ploke-db remove_namespace_removes_only_target_namespace_and_invalidates_search_state -- --nocapture`,
@@ -110,10 +110,9 @@ updated.
 - Full `cargo test -- --nocapture` was already green before this `C6` pass
   after the `Bm25Cmd::Search.scope` compile fix in
   [unit_tests.rs](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/indexer/unit_tests.rs).
-- Next target after compaction: keep `C6` in progress and wire subset import
-  and export commands through the same TUI/runtime path now used by
-  `/workspace rm <crate>`, while preserving the same membership/focus/IO/search
-  coherence guarantees.
+- Next target after compaction: start `C7` and make workspace-aware
+  read/context/tool behavior use the completed loaded-workspace model without
+  widening edit permissions.
 
 ## Update rule
 

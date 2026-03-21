@@ -24,6 +24,11 @@ pub enum Command {
     Quit,
     Help,
     HelpTopic(String),
+    LoadWorkspace(String),
+    LoadWorkspaceCrates {
+        workspace_ref: String,
+        crate_ref: String,
+    },
     ModelList,
     ModelInfo,
     ModelUse(String),
@@ -206,6 +211,33 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             }
         }
         "update" => Command::Update,
+        s if s.starts_with("load workspace ") => {
+            let workspace_ref = s.trim_start_matches("load workspace ").trim().to_string();
+            if workspace_ref.is_empty() || workspace_ref.contains(' ') {
+                Command::Raw(trimmed.to_string())
+            } else {
+                Command::LoadWorkspace(workspace_ref)
+            }
+        }
+        s if s.starts_with("load crate ") => {
+            let workspace_ref = s.trim_start_matches("load crate ").trim().to_string();
+            if workspace_ref.is_empty() || workspace_ref.contains(' ') {
+                Command::Raw(trimmed.to_string())
+            } else {
+                Command::LoadWorkspace(workspace_ref)
+            }
+        }
+        s if s.starts_with("load crates ") => {
+            let rest = s.trim_start_matches("load crates ").trim();
+            let mut parts = rest.split_whitespace();
+            match (parts.next(), parts.next(), parts.next()) {
+                (Some(workspace_ref), Some(crate_ref), None) => Command::LoadWorkspaceCrates {
+                    workspace_ref: workspace_ref.to_string(),
+                    crate_ref: crate_ref.to_string(),
+                },
+                _ => Command::Raw(trimmed.to_string()),
+            }
+        }
         "workspace status" => Command::WorkspaceStatus,
         "workspace update" => Command::WorkspaceUpdate,
         s if s.starts_with("workspace rm ") => {

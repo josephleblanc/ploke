@@ -9,8 +9,9 @@ use itertools::Itertools;
 use ploke_core::{CrateId, CrateInfo, EmbeddingData, FileData, NodeId, RetrievalScope, WorkspaceInfo};
 use ploke_error::DomainError;
 use ploke_db::{
-    CrateContextRow, EmbedDataVerbose, NamespaceRemovalResult, NodeType, RestoredEmbeddingSet,
-    SimilarArgs, multi_embedding::schema::EmbeddingSetExt, search_similar_args,
+    CrateContextRow, EmbedDataVerbose, NamespaceImportConflictReport, NamespaceImportError,
+    NamespaceImportResult, NamespaceRemovalResult, NodeType, RestoredEmbeddingSet, SimilarArgs,
+    multi_embedding::schema::EmbeddingSetExt, search_similar_args,
 };
 use ploke_embed::config::OpenRouterConfig;
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
@@ -670,7 +671,21 @@ fn resolve_loaded_crate_for_remove(
     loaded_rows: &[CrateContextRow],
     crate_ref: &str,
 ) -> Result<CrateContextRow, ploke_error::Error> {
-    let root_matches = loaded_rows
+    resolve_crate_context_row(
+        loaded_rows,
+        crate_ref,
+        "No loaded crate matched '{crate_ref}'. Use an exact loaded crate name or exact root path.",
+        "Workspace remove target '{crate_ref}' is ambiguous across multiple loaded crates; use the exact root path instead.",
+    )
+}
+
+fn resolve_crate_context_row(
+    rows: &[CrateContextRow],
+    crate_ref: &str,
+    missing_template: &str,
+    ambiguous_template: &str,
+) -> Result<CrateContextRow, ploke_error::Error> {
+    let root_matches = rows
         .iter()
         .filter(|row| row.root_path == crate_ref)
         .cloned()
@@ -679,7 +694,7 @@ fn resolve_loaded_crate_for_remove(
         return Ok(row.clone());
     }
 
-    let name_matches = loaded_rows
+    let name_matches = rows
         .iter()
         .filter(|row| row.name == crate_ref)
         .cloned()
@@ -687,16 +702,76 @@ fn resolve_loaded_crate_for_remove(
     match name_matches.as_slice() {
         [row] => Ok(row.clone()),
         [] => Err(ploke_error::Error::Domain(DomainError::Ui {
-            message: format!(
-                "No loaded crate matched '{crate_ref}'. Use an exact loaded crate name or exact root path."
-            ),
+            message: missing_template.replace("{crate_ref}", crate_ref),
         })),
         _ => Err(ploke_error::Error::Domain(DomainError::Ui {
-            message: format!(
-                "Workspace remove target '{crate_ref}' is ambiguous across multiple loaded crates; use the exact root path instead."
-            ),
+            message: ambiguous_template.replace("{crate_ref}", crate_ref),
         })),
     }
+}
+
+fn format_namespace_import_conflict(
+    workspace_ref: &str,
+    crate_ref: &str,
+    report: &NamespaceImportConflictReport,
+) -> String {
+    let mut details = Vec::new();
+    if let Some(namespace) = report.duplicate_namespace {
+        details.push(format!("duplicate namespace {namespace}"));
+    }
+    if let Some(crate_name) = &report.duplicate_crate_name {
+        details.push(format!("crate name '{crate_name}' is already loaded"));
+    }
+    if let Some(root_path) = &report.duplicate_root_path {
+        details.push(format!("root path '{root_path}' is already loaded"));
+    }
+    if let Some((existing_root, imported_root)) = &report.workspace_root_mismatch {
+        details.push(format!(
+            "workspace root mismatch: live DB is '{existing_root}' but import snapshot is '{imported_root}'"
+        ));
+    }
+
+    format!(
+        "Cannot load crate subset '{crate_ref}' from workspace snapshot '{workspace_ref}': {}.",
+        details.join("; ")
+    )
+}
+
+fn namespace_import_error_to_ui(
+    workspace_ref: &str,
+    crate_ref: &str,
+    err: NamespaceImportError,
+) -> ploke_error::Error {
+    match err {
+        NamespaceImportError::Conflict(report) => ploke_error::Error::Domain(DomainError::Ui {
+            message: format_namespace_import_conflict(workspace_ref, crate_ref, &report),
+        }),
+        NamespaceImportError::Db(err) => ploke_error::Error::from(err),
+    }
+}
+
+fn load_staging_snapshot_from_registry_entry(
+    entry: &WorkspaceRegistryEntry,
+) -> Result<(ploke_db::Database, RestoredWorkspaceSnapshot), ploke_error::Error> {
+    let valid_file = entry.snapshot_file.clone();
+    if !valid_file.exists() {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "Workspace registry entry '{}' points at missing snapshot '{}'.",
+                entry.workspace_name,
+                valid_file.display()
+            ),
+        }));
+    }
+
+    let staging_db = ploke_db::Database::init_with_schema().map_err(ploke_error::Error::from)?;
+    staging_db
+        .import_backup_with_embeddings(&valid_file)
+        .map_err(ploke_error::Error::from)?;
+    let restored_snapshot =
+        restored_workspace_snapshot_from_db(&staging_db, entry.focused_root.as_deref())?;
+    workspace_registry_entry_matches_snapshot(entry, &restored_snapshot)?;
+    Ok((staging_db, restored_snapshot))
 }
 
 // NOTE: Consider refactoring to avoid using explicit control flow and use error handling to
@@ -782,29 +857,16 @@ pub(super) async fn load_db(
         }));
     })?;
     let valid_file = entry.snapshot_file.clone();
-    if !valid_file.exists() {
-        let msg = format!(
-            "Workspace registry entry '{}' points at missing snapshot '{}'.",
-            entry.workspace_name,
-            valid_file.display()
-        );
-        event_bus.send(AppEvent::System(SystemEvent::LoadDb {
-            workspace_ref: workspace_ref.clone(),
-            file_dir: Some(Arc::new(valid_file.clone())),
-            root_path: None,
-            is_success: false,
-            error: Some(msg.clone()),
-        }));
-        return Err(ploke_error::Error::Domain(DomainError::Ui { message: msg }));
-    }
-
-    let staging_db = ploke_db::Database::init_with_schema().map_err(ploke_error::Error::from)?;
-    staging_db
-        .import_backup_with_embeddings(&valid_file)
-        .map_err(ploke_error::Error::from)?;
-    let restored_snapshot =
-        restored_workspace_snapshot_from_db(&staging_db, entry.focused_root.as_deref())?;
-    workspace_registry_entry_matches_snapshot(entry, &restored_snapshot)?;
+    let (staging_db, restored_snapshot) =
+        load_staging_snapshot_from_registry_entry(entry).inspect_err(|e| {
+            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                workspace_ref: workspace_ref.clone(),
+                file_dir: Some(Arc::new(valid_file.clone())),
+                root_path: None,
+                is_success: false,
+                error: Some(e.to_string()),
+            }));
+        })?;
 
     let staged_selection = staging_db
         .restore_embedding_set(&entry.workspace_id)
@@ -1090,6 +1152,16 @@ pub async fn workspace_remove_for_test(
     crate_ref: String,
 ) -> Result<(), ploke_error::Error> {
     workspace_remove(state, event_bus, crate_ref).await
+}
+
+#[cfg(feature = "test_harness")]
+pub async fn load_workspace_crates_for_test(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    workspace_ref: String,
+    crate_ref: String,
+) -> Result<(), ploke_error::Error> {
+    load_workspace_crates(state, event_bus, workspace_ref, crate_ref).await
 }
 
 async fn scan_for_change_target(
@@ -1578,6 +1650,108 @@ pub(super) async fn workspace_update(
         chat_history::MessageKind::SysInfo,
     )
     .await;
+    Ok(())
+}
+
+pub(super) async fn load_workspace_crates(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    workspace_ref: String,
+    crate_ref: String,
+) -> Result<(), ploke_error::Error> {
+    let (loaded_workspace_root, focused_root) = {
+        let guard = state.system.read().await;
+        (guard.loaded_workspace_root(), guard.focused_crate_root())
+    };
+    let Some(loaded_workspace_root) = loaded_workspace_root else {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "No loaded workspace is available to mutate.".to_string(),
+        }));
+    };
+
+    let registry = load_workspace_registry()?;
+    let entry = resolve_workspace_registry_entry(&registry, &workspace_ref)?;
+    let (staging_db, source_snapshot) = load_staging_snapshot_from_registry_entry(entry)?;
+    if source_snapshot.workspace.root_path != loaded_workspace_root {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "Cannot load crate subset from workspace snapshot '{}': loaded workspace root '{}' does not match snapshot root '{}'.",
+                workspace_ref,
+                loaded_workspace_root.display(),
+                source_snapshot.workspace.root_path.display()
+            ),
+        }));
+    }
+
+    let source_rows = staging_db
+        .list_crate_context_rows()
+        .map_err(ploke_error::Error::from)?;
+    let source_target = resolve_crate_context_row(
+        &source_rows,
+        &crate_ref,
+        "No crate matched '{crate_ref}' in the source workspace snapshot. Use an exact crate name or exact root path from that snapshot.",
+        "Workspace subset load target '{crate_ref}' is ambiguous in the source workspace snapshot; use the exact root path instead.",
+    )?;
+
+    let artifact = staging_db
+        .export_namespace(source_target.namespace)
+        .map_err(ploke_error::Error::from)?;
+    let imported_root = PathBuf::from(&artifact.crate_context.root_path);
+    let preferred_focus = focused_root.clone().or(Some(imported_root.clone()));
+
+    let NamespaceImportResult {
+        imported_namespace,
+        imported_crate_name,
+        hnsw_invalidated,
+        bm25_invalidated,
+        ..
+    } = state
+        .db
+        .import_namespace(&artifact)
+        .await
+        .map_err(|err| namespace_import_error_to_ui(&workspace_ref, &crate_ref, err))?;
+
+    let restored_snapshot =
+        restored_workspace_snapshot_from_db(&state.db, preferred_focus.as_deref())?;
+    publish_loaded_workspace_snapshot(state, &restored_snapshot).await;
+    let registry_entry = persist_current_workspace_snapshot(state).await?;
+
+    handlers::chat::add_msg_immediate(
+        state,
+        event_bus,
+        Uuid::new_v4(),
+        format!(
+            "Loaded workspace crate '{}' ({imported_namespace}) from snapshot '{}'.",
+            imported_crate_name, workspace_ref
+        ),
+        chat_history::MessageKind::SysInfo,
+    )
+    .await;
+
+    if hnsw_invalidated || bm25_invalidated {
+        handlers::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            "Workspace subset mutation invalidated active search state; rebuild embeddings or BM25 before relying on code search.".to_string(),
+            chat_history::MessageKind::SysInfo,
+        )
+        .await;
+    }
+
+    handlers::chat::add_msg_immediate(
+        state,
+        event_bus,
+        Uuid::new_v4(),
+        format!(
+            "Workspace snapshot metadata updated at '{}' after loading subset members for '{}'.",
+            registry_entry.snapshot_file.display(),
+            restored_snapshot.workspace.root_path.display()
+        ),
+        chat_history::MessageKind::SysInfo,
+    )
+    .await;
+
     Ok(())
 }
 

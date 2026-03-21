@@ -37,6 +37,8 @@ the criterion language, not just to the implementation details.
 | Phase 7 `C6` | `import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Exports one namespace from `ws_fixture_01_canonical`, removes it from a second loaded copy of that workspace, recreates HNSW on the surviving namespace, then imports the artifact back through `Database::import_namespace(...)` and proves the namespace returns without whole-DB replacement while `workspace_metadata.members`, vectors, BM25 rows, and HNSW availability are reconciled to the post-import dataset |
 | Phase 7 `C6` | `import_namespace_reports_duplicate_namespace_name_and_root_conflicts` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Attempts to import an exported namespace artifact back into the unchanged source workspace DB and proves `Database::import_namespace(...)` rejects it with an explicit conflict report naming the duplicate namespace, crate name, and root path instead of silently replacing or merging conflicting data |
 | Phase 7 `C6` | `workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata` in [workspace_subset_remove.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_subset_remove.rs) | Indexes the committed two-member workspace fixture in `ploke-tui`, removes one loaded member through the new `/workspace rm` runtime helper, and proves the surviving loaded membership, focus, path roots, rewritten registry/snapshot metadata, and explicit search invalidation message all converge to the same post-mutation member set |
+| Phase 7 `C6` | `workspace_load_crates_restores_removed_member_and_snapshot_metadata` in [workspace_subset_remove.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_subset_remove.rs) | Starts from the same committed two-member workspace fixture, removes one loaded member, then reloads that member from a registered workspace snapshot through `load crates <workspace> <crate>` and proves restored membership, preserved valid focus, widened path roots, rewritten registry/snapshot metadata, and explicit search invalidation all converge to the same post-import member set |
+| Phase 7 `C6` | `workspace_load_crates_conflict_preserves_runtime_state` in [workspace_subset_remove.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_subset_remove.rs) | Attempts to load an already loaded crate subset from a registered workspace snapshot and proves the conflict is explicit while loaded membership, focus, path roots, and active HNSW registration remain unchanged |
 
 ## Reasoning by acceptance item
 
@@ -514,6 +516,12 @@ Current witness reasoning:
   rewrites the current workspace registry/snapshot metadata, and reports search
   invalidation explicitly
 - [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs)
+  now also exposes `load_workspace_crates(...)`, which resolves an exact
+  workspace registry entry plus an exact crate name/root from the source
+  snapshot, imports that namespace through `ploke-db`, republishes loaded
+  membership/focus/IO roots from the live DB, rewrites the current workspace
+  registry/snapshot metadata, and reports search invalidation explicitly
+- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs)
   now reads restored `workspace_metadata` and `crate_context` rows with
   `@ 'NOW'`, which is required for subset mutation correctness because
   post-retraction runtime restore must ignore historical rows
@@ -573,18 +581,27 @@ What a passing witness proves:
   removed crate, derived IO roots narrow with it, the workspace registry and
   rewritten snapshot reflect the surviving members, and search invalidation is
   surfaced explicitly
-- if all seven tests pass, then `C6` now has direct evidence for namespace
+- if `workspace_load_crates_restores_removed_member_and_snapshot_metadata`
+  passes, then `ploke-tui` can drive one real subset import command end to end:
+  the target namespace is loaded from a registered workspace snapshot into the
+  live DB, loaded runtime membership expands back to the restored member set, a
+  still-valid focus is preserved, derived IO roots widen back to the restored
+  member set, the workspace registry and rewritten snapshot reflect the
+  restored members, and search invalidation is surfaced explicitly
+- if `workspace_load_crates_conflict_preserves_runtime_state` passes, then the
+  command/runtime path surfaces subset import conflicts before mutating loaded
+  membership, focus, IO roots, or active HNSW registration, which is direct
+  evidence that failed subset imports do not publish mixed state
+- if all nine tests pass, then `C6` now has direct evidence for namespace
   authority plus real namespace-scoped removal/export/import/conflict
-  validation in `ploke-db` and one end-to-end subset remove command path in
-  `ploke-tui`
+  validation in `ploke-db` and end-to-end subset remove/import command paths
+  in `ploke-tui`
 
 Scope note:
-- this is still partial evidence only
-- it now proves real subset removal, export, import, and duplicate conflict
-  validation primitives, plus one end-to-end subset remove command path
-- `C6` remains `in progress` until namespace-scoped subset import/export and
-  explicit conflict validation also exist end to end through the command/runtime
-  surface
+- this is sufficient witness evidence for `C6`
+- later phases still need to prove the broader `G1` and `G2` obligations across
+  more workspace-mutating commands, but the Phase 7 subset-command bar is now
+  met
 
 ## Update rule
 

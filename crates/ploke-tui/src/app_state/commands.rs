@@ -151,6 +151,10 @@ pub enum StateCommand {
     LoadDb {
         workspace_ref: String,
     },
+    LoadWorkspaceCrates {
+        workspace_ref: String,
+        crate_ref: String,
+    },
     WorkspaceStatus,
     WorkspaceUpdate,
     WorkspaceRemove {
@@ -274,6 +278,7 @@ impl StateCommand {
             ReadQuery { .. } => "ReadQuery",
             SaveDb => "SaveDb",
             LoadDb { .. } => "LoadDb",
+            LoadWorkspaceCrates { .. } => "LoadWorkspaceCrates",
             WorkspaceStatus => "WorkspaceStatus",
             WorkspaceUpdate => "WorkspaceUpdate",
             WorkspaceRemove { .. } => "WorkspaceRemove",

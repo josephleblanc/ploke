@@ -158,3 +158,22 @@ Update 2026-03-21 (later still):
 - `C6` still remains incomplete overall: subset import/export command wiring is
   still missing even though the DB primitives already exist and the first
   remove command path is now end to end.
+
+Update 2026-03-21 (latest):
+
+- `ploke-tui` now also has the end-to-end subset import command path
+  `load crates <workspace-name-or-id> <crate-name-or-exact-root>`.
+- The runtime path resolves an exact workspace registry entry, validates the
+  source snapshot against that registry metadata, exports the requested
+  namespace from a staging DB, imports it into the live DB through
+  `Database::import_namespace(...)`, and then republishes loaded membership,
+  focus, IO roots, and rewritten registry/snapshot metadata from the live DB.
+- The new fixture-backed witnesses
+  `workspace_load_crates_restores_removed_member_and_snapshot_metadata` and
+  `workspace_load_crates_conflict_preserves_runtime_state` now prove:
+  - successful subset import restores the missing member end to end without
+    whole-DB replacement
+  - conflict validation surfaces before runtime membership/focus/IO/search
+    state changes are published
+- With those witnesses plus the earlier DB-side remove/export/import/conflict
+  witnesses and `/workspace rm` runtime witness, `C6` is now satisfied.

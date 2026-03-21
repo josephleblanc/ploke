@@ -119,6 +119,24 @@ pub async fn load_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>, workspace
     }
 }
 
+pub async fn load_workspace_crates(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    workspace_ref: String,
+    crate_ref: String,
+) {
+    if let Err(e) = database::load_workspace_crates(state, event_bus, workspace_ref, crate_ref).await
+    {
+        match e {
+            ploke_error::Error::Fatal(_) => e.emit_fatal(),
+            ploke_error::Error::Warning(_) | ploke_error::Error::Internal(_) => e.emit_warning(),
+            _ => {
+                todo!("These should never happen.")
+            }
+        }
+    }
+}
+
 pub async fn workspace_status(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     let _ = database::workspace_status(state, event_bus)
         .await
