@@ -22,6 +22,7 @@ the criterion language, not just to the implementation details.
 | Phase 3 `C2` | `resolve_index_target_reports_missing_crate_or_workspace` in [parser.rs](/home/brasides/code/ploke/crates/ploke-tui/src/parser.rs#L287) | Proves non-Cargo targets fail as recoverable errors with explicit user guidance rather than being silently accepted as valid indexing roots |
 | Phase 3 `C2` | `index_workspace_resolves_ancestor_workspace_from_nested_path` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L40) | Drives the real `ploke-tui` indexing handler from a nested path inside `ws_fixture_01` and proves successful parse/transform commits multi-member loaded-workspace state and member-scoped path policy roots |
 | Phase 3 `C2` | `index_workspace_failure_keeps_previous_loaded_workspace_state` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L84) | Proves an invalid target records failure but preserves the previously loaded workspace root and member set instead of publishing partial state |
+| Phase 3 `C2` | `index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_differs` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L154) | Proves the real indexing handler does not silently reinterpret a repo-relative target from process cwd when loaded app state already identifies the absolute crate root, which is the regression that previously surfaced through `test_update_embed` |
 
 ## Reasoning by acceptance item
 
@@ -247,7 +248,8 @@ Current witness reasoning:
   introduces explicit index-target resolution that distinguishes crate-root,
   ancestor-workspace, and recoverable no-target cases
 - [indexing.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs#L33)
-  resolves the target before parsing and only publishes `set_loaded_workspace`
+  resolves the target before parsing, anchors relative targets to loaded
+  app-state authority when possible, and only publishes `set_loaded_workspace`
   plus derived IO roots after `run_parse_resolved(...)` succeeds
 - [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L40)
   drives the real handler and asserts both successful workspace publication and
@@ -272,7 +274,11 @@ What a passing witness proves:
   then a failed target resolution/indexing attempt does not overwrite the
   previously loaded workspace state, which is the Phase 3 `C2` witness for the
   failure-preserves-state half of `G1`
-- if all five tests pass, then the revised `C2` command semantics and the
+- if `index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_differs`
+  passes, then the real handler no longer reproduces the `test_update_embed`
+  regression where a repo-relative target string was silently re-resolved from
+  `crates/ploke-tui` cwd despite already-loaded absolute crate state
+- if all six tests pass, then the revised `C2` command semantics and the
   handler-level atomic publish contract both have direct regression witnesses
 
 Scope note:
@@ -281,6 +287,10 @@ Scope note:
   the supplied path is a crate root, otherwise nearest ancestor workspace,"
   which is intentionally narrower than the original plan text that treated bare
   `/index` as always workspace-oriented
+- helper-level regression tests in
+  [indexing.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs)
+  additionally isolate the loaded-state anchoring bug, but they are supporting
+  repro coverage rather than the primary acceptance witness
 - later phases still need stronger whole-session `G1` witnesses covering
   embedding/HNSW/BM25 coherence after mutating commands
 

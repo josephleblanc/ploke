@@ -13,8 +13,8 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 
 ## Current summary
 
-- Overall status: `Phase 3 in progress`
-- Current gate: readiness and Phases 1-2 are complete; Phase 3 `C2` has targeted witnesses but remains blocked on broader `ploke-tui` validation and a diagnosed relative-target regression in `test_update_embed`
+- Overall status: `Phase 3 complete; Phase 4 not started`
+- Current gate: readiness and Phases 1-3 are complete; next implementation target is Phase 4 `C3`
 - Cross-phase obligations to keep in view: `G1` coherent session state, `G2`
   explicit membership authority and manifest drift handling
 
@@ -40,7 +40,7 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 | --- | --- | --- |
 | Phase 1 `C0` fixture and ingestion baseline | `done` | Registered fixture witness proves restored `workspace_metadata.members` equals restored `crate_context.root_path` membership and restored identity matches `WorkspaceId::from_root_path(...)` |
 | Phase 2 `C1` explicit loaded-workspace state in `ploke-tui` | `done` | `SystemStatus` now carries explicit `LoadedWorkspaceState`, path policy roots come from loaded membership rather than focus alone, and DB-backed restore hydrates that state from `workspace_metadata` |
-| Phase 3 `C2` manifest-driven indexing | `in progress` | Targeted `C2` witnesses pass for revised target resolution and failure-state preservation, but broader `ploke-tui` validation is still red: `app_state::database::test::test_update_embed` now fails fast with `initial IndexWorkspace emitted AppEvent::Error ... Failed to normalize target path ... crates/ploke-tui/tests/fixture_crates/fixture_update_embed`; fix the relative-target regression before marking Phase 3 done |
+| Phase 3 `C2` manifest-driven indexing | `done` | Added committed-fixture and helper-level regression witnesses for relative-target anchoring, fixed `index_workspace(...)` to anchor relative targets to loaded app-state authority before generic resolution, documented the bug in `docs/active/bugs/2026-03-21-indexworkspace-relative-target-regression.md`, and revalidated `test_update_embed`, `load_db_crate_focus`, `index_start`, and `index_workspace_targets` via sub-agent |
 | Phase 4 `C3` workspace status and update | `not started` | Make stale detection and update behavior operate per loaded crate |
 | Phase 5 `C4` workspace save/load registry | `not started` | Restore by workspace identity with consistent snapshot metadata |
 | Phase 6 `C5` shared retrieval scope model | `not started` | Enforce scope before dense/BM25/hybrid truncation and fusion |
@@ -57,7 +57,7 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 | `R4` strict backup verification passes | `done` | none; command evidence only | Verified by sub-agent run: `cargo xtask verify-backup-dbs` passed for `fixture_nodes_canonical`, `fixture_nodes_local_embeddings`, `ploke_db_primary`, and `ws_fixture_01_canonical` |
 | Phase 1 `C0` workspace snapshot coherence has fixture-backed witness evidence | `done` | `workspace_backup_fixture_roundtrips_coherent_membership_and_identity` | Verified by sub-agent test run: `cargo test -p ploke-test-utils workspace_backup_fixture_roundtrips_coherent_membership_and_identity -- --nocapture` |
 | Phase 2 `C1` explicit loaded-workspace state in `ploke-tui` | `done` | `loaded_workspace_membership_controls_focus_and_path_policy`; `set_focus_from_root_preserves_existing_loaded_workspace_membership`; `workspace_restore_assigns_loaded_workspace_membership_from_db` | Verified by sub-agent test runs in `ploke-tui`; witness reasoning is recorded in `2026-03-20_workspaces_test_witnesses.md` |
-| Phase 3 `C2` manifest-driven indexing | `in progress` | `resolve_index_target_prefers_crate_root_when_pwd_is_crate_root`; `resolve_index_target_finds_workspace_when_pwd_is_not_crate_root`; `resolve_index_target_reports_missing_crate_or_workspace`; `index_workspace_resolves_ancestor_workspace_from_nested_path`; `index_workspace_failure_keeps_previous_loaded_workspace_state` | Targeted `C2` witnesses passed via sub-agent, but broader validation remains blocked by `app_state::database::test::test_update_embed`, which now fails fast after test hardening and proves the current tree emits an early `AppEvent::Error` for a wrongly normalized relative target path |
+| Phase 3 `C2` manifest-driven indexing | `done` | `resolve_index_target_prefers_crate_root_when_pwd_is_crate_root`; `resolve_index_target_finds_workspace_when_pwd_is_not_crate_root`; `resolve_index_target_reports_missing_crate_or_workspace`; `index_workspace_resolves_ancestor_workspace_from_nested_path`; `index_workspace_failure_keeps_previous_loaded_workspace_state`; `index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_differs` | Helper-level repro tests in `indexing.rs` isolate the loaded-state anchoring bug; broader sub-agent validation passed for `test_update_embed`, `load_db_crate_focus`, `index_start`, and `index_workspace_targets` |
 
 ## Handoff Notes
 
@@ -65,27 +65,21 @@ Use this section only for compact-handoff context that should survive a
 conversation compaction. Keep it short and replace it wholesale when it is
 updated.
 
-- Current implementation state: readiness and Phases 1-2 are complete; Phase 3
-  `C2` remains `in progress`.
-- Targeted `C2` witnesses still pass, but the broader blocker is now diagnosed
-  rather than merely described as a stall.
-- `app_state::database::test::test_update_embed` was hardened to subscribe
-  before `IndexWorkspace` and fail fast on `AppEvent::Error`; on the current
-  tree it now proves an early error from wrong relative-path normalization:
-  `/home/brasides/code/ploke/crates/ploke-tui/tests/fixture_crates/fixture_update_embed`
-  does not exist.
-- The regression source is the uncommitted `index_workspace(...)` refactor in
-  [indexing.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs),
-  which stopped anchoring relative targets to app-state authority and instead
-  re-resolves them from process cwd.
+- Current implementation state: readiness and Phases 1-3 are complete; Phase 4
+  `C3` is the next target.
+- `C2` now has both narrow bug witnesses and broader `ploke-tui` validation.
+- The bug report for the `test_update_embed` regression is
+  [2026-03-21-indexworkspace-relative-target-regression.md](/home/brasides/code/ploke/docs/active/bugs/2026-03-21-indexworkspace-relative-target-regression.md).
+- `test_update_embed` remains hardened to subscribe before `IndexWorkspace` and
+  fail fast on early `AppEvent::Error`, preventing the old apparent-hang
+  behavior from masking future indexing regressions.
 - ADR draft
   [ADR-023-refactor-crate-focus.md](/home/brasides/code/ploke/docs/design/adrs/proposed/ADR-023-refactor-crate-focus.md)
   was audited against current code (`a4f139ba`, 2026-03-21) and now records
   that `crate_focus` is already `Option<CrateId>` with derived root accessors,
   but remains semantically overloaded.
-- Next target after compaction: fix the `C2` relative-target regression in
-  `index_workspace(...)`, keep the new fast-fail behavior in `test_update_embed`,
-  then rerun broader `ploke-tui` validation before advancing to `C3`.
+- Next target after compaction: start Phase 4 `C3` by making workspace status
+  and update operate per loaded crate instead of focus-only assumptions.
 
 ## Update rule
 

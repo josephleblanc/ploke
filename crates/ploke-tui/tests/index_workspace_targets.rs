@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::{Mutex as StdMutex, OnceLock};
-use std::time::Duration;
 
 use tokio::sync::{Mutex, RwLock};
 
@@ -200,8 +199,16 @@ fn resolve_index_target_absolute_fixture_path_succeeds_from_ploke_tui_crate_dir(
     assert_eq!(resolved.member_roots, vec![resolved.focused_root.clone()]);
 }
 
+/// Regression witness for the `test_update_embed` failure mode.
+///
+/// Before the fix, `index_workspace(...)` re-resolved this repo-relative target
+/// from process cwd and emitted an early `AppEvent::Error` for the wrong
+/// normalized path under `crates/ploke-tui/tests/...`.
+///
+/// A pass here proves the handler now prefers already-loaded app-state
+/// authority when the relative target string names the currently loaded crate.
 #[tokio::test]
-async fn index_workspace_resolution_failure_emits_no_index_status_and_records_parse_failure() {
+async fn index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_differs() {
     let _lock = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
     let repo_root = workspace_root();
     let _guard = CwdGuard::set_to(&repo_root.join("crates/ploke-tui"));
@@ -213,7 +220,6 @@ async fn index_workspace_resolution_failure_emits_no_index_status_and_records_pa
         let mut system_guard = state.system.write().await;
         system_guard.set_focus_from_root(fixture_root.clone());
     }
-    let mut index_rx = event_bus.index_subscriber();
 
     index_workspace(
         &state,
@@ -223,21 +229,12 @@ async fn index_workspace_resolution_failure_emits_no_index_status_and_records_pa
     )
     .await;
 
+    let failure = state.system.read().await.last_parse_failure().cloned();
     assert!(
-        tokio::time::timeout(Duration::from_millis(200), index_rx.recv())
-            .await
-            .is_err(),
-        "resolution failure should not publish indexing status"
+        failure.is_none(),
+        "unexpected parse failure after relative target anchoring: {:?}",
+        failure
     );
-
-    let failure = state
-        .system
-        .read()
-        .await
-        .last_parse_failure()
-        .cloned()
-        .expect("parse failure recorded");
-    assert!(failure.message.contains("Failed to normalize target path"));
     assert_eq!(
         state.system.loaded_workspace_root_for_test().await,
         Some(fixture_root)

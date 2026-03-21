@@ -32,7 +32,8 @@ blocking steps.
 
 Target this pass at basic workspace-wide behavior in `ploke-tui`:
 
-- bare `/index` and `/index <workspace>` inside a Cargo workspace
+- bare `/index` and `/index <path>` with target resolution that prefers an
+  exact crate root and otherwise falls back to the nearest ancestor workspace
 - transform/import of all workspace members into one loaded DB
 - workspace-wide embeddings and HNSW indexing
 - optional BM25 indexing over the loaded workspace
@@ -230,7 +231,8 @@ Changes:
 
 - add structured workspace indexing commands instead of growing legacy raw
   parsing further
-- resolve workspace root and manifest before indexing
+- resolve the requested Cargo target before indexing: exact crate root first,
+  otherwise nearest ancestor workspace
 - use `parse_workspace(...)`
 - use `transform_parsed_workspace(...)`
 - record loaded workspace membership from parsed metadata, not from
@@ -242,10 +244,11 @@ Changes:
 
 Acceptance summary:
 
-- bare `/index` inside a workspace indexes every workspace member.
-- `/index <path>` indexes that workspace root.
-- non-workspace targets fail explicitly; they are not silently treated as
-  acceptable crate roots for workspace mode.
+- bare `/index` inside a crate root indexes that crate; otherwise it indexes
+  the nearest ancestor workspace.
+- `/index <path>` uses the same target rule: exact crate root first, otherwise
+  nearest ancestor workspace.
+- non-Cargo targets fail explicitly with recoverable guidance.
 - TUI state records all loaded member crates after success.
 - success is atomic across workspace state, IO roots, and index state; failure
   does not publish partial workspace state.

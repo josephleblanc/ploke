@@ -88,8 +88,10 @@ the precise senses below.
   and
   [crates/ingest/syn_parser/src/discovery/workspace.rs#L395](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/workspace.rs#L395).
 - `authoritative membership`: a phase-relative rule.
-  - during `/index`, parsed workspace output from `parse_workspace(...)` is
-    authoritative for loaded membership; see
+  - during `/index`, parsed target output is authoritative for loaded
+    membership: crate-target indexing may authoritatively load one crate, while
+    workspace-target indexing uses parsed workspace membership from
+    `parse_workspace(...)`; see
     [crates/ingest/syn_parser/src/lib.rs#L66](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs#L66)
     and
     [docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L88](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L88)
@@ -671,12 +673,12 @@ Acceptance statement:
   crates, a focused crate that is guaranteed to be one of those members, and a
   member set that is not inferred from focus alone.
 
-## Phase 3 C2: manifest-driven indexing replaces crate-root inference
+## Phase 3 C2: manifest-driven indexing resolves the explicit Cargo target
 
 Why this exists:
 
-- current indexing still resolves one target directory and uses crate-only parse
-  orchestration
+- current indexing still risks mixing command target resolution, loaded-state
+  authority, and crate-only parse orchestration
 
 New or changed data structures:
 
@@ -685,11 +687,17 @@ New or changed data structures:
 
 Required invariants:
 
-- bare `/index` inside a workspace resolves the workspace manifest, not just the
-  current working directory
-- `/index <path>` resolves a workspace root and rejects non-workspace targets
+- bare `/index` indexes the exact crate root when pwd is a crate root;
+  otherwise it resolves the nearest ancestor workspace manifest
+- `/index <path>` follows the same rule: exact crate root first, otherwise
+  nearest ancestor workspace
+- repo-relative or other relative targets must not be silently re-resolved from
+  process cwd when loaded app state already supplies the authoritative absolute
+  target
+- non-Cargo targets fail explicitly with recoverable guidance
 - successful indexing records the loaded workspace and its member crates from
-  parsed metadata
+  parsed metadata, or records the single loaded crate when the resolved target
+  is crate-scoped
 - successful indexing publishes focus, IO roots, active embedding state, and
   any ready BM25 state atomically for that loaded workspace
 - failed indexing leaves the previously coherent workspace state in place
@@ -704,11 +712,11 @@ Cross-crate contracts:
 Failure states:
 
 - only one crate is indexed from a multi-member workspace
-- non-workspace directories are silently accepted for workspace mode
+- non-Cargo directories are silently accepted as valid indexing roots
 - state still records only the focused crate after success
 - IO roots stay on the previous focus after indexing
-- `/index <path>` reuses the previous focused-crate root instead of the
-  requested workspace target
+- `/index <path>` ignores the explicit target or re-resolves it from process
+  cwd instead of app-state authority
 - focus or IO roots mutate before parse success and are not rolled back
 - BM25 readiness advances for a workspace whose corresponding embedding/DB
   commit did not finish
@@ -720,8 +728,11 @@ Required fixtures:
 
 Existing relevant code/tests:
 
-- current `index_workspace(...)` derives a `target_dir`, sets one crate focus,
-  and calls `run_parse(...)`; see
+- `resolve_index_target(...)` already distinguishes crate-root, ancestor-
+  workspace, and no-target cases; see
+  [crates/ploke-tui/src/parser.rs#L43](/home/brasides/code/ploke/crates/ploke-tui/src/parser.rs#L43)
+- current `index_workspace(...)` resolves a target, parses it, and publishes
+  loaded state only after parse success; see
   [crates/ploke-tui/src/app_state/handlers/indexing.rs#L36](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs#L36)
 - current command surface still exposes legacy `index start [directory]`; see
   [crates/ploke-tui/src/app/commands/mod.rs#L18](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/mod.rs#L18)
@@ -733,14 +744,16 @@ Existing relevant code/tests:
 
 Untestable or not yet provable:
 
-- current committed fixtures cannot yet prove multi-member indexing end to end
+- `C2` now has direct committed-fixture handler witnesses, but stronger
+  whole-session coherence evidence across embedding/HNSW/BM25 still belongs to
+  later phases and global `G1`
 
 Acceptance statement:
 
-- Phase 3 passes only when `/index` and `/index <path>` both produce
-  manifest-driven multi-member workspace indexing, commit workspace state
-  atomically on success, and fail loudly on invalid workspace targets without
-  publishing partial state.
+- Phase 3 passes only when `/index` and `/index <path>` both resolve the
+  intended Cargo target explicitly, commit loaded crate/workspace state
+  atomically on success, and fail loudly on invalid targets without publishing
+  partial state.
 
 ## Phase 4 C3: workspace status and update are per-crate, not focus-only
 

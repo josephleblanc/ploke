@@ -1,6 +1,7 @@
 use std::sync::Arc;
 #[cfg(feature = "test_harness")]
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::{Path, PathBuf};
 
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -33,6 +34,35 @@ async fn maybe_delay_indexing_for_test() {
     }
 }
 
+fn anchor_relative_target_to_loaded_state(
+    raw_target: &Path,
+    workspace_root: Option<&Path>,
+    member_roots: &[PathBuf],
+    focused_root: Option<&Path>,
+) -> Option<PathBuf> {
+    if raw_target.is_absolute() {
+        return Some(raw_target.to_path_buf());
+    }
+
+    if let Some(root) = focused_root
+        && root.ends_with(raw_target)
+    {
+        return Some(root.to_path_buf());
+    }
+
+    if let Some(root) = member_roots.iter().find(|root| root.ends_with(raw_target)) {
+        return Some(root.clone());
+    }
+
+    if let Some(root) = workspace_root
+        && root.ends_with(raw_target)
+    {
+        return Some(root.to_path_buf());
+    }
+
+    None
+}
+
 pub async fn index_workspace(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
@@ -49,10 +79,29 @@ pub async fn index_workspace(
         )
     };
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
-    let raw_target = if workspace.trim().is_empty() {
+    let (loaded_workspace_root, loaded_member_roots, focused_root) = {
+        let system_guard = state.system.read().await;
+        (
+            system_guard.loaded_workspace_root(),
+            system_guard.loaded_workspace_member_roots(),
+            system_guard.focused_crate_root(),
+        )
+    };
+    let raw_target = if workspace.trim().is_empty() || workspace.trim() == "." {
         None
     } else {
-        Some(std::path::PathBuf::from(&workspace))
+        let raw = PathBuf::from(&workspace);
+        if raw.is_absolute() {
+            Some(raw)
+        } else {
+            anchor_relative_target_to_loaded_state(
+                &raw,
+                loaded_workspace_root.as_deref(),
+                &loaded_member_roots,
+                focused_root.as_deref(),
+            )
+            .or(Some(raw))
+        }
     };
     let resolved = match resolve_index_target(raw_target) {
         Ok(resolved) => resolved,
@@ -139,7 +188,7 @@ pub async fn index_workspace(
         let res = tokio::spawn(async move {
             let indexing_result = ploke_embed::indexer::IndexerTask::index_workspace(
                 indexer_task,
-                workspace,
+                resolved.workspace_root.display().to_string(),
                 progress_tx,
                 progress_rx,
                 control_rx,
@@ -173,6 +222,51 @@ pub async fn index_workspace(
             }
         }
         tracing::info!("Indexer task returned");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::anchor_relative_target_to_loaded_state;
+    use std::path::{Path, PathBuf};
+
+    /// Regression witness for the `test_update_embed` failure mode.
+    ///
+    /// The `IndexWorkspace` command historically carried a repo-relative string
+    /// while `ploke-tui` already knew the loaded crate root as an absolute path.
+    /// Re-resolving the string from process cwd silently broke that agreement.
+    /// A pass here proves the handler can recover the authoritative absolute
+    /// path from loaded state before calling generic path resolution.
+    #[test]
+    fn anchor_relative_target_matches_loaded_focus_suffix() {
+        let focused_root =
+            PathBuf::from("/repo/tests/fixture_crates/fixture_update_embed");
+        let resolved = anchor_relative_target_to_loaded_state(
+            Path::new("tests/fixture_crates/fixture_update_embed"),
+            Some(focused_root.as_path()),
+            std::slice::from_ref(&focused_root),
+            Some(focused_root.as_path()),
+        );
+
+        assert_eq!(resolved, Some(focused_root));
+    }
+
+    /// A pass here proves the anchoring logic does not invent matches for
+    /// unrelated relative paths; those should still fall through to normal
+    /// resolution and explicit errors.
+    #[test]
+    fn anchor_relative_target_does_not_match_unrelated_suffix() {
+        let focused_root =
+            PathBuf::from("/repo/tests/fixture_crates/fixture_update_embed");
+        let member_root = PathBuf::from("/repo/tests/fixture_workspace/ws_fixture_01/member_root");
+        let resolved = anchor_relative_target_to_loaded_state(
+            Path::new("other/location"),
+            Some(Path::new("/repo/tests/fixture_workspace/ws_fixture_01")),
+            &[member_root],
+            Some(focused_root.as_path()),
+        );
+
+        assert_eq!(resolved, None);
     }
 }
 
