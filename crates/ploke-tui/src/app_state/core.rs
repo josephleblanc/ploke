@@ -1,9 +1,9 @@
 use chrono::Utc;
 use ploke_core::file_hash::LargeFilePolicy;
-use ploke_core::{ArcStr, CrateId, CrateInfo, TrackingHash, WorkspaceRoots};
+use ploke_core::{ArcStr, CrateId, CrateInfo, TrackingHash, WorkspaceInfo, WorkspaceRoots};
 use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -100,6 +100,16 @@ impl SystemState {
     pub async fn crate_focus_for_test(&self) -> Option<std::path::PathBuf> {
         let guard = self.0.read().await;
         guard.focused_crate_root()
+    }
+    #[cfg(feature = "test_harness")]
+    pub async fn loaded_workspace_root_for_test(&self) -> Option<std::path::PathBuf> {
+        let guard = self.0.read().await;
+        guard.loaded_workspace_root()
+    }
+    #[cfg(feature = "test_harness")]
+    pub async fn loaded_workspace_member_roots_for_test(&self) -> Vec<std::path::PathBuf> {
+        let guard = self.0.read().await;
+        guard.loaded_workspace_member_roots()
     }
 
     pub async fn is_stale_err(&self) -> Result<(), ploke_error::Error> {
@@ -380,9 +390,36 @@ impl AppState {
     }
 }
 
+#[derive(Debug)]
+pub struct LoadedWorkspaceState {
+    pub(crate) workspace: WorkspaceInfo,
+    pub(crate) members: WorkspaceRoots,
+}
+
+impl LoadedWorkspaceState {
+    pub fn from_member_roots(workspace_root: PathBuf, member_roots: Vec<PathBuf>) -> Self {
+        let mut members = WorkspaceRoots::default();
+        for root in member_roots {
+            members.upsert(CrateInfo::from_root_path(root));
+        }
+        Self {
+            workspace: WorkspaceInfo::from_root_path(workspace_root),
+            members,
+        }
+    }
+
+    pub fn member_roots(&self) -> Vec<PathBuf> {
+        self.members
+            .crates
+            .iter()
+            .map(|info| info.root_path.clone())
+            .collect()
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct SystemStatus {
-    pub(crate) workspace_roots: WorkspaceRoots,
+    pub(crate) loaded_workspace: Option<LoadedWorkspaceState>,
     pub(crate) crate_focus: Option<CrateId>,
     pub(crate) crate_versions: HashMap<CrateId, u64>,
     pub(crate) crate_deps: HashMap<CrateId, Vec<CrateId>>,
@@ -401,30 +438,43 @@ pub struct ParseFailure {
 
 impl SystemStatus {
     pub fn new(crate_focus: Option<PathBuf>) -> Self {
-        let mut workspace_roots = WorkspaceRoots::default();
-        let mut crate_versions = HashMap::new();
-        let crate_focus = crate_focus.map(|path| {
-            let info = CrateInfo::from_root_path(path);
-            let id = info.id;
-            workspace_roots.upsert(info);
-            crate_versions.entry(id).or_insert(0);
-            id
-        });
-        Self {
-            workspace_roots,
-            crate_focus,
-            crate_versions,
+        let mut status = Self {
+            loaded_workspace: None,
+            crate_focus: None,
+            crate_versions: HashMap::new(),
             crate_deps: HashMap::new(),
             invalidated_crates: HashSet::new(),
             no_workspace_tip_shown: false,
             last_parse_failure: None,
             last_parse_success_ms: None,
+        };
+        if let Some(path) = crate_focus {
+            let id = status.set_focus_from_root(path);
+            status.crate_versions.entry(id).or_insert(0);
         }
+        status
+    }
+
+    pub fn loaded_workspace(&self) -> Option<&LoadedWorkspaceState> {
+        self.loaded_workspace.as_ref()
+    }
+
+    pub fn loaded_workspace_root(&self) -> Option<PathBuf> {
+        self.loaded_workspace
+            .as_ref()
+            .map(|loaded| loaded.workspace.root_path.clone())
+    }
+
+    pub fn loaded_workspace_member_roots(&self) -> Vec<PathBuf> {
+        self.loaded_workspace
+            .as_ref()
+            .map(LoadedWorkspaceState::member_roots)
+            .unwrap_or_default()
     }
 
     pub fn focused_crate(&self) -> Option<&CrateInfo> {
         self.crate_focus
-            .and_then(|id| self.workspace_roots.find_by_id(id))
+            .and_then(|id| self.loaded_workspace.as_ref()?.members.find_by_id(id))
     }
 
     pub fn focused_crate_root(&self) -> Option<PathBuf> {
@@ -435,10 +485,40 @@ impl SystemStatus {
         self.focused_crate().map(|info| info.name.as_str())
     }
 
+    pub fn set_loaded_workspace(
+        &mut self,
+        workspace_root: PathBuf,
+        member_roots: Vec<PathBuf>,
+        focused_root: Option<PathBuf>,
+    ) -> Option<CrateId> {
+        let loaded_workspace = LoadedWorkspaceState::from_member_roots(workspace_root, member_roots);
+        let focus_id = focused_root
+            .as_ref()
+            .and_then(|root| loaded_workspace.members.find_by_root_path(root))
+            .map(|info| info.id);
+
+        for info in &loaded_workspace.members.crates {
+            self.crate_versions.entry(info.id).or_insert(0);
+        }
+
+        self.loaded_workspace = Some(loaded_workspace);
+        self.crate_focus = focus_id;
+        focus_id
+    }
+
     pub fn set_focus_from_root(&mut self, root: PathBuf) -> CrateId {
-        let info = CrateInfo::from_root_path(root);
+        if let Some(loaded_workspace) = self.loaded_workspace.as_ref()
+            && let Some(info) = loaded_workspace.members.find_by_root_path(&root)
+        {
+            let id = info.id;
+            self.crate_versions.entry(id).or_insert(0);
+            self.crate_focus = Some(id);
+            return id;
+        }
+
+        let info = CrateInfo::from_root_path(root.clone());
         let id = info.id;
-        self.workspace_roots.upsert(info);
+        self.loaded_workspace = Some(LoadedWorkspaceState::from_member_roots(root, vec![info.root_path.clone()]));
         self.crate_versions.entry(id).or_insert(0);
         self.crate_focus = Some(id);
         id
@@ -498,10 +578,15 @@ impl SystemStatus {
     }
 
     pub fn derive_path_policy(&self, extra_read_roots: &[PathBuf]) -> Option<PathPolicy> {
-        let focus_root = self.focused_crate_root()?;
-        let mut roots = Vec::with_capacity(1 + extra_read_roots.len());
-        roots.push(focus_root);
+        let workspace_roots = self.loaded_workspace_member_roots();
+        let mut roots = Vec::with_capacity(workspace_roots.len() + extra_read_roots.len());
+        roots.extend(workspace_roots);
         roots.extend(extra_read_roots.iter().cloned());
+        let mut seen = BTreeSet::new();
+        roots.retain(|root| seen.insert(root.clone()));
+        if roots.is_empty() {
+            return None;
+        }
         Some(PathPolicy {
             roots,
             symlink_policy: SymlinkPolicy::DenyCrossRoot,
@@ -529,5 +614,62 @@ mod tests {
         assert_eq!(version, 1);
         assert!(status.invalidated_crates.contains(&id_b));
         assert!(!status.invalidated_crates.contains(&id_a));
+    }
+
+    #[test]
+    fn loaded_workspace_membership_controls_focus_and_path_policy() {
+        let mut status = SystemStatus::default();
+        let workspace_root = std::env::temp_dir().join("ploke_test_workspace");
+        let member_a = workspace_root.join("crate_a");
+        let member_b = workspace_root.join("nested/crate_b");
+
+        let focused = status.set_loaded_workspace(
+            workspace_root.clone(),
+            vec![member_a.clone(), member_b.clone()],
+            Some(member_b.clone()),
+        );
+
+        assert!(focused.is_some(), "focus should be set to a workspace member");
+        assert_eq!(status.loaded_workspace_root(), Some(workspace_root));
+        assert_eq!(status.focused_crate_root(), Some(member_b.clone()));
+        assert_eq!(
+            status.loaded_workspace_member_roots(),
+            vec![member_a.clone(), member_b.clone()]
+        );
+
+        let policy = status
+            .derive_path_policy(&[])
+            .expect("loaded workspace should derive a path policy");
+        assert_eq!(policy.roots, vec![member_a, member_b]);
+    }
+
+    #[test]
+    fn set_focus_from_root_preserves_existing_loaded_workspace_membership() {
+        let mut status = SystemStatus::default();
+        let workspace_root = std::env::temp_dir().join("ploke_test_workspace_focus");
+        let member_a = workspace_root.join("crate_a");
+        let member_b = workspace_root.join("crate_b");
+
+        status.set_loaded_workspace(
+            workspace_root,
+            vec![member_a.clone(), member_b.clone()],
+            Some(member_a.clone()),
+        );
+        let focused_id = status.set_focus_from_root(member_b.clone());
+
+        assert_eq!(status.focused_crate_root(), Some(member_b.clone()));
+        assert!(
+            status
+                .loaded_workspace_member_roots()
+                .iter()
+                .any(|root| root == &member_a)
+        );
+        assert!(
+            status
+                .loaded_workspace_member_roots()
+                .iter()
+                .any(|root| root == &member_b)
+        );
+        assert_eq!(status.crate_focus, Some(focused_id));
     }
 }

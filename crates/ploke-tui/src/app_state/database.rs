@@ -1,8 +1,10 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     ops::ControlFlow,
+    path::PathBuf,
 };
 
+use cozo::DataValue;
 use itertools::Itertools;
 use ploke_core::{EmbeddingData, FileData, NodeId};
 use ploke_db::{
@@ -40,6 +42,50 @@ use super::*;
 
 pub const TUI_DB_TARGET: &str = "tracing_db_target";
 pub const TUI_SCAN_TARGET: &str = "scan-for-change";
+
+fn restored_workspace_members(
+    state: &Arc<AppState>,
+) -> Result<Option<(PathBuf, Vec<PathBuf>)>, ploke_error::Error> {
+    let db_res = state.db.raw_query(
+        "?[root_path, members] := *workspace_metadata { root_path, members }",
+    )?;
+    let Some(row) = db_res.rows.first() else {
+        return Ok(None);
+    };
+
+    let workspace_root = row
+        .first()
+        .and_then(DataValue::get_str)
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(
+                "workspace_metadata.root_path missing or non-string".to_string(),
+            ))
+        })?;
+
+    let members = row
+        .get(1)
+        .and_then(|value| match value {
+            DataValue::List(values) => Some(values),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(
+                "workspace_metadata.members missing or non-list".to_string(),
+            ))
+        })?
+        .iter()
+        .map(|value| {
+            value.get_str().map(PathBuf::from).ok_or_else(|| {
+                ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(
+                    "workspace_metadata.members contained non-string path".to_string(),
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(Some((workspace_root, members)))
+}
 
 /// Attempt to construct or reuse an embedder that matches the restored embedding set so the runtime
 /// stays aligned with the database after a load.
@@ -427,7 +473,16 @@ pub(super) async fn load_db(
                     .map(|v| v.get_str().expect("Crate must always be a string"))?;
                 // crate_root_path is expected to be absolute from DB context; use directly
                 let root_path = std::path::PathBuf::from(crate_root_path);
-                system_guard.set_focus_from_root(root_path.clone());
+                if let Some((workspace_root, member_roots)) = restored_workspace_members(state)? {
+                    let focused_root = if member_roots.iter().any(|member| member == &root_path) {
+                        Some(root_path.clone())
+                    } else {
+                        member_roots.first().cloned()
+                    };
+                    system_guard.set_loaded_workspace(workspace_root, member_roots, focused_root);
+                } else {
+                    system_guard.set_focus_from_root(root_path.clone());
+                }
                 // Also update IoManager roots for IO-level enforcement
                 debug!(load_db_crate_focus = ?root_path);
                 let policy = system_guard.derive_path_policy(&[]);
@@ -484,7 +539,16 @@ pub async fn test_set_crate_focus_from_db(
     let root_path = std::path::PathBuf::from(crate_root_path);
     let policy = {
         let mut system_guard = state.system.write().await;
-        system_guard.set_focus_from_root(root_path.clone());
+        if let Some((workspace_root, member_roots)) = restored_workspace_members(state)? {
+            let focused_root = if member_roots.iter().any(|member| member == &root_path) {
+                Some(root_path.clone())
+            } else {
+                member_roots.first().cloned()
+            };
+            system_guard.set_loaded_workspace(workspace_root, member_roots, focused_root);
+        } else {
+            system_guard.set_focus_from_root(root_path.clone());
+        }
         system_guard.derive_path_policy(&[])
     };
     if let Some(policy) = policy {

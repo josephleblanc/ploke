@@ -184,6 +184,49 @@ Scope note:
 - it is not a universal proof over all possible workspaces, which matches the
   acceptance criterion's stated scope
 
+### Phase 2 `C1` loaded workspace state is first-class in `ploke-tui`
+
+Criterion text:
+- requires a first-class loaded-workspace structure rather than focus-only
+  state
+- requires focused crate to be absent or a member of the loaded workspace
+- requires path policy roots to derive from loaded workspace membership, not
+  only the focused crate root
+- requires loaded workspace membership to come from parsed or restored
+  workspace state rather than ad hoc focus inference
+
+Current witness reasoning:
+- [core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L388)
+  introduces `LoadedWorkspaceState` and stores it explicitly on
+  `SystemStatus`
+- [core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L569)
+  proves that loaded membership controls both focus validity and derived path
+  policy roots
+- [load_db_crate_focus.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/load_db_crate_focus.rs#L73)
+  proves that restored `workspace_metadata` and `crate_context` hydrate loaded
+  workspace state from the DB-backed restore path rather than from focus alone
+
+What a passing witness proves:
+- if `loaded_workspace_membership_controls_focus_and_path_policy` passes, then
+  `SystemStatus` can represent a multi-member loaded workspace, focus one of
+  its members, and derive read roots from the full loaded member set rather
+  than only the focused crate root
+- if `set_focus_from_root_preserves_existing_loaded_workspace_membership`
+  passes, then changing focus within a loaded workspace does not collapse the
+  member set to a focus-only singleton and the focused crate remains a member of
+  the loaded workspace
+- if `workspace_restore_assigns_loaded_workspace_membership_from_db` passes,
+  then restored `workspace_metadata` drives loaded workspace hydration on the
+  `ploke-tui` side and produces a member-scoped path policy from the persisted
+  workspace state
+- if all three pass, then `ploke-tui` has first-class loaded workspace state
+  with explicit membership authority and member-scoped IO roots, satisfying
+  Phase 2 `C1`
+
+Scope note:
+- this is sufficient evidence for Phase 2 `C1`
+- manifest-driven indexing behavior remains Phase 3 `C2`
+
 ## Update rule
 
 When a new acceptance-relevant test is added or changed:
