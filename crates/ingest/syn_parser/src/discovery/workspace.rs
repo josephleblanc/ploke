@@ -511,4 +511,28 @@ members = [
 
         Ok(())
     }
+
+    #[test]
+    fn committed_workspace_fixture_locates_nested_members() -> Result<(), PlokeError> {
+        let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_01");
+        let nested_member_root = fixture_workspace_root.join("nested/member_nested");
+
+        let (manifest_path, metadata) = locate_workspace_manifest(&nested_member_root)?;
+        let workspace = metadata
+            .workspace
+            .expect("committed fixture should parse as a workspace");
+
+        assert_eq!(manifest_path, fixture_workspace_root.join("Cargo.toml"));
+        assert_eq!(workspace.path, fixture_workspace_root);
+        assert_eq!(
+            workspace.members,
+            vec![
+                workspace.path.join("member_root"),
+                workspace.path.join("nested/member_nested"),
+            ]
+        );
+        assert_eq!(workspace.package_version(), Some("0.2.0"));
+
+        Ok(())
+    }
 }

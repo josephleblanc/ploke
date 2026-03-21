@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-03-20
-Last updated: 2026-03-20
+Last reviewed: 2026-03-21
+Last updated: 2026-03-21
 
 This document is the current inventory for backup database fixtures under
 `tests/backup_dbs/`. It records which source targets produced each fixture,
@@ -68,6 +68,7 @@ example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
 | `fixture_nodes_local_embeddings_2026-03-20.sqlite` | `tests/fixture_crates/fixture_nodes` | local-embedding `fixture_nodes` backup | 2026-03-20 |
 | `fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92` | `tests/fixture_crates/fixture_nodes` | legacy multi-embedding schema snapshot | 2026-03-20 |
 | `ploke_db_primary_2026-03-20.sqlite` | `crates/ploke-db` | current-schema `ploke-db` graph backup | 2026-03-20 |
+| `ws_fixture_01_canonical_2026-03-21.sqlite` | `tests/fixture_workspace/ws_fixture_01` | canonical plain backup of committed multi-member workspace fixture | 2026-03-21 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
 ## `fixture_nodes_canonical_2026-03-20.sqlite`
@@ -144,6 +145,25 @@ example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
 - Tests using this fixture:
   - `ploke-tui`
     - [crates/ploke-tui/tests/get_code_edges_regression.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/get_code_edges_regression.rs): shared immutable DB via `shared_backup_fixture_db`
+
+## `ws_fixture_01_canonical_2026-03-21.sqlite`
+
+- File: `tests/backup_dbs/ws_fixture_01_canonical_2026-03-21.sqlite`
+- Parsed target(s): `tests/fixture_workspace/ws_fixture_01`
+- Expected DB config:
+  - plain backup import
+  - primary HNSW index must be created after import by the caller
+  - no embedding model contract is assumed by default
+  - generated from the committed multi-member workspace fixture via the shared
+    workspace-fixture recreation path
+- Tests using this fixture:
+  - `ploke-test-utils`
+    - [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs): registry lookup and strict-load witness for the active workspace fixture
+- Notes:
+  - this fixture is the canonical plain workspace backup required by the
+    workspace rollout readiness gate
+  - the filename is dated `2026-03-21` because `cargo xtask recreate-backup-db`
+    stamps outputs with UTC date
 
 ## `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45`
 

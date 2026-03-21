@@ -12,7 +12,8 @@ use ploke_test_utils::fixture_dbs::{active_backup_db_fixtures, all_backup_db_fix
 use ploke_test_utils::{
     FIXTURE_NODES_LOCAL_EMBEDDINGS, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
     FixtureImportMode, FixtureManualRecreation, backup_db_fixture, fresh_backup_fixture_db,
-    setup_db_full_crate, setup_db_full_multi_embedding, validate_backup_fixture_contract,
+    setup_db_full_crate, setup_db_full_multi_embedding, setup_db_full_workspace_fixture,
+    validate_backup_fixture_contract,
 };
 use ploke_transform::schema::crate_node::WorkspaceMetadataSchema;
 use reqwest::blocking::Client;
@@ -490,6 +491,11 @@ fn recreate_automated_fixture(
         }
         FixtureAutomation::FixtureCrateLocalEmbeddings { fixture_name, .. } => {
             recreate_local_embedding_fixture_db(fixture, fixture_name)?
+        }
+        FixtureAutomation::WorkspaceFixture { fixture_name, .. } => {
+            let cozo_db = setup_db_full_workspace_fixture(fixture_name)
+                .map_err(|err| format!("build workspace fixture database: {err}"))?;
+            Arc::new(Database::new(cozo_db))
         }
         FixtureAutomation::WorkspaceCrate { crate_name, .. } => {
             let cozo_db = setup_db_full_crate(crate_name)

@@ -51,6 +51,10 @@ pub enum FixtureAutomation {
         fixture_name: &'static str,
         output_stem: &'static str,
     },
+    WorkspaceFixture {
+        fixture_name: &'static str,
+        output_stem: &'static str,
+    },
     WorkspaceCrate {
         crate_name: &'static str,
         output_stem: &'static str,
@@ -116,6 +120,10 @@ impl FixtureDb {
             | FixtureCreationStrategy::Automated(
                 FixtureAutomation::FixtureCrateLocalEmbeddings { output_stem, .. },
             )
+            | FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceFixture {
+                output_stem,
+                ..
+            })
             | FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceCrate {
                 output_stem,
                 ..
@@ -226,6 +234,24 @@ pub const PLOKE_DB_PRIMARY: FixtureDb = FixtureDb {
     notes: "Current-schema `crates/ploke-db` graph backup recreated from source via setup_db_full_crate(\"ploke-db\") and used by get_code_edges regression tests.",
 };
 
+pub const WS_FIXTURE_01_CANONICAL: FixtureDb = FixtureDb {
+    id: "ws_fixture_01_canonical",
+    rel_path: "tests/backup_dbs/ws_fixture_01_canonical_2026-03-21.sqlite",
+    parsed_targets: &["tests/fixture_workspace/ws_fixture_01"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceFixture {
+        fixture_name: "ws_fixture_01",
+        output_stem: "ws_fixture_01_canonical",
+    }),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: true,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-03-21",
+    notes: "Canonical plain backup for the committed multi-member workspace fixture `tests/fixture_workspace/ws_fixture_01`. Regeneration parses the on-disk workspace fixture, transforms `workspace_metadata` plus crate graphs into a fresh DB, and writes a strict plain-backup snapshot without assuming any embedding model contract.",
+};
+
 pub const PLOKE_DB_ORPHANED: FixtureDb = FixtureDb {
     id: "ploke_db_orphaned",
     rel_path: "tests/backup_dbs/ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45",
@@ -252,6 +278,7 @@ pub const BACKUP_DB_FIXTURES: &[&FixtureDb] = &[
     &FIXTURE_NODES_LOCAL_EMBEDDINGS,
     &FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1,
     &PLOKE_DB_PRIMARY,
+    &WS_FIXTURE_01_CANONICAL,
     &PLOKE_DB_ORPHANED,
 ];
 
@@ -373,5 +400,40 @@ mod tests {
             "fixture_nodes_canonical_2026-03-20.sqlite"
         );
         assert_eq!(fixture.status, FixtureStatus::Active);
+    }
+
+    #[test]
+    fn backup_db_fixture_lookup_returns_registered_workspace_fixture() {
+        let fixture = backup_db_fixture("ws_fixture_01_canonical")
+            .expect("workspace fixture should be registered");
+
+        assert_eq!(
+            fixture.filename(),
+            "ws_fixture_01_canonical_2026-03-21.sqlite"
+        );
+        assert_eq!(
+            fixture.parsed_targets,
+            &["tests/fixture_workspace/ws_fixture_01"]
+        );
+        assert_eq!(fixture.import_mode, FixtureImportMode::PlainBackup);
+        assert_eq!(fixture.status, FixtureStatus::Active);
+    }
+
+    #[test]
+    fn workspace_backup_fixture_loads_via_registry_and_has_workspace_metadata() {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)
+            .expect("workspace fixture should load through the registry-backed helper");
+
+        let workspace_rows = db
+            .raw_query(
+                "?[id, root_path, members] := *workspace_metadata { id, root_path, members }",
+            )
+            .expect("workspace_metadata query should succeed");
+        assert_eq!(workspace_rows.rows.len(), 1);
+
+        let crate_rows = db
+            .raw_query("?[name, root_path] := *crate_context { name, root_path }")
+            .expect("crate_context query should succeed");
+        assert_eq!(crate_rows.rows.len(), 2);
     }
 }

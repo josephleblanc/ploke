@@ -124,11 +124,12 @@ fn cozo_file_value(path: &PathBuf) -> Result<DataValue, TransformError> {
 
 #[cfg(test)]
 mod tests {
-    use cozo::{Db, MemStorage};
-    use std::fs;
+    use cozo::{DataValue, Db, MemStorage, UuidWrapper};
+    use ploke_common::workspace_root;
+    use ploke_core::WorkspaceId;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
     use syn_parser::{discovery::workspace::WorkspaceMetadataSection, parse_workspace};
-    use uuid::Uuid;
 
     use crate::{
         schema::{crate_node::WorkspaceMetadataSchema, create_schema_all},
@@ -156,60 +157,48 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_parsed_workspace() -> Result<(), Box<dyn std::error::Error>> {
-        let workspace_root =
-            std::env::temp_dir().join(format!("ploke-workspace-{}", Uuid::new_v4()));
-        let test_result = (|| -> Result<(), Box<dyn std::error::Error>> {
-            fs::create_dir_all(workspace_root.join("crate_a/src"))?;
-            fs::create_dir_all(workspace_root.join("crate_b/src"))?;
-            fs::write(
-                workspace_root.join("Cargo.toml"),
-                r#"[workspace]
-members = ["crate_a", "crate_b"]
-resolver = "2"
+    fn transform_parsed_workspace_persists_workspace_metadata_fields_from_committed_fixture(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_01");
+        let parsed_workspace = parse_workspace(&fixture_workspace_root, None)?;
 
-[workspace.package]
-version = "0.1.0"
-"#,
-            )?;
-            fs::write(
-                workspace_root.join("crate_a/Cargo.toml"),
-                r#"[package]
-name = "crate_a"
-version.workspace = true
-edition = "2021"
-"#,
-            )?;
-            fs::write(
-                workspace_root.join("crate_a/src/lib.rs"),
-                "pub fn a() -> usize { 1 }\n",
-            )?;
-            fs::write(
-                workspace_root.join("crate_b/Cargo.toml"),
-                r#"[package]
-name = "crate_b"
-version.workspace = true
-edition = "2021"
-"#,
-            )?;
-            fs::write(
-                workspace_root.join("crate_b/src/lib.rs"),
-                "pub fn b() -> usize { crate_a::a() }\n",
-            )?;
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+        create_schema_all(&db)?;
 
-            let parsed_workspace = parse_workspace(&workspace_root, None)?;
+        transform_parsed_workspace(&db, parsed_workspace)?;
 
-            let db = Db::new(MemStorage::default()).expect("Failed to create database");
-            db.initialize().expect("Failed to initialize database");
-            create_schema_all(&db)?;
+        let workspace_rows = db.run_script(
+            "?[id, namespace, root_path, resolver, members, exclude, package_version] := \
+             *workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version }",
+            BTreeMap::new(),
+            cozo::ScriptMutability::Immutable,
+        )?;
 
-            transform_parsed_workspace(&db, parsed_workspace)?;
-            Ok(())
-        })();
+        assert_eq!(workspace_rows.rows.len(), 1);
+        let row = &workspace_rows.rows[0];
+        let expected_workspace_id = WorkspaceId::from_root_path(&fixture_workspace_root).uuid();
+        let expected_members = vec![
+            DataValue::from(fixture_workspace_root.join("member_root").display().to_string()),
+            DataValue::from(
+                fixture_workspace_root
+                    .join("nested/member_nested")
+                    .display()
+                    .to_string(),
+            ),
+        ];
 
-        let cleanup_result = fs::remove_dir_all(&workspace_root);
-        test_result?;
-        cleanup_result?;
+        assert_eq!(row[0], DataValue::Uuid(UuidWrapper(expected_workspace_id)));
+        assert_eq!(row[1], DataValue::Uuid(UuidWrapper(expected_workspace_id)));
+        assert_eq!(
+            row[2],
+            DataValue::from(fixture_workspace_root.display().to_string())
+        );
+        assert_eq!(row[3], DataValue::from("2"));
+        assert_eq!(row[4], DataValue::List(expected_members));
+        assert_eq!(row[5], DataValue::Null);
+        assert_eq!(row[6], DataValue::from("0.2.0"));
+
         Ok(())
     }
 }

@@ -444,6 +444,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    use ploke_common::workspace_root;
     use tempfile::tempdir;
 
     use super::*;
@@ -488,6 +489,10 @@ edition = "2021"
             ("crate_a", "pub fn crate_a_fn() {}\n"),
             ("crate_b", "pub fn crate_b_fn() {}\n"),
         ])
+    }
+
+    fn committed_workspace_fixture_root(name: &str) -> PathBuf {
+        workspace_root().join("tests/fixture_workspace").join(name)
     }
 
     #[test]
@@ -734,5 +739,38 @@ edition = "2021"
             crate_roots,
             vec![tmp.path().join("crate_a"), tmp.path().join("crate_b")]
         );
+    }
+
+    #[test]
+    fn parse_workspace_committed_fixture_uses_multi_member_workspace() {
+        let fixture_root = committed_workspace_fixture_root("ws_fixture_01");
+        let nested_member = fixture_root.join("nested/member_nested");
+        let root_member = fixture_root.join("member_root");
+
+        assert!(
+            fixture_root.is_dir(),
+            "fixture workspace must exist on disk"
+        );
+
+        let parsed_workspace = parse_workspace(&fixture_root, None).unwrap();
+
+        assert_eq!(parsed_workspace.workspace.path, fixture_root);
+        assert_eq!(
+            parsed_workspace.workspace.members,
+            vec![root_member.clone(), nested_member.clone()]
+        );
+        assert_eq!(parsed_workspace.crates.len(), 2);
+
+        let mut crate_roots = parsed_workspace
+            .crates
+            .iter()
+            .map(|parsed_crate| parsed_crate.crate_context.root_path.clone())
+            .collect::<Vec<_>>();
+        crate_roots.sort();
+
+        let mut expected_roots = vec![root_member, nested_member];
+        expected_roots.sort();
+
+        assert_eq!(crate_roots, expected_roots);
     }
 }

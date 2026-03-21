@@ -130,6 +130,22 @@ This now recreates the active `ploke_db_primary` backup directly from the real
 `setup_db_full_crate("ploke-db")` test helper, then validates it as a plain
 backup fixture.
 
+### `ws_fixture_01_canonical`
+
+```bash
+cargo xtask recreate-backup-db --fixture ws_fixture_01_canonical
+```
+
+This is automated.
+
+Current behavior:
+
+- parses the committed workspace fixture at `tests/fixture_workspace/ws_fixture_01`
+- transforms its `workspace_metadata` row plus all member crate graphs into a
+  fresh DB
+- writes a plain backup snapshot that preserves the current workspace schema
+  relations without requiring embeddings
+
 ## Review rule
 
 Before changing fixture consumers or adding a new backup, update the inventory
@@ -146,6 +162,7 @@ cargo xtask verify-backup-dbs
 cargo xtask recreate-backup-db --fixture fixture_nodes_canonical
 cargo xtask recreate-backup-db --fixture fixture_nodes_local_embeddings
 cargo xtask recreate-backup-db --fixture ploke_db_primary
+cargo xtask recreate-backup-db --fixture ws_fixture_01_canonical
 cargo xtask setup-rag-fixtures
 ```
 

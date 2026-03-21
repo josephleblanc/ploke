@@ -1,0 +1,11 @@
+[package]
+name = "ws_fixture_nested"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+ws_fixture_root = { workspace = true }
