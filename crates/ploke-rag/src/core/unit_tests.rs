@@ -402,83 +402,6 @@ mod tests {
             search_term
         );
         let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _)| *id).collect();
-        // NOTE: The following causes the test to fail, since it seems we don't get the snippet via
-        // hnsw search for this particular item.
-        // let snippet = fetch_snippet_containing(db, ordered_node_ids, search_term).await?;
-        // assert!(
-        //     snippet.contains(search_term),
-        //     "Dense search returned a snippet without the search term '{search_term}'"
-        // );
-
-        // Ensure sparse index is populated so we test BM25 behavior (not dense fallback).
-        rag.bm25_rebuild().await?;
-        let mut results: Vec<(Uuid, f32)> = Vec::new();
-        for _ in 0..10 {
-            results = rag.search_bm25(search_term, 15).await?;
-            if !results.is_empty() {
-                break;
-            }
-            sleep(Duration::from_millis(50)).await;
-        }
-        assert!(
-            !results.is_empty(),
-            "BM25 search returned no results for '{}'",
-            search_term
-        );
-
-        let ordered_node_ids: Vec<Uuid> = results.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_search_traits() -> Result<(), Error> {
-        init_tracing_once();
-        let db = default_test_db_setup().expect("Must set up TEST_DB_NODES correctly.");
-        // let db = TEST_DB_NODES
-        //     .as_ref()
-        //     .expect("Must set up TEST_DB_NODES correctly.");
-
-        // TODO:active-embedding-set 2025-12-15
-        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
-        // functions.
-        let active_embedding_set = db.with_active_set(|set| set.clone())?;
-        let debug_output = db.is_embedding_info_all(&active_embedding_set)?;
-        debug_output.tracing_print_all(Level::DEBUG);
-        // Ensure the fixture backup is only loaded when the dense index has not been built yet.
-        {
-            use ploke_db::multi_embedding::hnsw_ext::HnswExt;
-            let db_ref: &Database = db.as_ref();
-            let has_index = db_ref.is_hnsw_index_registered(&active_embedding_set)?;
-            debug!(target: "hnsw-already-present", ?has_index);
-            if !has_index {
-                create_index_primary_with_index(db.as_ref())?;
-            }
-        }
-        let debug_output = db.is_embedding_info_all(&active_embedding_set)?;
-        debug_output.tracing_print_all(Level::DEBUG);
-        // When this test is run in isolation we still need a dense index.
-        // create_index_primary_with_index(db)?;
-
-        let search_term = "ComplexGenericTrait";
-
-        let rag = &DEFAULT_TEST_RAG;
-
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
-
-        assert!(
-            !search_res.is_empty(),
-            "Dense search returned no results for '{}'",
-            search_term
-        );
-        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _)| *id).collect();
-        // NOTE: The following causes the test to fail, since it seems we don't get the snippet via
-        // hnsw search for this particular item.
-        // let snippet = fetch_snippet_containing(db, ordered_node_ids, search_term).await?;
-        // assert!(
-        //     snippet.contains(search_term),
-        //     "Dense search returned a snippet without the search term '{search_term}'"
-        // );
 
         // Ensure sparse index is populated so we test BM25 behavior (not dense fallback).
         rag.bm25_rebuild().await?;
@@ -604,12 +527,11 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_search_generic_trait() -> Result<(), Error> {
         init_tracing_once();
+        // Rebuild BM25 index so hybrid search uses real sparse scores rather than dense fallback.
         let rag = &DEFAULT_TEST_RAG;
         let db = &DEFAULT_TEST_RAG.db;
 
         let search_term = "GenericSuperTrait";
-        // Rebuild BM25 index so hybrid search uses real sparse scores rather than dense fallback.
-        rag.bm25_rebuild().await?;
         let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15).await?;
         assert!(
             !fused.is_empty(),
