@@ -74,6 +74,9 @@ updated.
   entrypoints, there are direct witnesses for BM25 pre-`top_k`, dense
   pre-`:limit`, hybrid fusion, and `get_context(...)` scope enforcement, and
   broader `cargo test -p ploke-tui --tests -- --nocapture` passed.
+- Full `cargo test -- --nocapture` is also green after updating
+  `crates/ingest/ploke-embed/src/indexer/unit_tests.rs` to populate the new
+  `scope` field on `Bm25Cmd::Search`.
 - `ploke_db_primary` was refreshed to
   `tests/backup_dbs/ploke_db_primary_2026-03-21.sqlite`, resolving the earlier
   freshness blocker in the broader slice.

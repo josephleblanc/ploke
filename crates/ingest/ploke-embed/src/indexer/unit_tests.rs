@@ -12,6 +12,7 @@ use std::{
 
 use cozo::{CallbackOp, DataValue, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
+use ploke_core::RetrievalScope;
 use ploke_db::{
     bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer},
     hnsw_all_types, CallbackManager, Database, DbError, NodeType,
@@ -454,6 +455,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
             .send(Bm25Cmd::Search {
                 query: name_str.to_string(),
                 top_k: 2,
+                scope: RetrievalScope::LoadedWorkspace,
                 resp: tx,
             })
             .await
