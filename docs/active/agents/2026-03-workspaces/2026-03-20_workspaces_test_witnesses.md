@@ -466,9 +466,9 @@ Scope note:
 - `ploke_db_primary` was refreshed to
   `tests/backup_dbs/ploke_db_primary_2026-03-21.sqlite`, resolving the earlier
   `get_code_edges_regression` freshness blocker
-- broader `ploke-tui --tests` validation is still failing in
-  `rag::tests::apply_code_edit_tests::test_auto_confirm_workflow`, so `C5`
-  should remain `in progress` until that regression is understood
+- broader `cargo test -p ploke-tui --tests -- --nocapture` passed via
+  sub-agent after the fixture refresh and witness additions, so Phase 6 `C5`
+  now has both targeted witness coverage and broader regression validation
 
 ## Update rule
 
