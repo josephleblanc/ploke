@@ -236,6 +236,12 @@ pub fn execute(app: &mut App, command: Command) {
             });
         }
         Command::Update => spawn_update(app),
+        Command::WorkspaceStatus => {
+            app.send_cmd(StateCommand::WorkspaceStatus);
+        }
+        Command::WorkspaceUpdate => {
+            app.send_cmd(StateCommand::WorkspaceUpdate);
+        }
         Command::EditApprove(id) => {
             app.send_cmd(StateCommand::ApproveEdits { request_id: id });
         }

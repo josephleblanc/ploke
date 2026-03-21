@@ -151,6 +151,8 @@ pub enum StateCommand {
     LoadDb {
         crate_name: String,
     },
+    WorkspaceStatus,
+    WorkspaceUpdate,
     ScanForChange {
         scan_tx: oneshot::Sender<Option<Vec<PathBuf>>>,
     },
@@ -269,6 +271,8 @@ impl StateCommand {
             ReadQuery { .. } => "ReadQuery",
             SaveDb => "SaveDb",
             LoadDb { .. } => "LoadDb",
+            WorkspaceStatus => "WorkspaceStatus",
+            WorkspaceUpdate => "WorkspaceUpdate",
             BatchPromptSearch { .. } => "BatchPromptSearch",
             Bm25Rebuild => "Bm25Rebuild",
             Bm25Search { .. } => "Bm25Search",

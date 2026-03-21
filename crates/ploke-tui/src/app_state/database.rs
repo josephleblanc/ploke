@@ -1,12 +1,13 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     ops::ControlFlow,
     path::PathBuf,
 };
 
 use cozo::DataValue;
 use itertools::Itertools;
-use ploke_core::{EmbeddingData, FileData, NodeId};
+use ploke_core::{CrateId, CrateInfo, EmbeddingData, FileData, NodeId};
+use ploke_error::DomainError;
 use ploke_db::{
     EmbedDataVerbose, NodeType, RestoredEmbeddingSet, SimilarArgs,
     multi_embedding::schema::EmbeddingSetExt, search_similar_args,
@@ -20,6 +21,7 @@ use ploke_transform::transform::transform_parsed_graph;
 use serde::{Deserialize, Serialize};
 use syn_parser::{
     ModuleTree, ParserOutput, TestIds,
+    discovery::workspace::try_parse_manifest,
     error::SynParserError,
     parser::{
         nodes::{AnyNodeId, AsAnyNodeId as _, ModuleNodeId, PrimaryNodeId},
@@ -31,7 +33,10 @@ use tokio::sync::oneshot;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
-    app_state::helpers::{print_module_set, printable_nodes},
+    app_state::{
+        core::WorkspaceFreshness,
+        helpers::{print_module_set, printable_nodes},
+    },
     parser::run_parse_no_transform,
     tracing_setup::SCAN_CHANGE,
     utils::helper::find_file_by_prefix,
@@ -42,6 +47,33 @@ use super::*;
 
 pub const TUI_DB_TARGET: &str = "tracing_db_target";
 pub const TUI_SCAN_TARGET: &str = "scan-for-change";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LoadedCrateScanTarget {
+    crate_id: CrateId,
+    crate_name: String,
+    root_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkspaceDriftStatus {
+    added_member_roots: Vec<PathBuf>,
+    removed_member_roots: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkspaceMemberStatus {
+    crate_id: CrateId,
+    crate_name: String,
+    root_path: PathBuf,
+    freshness: WorkspaceFreshness,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkspaceStatusReport {
+    members: Vec<WorkspaceMemberStatus>,
+    drift: Option<WorkspaceDriftStatus>,
+}
 
 fn restored_workspace_members(
     state: &Arc<AppState>,
@@ -85,6 +117,201 @@ fn restored_workspace_members(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Some((workspace_root, members)))
+}
+
+fn crate_name_for_root_path(
+    state: &Arc<AppState>,
+    root_path: &std::path::Path,
+) -> Result<String, ploke_error::Error> {
+    let root_path = root_path.display().to_string();
+    let script = format!(
+        "?[name] := *crate_context {{ name, root_path @ 'NOW' }}, root_path = \"{root_path}\""
+    );
+    let db_res = state.db.raw_query(&script)?;
+    let Some(name) = db_res
+        .rows
+        .first()
+        .and_then(|row| row.first())
+        .and_then(DataValue::get_str)
+    else {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: format!("No crate_context row found for loaded crate root '{}'", root_path),
+        }));
+    };
+    Ok(name.to_string())
+}
+
+fn workspace_drift_status(
+    workspace_root: &std::path::Path,
+    loaded_members: &[PathBuf],
+) -> Result<Option<WorkspaceDriftStatus>, ploke_error::Error> {
+    let manifest = try_parse_manifest(workspace_root).map_err(|err| {
+        ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "Failed to inspect workspace manifest at '{}': {err}",
+                workspace_root.join("Cargo.toml").display()
+            ),
+        })
+    })?;
+    let Some(workspace) = manifest.workspace else {
+        return Ok(None);
+    };
+
+    let loaded: BTreeSet<_> = loaded_members.iter().cloned().collect();
+    let current: BTreeSet<_> = workspace.members.into_iter().collect();
+
+    let added_member_roots = current.difference(&loaded).cloned().collect::<Vec<_>>();
+    let removed_member_roots = loaded.difference(&current).cloned().collect::<Vec<_>>();
+
+    if added_member_roots.is_empty() && removed_member_roots.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(WorkspaceDriftStatus {
+            added_member_roots,
+            removed_member_roots,
+        }))
+    }
+}
+
+async fn loaded_crate_targets(
+    state: &Arc<AppState>,
+) -> Result<(Option<PathBuf>, Vec<LoadedCrateScanTarget>), ploke_error::Error> {
+    let (workspace_root, member_roots) = {
+        let system_guard = state.system.read().await;
+        (
+            system_guard.loaded_workspace_root(),
+            system_guard.loaded_workspace_member_roots(),
+        )
+    };
+
+    let mut targets = Vec::with_capacity(member_roots.len());
+    for root_path in member_roots {
+        let crate_name = crate_name_for_root_path(state, &root_path)?;
+        targets.push(LoadedCrateScanTarget {
+            crate_id: CrateInfo::from_root_path(root_path.clone()).id,
+            crate_name,
+            root_path,
+        });
+    }
+
+    Ok((workspace_root, targets))
+}
+
+async fn focused_scan_target(
+    state: &Arc<AppState>,
+) -> Result<LoadedCrateScanTarget, ploke_error::Error> {
+    let root_path = {
+        let guard = state.system.read().await;
+        guard.focused_crate_root().ok_or_else(|| {
+            let e = ploke_error::Error::from(StateError::MissingCrateFocus {
+                msg: "Missing crate focus is None, cannot scan unspecified target crate",
+            });
+            e.emit_warning();
+            e
+        })?
+    };
+    let crate_name = crate_name_for_root_path(state, &root_path)?;
+    Ok(LoadedCrateScanTarget {
+        crate_id: CrateInfo::from_root_path(root_path.clone()).id,
+        crate_name,
+        root_path,
+    })
+}
+
+async fn freshness_for_target(
+    state: &Arc<AppState>,
+    target: &LoadedCrateScanTarget,
+) -> Result<WorkspaceFreshness, ploke_error::Error> {
+    let file_data = state.db.get_crate_files(&target.crate_name)?;
+    let (file_data, removed_file_data): (Vec<_>, Vec<_>) =
+        file_data.into_iter().partition(|f| f.file_path.exists());
+
+    let result = state
+        .io_handle
+        .scan_changes_batch(file_data)
+        .await
+        .inspect_err(|e| {
+            error!("Error in state.io_handle.scan_changes_batch: {e}");
+        })??;
+
+    if result.iter().any(|f| f.is_some()) || !removed_file_data.is_empty() {
+        Ok(WorkspaceFreshness::Stale)
+    } else {
+        Ok(WorkspaceFreshness::Fresh)
+    }
+}
+
+async fn collect_workspace_status_report(
+    state: &Arc<AppState>,
+) -> Result<WorkspaceStatusReport, ploke_error::Error> {
+    let (workspace_root, targets) = loaded_crate_targets(state).await?;
+    if targets.is_empty() {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "No loaded crate roots are available. Index or load a crate/workspace first."
+                .to_string(),
+        }));
+    }
+
+    let drift = match workspace_root.as_ref() {
+        Some(root) if targets.len() > 1 => {
+            let member_roots = targets
+                .iter()
+                .map(|target| target.root_path.clone())
+                .collect::<Vec<_>>();
+            workspace_drift_status(root, &member_roots)?
+        }
+        _ => None,
+    };
+
+    let mut members = Vec::with_capacity(targets.len());
+    for target in targets {
+        let freshness = freshness_for_target(state, &target).await?;
+        {
+            let mut system_guard = state.system.write().await;
+            system_guard.set_workspace_freshness(target.crate_id, freshness);
+        }
+        members.push(WorkspaceMemberStatus {
+            crate_id: target.crate_id,
+            crate_name: target.crate_name,
+            root_path: target.root_path,
+            freshness,
+        });
+    }
+
+    Ok(WorkspaceStatusReport { members, drift })
+}
+
+fn format_workspace_status_report(report: &WorkspaceStatusReport) -> String {
+    let mut lines = vec!["Workspace status:".to_string()];
+    for member in &report.members {
+        let freshness = match member.freshness {
+            WorkspaceFreshness::Fresh => "fresh",
+            WorkspaceFreshness::Stale => "stale",
+        };
+        lines.push(format!(
+            "- {} [{}] {}",
+            member.crate_name,
+            freshness,
+            member.root_path.display()
+        ));
+    }
+
+    if let Some(drift) = &report.drift {
+        if !drift.added_member_roots.is_empty() {
+            lines.push("Drift: added workspace members require re-index:".to_string());
+            for path in &drift.added_member_roots {
+                lines.push(format!("- added {}", path.display()));
+            }
+        }
+        if !drift.removed_member_roots.is_empty() {
+            lines.push("Drift: removed workspace members require re-index:".to_string());
+            for path in &drift.removed_member_roots {
+                lines.push(format!("- removed {}", path.display()));
+            }
+        }
+    }
+
+    lines.join("\n")
 }
 
 /// Attempt to construct or reuse an embedder that matches the restored embedding set so the runtime
@@ -560,34 +787,31 @@ pub async fn test_set_crate_focus_from_db(
     Ok(())
 }
 
-pub(super) async fn scan_for_change(
+#[cfg(feature = "test_harness")]
+pub async fn workspace_status_for_test(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
-    scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
 ) -> Result<(), ploke_error::Error> {
-    use ploke_error::{DomainError, Error as PlokeError};
-    // Snapshot focus metadata up front; do not hold the system lock across IO.
-    let (crate_path, crate_name) = {
-        let guard = state.system.read().await;
-        // TODO: Make a wrapper type for this and make it a method to get just the crate name.
-        let crate_path = guard.focused_crate_root().ok_or_else(|| {
-            error!("Missing crate focus, cannot scan unspecified target crate");
-            let e = PlokeError::from(StateError::MissingCrateFocus {
-                msg: "Missing crate focus is None, cannot scan unspecified target crate",
-            });
-            e.emit_warning();
-            e
-        })?;
-        let crate_name = guard.focused_crate_name().ok_or_else(|| {
-            error!("Crate name is empty, cannot scan empty crate name");
-            let e = PlokeError::from(StateError::MissingCrateFocus {
-                msg: "Missing crate focus is empty or non-utf8 string, cannot scan unspecified target crate",
-            });
-            e.emit_warning();
-            e
-        })?;
-        (crate_path, crate_name.to_string())
-    };
+    workspace_status(state, event_bus).await
+}
+
+#[cfg(feature = "test_harness")]
+pub async fn workspace_update_for_test(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+) -> Result<(), ploke_error::Error> {
+    workspace_update(state, event_bus).await
+}
+
+async fn scan_for_change_target(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    target: &LoadedCrateScanTarget,
+    scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
+    emit_reindex: bool,
+) -> Result<(), ploke_error::Error> {
+    let crate_path = target.root_path.clone();
+    let crate_name = target.crate_name.clone();
 
     info!("scan_for_change in crate_name: {}", crate_name);
     // 2. get the files in the target project from the db, with hashes
@@ -950,15 +1174,121 @@ module tree process or run_parse_no_transform"
             }
         }
 
-        trace!("Finishing scanning, sending message to reindex workspace");
-        event_bus.send(AppEvent::System(SystemEvent::ReIndex {
-            workspace: crate_name.to_string(),
-        }));
+        if emit_reindex {
+            trace!("Finishing scanning, sending message to reindex workspace");
+            event_bus.send(AppEvent::System(SystemEvent::ReIndex {
+                workspace: crate_name.to_string(),
+            }));
+        }
         let _ = scan_tx.send(Some(changed_filenames));
         // TODO: Add validation step here.
     }
     //
 
+    Ok(())
+}
+
+pub(super) async fn scan_for_change(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
+) -> Result<(), ploke_error::Error> {
+    let target = focused_scan_target(state).await?;
+    scan_for_change_target(state, event_bus, &target, scan_tx, true).await
+}
+
+pub(super) async fn workspace_status(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+) -> Result<(), ploke_error::Error> {
+    let report = collect_workspace_status_report(state).await?;
+    handlers::chat::add_msg_immediate(
+        state,
+        event_bus,
+        Uuid::new_v4(),
+        format_workspace_status_report(&report),
+        chat_history::MessageKind::SysInfo,
+    )
+    .await;
+    Ok(())
+}
+
+pub(super) async fn workspace_update(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+) -> Result<(), ploke_error::Error> {
+    let report = collect_workspace_status_report(state).await?;
+    if let Some(drift) = &report.drift {
+        let msg = format_workspace_status_report(&report);
+        event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
+            message: msg.clone(),
+            severity: crate::error::ErrorSeverity::Error,
+        }));
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "Workspace member drift detected (added: {}, removed: {}); re-index the workspace before updating.",
+                drift.added_member_roots.len(),
+                drift.removed_member_roots.len()
+            ),
+        }));
+    }
+
+    let stale_targets = report
+        .members
+        .iter()
+        .filter(|member| member.freshness == WorkspaceFreshness::Stale)
+        .map(|member| LoadedCrateScanTarget {
+            crate_id: member.crate_id,
+            crate_name: member.crate_name.clone(),
+            root_path: member.root_path.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    if stale_targets.is_empty() {
+        handlers::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            "Workspace update skipped: all loaded crates are already fresh.".to_string(),
+            chat_history::MessageKind::SysInfo,
+        )
+        .await;
+        return Ok(());
+    }
+
+    for target in &stale_targets {
+        let (scan_tx, scan_rx) = oneshot::channel();
+        scan_for_change_target(state, event_bus, target, scan_tx, false).await?;
+        let _ = scan_rx.await;
+    }
+
+    let workspace_target = {
+        let system_guard = state.system.read().await;
+        system_guard
+            .loaded_workspace_root()
+            .or_else(|| system_guard.focused_crate_root())
+            .ok_or_else(|| ploke_error::Error::Domain(DomainError::Ui {
+                message: "No loaded crate or workspace is available to update.".to_string(),
+            }))?
+    };
+
+    crate::app_state::handlers::indexing::index_workspace(
+        state,
+        event_bus,
+        workspace_target.display().to_string(),
+        false,
+    )
+    .await;
+
+    let refreshed = collect_workspace_status_report(state).await?;
+    handlers::chat::add_msg_immediate(
+        state,
+        event_bus,
+        Uuid::new_v4(),
+        format_workspace_status_report(&refreshed),
+        chat_history::MessageKind::SysInfo,
+    )
+    .await;
     Ok(())
 }
 

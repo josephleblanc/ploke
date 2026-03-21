@@ -23,6 +23,8 @@ the criterion language, not just to the implementation details.
 | Phase 3 `C2` | `index_workspace_resolves_ancestor_workspace_from_nested_path` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L40) | Drives the real `ploke-tui` indexing handler from a nested path inside `ws_fixture_01` and proves successful parse/transform commits multi-member loaded-workspace state and member-scoped path policy roots |
 | Phase 3 `C2` | `index_workspace_failure_keeps_previous_loaded_workspace_state` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L84) | Proves an invalid target records failure but preserves the previously loaded workspace root and member set instead of publishing partial state |
 | Phase 3 `C2` | `index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_differs` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L154) | Proves the real indexing handler does not silently reinterpret a repo-relative target from process cwd when loaded app state already identifies the absolute crate root, which is the regression that previously surfaced through `test_update_embed` |
+| Phase 4 `C3` | `workspace_status_and_update_operate_per_loaded_crate` in [workspace_status_update.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_status_update.rs#L103) | Drives the real workspace status/update path on the committed multi-member fixture, proves one changed member is marked stale while the untouched member stays fresh, then proves `/workspace update` returns both to fresh without dropping a seeded unchanged-member embedding |
+| Phase 4 `C3` | `workspace_status_reports_workspace_member_drift` in [workspace_status_update.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_status_update.rs#L178) | Mutates the committed workspace manifest after load and proves `/workspace status` reports removed-member drift explicitly instead of silently absorbing the changed member set |
 
 ## Reasoning by acceptance item
 
@@ -293,6 +295,51 @@ Scope note:
   repro coverage rather than the primary acceptance witness
 - later phases still need stronger whole-session `G1` witnesses covering
   embedding/HNSW/BM25 coherence after mutating commands
+
+### Phase 4 `C3` workspace status and update are per-crate, not focus-only
+
+Criterion text:
+- requires `/workspace status` to report every loaded crate, not only the
+  focused crate
+- requires stale detection to key off loaded crate roots and DB file metadata
+- requires `/workspace update` to converge stale crates back to fresh without
+  dropping unchanged embeddings
+- requires member-set drift to be surfaced explicitly rather than silently
+  ignored
+
+Current witness reasoning:
+- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1200)
+  adds per-loaded-crate freshness collection plus explicit workspace drift
+  comparison against the current manifest
+- [workspace_status_update.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_status_update.rs#L103)
+  drives the real status/update path against committed fixture `ws_fixture_01`
+  with one changed member and one unchanged member
+- [workspace_status_update.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_status_update.rs#L178)
+  mutates the loaded workspace manifest and proves drift is surfaced in
+  user-visible status output
+
+What a passing witness proves:
+- if `workspace_status_and_update_operate_per_loaded_crate` passes, then
+  `ploke-tui` computes freshness across all loaded workspace members rather
+  than only the focused crate, records the changed member as stale while the
+  untouched member remains fresh, and `/workspace update` returns the loaded
+  member set to a fresh state without clearing a seeded unchanged-member
+  embedding
+- if `workspace_status_reports_workspace_member_drift` passes, then
+  `/workspace status` re-compares the loaded member set against the current
+  manifest and explicitly reports removed-member drift instead of silently
+  accepting the mismatch
+- if both tests pass, then Phase 4 `C3` has direct witness evidence for
+  per-crate status/update behavior and explicit workspace-member drift
+  surfacing
+
+Scope note:
+- this witness set is sufficient for Phase 4 `C3`
+- the `workspace_status_and_update_operate_per_loaded_crate` harness still
+  emits handled `Cozo embeddings not implemented` logging from the mock-backed
+  indexer path, but the test and broader `ploke-tui --tests` suite complete
+  successfully
+- registry-backed save/load identity remains Phase 5 `C4`
 
 ## Update rule
 

@@ -276,6 +276,12 @@ pub async fn state_manager(
             StateCommand::LoadDb { crate_name } => {
                 handlers::db::load_db(&state, &event_bus, crate_name).await;
             }
+            StateCommand::WorkspaceStatus => {
+                handlers::db::workspace_status(&state, &event_bus).await;
+            }
+            StateCommand::WorkspaceUpdate => {
+                handlers::db::workspace_update(&state, &event_bus).await;
+            }
             StateCommand::ScanForChange { scan_tx } => {
                 handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
             }

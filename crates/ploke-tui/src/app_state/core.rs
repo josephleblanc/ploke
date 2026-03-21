@@ -111,6 +111,25 @@ impl SystemState {
         let guard = self.0.read().await;
         guard.loaded_workspace_member_roots()
     }
+    #[cfg(feature = "test_harness")]
+    pub async fn workspace_freshness_for_test(
+        &self,
+    ) -> Vec<(std::path::PathBuf, WorkspaceFreshness)> {
+        let guard = self.0.read().await;
+        let Some(loaded_workspace) = guard.loaded_workspace.as_ref() else {
+            return Vec::new();
+        };
+        loaded_workspace
+            .members
+            .crates
+            .iter()
+            .filter_map(|info| {
+                guard
+                    .workspace_freshness(*&info.id)
+                    .map(|freshness| (info.root_path.clone(), freshness))
+            })
+            .collect()
+    }
 
     pub async fn is_stale_err(&self) -> Result<(), ploke_error::Error> {
         if self.read().await.focused_crate_stale() == Some(true) {
@@ -417,6 +436,12 @@ impl LoadedWorkspaceState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WorkspaceFreshness {
+    Fresh,
+    Stale,
+}
+
 #[derive(Debug, Default)]
 pub struct SystemStatus {
     pub(crate) loaded_workspace: Option<LoadedWorkspaceState>,
@@ -424,6 +449,7 @@ pub struct SystemStatus {
     pub(crate) crate_versions: HashMap<CrateId, u64>,
     pub(crate) crate_deps: HashMap<CrateId, Vec<CrateId>>,
     pub(crate) invalidated_crates: HashSet<CrateId>,
+    pub(crate) workspace_freshness: HashMap<CrateId, WorkspaceFreshness>,
     pub(crate) no_workspace_tip_shown: bool,
     pub(crate) last_parse_failure: Option<ParseFailure>,
     pub(crate) last_parse_success_ms: Option<i64>,
@@ -444,6 +470,7 @@ impl SystemStatus {
             crate_versions: HashMap::new(),
             crate_deps: HashMap::new(),
             invalidated_crates: HashSet::new(),
+            workspace_freshness: HashMap::new(),
             no_workspace_tip_shown: false,
             last_parse_failure: None,
             last_parse_success_ms: None,
@@ -492,13 +519,18 @@ impl SystemStatus {
         focused_root: Option<PathBuf>,
     ) -> Option<CrateId> {
         let loaded_workspace = LoadedWorkspaceState::from_member_roots(workspace_root, member_roots);
+        let member_ids: HashSet<_> = loaded_workspace.members.crates.iter().map(|info| info.id).collect();
         let focus_id = focused_root
             .as_ref()
             .and_then(|root| loaded_workspace.members.find_by_root_path(root))
             .map(|info| info.id);
 
+        self.workspace_freshness
+            .retain(|crate_id, _| member_ids.contains(crate_id));
         for info in &loaded_workspace.members.crates {
             self.crate_versions.entry(info.id).or_insert(0);
+            self.workspace_freshness
+                .insert(info.id, WorkspaceFreshness::Fresh);
         }
 
         self.loaded_workspace = Some(loaded_workspace);
@@ -520,6 +552,8 @@ impl SystemStatus {
         let id = info.id;
         self.loaded_workspace = Some(LoadedWorkspaceState::from_member_roots(root, vec![info.root_path.clone()]));
         self.crate_versions.entry(id).or_insert(0);
+        self.workspace_freshness
+            .insert(id, WorkspaceFreshness::Fresh);
         self.crate_focus = Some(id);
         id
     }
@@ -544,7 +578,19 @@ impl SystemStatus {
 
     pub fn focused_crate_stale(&self) -> Option<bool> {
         let crate_id = self.crate_focus?;
-        Some(self.invalidated_crates.contains(&crate_id))
+        let freshness_stale = self
+            .workspace_freshness
+            .get(&crate_id)
+            .is_some_and(|status| *status == WorkspaceFreshness::Stale);
+        Some(self.invalidated_crates.contains(&crate_id) || freshness_stale)
+    }
+
+    pub fn set_workspace_freshness(&mut self, crate_id: CrateId, freshness: WorkspaceFreshness) {
+        self.workspace_freshness.insert(crate_id, freshness);
+    }
+
+    pub fn workspace_freshness(&self, crate_id: CrateId) -> Option<WorkspaceFreshness> {
+        self.workspace_freshness.get(&crate_id).copied()
     }
 
     pub fn record_parse_failure(&mut self, target_dir: PathBuf, message: String) {

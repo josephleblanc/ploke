@@ -119,6 +119,24 @@ pub async fn load_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>, crate_nam
     }
 }
 
+pub async fn workspace_status(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
+    let _ = database::workspace_status(state, event_bus)
+        .await
+        .inspect_err(|e| {
+            e.emit_error();
+            tracing::error!("Error in WorkspaceStatus:\n{e}");
+        });
+}
+
+pub async fn workspace_update(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
+    let _ = database::workspace_update(state, event_bus)
+        .await
+        .inspect_err(|e| {
+            e.emit_error();
+            tracing::error!("Error in WorkspaceUpdate:\n{e}");
+        });
+}
+
 pub async fn scan_for_change(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,

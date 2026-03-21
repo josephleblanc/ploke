@@ -59,6 +59,8 @@ pub enum Command {
     ToolVerbosityShow,
     VerbosityProfileSet(MessageVerbosityProfile),
     VerbosityProfileShow,
+    WorkspaceStatus,
+    WorkspaceUpdate,
     CopySelection,
     Raw(String),
     SearchContext(String),
@@ -203,6 +205,8 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             }
         }
         "update" => Command::Update,
+        "workspace status" => Command::WorkspaceStatus,
+        "workspace update" => Command::WorkspaceUpdate,
         "copy" => Command::CopySelection,
         s if s.starts_with("edit preview mode ") => {
             let m = s

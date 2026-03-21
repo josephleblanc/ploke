@@ -24,6 +24,8 @@ pub use events::MessageUpdatedEvent;
 #[cfg(feature = "test_harness")]
 pub use database::test_set_crate_focus_from_db;
 #[cfg(feature = "test_harness")]
+pub use database::{workspace_status_for_test, workspace_update_for_test};
+#[cfg(feature = "test_harness")]
 pub use handlers::indexing::set_indexing_test_delay_ms;
 
 // Keep tests colocated under app_state after refactor
