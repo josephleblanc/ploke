@@ -25,6 +25,10 @@ the criterion language, not just to the implementation details.
 | Phase 3 `C2` | `index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_differs` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L154) | Proves the real indexing handler does not silently reinterpret a repo-relative target from process cwd when loaded app state already identifies the absolute crate root, which is the regression that previously surfaced through `test_update_embed` |
 | Phase 4 `C3` | `workspace_status_and_update_operate_per_loaded_crate` in [workspace_status_update.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_status_update.rs#L103) | Drives the real workspace status/update path on the committed multi-member fixture, proves one changed member is marked stale while the untouched member stays fresh, then proves `/workspace update` returns both to fresh without dropping a seeded unchanged-member embedding |
 | Phase 4 `C3` | `workspace_status_reports_workspace_member_drift` in [workspace_status_update.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_status_update.rs#L178) | Mutates the committed workspace manifest after load and proves `/workspace status` reports removed-member drift explicitly instead of silently absorbing the changed member set |
+| Phase 5 `C4` | `load_db_restores_saved_embedding_set_and_index` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1649) | Saves a crate-backed singleton workspace snapshot through `/save db`, asserts a workspace-registry entry was written, then reloads through the registry-backed `/load` path and proves active embedding-set metadata plus HNSW restore still roundtrip |
+| Phase 5 `C4` | `load_db_requires_workspace_registry_entry_instead_of_prefix_lookup` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1752) | Proves `/load` no longer scans backup filenames by prefix: a stray prefix-matching backup file is insufficient without a registry entry |
+| Phase 5 `C4` | `load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1778) | Proves workspace restore rejects the legacy `FirstPopulated` embedding-set fallback when snapshot metadata is missing, which is a required `C4` failure mode |
+| Phase 5 `C4` | `load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1868) | Proves registry/snapshot disagreement fails explicitly instead of silently preferring stale registry metadata over restored snapshot metadata |
 
 ## Reasoning by acceptance item
 
@@ -340,6 +344,61 @@ Scope note:
   indexer path, but the test and broader `ploke-tui --tests` suite complete
   successfully
 - registry-backed save/load identity remains Phase 5 `C4`
+
+### Phase 5 `C4` workspace save/load uses registry-backed workspace identity
+
+Criterion text:
+- requires `/save db` to persist both a whole-workspace snapshot and registry
+  metadata
+- requires `/load <workspace>` to resolve by exact workspace identity instead
+  of filename-prefix lookup
+- requires restored membership to come from snapshot/DB metadata
+- requires active embedding-set metadata to roundtrip from authoritative
+  snapshot metadata rather than the legacy `FirstPopulated` fallback
+- requires registry/snapshot disagreement to fail explicitly
+
+Current witness reasoning:
+- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L398)
+  now writes a `WorkspaceRegistryEntry` on save and resolves exact
+  workspace-name or workspace-id entries on load
+- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1649)
+  proves registry creation plus active embedding-set/HNSW restore on the
+  registry-backed load path
+- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1752)
+  proves legacy prefix-based filename discovery is no longer accepted as a
+  load mechanism
+- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1778)
+  proves the workspace restore path refuses `FirstPopulated` fallback when
+  authoritative active embedding metadata is missing
+- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1868)
+  proves stale registry metadata is not silently preferred over the restored
+  snapshot metadata
+
+What a passing witness proves:
+- if `load_db_restores_saved_embedding_set_and_index` passes, then `/save db`
+  creates a registry-backed snapshot entry and `/load` can restore that saved
+  workspace by registry identity while preserving authoritative active
+  embedding-set metadata and recreating the active set's HNSW index
+- if `load_db_requires_workspace_registry_entry_instead_of_prefix_lookup`
+  passes, then `/load` no longer treats filename-prefix discovery as an
+  acceptable locator for workspace snapshots
+- if `load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads`
+  passes, then workspace restore does not silently accept the legacy
+  `FirstPopulated` embedding-set fallback as workspace-correct behavior
+- if `load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot`
+  passes, then disagreement between registry metadata and restored snapshot
+  metadata fails explicitly instead of silently preferring stale registry data
+- if all four tests pass, then Phase 5 `C4` has direct witness evidence for
+  registry-backed save/load identity, strict snapshot metadata authority, and
+  explicit mismatch handling
+
+Scope note:
+- this witness set is sufficient for the implemented Phase 5 `C4` behavior
+- the restored-membership equality requirement is additionally supported by the
+  earlier Phase 1 `C0` witness
+  `workspace_backup_fixture_roundtrips_coherent_membership_and_identity`
+- whole-session `G1` coherence across DB, HNSW, BM25, TUI state, and IO roots
+  still remains a separate cross-phase obligation
 
 ## Update rule
 

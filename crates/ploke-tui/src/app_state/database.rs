@@ -6,7 +6,7 @@ use std::{
 
 use cozo::DataValue;
 use itertools::Itertools;
-use ploke_core::{CrateId, CrateInfo, EmbeddingData, FileData, NodeId};
+use ploke_core::{CrateId, CrateInfo, EmbeddingData, FileData, NodeId, WorkspaceInfo};
 use ploke_error::DomainError;
 use ploke_db::{
     EmbedDataVerbose, NodeType, RestoredEmbeddingSet, SimilarArgs,
@@ -39,8 +39,8 @@ use crate::{
     },
     parser::run_parse_no_transform,
     tracing_setup::SCAN_CHANGE,
-    utils::helper::find_file_by_prefix,
     utils::parse_errors::format_parse_failure,
+    user_config::{WorkspaceRegistry, WorkspaceRegistryEntry},
 };
 
 use super::*;
@@ -75,10 +75,17 @@ struct WorkspaceStatusReport {
     drift: Option<WorkspaceDriftStatus>,
 }
 
-fn restored_workspace_members(
-    state: &Arc<AppState>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RestoredWorkspaceSnapshot {
+    workspace: WorkspaceInfo,
+    focused_root: PathBuf,
+    member_roots: Vec<PathBuf>,
+}
+
+fn restored_workspace_members_from_db(
+    db: &ploke_db::Database,
 ) -> Result<Option<(PathBuf, Vec<PathBuf>)>, ploke_error::Error> {
-    let db_res = state.db.raw_query(
+    let db_res = db.raw_query(
         "?[root_path, members] := *workspace_metadata { root_path, members }",
     )?;
     let Some(row) = db_res.rows.first() else {
@@ -117,6 +124,173 @@ fn restored_workspace_members(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Some((workspace_root, members)))
+}
+
+fn restored_crate_context_rows(
+    db: &ploke_db::Database,
+) -> Result<Vec<(String, PathBuf)>, ploke_error::Error> {
+    let db_res = db.raw_query("?[name, root_path] := *crate_context { name, root_path }")?;
+    db_res
+        .rows
+        .into_iter()
+        .map(|row| {
+            let name = row
+                .first()
+                .and_then(DataValue::get_str)
+                .ok_or_else(|| {
+                    ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(
+                        "crate_context.name missing or non-string".to_string(),
+                    ))
+                })?
+                .to_string();
+            let root_path = row
+                .get(1)
+                .and_then(DataValue::get_str)
+                .map(PathBuf::from)
+                .ok_or_else(|| {
+                    ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(
+                        "crate_context.root_path missing or non-string".to_string(),
+                    ))
+                })?;
+            Ok((name, root_path))
+        })
+        .collect()
+}
+
+fn restored_workspace_snapshot_from_db(
+    db: &ploke_db::Database,
+    preferred_focus: Option<&std::path::Path>,
+) -> Result<RestoredWorkspaceSnapshot, ploke_error::Error> {
+    let crate_rows = restored_crate_context_rows(db)?;
+    if crate_rows.is_empty() {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "Restored database did not contain any crate_context rows.".to_string(),
+        }));
+    }
+
+    if let Some((workspace_root, member_roots)) = restored_workspace_members_from_db(db)? {
+        let crate_row_roots = crate_rows
+            .iter()
+            .map(|(_, root_path)| root_path.clone())
+            .collect::<BTreeSet<_>>();
+        let workspace_member_roots = member_roots.iter().cloned().collect::<BTreeSet<_>>();
+        if crate_row_roots != workspace_member_roots {
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: "Restored workspace snapshot is inconsistent: workspace_metadata.members does not match restored crate_context.root_path rows.".to_string(),
+            }));
+        }
+
+        let focused_root = preferred_focus
+            .map(|path| path.to_path_buf())
+            .filter(|root| member_roots.iter().any(|member| member == root))
+            .or_else(|| member_roots.first().cloned())
+            .ok_or_else(|| ploke_error::Error::Domain(DomainError::Ui {
+                message: "Restored workspace metadata did not contain any member roots.".to_string(),
+            }))?;
+
+        return Ok(RestoredWorkspaceSnapshot {
+            workspace: WorkspaceInfo::from_root_path(workspace_root),
+            focused_root,
+            member_roots,
+        });
+    }
+
+    if crate_rows.len() > 1 {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "Restored database contains multiple crate_context rows but no workspace_metadata; refusing ambiguous workspace restore.".to_string(),
+        }));
+    }
+
+    let root_path = crate_rows[0].1.clone();
+    Ok(RestoredWorkspaceSnapshot {
+        workspace: WorkspaceInfo::from_root_path(root_path.clone()),
+        focused_root: root_path.clone(),
+        member_roots: vec![root_path],
+    })
+}
+
+fn workspace_registry_entry_matches_snapshot(
+    entry: &WorkspaceRegistryEntry,
+    snapshot: &RestoredWorkspaceSnapshot,
+) -> Result<(), ploke_error::Error> {
+    let snapshot_id = snapshot.workspace.id.uuid().to_string();
+    if entry.workspace_id != snapshot_id {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "Workspace registry mismatch: entry '{}' points at workspace id {}, but restored snapshot reports {}.",
+                entry.workspace_name, entry.workspace_id, snapshot_id
+            ),
+        }));
+    }
+    if entry.workspace_root != snapshot.workspace.root_path {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "Workspace registry mismatch: entry '{}' root '{}' does not match restored snapshot root '{}'.",
+                entry.workspace_name,
+                entry.workspace_root.display(),
+                snapshot.workspace.root_path.display()
+            ),
+        }));
+    }
+    let registry_members = entry.member_roots.iter().cloned().collect::<BTreeSet<_>>();
+    let snapshot_members = snapshot.member_roots.iter().cloned().collect::<BTreeSet<_>>();
+    if registry_members != snapshot_members {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "Workspace registry mismatch: entry '{}' member roots do not match the restored snapshot metadata.",
+                entry.workspace_name
+            ),
+        }));
+    }
+    Ok(())
+}
+
+fn load_workspace_registry() -> Result<WorkspaceRegistry, ploke_error::Error> {
+    WorkspaceRegistry::load_from_path(&WorkspaceRegistry::default_registry_path())
+        .map_err(|err| ploke_error::Error::Domain(DomainError::Ui {
+            message: format!("Failed to load workspace registry: {err}"),
+        }))
+}
+
+fn save_workspace_registry(registry: &WorkspaceRegistry) -> Result<(), ploke_error::Error> {
+    registry
+        .save_to_path(&WorkspaceRegistry::default_registry_path())
+        .map_err(|err| ploke_error::Error::Domain(DomainError::Ui {
+            message: format!("Failed to save workspace registry: {err}"),
+        }))
+}
+
+fn resolve_workspace_registry_entry<'a>(
+    registry: &'a WorkspaceRegistry,
+    workspace_ref: &str,
+) -> Result<&'a WorkspaceRegistryEntry, ploke_error::Error> {
+    if let Some(entry) = registry
+        .entries
+        .iter()
+        .find(|entry| entry.workspace_id == workspace_ref)
+    {
+        return Ok(entry);
+    }
+
+    let matches = registry
+        .entries
+        .iter()
+        .filter(|entry| entry.workspace_name == workspace_ref)
+        .collect::<Vec<_>>();
+
+    match matches.as_slice() {
+        [entry] => Ok(*entry),
+        [] => Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "No workspace registry entry named or identified by '{workspace_ref}' was found."
+            ),
+        })),
+        _ => Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "Workspace registry lookup for '{workspace_ref}' is ambiguous; use the exact workspace id instead."
+            ),
+        })),
+    }
 }
 
 fn crate_name_for_root_path(
@@ -358,6 +532,44 @@ fn build_embedder_for_restored_set(
     }
 }
 
+async fn current_workspace_registry_entry(
+    state: &Arc<AppState>,
+) -> Result<WorkspaceRegistryEntry, ploke_error::Error> {
+    let (workspace_root, member_roots, focused_root) = {
+        let system_guard = state.system.read().await;
+        let focused_root = system_guard.focused_crate_root();
+        let member_roots = system_guard.loaded_workspace_member_roots();
+        let workspace_root = system_guard
+            .loaded_workspace_root()
+            .or_else(|| focused_root.clone())
+            .ok_or_else(|| ploke_error::Error::Domain(DomainError::Ui {
+                message: "No loaded crate or workspace is available to save.".to_string(),
+            }))?;
+        let member_roots = if member_roots.is_empty() {
+            vec![workspace_root.clone()]
+        } else {
+            member_roots
+        };
+        (workspace_root, member_roots, focused_root)
+    };
+
+    let workspace = WorkspaceInfo::from_root_path(workspace_root);
+    let active_embedding_set_rel = state
+        .db
+        .with_active_set(|set| set.rel_name().as_ref().to_string())
+        .ok();
+
+    Ok(WorkspaceRegistryEntry {
+        workspace_id: workspace.id.uuid().to_string(),
+        workspace_name: workspace.name.clone(),
+        workspace_root: workspace.root_path,
+        snapshot_file: PathBuf::new(),
+        focused_root,
+        member_roots,
+        active_embedding_set_rel,
+    })
+}
+
 // NOTE: Consider refactoring to avoid using explicit control flow and use error handling to
 // achieve the same results more clearly
 pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
@@ -392,89 +604,91 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
             error: Some(msg),
         }));
     }
-    let system_guard = state.system.read().await;
-    // make sure directory exists, otherwise report error
+    let registry_entry = match current_workspace_registry_entry(state).await {
+        Ok(entry) => entry,
+        Err(e) => {
+            let msg = format!("{e}");
+            handlers::chat::add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                msg,
+                chat_history::MessageKind::SysInfo,
+            )
+            .await;
+            return;
+        }
+    };
 
-    // Using crate focus here, which we set when we perform indexing.
-    // TODO: Revisit this design. Consider how to best allow for potential switches in
-    // focus of the user's target crate within the same session.
-    // - Explicit command?
-    // - Model-allowed tool calling?
-    if let Some(crate_name) = system_guard.focused_crate_name() {
-        let crate_name_version = match state
+    let snapshot_file = default_dir.join(format!(
+        "{}_{}.sqlite",
+        registry_entry.workspace_name, registry_entry.workspace_id
+    ));
+    let registry_entry = WorkspaceRegistryEntry {
+        snapshot_file: snapshot_file.clone(),
+        ..registry_entry
+    };
+    debug!(
+        save_workspace = %registry_entry.workspace_name,
+        workspace_id = %registry_entry.workspace_id
+    );
+
+    if snapshot_file.exists() {
+        let _ = std::fs::remove_file(&snapshot_file).inspect_err(|_| {
+            error!(
+                "Error removing previous database file {}",
+                snapshot_file.display()
+            );
+        });
+    }
+
+    if let Ok(active_set) = state.db.with_active_set(|set| set.clone())
+        && let Err(e) = state
             .db
-            .get_crate_name_id(crate_name)
-            .map_err(ploke_error::Error::from)
-        {
-            Ok(db_result) => db_result,
-            Err(e) => {
+            .put_active_embedding_set_meta(&registry_entry.workspace_id, &active_set)
+    {
+        error!("Failed to persist active embedding set for backup: {e}");
+    }
+
+    let mut registry = match load_workspace_registry() {
+        Ok(registry) => registry,
+        Err(e) => {
+            e.emit_warning();
+            event_bus.send(AppEvent::System(SystemEvent::BackupDb {
+                file_dir: format!("{}", snapshot_file.display()),
+                is_success: false,
+                error: Some(e.to_string()),
+            }));
+            return;
+        }
+    };
+
+    match state.db.backup_db(snapshot_file.clone()) {
+        Ok(()) => {
+            registry.upsert(registry_entry);
+            if let Err(e) = save_workspace_registry(&registry) {
                 e.emit_warning();
-                let err_msg = format!("Error loading crate: {}", e);
-                handlers::chat::add_msg_immediate(
-                    state,
-                    event_bus,
-                    Uuid::new_v4(),
-                    err_msg,
-                    chat_history::MessageKind::SysInfo,
-                )
-                .await;
-                return;
-            }
-        };
-        debug!(save_crate_focus = ?crate_name);
-
-        let file_dir = default_dir.join(crate_name_version);
-        info!("Checking for previous database file {}", file_dir.display());
-        if let Ok(mut read_dir) = std::fs::read_dir(&default_dir) {
-            info!("reading dir result\n{:?}", read_dir);
-            while let Some(Ok(file)) = read_dir.next() {
-                if file.path() == file_dir {
-                    let _ = std::fs::remove_file(&file_dir).inspect_err(|e| {
-                        error!(
-                            "Error removing previous database file {}",
-                            file_dir.display()
-                        );
-                    });
-                }
-            }
-        }
-
-        // Persist the active embedding set selection so it survives backup/restore.
-        if let Ok(active_set) = state.db.with_active_set(|set| set.clone())
-            && let Err(e) = state
-                .db
-                .put_active_embedding_set_meta(crate_name, &active_set)
-        {
-            error!("Failed to persist active embedding set for backup: {e}");
-        }
-        match state.db.backup_db(file_dir.clone()) {
-            Ok(()) => {
                 event_bus.send(AppEvent::System(SystemEvent::BackupDb {
-                    file_dir: format!("{}", file_dir.display()),
-                    is_success: true,
-                    error: None,
-                }));
-            }
-            Err(e) => {
-                event_bus.send(AppEvent::System(SystemEvent::BackupDb {
-                    file_dir: format!("{}", file_dir.display()),
+                    file_dir: format!("{}", snapshot_file.display()),
                     is_success: false,
                     error: Some(e.to_string()),
                 }));
+                return;
             }
-        };
-    } else {
-        // Explicitly surface a message if no active crate is selected
-        let msg = "No active crate selected. Use `/index start <path>` or `/load crate <name>` before saving the database.".to_string();
-        handlers::chat::add_msg_immediate(
-            state,
-            event_bus,
-            Uuid::new_v4(),
-            msg,
-            chat_history::MessageKind::SysInfo,
-        )
-        .await;
-    }
+            event_bus.send(AppEvent::System(SystemEvent::BackupDb {
+                file_dir: format!("{}", snapshot_file.display()),
+                is_success: true,
+                error: None,
+            }));
+        }
+        Err(e) => {
+            event_bus.send(AppEvent::System(SystemEvent::BackupDb {
+                file_dir: format!("{}", snapshot_file.display()),
+                is_success: false,
+                error: Some(e.to_string()),
+            }));
+        }
+    };
 }
 
 /// Loads a previously saved database backup into the application.
@@ -507,76 +721,117 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
 pub(super) async fn load_db(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
-    crate_name: String,
+    workspace_ref: String,
 ) -> Result<(), ploke_error::Error> {
-    let mut default_dir = dirs::config_local_dir().ok_or_else(|| {
-        let err_msg = "Could not locate default config directory on system";
-        let e =
-            ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir { msg: err_msg });
-        e.emit_warning();
+    let registry = load_workspace_registry().inspect_err(|e| {
         event_bus.send(AppEvent::System(SystemEvent::LoadDb {
-            crate_name: crate_name.clone(),
+            workspace_ref: workspace_ref.clone(),
             file_dir: None,
             root_path: None,
             is_success: false,
-            error: Some(err_msg),
+            error: Some(e.to_string()),
         }));
-        e
     })?;
-    default_dir.push("ploke/data");
-    let valid_file = match find_file_by_prefix(default_dir.as_path(), &crate_name).await {
-        Ok(Some(path_buf)) => Ok(path_buf),
-        Ok(None) => {
-            let err_msg = "No backup file detected at default configuration location";
-            let error = ploke_error::WarningError::PlokeDb(err_msg.to_string());
-            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
-                crate_name: crate_name.clone(),
-                file_dir: Some(Arc::new(default_dir)),
-                root_path: None,
-                is_success: false,
-                error: Some(err_msg),
-            }));
-            Err(error)
-        }
-        Err(e) => {
-            // TODO: Improve this error message
-            error!("Failed to load file: {}", e);
-            let err_msg = "Could not find saved file, io error";
-            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
-                crate_name: crate_name.clone(),
-                file_dir: Some(Arc::new(default_dir)),
-                root_path: None,
-                is_success: false,
-                error: Some(err_msg),
-            }));
-            Err(ploke_error::FatalError::DefaultConfigDir { msg: err_msg })?
-        }
-    }?;
+    let entry = resolve_workspace_registry_entry(&registry, &workspace_ref).inspect_err(|e| {
+        event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+            workspace_ref: workspace_ref.clone(),
+            file_dir: None,
+            root_path: None,
+            is_success: false,
+            error: Some(e.to_string()),
+        }));
+    })?;
+    let valid_file = entry.snapshot_file.clone();
+    if !valid_file.exists() {
+        let msg = format!(
+            "Workspace registry entry '{}' points at missing snapshot '{}'.",
+            entry.workspace_name,
+            valid_file.display()
+        );
+        event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+            workspace_ref: workspace_ref.clone(),
+            file_dir: Some(Arc::new(valid_file.clone())),
+            root_path: None,
+            is_success: false,
+            error: Some(msg.clone()),
+        }));
+        return Err(ploke_error::Error::Domain(DomainError::Ui { message: msg }));
+    }
 
+    let staging_db = ploke_db::Database::init_with_schema().map_err(ploke_error::Error::from)?;
+    staging_db
+        .import_backup_with_embeddings(&valid_file)
+        .map_err(ploke_error::Error::from)?;
+    let restored_snapshot =
+        restored_workspace_snapshot_from_db(&staging_db, entry.focused_root.as_deref())?;
+    workspace_registry_entry_matches_snapshot(entry, &restored_snapshot)?;
+
+    let staged_selection = staging_db
+        .restore_embedding_set(&entry.workspace_id)
+        .map_err(ploke_error::Error::from)?;
+    let restored_set = match staged_selection {
+        Some((set, RestoredEmbeddingSet::FromMetadata)) => {
+            if let Some(expected_rel) = &entry.active_embedding_set_rel
+                && set.rel_name().as_ref() != expected_rel
+            {
+                return Err(ploke_error::Error::Domain(DomainError::Ui {
+                    message: format!(
+                        "Workspace registry mismatch: entry '{}' expected active embedding set '{}', but restored snapshot metadata selected '{}'.",
+                        entry.workspace_name,
+                        expected_rel,
+                        set.rel_name()
+                    ),
+                }));
+            }
+            Some(set)
+        }
+        Some((set, RestoredEmbeddingSet::FirstPopulated)) => {
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "Workspace snapshot '{}' is missing authoritative active embedding metadata; refusing legacy first-populated fallback to '{}'.",
+                    entry.workspace_name,
+                    set.rel_name()
+                ),
+            }));
+        }
+        None => {
+            if entry.active_embedding_set_rel.is_some() {
+                return Err(ploke_error::Error::Domain(DomainError::Ui {
+                    message: format!(
+                        "Workspace registry entry '{}' expects active embedding metadata, but none was restored from the snapshot.",
+                        entry.workspace_name
+                    ),
+                }));
+            }
+            None
+        }
+    };
+
+    state.db.clear_hnsw_idx().await.map_err(ploke_error::Error::from)?;
+    state.db.clear_relations().await.map_err(ploke_error::Error::from)?;
     state
         .db
         .import_backup_with_embeddings(&valid_file)
         .map_err(ploke_error::Error::from)?;
 
-    // Attempt to restore the active embedding set from metadata in the backup, falling back to the
-    // first populated set.
-    let selection = state
-        .db
-        .restore_embedding_set(&crate_name)
-        .map_err(ploke_error::Error::from)?;
-    if let Some((set, reason)) = selection {
-        let reason_text = match reason {
-            RestoredEmbeddingSet::FromMetadata => {
-                format!(
-                    "Restored embedding set '{}' from backup metadata.",
-                    set.rel_name()
-                )
-            }
-            RestoredEmbeddingSet::FirstPopulated => format!(
-                "No metadata found; using first populated embedding set '{}' from backup.",
-                set.rel_name()
-            ),
+    if let Some(set) = restored_set {
+        let selection = state
+            .db
+            .restore_embedding_set(&entry.workspace_id)
+            .map_err(ploke_error::Error::from)?;
+        let Some((set, RestoredEmbeddingSet::FromMetadata)) = selection else {
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "Workspace snapshot '{}' failed to restore the active embedding set from authoritative metadata on the live database.",
+                    entry.workspace_name
+                ),
+            }));
         };
+
+        let reason_text = format!(
+            "Restored embedding set '{}' from workspace snapshot metadata.",
+            set.rel_name()
+        );
         handlers::chat::add_msg_immediate(
             state,
             event_bus,
@@ -587,8 +842,6 @@ pub(super) async fn load_db(
         .await;
         info!("{reason_text}");
 
-        // Build or reuse an embedder that matches the restored set and activate it so the runtime
-        // and DB stay in sync.
         match build_embedder_for_restored_set(state, &set) {
             Ok(Some(new_embedder)) => {
                 if let Err(e) =
@@ -612,7 +865,7 @@ pub(super) async fn load_db(
                     .await;
                 } else {
                     let msg = format!(
-                        "Switched embedding model to '{}' from backup (dims {}). Code search should work. Use `/embedding search <model>` to reindex with a different model.",
+                        "Switched embedding model to '{}' from workspace snapshot (dims {}). Code search should work. Use `/embedding search <model>` to reindex with a different model.",
                         set.rel_name(),
                         set.dims()
                     );
@@ -664,7 +917,7 @@ pub(super) async fn load_db(
 
         ploke_db::create_index_for_set(&state.db, &set)?;
     } else {
-        let msg = "No populated embedding set found after restore; embedding searches will be unavailable";
+        let msg = "Workspace snapshot restored without an active embedding set; embedding searches will be unavailable until a set is selected or rebuilt.";
         warn!("{msg}");
         handlers::chat::add_msg_immediate(
             state,
@@ -674,42 +927,28 @@ pub(super) async fn load_db(
             chat_history::MessageKind::SysInfo,
         )
         .await;
-        return Err(ploke_error::WarningError::PlokeDb(msg.to_string()).into());
     }
+
+    handlers::chat::add_msg_immediate(
+        state,
+        event_bus,
+        Uuid::new_v4(),
+        "BM25 search availability was not restored from the workspace snapshot; rebuild BM25 before relying on sparse or hybrid search.".to_string(),
+        chat_history::MessageKind::SysInfo,
+    )
+    .await;
 
     // get count for sanity and user feedback
     match state.db.count_relations().await {
         Ok(count) if count > 0 => {
             {
                 let mut system_guard = state.system.write().await;
-                let script = format!(
-                    "?[root_path] := *crate_context {{name: crate_name, root_path @ 'NOW' }}, crate_name = \"{crate_name}\""
+                let root_path = restored_snapshot.focused_root.clone();
+                system_guard.set_loaded_workspace(
+                    restored_snapshot.workspace.root_path.clone(),
+                    restored_snapshot.member_roots.clone(),
+                    Some(root_path.clone()),
                 );
-                let db_res = state.db.raw_query(&script)?;
-                let crate_root_path = db_res
-                    .rows
-                    .first()
-                    .and_then(|c| c.first())
-                    .ok_or_else(|| {
-                        let msg = "Incorrect retrieval of crate context, no first row/column";
-                        error!(msg);
-                        ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(
-                            msg.to_string(),
-                        ))
-                    })
-                    .map(|v| v.get_str().expect("Crate must always be a string"))?;
-                // crate_root_path is expected to be absolute from DB context; use directly
-                let root_path = std::path::PathBuf::from(crate_root_path);
-                if let Some((workspace_root, member_roots)) = restored_workspace_members(state)? {
-                    let focused_root = if member_roots.iter().any(|member| member == &root_path) {
-                        Some(root_path.clone())
-                    } else {
-                        member_roots.first().cloned()
-                    };
-                    system_guard.set_loaded_workspace(workspace_root, member_roots, focused_root);
-                } else {
-                    system_guard.set_focus_from_root(root_path.clone());
-                }
                 // Also update IoManager roots for IO-level enforcement
                 debug!(load_db_crate_focus = ?root_path);
                 let policy = system_guard.derive_path_policy(&[]);
@@ -721,7 +960,7 @@ pub(super) async fn load_db(
                         .await;
                 }
                 event_bus.send(AppEvent::System(SystemEvent::LoadDb {
-                    crate_name,
+                    workspace_ref,
                     file_dir: Some(Arc::new(valid_file)),
                     root_path: Some(Arc::new(root_path)),
                     is_success: true,
@@ -732,11 +971,11 @@ pub(super) async fn load_db(
         }
         Ok(_count) => {
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
-                crate_name,
+                workspace_ref,
                 file_dir: Some(Arc::new(valid_file)),
                 root_path: None,
                 is_success: false,
-                error: Some("Database backed up from file, but 0 relations found."),
+                error: Some("Database backed up from file, but 0 relations found.".to_string()),
             }));
             Ok(())
         }
@@ -766,7 +1005,8 @@ pub async fn test_set_crate_focus_from_db(
     let root_path = std::path::PathBuf::from(crate_root_path);
     let policy = {
         let mut system_guard = state.system.write().await;
-        if let Some((workspace_root, member_roots)) = restored_workspace_members(state)? {
+        if let Some((workspace_root, member_roots)) = restored_workspace_members_from_db(&state.db)?
+        {
             let focused_root = if member_roots.iter().any(|member| member == &root_path) {
                 Some(root_path.clone())
             } else {
@@ -1347,7 +1587,10 @@ pub(super) async fn write_query(state: &Arc<AppState>, query_content: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
+    use std::{
+        collections::BTreeMap,
+        sync::{Mutex as StdMutex, OnceLock},
+    };
 
     use cozo::{DataValue, ScriptMutability, UuidWrapper};
     use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingShape};
@@ -1357,6 +1600,31 @@ mod tests {
     use tempfile::TempDir;
 
     const HNSW_SUFFIX: &str = ":hnsw_idx";
+
+    fn config_home_lock() -> &'static StdMutex<()> {
+        static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| StdMutex::new(()))
+    }
+
+    struct XdgConfigHomeGuard {
+        old_xdg: Option<String>,
+    }
+
+    impl XdgConfigHomeGuard {
+        fn set_to(path: &std::path::Path) -> Self {
+            let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", path);
+            }
+            Self { old_xdg }
+        }
+    }
+
+    impl Drop for XdgConfigHomeGuard {
+        fn drop(&mut self) {
+            restore_xdg_config_home(self.old_xdg.take());
+        }
+    }
 
     fn build_state(
         db: Arc<ploke_db::Database>,
@@ -1389,13 +1657,23 @@ mod tests {
         )
     }
 
+    fn restore_xdg_config_home(old_xdg: Option<String>) {
+        if let Some(old) = old_xdg {
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", old);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn load_db_restores_saved_embedding_set_and_index() {
+        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
         let tmp_config = TempDir::new().expect("temp config dir");
-        let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", tmp_config.path());
-        }
+        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
         let crate_name = "fixture_crate";
         let crate_root = tmp_config.path().join(crate_name);
@@ -1450,11 +1728,20 @@ mod tests {
             "pre-backup embedding count"
         );
         ploke_db::create_index_for_set(&db, &target_set).expect("create index for set");
-        db.put_active_embedding_set_meta(crate_name, &target_set)
-            .expect("persist active set metadata");
 
         let bus = Arc::new(EventBus::new(EventBusCaps::default()));
         save_db(&state, &bus).await;
+        let registry = WorkspaceRegistry::load_from_path(&WorkspaceRegistry::default_registry_path())
+            .expect("load workspace registry");
+        let entry = registry
+            .entries
+            .iter()
+            .find(|entry| entry.workspace_name == crate_name)
+            .expect("registry entry for saved crate-backed workspace");
+        assert_eq!(
+            entry.active_embedding_set_rel.as_deref(),
+            Some(target_set.rel_name().as_ref())
+        );
 
         // Session 2: start with default set/runtime and load from backup.
         let fresh_db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
@@ -1516,16 +1803,200 @@ mod tests {
             Some(crate_root.as_path()),
             "crate focus should be restored from backup"
         );
+    }
 
-        if let Some(old) = old_xdg {
-            unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", old);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("XDG_CONFIG_HOME");
-            }
-        }
+    #[tokio::test]
+    async fn load_db_requires_workspace_registry_entry_instead_of_prefix_lookup() {
+        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let tmp_config = TempDir::new().expect("temp config dir");
+        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+
+        let data_dir = tmp_config.path().join("ploke/data");
+        std::fs::create_dir_all(&data_dir).expect("create data dir");
+        let stale_backup = data_dir.join("fixture_crate_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        std::fs::write(&stale_backup, "not-a-real-backup").expect("write stale backup");
+
+        let fresh_db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
+        fresh_db.setup_multi_embedding().expect("multi embed setup");
+        let fresh_embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+            Arc::clone(&fresh_db.active_embedding_set),
+            EmbeddingProcessor::new_mock(),
+        ));
+        let fresh_state = build_state(Arc::clone(&fresh_db), Arc::clone(&fresh_embedder));
+        let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+        let err = load_db(&fresh_state, &bus, "fixture_crate".to_string())
+            .await
+            .expect_err("missing registry entry should fail");
+        assert!(
+            err.to_string().contains("No workspace registry entry"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads() {
+        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let tmp_config = TempDir::new().expect("temp config dir");
+        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+
+        let workspace_name = "fixture_crate";
+        let workspace_root = tmp_config.path().join(workspace_name);
+        std::fs::create_dir_all(&workspace_root).expect("workspace root dir");
+        let workspace = WorkspaceInfo::from_root_path(workspace_root.clone());
+        let snapshot_file = tmp_config
+            .path()
+            .join("ploke/data")
+            .join(format!("{}_{}.sqlite", workspace.name, workspace.id.uuid()));
+        std::fs::create_dir_all(snapshot_file.parent().expect("snapshot parent"))
+            .expect("create snapshot dir");
+
+        let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
+        db.setup_multi_embedding().expect("multi embed setup");
+        let embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new_mock(),
+        ));
+        let state = build_state(Arc::clone(&db), Arc::clone(&embedder));
+        state
+            .system
+            .set_crate_focus_for_test(workspace_root.clone())
+            .await;
+
+        let ns = uuid::Uuid::new_v4();
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), DataValue::Uuid(UuidWrapper(ns)));
+        params.insert("name".to_string(), DataValue::from(workspace_name));
+        params.insert("version".to_string(), DataValue::from("0.1.0"));
+        params.insert("namespace".to_string(), DataValue::Uuid(UuidWrapper(ns)));
+        params.insert(
+            "root_path".to_string(),
+            DataValue::from(workspace_root.display().to_string()),
+        );
+        params.insert("files".to_string(), DataValue::List(vec![]));
+        let script = CrateContextSchema::SCHEMA.script_put(&params);
+        db.run_script(&script, params, ScriptMutability::Mutable)
+            .expect("crate_context put");
+
+        let target_set = custom_set();
+        embedder
+            .activate(
+                &db,
+                target_set.clone(),
+                Arc::new(EmbeddingProcessor::new_mock()),
+            )
+            .expect("activate custom set");
+        db.update_embeddings_batch(vec![(uuid::Uuid::new_v4(), vec![0.1, 0.2, 0.3])])
+            .expect("update embeddings");
+        db.backup_db(snapshot_file.clone()).expect("backup db");
+
+        let mut registry = WorkspaceRegistry::default();
+        registry.upsert(WorkspaceRegistryEntry {
+            workspace_id: workspace.id.uuid().to_string(),
+            workspace_name: workspace.name.clone(),
+            workspace_root: workspace.root_path.clone(),
+            snapshot_file: snapshot_file.clone(),
+            focused_root: Some(workspace_root.clone()),
+            member_roots: vec![workspace_root.clone()],
+            active_embedding_set_rel: Some(target_set.rel_name().as_ref().to_string()),
+        });
+        registry
+            .save_to_path(&WorkspaceRegistry::default_registry_path())
+            .expect("save workspace registry");
+
+        let fresh_db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
+        fresh_db.setup_multi_embedding().expect("multi embed setup");
+        let fresh_embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+            Arc::clone(&fresh_db.active_embedding_set),
+            EmbeddingProcessor::new_mock(),
+        ));
+        let fresh_state = build_state(Arc::clone(&fresh_db), Arc::clone(&fresh_embedder));
+        let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+        let err = load_db(&fresh_state, &bus, workspace_name.to_string())
+            .await
+            .expect_err("first-populated fallback should be rejected");
+        assert!(
+            err.to_string().contains("refusing legacy first-populated fallback"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot() {
+        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let tmp_config = TempDir::new().expect("temp config dir");
+        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+
+        let workspace_name = "fixture_crate";
+        let workspace_root = tmp_config.path().join(workspace_name);
+        std::fs::create_dir_all(&workspace_root).expect("workspace root dir");
+        let workspace = WorkspaceInfo::from_root_path(workspace_root.clone());
+        let snapshot_file = tmp_config
+            .path()
+            .join("ploke/data")
+            .join(format!("{}_{}.sqlite", workspace.name, workspace.id.uuid()));
+        std::fs::create_dir_all(snapshot_file.parent().expect("snapshot parent"))
+            .expect("create snapshot dir");
+
+        let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
+        db.setup_multi_embedding().expect("multi embed setup");
+        let embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new_mock(),
+        ));
+        let state = build_state(Arc::clone(&db), Arc::clone(&embedder));
+        state
+            .system
+            .set_crate_focus_for_test(workspace_root.clone())
+            .await;
+
+        let ns = uuid::Uuid::new_v4();
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), DataValue::Uuid(UuidWrapper(ns)));
+        params.insert("name".to_string(), DataValue::from(workspace_name));
+        params.insert("version".to_string(), DataValue::from("0.1.0"));
+        params.insert("namespace".to_string(), DataValue::Uuid(UuidWrapper(ns)));
+        params.insert(
+            "root_path".to_string(),
+            DataValue::from(workspace_root.display().to_string()),
+        );
+        params.insert("files".to_string(), DataValue::List(vec![]));
+        let script = CrateContextSchema::SCHEMA.script_put(&params);
+        db.run_script(&script, params, ScriptMutability::Mutable)
+            .expect("crate_context put");
+        db.backup_db(snapshot_file.clone()).expect("backup db");
+
+        let mut registry = WorkspaceRegistry::default();
+        registry.upsert(WorkspaceRegistryEntry {
+            workspace_id: workspace.id.uuid().to_string(),
+            workspace_name: workspace.name.clone(),
+            workspace_root: tmp_config.path().join("different_root"),
+            snapshot_file: snapshot_file.clone(),
+            focused_root: Some(workspace_root.clone()),
+            member_roots: vec![workspace_root.clone()],
+            active_embedding_set_rel: None,
+        });
+        registry
+            .save_to_path(&WorkspaceRegistry::default_registry_path())
+            .expect("save workspace registry");
+
+        let fresh_db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
+        fresh_db.setup_multi_embedding().expect("multi embed setup");
+        let fresh_embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+            Arc::clone(&fresh_db.active_embedding_set),
+            EmbeddingProcessor::new_mock(),
+        ));
+        let fresh_state = build_state(Arc::clone(&fresh_db), Arc::clone(&fresh_embedder));
+        let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+        let err = load_db(&fresh_state, &bus, workspace_name.to_string())
+            .await
+            .expect_err("registry/snapshot mismatch should fail");
+        assert!(
+            err.to_string().contains("Workspace registry mismatch"),
+            "unexpected error: {err}"
+        );
     }
 }
 

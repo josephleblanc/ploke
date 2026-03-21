@@ -149,7 +149,7 @@ pub enum StateCommand {
     },
     SaveDb,
     LoadDb {
-        crate_name: String,
+        workspace_ref: String,
     },
     WorkspaceStatus,
     WorkspaceUpdate,

@@ -200,7 +200,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     }
                 }
                 SystemEvent::LoadDb {
-                    crate_name,
+                    workspace_ref,
                     file_dir,
                     root_path,
                     is_success,
@@ -211,7 +211,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         display_file_info(file_dir.as_ref()),
                     );
                     app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Success: Cozo data for code graph loaded successfully for {crate_name} from {}\nRoot project path set to: {}", 
+                        msg: format!("Success: Cozo data for code graph loaded successfully for workspace '{workspace_ref}' from {}\nRoot project path set to: {}", 
                             display_file_info(file_dir.as_ref()),
                             display_file_info(root_path.as_ref())
                         ),
@@ -220,7 +220,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     });
                 }
                 SystemEvent::LoadDb {
-                    crate_name,
+                    workspace_ref,
                     file_dir,
                     root_path,
                     is_success,
@@ -233,7 +233,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     );
                     if let Some(error_str) = error {
                         app.send_cmd(StateCommand::AddMessageImmediate {
-                            msg: format!("Error: Cozo data for code graph of {crate_name} not loaded from {}\n\tFailed with error: {}", 
+                            msg: format!("Error: Cozo data for code graph of workspace '{workspace_ref}' not loaded from {}\n\tFailed with error: {}", 
                                 display_file_info(file_dir.as_ref()),
                                 &error_str),
                             kind: MessageKind::SysInfo,

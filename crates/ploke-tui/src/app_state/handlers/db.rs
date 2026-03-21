@@ -107,8 +107,8 @@ pub async fn batch_prompt_search(
     }
 }
 
-pub async fn load_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>, crate_name: String) {
-    if let Err(e) = database::load_db(state, event_bus, crate_name).await {
+pub async fn load_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>, workspace_ref: String) {
+    if let Err(e) = database::load_db(state, event_bus, workspace_ref).await {
         match e {
             ploke_error::Error::Fatal(_) => e.emit_fatal(),
             ploke_error::Error::Warning(_) | ploke_error::Error::Internal(_) => e.emit_warning(),

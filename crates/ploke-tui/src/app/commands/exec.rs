@@ -917,20 +917,41 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             });
             app.send_cmd(StateCommand::SaveState);
         }
+        cmd if cmd.starts_with("load workspace ") => {
+            match cmd.trim_start_matches("load workspace ").trim() {
+                workspace_ref if !workspace_ref.contains(' ') => {
+                    app.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: format!("Attempting to load workspace snapshot for {workspace_ref}..."),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                    app.send_cmd(StateCommand::LoadDb {
+                        workspace_ref: workspace_ref.to_string(),
+                    });
+                }
+                _ => {
+                    app.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: "Please enter the workspace name or workspace id you wish to load.\nSaved workspace snapshots are located via the workspace registry under your config directory.".to_string(),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                }
+            }
+        }
         cmd if cmd.starts_with("load crate") => match cmd.trim_start_matches("load crate").trim() {
-            crate_name if !crate_name.contains(' ') => {
+            workspace_ref if !workspace_ref.contains(' ') => {
                 app.send_cmd(StateCommand::AddMessageImmediate {
-                    msg: format!("Attempting to load code graph for {crate_name}..."),
+                    msg: format!("Attempting to load workspace snapshot for {workspace_ref}..."),
                     kind: MessageKind::SysInfo,
                     new_msg_id: Uuid::new_v4(),
                 });
                 app.send_cmd(StateCommand::LoadDb {
-                    crate_name: crate_name.to_string(),
+                    workspace_ref: workspace_ref.to_string(),
                 });
             }
             _ => {
                 app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: "Please enter the name of the crate you wish to load.\nThe crates with db backups are located in your default config directory.".to_string(),
+                        msg: "Please enter the workspace name or workspace id you wish to load.\nSaved workspace snapshots are located via the workspace registry under your config directory.".to_string(),
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     });

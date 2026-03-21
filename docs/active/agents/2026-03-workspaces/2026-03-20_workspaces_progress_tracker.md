@@ -13,8 +13,8 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 
 ## Current summary
 
-- Overall status: `Phase 4 complete; Phase 5 not started`
-- Current gate: readiness and Phases 1-4 are complete; next implementation target is Phase 5 `C4`
+- Overall status: `Phase 5 complete; Phase 6 not started`
+- Current gate: readiness and Phases 1-5 are complete; next implementation target is Phase 6 `C5`
 - Cross-phase obligations to keep in view: `G1` coherent session state, `G2`
   explicit membership authority and manifest drift handling
 
@@ -42,7 +42,7 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 | Phase 2 `C1` explicit loaded-workspace state in `ploke-tui` | `done` | `SystemStatus` now carries explicit `LoadedWorkspaceState`, path policy roots come from loaded membership rather than focus alone, and DB-backed restore hydrates that state from `workspace_metadata` |
 | Phase 3 `C2` manifest-driven indexing | `done` | Added committed-fixture and helper-level regression witnesses for relative-target anchoring, fixed `index_workspace(...)` to anchor relative targets to loaded app-state authority before generic resolution, documented the bug in `docs/active/bugs/2026-03-21-indexworkspace-relative-target-regression.md`, and revalidated `test_update_embed`, `load_db_crate_focus`, `index_start`, and `index_workspace_targets` via sub-agent |
 | Phase 4 `C3` workspace status and update | `done` | Added per-loaded-crate freshness tracking plus `/workspace status` and `/workspace update` command wiring in `ploke-tui`; committed-fixture witnesses prove multi-member status, update convergence, and manifest-drift surfacing, and broader `cargo test -p ploke-tui --tests -- --nocapture` passed via sub-agent |
-| Phase 5 `C4` workspace save/load registry | `not started` | Restore by workspace identity with consistent snapshot metadata |
+| Phase 5 `C4` workspace save/load registry | `done` | `/save db` now writes a registry-backed workspace snapshot, `/load` resolves exact workspace name/id through the registry, restore rejects `FirstPopulated` fallback, and explicit tests cover registry creation, no-prefix lookup, metadata mismatch failure, and embedding-set metadata restore |
 | Phase 6 `C5` shared retrieval scope model | `not started` | Enforce scope before dense/BM25/hybrid truncation and fusion |
 | Phase 7 `C6` namespace-scoped subset DB operations | `not started` | Add explicit export/import/remove primitives before subset commands |
 | Phase 8 `C7` workspace-aware tools with strict edit safety | `not started` | Expand read/context behavior without widening edit permissions |
@@ -59,6 +59,7 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 | Phase 2 `C1` explicit loaded-workspace state in `ploke-tui` | `done` | `loaded_workspace_membership_controls_focus_and_path_policy`; `set_focus_from_root_preserves_existing_loaded_workspace_membership`; `workspace_restore_assigns_loaded_workspace_membership_from_db` | Verified by sub-agent test runs in `ploke-tui`; witness reasoning is recorded in `2026-03-20_workspaces_test_witnesses.md` |
 | Phase 3 `C2` manifest-driven indexing | `done` | `resolve_index_target_prefers_crate_root_when_pwd_is_crate_root`; `resolve_index_target_finds_workspace_when_pwd_is_not_crate_root`; `resolve_index_target_reports_missing_crate_or_workspace`; `index_workspace_resolves_ancestor_workspace_from_nested_path`; `index_workspace_failure_keeps_previous_loaded_workspace_state`; `index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_differs` | Helper-level repro tests in `indexing.rs` isolate the loaded-state anchoring bug; broader sub-agent validation passed for `test_update_embed`, `load_db_crate_focus`, `index_start`, and `index_workspace_targets` |
 | Phase 4 `C3` workspace status and update | `done` | `workspace_status_and_update_operate_per_loaded_crate`; `workspace_status_reports_workspace_member_drift` | Verified by sub-agent runs of the new `workspace_status_update` integration test plus broader `cargo test -p ploke-tui --tests -- --nocapture`; test harness still logs handled `Cozo embeddings not implemented` noise from the mock-backed index path |
+| Phase 5 `C4` workspace save/load registry | `done` | `load_db_restores_saved_embedding_set_and_index`; `load_db_requires_workspace_registry_entry_instead_of_prefix_lookup`; `load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads`; `load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot` | Verified by sub-agent runs of the targeted C4 tests plus broader `cargo test -p ploke-tui --tests -- --nocapture`; exact registry lookup now replaces filename-prefix restore |
 
 ## Handoff Notes
 
@@ -66,10 +67,11 @@ Use this section only for compact-handoff context that should survive a
 conversation compaction. Keep it short and replace it wholesale when it is
 updated.
 
-- Current implementation state: readiness and Phases 1-4 are complete; Phase 5
-  `C4` is the next target.
-- `C3` now has both narrow multi-member witnesses and broader `ploke-tui`
-  `--tests` validation.
+- Current implementation state: readiness and Phases 1-5 are complete; Phase 6
+  `C5` is the next target.
+- `C4` now has direct witness coverage for registry-backed save/load, explicit
+  registry/snapshot mismatch failure, and refusal of legacy
+  `FirstPopulated` embedding-set fallback during workspace restore.
 - The bug report for the `test_update_embed` regression is
   [2026-03-21-indexworkspace-relative-target-regression.md](/home/brasides/code/ploke/docs/active/bugs/2026-03-21-indexworkspace-relative-target-regression.md).
 - `test_update_embed` remains hardened to subscribe before `IndexWorkspace` and
@@ -83,9 +85,9 @@ updated.
   was audited against current code (`a4f139ba`, 2026-03-21) and now records
   that `crate_focus` is already `Option<CrateId>` with derived root accessors,
   but remains semantically overloaded.
-- Next target after compaction: start Phase 5 `C4` by moving `/save db` and
-  `/load` toward registry-backed workspace identity instead of focused-crate
-  naming.
+- Next target after compaction: start Phase 6 `C5` by introducing the shared
+  retrieval scope model and enforcing scope before dense/BM25/hybrid truncation
+  and fusion.
 
 ## Update rule
 

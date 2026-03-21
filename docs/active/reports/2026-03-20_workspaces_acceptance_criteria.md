@@ -821,7 +821,9 @@ Acceptance statement:
 
 Why this exists:
 
-- current save/load is keyed by focused crate name and prefix-based file lookup
+- earlier save/load was keyed by focused crate name and prefix-based file
+  lookup, which was insufficient for workspace identity and explicit mismatch
+  handling
 
 New or changed data structures:
 
@@ -883,23 +885,31 @@ Required fixtures:
 
 Existing relevant code/tests:
 
-- `save_db(...)` currently names backups from `focused_crate_name()`; see
-  [crates/ploke-tui/src/app_state/database.rs#L90](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L90)
-- `load_db(...)` currently uses `find_file_by_prefix(...)`; see
-  [crates/ploke-tui/src/app_state/database.rs#L234](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L234)
+- `save_db(...)` now writes a registry-backed workspace snapshot keyed by
+  `WorkspaceInfo::from_root_path(...)` identity rather than by focused crate
+  name; see
+  [crates/ploke-tui/src/app_state/database.rs#L513](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L513)
+- `load_db(...)` now resolves exact workspace registry entries, validates the
+  restored snapshot against registry metadata, and rejects legacy
+  `FirstPopulated` fallback for workspace restore; see
+  [crates/ploke-tui/src/app_state/database.rs#L723](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L723)
 - restore currently recreates HNSW for the restored active set, reports
-  embedding-search unavailability when no populated set exists, and resets focus
-  from `crate_context.root_path`; see
-  [crates/ploke-tui/src/app_state/database.rs#L290](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L290),
-  [crates/ploke-tui/src/app_state/database.rs#L392](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L392),
+  embedding-search unavailability when no active set is restored, reports BM25
+  unavailability explicitly, and hydrates loaded workspace membership from the
+  restored snapshot metadata; see
+  [crates/ploke-tui/src/app_state/database.rs#L809](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L809),
+  [crates/ploke-tui/src/app_state/database.rs#L915](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L915),
   and
-  [crates/ploke-tui/src/app_state/database.rs#L407](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L407)
+  [crates/ploke-tui/src/app_state/database.rs#L939](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L939)
 - `restore_embedding_set(...)` still permits legacy `FirstPopulated` fallback;
   see
   [crates/ploke-db/src/database.rs#L974](/home/brasides/code/ploke/crates/ploke-db/src/database.rs#L974)
-- `load_db_restores_saved_embedding_set_and_index` already proves active-set
-  restore on crate backups; see
-  [crates/ploke-tui/src/app_state/database.rs#L999](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L999)
+- `load_db_restores_saved_embedding_set_and_index`,
+  `load_db_requires_workspace_registry_entry_instead_of_prefix_lookup`,
+  `load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads`,
+  and `load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot`
+  now provide direct witness coverage for the core `C4` restore invariants; see
+  [crates/ploke-tui/src/app_state/database.rs#L1649](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1649)
 - BM25 status is actor state and is not restored by `load_db(...)` today; see
   [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/bm25_service.rs#L9)
   and
@@ -907,8 +917,9 @@ Existing relevant code/tests:
 
 Untestable or not yet provable:
 
-- current code has no workspace registry, so atomic workspace restore behavior
-  is not yet provable
+- whole-session `G1` atomicity across DB mutation, runtime state publication,
+  HNSW registration, BM25 availability, and IO roots is still not provable from
+  one assertion point in current code
 
 Acceptance statement:
 

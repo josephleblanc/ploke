@@ -25,8 +25,9 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     check api - Check API key configuration
     copy - Copy selected conversation message to clipboard
     save history - Save conversation history/state
-    load crate &lt;name&gt; - Load a saved crate database by crate name
-    save db | sd - Save active crate database snapshot
+    load workspace &lt;name-or-id&gt; - Load a saved workspace snapshot by exact registry name or id
+    load crate &lt;name-or-id&gt; - Legacy alias for loading a saved workspace snapshot
+    save db | sd - Save the active workspace snapshot and registry entry
     query load | ql - Load default query from default.dl
     query load &lt;query_name&gt; &lt;file_name&gt; - Load a named query from a file
     batch [prompt_file] [out_file] [max_hits] [threshold] - Run batch prompt search

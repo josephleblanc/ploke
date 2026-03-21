@@ -273,8 +273,8 @@ pub async fn state_manager(
                 )
                 .await;
             }
-            StateCommand::LoadDb { crate_name } => {
-                handlers::db::load_db(&state, &event_bus, crate_name).await;
+            StateCommand::LoadDb { workspace_ref } => {
+                handlers::db::load_db(&state, &event_bus, workspace_ref).await;
             }
             StateCommand::WorkspaceStatus => {
                 handlers::db::workspace_status(&state, &event_bus).await;

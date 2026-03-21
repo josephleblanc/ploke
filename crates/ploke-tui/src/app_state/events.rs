@@ -77,13 +77,13 @@ pub enum SystemEvent {
         error: Option<String>,
     },
     LoadDb {
-        crate_name: String,
+        workspace_ref: String,
         #[serde(skip)]
         file_dir: Option<Arc<std::path::PathBuf>>,
         #[serde(skip)]
         root_path: Option<Arc<std::path::PathBuf>>,
         is_success: bool,
-        error: Option<&'static str>,
+        error: Option<String>,
     },
     ReIndex {
         workspace: String,
