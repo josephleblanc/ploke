@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, ops::Deref as _};
 use cozo::{DataValue, Num, ScriptMutability, UuidWrapper};
 use itertools::Itertools;
 use ploke_core::embeddings::EmbeddingSet;
+use ploke_core::RetrievalScope;
 use syn_parser::utils::LogStyle;
 use tracing::{debug, info, instrument};
 use uuid::Uuid;
@@ -32,6 +33,7 @@ pub trait HnswExt {
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -43,6 +45,7 @@ pub trait HnswExt {
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -216,6 +219,7 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        _scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -338,6 +342,7 @@ has_embedding[id, name, distance] :=
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -356,6 +361,12 @@ has_embedding[id, name, distance] :=
         if let Some(radius) = radius {
             params.insert("radius".into(), DataValue::Num(Num::Float(radius)));
         }
+        let scope_filter_clause = if let Some(namespace) = scope.namespace_filter() {
+            params.insert("scope_namespace".into(), DataValue::Uuid(UuidWrapper(namespace)));
+            ",\n    namespace == $scope_namespace"
+        } else {
+            ""
+        };
 
         let rel = node_type.relation_str();
         let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
@@ -395,7 +406,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
     *file_mod {{ owner_id: mod_id, file_path, namespace @ 'NOW'}}
 
 ?[id, name, file_path, file_hash, hash, span, namespace, distance] :=
-    batch[id, name, file_path, file_hash, hash, span, namespace, distance]
+    batch[id, name, file_path, file_hash, hash, span, namespace, distance]{scope_filter_clause}
 :order distance
 :limit $limit
 "#,
@@ -403,6 +414,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
             hnsw_suffix = HNSW_SUFFIX,
             rel = rel,
             radius_clause = radius_clause,
+            scope_filter_clause = scope_filter_clause,
         );
         debug!(target: "cozo-script", hnsw_script = %script);
 
@@ -498,6 +510,7 @@ impl HnswExt for Database {
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -507,6 +520,7 @@ impl HnswExt for Database {
         self.deref().search_similar_for_set(
             embedding_set,
             node_type,
+            scope,
             vector_query,
             k,
             ef,
@@ -527,6 +541,7 @@ impl HnswExt for Database {
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -536,6 +551,7 @@ impl HnswExt for Database {
         self.deref().search_similar_for_set_test(
             embedding_set,
             node_type,
+            scope,
             vector_query,
             k,
             ef,
@@ -953,6 +969,7 @@ mod tests {
         let result = db.search_similar_for_set(
             &embedding_set,
             NodeType::Function,
+            RetrievalScope::LoadedWorkspace,
             query_vector.clone(),
             k,
             ef,
@@ -993,6 +1010,7 @@ mod tests {
         let radius_result = db.search_similar_for_set(
             &embedding_set,
             NodeType::Function,
+            RetrievalScope::LoadedWorkspace,
             query_vector,
             k,
             ef,

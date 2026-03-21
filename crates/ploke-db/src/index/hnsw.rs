@@ -8,6 +8,7 @@ use tracing::instrument;
 use crate::database::HNSW_SUFFIX;
 use crate::multi_embedding::hnsw_ext::HnswExt;
 use ploke_core::embeddings::EmbeddingSet;
+use ploke_core::RetrievalScope;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
     DataValue::List(
@@ -77,13 +78,14 @@ pub fn search_similar(
     vector_query: Vec<f32>,
     k: usize,
     ef: usize,
+    scope: RetrievalScope,
     ty: NodeType,
 ) -> Result<TypedEmbedData, ploke_error::Error> {
     // TODO:active-embedding-set 2025-12-15
     // update the active embedding set functions to correctly use Arc<RwLock<>> within these
     // functions.
     let active_embedding_set = db.with_active_set(|set| set.clone())?;
-    db.search_similar_for_set(&active_embedding_set, ty, vector_query, k, ef, 100, None)
+    db.search_similar_for_set(&active_embedding_set, ty, scope, vector_query, k, ef, 100, None)
         .map(|res| res.typed_data)
 }
 
@@ -91,6 +93,7 @@ pub fn search_similar(
 pub struct SimilarArgs<'a> {
     pub db: &'a Database,
     pub vector_query: &'a Vec<f32>,
+    pub scope: RetrievalScope,
     pub k: usize,
     pub ef: usize,
     pub ty: NodeType,
@@ -103,6 +106,7 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
     let SimilarArgs {
         db,
         vector_query,
+        scope,
         k,
         ef,
         ty,
@@ -119,6 +123,7 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
     db.search_similar_for_set(
         &active_embedding_set,
         ty,
+        scope,
         vector_query.clone(),
         k,
         ef,

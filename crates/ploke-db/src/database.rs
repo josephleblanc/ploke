@@ -1684,6 +1684,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
                 let DocMeta {
                     token_length,
                     tracking_hash,
+                    namespace: _,
                 } = doc_meta;
                 DataValue::List(vec![
                     DataValue::Uuid(UuidWrapper(id)),
@@ -2108,10 +2109,12 @@ mod tests {
         let docdata_one = DocMeta {
             token_length: 42,
             tracking_hash: TrackingHash(Uuid::new_v4()),
+            namespace: Uuid::new_v4(),
         };
         let docdata_two = DocMeta {
             token_length: 128,
             tracking_hash: TrackingHash(Uuid::new_v4()),
+            namespace: Uuid::new_v4(),
         };
 
         let docs = vec![(Uuid::new_v4(), docdata_one), (Uuid::new_v4(), docdata_two)];

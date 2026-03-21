@@ -15,6 +15,7 @@ use once_cell::sync::Lazy;
 use ploke_core::{
     ArcStr,
     rag_types::{AssembledContext, ContextPart},
+    RetrievalScope,
 };
 use tokio::sync::oneshot;
 
@@ -107,7 +108,13 @@ pub async fn process_with_rag(
             let mut budget = state.budget.clone();
             budget.per_part_max = profile.per_part_max_tokens;
             match rag
-                .get_context(&user_msg, profile.top_k, &budget, &retrieval_strategy)
+                .get_context(
+                    &user_msg,
+                    profile.top_k,
+                    &budget,
+                    &retrieval_strategy,
+                    RetrievalScope::LoadedWorkspace,
+                )
                 .await
             {
                 Ok(rag_ctx) => {

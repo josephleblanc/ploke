@@ -44,6 +44,25 @@ impl WorkspaceId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RetrievalScope {
+    LoadedWorkspace,
+    SpecificCrate(CrateId),
+}
+
+impl RetrievalScope {
+    pub fn crate_id(self) -> Option<CrateId> {
+        match self {
+            Self::LoadedWorkspace => None,
+            Self::SpecificCrate(crate_id) => Some(crate_id),
+        }
+    }
+
+    pub fn namespace_filter(self) -> Option<Uuid> {
+        self.crate_id().map(CrateId::uuid)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrateInfo {
     pub id: CrateId,

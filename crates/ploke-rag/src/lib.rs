@@ -42,6 +42,7 @@
 //! Quickstart
 //! ```no_run
 //! use std::sync::Arc;
+//! use ploke_core::RetrievalScope;
 //! use ploke_rag::{RagService, RetrievalStrategy, TokenBudget};
 //! use ploke_embed::runtime::EmbeddingRuntime;
 //! use ploke_db::{Database};
@@ -51,10 +52,10 @@
 //! let rag = RagService::new(db.clone(), embedder.clone())?;
 //!
 //! // Sparse-only (lenient): falls back to dense if BM25 is unready/empty.
-//! let bm25_hits = rag.search_bm25("how to implement graph nodes", 15).await?;
+//! let bm25_hits = rag.search_bm25("how to implement graph nodes", 15, RetrievalScope::LoadedWorkspace).await?;
 //!
 //! // Hybrid: concurrent BM25 + dense, fused via weighted RRF.
-//! let fused = rag.hybrid_search("module visibility rules", 15).await?;
+//! let fused = rag.hybrid_search("module visibility rules", 15, RetrievalScope::LoadedWorkspace).await?;
 //!
 //! // Assemble a context for downstream prompting.
 //! let budget = TokenBudget { max_total: 1024, per_file_max: 512, per_part_max: 256 };
@@ -63,6 +64,7 @@
 //!     12,
 //!     &budget,
 //!     &RetrievalStrategy::Hybrid { rrf: Default::default(), mmr: None },
+//!     RetrievalScope::LoadedWorkspace,
 //! ).await?;
 //! # Ok(()) }
 //! ```
@@ -118,7 +120,7 @@ fn ensure_tracer_initialized() {
     // Tests configure tracing themselves; no-op to avoid interfering with test harness.
 }
 
-use ploke_core::EmbeddingData;
+use ploke_core::{EmbeddingData, RetrievalScope};
 use ploke_db::{
     bm25_index::bm25_service::{self, Bm25Cmd},
     search_similar_args, Database, DbError, NodeType, SimilarArgs, TypedEmbedData,

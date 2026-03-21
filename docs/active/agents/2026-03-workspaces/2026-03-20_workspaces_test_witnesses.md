@@ -29,6 +29,7 @@ the criterion language, not just to the implementation details.
 | Phase 5 `C4` | `load_db_requires_workspace_registry_entry_instead_of_prefix_lookup` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1752) | Proves `/load` no longer scans backup filenames by prefix: a stray prefix-matching backup file is insufficient without a registry entry |
 | Phase 5 `C4` | `load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1778) | Proves workspace restore rejects the legacy `FirstPopulated` embedding-set fallback when snapshot metadata is missing, which is a required `C4` failure mode |
 | Phase 5 `C4` | `load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1868) | Proves registry/snapshot disagreement fails explicitly instead of silently preferring stale registry metadata over restored snapshot metadata |
+| Phase 6 `C5` | `bm25_specific_crate_scope_filters_before_top_k_truncation` in [bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs#L1006) | Builds a two-namespace in-memory BM25 corpus where the stronger out-of-scope document wins unscoped `top_k=1`, then proves `SpecificCrate(CrateId)` still returns the weaker in-scope document at `top_k=1`, which is direct evidence that scope is applied before BM25 truncation |
 
 ## Reasoning by acceptance item
 
@@ -399,6 +400,42 @@ Scope note:
   `workspace_backup_fixture_roundtrips_coherent_membership_and_identity`
 - whole-session `G1` coherence across DB, HNSW, BM25, TUI state, and IO roots
   still remains a separate cross-phase obligation
+
+### Phase 6 `C5` shared retrieval scope model
+
+Criterion text:
+- requires one shared scope model across dense, BM25, hybrid, and context
+  assembly entrypoints
+- requires scope to be enforced before BM25 `top_k`, dense `:limit`, dense
+  fallback, and hybrid fusion
+- rejects late caller-side filtering as sufficient proof
+
+Current witness reasoning:
+- [workspace.rs](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs#L43)
+  now defines shared `RetrievalScope`
+- [bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs#L672)
+  now applies scope filtering inside `Bm25Indexer::search(...)` before
+  truncating to `top_k`
+- [bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs#L1006)
+  proves the pre-`top_k` filter on a two-namespace corpus where the stronger
+  out-of-scope document would otherwise win
+
+What a passing witness proves:
+- if `bm25_specific_crate_scope_filters_before_top_k_truncation` passes, then
+  BM25 crate scope is not being applied as late caller-side filtering after
+  `top_k`
+- if that test passes, then a `SpecificCrate(CrateId)` scope can still return
+  the weaker in-scope document at `top_k=1` even when an out-of-scope document
+  would win the unscoped search, which is direct evidence that scope is
+  enforced before BM25 truncation
+
+Scope note:
+- this is only partial Phase 6 `C5` evidence
+- dense search, hybrid fusion, and `get_context(...)` still need their own
+  scope witnesses before `C5` can be considered complete
+- broader `ploke-tui --tests` validation is currently blocked by the
+  freshness-guarded `get_code_edges_regression` tests after edits to
+  `crates/ploke-db/src/database.rs`
 
 ## Update rule
 

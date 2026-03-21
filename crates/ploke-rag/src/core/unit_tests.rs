@@ -5,7 +5,7 @@ mod tests {
     use crate::{RetrievalStrategy, TokenBudget};
     use itertools::Itertools;
     use lazy_static::lazy_static;
-    use ploke_core::EmbeddingData;
+    use ploke_core::{EmbeddingData, RetrievalScope};
     use ploke_db::{
         Database, create_index_primary_with_index,
         multi_embedding::{db_ext::EmbeddingExt, debug::DebugAll},
@@ -39,6 +39,8 @@ mod tests {
         let db = default_test_db_setup().expect("db setup");
         init_test_rag(db)
     });
+
+    const LOADED_WORKSPACE_SCOPE: RetrievalScope = RetrievalScope::LoadedWorkspace;
     fn init_test_rag(db: Arc<Database>) -> RagService {
         let model =
             LocalEmbedder::new(EmbeddingConfig::default()).expect("valid default embedding config");
@@ -139,6 +141,7 @@ mod tests {
         let err = match db.search_similar_for_set(
             &active_embedding_set,
             ploke_db::NodeType::Function,
+            LOADED_WORKSPACE_SCOPE,
             query_vec,
             5,
             10,
@@ -243,7 +246,7 @@ mod tests {
         let rag = &DEFAULT_TEST_RAG;
         let db = &DEFAULT_TEST_RAG.db;
 
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 15).await?;
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 15, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -281,7 +284,7 @@ mod tests {
 
         let mut bm25_res: Vec<(Uuid, f32)> = Vec::new();
         for _ in 0..10 {
-            bm25_res = rag.search_bm25(search_term, 15).await?;
+            bm25_res = rag.search_bm25(search_term, 15, LOADED_WORKSPACE_SCOPE).await?;
             if !bm25_res.is_empty() {
                 break;
             }
@@ -309,7 +312,7 @@ mod tests {
 
         let search_term = "use_all_const_static";
 
-        let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15).await?;
+        let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !fused.is_empty(),
             "Hybrid search returned no results for '{}'",
@@ -332,7 +335,7 @@ mod tests {
         let search_term = "use_all_const_static";
 
         // Intentionally do not call bm25_rebuild or index anything; fallback should kick in.
-        let results: Vec<(Uuid, f32)> = rag.search_bm25(search_term, 15).await?;
+        let results: Vec<(Uuid, f32)> = rag.search_bm25(search_term, 15, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !results.is_empty(),
             "BM25 fallback returned no results for '{}'",
@@ -352,7 +355,7 @@ mod tests {
 
         let search_term = "DocumentedStruct";
 
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -372,7 +375,7 @@ mod tests {
 
         let search_term = "GenericEnum";
 
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -394,7 +397,7 @@ mod tests {
 
         let search_term = "ComplexGenericTrait";
 
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
 
         assert!(
             !search_res.is_empty(),
@@ -407,7 +410,7 @@ mod tests {
         rag.bm25_rebuild().await?;
         let mut results: Vec<(Uuid, f32)> = Vec::new();
         for _ in 0..10 {
-            results = rag.search_bm25(search_term, 15).await?;
+            results = rag.search_bm25(search_term, 15, LOADED_WORKSPACE_SCOPE).await?;
             if !results.is_empty() {
                 break;
             }
@@ -432,7 +435,7 @@ mod tests {
 
         let search_term = "GenericUnion";
 
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -452,7 +455,7 @@ mod tests {
 
         let search_term = "documented_macro";
 
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -472,7 +475,7 @@ mod tests {
 
         let search_term = "DisplayableContainer";
 
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -492,7 +495,7 @@ mod tests {
 
         let search_term = "TOP_LEVEL_BOOL";
 
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -512,7 +515,7 @@ mod tests {
 
         let search_term = "TOP_LEVEL_COUNTER";
 
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -532,7 +535,7 @@ mod tests {
         let db = &DEFAULT_TEST_RAG.db;
 
         let search_term = "GenericSuperTrait";
-        let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15).await?;
+        let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !fused.is_empty(),
             "Hybrid search returned no results for '{}'",
@@ -558,7 +561,7 @@ mod tests {
 
         let mut bm25_res: Vec<(Uuid, f32)> = Vec::new();
         for _ in 0..10 {
-            bm25_res = rag.search_bm25(search_term, 15).await?;
+            bm25_res = rag.search_bm25(search_term, 15, LOADED_WORKSPACE_SCOPE).await?;
             if !bm25_res.is_empty() {
                 break;
             }
@@ -584,7 +587,7 @@ mod tests {
 
         let search_term = "use_all_const_static";
 
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",

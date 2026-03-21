@@ -21,7 +21,7 @@ use crate::llm::{self, LlmEvent, ProviderKey};
 use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
-use ploke_core::ArcStr;
+use ploke_core::{ArcStr, RetrievalScope};
 use ploke_llm::embeddings::{EmbClientConfig, HasEmbeddingModels};
 use ploke_llm::manager::events::{embedding_models, models};
 use reqwest::Client;
@@ -814,7 +814,13 @@ pub(crate) fn open_context_search(app: &mut App, query_id: u64, search_term: &st
         };
         if let Some(rag_service) = &state.rag {
             match rag_service
-                .get_context(&keyword_str, top_k, budget, &retrieval_strategy)
+                .get_context(
+                    &keyword_str,
+                    top_k,
+                    budget,
+                    &retrieval_strategy,
+                    RetrievalScope::LoadedWorkspace,
+                )
                 .await
             {
                 Ok(ctx_returned) => {

@@ -6,7 +6,7 @@ use std::{
 
 use cozo::DataValue;
 use itertools::Itertools;
-use ploke_core::{CrateId, CrateInfo, EmbeddingData, FileData, NodeId, WorkspaceInfo};
+use ploke_core::{CrateId, CrateInfo, EmbeddingData, FileData, NodeId, RetrievalScope, WorkspaceInfo};
 use ploke_error::DomainError;
 use ploke_db::{
     EmbedDataVerbose, NodeType, RestoredEmbeddingSet, SimilarArgs,
@@ -2117,6 +2117,7 @@ pub(super) async fn batch_prompt_search(
                 let args = SimilarArgs {
                     db: &state.db,
                     vector_query: &embedding,
+                    scope: RetrievalScope::LoadedWorkspace,
                     k,
                     ef,
                     ty,
