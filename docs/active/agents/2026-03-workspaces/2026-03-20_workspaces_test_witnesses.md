@@ -153,6 +153,37 @@ Scope note:
   coherence assertions between `workspace_metadata.members` and restored
   `crate_context` membership
 
+### Phase 1 `C0` workspace snapshot coherence has fixture-backed witness evidence
+
+Criterion text:
+- requires fixture-backed equality assertions between
+  `workspace_metadata.members` and restored multi-member crate rows
+- requires restored workspace identity and root path to agree with
+  `WorkspaceId::from_root_path(...)`
+- requires backup/restore not to change the represented workspace member set
+
+Current witness reasoning:
+- [fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs#L441)
+  loads the registered backup fixture `ws_fixture_01_canonical` through the
+  strict registry-backed restore path, queries both `workspace_metadata` and
+  `crate_context`, and compares the restored membership sets directly
+
+What a passing witness proves:
+- if `workspace_backup_fixture_roundtrips_coherent_membership_and_identity`
+  passes, then the restored workspace snapshot contains one
+  `workspace_metadata` row whose `id` and `namespace` match
+  `WorkspaceId::from_root_path(...)`, whose `root_path` matches the committed
+  fixture root, and whose `members` set equals the set of restored
+  `crate_context.root_path` rows
+- if that test passes, then the registered workspace snapshot preserves both
+  workspace identity and member-set coherence across the transform/backup/restore
+  path required by Phase 1 `C0`
+
+Scope note:
+- this is sufficient regression evidence for Phase 1 `C0`
+- it is not a universal proof over all possible workspaces, which matches the
+  acceptance criterion's stated scope
+
 ## Update rule
 
 When a new acceptance-relevant test is added or changed:

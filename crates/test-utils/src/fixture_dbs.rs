@@ -376,6 +376,11 @@ pub fn validate_backup_fixture_contract(fixture: &FixtureDb, db: &Database) -> R
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use cozo::{DataValue, UuidWrapper};
+    use ploke_core::WorkspaceId;
+
     use super::*;
 
     #[test]
@@ -435,5 +440,61 @@ mod tests {
             .raw_query("?[name, root_path] := *crate_context { name, root_path }")
             .expect("crate_context query should succeed");
         assert_eq!(crate_rows.rows.len(), 2);
+    }
+
+    #[test]
+    fn workspace_backup_fixture_roundtrips_coherent_membership_and_identity() {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)
+            .expect("workspace fixture should load through the registry-backed helper");
+        let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_01");
+        let expected_workspace_id = WorkspaceId::from_root_path(&fixture_workspace_root).uuid();
+
+        let workspace_rows = db
+            .raw_query(
+                "?[id, namespace, root_path, members] := \
+                 *workspace_metadata { id, namespace, root_path, members }",
+            )
+            .expect("workspace_metadata query should succeed");
+        assert_eq!(workspace_rows.rows.len(), 1);
+
+        let workspace_row = &workspace_rows.rows[0];
+        assert_eq!(
+            workspace_row[0],
+            DataValue::Uuid(UuidWrapper(expected_workspace_id))
+        );
+        assert_eq!(
+            workspace_row[1],
+            DataValue::Uuid(UuidWrapper(expected_workspace_id))
+        );
+        assert_eq!(
+            workspace_row[2],
+            DataValue::from(fixture_workspace_root.display().to_string())
+        );
+
+        let workspace_members = match &workspace_row[3] {
+            DataValue::List(values) => values
+                .iter()
+                .map(|value| match value {
+                    DataValue::Str(path) => path.to_string(),
+                    other => panic!("expected workspace member path string, found {other:?}"),
+                })
+                .collect::<BTreeSet<_>>(),
+            other => panic!("expected workspace members list, found {other:?}"),
+        };
+
+        let crate_rows = db
+            .raw_query("?[root_path] := *crate_context { root_path }")
+            .expect("crate_context query should succeed");
+        assert_eq!(crate_rows.rows.len(), 2);
+        let crate_member_paths = crate_rows
+            .rows
+            .iter()
+            .map(|row| match &row[0] {
+                DataValue::Str(path) => path.to_string(),
+                other => panic!("expected crate_context.root_path string, found {other:?}"),
+            })
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(workspace_members, crate_member_paths);
     }
 }

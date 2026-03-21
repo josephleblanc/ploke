@@ -13,8 +13,8 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 
 ## Current summary
 
-- Overall status: `readiness complete`
-- Current gate: readiness is complete; Phase 1 `C0` witness work can begin
+- Overall status: `Phase 1 complete`
+- Current gate: readiness and Phase 1 are complete; Phase 2 `C1` can begin
 - Cross-phase obligations to keep in view: `G1` coherent session state, `G2`
   explicit membership authority and manifest drift handling
 
@@ -38,7 +38,7 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 
 | Phase | Status | Exit target / next step |
 | --- | --- | --- |
-| Phase 1 `C0` fixture and ingestion baseline | `not started` | Prove `workspace_metadata.members` and restored `crate_context` membership agree for the registered workspace snapshot |
+| Phase 1 `C0` fixture and ingestion baseline | `done` | Registered fixture witness proves restored `workspace_metadata.members` equals restored `crate_context.root_path` membership and restored identity matches `WorkspaceId::from_root_path(...)` |
 | Phase 2 `C1` explicit loaded-workspace state in `ploke-tui` | `not started` | Introduce first-class loaded workspace state and atomic IO-root updates |
 | Phase 3 `C2` manifest-driven indexing | `not started` | Replace crate-root inference with manifest-driven workspace indexing |
 | Phase 4 `C3` workspace status and update | `not started` | Make stale detection and update behavior operate per loaded crate |
@@ -55,6 +55,7 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 | `R2` registered workspace backup fixture exists | `done` | `backup_db_fixture_lookup_returns_registered_workspace_fixture`; `workspace_backup_fixture_loads_via_registry_and_has_workspace_metadata` | Scoped verification evidence: `cargo xtask verify-backup-dbs --fixture ws_fixture_01_canonical` |
 | `R3` `workspace_metadata` transform is asserted | `done` | `transform_parsed_workspace_persists_workspace_metadata_fields_from_committed_fixture` | Verified by sub-agent test run: `cargo test -p ploke-transform transform_parsed_workspace_persists_workspace_metadata_fields_from_committed_fixture -- --nocapture` |
 | `R4` strict backup verification passes | `done` | none; command evidence only | Verified by sub-agent run: `cargo xtask verify-backup-dbs` passed for `fixture_nodes_canonical`, `fixture_nodes_local_embeddings`, `ploke_db_primary`, and `ws_fixture_01_canonical` |
+| Phase 1 `C0` workspace snapshot coherence has fixture-backed witness evidence | `done` | `workspace_backup_fixture_roundtrips_coherent_membership_and_identity` | Verified by sub-agent test run: `cargo test -p ploke-test-utils workspace_backup_fixture_roundtrips_coherent_membership_and_identity -- --nocapture` |
 
 ## Update rule
 
