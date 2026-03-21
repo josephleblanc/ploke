@@ -33,6 +33,9 @@ the criterion language, not just to the implementation details.
 | Phase 7 `C6` | `workspace_fixture_namespace_inventory_matches_crate_context_membership` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Loads `ws_fixture_01_canonical`, enumerates `crate_context` rows, builds a per-namespace inventory from `crate_context.namespace -> file_mod.namespace -> syntax_edge` descendant closure, and proves each loaded crate has a non-empty graph inventory rooted inside the committed workspace fixture |
 | Phase 7 `C6` | `workspace_fixture_namespaces_remain_distinct_in_subset_inventory` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Proves the two workspace members in `ws_fixture_01_canonical` produce distinct namespace inventories with disjoint root file modules and disjoint descendant graph ids, which is the first direct evidence that later subset operations can key off explicit namespace authority rather than crate-name or whole-DB assumptions |
 | Phase 7 `C6` | `remove_namespace_removes_only_target_namespace_and_invalidates_search_state` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Seeds dense/BM25 state for one crate namespace inside `ws_fixture_01_canonical`, removes that namespace through `Database::remove_namespace(...)`, and proves the sibling namespace survives while target `crate_context`, `workspace_metadata.members`, graph rows, vectors, BM25 rows, and HNSW registration are all reconciled to the post-mutation dataset |
+| Phase 7 `C6` | `export_namespace_artifact_contains_only_target_namespace_rows` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Seeds dense/BM25 plus active embedding metadata for one crate namespace inside `ws_fixture_01_canonical`, exports that namespace through `Database::export_namespace(...)`, and proves the artifact contains only the target namespace’s `crate_context`, `file_mod`, rooted graph rows, vector rows, BM25 rows, embedding-set metadata, and pruned `workspace_metadata.members` |
+| Phase 7 `C6` | `import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Exports one namespace from `ws_fixture_01_canonical`, removes it from a second loaded copy of that workspace, recreates HNSW on the surviving namespace, then imports the artifact back through `Database::import_namespace(...)` and proves the namespace returns without whole-DB replacement while `workspace_metadata.members`, vectors, BM25 rows, and HNSW availability are reconciled to the post-import dataset |
+| Phase 7 `C6` | `import_namespace_reports_duplicate_namespace_name_and_root_conflicts` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Attempts to import an exported namespace artifact back into the unchanged source workspace DB and proves `Database::import_namespace(...)` rejects it with an explicit conflict report naming the duplicate namespace, crate name, and root path instead of silently replacing or merging conflicting data |
 
 ## Reasoning by acceptance item
 
@@ -494,6 +497,15 @@ Current witness reasoning:
   descendant graph rows, removes its `crate_context` and `file_mod` roots,
   prunes `workspace_metadata.members`, retracts vector/BM25 rows for removed
   node ids, and explicitly invalidates active HNSW registration
+- [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+  now also exposes `export_namespace(...)`, which builds a structured
+  namespace-scoped artifact from explicit `crate_context`/`file_mod` authority
+  and carries only the target crate's graph rows, search rows, embedding-set
+  metadata, and pruned `workspace_metadata`
+- [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+  now also exposes `import_namespace(...)`, `NamespaceImportConflictReport`,
+  and `NamespaceImportError`, which import one exported namespace artifact into
+  a populated DB only after explicit duplicate namespace/name/root validation
 - [2026-03-21_c6_subset_db_design_notes.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-21_c6_subset_db_design_notes.md)
   records why this is the first safe seam for `C6` and why current whole-backup
   APIs are insufficient
@@ -520,16 +532,41 @@ What a passing witness proves:
   `crate_context` plus `file_mod`, because the test asserts that the returned
   removed root modules and descendant-id set exactly match the pre-removal
   inventory for the requested namespace
-- if all three tests pass, then `C6` now has direct evidence for namespace
-  authority plus one real namespace-scoped mutation primitive in `ploke-db`
+- if `export_namespace_artifact_contains_only_target_namespace_rows` passes,
+  then `ploke-db` can export one explicit crate namespace from a loaded
+  multi-member workspace fixture without including sibling `crate_context`,
+  `file_mod`, rooted graph rows, or search rows
+- if that `export_namespace(...)` test passes, then the exported artifact is
+  directly proven to preserve only the target namespace's `crate_context`,
+  `file_mod` roots, rooted graph rows, vector rows, BM25 rows,
+  `active_embedding_set` metadata, referenced `embedding_set` rows, and a
+  pruned `workspace_metadata.members` list containing only the exported root
+- if all four tests pass, then `C6` now has direct evidence for namespace
+- authority plus real namespace-scoped removal and export primitives in
+  `ploke-db`
+- if `import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state`
+  passes, then `ploke-db` can import one exported crate namespace into an
+  already populated DB without behaving like whole-DB replacement, while
+  restoring the target namespace's `crate_context`, rooted graph rows, vectors,
+  BM25 rows, and merged `workspace_metadata.members`
+- if that import test passes, then a live HNSW registration for the pre-import
+  dataset is explicitly invalidated after the subset mutation, which is direct
+  evidence that the DB primitive does not leave stale search readiness behind
+- if `import_namespace_reports_duplicate_namespace_name_and_root_conflicts`
+  passes, then duplicate namespace/name/root cases are surfaced explicitly by
+  `import_namespace(...)` instead of being silently merged or replaced
+- if all six tests pass, then `C6` now has direct DB-level evidence for
+  namespace authority plus real namespace-scoped removal, export, import, and
+  duplicate conflict validation in `ploke-db`
 
 Scope note:
 - this is still partial evidence only
-- it now proves one real subset removal primitive, but it does not yet prove
-  subset export, subset import, import conflict validation, or the later
-  end-to-end TUI/runtime membership update path
+- it now proves real subset removal, export, import, and duplicate conflict
+  validation primitives, but it does not yet prove the later end-to-end
+  TUI/runtime membership/focus/IO update path
 - `C6` remains `in progress` until namespace-scoped subset export/import and
-  explicit conflict validation exist
+  explicit conflict validation exist end to end through the command/runtime
+  surface
 
 ## Update rule
 

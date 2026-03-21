@@ -111,6 +111,56 @@ pub struct NamespaceRemovalResult {
     pub bm25_invalidated: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelationExportRows {
+    pub relation: String,
+    pub key_fields: Vec<String>,
+    pub val_fields: Vec<String>,
+    pub rows: Vec<Vec<DataValue>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamespaceExportArtifact {
+    pub namespace: Uuid,
+    pub crate_context: CrateContextRow,
+    pub file_module_owner_ids: BTreeSet<Uuid>,
+    pub descendant_ids: BTreeSet<Uuid>,
+    pub workspace_members: Vec<String>,
+    pub relation_exports: Vec<RelationExportRows>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceImportConflictReport {
+    pub duplicate_namespace: Option<Uuid>,
+    pub duplicate_crate_name: Option<String>,
+    pub duplicate_root_path: Option<String>,
+    pub workspace_root_mismatch: Option<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceImportResult {
+    pub imported_namespace: Uuid,
+    pub imported_crate_name: String,
+    pub imported_root_path: String,
+    pub imported_descendant_ids: BTreeSet<Uuid>,
+    pub imported_file_module_owner_ids: BTreeSet<Uuid>,
+    pub workspace_member_added: bool,
+    pub hnsw_invalidated: bool,
+    pub bm25_invalidated: bool,
+}
+
+#[derive(Debug)]
+pub enum NamespaceImportError {
+    Conflict(NamespaceImportConflictReport),
+    Db(DbError),
+}
+
+impl From<DbError> for NamespaceImportError {
+    fn from(value: DbError) -> Self {
+        Self::Db(value)
+    }
+}
+
 impl std::ops::Deref for Database {
     type Target = Db<MemStorage>;
 
@@ -267,6 +317,592 @@ target[id] := input[id_str], id = to_uuid(id_str)
         self.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
             .map(|_| ())
             .map_err(DbError::from)
+    }
+
+    fn collect_relation_rows_by_id(
+        &self,
+        relation: &str,
+        key_fields: &[&str],
+        val_fields: &[&str],
+        ids: &BTreeSet<Uuid>,
+    ) -> Result<RelationExportRows, DbError> {
+        let key_fields_owned = key_fields.iter().map(|field| (*field).to_string()).collect();
+        let val_fields_owned = val_fields.iter().map(|field| (*field).to_string()).collect();
+        if ids.is_empty() {
+            return Ok(RelationExportRows {
+                relation: relation.to_string(),
+                key_fields: key_fields_owned,
+                val_fields: val_fields_owned,
+                rows: Vec::new(),
+            });
+        }
+
+        let input_rows = Self::uuid_input_rows(ids);
+        let query_fields = key_fields
+            .iter()
+            .chain(val_fields.iter())
+            .copied()
+            .join(", ");
+        let key_match = key_fields
+            .iter()
+            .map(|field| format!("target[{field}]"))
+            .join(" or ");
+        let script = format!(
+            r#"
+input[id_str] <- [{input_rows}]
+target[id] := input[id_str], id = to_uuid(id_str)
+?[{query_fields}] := *{relation} {{ {query_fields} @ 'NOW' }}, ({key_match})
+"#
+        );
+        let rows = self.raw_query(&script)?.rows;
+        Ok(RelationExportRows {
+            relation: relation.to_string(),
+            key_fields: key_fields_owned,
+            val_fields: val_fields_owned,
+            rows,
+        })
+    }
+
+    fn collect_syntax_edge_rows_for_ids(
+        &self,
+        ids: &BTreeSet<Uuid>,
+    ) -> Result<RelationExportRows, DbError> {
+        let key_fields = vec!["source_id".to_string(), "target_id".to_string()];
+        let val_fields = vec![
+            "relation_kind".to_string(),
+            "source_kind".to_string(),
+            "target_kind".to_string(),
+        ];
+        if ids.is_empty() {
+            return Ok(RelationExportRows {
+                relation: "syntax_edge".to_string(),
+                key_fields,
+                val_fields,
+                rows: Vec::new(),
+            });
+        }
+
+        let input_rows = Self::uuid_input_rows(ids);
+        let script = format!(
+            r#"
+input[id_str] <- [{input_rows}]
+target[id] := input[id_str], id = to_uuid(id_str)
+?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+    *syntax_edge {{ source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW' }},
+    (target[source_id] or target[target_id])
+"#
+        );
+        Ok(RelationExportRows {
+            relation: "syntax_edge".to_string(),
+            key_fields,
+            val_fields,
+            rows: self.raw_query(&script)?.rows,
+        })
+    }
+
+    fn collect_vector_rows_for_ids(
+        &self,
+        relation: &str,
+        ids: &BTreeSet<Uuid>,
+    ) -> Result<RelationExportRows, DbError> {
+        let key_fields = vec!["node_id".to_string(), "embedding_set_id".to_string()];
+        let val_fields = vec!["vector".to_string()];
+        if ids.is_empty() {
+            return Ok(RelationExportRows {
+                relation: relation.to_string(),
+                key_fields,
+                val_fields,
+                rows: Vec::new(),
+            });
+        }
+
+        let input_rows = Self::uuid_input_rows(ids);
+        let script = format!(
+            r#"
+input[id_str] <- [{input_rows}]
+target[node_id] := input[id_str], node_id = to_uuid(id_str)
+?[node_id, embedding_set_id, vector] :=
+    *{relation} {{ node_id, embedding_set_id, vector @ 'NOW' }},
+    target[node_id]
+"#
+        );
+        Ok(RelationExportRows {
+            relation: relation.to_string(),
+            key_fields,
+            val_fields,
+            rows: self.raw_query(&script)?.rows,
+        })
+    }
+
+    fn collect_bm25_doc_meta_for_ids(
+        &self,
+        ids: &BTreeSet<Uuid>,
+    ) -> Result<RelationExportRows, DbError> {
+        self.collect_relation_rows_by_id(
+            "bm25_doc_meta",
+            &["id"],
+            &["tracking_hash", "tokenizer_version", "token_length"],
+            ids,
+        )
+    }
+
+    fn collect_crate_context_rows_for_namespace(
+        &self,
+        namespace: Uuid,
+    ) -> Result<RelationExportRows, DbError> {
+        let namespace_lit = namespace.to_string();
+        let script = format!(
+            r#"
+?[id, name, version, namespace, root_path, files] :=
+    *crate_context {{ id, name, version, namespace, root_path, files @ 'NOW' }},
+    namespace = to_uuid("{namespace_lit}")
+"#
+        );
+        Ok(RelationExportRows {
+            relation: "crate_context".to_string(),
+            key_fields: vec!["id".to_string()],
+            val_fields: vec![
+                "name".to_string(),
+                "version".to_string(),
+                "namespace".to_string(),
+                "root_path".to_string(),
+                "files".to_string(),
+            ],
+            rows: self.raw_query(&script)?.rows,
+        })
+    }
+
+    fn collect_file_mod_rows_for_namespace(
+        &self,
+        namespace: Uuid,
+    ) -> Result<RelationExportRows, DbError> {
+        let namespace_lit = namespace.to_string();
+        let script = format!(
+            r#"
+?[owner_id, file_path, file_docs, items, namespace] :=
+    *file_mod {{ owner_id, file_path, file_docs, items, namespace @ 'NOW' }},
+    namespace = to_uuid("{namespace_lit}")
+"#
+        );
+        Ok(RelationExportRows {
+            relation: "file_mod".to_string(),
+            key_fields: vec!["owner_id".to_string()],
+            val_fields: vec![
+                "file_path".to_string(),
+                "file_docs".to_string(),
+                "items".to_string(),
+                "namespace".to_string(),
+            ],
+            rows: self.raw_query(&script)?.rows,
+        })
+    }
+
+    fn collect_workspace_metadata_rows_for_root(
+        &self,
+        exported_root_path: &str,
+    ) -> Result<(Vec<String>, RelationExportRows), DbError> {
+        let rows = self.raw_query(
+            r#"?[id, namespace, root_path, resolver, members, exclude, package_version] :=
+*workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version @ 'NOW' }"#,
+        )?;
+
+        let mut workspace_members = Vec::new();
+        let mut exported_rows = Vec::new();
+        if let Some(row) = rows.rows.first() {
+            let id = row
+                .first()
+                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.id".into()))?
+                .clone();
+            let namespace = row
+                .get(1)
+                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.namespace".into()))?
+                .clone();
+            let root_path = row
+                .get(2)
+                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.root_path".into()))?
+                .clone();
+            let resolver = row
+                .get(3)
+                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.resolver".into()))?
+                .clone();
+            let exclude = row
+                .get(5)
+                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.exclude".into()))?
+                .clone();
+            let package_version = row
+                .get(6)
+                .ok_or_else(|| {
+                    DbError::QueryExecution("missing workspace_metadata.package_version".into())
+                })?
+                .clone();
+            workspace_members.push(exported_root_path.to_string());
+            exported_rows.push(vec![
+                id,
+                namespace,
+                root_path,
+                resolver,
+                DataValue::List(vec![DataValue::from(exported_root_path.to_string())]),
+                exclude,
+                package_version,
+            ]);
+        }
+
+        Ok((
+            workspace_members,
+            RelationExportRows {
+                relation: "workspace_metadata".to_string(),
+                key_fields: vec!["id".to_string()],
+                val_fields: vec![
+                    "namespace".to_string(),
+                    "root_path".to_string(),
+                    "resolver".to_string(),
+                    "members".to_string(),
+                    "exclude".to_string(),
+                    "package_version".to_string(),
+                ],
+                rows: exported_rows,
+            },
+        ))
+    }
+
+    fn collect_active_embedding_set_rows_for_crate_name(
+        &self,
+        crate_name: &str,
+    ) -> Result<RelationExportRows, DbError> {
+        let rels = self
+            .iter_relations()
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        if !rels.into_iter().any(|r| r == ACTIVE_EMBEDDING_SET_REL) {
+            return Ok(RelationExportRows {
+                relation: ACTIVE_EMBEDDING_SET_REL.to_string(),
+                key_fields: vec!["crate_name".to_string()],
+                val_fields: vec![
+                    "embedding_set_id".to_string(),
+                    "provider".to_string(),
+                    "model".to_string(),
+                    "dims".to_string(),
+                    "embedding_dtype".to_string(),
+                    "rel_name".to_string(),
+                ],
+                rows: Vec::new(),
+            });
+        }
+
+        let script = format!(
+            r#"
+?[crate_name, embedding_set_id, provider, model, dims, embedding_dtype, rel_name] :=
+    *{rel} {{ crate_name, embedding_set_id, provider, model, dims, embedding_dtype, rel_name @ 'NOW' }},
+    crate_name = "{crate_name}"
+"#,
+            rel = ACTIVE_EMBEDDING_SET_REL
+        );
+        Ok(RelationExportRows {
+            relation: ACTIVE_EMBEDDING_SET_REL.to_string(),
+            key_fields: vec!["crate_name".to_string()],
+            val_fields: vec![
+                "embedding_set_id".to_string(),
+                "provider".to_string(),
+                "model".to_string(),
+                "dims".to_string(),
+                "embedding_dtype".to_string(),
+                "rel_name".to_string(),
+            ],
+            rows: self.raw_query(&script)?.rows,
+        })
+    }
+
+    fn collect_embedding_set_rows_for_rel_names(
+        &self,
+        rel_names: &BTreeSet<String>,
+    ) -> Result<RelationExportRows, DbError> {
+        if rel_names.is_empty() {
+            return Ok(RelationExportRows {
+                relation: EmbeddingSet::RELATION_NAME.to_string(),
+                key_fields: vec!["id".to_string()],
+                val_fields: vec![
+                    "provider".to_string(),
+                    "model".to_string(),
+                    "dims".to_string(),
+                    "embedding_dtype".to_string(),
+                    "rel_name".to_string(),
+                ],
+                rows: Vec::new(),
+            });
+        }
+
+        let rel_checks = rel_names
+            .iter()
+            .map(|rel_name| format!("rel_name = \"{rel_name}\""))
+            .join(" or ");
+        let script = format!(
+            r#"
+?[id, provider, model, dims, embedding_dtype, rel_name] :=
+    *{relation} {{ id, provider, model, dims, embedding_dtype, rel_name @ 'NOW' }},
+    ({rel_checks})
+"#,
+            relation = EmbeddingSet::RELATION_NAME
+        );
+        Ok(RelationExportRows {
+            relation: EmbeddingSet::RELATION_NAME.to_string(),
+            key_fields: vec!["id".to_string()],
+            val_fields: vec![
+                "provider".to_string(),
+                "model".to_string(),
+                "dims".to_string(),
+                "embedding_dtype".to_string(),
+                "rel_name".to_string(),
+            ],
+            rows: self.raw_query(&script)?.rows,
+        })
+    }
+
+    fn relation_export<'a>(
+        artifact: &'a NamespaceExportArtifact,
+        relation: &str,
+    ) -> Result<&'a RelationExportRows, DbError> {
+        artifact
+            .relation_exports
+            .iter()
+            .find(|rows| rows.relation == relation)
+            .ok_or_else(|| {
+                DbError::QueryExecution(format!(
+                    "namespace export missing required relation snapshot: {relation}"
+                ))
+            })
+    }
+
+    fn put_relation_export_rows(&self, export: &RelationExportRows) -> Result<(), DbError> {
+        if export.rows.is_empty() {
+            return Ok(());
+        }
+
+        let all_fields = export
+            .key_fields
+            .iter()
+            .chain(export.val_fields.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        let put_keys = export.key_fields.join(", ");
+        let put_vals = export.val_fields.join(", ");
+        let lhs = all_fields.join(", ");
+
+        for row in &export.rows {
+            let mut params = BTreeMap::new();
+            let rhs = row
+                .iter()
+                .enumerate()
+                .map(|(idx, value)| {
+                    let name = format!("f{idx}");
+                    params.insert(name.clone(), value.clone());
+                    format!("${name}")
+                })
+                .join(", ");
+            let script = format!(
+                r#"
+?[{lhs}, at] <- [[{rhs}, 'ASSERT']]
+
+:put {relation} {{ {put_keys}, at => {put_vals} }}
+"#,
+                relation = export.relation
+            );
+            self.run_script(&script, params, cozo::ScriptMutability::Mutable)
+                .map_err(DbError::from)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_namespace_import_conflicts(
+        &self,
+        artifact: &NamespaceExportArtifact,
+    ) -> Result<(), NamespaceImportError> {
+        let crate_rows = self.list_crate_context_rows().map_err(NamespaceImportError::from)?;
+        let duplicate_namespace = crate_rows
+            .iter()
+            .find(|row| row.namespace == artifact.namespace)
+            .map(|row| row.namespace);
+        let duplicate_crate_name = crate_rows
+            .iter()
+            .find(|row| row.name == artifact.crate_context.name)
+            .map(|row| row.name.clone());
+        let duplicate_root_path = crate_rows
+            .iter()
+            .find(|row| row.root_path == artifact.crate_context.root_path)
+            .map(|row| row.root_path.clone());
+
+        let workspace_root_mismatch = if let Some(existing_row) = self
+            .raw_query(
+                r#"?[root_path] := *workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version @ 'NOW' }"#,
+            )
+            .map_err(NamespaceImportError::from)?
+            .rows
+            .first()
+        {
+            if let Some(imported_workspace) = artifact
+                .relation_exports
+                .iter()
+                .find(|rows| rows.relation == "workspace_metadata")
+                .and_then(|rows| rows.rows.first())
+            {
+                let existing_root = existing_row
+                    .first()
+                    .ok_or_else(|| {
+                        NamespaceImportError::from(DbError::QueryExecution(
+                            "missing workspace_metadata.root_path".into(),
+                        ))
+                    })
+                    .and_then(|value| to_string(value).map_err(NamespaceImportError::from))?;
+                let imported_root = imported_workspace
+                    .get(2)
+                    .ok_or_else(|| {
+                        NamespaceImportError::from(DbError::QueryExecution(
+                            "missing exported workspace_metadata.root_path".into(),
+                        ))
+                    })
+                    .and_then(|value| to_string(value).map_err(NamespaceImportError::from))?;
+                if existing_root != imported_root {
+                    Some((existing_root, imported_root))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if duplicate_namespace.is_some()
+            || duplicate_crate_name.is_some()
+            || duplicate_root_path.is_some()
+            || workspace_root_mismatch.is_some()
+        {
+            return Err(NamespaceImportError::Conflict(
+                NamespaceImportConflictReport {
+                    duplicate_namespace,
+                    duplicate_crate_name,
+                    duplicate_root_path,
+                    workspace_root_mismatch,
+                },
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn merge_workspace_metadata_from_export(
+        &self,
+        artifact: &NamespaceExportArtifact,
+    ) -> Result<bool, DbError> {
+        let workspace_export = Self::relation_export(artifact, "workspace_metadata")?;
+        let Some(export_row) = workspace_export.rows.first() else {
+            return Ok(false);
+        };
+
+        let current = self.raw_query(
+            r#"?[id, namespace, root_path, resolver, members, exclude, package_version] :=
+*workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version @ 'NOW' }"#,
+        )?;
+
+        if current.rows.is_empty() {
+            self.put_relation_export_rows(workspace_export)?;
+            return Ok(true);
+        }
+        if current.rows.len() > 1 {
+            return Err(DbError::QueryExecution(format!(
+                "expected at most one workspace_metadata row, found {}",
+                current.rows.len()
+            )));
+        }
+
+        let row = &current.rows[0];
+        let mut members = row
+            .get(4)
+            .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.members".into()))
+            .and_then(to_string_list)?;
+        let imported_member = export_row
+            .get(4)
+            .ok_or_else(|| {
+                DbError::QueryExecution("missing exported workspace_metadata.members".into())
+            })
+            .and_then(to_string_list)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                DbError::QueryExecution("exported workspace metadata had no member".into())
+            })?;
+        members.push(imported_member);
+        members.sort();
+        members.dedup();
+
+        let mut params = BTreeMap::new();
+        params.insert(
+            "id".into(),
+            row.first()
+                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.id".into()))?
+                .clone(),
+        );
+        params.insert(
+            "namespace".into(),
+            row.get(1)
+                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.namespace".into()))?
+                .clone(),
+        );
+        params.insert(
+            "root_path".into(),
+            row.get(2)
+                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.root_path".into()))?
+                .clone(),
+        );
+        params.insert(
+            "resolver".into(),
+            row.get(3)
+                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.resolver".into()))?
+                .clone(),
+        );
+        params.insert(
+            "members".into(),
+            DataValue::List(members.into_iter().map(DataValue::from).collect()),
+        );
+        params.insert(
+            "exclude".into(),
+            row.get(5)
+                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.exclude".into()))?
+                .clone(),
+        );
+        params.insert(
+            "package_version".into(),
+            row.get(6)
+                .ok_or_else(|| {
+                    DbError::QueryExecution("missing workspace_metadata.package_version".into())
+                })?
+                .clone(),
+        );
+        let script = r#"
+?[id, namespace, root_path, resolver, members, exclude, package_version, at] <- [[
+    $id,
+    $namespace,
+    $root_path,
+    $resolver,
+    $members,
+    $exclude,
+    $package_version,
+    'ASSERT'
+]]
+
+:put workspace_metadata {
+    id,
+    namespace,
+    root_path,
+    resolver,
+    members,
+    exclude,
+    package_version,
+    at
+}"#;
+        self.run_script(script, params, cozo::ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+        Ok(true)
     }
 
     fn retract_syntax_edges_for_ids(&self, ids: &BTreeSet<Uuid>) -> Result<(), DbError> {
@@ -1749,6 +2385,199 @@ desc[id] := parent_of[id, parent], desc[parent]
             bm25_invalidated: true,
         })
     }
+
+    pub fn export_namespace(
+        &self,
+        namespace: Uuid,
+    ) -> Result<NamespaceExportArtifact, DbError> {
+        let inventory = self.collect_namespace_inventory(namespace)?;
+        let mut relation_exports = vec![
+            self.collect_crate_context_rows_for_namespace(namespace)?,
+            self.collect_file_mod_rows_for_namespace(namespace)?,
+            self.collect_syntax_edge_rows_for_ids(&inventory.descendant_ids)?,
+            self.collect_bm25_doc_meta_for_ids(&inventory.descendant_ids)?,
+        ];
+
+        let mut descendant_relations = NodeType::all_variants()
+            .into_iter()
+            .filter(|ty| *ty != NodeType::SyntaxEdge)
+            .map(|ty| ty.relation_str().to_string())
+            .collect::<Vec<_>>();
+        descendant_relations.push("method".to_string());
+        descendant_relations.sort();
+        descendant_relations.dedup();
+
+        for relation in descendant_relations {
+            let node_type = NodeType::all_variants()
+                .into_iter()
+                .find(|ty| ty.relation_str() == relation)
+                .filter(|ty| *ty != NodeType::SyntaxEdge);
+            if let Some(node_type) = node_type {
+                let key_fields = node_type.keys().collect::<Vec<_>>();
+                let val_fields = node_type.vals().collect::<Vec<_>>();
+                relation_exports.push(self.collect_relation_rows_by_id(
+                    &relation,
+                    &key_fields,
+                    &val_fields,
+                    &inventory.descendant_ids,
+                )?);
+            } else if relation == "method" {
+                let key_fields = MethodNodeSchema::SCHEMA
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>();
+                let val_fields = MethodNodeSchema::SCHEMA
+                    .vals()
+                    .copied()
+                    .collect::<Vec<_>>();
+                relation_exports.push(self.collect_relation_rows_by_id(
+                    &relation,
+                    &key_fields,
+                    &val_fields,
+                    &inventory.descendant_ids,
+                )?);
+            }
+        }
+
+        let mut exported_embedding_rel_names = BTreeSet::new();
+        for relation in self.list_embedding_vector_relations()? {
+            let export = self.collect_vector_rows_for_ids(&relation, &inventory.descendant_ids)?;
+            if !export.rows.is_empty() {
+                exported_embedding_rel_names.insert(relation.clone());
+            }
+            relation_exports.push(export);
+        }
+
+        let active_embedding_meta =
+            self.collect_active_embedding_set_rows_for_crate_name(&inventory.crate_context.name)?;
+        if let Some(rel_name) = active_embedding_meta
+            .rows
+            .first()
+            .and_then(|row| row.get(6))
+            .and_then(|value| value.get_str())
+        {
+            exported_embedding_rel_names.insert(rel_name.to_string());
+        }
+        relation_exports.push(active_embedding_meta);
+        relation_exports.push(self.collect_embedding_set_rows_for_rel_names(
+            &exported_embedding_rel_names,
+        )?);
+
+        let (workspace_members, workspace_export) =
+            self.collect_workspace_metadata_rows_for_root(&inventory.crate_context.root_path)?;
+        relation_exports.push(workspace_export);
+
+        Ok(NamespaceExportArtifact {
+            namespace: inventory.crate_context.namespace,
+            crate_context: inventory.crate_context,
+            file_module_owner_ids: inventory.file_module_owner_ids,
+            descendant_ids: inventory.descendant_ids,
+            workspace_members,
+            relation_exports,
+        })
+    }
+
+    pub async fn import_namespace(
+        &self,
+        artifact: &NamespaceExportArtifact,
+    ) -> Result<NamespaceImportResult, NamespaceImportError> {
+        self.validate_namespace_import_conflicts(artifact)?;
+
+        let embedding_set_export = Self::relation_export(artifact, EmbeddingSet::RELATION_NAME)
+            .map_err(NamespaceImportError::from)?;
+        self.put_relation_export_rows(embedding_set_export)
+            .map_err(NamespaceImportError::from)?;
+
+        for row in &embedding_set_export.rows {
+            let provider = to_string(&row[1]).map_err(NamespaceImportError::from)?;
+            let model = to_string(&row[2]).map_err(NamespaceImportError::from)?;
+            let dims = to_u64(&row[3]).map_err(NamespaceImportError::from)?;
+            let dtype = Self::parse_embedding_dtype(
+                &to_string(&row[4]).map_err(NamespaceImportError::from)?,
+            )
+            .map_err(NamespaceImportError::from)?;
+            let set = EmbeddingSet::new(
+                EmbeddingProviderSlug::new_from_str(&provider),
+                EmbeddingModelId::new_from_str(&model),
+                EmbeddingShape::new(dims as u32, dtype),
+            );
+            self.ensure_embedding_relation(&set)
+                .map_err(NamespaceImportError::from)?;
+            self.ensure_vector_embedding_relation(&set)
+                .map_err(NamespaceImportError::from)?;
+        }
+
+        let active_embedding_export = Self::relation_export(artifact, ACTIVE_EMBEDDING_SET_REL)
+            .map_err(NamespaceImportError::from)?;
+        self.ensure_active_embedding_relation()
+            .map_err(NamespaceImportError::from)?;
+        self.put_relation_export_rows(active_embedding_export)
+            .map_err(NamespaceImportError::from)?;
+
+        for relation in [
+            "crate_context",
+            "file_mod",
+            "workspace_metadata",
+            "syntax_edge",
+            "bm25_doc_meta",
+        ] {
+            if relation == "workspace_metadata" {
+                self.merge_workspace_metadata_from_export(artifact)
+                    .map_err(NamespaceImportError::from)?;
+            } else {
+                let export =
+                    Self::relation_export(artifact, relation).map_err(NamespaceImportError::from)?;
+                self.put_relation_export_rows(export)
+                    .map_err(NamespaceImportError::from)?;
+            }
+        }
+
+        let mut descendant_relations = NodeType::all_variants()
+            .into_iter()
+            .filter(|ty| *ty != NodeType::SyntaxEdge)
+            .map(|ty| ty.relation_str().to_string())
+            .collect::<Vec<_>>();
+        descendant_relations.push("method".to_string());
+        descendant_relations.sort();
+        descendant_relations.dedup();
+        for relation in descendant_relations {
+            let export =
+                Self::relation_export(artifact, &relation).map_err(NamespaceImportError::from)?;
+            self.put_relation_export_rows(export)
+                .map_err(NamespaceImportError::from)?;
+        }
+
+        let embedding_set_relations = embedding_set_export
+            .rows
+            .iter()
+            .filter_map(|row| row.get(5))
+            .filter_map(|value| value.get_str())
+            .collect::<BTreeSet<_>>();
+        for relation in embedding_set_relations {
+            let export =
+                Self::relation_export(artifact, relation).map_err(NamespaceImportError::from)?;
+            self.put_relation_export_rows(export)
+                .map_err(NamespaceImportError::from)?;
+        }
+
+        let hnsw_invalidated = self
+            .invalidate_active_hnsw_index()
+            .map_err(NamespaceImportError::from)?;
+
+        Ok(NamespaceImportResult {
+            imported_namespace: artifact.namespace,
+            imported_crate_name: artifact.crate_context.name.clone(),
+            imported_root_path: artifact.crate_context.root_path.clone(),
+            imported_descendant_ids: artifact.descendant_ids.clone(),
+            imported_file_module_owner_ids: artifact.file_module_owner_ids.clone(),
+            workspace_member_added: !artifact.workspace_members.is_empty(),
+            hnsw_invalidated,
+            bm25_invalidated: !Self::relation_export(artifact, "bm25_doc_meta")
+                .map_err(NamespaceImportError::from)?
+                .rows
+                .is_empty(),
+        })
+    }
     pub fn get_path_info(&self, path: &str) -> Result<QueryResult, PlokeError> {
         let ty = NodeType::Module;
         let rel = ty.relation_str();
@@ -2312,9 +3141,26 @@ mod tests {
         EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
     };
     use ploke_core::TrackingHash;
+    use ploke_test_utils::fixture_dbs::FixtureDb;
     use ploke_transform::schema::create_schema_all;
     use tracing::error;
     use tracing::info;
+
+    fn fresh_local_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, PlokeError> {
+        let db = Database::init_with_schema()?;
+        let fixture_path = fixture.path();
+        match fixture.import_mode {
+            ploke_test_utils::fixture_dbs::FixtureImportMode::PlainBackup => {
+                let prior_rels = db.relations_vec()?;
+                db.import_from_backup(&fixture_path, &prior_rels)
+                    .map_err(DbError::from)?;
+            }
+            ploke_test_utils::fixture_dbs::FixtureImportMode::BackupWithEmbeddings => {
+                db.import_backup_with_embeddings(&fixture_path)?;
+            }
+        }
+        Ok(db)
+    }
     use tracing::trace;
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
@@ -3040,7 +3886,7 @@ mod tests {
 
     #[test]
     fn workspace_fixture_namespace_inventory_matches_crate_context_membership() -> Result<(), PlokeError> {
-        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let crate_contexts = db
             .list_crate_context_rows()
             .expect("workspace fixture should expose crate_context rows");
@@ -3339,6 +4185,329 @@ id = to_uuid("{seeded_node}")"#
             bm25_after.rows.is_empty(),
             "removed namespace should retract bm25 metadata for removed nodes"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn export_namespace_artifact_contains_only_target_namespace_rows() -> Result<(), PlokeError>
+    {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let crate_contexts = db
+            .list_crate_context_rows()
+            .expect("workspace fixture should expose crate_context rows");
+        let [exported, sibling] = crate_contexts.as_slice() else {
+            panic!("expected exactly two crate contexts for ws_fixture_01");
+        };
+
+        let exported_inventory = db
+            .collect_namespace_inventory(exported.namespace)
+            .expect("exported namespace inventory should build");
+        let sibling_inventory = db
+            .collect_namespace_inventory(sibling.namespace)
+            .expect("sibling namespace inventory should build");
+
+        db.setup_multi_embedding()?;
+        let active_set = db.with_active_set(|set| set.clone())?;
+        let seeded_node = *exported_inventory
+            .descendant_ids
+            .iter()
+            .next()
+            .expect("exported namespace should have at least one descendant");
+        db.update_embeddings_batch(vec![(
+            seeded_node,
+            vec![0.0_f32; active_set.dims() as usize],
+        )])?;
+        db.put_active_embedding_set_meta(&exported.name, &active_set)?;
+
+        let bm25_tracking_hash = TrackingHash(Uuid::new_v4());
+        let mut bm25_params = BTreeMap::new();
+        bm25_params.insert("id".into(), DataValue::Uuid(UuidWrapper(seeded_node)));
+        bm25_params.insert(
+            "tracking_hash".into(),
+            DataValue::Uuid(UuidWrapper(bm25_tracking_hash.0)),
+        );
+        bm25_params.insert(
+            "tokenizer_version".into(),
+            DataValue::Str(TOKENIZER_VERSION.into()),
+        );
+        bm25_params.insert("token_length".into(), DataValue::Num(cozo::Num::Int(3)));
+        db.run_script(
+            r#"
+?[id, tracking_hash, tokenizer_version, token_length, at] <- [[
+    $id,
+    $tracking_hash,
+    $tokenizer_version,
+    $token_length,
+    'ASSERT'
+]]
+
+:put bm25_doc_meta { id => tracking_hash, tokenizer_version, token_length, at }
+"#,
+            bm25_params,
+            ScriptMutability::Mutable,
+        )
+        .map_err(DbError::from)?;
+
+        let artifact = db.export_namespace(exported.namespace)?;
+        let relation_export = |relation: &str| {
+            artifact
+                .relation_exports
+                .iter()
+                .find(|rows| rows.relation == relation)
+                .unwrap_or_else(|| panic!("missing relation export for {relation}"))
+        };
+
+        assert_eq!(artifact.namespace, exported.namespace);
+        assert_eq!(artifact.crate_context, *exported);
+        assert_eq!(
+            artifact.file_module_owner_ids,
+            exported_inventory.file_module_owner_ids
+        );
+        assert_eq!(artifact.descendant_ids, exported_inventory.descendant_ids);
+        assert_eq!(
+            artifact.workspace_members,
+            vec![exported.root_path.clone()],
+            "subset export should prune workspace membership to the exported crate root"
+        );
+
+        let crate_context_export = relation_export("crate_context");
+        assert_eq!(crate_context_export.rows.len(), 1);
+        assert_eq!(
+            to_uuid(&crate_context_export.rows[0][3])?,
+            exported.namespace,
+            "crate_context export should only contain the target namespace"
+        );
+
+        let file_mod_export = relation_export("file_mod");
+        assert_eq!(
+            file_mod_export.rows.len(),
+            exported_inventory.file_module_owner_ids.len()
+        );
+        for row in &file_mod_export.rows {
+            assert_eq!(
+                to_uuid(&row[4])?,
+                exported.namespace,
+                "file_mod export should only contain the target namespace"
+            );
+            let owner_id = to_uuid(&row[0])?;
+            assert!(
+                exported_inventory.file_module_owner_ids.contains(&owner_id),
+                "file_mod export should be keyed by the pre-export namespace inventory"
+            );
+            assert!(
+                !sibling_inventory.file_module_owner_ids.contains(&owner_id),
+                "file_mod export must exclude sibling namespace roots"
+            );
+        }
+
+        let workspace_export = relation_export("workspace_metadata");
+        assert_eq!(workspace_export.rows.len(), 1);
+        assert_eq!(
+            to_string_list(&workspace_export.rows[0][4])?,
+            vec![exported.root_path.clone()]
+        );
+
+        let syntax_edge_export = relation_export("syntax_edge");
+        assert!(
+            !syntax_edge_export.rows.is_empty(),
+            "subset export should carry syntax_edge rows for the target namespace"
+        );
+        for row in &syntax_edge_export.rows {
+            let source = to_uuid(&row[0])?;
+            let target = to_uuid(&row[1])?;
+            assert!(
+                artifact.descendant_ids.contains(&source) || artifact.descendant_ids.contains(&target),
+                "syntax_edge export should stay inside the target descendant closure"
+            );
+            assert!(
+                !sibling_inventory.descendant_ids.contains(&source)
+                    && !sibling_inventory.descendant_ids.contains(&target),
+                "syntax_edge export must exclude sibling namespace descendants"
+            );
+        }
+
+        let bm25_export = relation_export("bm25_doc_meta");
+        assert_eq!(bm25_export.rows.len(), 1);
+        assert_eq!(to_uuid(&bm25_export.rows[0][0])?, seeded_node);
+
+        let vector_export = relation_export(active_set.rel_name().as_ref());
+        assert_eq!(vector_export.rows.len(), 1);
+        assert_eq!(to_uuid(&vector_export.rows[0][0])?, seeded_node);
+
+        let active_embedding_export = relation_export(ACTIVE_EMBEDDING_SET_REL);
+        assert_eq!(active_embedding_export.rows.len(), 1);
+        assert_eq!(to_string(&active_embedding_export.rows[0][0])?, exported.name);
+
+        let embedding_set_export = relation_export(EmbeddingSet::RELATION_NAME);
+        assert_eq!(embedding_set_export.rows.len(), 1);
+        assert_eq!(
+            to_string(&embedding_set_export.rows[0][5])?,
+            active_set.rel_name().as_ref()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state(
+    ) -> Result<(), PlokeError> {
+        let source_db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let source_contexts = source_db.list_crate_context_rows()?;
+        let [exported, sibling] = source_contexts.as_slice() else {
+            panic!("expected exactly two crate contexts for ws_fixture_01");
+        };
+        let exported_inventory = source_db.collect_namespace_inventory(exported.namespace)?;
+
+        source_db.setup_multi_embedding()?;
+        let active_set = source_db.with_active_set(|set| set.clone())?;
+        let exported_seeded_node = *exported_inventory
+            .descendant_ids
+            .iter()
+            .next()
+            .expect("exported namespace should have descendants");
+        source_db.update_embeddings_batch(vec![(
+            exported_seeded_node,
+            vec![0.0_f32; active_set.dims() as usize],
+        )])?;
+        source_db.put_active_embedding_set_meta(&exported.name, &active_set)?;
+        let mut bm25_params = BTreeMap::new();
+        bm25_params.insert("id".into(), DataValue::Uuid(UuidWrapper(exported_seeded_node)));
+        bm25_params.insert(
+            "tracking_hash".into(),
+            DataValue::Uuid(UuidWrapper(Uuid::new_v4())),
+        );
+        bm25_params.insert(
+            "tokenizer_version".into(),
+            DataValue::Str(TOKENIZER_VERSION.into()),
+        );
+        bm25_params.insert("token_length".into(), DataValue::Num(cozo::Num::Int(3)));
+        source_db
+            .run_script(
+                r#"
+?[id, tracking_hash, tokenizer_version, token_length, at] <- [[
+    $id,
+    $tracking_hash,
+    $tokenizer_version,
+    $token_length,
+    'ASSERT'
+]]
+
+:put bm25_doc_meta { id => tracking_hash, tokenizer_version, token_length, at }
+"#,
+                bm25_params,
+                ScriptMutability::Mutable,
+            )
+            .map_err(DbError::from)?;
+        let artifact = source_db.export_namespace(exported.namespace)?;
+
+        let dest_db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let dest_contexts = dest_db.list_crate_context_rows()?;
+        let [_, remaining] = dest_contexts.as_slice() else {
+            panic!("expected exactly two crate contexts for ws_fixture_01");
+        };
+        let remaining_inventory = dest_db.collect_namespace_inventory(remaining.namespace)?;
+        dest_db.setup_multi_embedding()?;
+        let dest_active_set = dest_db.with_active_set(|set| set.clone())?;
+        let remaining_seeded_node = *remaining_inventory
+            .descendant_ids
+            .iter()
+            .next()
+            .expect("remaining namespace should have descendants");
+        dest_db.update_embeddings_batch(vec![(
+            remaining_seeded_node,
+            vec![0.0_f32; dest_active_set.dims() as usize],
+        )])?;
+        dest_db.create_embedding_index(&dest_active_set)?;
+        assert!(dest_db.is_hnsw_index_registered(&dest_active_set)?);
+        dest_db.remove_namespace(exported.namespace).await?;
+        dest_db.create_embedding_index(&dest_active_set)?;
+        assert!(
+            dest_db.is_hnsw_index_registered(&dest_active_set)?,
+            "test setup should recreate hnsw on the surviving namespace before import"
+        );
+
+        let result = dest_db
+            .import_namespace(&artifact)
+            .await
+            .expect("namespace import into populated db should succeed");
+
+        assert_eq!(result.imported_namespace, exported.namespace);
+        assert_eq!(result.imported_crate_name, exported.name);
+        assert_eq!(result.imported_root_path, exported.root_path);
+        assert_eq!(result.imported_descendant_ids, exported_inventory.descendant_ids);
+        assert_eq!(
+            result.imported_file_module_owner_ids,
+            exported_inventory.file_module_owner_ids
+        );
+        assert!(result.workspace_member_added);
+        assert!(result.hnsw_invalidated);
+        assert!(result.bm25_invalidated);
+
+        let restored_contexts = dest_db.list_crate_context_rows()?;
+        assert_eq!(restored_contexts.len(), 2);
+        assert!(restored_contexts.iter().any(|row| row.namespace == exported.namespace));
+        assert!(restored_contexts.iter().any(|row| row.namespace == sibling.namespace));
+
+        let restored_inventory = dest_db.collect_namespace_inventory(exported.namespace)?;
+        assert_eq!(restored_inventory.crate_context, *exported);
+        assert_eq!(restored_inventory.descendant_ids, exported_inventory.descendant_ids);
+
+        let workspace_rows = dest_db.raw_query(
+            r#"?[members] := *workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version @ 'NOW' }"#,
+        )?;
+        let mut members = workspace_rows.rows[0]
+            .first()
+            .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.members".into()))
+            .and_then(to_string_list)?;
+        members.sort();
+        let mut expected_members = vec![exported.root_path.clone(), sibling.root_path.clone()];
+        expected_members.sort();
+        assert_eq!(members, expected_members);
+
+        let imported_vector_rows = dest_db.raw_query(&format!(
+            r#"?[node_id] := *{} {{ node_id, embedding_set_id, vector @ 'NOW' }}, node_id = to_uuid("{exported_seeded_node}")"#,
+            dest_active_set.rel_name()
+        ))?;
+        assert_eq!(imported_vector_rows.rows.len(), 1);
+        let imported_bm25_rows = dest_db.raw_query(&format!(
+            r#"?[id] := *bm25_doc_meta {{ id, tracking_hash, tokenizer_version, token_length @ 'NOW' }},
+id = to_uuid("{exported_seeded_node}")"#
+        ))?;
+        assert_eq!(imported_bm25_rows.rows.len(), 1);
+        assert!(
+            !dest_db.is_hnsw_index_registered(&dest_active_set)?,
+            "namespace import should invalidate hnsw registration until rebuild"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn import_namespace_reports_duplicate_namespace_name_and_root_conflicts(
+    ) -> Result<(), PlokeError> {
+        let source_db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let source_contexts = source_db.list_crate_context_rows()?;
+        let [exported, _] = source_contexts.as_slice() else {
+            panic!("expected exactly two crate contexts for ws_fixture_01");
+        };
+        let artifact = source_db.export_namespace(exported.namespace)?;
+
+        let target_db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let err = target_db
+            .import_namespace(&artifact)
+            .await
+            .expect_err("importing an already-loaded namespace should conflict");
+
+        match err {
+            NamespaceImportError::Conflict(report) => {
+                assert_eq!(report.duplicate_namespace, Some(exported.namespace));
+                assert_eq!(report.duplicate_crate_name, Some(exported.name.clone()));
+                assert_eq!(report.duplicate_root_path, Some(exported.root_path.clone()));
+                assert_eq!(report.workspace_root_mismatch, None);
+            }
+            other => panic!("expected conflict report, got {other:?}"),
+        }
 
         Ok(())
     }

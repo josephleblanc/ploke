@@ -109,3 +109,29 @@ Update 2026-03-21:
   availability.
 - `C6` is still not complete: subset export/import and import conflict
   validation remain the next missing DB primitives.
+
+Update 2026-03-21 (later):
+
+- `Database::export_namespace(...)` now exists in
+  [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) as
+  the first real namespace-scoped subset export primitive.
+- `Database::import_namespace(...)` now exists in
+  [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) as
+  the first real namespace-scoped subset import primitive, with explicit
+  duplicate namespace/name/root conflict reporting.
+- The fixture-backed witness
+  `export_namespace_artifact_contains_only_target_namespace_rows` proves the
+  exported artifact is built from explicit namespace inventory and contains
+  only the target crate's `crate_context`, `file_mod`, rooted graph rows,
+  vector rows, BM25 rows, embedding-set metadata, and a pruned
+  `workspace_metadata.members` list.
+- The fixture-backed witnesses
+  `import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state`
+  and `import_namespace_reports_duplicate_namespace_name_and_root_conflicts`
+  now prove one exported namespace can be re-imported into a populated DB
+  without whole-DB replacement, and that duplicate namespace/name/root cases
+  fail explicitly.
+- `C6` still remains incomplete overall: the DB primitives now exist, but the
+  next missing layer is TUI/runtime subset command wiring so loaded membership,
+  focus, IO roots, registry/snapshot metadata, and search availability update
+  end to end.
