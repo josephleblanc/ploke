@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::{ops::Deref, panic::Location, path::Path};
 
@@ -81,6 +81,21 @@ impl QueryContext {
 struct CrateRow {
     name: String,
     id: String, // the UUID already arrives as a string
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrateContextRow {
+    pub id: Uuid,
+    pub name: String,
+    pub namespace: Uuid,
+    pub root_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceInventory {
+    pub crate_context: CrateContextRow,
+    pub file_module_owner_ids: BTreeSet<Uuid>,
+    pub descendant_ids: BTreeSet<Uuid>,
 }
 
 impl std::ops::Deref for Database {
@@ -1207,6 +1222,106 @@ impl Database {
         let name_id = format!("{}_{}", name, id);
         Ok(name_id)
     }
+
+    pub fn list_crate_context_rows(&self) -> Result<Vec<CrateContextRow>, DbError> {
+        let rows = self.raw_query(
+            "?[id, name, namespace, root_path] := *crate_context { id, name, namespace, root_path }",
+        )?;
+
+        rows.rows
+            .into_iter()
+            .map(|row| {
+                let id = row
+                    .first()
+                    .ok_or_else(|| DbError::QueryExecution("missing crate_context.id".into()))
+                    .and_then(to_uuid)?;
+                let name = row
+                    .get(1)
+                    .ok_or_else(|| DbError::QueryExecution("missing crate_context.name".into()))
+                    .and_then(to_string)?;
+                let namespace = row
+                    .get(2)
+                    .ok_or_else(|| DbError::QueryExecution("missing crate_context.namespace".into()))
+                    .and_then(to_uuid)?;
+                let root_path = row
+                    .get(3)
+                    .ok_or_else(|| DbError::QueryExecution("missing crate_context.root_path".into()))
+                    .and_then(to_string)?;
+
+                Ok(CrateContextRow {
+                    id,
+                    name,
+                    namespace,
+                    root_path,
+                })
+            })
+            .collect()
+    }
+
+    pub fn collect_namespace_inventory(&self, namespace: Uuid) -> Result<NamespaceInventory, DbError> {
+        let namespace_lit = namespace.to_string();
+        let context_rows = self.raw_query(&format!(
+            r#"?[id, name, namespace, root_path] :=
+*crate_context {{ id, name, namespace, root_path }},
+namespace = to_uuid("{namespace_lit}")"#
+        ))?;
+
+        if context_rows.rows.is_empty() {
+            return Err(DbError::NotFound);
+        }
+        if context_rows.rows.len() > 1 {
+            return Err(DbError::QueryExecution(format!(
+                "expected exactly one crate_context row for namespace {namespace}, found {}",
+                context_rows.rows.len()
+            )));
+        }
+
+        let row = &context_rows.rows[0];
+        let crate_context = CrateContextRow {
+            id: row.first().ok_or_else(|| DbError::QueryExecution("missing crate_context.id".into())).and_then(to_uuid)?,
+            name: row.get(1).ok_or_else(|| DbError::QueryExecution("missing crate_context.name".into())).and_then(to_string)?,
+            namespace: row.get(2).ok_or_else(|| DbError::QueryExecution("missing crate_context.namespace".into())).and_then(to_uuid)?,
+            root_path: row.get(3).ok_or_else(|| DbError::QueryExecution("missing crate_context.root_path".into())).and_then(to_string)?,
+        };
+
+        let root_rows = self.raw_query(&format!(
+            r#"?[owner_id] := *file_mod {{ owner_id, namespace }}, namespace = to_uuid("{namespace_lit}")"#
+        ))?;
+        let file_module_owner_ids = root_rows
+            .rows
+            .iter()
+            .map(|row| {
+                row.first()
+                    .ok_or_else(|| DbError::QueryExecution("missing file_mod.owner_id".into()))
+                    .and_then(to_uuid)
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+
+        let descendant_rows = self.raw_query(&format!(
+            r#"
+root[id] := *file_mod {{ owner_id: id, namespace }}, namespace = to_uuid("{namespace_lit}")
+parent_of[child, parent] := *syntax_edge {{ source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+desc[id] := root[id]
+desc[id] := parent_of[id, parent], desc[parent]
+?[id] := desc[id]
+"#
+        ))?;
+        let descendant_ids = descendant_rows
+            .rows
+            .iter()
+            .map(|row| {
+                row.first()
+                    .ok_or_else(|| DbError::QueryExecution("missing descendant id".into()))
+                    .and_then(to_uuid)
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+
+        Ok(NamespaceInventory {
+            crate_context,
+            file_module_owner_ids,
+            descendant_ids,
+        })
+    }
     pub fn get_path_info(&self, path: &str) -> Result<QueryResult, PlokeError> {
         let ty = NodeType::Module;
         let rel = ty.relation_str();
@@ -1756,7 +1871,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{BTreeSet, HashSet};
 
     use super::*;
     use crate::bm25_index::DocData;
@@ -1777,6 +1892,8 @@ mod tests {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
     use uuid::Uuid;
+
+    use ploke_test_utils::{WS_FIXTURE_01_CANONICAL, fresh_backup_fixture_db, workspace_root};
 
     fn setup_db() -> Database {
         let db = Db::new(MemStorage::default()).unwrap();
@@ -2490,6 +2607,92 @@ mod tests {
             selection.0.hash_id().into_inner(),
             set.hash_id().into_inner()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_fixture_namespace_inventory_matches_crate_context_membership() -> Result<(), PlokeError> {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let crate_contexts = db
+            .list_crate_context_rows()
+            .expect("workspace fixture should expose crate_context rows");
+        assert_eq!(crate_contexts.len(), 2, "expected two crate contexts for ws_fixture_01");
+
+        let expected_root_paths = crate_contexts
+            .iter()
+            .map(|row| row.root_path.clone())
+            .collect::<BTreeSet<_>>();
+        let expected_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_01");
+        assert!(
+            expected_root_paths
+                .iter()
+                .all(|path| path.starts_with(&expected_workspace_root.display().to_string())),
+            "crate roots should remain inside the committed workspace fixture"
+        );
+
+        for context in &crate_contexts {
+            let inventory = db
+                .collect_namespace_inventory(context.namespace)
+                .expect("namespace inventory should build from crate_context namespace");
+            assert_eq!(inventory.crate_context, *context);
+            assert!(
+                !inventory.file_module_owner_ids.is_empty(),
+                "namespace inventory should include at least one file_mod owner"
+            );
+            assert!(
+                !inventory.descendant_ids.is_empty(),
+                "namespace inventory should include descendant graph ids"
+            );
+            assert!(
+                inventory
+                    .file_module_owner_ids
+                    .iter()
+                    .all(|id| inventory.descendant_ids.contains(id)),
+                "root file modules should be included in descendant inventory"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_fixture_namespaces_remain_distinct_in_subset_inventory() -> Result<(), PlokeError> {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let crate_contexts = db
+            .list_crate_context_rows()
+            .expect("workspace fixture should expose crate_context rows");
+        let [left, right] = crate_contexts.as_slice() else {
+            panic!("expected exactly two crate contexts for ws_fixture_01");
+        };
+
+        let left_inventory = db
+            .collect_namespace_inventory(left.namespace)
+            .expect("left namespace inventory should build");
+        let right_inventory = db
+            .collect_namespace_inventory(right.namespace)
+            .expect("right namespace inventory should build");
+
+        assert_ne!(
+            left_inventory.crate_context.namespace, right_inventory.crate_context.namespace,
+            "fixture crates must have distinct namespaces"
+        );
+        assert_ne!(
+            left_inventory.crate_context.root_path, right_inventory.crate_context.root_path,
+            "fixture crates must have distinct root paths"
+        );
+        assert!(
+            left_inventory
+                .file_module_owner_ids
+                .is_disjoint(&right_inventory.file_module_owner_ids),
+            "root file modules should not overlap across namespaces"
+        );
+        assert!(
+            left_inventory
+                .descendant_ids
+                .is_disjoint(&right_inventory.descendant_ids),
+            "namespace descendant inventories should stay distinct on the committed workspace fixture"
+        );
+
         Ok(())
     }
 }

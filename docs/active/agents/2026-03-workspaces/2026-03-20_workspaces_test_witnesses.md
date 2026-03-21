@@ -30,6 +30,8 @@ the criterion language, not just to the implementation details.
 | Phase 5 `C4` | `load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1778) | Proves workspace restore rejects the legacy `FirstPopulated` embedding-set fallback when snapshot metadata is missing, which is a required `C4` failure mode |
 | Phase 5 `C4` | `load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1868) | Proves registry/snapshot disagreement fails explicitly instead of silently preferring stale registry metadata over restored snapshot metadata |
 | Phase 6 `C5` | `bm25_specific_crate_scope_filters_before_top_k_truncation` in [bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs#L1006) | Builds a two-namespace in-memory BM25 corpus where the stronger out-of-scope document wins unscoped `top_k=1`, then proves `SpecificCrate(CrateId)` still returns the weaker in-scope document at `top_k=1`, which is direct evidence that scope is applied before BM25 truncation |
+| Phase 7 `C6` | `workspace_fixture_namespace_inventory_matches_crate_context_membership` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Loads `ws_fixture_01_canonical`, enumerates `crate_context` rows, builds a per-namespace inventory from `crate_context.namespace -> file_mod.namespace -> syntax_edge` descendant closure, and proves each loaded crate has a non-empty graph inventory rooted inside the committed workspace fixture |
+| Phase 7 `C6` | `workspace_fixture_namespaces_remain_distinct_in_subset_inventory` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Proves the two workspace members in `ws_fixture_01_canonical` produce distinct namespace inventories with disjoint root file modules and disjoint descendant graph ids, which is the first direct evidence that later subset operations can key off explicit namespace authority rather than crate-name or whole-DB assumptions |
 
 ## Reasoning by acceptance item
 
@@ -469,6 +471,42 @@ Scope note:
 - broader `cargo test -p ploke-tui --tests -- --nocapture` passed via
   sub-agent after the fixture refresh and witness additions, so Phase 6 `C5`
   now has both targeted witness coverage and broader regression validation
+
+### Phase 7 `C6` namespace-scoped subset DB operations
+
+Criterion text:
+- requires namespace-scoped DB primitives before `/load crates ...` or
+  `/workspace rm <crate>`
+- requires subset operations to use explicit namespace authority rather than
+  whole-DB replacement
+- requires explicit conflict handling and post-mutation membership/search-state
+  reconciliation
+
+Current witness reasoning:
+- [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+  now exposes `list_crate_context_rows(...)` and
+  `collect_namespace_inventory(...)`, which build a DB-side inventory from
+  `crate_context.namespace`, `file_mod.namespace`, and `syntax_edge`
+  descendant closure
+- [2026-03-21_c6_subset_db_design_notes.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-21_c6_subset_db_design_notes.md)
+  records why this is the first safe seam for `C6` and why current whole-backup
+  APIs are insufficient
+
+What a passing witness proves:
+- if `workspace_fixture_namespace_inventory_matches_crate_context_membership`
+  passes, then the committed multi-member workspace fixture already exposes a
+  per-crate namespace inventory in `ploke-db` derived from persisted DB
+  authority rather than from crate-name lookup or cwd-derived behavior
+- if `workspace_fixture_namespaces_remain_distinct_in_subset_inventory`
+  passes, then the two crates in `ws_fixture_01_canonical` remain distinct at
+  the namespace/root/descendant-id level inside the DB, which is the minimal
+  precondition for later subset export/import/remove primitives
+
+Scope note:
+- this is partial evidence only
+- it does not yet prove subset export, subset import, subset removal, conflict
+  validation, workspace membership mutation, or search-state reconciliation
+- `C6` remains `in progress` until real namespace-scoped subset mutation exists
 
 ## Update rule
 
