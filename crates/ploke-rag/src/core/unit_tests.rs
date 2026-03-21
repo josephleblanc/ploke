@@ -1,14 +1,16 @@
 #[cfg(test)]
 mod tests {
-    use std::{default, sync::Arc};
+    use std::{collections::BTreeMap, default, sync::Arc};
 
     use crate::{RetrievalStrategy, TokenBudget};
     use itertools::Itertools;
     use lazy_static::lazy_static;
-    use ploke_core::{EmbeddingData, RetrievalScope};
+    use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
     use ploke_db::{
         Database, create_index_primary_with_index,
-        multi_embedding::{db_ext::EmbeddingExt, debug::DebugAll},
+        multi_embedding::{
+            db_ext::EmbeddingExt, debug::DebugAll, hnsw_ext::HnswExt,
+        },
     };
     use ploke_embed::{
         indexer::{EmbeddingProcessor, EmbeddingSource},
@@ -18,7 +20,8 @@ mod tests {
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
     use ploke_test_utils::{
-        FIXTURE_NODES_LOCAL_EMBEDDINGS, fresh_backup_fixture_db, shared_backup_fixture_db,
+        FIXTURE_NODES_LOCAL_EMBEDDINGS, WS_FIXTURE_01_CANONICAL, fresh_backup_fixture_db,
+        shared_backup_fixture_db,
     };
     use tokio::time::{Duration, sleep};
     use tracing::{Level, debug};
@@ -41,6 +44,13 @@ mod tests {
     });
 
     const LOADED_WORKSPACE_SCOPE: RetrievalScope = RetrievalScope::LoadedWorkspace;
+    struct WorkspaceScopeFixture {
+        root_id: Uuid,
+        root_namespace: Uuid,
+        nested_id: Uuid,
+        nested_namespace: Uuid,
+    }
+
     fn init_test_rag(db: Arc<Database>) -> RagService {
         let model =
             LocalEmbedder::new(EmbeddingConfig::default()).expect("valid default embedding config");
@@ -75,6 +85,18 @@ mod tests {
             Arc::clone(&db.active_embedding_set),
             processor,
         ))
+    }
+
+    fn init_test_rag_with_io(db: Arc<Database>) -> RagService {
+        let model =
+            LocalEmbedder::new(EmbeddingConfig::default()).expect("valid default embedding config");
+        let source = EmbeddingSource::Local(model);
+        let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(source),
+        ));
+        RagService::new_with_io(db, embedding_runtime, IoManagerHandle::new())
+            .expect("valid db and RagService constructor args")
     }
 
     #[tokio::test]
@@ -237,6 +259,66 @@ mod tests {
         Ok(())
     }
 
+    fn workspace_fixture_function_rows(db: &Database) -> Result<WorkspaceScopeFixture, Error> {
+        let rows = db
+            .get_unembedded_node_data(64, 0)?
+            .into_iter()
+            .flat_map(|typed| typed.v.into_iter())
+            .collect_vec();
+        let mut by_name = BTreeMap::new();
+        for row in rows {
+            by_name.insert(row.name, (row.id, row.namespace));
+        }
+
+        let (root_id, root_namespace) = by_name.remove("root_value").ok_or_else(|| {
+            ploke_error::Error::Internal(ploke_error::internal::InternalError::CompilerError(
+                "missing root_value in workspace fixture".to_string(),
+            ))
+        })?;
+        let (nested_id, nested_namespace) = by_name.remove("nested_value").ok_or_else(|| {
+            ploke_error::Error::Internal(ploke_error::internal::InternalError::CompilerError(
+                "missing nested_value in workspace fixture".to_string(),
+            ))
+        })?;
+
+        Ok(WorkspaceScopeFixture {
+            root_id,
+            root_namespace,
+            nested_id,
+            nested_namespace,
+        })
+    }
+
+    fn load_workspace_scope_db(query: &str) -> Result<(Arc<Database>, WorkspaceScopeFixture), Error> {
+        let db = Arc::new(fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?);
+        let fixture = workspace_fixture_function_rows(db.as_ref())?;
+        let embedding_set = db.with_active_set(|set| set.clone())?;
+        db.ensure_embedding_relation(&embedding_set)?;
+
+        let embedder = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let query_vec = embedder
+            .embed_batch(&[query])?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                ploke_error::Error::Internal(ploke_error::internal::InternalError::CompilerError(
+                    "expected one query embedding".to_string(),
+                ))
+            })?;
+        let mut in_scope_vec = query_vec.clone();
+        if let Some(first) = in_scope_vec.first_mut() {
+            *first += 0.05;
+        }
+
+        db.update_embeddings_batch(vec![
+            (fixture.root_id, query_vec),
+            (fixture.nested_id, in_scope_vec),
+        ])?;
+        db.create_embedding_index(&embedding_set)?;
+
+        Ok((db, fixture))
+    }
+
     #[tokio::test]
     async fn test_search() -> Result<(), Error> {
         init_tracing_once();
@@ -321,6 +403,48 @@ mod tests {
 
         let ordered_node_ids: Vec<Uuid> = fused.iter().map(|(id, _score)| *id).collect();
         fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn hybrid_specific_crate_scope_excludes_out_of_scope_candidates_before_fusion() -> Result<(), Error> {
+        init_tracing_once();
+        let query = "root value";
+        let (db, fixture) = load_workspace_scope_db(query)?;
+        let rag = init_test_rag(Arc::clone(&db));
+
+        rag.bm25_rebuild().await?;
+
+        let unscoped = rag.hybrid_search(query, 1, RetrievalScope::LoadedWorkspace).await?;
+        assert_eq!(unscoped.len(), 1, "unscoped hybrid top_k=1 should return one hit");
+        assert_eq!(
+            unscoped[0].0, fixture.root_id,
+            "unscoped hybrid search should prefer the stronger out-of-scope root_value candidate"
+        );
+
+        let scoped = rag
+            .hybrid_search(
+                query,
+                2,
+                RetrievalScope::SpecificCrate(CrateId::new(fixture.nested_namespace)),
+            )
+            .await?;
+        assert!(
+            !scoped.is_empty(),
+            "scoped hybrid search should retain an in-scope candidate"
+        );
+        assert!(
+            scoped.iter().all(|(id, _)| *id == fixture.nested_id),
+            "hybrid fusion must not admit the out-of-scope root_value candidate"
+        );
+
+        let nodes = db.get_nodes_ordered(scoped.iter().map(|(id, _)| *id).collect())?;
+        assert!(
+            nodes.iter()
+                .all(|node| node.namespace == fixture.nested_namespace),
+            "scoped hybrid results must remain in the requested crate namespace"
+        );
+
         Ok(())
     }
 
@@ -531,8 +655,9 @@ mod tests {
     async fn test_hybrid_search_generic_trait() -> Result<(), Error> {
         init_tracing_once();
         // Rebuild BM25 index so hybrid search uses real sparse scores rather than dense fallback.
-        let rag = &DEFAULT_TEST_RAG;
-        let db = &DEFAULT_TEST_RAG.db;
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?;
+        let db = Arc::new(db_raw);
+        let rag = init_test_rag(Arc::clone(&db));
 
         let search_term = "GenericSuperTrait";
         let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15, LOADED_WORKSPACE_SCOPE).await?;
@@ -543,7 +668,48 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = fused.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_context_specific_crate_scope_does_not_materialize_out_of_scope_ids() -> Result<(), Error> {
+        init_tracing_once();
+        let query = "root value";
+        let (db, fixture) = load_workspace_scope_db(query)?;
+        let rag = init_test_rag_with_io(Arc::clone(&db));
+
+        rag.bm25_rebuild().await?;
+
+        let context = rag
+            .get_context(
+                query,
+                2,
+                &TokenBudget::default(),
+                &RetrievalStrategy::Hybrid {
+                    rrf: Default::default(),
+                    mmr: None,
+                },
+                RetrievalScope::SpecificCrate(CrateId::new(fixture.nested_namespace)),
+            )
+            .await?;
+
+        assert!(
+            !context.parts.is_empty(),
+            "scoped get_context should return at least one assembled part"
+        );
+        assert!(
+            context
+                .parts
+                .iter()
+                .all(|part| part.file_path.as_ref().contains("nested/member_nested")),
+            "get_context should only materialize snippets from the requested crate"
+        );
+        assert!(
+            context.parts.iter().all(|part| part.id == fixture.nested_id),
+            "context assembly must not materialize the out-of-scope root_value node"
+        );
+
         Ok(())
     }
 

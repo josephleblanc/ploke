@@ -419,6 +419,16 @@ Current witness reasoning:
 - [bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs#L1006)
   proves the pre-`top_k` filter on a two-namespace corpus where the stronger
   out-of-scope document would otherwise win
+- [hnsw_ext.rs](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L1096)
+  proves the dense pre-`:limit` filter on a workspace-backed graph where the
+  stronger out-of-scope vector would otherwise win
+- [unit_tests.rs](/home/brasides/code/ploke/crates/ploke-rag/src/core/unit_tests.rs#L410)
+  proves hybrid search does not fuse an out-of-scope dense/BM25 winner into the
+  final scoped result set
+- [unit_tests.rs](/home/brasides/code/ploke/crates/ploke-rag/src/core/unit_tests.rs#L676)
+  proves `get_context(...)` only materializes IDs and file paths from the
+  allowed crate scope, even when the out-of-scope candidate is the stronger
+  unscoped semantic match
 
 What a passing witness proves:
 - if `bm25_specific_crate_scope_filters_before_top_k_truncation` passes, then
@@ -428,14 +438,37 @@ What a passing witness proves:
   the weaker in-scope document at `top_k=1` even when an out-of-scope document
   would win the unscoped search, which is direct evidence that scope is
   enforced before BM25 truncation
+- if `search_similar_for_set_specific_crate_scope_filters_before_limit` passes,
+  then dense/HNSW search does not apply crate scope after HNSW `:limit`
+- if that dense test passes, then a `SpecificCrate(CrateId)` scope can still
+  return the weaker in-scope vector at `limit=1` even when the stronger
+  out-of-scope vector would win the unscoped search, which is direct evidence
+  that dense scope is enforced before truncation
+- if `hybrid_specific_crate_scope_excludes_out_of_scope_candidates_before_fusion`
+  passes, then hybrid search is not fusing differently scoped dense and BM25
+  candidate sets into the final result
+- if that hybrid test passes, then a scoped hybrid query returns only the
+  in-scope crate result even when the out-of-scope candidate is the stronger
+  unscoped semantic match, which is direct evidence that hybrid fusion is built
+  from already-scoped candidate sets
+- if `get_context_specific_crate_scope_does_not_materialize_out_of_scope_ids`
+  passes, then `get_context(...)` is not materializing out-of-scope nodes after
+  retrieval
+- if that `get_context(...)` test passes, then scoped context assembly only
+  emits IDs and file paths from the allowed crate namespace, which is direct
+  evidence that context assembly respects the shared retrieval scope
+- if all four tests pass, then Phase 6 `C5` has direct witness evidence that
+  BM25, dense, hybrid, and `get_context(...)` share one scope model and enforce
+  it before truncation, fusion, and context materialization
 
 Scope note:
-- this is only partial Phase 6 `C5` evidence
-- dense search, hybrid fusion, and `get_context(...)` still need their own
-  scope witnesses before `C5` can be considered complete
-- broader `ploke-tui --tests` validation is currently blocked by the
-  freshness-guarded `get_code_edges_regression` tests after edits to
-  `crates/ploke-db/src/database.rs`
+- this witness set is sufficient for the named Phase 6 `C5` scope requirements
+- `ploke_db_primary` was refreshed to
+  `tests/backup_dbs/ploke_db_primary_2026-03-21.sqlite`, resolving the earlier
+  `get_code_edges_regression` freshness blocker
+- broader `ploke-tui --tests` validation is still failing in
+  `rag::tests::apply_code_edit_tests::test_auto_confirm_workflow`, so `C5`
+  should remain `in progress` until that regression is understood
 
 ## Update rule
 

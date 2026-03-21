@@ -14,7 +14,7 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 ## Current summary
 
 - Overall status: `Phase 6 in progress`
-- Current gate: readiness and Phases 1-5 are complete; Phase 6 `C5` has started and is blocked on completing retrieval-scope proof plus broader regression cleanup
+- Current gate: readiness and Phases 1-5 are complete; Phase 6 `C5` has witness coverage landed but remains blocked on broader regression cleanup
 - Cross-phase obligations to keep in view: `G1` coherent session state, `G2`
   explicit membership authority and manifest drift handling
 
@@ -43,7 +43,7 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 | Phase 3 `C2` manifest-driven indexing | `done` | Added committed-fixture and helper-level regression witnesses for relative-target anchoring, fixed `index_workspace(...)` to anchor relative targets to loaded app-state authority before generic resolution, documented the bug in `docs/active/bugs/2026-03-21-indexworkspace-relative-target-regression.md`, and revalidated `test_update_embed`, `load_db_crate_focus`, `index_start`, and `index_workspace_targets` via sub-agent |
 | Phase 4 `C3` workspace status and update | `done` | Added per-loaded-crate freshness tracking plus `/workspace status` and `/workspace update` command wiring in `ploke-tui`; committed-fixture witnesses prove multi-member status, update convergence, and manifest-drift surfacing, and broader `cargo test -p ploke-tui --tests -- --nocapture` passed via sub-agent |
 | Phase 5 `C4` workspace save/load registry | `done` | `/save db` now writes a registry-backed workspace snapshot, `/load` resolves exact workspace name/id through the registry, restore rejects `FirstPopulated` fallback, and explicit tests cover registry creation, no-prefix lookup, metadata mismatch failure, and embedding-set metadata restore |
-| Phase 6 `C5` shared retrieval scope model | `in progress` | Added shared `RetrievalScope` threading across `ploke-core`, `ploke-db`, `ploke-rag`, and `ploke-tui`, plus a BM25 witness proving `SpecificCrate` scope is applied before `top_k`; next step is dense/hybrid/context proof and resolving the `get_code_edges_regression` backup-freshness failure before broader validation can pass |
+| Phase 6 `C5` shared retrieval scope model | `in progress` | Added shared `RetrievalScope` threading across `ploke-core`, `ploke-db`, `ploke-rag`, and `ploke-tui`; refreshed `ploke_db_primary`; landed BM25, dense, hybrid, and `get_context(...)` witnesses for `SpecificCrate` pre-truncation scope; next step is resolving the broader `ploke-tui --tests` failure in `rag::tests::apply_code_edit_tests::test_auto_confirm_workflow` before marking `C5` done |
 | Phase 7 `C6` namespace-scoped subset DB operations | `not started` | Add explicit export/import/remove primitives before subset commands |
 | Phase 8 `C7` workspace-aware tools with strict edit safety | `not started` | Expand read/context behavior without widening edit permissions |
 
@@ -60,7 +60,7 @@ Status legend: `not started` | `in progress` | `blocked` | `done`
 | Phase 3 `C2` manifest-driven indexing | `done` | `resolve_index_target_prefers_crate_root_when_pwd_is_crate_root`; `resolve_index_target_finds_workspace_when_pwd_is_not_crate_root`; `resolve_index_target_reports_missing_crate_or_workspace`; `index_workspace_resolves_ancestor_workspace_from_nested_path`; `index_workspace_failure_keeps_previous_loaded_workspace_state`; `index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_differs` | Helper-level repro tests in `indexing.rs` isolate the loaded-state anchoring bug; broader sub-agent validation passed for `test_update_embed`, `load_db_crate_focus`, `index_start`, and `index_workspace_targets` |
 | Phase 4 `C3` workspace status and update | `done` | `workspace_status_and_update_operate_per_loaded_crate`; `workspace_status_reports_workspace_member_drift` | Verified by sub-agent runs of the new `workspace_status_update` integration test plus broader `cargo test -p ploke-tui --tests -- --nocapture`; test harness still logs handled `Cozo embeddings not implemented` noise from the mock-backed index path |
 | Phase 5 `C4` workspace save/load registry | `done` | `load_db_restores_saved_embedding_set_and_index`; `load_db_requires_workspace_registry_entry_instead_of_prefix_lookup`; `load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads`; `load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot` | Verified by sub-agent runs of the targeted C4 tests plus broader `cargo test -p ploke-tui --tests -- --nocapture`; exact registry lookup now replaces filename-prefix restore |
-| Phase 6 `C5` shared retrieval scope model | `in progress` | `bm25_specific_crate_scope_filters_before_top_k_truncation` | First witness proves BM25 applies crate scope before `top_k`; targeted `ploke-db`, `ploke-rag`, `index_workspace_targets`, and `test_update_embed` runs passed, but broader `cargo test -p ploke-tui --tests -- --nocapture` is currently blocked by `get_code_edges_regression` tracking-hash freshness checks against `ploke_db_primary` after edits to `crates/ploke-db/src/database.rs` |
+| Phase 6 `C5` shared retrieval scope model | `in progress` | `bm25_specific_crate_scope_filters_before_top_k_truncation`; `search_similar_for_set_specific_crate_scope_filters_before_limit`; `hybrid_specific_crate_scope_excludes_out_of_scope_candidates_before_fusion`; `get_context_specific_crate_scope_does_not_materialize_out_of_scope_ids` | Targeted `ploke-db` and `ploke-rag` witness runs passed and `ploke_db_primary` was refreshed to clear the earlier freshness blocker, but broader `cargo test -p ploke-tui --tests -- --nocapture` now fails in `rag::tests::apply_code_edit_tests::test_auto_confirm_workflow`, so `C5` remains `in progress` |
 
 ## Handoff Notes
 
@@ -70,15 +70,17 @@ updated.
 
 - Current implementation state: readiness and Phases 1-5 are complete; Phase 6
   `C5` is in progress.
-- `C5` now has a first shared-scope slice landed:
-  `RetrievalScope` exists in `ploke-core`, is threaded through dense/BM25/RAG
-  entrypoints, and BM25 has a witness proving `SpecificCrate` scope is applied
-  before `top_k`.
-- Broader validation is not green yet. `cargo test -p ploke-tui --tests -- --nocapture`
-  currently fails in
-  `crates/ploke-tui/tests/get_code_edges_regression.rs` because the
-  `ploke_db_primary` backup freshness guard now disagrees with the edited
-  `crates/ploke-db/src/database.rs` tracking hash.
+- `C5` now has the full planned witness set landed:
+  `RetrievalScope` is threaded through dense/BM25/RAG entrypoints, and there
+  are direct witnesses for BM25 pre-`top_k`, dense pre-`:limit`, hybrid
+  fusion, and `get_context(...)` scope enforcement.
+- `ploke_db_primary` was refreshed to
+  `tests/backup_dbs/ploke_db_primary_2026-03-21.sqlite`, and the earlier
+  `get_code_edges_regression` freshness blocker is resolved.
+- Broader validation is still not green. `cargo test -p ploke-tui --tests -- --nocapture`
+  now fails in
+  `rag::tests::apply_code_edit_tests::test_auto_confirm_workflow`, where the
+  proposal status stays `Pending` instead of becoming `Applied`.
 - The bug report for the `test_update_embed` regression is
   [2026-03-21-indexworkspace-relative-target-regression.md](/home/brasides/code/ploke/docs/active/bugs/2026-03-21-indexworkspace-relative-target-regression.md).
 - `test_update_embed` remains hardened to subscribe before `IndexWorkspace` and
@@ -94,10 +96,11 @@ updated.
   but remains semantically overloaded.
 - Discovery notes for the current `C5` pass are in
   [2026-03-21_c5_retrieval_scope_design_notes.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-21_c5_retrieval_scope_design_notes.md).
-- Next target after compaction: finish `C5` by adding dense/hybrid/context
-  scope witnesses and deciding whether to refresh `ploke_db_primary` or adjust
-  the broader regression slice around the freshness-guarded
-  `get_code_edges_regression` tests.
+- Next target after compaction: investigate
+  `rag::tests::apply_code_edit_tests::test_auto_confirm_workflow`, determine
+  whether the regression is caused by retrieval-scope changes or unrelated
+  workflow drift, and only mark `C5` done if the broader `ploke-tui` slice is
+  green.
 
 ## Update rule
 

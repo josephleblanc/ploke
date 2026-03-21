@@ -67,7 +67,7 @@ example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
 | `fixture_nodes_canonical_2026-03-20.sqlite` | `tests/fixture_crates/fixture_nodes` | canonical parsed `fixture_nodes` backup | 2026-03-20 |
 | `fixture_nodes_local_embeddings_2026-03-20.sqlite` | `tests/fixture_crates/fixture_nodes` | local-embedding `fixture_nodes` backup | 2026-03-20 |
 | `fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92` | `tests/fixture_crates/fixture_nodes` | legacy multi-embedding schema snapshot | 2026-03-20 |
-| `ploke_db_primary_2026-03-20.sqlite` | `crates/ploke-db` | current-schema `ploke-db` graph backup | 2026-03-20 |
+| `ploke_db_primary_2026-03-21.sqlite` | `crates/ploke-db` | current-schema `ploke-db` graph backup | 2026-03-21 |
 | `ws_fixture_01_canonical_2026-03-21.sqlite` | `tests/fixture_workspace/ws_fixture_01` | canonical plain backup of committed multi-member workspace fixture | 2026-03-21 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
@@ -131,9 +131,9 @@ example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
   - only a commented-out reference remains in [crates/ploke-rag/src/core/unit_tests.rs](/home/brasides/code/ploke/crates/ploke-rag/src/core/unit_tests.rs)
   - keep under review until explicitly removed or reintroduced
 
-## `ploke_db_primary_2026-03-20.sqlite`
+## `ploke_db_primary_2026-03-21.sqlite`
 
-- File: `tests/backup_dbs/ploke_db_primary_2026-03-20.sqlite`
+- File: `tests/backup_dbs/ploke_db_primary_2026-03-21.sqlite`
 - Parsed target(s): `crates/ploke-db`
 - Expected DB config:
   - plain backup import

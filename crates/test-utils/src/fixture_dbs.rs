@@ -218,7 +218,7 @@ pub const FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1: FixtureDb = FixtureDb {
 
 pub const PLOKE_DB_PRIMARY: FixtureDb = FixtureDb {
     id: "ploke_db_primary",
-    rel_path: "tests/backup_dbs/ploke_db_primary_2026-03-20.sqlite",
+    rel_path: "tests/backup_dbs/ploke_db_primary_2026-03-21.sqlite",
     parsed_targets: &["crates/ploke-db"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceCrate {
@@ -230,7 +230,7 @@ pub const PLOKE_DB_PRIMARY: FixtureDb = FixtureDb {
     requires_primary_index: true,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-03-20",
+    last_updated: "2026-03-21",
     notes: "Current-schema `crates/ploke-db` graph backup recreated from source via setup_db_full_crate(\"ploke-db\") and used by get_code_edges regression tests.",
 };
 
