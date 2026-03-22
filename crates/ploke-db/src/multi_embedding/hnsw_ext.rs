@@ -362,7 +362,10 @@ has_embedding[id, name, distance] :=
             params.insert("radius".into(), DataValue::Num(Num::Float(radius)));
         }
         let scope_filter_clause = if let Some(namespace) = scope.namespace_filter() {
-            params.insert("scope_namespace".into(), DataValue::Uuid(UuidWrapper(namespace)));
+            params.insert(
+                "scope_namespace".into(),
+                DataValue::Uuid(UuidWrapper(namespace)),
+            );
             ",\n    namespace == $scope_namespace"
         } else {
             ""
@@ -715,12 +718,16 @@ mod tests {
             by_name.insert(name, (id, namespace));
         }
 
-        let root = by_name
-            .remove("root_value")
-            .ok_or_else(|| Error::from(DbError::Cozo("missing root_value in workspace fixture".into())))?;
-        let nested = by_name
-            .remove("nested_value")
-            .ok_or_else(|| Error::from(DbError::Cozo("missing nested_value in workspace fixture".into())))?;
+        let root = by_name.remove("root_value").ok_or_else(|| {
+            Error::from(DbError::Cozo(
+                "missing root_value in workspace fixture".into(),
+            ))
+        })?;
+        let nested = by_name.remove("nested_value").ok_or_else(|| {
+            Error::from(DbError::Cozo(
+                "missing nested_value in workspace fixture".into(),
+            ))
+        })?;
         Ok([root, nested])
     }
 
@@ -1127,7 +1134,11 @@ mod tests {
             1,
             None,
         )?;
-        assert_eq!(unscoped.typed_data.v.len(), 1, "unscoped limit=1 should truncate to one hit");
+        assert_eq!(
+            unscoped.typed_data.v.len(),
+            1,
+            "unscoped limit=1 should truncate to one hit"
+        );
         assert_eq!(
             unscoped.typed_data.v[0].id, root_id,
             "unscoped search should prefer the stronger out-of-scope vector before limit"
@@ -1147,7 +1158,11 @@ mod tests {
             1,
             None,
         )?;
-        assert_eq!(scoped.typed_data.v.len(), 1, "scoped limit=1 should still return one hit");
+        assert_eq!(
+            scoped.typed_data.v.len(),
+            1,
+            "scoped limit=1 should still return one hit"
+        );
         assert_eq!(
             scoped.typed_data.v[0].id, nested_id,
             "crate scope must be applied before the final dense :limit truncation"

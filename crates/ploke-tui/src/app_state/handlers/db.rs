@@ -125,7 +125,8 @@ pub async fn load_workspace_crates(
     workspace_ref: String,
     crate_ref: String,
 ) {
-    if let Err(e) = database::load_workspace_crates(state, event_bus, workspace_ref, crate_ref).await
+    if let Err(e) =
+        database::load_workspace_crates(state, event_bus, workspace_ref, crate_ref).await
     {
         match e {
             ploke_error::Error::Fatal(_) => e.emit_fatal(),
@@ -155,11 +156,7 @@ pub async fn workspace_update(state: &Arc<AppState>, event_bus: &Arc<EventBus>) 
         });
 }
 
-pub async fn workspace_remove(
-    state: &Arc<AppState>,
-    event_bus: &Arc<EventBus>,
-    crate_ref: String,
-) {
+pub async fn workspace_remove(state: &Arc<AppState>, event_bus: &Arc<EventBus>, crate_ref: String) {
     let _ = database::workspace_remove(state, event_bus, crate_ref)
         .await
         .inspect_err(|e| {

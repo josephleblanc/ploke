@@ -1052,7 +1052,11 @@ fn hello() { println!(\"hi\"); }",
         ]);
 
         let unscoped = idx.search("alpha target bonus", 1, RetrievalScope::LoadedWorkspace);
-        assert_eq!(unscoped.len(), 1, "unscoped top_k=1 should truncate to one hit");
+        assert_eq!(
+            unscoped.len(),
+            1,
+            "unscoped top_k=1 should truncate to one hit"
+        );
         let unscoped_namespace = idx
             .staged_meta
             .get(&unscoped[0].id)
@@ -1068,7 +1072,11 @@ fn hello() { println!(\"hi\"); }",
             1,
             RetrievalScope::SpecificCrate(CrateId::new(namespace_a)),
         );
-        assert_eq!(scoped.len(), 1, "scoped top_k=1 should still return one in-scope hit");
+        assert_eq!(
+            scoped.len(),
+            1,
+            "scoped top_k=1 should still return one in-scope hit"
+        );
         let scoped_namespace = idx
             .staged_meta
             .get(&scoped[0].id)

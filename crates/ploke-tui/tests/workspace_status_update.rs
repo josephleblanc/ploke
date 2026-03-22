@@ -11,8 +11,8 @@ use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
 use ploke_rag::TokenBudget;
 use ploke_test_utils::workspace_root;
-use ploke_tui::app_state::IndexTargetDir;
 use ploke_tui as tui;
+use ploke_tui::app_state::IndexTargetDir;
 use tokio::sync::{Mutex, RwLock};
 
 use tui::app_state::handlers::indexing::index_workspace;
@@ -156,7 +156,11 @@ async fn workspace_status_and_update_operate_per_loaded_crate() {
 
     let mut freshness = state.system.workspace_freshness_for_test().await;
     freshness.sort_by(|a, b| a.0.cmp(&b.0));
-    assert_eq!(freshness.len(), 2, "both loaded workspace members must be tracked");
+    assert_eq!(
+        freshness.len(),
+        2,
+        "both loaded workspace members must be tracked"
+    );
     assert_eq!(
         freshness,
         vec![

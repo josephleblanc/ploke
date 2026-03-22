@@ -19,9 +19,9 @@ pub use core::{
     AppState, ChatState, ConfigState, IndexingState, LoadedCrateState, RuntimeConfig, SystemState,
     SystemStatus,
 };
-pub use events::SystemMutation;
 pub use dispatcher::state_manager;
 pub use events::MessageUpdatedEvent;
+pub use events::SystemMutation;
 
 // Test-only exports (use the crate feature so integration tests can call these helpers)
 #[cfg(feature = "test_harness")]

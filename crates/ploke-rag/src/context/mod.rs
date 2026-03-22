@@ -14,15 +14,15 @@ use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
 use ploke_core::{
+    EmbeddingData,
     rag_types::{
         AssembledContext, CanonPath, ContextPart, ContextPartKind, ContextStats, Modality,
         NodeFilepath,
     },
-    EmbeddingData,
 };
 use ploke_db::{
-    get_by_id::{GetNodeInfo, NodePaths},
     Database, NodeType,
+    get_by_id::{GetNodeInfo, NodePaths},
 };
 use ploke_io::IoManagerHandle;
 use serde::{Deserialize, Serialize};

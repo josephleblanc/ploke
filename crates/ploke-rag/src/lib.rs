@@ -122,13 +122,14 @@ fn ensure_tracer_initialized() {
 
 use ploke_core::{EmbeddingData, RetrievalScope};
 use ploke_db::{
+    Database, DbError, NodeType, SimilarArgs, TypedEmbedData,
     bm25_index::bm25_service::{self, Bm25Cmd},
-    search_similar_args, Database, DbError, NodeType, SimilarArgs, TypedEmbedData,
+    search_similar_args,
 };
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerTask};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{sleep, timeout, Duration};
+use tokio::time::{Duration, sleep, timeout};
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
@@ -136,11 +137,11 @@ pub mod error;
 pub mod fusion;
 pub use error::RagError;
 pub use fusion::{
-    mmr_select, normalize_scores, rrf_fuse, MmrConfig, RrfConfig, ScoreNorm, Similarity,
+    MmrConfig, RrfConfig, ScoreNorm, Similarity, mmr_select, normalize_scores, rrf_fuse,
 };
 pub mod context;
 pub use context::{
-    assemble_context, ApproxCharTokenizer, AssemblyPolicy, Ordering, TokenBudget, TokenCounter,
+    ApproxCharTokenizer, AssemblyPolicy, Ordering, TokenBudget, TokenCounter, assemble_context,
 };
 pub mod core;
 pub use core::{NoopReranker, RagConfig, RagService, Reranker, RetrievalStrategy};

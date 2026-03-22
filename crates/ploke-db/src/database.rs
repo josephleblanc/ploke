@@ -14,8 +14,8 @@ use itertools::Itertools;
 use lazy_static::lazy_static;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
 use ploke_error::Error as PlokeError;
-use ploke_transform::schema::meta::Bm25MetaSchema;
 use ploke_transform::schema::assoc_nodes::MethodNodeSchema;
+use ploke_transform::schema::meta::Bm25MetaSchema;
 use serde::{Deserialize, Serialize};
 use syn_parser::parser::nodes::{AnyNodeId, ToCozoUuid};
 use tracing::{debug, info, instrument, trace, warn};
@@ -271,9 +271,7 @@ pub struct FileInfo {
 
 impl Database {
     fn uuid_input_rows(ids: &BTreeSet<Uuid>) -> String {
-        ids.iter()
-            .map(|id| format!("[\"{id}\"]"))
-            .join(", ")
+        ids.iter().map(|id| format!("[\"{id}\"]")).join(", ")
     }
 
     fn retract_relation_rows_by_id(
@@ -326,8 +324,14 @@ target[id] := input[id_str], id = to_uuid(id_str)
         val_fields: &[&str],
         ids: &BTreeSet<Uuid>,
     ) -> Result<RelationExportRows, DbError> {
-        let key_fields_owned = key_fields.iter().map(|field| (*field).to_string()).collect();
-        let val_fields_owned = val_fields.iter().map(|field| (*field).to_string()).collect();
+        let key_fields_owned = key_fields
+            .iter()
+            .map(|field| (*field).to_string())
+            .collect();
+        let val_fields_owned = val_fields
+            .iter()
+            .map(|field| (*field).to_string())
+            .collect();
         if ids.is_empty() {
             return Ok(RelationExportRows {
                 relation: relation.to_string(),
@@ -515,19 +519,27 @@ target[node_id] := input[id_str], node_id = to_uuid(id_str)
                 .clone();
             let namespace = row
                 .get(1)
-                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.namespace".into()))?
+                .ok_or_else(|| {
+                    DbError::QueryExecution("missing workspace_metadata.namespace".into())
+                })?
                 .clone();
             let root_path = row
                 .get(2)
-                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.root_path".into()))?
+                .ok_or_else(|| {
+                    DbError::QueryExecution("missing workspace_metadata.root_path".into())
+                })?
                 .clone();
             let resolver = row
                 .get(3)
-                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.resolver".into()))?
+                .ok_or_else(|| {
+                    DbError::QueryExecution("missing workspace_metadata.resolver".into())
+                })?
                 .clone();
             let exclude = row
                 .get(5)
-                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.exclude".into()))?
+                .ok_or_else(|| {
+                    DbError::QueryExecution("missing workspace_metadata.exclude".into())
+                })?
                 .clone();
             let package_version = row
                 .get(6)
@@ -716,7 +728,9 @@ target[node_id] := input[id_str], node_id = to_uuid(id_str)
         &self,
         artifact: &NamespaceExportArtifact,
     ) -> Result<(), NamespaceImportError> {
-        let crate_rows = self.list_crate_context_rows().map_err(NamespaceImportError::from)?;
+        let crate_rows = self
+            .list_crate_context_rows()
+            .map_err(NamespaceImportError::from)?;
         let duplicate_namespace = crate_rows
             .iter()
             .find(|row| row.namespace == artifact.namespace)
@@ -845,19 +859,25 @@ target[node_id] := input[id_str], node_id = to_uuid(id_str)
         params.insert(
             "namespace".into(),
             row.get(1)
-                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.namespace".into()))?
+                .ok_or_else(|| {
+                    DbError::QueryExecution("missing workspace_metadata.namespace".into())
+                })?
                 .clone(),
         );
         params.insert(
             "root_path".into(),
             row.get(2)
-                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.root_path".into()))?
+                .ok_or_else(|| {
+                    DbError::QueryExecution("missing workspace_metadata.root_path".into())
+                })?
                 .clone(),
         );
         params.insert(
             "resolver".into(),
             row.get(3)
-                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.resolver".into()))?
+                .ok_or_else(|| {
+                    DbError::QueryExecution("missing workspace_metadata.resolver".into())
+                })?
                 .clone(),
         );
         params.insert(
@@ -867,7 +887,9 @@ target[node_id] := input[id_str], node_id = to_uuid(id_str)
         params.insert(
             "exclude".into(),
             row.get(5)
-                .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.exclude".into()))?
+                .ok_or_else(|| {
+                    DbError::QueryExecution("missing workspace_metadata.exclude".into())
+                })?
                 .clone(),
         );
         params.insert(
@@ -1092,13 +1114,14 @@ target[id] := input[id_str], id = to_uuid(id_str)
             .filter(|member| member != removed_root_path)
             .map(DataValue::from)
             .collect::<Vec<_>>();
-        if updated_members.len() == row
-            .get(4)
-            .and_then(|value| match value {
-                DataValue::List(items) => Some(items.len()),
-                _ => None,
-            })
-            .unwrap_or_default()
+        if updated_members.len()
+            == row
+                .get(4)
+                .and_then(|value| match value {
+                    DataValue::List(items) => Some(items.len()),
+                    _ => None,
+                })
+                .unwrap_or_default()
         {
             return Ok(false);
         }
@@ -2194,11 +2217,15 @@ target[id] := input[id_str], id = to_uuid(id_str)
                     .and_then(to_string)?;
                 let namespace = row
                     .get(2)
-                    .ok_or_else(|| DbError::QueryExecution("missing crate_context.namespace".into()))
+                    .ok_or_else(|| {
+                        DbError::QueryExecution("missing crate_context.namespace".into())
+                    })
                     .and_then(to_uuid)?;
                 let root_path = row
                     .get(3)
-                    .ok_or_else(|| DbError::QueryExecution("missing crate_context.root_path".into()))
+                    .ok_or_else(|| {
+                        DbError::QueryExecution("missing crate_context.root_path".into())
+                    })
                     .and_then(to_string)?;
 
                 Ok(CrateContextRow {
@@ -2211,7 +2238,10 @@ target[id] := input[id_str], id = to_uuid(id_str)
             .collect()
     }
 
-    pub fn collect_namespace_inventory(&self, namespace: Uuid) -> Result<NamespaceInventory, DbError> {
+    pub fn collect_namespace_inventory(
+        &self,
+        namespace: Uuid,
+    ) -> Result<NamespaceInventory, DbError> {
         let namespace_lit = namespace.to_string();
         let context_rows = self.raw_query(&format!(
             r#"?[id, name, namespace, root_path] :=
@@ -2231,10 +2261,22 @@ namespace = to_uuid("{namespace_lit}")"#
 
         let row = &context_rows.rows[0];
         let crate_context = CrateContextRow {
-            id: row.first().ok_or_else(|| DbError::QueryExecution("missing crate_context.id".into())).and_then(to_uuid)?,
-            name: row.get(1).ok_or_else(|| DbError::QueryExecution("missing crate_context.name".into())).and_then(to_string)?,
-            namespace: row.get(2).ok_or_else(|| DbError::QueryExecution("missing crate_context.namespace".into())).and_then(to_uuid)?,
-            root_path: row.get(3).ok_or_else(|| DbError::QueryExecution("missing crate_context.root_path".into())).and_then(to_string)?,
+            id: row
+                .first()
+                .ok_or_else(|| DbError::QueryExecution("missing crate_context.id".into()))
+                .and_then(to_uuid)?,
+            name: row
+                .get(1)
+                .ok_or_else(|| DbError::QueryExecution("missing crate_context.name".into()))
+                .and_then(to_string)?,
+            namespace: row
+                .get(2)
+                .ok_or_else(|| DbError::QueryExecution("missing crate_context.namespace".into()))
+                .and_then(to_uuid)?,
+            root_path: row
+                .get(3)
+                .ok_or_else(|| DbError::QueryExecution("missing crate_context.root_path".into()))
+                .and_then(to_string)?,
         };
 
         let root_rows = self.raw_query(&format!(
@@ -2386,10 +2428,7 @@ desc[id] := parent_of[id, parent], desc[parent]
         })
     }
 
-    pub fn export_namespace(
-        &self,
-        namespace: Uuid,
-    ) -> Result<NamespaceExportArtifact, DbError> {
+    pub fn export_namespace(&self, namespace: Uuid) -> Result<NamespaceExportArtifact, DbError> {
         let inventory = self.collect_namespace_inventory(namespace)?;
         let mut relation_exports = vec![
             self.collect_crate_context_rows_for_namespace(namespace)?,
@@ -2422,14 +2461,8 @@ desc[id] := parent_of[id, parent], desc[parent]
                     &inventory.descendant_ids,
                 )?);
             } else if relation == "method" {
-                let key_fields = MethodNodeSchema::SCHEMA
-                    .keys()
-                    .copied()
-                    .collect::<Vec<_>>();
-                let val_fields = MethodNodeSchema::SCHEMA
-                    .vals()
-                    .copied()
-                    .collect::<Vec<_>>();
+                let key_fields = MethodNodeSchema::SCHEMA.keys().copied().collect::<Vec<_>>();
+                let val_fields = MethodNodeSchema::SCHEMA.vals().copied().collect::<Vec<_>>();
                 relation_exports.push(self.collect_relation_rows_by_id(
                     &relation,
                     &key_fields,
@@ -2459,9 +2492,8 @@ desc[id] := parent_of[id, parent], desc[parent]
             exported_embedding_rel_names.insert(rel_name.to_string());
         }
         relation_exports.push(active_embedding_meta);
-        relation_exports.push(self.collect_embedding_set_rows_for_rel_names(
-            &exported_embedding_rel_names,
-        )?);
+        relation_exports
+            .push(self.collect_embedding_set_rows_for_rel_names(&exported_embedding_rel_names)?);
 
         let (workspace_members, workspace_export) =
             self.collect_workspace_metadata_rows_for_root(&inventory.crate_context.root_path)?;
@@ -2525,8 +2557,8 @@ desc[id] := parent_of[id, parent], desc[parent]
                 self.merge_workspace_metadata_from_export(artifact)
                     .map_err(NamespaceImportError::from)?;
             } else {
-                let export =
-                    Self::relation_export(artifact, relation).map_err(NamespaceImportError::from)?;
+                let export = Self::relation_export(artifact, relation)
+                    .map_err(NamespaceImportError::from)?;
                 self.put_relation_export_rows(export)
                     .map_err(NamespaceImportError::from)?;
             }
@@ -3167,7 +3199,7 @@ mod tests {
     use tracing_subscriber::util::SubscriberInitExt;
     use uuid::Uuid;
 
-    use ploke_test_utils::{WS_FIXTURE_01_CANONICAL, fresh_backup_fixture_db, workspace_root};
+    use ploke_test_utils::{fresh_backup_fixture_db, workspace_root, WS_FIXTURE_01_CANONICAL};
 
     fn setup_db() -> Database {
         let db = Db::new(MemStorage::default()).unwrap();
@@ -3885,18 +3917,24 @@ mod tests {
     }
 
     #[test]
-    fn workspace_fixture_namespace_inventory_matches_crate_context_membership() -> Result<(), PlokeError> {
+    fn workspace_fixture_namespace_inventory_matches_crate_context_membership(
+    ) -> Result<(), PlokeError> {
         let db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let crate_contexts = db
             .list_crate_context_rows()
             .expect("workspace fixture should expose crate_context rows");
-        assert_eq!(crate_contexts.len(), 2, "expected two crate contexts for ws_fixture_01");
+        assert_eq!(
+            crate_contexts.len(),
+            2,
+            "expected two crate contexts for ws_fixture_01"
+        );
 
         let expected_root_paths = crate_contexts
             .iter()
             .map(|row| row.root_path.clone())
             .collect::<BTreeSet<_>>();
-        let expected_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_01");
+        let expected_workspace_root =
+            workspace_root().join("tests/fixture_workspace/ws_fixture_01");
         assert!(
             expected_root_paths
                 .iter()
@@ -3930,7 +3968,8 @@ mod tests {
     }
 
     #[test]
-    fn workspace_fixture_namespaces_remain_distinct_in_subset_inventory() -> Result<(), PlokeError> {
+    fn workspace_fixture_namespaces_remain_distinct_in_subset_inventory() -> Result<(), PlokeError>
+    {
         let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let crate_contexts = db
             .list_crate_context_rows()
@@ -4088,7 +4127,10 @@ id = to_uuid("{seeded_node}")"#
             .collect_namespace_inventory(remaining.namespace)
             .expect("remaining namespace should still be present");
         assert_eq!(surviving_inventory.crate_context, *remaining);
-        assert_eq!(surviving_inventory.descendant_ids, remaining_inventory.descendant_ids);
+        assert_eq!(
+            surviving_inventory.descendant_ids,
+            remaining_inventory.descendant_ids
+        );
         let removed_file_mods_after = db.raw_query(&format!(
             r#"?[owner_id] := *file_mod {{ owner_id, namespace @ 'NOW' }}, namespace = to_uuid("{}")"#,
             removed.namespace
@@ -4101,7 +4143,11 @@ id = to_uuid("{seeded_node}")"#
         let workspace_rows = db.raw_query(
             r#"?[members] := *workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version @ 'NOW' }"#,
         )?;
-        assert_eq!(workspace_rows.rows.len(), 1, "workspace metadata should remain present");
+        assert_eq!(
+            workspace_rows.rows.len(),
+            1,
+            "workspace metadata should remain present"
+        );
         let members = workspace_rows.rows[0]
             .first()
             .ok_or_else(|| DbError::QueryExecution("missing workspace_metadata.members".into()))
@@ -4190,8 +4236,8 @@ id = to_uuid("{seeded_node}")"#
     }
 
     #[tokio::test]
-    async fn export_namespace_artifact_contains_only_target_namespace_rows() -> Result<(), PlokeError>
-    {
+    async fn export_namespace_artifact_contains_only_target_namespace_rows(
+    ) -> Result<(), PlokeError> {
         let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let crate_contexts = db
             .list_crate_context_rows()
@@ -4317,7 +4363,8 @@ id = to_uuid("{seeded_node}")"#
             let source = to_uuid(&row[0])?;
             let target = to_uuid(&row[1])?;
             assert!(
-                artifact.descendant_ids.contains(&source) || artifact.descendant_ids.contains(&target),
+                artifact.descendant_ids.contains(&source)
+                    || artifact.descendant_ids.contains(&target),
                 "syntax_edge export should stay inside the target descendant closure"
             );
             assert!(
@@ -4337,7 +4384,10 @@ id = to_uuid("{seeded_node}")"#
 
         let active_embedding_export = relation_export(ACTIVE_EMBEDDING_SET_REL);
         assert_eq!(active_embedding_export.rows.len(), 1);
-        assert_eq!(to_string(&active_embedding_export.rows[0][0])?, exported.name);
+        assert_eq!(
+            to_string(&active_embedding_export.rows[0][0])?,
+            exported.name
+        );
 
         let embedding_set_export = relation_export(EmbeddingSet::RELATION_NAME);
         assert_eq!(embedding_set_export.rows.len(), 1);
@@ -4372,7 +4422,10 @@ id = to_uuid("{seeded_node}")"#
         )])?;
         source_db.put_active_embedding_set_meta(&exported.name, &active_set)?;
         let mut bm25_params = BTreeMap::new();
-        bm25_params.insert("id".into(), DataValue::Uuid(UuidWrapper(exported_seeded_node)));
+        bm25_params.insert(
+            "id".into(),
+            DataValue::Uuid(UuidWrapper(exported_seeded_node)),
+        );
         bm25_params.insert(
             "tracking_hash".into(),
             DataValue::Uuid(UuidWrapper(Uuid::new_v4())),
@@ -4435,7 +4488,10 @@ id = to_uuid("{seeded_node}")"#
         assert_eq!(result.imported_namespace, exported.namespace);
         assert_eq!(result.imported_crate_name, exported.name);
         assert_eq!(result.imported_root_path, exported.root_path);
-        assert_eq!(result.imported_descendant_ids, exported_inventory.descendant_ids);
+        assert_eq!(
+            result.imported_descendant_ids,
+            exported_inventory.descendant_ids
+        );
         assert_eq!(
             result.imported_file_module_owner_ids,
             exported_inventory.file_module_owner_ids
@@ -4446,12 +4502,19 @@ id = to_uuid("{seeded_node}")"#
 
         let restored_contexts = dest_db.list_crate_context_rows()?;
         assert_eq!(restored_contexts.len(), 2);
-        assert!(restored_contexts.iter().any(|row| row.namespace == exported.namespace));
-        assert!(restored_contexts.iter().any(|row| row.namespace == sibling.namespace));
+        assert!(restored_contexts
+            .iter()
+            .any(|row| row.namespace == exported.namespace));
+        assert!(restored_contexts
+            .iter()
+            .any(|row| row.namespace == sibling.namespace));
 
         let restored_inventory = dest_db.collect_namespace_inventory(exported.namespace)?;
         assert_eq!(restored_inventory.crate_context, *exported);
-        assert_eq!(restored_inventory.descendant_ids, exported_inventory.descendant_ids);
+        assert_eq!(
+            restored_inventory.descendant_ids,
+            exported_inventory.descendant_ids
+        );
 
         let workspace_rows = dest_db.raw_query(
             r#"?[members] := *workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version @ 'NOW' }"#,

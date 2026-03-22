@@ -179,7 +179,12 @@ mod tests {
         let row = &workspace_rows.rows[0];
         let expected_workspace_id = WorkspaceId::from_root_path(&fixture_workspace_root).uuid();
         let expected_members = vec![
-            DataValue::from(fixture_workspace_root.join("member_root").display().to_string()),
+            DataValue::from(
+                fixture_workspace_root
+                    .join("member_root")
+                    .display()
+                    .to_string(),
+            ),
             DataValue::from(
                 fixture_workspace_root
                     .join("nested/member_nested")

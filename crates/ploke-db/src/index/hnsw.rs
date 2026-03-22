@@ -85,8 +85,17 @@ pub fn search_similar(
     // update the active embedding set functions to correctly use Arc<RwLock<>> within these
     // functions.
     let active_embedding_set = db.with_active_set(|set| set.clone())?;
-    db.search_similar_for_set(&active_embedding_set, ty, scope, vector_query, k, ef, 100, None)
-        .map(|res| res.typed_data)
+    db.search_similar_for_set(
+        &active_embedding_set,
+        ty,
+        scope,
+        vector_query,
+        k,
+        ef,
+        100,
+        None,
+    )
+    .map(|res| res.typed_data)
 }
 
 #[derive(Clone)]

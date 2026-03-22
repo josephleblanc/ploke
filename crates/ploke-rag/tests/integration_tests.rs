@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use ploke_core::EmbeddingData;
-use ploke_db::{multi_embedding::db_ext::EmbeddingExt, Database};
+use ploke_db::{Database, multi_embedding::db_ext::EmbeddingExt};
 use ploke_embed::{
     indexer::{EmbeddingProcessor, EmbeddingSource},
     local::{EmbeddingConfig, LocalEmbedder},
@@ -11,8 +11,8 @@ use ploke_embed::{
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
 use ploke_rag::RagService;
-use ploke_test_utils::{shared_backup_fixture_db, FIXTURE_NODES_LOCAL_EMBEDDINGS};
-use tokio::time::{sleep, Duration};
+use ploke_test_utils::{FIXTURE_NODES_LOCAL_EMBEDDINGS, shared_backup_fixture_db};
+use tokio::time::{Duration, sleep};
 
 lazy_static::lazy_static! {
     pub static ref TEST_DB_NODES: Result<Arc<Database>, Error> = {
@@ -72,7 +72,7 @@ async fn fetch_snippet_containing(
 
 #[cfg(test)]
 mod benches {
-    use criterion::{criterion_group, criterion_main, Criterion};
+    use criterion::{Criterion, criterion_group, criterion_main};
     use std::hint::black_box;
     use tokio::runtime::Runtime;
 

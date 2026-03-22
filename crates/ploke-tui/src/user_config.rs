@@ -490,7 +490,8 @@ impl WorkspaceRegistry {
             *existing = entry;
         } else {
             self.entries.push(entry);
-            self.entries.sort_by(|a, b| a.workspace_name.cmp(&b.workspace_name));
+            self.entries
+                .sort_by(|a, b| a.workspace_name.cmp(&b.workspace_name));
         }
     }
 }

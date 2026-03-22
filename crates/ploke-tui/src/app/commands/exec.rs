@@ -897,7 +897,10 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
                 None
             };
             let indexing_request_msg = if let Some(index_target_dir) = target_dir.as_ref() {
-                format!("Indexing requested for target dir: {}", index_target_dir.to_display_string())
+                format!(
+                    "Indexing requested for target dir: {}",
+                    index_target_dir.to_display_string()
+                )
             } else {
                 format!("Indexing requested for pwd")
             };

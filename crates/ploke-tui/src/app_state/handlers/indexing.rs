@@ -34,7 +34,6 @@ async fn maybe_delay_indexing_for_test() {
     }
 }
 
-
 pub async fn index_workspace(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,

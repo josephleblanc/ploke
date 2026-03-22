@@ -21,9 +21,9 @@ pub mod multi_embedding;
 
 pub use database::RestoredEmbeddingSet;
 pub use database::{
-    CrateContextRow, Database, NamespaceExportArtifact, NamespaceImportConflictReport,
-    NamespaceImportError, NamespaceImportResult, NamespaceRemovalResult, QueryContext,
-    TypedEmbedData, to_usize, to_uuid,
+    to_usize, to_uuid, CrateContextRow, Database, NamespaceExportArtifact,
+    NamespaceImportConflictReport, NamespaceImportError, NamespaceImportResult,
+    NamespaceRemovalResult, QueryContext, TypedEmbedData,
 };
 pub use error::DbError;
 pub use index::hnsw::{

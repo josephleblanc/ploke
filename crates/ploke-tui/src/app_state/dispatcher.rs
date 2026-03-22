@@ -148,8 +148,13 @@ pub async fn state_manager(
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
                 tokio::spawn(async move {
-                    handlers::indexing::index_workspace(&state, &event_bus, target_dir, needs_parse)
-                        .await;
+                    handlers::indexing::index_workspace(
+                        &state,
+                        &event_bus,
+                        target_dir,
+                        needs_parse,
+                    )
+                    .await;
                 });
             }
             StateCommand::PauseIndexing => handlers::indexing::pause(&state).await,

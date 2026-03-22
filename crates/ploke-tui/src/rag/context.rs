@@ -13,9 +13,8 @@ use std::{ops::ControlFlow, path::PathBuf};
 
 use once_cell::sync::Lazy;
 use ploke_core::{
-    ArcStr,
+    ArcStr, RetrievalScope,
     rag_types::{AssembledContext, ContextPart},
-    RetrievalScope,
 };
 use tokio::sync::oneshot;
 

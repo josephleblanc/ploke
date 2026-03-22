@@ -4,10 +4,13 @@ use ploke_db::Database;
 use ploke_io::path_policy::{PathPolicy, normalize_target_path};
 use ploke_transform::transform::{transform_parsed_graph, transform_parsed_workspace};
 use syn_parser::{
-    ModuleTree, ParsedCodeGraph, ParserOutput, discovery::run_discovery_phase,
+    ModuleTree, ParsedCodeGraph, ParserOutput,
+    discovery::run_discovery_phase,
     discovery::workspace::{locate_workspace_manifest, try_parse_manifest},
-    error::SynParserError, parser::analyze_files_parallel, try_run_phases_and_merge,
+    error::SynParserError,
     parse_workspace,
+    parser::analyze_files_parallel,
+    try_run_phases_and_merge,
 };
 use tracing::instrument;
 
@@ -50,7 +53,8 @@ impl fmt::Display for IndexTargetResolveError {
 pub fn resolve_index_target(
     user_dir: Option<PathBuf>,
 ) -> Result<ResolvedIndexTarget, IndexTargetResolveError> {
-    let requested_path = resolve_target_dir(user_dir).map_err(IndexTargetResolveError::Resolution)?;
+    let requested_path =
+        resolve_target_dir(user_dir).map_err(IndexTargetResolveError::Resolution)?;
     let local_manifest = requested_path.join("Cargo.toml");
 
     if local_manifest.is_file() {
@@ -161,8 +165,8 @@ pub fn resolve_target_dir(user_dir: Option<PathBuf>) -> Result<PathBuf, SynParse
 }
 
 pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), SynParserError> {
-    let resolved =
-        resolve_index_target(target_dir).map_err(|err| SynParserError::InternalState(err.to_string()))?;
+    let resolved = resolve_index_target(target_dir)
+        .map_err(|err| SynParserError::InternalState(err.to_string()))?;
     run_parse_resolved(db, &resolved)
 }
 
@@ -185,9 +189,9 @@ pub fn run_parse_resolved(
             let merged = parser_output.extract_merged_graph().ok_or_else(|| {
                 SynParserError::InternalState("Missing parsed code graph".to_string())
             })?;
-            let tree = parser_output.extract_module_tree().ok_or_else(|| {
-                SynParserError::InternalState("Missing module tree".to_string())
-            })?;
+            let tree = parser_output
+                .extract_module_tree()
+                .ok_or_else(|| SynParserError::InternalState("Missing module tree".to_string()))?;
             transform_parsed_graph(&db, merged, &tree).map_err(|err| {
                 SynParserError::InternalState(format!("Failed to transform parsed graph: {err}"))
             })?;

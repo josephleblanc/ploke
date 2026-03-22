@@ -276,13 +276,13 @@ impl RagService {
                         query.len(),
                         top_k,
                         recv_err
-                    )))
+                    )));
                 }
                 Err(_) => {
                     return Err(RagError::Channel(format!(
                         "timeout waiting for BM25 search ({} ms)",
                         self.cfg.bm25_timeout_ms
-                    )))
+                    )));
                 }
             };
 
@@ -433,12 +433,12 @@ impl RagService {
 
         let (tx, rx) = oneshot::channel();
         self.bm_embedder
-                .send(Bm25Cmd::Search {
-                    query: query.to_string(),
-                    top_k,
-                    scope,
-                    resp: tx,
-                })
+            .send(Bm25Cmd::Search {
+                query: query.to_string(),
+                top_k,
+                scope,
+                resp: tx,
+            })
             .await
             .map_err(|e| {
                 RagError::Channel(format!(
@@ -457,13 +457,13 @@ impl RagService {
                     query.len(),
                     top_k,
                     recv_err
-                )))
+                )));
             }
             Err(_) => {
                 return Err(RagError::Channel(format!(
                     "timeout waiting for BM25 search ({} ms)",
                     self.cfg.bm25_timeout_ms
-                )))
+                )));
             }
         };
 
