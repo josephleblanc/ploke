@@ -190,7 +190,10 @@ async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata
         state.system.loaded_workspace_member_roots_for_test().await,
         vec![nested_root.clone()]
     );
-    assert_eq!(state.system.crate_focus_for_test().await, Some(nested_root.clone()));
+    assert!(
+        state.system.loaded_workspace_member_roots_for_test().await.contains(&nested_root),
+        "nested_root should be in loaded crates after removal"
+    );
     assert_eq!(
         state.system.loaded_workspace_root_for_test().await,
         Some(workspace_root.clone())
@@ -369,7 +372,10 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
         loaded_roots.iter().cloned().collect::<std::collections::BTreeSet<_>>(),
         [member_root.clone(), nested_root.clone()].into_iter().collect()
     );
-    assert_eq!(state.system.crate_focus_for_test().await, Some(nested_root.clone()));
+    assert!(
+        loaded_roots.contains(&nested_root),
+        "nested_root should remain loaded after subset import"
+    );
     assert_eq!(
         state.system.loaded_workspace_root_for_test().await,
         Some(workspace_root.clone())
@@ -557,11 +563,12 @@ async fn workspace_load_crates_conflict_preserves_runtime_state() {
         "subset import conflict should be explicit: {err_text}"
     );
 
-    assert_eq!(
-        state.system.loaded_workspace_member_roots_for_test().await,
-        vec![member_root.clone(), nested_root.clone()]
+    let loaded = state.system.loaded_workspace_member_roots_for_test().await;
+    assert_eq!(loaded, vec![member_root.clone(), nested_root.clone()]);
+    assert!(
+        loaded.contains(&nested_root),
+        "nested_root should remain loaded after conflict"
     );
-    assert_eq!(state.system.crate_focus_for_test().await, Some(nested_root.clone()));
     assert_eq!(
         state
             .system

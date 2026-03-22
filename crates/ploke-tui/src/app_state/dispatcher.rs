@@ -165,15 +165,17 @@ pub async fn state_manager(
             }
             StateCommand::RecordIndexCompleted => {
                 let mut sys = state.system.write().await;
-                if let Some(crate_id) = sys.crate_focus {
+                let loaded_ids: Vec<_> = sys.loaded_crates.keys().copied().collect();
+                if loaded_ids.is_empty() {
+                    tracing::warn!("Indexing completed but no crates are loaded");
+                }
+                for crate_id in loaded_ids {
                     let version = sys.record_index_complete(crate_id);
                     tracing::debug!(
                         "Indexing complete; crate_id={:?} version={}",
                         crate_id,
                         version
                     );
-                } else {
-                    tracing::warn!("Indexing completed but no crate focus set");
                 }
             }
 

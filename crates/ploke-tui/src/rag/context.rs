@@ -174,7 +174,7 @@ pub async fn process_with_rag(
     // Conversation-only fallback: prepend a short system notice then send PromptConstructed
     let (crate_loaded, first_tip): (bool, bool) = {
         let mut sys = state.system.write().await;
-        let loaded = sys.focused_crate().is_some();
+        let loaded = sys.has_loaded_crates();
         let first = !sys.no_workspace_tip_shown;
         if !loaded {
             sys.no_workspace_tip_shown = true;

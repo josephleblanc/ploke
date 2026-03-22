@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(feature = "test_harness")]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,58 +34,6 @@ async fn maybe_delay_indexing_for_test() {
     }
 }
 
-#[derive(Debug)]
-struct StateDirCtx {
-    workspace_root: Option<PathBuf>,
-    member_roots: Vec<PathBuf>,
-    focused_root: Option<PathBuf>,
-}
-
-impl StateDirCtx {
-    fn anchor_relative_target_to_loaded_state(
-        &self,
-        target_dir: &IndexTargetDir,
-    ) -> Option<IndexTargetDir> {
-        if let Some(root) = self.focused_root.as_ref()
-            && root.ends_with(target_dir.as_path())
-        {
-            Some(IndexTargetDir::new(root.to_owned()))
-        } else if let Some(root) = self
-            .member_roots
-            .iter()
-            .find(|root| root.ends_with(target_dir.as_path()))
-        {
-            Some(IndexTargetDir::new(root.to_owned()))
-        } else if let Some(root) = self.workspace_root.as_ref()
-            && root.ends_with(target_dir.as_path())
-        {
-            Some(IndexTargetDir::new(root.to_owned()))
-        } else {
-            None
-        }
-    }
-}
-
-fn anchor_relative_target_to_loaded_state(
-    target_dir: &Path,
-    workspace_root: Option<&Path>,
-    member_roots: &[PathBuf],
-    focused_root: Option<&Path>,
-) -> Option<PathBuf> {
-    if let Some(root) = focused_root
-        && root.ends_with(target_dir)
-    {
-        Some(root.to_path_buf())
-    } else if let Some(root) = member_roots.iter().find(|root| root.ends_with(target_dir)) {
-        Some(root.clone())
-    } else if let Some(root) = workspace_root
-        && root.ends_with(target_dir)
-    {
-        Some(root.to_path_buf())
-    } else {
-        None
-    }
-}
 
 pub async fn index_workspace(
     state: &Arc<AppState>,
@@ -103,31 +51,19 @@ pub async fn index_workspace(
         )
     };
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
-    let state_dir_ctx = {
-        let system_guard = state.system.read().await;
-        StateDirCtx {
-            workspace_root: system_guard.loaded_workspace_root(),
-            member_roots: system_guard.loaded_workspace_member_roots(),
-            focused_root: system_guard.focused_crate_root(),
-        }
-    };
 
-    // TODO:workspaces-tui as referenced in docs/active/todo/2026-03-22_workspaces-tui.md
-    // - using a stopgap measure, later fix resolve_index_target to be method of `IndexTargetDir`
     let stopgap_pathbuf = target_dir.clone().map(|p| p.as_path().to_path_buf());
 
-    let maybe_anchored = if let Some(dir) = target_dir {
-        if dir.is_absolute() {
-            Some(dir)
-        } else {
-            state_dir_ctx
-                .anchor_relative_target_to_loaded_state(&dir)
-                .or(Some(dir))
-        }
+    let resolved_target = if let Some(dir) = target_dir {
+        let anchored = {
+            let system_guard = state.system.read().await;
+            dir.resolve_against_loaded_state(&system_guard)
+        };
+        Some(anchored.unwrap_or(dir).as_path().to_path_buf())
     } else {
-        None
+        stopgap_pathbuf.clone()
     };
-    let resolved = match resolve_index_target(stopgap_pathbuf.clone()) {
+    let resolved = match resolve_index_target(resolved_target) {
         Ok(resolved) => resolved,
         Err(err) => {
             let msg = err.to_string();
@@ -253,44 +189,48 @@ pub async fn index_workspace(
 
 #[cfg(test)]
 mod tests {
-    use super::anchor_relative_target_to_loaded_state;
-    use std::path::{Path, PathBuf};
+    use crate::app_state::IndexTargetDir;
+    use crate::app_state::core::SystemStatus;
+    use std::path::PathBuf;
 
     /// Regression witness for the `test_update_embed` failure mode.
     ///
     /// The `IndexWorkspace` command historically carried a repo-relative string
     /// while `ploke-tui` already knew the loaded crate root as an absolute path.
     /// Re-resolving the string from process cwd silently broke that agreement.
-    /// A pass here proves the handler can recover the authoritative absolute
-    /// path from loaded state before calling generic path resolution.
+    /// A pass here proves `IndexTargetDir::resolve_against_loaded_state` can
+    /// recover the authoritative absolute path from loaded state.
     #[test]
-    fn anchor_relative_target_matches_loaded_focus_suffix() {
+    fn anchor_relative_target_matches_loaded_crate_suffix() {
         let focused_root = PathBuf::from("/repo/tests/fixture_crates/fixture_update_embed");
-        let resolved = anchor_relative_target_to_loaded_state(
-            Path::new("tests/fixture_crates/fixture_update_embed"),
-            Some(focused_root.as_path()),
-            std::slice::from_ref(&focused_root),
-            Some(focused_root.as_path()),
-        );
+        let mut status = SystemStatus::default();
+        status.set_focus_from_root(focused_root.clone());
 
-        assert_eq!(resolved, Some(focused_root));
+        let target = IndexTargetDir::from("tests/fixture_crates/fixture_update_embed");
+        let resolved = target.resolve_against_loaded_state(&status);
+
+        assert_eq!(
+            resolved.map(|d| d.as_path().to_path_buf()),
+            Some(focused_root)
+        );
     }
 
-    /// A pass here proves the anchoring logic does not invent matches for
-    /// unrelated relative paths; those should still fall through to normal
-    /// resolution and explicit errors.
+    /// Anchoring logic must not invent matches for unrelated relative paths;
+    /// those should fall through to normal resolution and explicit errors.
     #[test]
     fn anchor_relative_target_does_not_match_unrelated_suffix() {
-        let focused_root = PathBuf::from("/repo/tests/fixture_crates/fixture_update_embed");
         let member_root = PathBuf::from("/repo/tests/fixture_workspace/ws_fixture_01/member_root");
-        let resolved = anchor_relative_target_to_loaded_state(
-            Path::new("other/location"),
-            Some(Path::new("/repo/tests/fixture_workspace/ws_fixture_01")),
-            &[member_root],
-            Some(focused_root.as_path()),
+        let mut status = SystemStatus::default();
+        status.set_loaded_workspace(
+            PathBuf::from("/repo/tests/fixture_workspace/ws_fixture_01"),
+            vec![member_root],
+            None,
         );
 
-        assert_eq!(resolved, None);
+        let target = IndexTargetDir::from("other/location");
+        let resolved = target.resolve_against_loaded_state(&status);
+
+        assert!(resolved.is_none());
     }
 }
 

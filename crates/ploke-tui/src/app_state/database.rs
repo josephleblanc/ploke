@@ -92,7 +92,7 @@ impl IndexTargetDir {
     pub fn new(path: PathBuf) -> Self {
         Self(path)
     }
-    pub fn as_display(&self) -> std::path::Display {
+    pub fn as_display(&self) -> std::path::Display<'_> {
         self.0.display()
     }
 
@@ -107,6 +107,30 @@ impl IndexTargetDir {
 
     pub fn as_path(&self) -> &std::path::Path {
         self.0.as_path()
+    }
+
+    /// Resolve this target directory against loaded workspace/crate state.
+    /// If the path is absolute, returns it as-is. If relative, attempts to
+    /// anchor it against loaded member roots, workspace root, or loaded crate
+    /// roots. Returns `None` if no anchoring is possible.
+    pub fn resolve_against_loaded_state(
+        &self,
+        status: &super::core::SystemStatus,
+    ) -> Option<IndexTargetDir> {
+        if self.is_absolute() {
+            return Some(self.clone());
+        }
+        let target = self.as_path();
+        let loaded_roots = status.loaded_crate_roots();
+        if let Some(root) = loaded_roots.iter().find(|root| root.ends_with(target)) {
+            return Some(IndexTargetDir::new(root.clone()));
+        }
+        if let Some(ws_root) = status.loaded_workspace_root() {
+            if ws_root.ends_with(target) {
+                return Some(IndexTargetDir::new(ws_root));
+            }
+        }
+        None
     }
 }
 
@@ -424,14 +448,18 @@ async fn loaded_crate_targets(
     Ok((workspace_root, targets))
 }
 
-async fn focused_scan_target(
+/// Build a scan target from the first loaded crate.
+/// For single-crate setups this is unambiguous; for workspaces it picks the
+/// first loaded member (by CrateId ordering). Callers that need to scan a
+/// specific crate should build the `LoadedCrateScanTarget` directly.
+async fn primary_scan_target(
     state: &Arc<AppState>,
 ) -> Result<LoadedCrateScanTarget, ploke_error::Error> {
     let root_path = {
         let guard = state.system.read().await;
         guard.focused_crate_root().ok_or_else(|| {
             let e = ploke_error::Error::from(StateError::MissingCrateFocus {
-                msg: "Missing crate focus is None, cannot scan unspecified target crate",
+                msg: "No crate is loaded; cannot scan unspecified target crate",
             });
             e.emit_warning();
             e
@@ -1614,7 +1642,7 @@ pub(super) async fn scan_for_change(
     event_bus: &Arc<EventBus>,
     scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
 ) -> Result<(), ploke_error::Error> {
-    let target = focused_scan_target(state).await?;
+    let target = primary_scan_target(state).await?;
     scan_for_change_target(state, event_bus, &target, scan_tx, true).await
 }
 
@@ -2831,7 +2859,7 @@ mod test {
         {
             let mut system_guard = state.system.write().await;
             let path = workspace_root.join(target_dir);
-            system_guard.set_focus_from_root(workspace_root.clone());
+            system_guard.set_focus_from_root(path.clone());
             trace!(
                 target: TUI_SCAN_TARGET,
                 "system_guard.focused_crate_root: {:?}",

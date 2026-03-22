@@ -1,4 +1,36 @@
+use std::path::PathBuf;
+
+use ploke_core::CrateId;
 use uuid::Uuid;
+
+use super::core::WorkspaceFreshness;
+
+/// Typed mutations for `SystemStatus`. All system state changes flow through
+/// these variants, applied via `SystemStatus::apply`. This centralizes state
+/// transitions and prevents ad-hoc field mutation.
+#[derive(Debug, Clone)]
+pub enum SystemMutation {
+    LoadWorkspace {
+        workspace_root: PathBuf,
+        member_roots: Vec<PathBuf>,
+        focused_root: Option<PathBuf>,
+    },
+    LoadStandaloneCrate {
+        crate_root: PathBuf,
+    },
+    RecordParseSuccess,
+    RecordParseFailure {
+        target_dir: PathBuf,
+        message: String,
+    },
+    SetWorkspaceFreshness {
+        crate_id: CrateId,
+        freshness: WorkspaceFreshness,
+    },
+    RecordIndexComplete {
+        crate_id: CrateId,
+    },
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct MessageUpdatedEvent(pub Uuid);

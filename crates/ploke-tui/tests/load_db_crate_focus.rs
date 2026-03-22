@@ -120,12 +120,11 @@ async fn workspace_restore_assigns_loaded_workspace_membership_from_db() {
     let loaded_member_roots = state.system.loaded_workspace_member_roots_for_test().await;
     assert_eq!(loaded_member_roots, expected_member_roots);
 
-    let focused_root = state
-        .system
-        .crate_focus_for_test()
-        .await
-        .expect("focused crate root");
-    assert_eq!(focused_root, fixture_workspace_root.join("member_root"));
+    let loaded_roots = state.system.loaded_workspace_member_roots_for_test().await;
+    assert!(
+        loaded_roots.contains(&fixture_workspace_root.join("member_root")),
+        "member_root should be in loaded crates"
+    );
 
     let policy_roots = {
         let guard = state.system.read().await;

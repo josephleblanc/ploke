@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::PROJECT_NAMESPACE_UUID;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CrateId(Uuid);
 
 impl CrateId {
