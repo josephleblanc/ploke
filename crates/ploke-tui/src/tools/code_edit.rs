@@ -133,7 +133,14 @@ pub async fn print_code_edit_results(
 ) -> Result<ToolResult, ploke_error::Error> {
     let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
     if let Some(prop) = proposal_opt {
-        let crate_root = { ctx.state.system.read().await.focused_crate_root() };
+        let primary_root = {
+            ctx.state
+                .system
+                .read()
+                .await
+                .tool_path_context()
+                .map(|(r, _)| r)
+        };
         let staged = if matches!(tool_name, ToolName::NsPatch) {
             prop.edits_ns.len()
         } else {
@@ -149,7 +156,7 @@ pub async fn print_code_edit_results(
         let display_files: Vec<String> = files
             .iter()
             .map(|p| {
-                if let Some(root) = crate_root.as_ref() {
+                if let Some(ref root) = primary_root {
                     p.strip_prefix(root)
                         .map(|rp| rp.display().to_string())
                         .unwrap_or_else(|_| p.display().to_string())

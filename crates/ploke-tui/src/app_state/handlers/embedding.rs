@@ -5,6 +5,7 @@ use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::{RagEvent, app_state::AppState, chat_history::Message, error::ResultExt as _};
+use ploke_core::RetrievalScope;
 use ploke_db::{NodeType, search_similar};
 
 /// Handles embedding of a user message and subsequent similarity search.
@@ -98,8 +99,15 @@ async fn embedding_search_similar(
     new_msg_id: Uuid,
     embeddings: Vec<f32>,
 ) -> color_eyre::Result<()> {
-    let ty_embed_data =
-        search_similar(&state.db, embeddings, 100, 200, NodeType::Function).emit_error()?;
+    let ty_embed_data = search_similar(
+        &state.db,
+        embeddings,
+        100,
+        200,
+        RetrievalScope::LoadedWorkspace,
+        NodeType::Function,
+    )
+    .emit_error()?;
     tracing::info!("search_similar Success! with result {:?}", ty_embed_data);
 
     let snippets = state

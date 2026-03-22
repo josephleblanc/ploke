@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, ops::Deref as _};
 use cozo::{DataValue, Num, ScriptMutability, UuidWrapper};
 use itertools::Itertools;
 use ploke_core::embeddings::EmbeddingSet;
+use ploke_core::RetrievalScope;
 use syn_parser::utils::LogStyle;
 use tracing::{debug, info, instrument};
 use uuid::Uuid;
@@ -32,6 +33,7 @@ pub trait HnswExt {
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -43,6 +45,7 @@ pub trait HnswExt {
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -216,6 +219,7 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        _scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -338,6 +342,7 @@ has_embedding[id, name, distance] :=
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -356,6 +361,15 @@ has_embedding[id, name, distance] :=
         if let Some(radius) = radius {
             params.insert("radius".into(), DataValue::Num(Num::Float(radius)));
         }
+        let scope_filter_clause = if let Some(namespace) = scope.namespace_filter() {
+            params.insert(
+                "scope_namespace".into(),
+                DataValue::Uuid(UuidWrapper(namespace)),
+            );
+            ",\n    namespace == $scope_namespace"
+        } else {
+            ""
+        };
 
         let rel = node_type.relation_str();
         let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
@@ -395,7 +409,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
     *file_mod {{ owner_id: mod_id, file_path, namespace @ 'NOW'}}
 
 ?[id, name, file_path, file_hash, hash, span, namespace, distance] :=
-    batch[id, name, file_path, file_hash, hash, span, namespace, distance]
+    batch[id, name, file_path, file_hash, hash, span, namespace, distance]{scope_filter_clause}
 :order distance
 :limit $limit
 "#,
@@ -403,6 +417,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
             hnsw_suffix = HNSW_SUFFIX,
             rel = rel,
             radius_clause = radius_clause,
+            scope_filter_clause = scope_filter_clause,
         );
         debug!(target: "cozo-script", hnsw_script = %script);
 
@@ -498,6 +513,7 @@ impl HnswExt for Database {
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -507,6 +523,7 @@ impl HnswExt for Database {
         self.deref().search_similar_for_set(
             embedding_set,
             node_type,
+            scope,
             vector_query,
             k,
             ef,
@@ -527,6 +544,7 @@ impl HnswExt for Database {
         &self,
         embedding_set: &EmbeddingSet,
         node_type: NodeType,
+        scope: RetrievalScope,
         vector_query: Vec<f32>,
         k: usize,
         ef: usize,
@@ -536,6 +554,7 @@ impl HnswExt for Database {
         self.deref().search_similar_for_set_test(
             embedding_set,
             node_type,
+            scope,
             vector_query,
             k,
             ef,
@@ -551,17 +570,21 @@ pub(crate) use tests::init_tracing_once;
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashSet,
+        cell::RefCell,
+        collections::{BTreeMap, HashSet},
         sync::{Arc, Once},
     };
 
     use super::*;
-    use cozo::NamedRows;
+    use cozo::{NamedRows, UuidWrapper};
+    use ploke_core::CrateId;
     use ploke_error::Error;
+    use ploke_test_utils::WS_FIXTURE_01_CANONICAL;
     use syn_parser::utils::LogStyle;
     use tracing::info;
 
     use crate::{
+        create_index_primary,
         database::ImmutQuery,
         log_script,
         multi_embedding::{
@@ -571,10 +594,19 @@ mod tests {
         run_script_params,
     };
 
+    thread_local! {
+        static TEST_TRACING_GUARD: RefCell<Option<ploke_test_utils::TestTracingGuard>> =
+            RefCell::new(None);
+    }
+
     static TEST_TRACING: Once = Once::new();
     pub(crate) fn init_tracing_once(target: &'static str, level: tracing::Level) {
         TEST_TRACING.call_once(|| {
-            ploke_test_utils::init_test_tracing_with_target(target, level);
+            TEST_TRACING_GUARD.with(|guard| {
+                *guard.borrow_mut() = Some(ploke_test_utils::init_test_tracing_with_target(
+                    target, level,
+                ));
+            });
         });
     }
 
@@ -634,6 +666,69 @@ mod tests {
             .map_err(DbError::from)?;
 
         Ok(ids)
+    }
+
+    fn load_workspace_fixture_db() -> Result<Database, Error> {
+        let db = Database::init_with_schema()?;
+        let target_file = WS_FIXTURE_01_CANONICAL.path();
+        let prior_rels = db.relations_vec()?;
+        db.import_from_backup(&target_file, &prior_rels)
+            .map_err(DbError::from)?;
+        create_index_primary(&db)?;
+        Ok(db)
+    }
+
+    fn workspace_fixture_function_rows(db: &Database) -> Result<[(Uuid, Uuid); 2], Error> {
+        let rows = db.raw_query(
+            r#"
+?[id, name, namespace] :=
+    *function{id, name @ 'NOW'},
+    *syntax_edge{source_id: mod_id, target_id: id, relation_kind: "Contains" @ 'NOW'},
+    *file_mod{owner_id: mod_id, namespace @ 'NOW'}
+"#,
+        )?;
+
+        let mut by_name = BTreeMap::new();
+        for row in rows.rows {
+            let id = match row.first() {
+                Some(DataValue::Uuid(UuidWrapper(id))) => *id,
+                other => {
+                    return Err(Error::from(DbError::Cozo(format!(
+                        "expected function id uuid, found {other:?}"
+                    ))));
+                }
+            };
+            let name = row
+                .get(1)
+                .and_then(DataValue::get_str)
+                .ok_or_else(|| {
+                    Error::from(DbError::Cozo(
+                        "expected function name string in workspace fixture query".to_string(),
+                    ))
+                })?
+                .to_string();
+            let namespace = match row.get(2) {
+                Some(DataValue::Uuid(UuidWrapper(namespace))) => *namespace,
+                other => {
+                    return Err(Error::from(DbError::Cozo(format!(
+                        "expected namespace uuid, found {other:?}"
+                    ))));
+                }
+            };
+            by_name.insert(name, (id, namespace));
+        }
+
+        let root = by_name.remove("root_value").ok_or_else(|| {
+            Error::from(DbError::Cozo(
+                "missing root_value in workspace fixture".into(),
+            ))
+        })?;
+        let nested = by_name.remove("nested_value").ok_or_else(|| {
+            Error::from(DbError::Cozo(
+                "missing nested_value in workspace fixture".into(),
+            ))
+        })?;
+        Ok([root, nested])
     }
 
     #[test]
@@ -943,6 +1038,7 @@ mod tests {
         let result = db.search_similar_for_set(
             &embedding_set,
             NodeType::Function,
+            RetrievalScope::LoadedWorkspace,
             query_vector.clone(),
             k,
             ef,
@@ -983,6 +1079,7 @@ mod tests {
         let radius_result = db.search_similar_for_set(
             &embedding_set,
             NodeType::Function,
+            RetrievalScope::LoadedWorkspace,
             query_vector,
             k,
             ef,
@@ -997,6 +1094,82 @@ mod tests {
         assert!(
             radius_result.dist.first().map(|d| d.abs()).unwrap_or(1.0) < 1e-6,
             "radius-filtered neighbor should have near-zero distance"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn search_similar_for_set_specific_crate_scope_filters_before_limit() -> Result<(), Error> {
+        let db = load_workspace_fixture_db()?;
+        let embedding_set = db.with_active_set(|set| set.clone())?;
+        db.ensure_embedding_relation(&embedding_set)?;
+
+        let [(root_id, root_namespace), (nested_id, nested_namespace)] =
+            workspace_fixture_function_rows(&db)?;
+
+        let exact_match = embedding_set
+            .new_vector_with_node(root_id, vec![0.0; embedding_set.dims() as usize])
+            .into_cozo_datavalue();
+        let in_scope_match = embedding_set
+            .new_vector_with_node(nested_id, vec![0.1; embedding_set.dims() as usize])
+            .into_cozo_datavalue();
+        let mut params = BTreeMap::new();
+        params.insert(
+            "updates".to_string(),
+            DataValue::List(vec![exact_match, in_scope_match]),
+        );
+        let put_vectors = embedding_set.script_put_vector_with_param_batch();
+        db.run_script(&put_vectors, params, ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+        db.create_embedding_index(&embedding_set)?;
+
+        let unscoped = db.search_similar_for_set(
+            &embedding_set,
+            NodeType::Function,
+            RetrievalScope::LoadedWorkspace,
+            vec![0.0; embedding_set.dims() as usize],
+            2,
+            10,
+            1,
+            None,
+        )?;
+        assert_eq!(
+            unscoped.typed_data.v.len(),
+            1,
+            "unscoped limit=1 should truncate to one hit"
+        );
+        assert_eq!(
+            unscoped.typed_data.v[0].id, root_id,
+            "unscoped search should prefer the stronger out-of-scope vector before limit"
+        );
+        assert_eq!(
+            unscoped.typed_data.v[0].namespace, root_namespace,
+            "unscoped search should expose the out-of-scope namespace"
+        );
+
+        let scoped = db.search_similar_for_set(
+            &embedding_set,
+            NodeType::Function,
+            RetrievalScope::SpecificCrate(CrateId::new(nested_namespace)),
+            vec![0.0; embedding_set.dims() as usize],
+            2,
+            10,
+            1,
+            None,
+        )?;
+        assert_eq!(
+            scoped.typed_data.v.len(),
+            1,
+            "scoped limit=1 should still return one hit"
+        );
+        assert_eq!(
+            scoped.typed_data.v[0].id, nested_id,
+            "crate scope must be applied before the final dense :limit truncation"
+        );
+        assert_eq!(
+            scoped.typed_data.v[0].namespace, nested_namespace,
+            "scoped result should stay inside the requested crate namespace"
         );
 
         Ok(())
@@ -1061,7 +1234,7 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         }
 
         let mut target_file = workspace_root();
-        target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        target_file.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
         let prior_rels_vec = db
             .relations_vec()
             .inspect_err(|e| error!(target: HNSW_TARGET, "{e:#?}"))?;
@@ -1108,7 +1281,7 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
 
         let db = Database::init_with_schema()?;
         let mut target_file = workspace_root();
-        target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        target_file.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
         let prior_rels_vec = db.relations_vec()?;
         db.import_from_backup(&target_file, &prior_rels_vec)
             .map_err(DbError::from)

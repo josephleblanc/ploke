@@ -9,7 +9,6 @@ use crate::test_harness::openrouter_env;
 use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
 use ploke_core::ArcStr;
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -24,28 +23,18 @@ use tui::app_state::{self, AppState, ChatState, ConfigState, StateCommand, Syste
 use tui::user_config::UserConfig;
 use tui::{AppEvent, EventBus, EventBusCaps, EventPriority};
 
-use ploke_db::{Database, bm25_index, create_index_primary};
+use ploke_db::{Database, bm25_index};
 use ploke_embed::cancel_token::CancellationToken;
 use ploke_embed::indexer::IndexerTask;
 use ploke_rag::{RagConfig, RagService, TokenBudget};
-use ploke_test_utils::workspace_root;
+use ploke_test_utils::{FIXTURE_NODES_LOCAL_EMBEDDINGS, shared_backup_fixture_db, workspace_root};
 use serde::Serialize;
 use uuid::Uuid;
 
 lazy_static! {
-    /// Shared DB restored from a backup of `fixture_nodes` (if present), with primary index created.
+    /// Shared DB restored from the registry-backed local embedding `fixture_nodes` backup.
     pub static ref TEST_DB_NODES: Result<Arc<Database>, ploke_error::Error> = {
-        let db = Database::init_with_schema()?;
-        let mut backup = workspace_root();
-        backup.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
-        if backup.exists() {
-            let prior_rels_vec = db.relations_vec()?;
-            db.import_from_backup(&backup, &prior_rels_vec)
-                .map_err(ploke_db::DbError::from)
-                .map_err(ploke_error::Error::from)?;
-        }
-        create_index_primary(&db)?;
-        Ok(Arc::new(db))
+        shared_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)
     };
 }
 

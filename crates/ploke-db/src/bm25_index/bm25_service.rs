@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{Database, DbError};
+use ploke_core::RetrievalScope;
 
 use super::{Bm25Indexer, DocData, DocMeta};
 use tokio::sync::{mpsc, oneshot};
@@ -31,6 +32,7 @@ pub enum Bm25Cmd {
     Search {
         query: String,
         top_k: usize,
+        scope: RetrievalScope,
         resp: oneshot::Sender<Vec<(Uuid, f32)>>,
     },
     /// Get current lifecycle/status of the BM25 actor/index.
@@ -124,9 +126,14 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result<mpsc::Sender<Bm25Cmd>, DbE
                     );
                     let _ = resp.send(Ok(()));
                 }
-                Bm25Cmd::Search { query, top_k, resp } => {
+                Bm25Cmd::Search {
+                    query,
+                    top_k,
+                    scope,
+                    resp,
+                } => {
                     tracing::debug!("query: {query}, top_k: {top_k}, resp: {resp:?}");
-                    let scored = indexer.search(&query, top_k);
+                    let scored = indexer.search(&query, top_k, scope);
                     tracing::trace!("scored: {scored:?}");
                     let results: Vec<(Uuid, f32)> =
                         scored.into_iter().map(|d| (d.id, d.score)).collect();
@@ -289,9 +296,14 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
                     );
                     let _ = resp.send(Ok(()));
                 }
-                Bm25Cmd::Search { query, top_k, resp } => {
+                Bm25Cmd::Search {
+                    query,
+                    top_k,
+                    scope,
+                    resp,
+                } => {
                     tracing::debug!("query: {query}, top_k: {top_k}, resp: {resp:?}");
-                    let scored = indexer.search(&query, top_k);
+                    let scored = indexer.search(&query, top_k, scope);
                     tracing::debug!("scored: {scored:?}");
                     let results: Vec<(uuid::Uuid, f32)> =
                         scored.into_iter().map(|d| (d.id, d.score)).collect();

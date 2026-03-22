@@ -237,7 +237,8 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     }
 
     // Resolve each edit by canonical path -> EmbeddingData -> WriteSnippetData
-    let crate_root = { state.system.read().await.focused_crate_root() };
+    let tool_paths = { state.system.read().await.tool_path_context() };
+    let primary_root = tool_paths.as_ref().map(|(p, _)| p.clone());
     let editing_cfg = { state.config.read().await.editing.clone() };
     let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
     let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
@@ -253,21 +254,26 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 namespace,
             } => {
                 let p = PathBuf::from(file_path);
-                let abs_path = if let Some(root) = crate_root.as_ref() {
-                    match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
-                        Ok(pb) => pb,
-                        Err(err) => {
-                            let msg = format!("invalid path: {}", err);
-                            tool_call_params.tool_call_failed(msg);
-                            return;
+                let abs_path = match &tool_paths {
+                    Some((primary, policy)) => {
+                        match path_scoping::resolve_tool_path(p.as_path(), primary, policy) {
+                            Ok(pb) => pb,
+                            Err(err) => {
+                                let msg = format!("invalid path: {}", err);
+                                tool_call_params.tool_call_failed(msg);
+                                return;
+                            }
                         }
                     }
-                } else if p.is_absolute() {
-                    p
-                } else {
-                    std::env::current_dir()
-                        .unwrap_or_else(|_| PathBuf::from("."))
-                        .join(p)
+                    None => {
+                        if p.is_absolute() {
+                            p
+                        } else {
+                            std::env::current_dir()
+                                .unwrap_or_else(|_| PathBuf::from("."))
+                                .join(p)
+                        }
+                    }
                 };
                 let ws = WriteSnippetData {
                     id: uuid::Uuid::new_v4(),
@@ -302,21 +308,26 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 // TODO: Clean up the next 20 lines or so
                 let p = PathBuf::from(file);
                 let file_was_relative = !p.is_absolute();
-                let abs_path = if let Some(root) = crate_root.as_ref() {
-                    match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
-                        Ok(pb) => pb,
-                        Err(err) => {
-                            let msg = format!("invalid path: {}", err);
-                            tool_call_params.tool_call_failed(msg);
-                            return;
+                let abs_path = match &tool_paths {
+                    Some((primary, policy)) => {
+                        match path_scoping::resolve_tool_path(p.as_path(), primary, policy) {
+                            Ok(pb) => pb,
+                            Err(err) => {
+                                let msg = format!("invalid path: {}", err);
+                                tool_call_params.tool_call_failed(msg);
+                                return;
+                            }
                         }
                     }
-                } else if p.is_absolute() {
-                    p
-                } else {
-                    std::env::current_dir()
-                        .unwrap_or_else(|_| PathBuf::from("."))
-                        .join(p)
+                    None => {
+                        if p.is_absolute() {
+                            p
+                        } else {
+                            std::env::current_dir()
+                                .unwrap_or_else(|_| PathBuf::from("."))
+                                .join(p)
+                        }
+                    }
                 };
                 let canon_trim = canon.trim();
                 if canon_trim.is_empty() {
@@ -494,7 +505,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         }
         let after = String::from_utf8_lossy(&bytes).to_string();
 
-        let display_path = if let Some(root) = crate_root.as_ref() {
+        let display_path = if let Some(root) = primary_root.as_ref() {
             path.strip_prefix(root)
                 .unwrap_or(path.as_path())
                 .to_path_buf()
@@ -530,7 +541,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     let display_files: Vec<String> = files
         .iter()
         .map(|p| {
-            if let Some(root) = crate_root.as_ref() {
+            if let Some(root) = primary_root.as_ref() {
                 p.strip_prefix(root)
                     .map(|rp| rp.display().to_string())
                     .unwrap_or_else(|_| p.display().to_string())
@@ -679,7 +690,6 @@ pub async fn apply_ns_code_edit_tool(
         typed_req,
         call_id,
     } = tool_call_params.clone();
-    let crate_root = { state.system.read().await.focused_crate_root() };
     let editing_cfg = { state.config.read().await.editing.clone() };
     let edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
     let files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
@@ -719,28 +729,33 @@ pub async fn apply_ns_code_edit_tool(
         //         .join(p)
         // };
 
-        let crate_root = state
-            .system
-            .read()
-            .await
-            .focused_crate_root()
-            .ok_or_else(|| {
-                ploke_error::Error::Domain(DomainError::Ui {
+        let (primary_root, policy) =
+            state
+                .system
+                .read()
+                .await
+                .tool_path_context()
+                .ok_or_else(|| {
+                    ploke_error::Error::Domain(DomainError::Ui {
                     message:
-                        "No crate is currently focused; load a workspace before using read_file."
+                        "No workspace is loaded; load a workspace before using non_semantic_patch."
                             .to_string(),
                 })
-            })?;
+                })?;
 
         let requested_path = PathBuf::from(file.as_str());
-        let abs_path =
-            path_scoping::resolve_in_crate_root(&requested_path, &crate_root).map_err(|err| {
-                ploke_error::Error::Domain(DomainError::Io {
-                    message: format!(
-                        "invalid path: {err}. Paths must be absolute or crate-root-relative."
-                    ),
-                })
-            })?;
+        let abs_path = path_scoping::resolve_tool_path(
+            requested_path.as_path(),
+            &primary_root,
+            &policy,
+        )
+        .map_err(|err| {
+            ploke_error::Error::Domain(DomainError::Io {
+                message: format!(
+                    "invalid path: {err}. Paths must be absolute or workspace-root-relative."
+                ),
+            })
+        })?;
 
         let request = ploke_io::ReadFileRequest {
             file_path: abs_path.clone(),
@@ -814,7 +829,7 @@ pub async fn apply_ns_code_edit_tool(
         let apply_patch_result =
             mpatch::apply_patch_to_content(&patch, Some(&content), &apply_options);
         let display_path = abs_path
-            .strip_prefix(&crate_root)
+            .strip_prefix(&primary_root)
             .unwrap_or(abs_path.as_path())
             .to_path_buf();
         let per_file = BeforeAfter {
@@ -839,7 +854,7 @@ pub async fn apply_ns_code_edit_tool(
         let display_files: Vec<String> = files
             .iter()
             .map(|p| {
-                p.strip_prefix(&crate_root)
+                p.strip_prefix(&primary_root)
                     .map(|rp| rp.display().to_string())
                     .unwrap_or_else(|_| p.display().to_string())
             })

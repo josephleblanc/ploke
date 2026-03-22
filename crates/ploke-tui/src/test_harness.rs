@@ -15,13 +15,22 @@ use crate::{
     observability, run_event_bus,
     user_config::{OPENROUTER_URL, UserConfig, openrouter_url},
 };
-use ploke_db::{bm25_index, create_index_primary};
+use ploke_db::bm25_index;
 use ploke_embed::{cancel_token::CancellationToken, indexer::IndexerTask};
 use ploke_rag::{RagConfig, RagService, TokenBudget};
-use ploke_test_utils::workspace_root;
+use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
 
 #[cfg(feature = "test_harness")]
 lazy_static! {
+    /// Local one-time canonical fixture DB for TEST_APP.
+    ///
+    /// This stays registry-backed, but it is intentionally not sourced from the shared immutable
+    /// fixture cache because TEST_APP wires the database into mutable runtime services.
+    static ref TEST_APP_DB: Arc<ploke_db::Database> = Arc::new(
+        fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)
+            .expect("load fixture_nodes_canonical fresh test db")
+    );
+
     /// A globally accessible App instance for tests, wrapped in Arc<Mutex<...>>.
     pub static ref TEST_APP: Arc<Mutex<App>> = {
         // Build a realistic App instance without spawning UI/event loops.
@@ -34,38 +43,17 @@ lazy_static! {
         let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
         let tool_verbosity = runtime_cfg.tool_verbosity;
 
-        // Initialize an in-memory database with schema; optionally restore a pre-loaded backup for realistic tests
-        let db = ploke_db::Database::init_with_schema().expect("init test db");
-
-        // Prefer env override; otherwise use the standard fixture backup path if it exists
-        let backup_path = std::env::var("PLOKE_TEST_DB_BACKUP")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| {
-                let mut p = workspace_root();
-                p.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
-                p
-            });
-
-        if backup_path.exists() {
-            let prior_rels_vec = db.relations_vec().expect("relations_vec");
-            db.import_from_backup(&backup_path, &prior_rels_vec)
-                .expect("import_from_backup");
-        }
-        // Ensure primary index exists for consistent behavior in tests using Rag/DB lookups
-        create_index_primary(&db).expect("create primary index");
+        // Load a harness-local canonical fixture DB through the registry-backed helper.
+        let db_handle = Arc::clone(&TEST_APP_DB);
 
         // Embedder (from config) and shared runtime
         let processor = config
             .load_embedding_processor()
             .expect("load embedding processor");
-        let embedding_runtime =
-            Arc::new(ploke_embed::runtime::EmbeddingRuntime::with_default_set(processor));
-        // Share the active set handle with the database
-        let db_handle = Arc::new({
-            let mut db = db;
-            db.active_embedding_set = embedding_runtime.active_set_handle();
-            db
-        });
+        let embedding_runtime = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db_handle.active_embedding_set),
+            processor,
+        ));
 
         // IO manager
         let io_handle = ploke_io::IoManagerHandle::new();

@@ -22,7 +22,7 @@ fn test_parser_robustness_against_malformed_input() {
     );
 
     // 1. Run Discovery
-    let discovery = run_discovery_phase(&fixture_path, &[fixture_path.clone()]).expect(
+    let discovery = run_discovery_phase(None, &[fixture_path]).expect(
         "Discovery failed even though it should handle malformed files (it only looks for files)",
     );
 

@@ -4,6 +4,7 @@ use ploke_core::rag_types::{
 use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
 
 use super::*;
+use ploke_core::RetrievalScope;
 
 // Canonical schema: RequestCodeContextArgs { token_budget, hint }
 pub struct RequestCodeContext {
@@ -142,7 +143,13 @@ impl super::Tool for RequestCodeContextGat {
         let strategy = cfg.rag.strategy.to_runtime();
         drop(cfg);
         let AssembledContext { parts, stats } = rag
-            .get_context(&search_term, top_k, &budget, &strategy)
+            .get_context(
+                &search_term,
+                top_k,
+                &budget,
+                &strategy,
+                RetrievalScope::LoadedWorkspace,
+            )
             .await?;
 
         let assembled_meta = AssembledMeta {

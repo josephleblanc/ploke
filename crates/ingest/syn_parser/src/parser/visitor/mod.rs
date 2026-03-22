@@ -483,13 +483,11 @@ pub fn analyze_files_parallel(
 
     let parsed_results: Vec<Result<ParsedCodeGraph, SynParserError>> = discovery_output
         .crate_contexts
-        .values() // Iterate over CrateContext values
-        .par_bridge() // Bridge into a parallel iterator (efficient for HashMap values)
+        .values()
+        .par_bridge()
         .flat_map(|crate_context| {
             // Process each crate in parallel
             // For each crate, parallelize over its files
-            // Assume CrateContext has a `root_dir` field or similar
-            // If not, we might need to adjust how src_dir is found
             let crate_root_dir = crate_context.root_path.clone(); // Assuming CrateContext has root_dir
             let src_dir = crate_root_dir.join("src");
 

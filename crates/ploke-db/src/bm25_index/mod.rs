@@ -13,7 +13,7 @@ use std::{
 
 use bm25::{EmbedderBuilder, Scorer, Tokenizer};
 use cozo::{DataValue, UuidWrapper};
-use ploke_core::{EmbeddingData, TrackingHash};
+use ploke_core::{CrateId, EmbeddingData, RetrievalScope, TrackingHash};
 use uuid::Uuid;
 
 use crate::{Database, DbError, NodeType};
@@ -372,6 +372,7 @@ impl Tokenizer for CodeTokenizer {
 pub struct DocMeta {
     pub token_length: usize,
     pub tracking_hash: TrackingHash,
+    pub namespace: Uuid,
 }
 
 #[derive(Debug, Clone)]
@@ -391,6 +392,7 @@ impl DocData {
             meta: DocMeta {
                 token_length,
                 tracking_hash,
+                namespace: value.0.namespace,
             },
             snippet: value.1.clone(),
             name: value.0.name.clone(),
@@ -405,7 +407,7 @@ impl DocData {
 /// Example:
 /// ```
 /// use ploke_db::bm25_index::{Bm25Indexer, DocData, DocMeta, CodeTokenizer};
-/// use ploke_core::TrackingHash;
+/// use ploke_core::{RetrievalScope, TrackingHash};
 /// use uuid::Uuid;
 ///
 /// let mut idx = Bm25Indexer::new(10.0);
@@ -414,11 +416,12 @@ impl DocData {
 /// let meta = DocMeta {
 ///     token_length: CodeTokenizer::count_tokens_in_code(&snippet),
 ///     tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes())),
+///     namespace: Uuid::new_v4(),
 /// };
 /// let name = String::from("add_one");
 /// let doc = DocData { id, meta, snippet, name };
 /// idx.upsert_batch(std::iter::once(doc));
-/// let res = idx.search("add_one", 5);
+/// let res = idx.search("add_one", 5, RetrievalScope::LoadedWorkspace);
 /// assert!(!res.is_empty());
 /// ```
 pub struct Bm25Indexer {
@@ -506,12 +509,13 @@ impl Bm25Indexer {
     /// Example (no_run):
     /// ```
     /// # use std::sync::Arc;
+    /// # use ploke_core::RetrievalScope;
     /// # use ploke_db::{Database, create_index_primary};
     /// # use ploke_db::bm25_index::Bm25Indexer;
     /// # fn example(db: Arc<Database>) -> Result<(), ploke_db::DbError> {
     /// let idx = Bm25Indexer::rebuild_from_db(db.as_ref())?;
     /// // Searching for an identifier name present in the database should return results:
-    /// let _ = idx.search("main", 5);
+    /// let _ = idx.search("main", 5, RetrievalScope::LoadedWorkspace);
     /// # Ok(())
     /// # }
     /// ```
@@ -522,11 +526,12 @@ impl Bm25Indexer {
         // Compute total token count and prepare compact (id, meta, combined) triples
         let (sum, metas): (usize, Vec<(Uuid, DocMeta, String)>) = items
             .into_iter()
-            .map(|(id, name, th)| {
+            .map(|(id, name, th, namespace)| {
                 let token_len = CodeTokenizer::count_tokens_in_code(&name);
                 let meta = DocMeta {
                     token_length: token_len,
                     tracking_hash: th,
+                    namespace,
                 };
                 // Combined text: boost the identifier by doubling it
                 let combined = format!("{0} {0}", name);
@@ -594,6 +599,7 @@ impl Bm25Indexer {
                 DocMeta {
                     token_length: token_len,
                     tracking_hash,
+                    namespace: meta.namespace,
                 },
             );
         }
@@ -658,11 +664,23 @@ impl Bm25Indexer {
     }
 
     /// Search with a query string, returning top-k results as ScoredDocument<Uuid>
-    pub fn search(&self, query: &str, top_k: usize) -> Vec<bm25::ScoredDocument<Uuid>> {
+    pub fn search(
+        &self,
+        query: &str,
+        top_k: usize,
+        scope: RetrievalScope,
+    ) -> Vec<bm25::ScoredDocument<Uuid>> {
         let qemb = self.embedder.embed(query);
         tracing::debug!("qemb: {qemb:?}");
         let mut matches = self.scorer.matches(&qemb);
         tracing::trace!("matches: {matches:?}");
+        if let Some(namespace) = scope.namespace_filter() {
+            matches.retain(|doc| {
+                self.staged_meta
+                    .get(&doc.id)
+                    .is_some_and(|meta| meta.namespace == namespace)
+            });
+        }
         if matches.len() > top_k {
             matches.truncate(top_k);
         }
@@ -696,7 +714,7 @@ impl Bm25Indexer {
     }
 }
 
-/// Collect (id, name, tracking_hash) triples for all primary node relations from the database.
+/// Collect rebuild items for all primary node relations from the database.
 ///
 /// This function is used by rebuild to stream a lightweight corpus without loading entire snippets.
 /// It filters out rows where `name` or `tracking_hash` are missing.
@@ -714,19 +732,28 @@ impl Bm25Indexer {
 /// ```
 pub(crate) fn collect_rebuild_sources(
     db: &Database,
-) -> Result<Vec<(Uuid, String, TrackingHash)>, DbError> {
-    let mut out: Vec<(Uuid, String, TrackingHash)> = Vec::new();
+) -> Result<Vec<(Uuid, String, TrackingHash, Uuid)>, DbError> {
+    let mut out: Vec<(Uuid, String, TrackingHash, Uuid)> = Vec::new();
     for node in NodeType::primary_nodes().iter() {
         let rel = node.relation_str();
-        // Pull id, name and tracking_hash from each primary relation.
-        // We keep the script minimal to avoid unnecessary allocations and conversions.
         let script = format!(
-            "?[id, name, tracking_hash] := *{} {{ id, name, tracking_hash }}",
-            rel
+            r#"
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+is_root_module[id] := *module{{id @ 'NOW'}}, *file_mod{{owner_id: id @ 'NOW'}}
+
+?[id, name, tracking_hash, namespace] :=
+    *{rel}{{ id, name, tracking_hash @ 'NOW' }},
+    ancestor[id, mod_id],
+    is_root_module[mod_id],
+    *file_mod{{ owner_id: mod_id, namespace @ 'NOW' }}
+"#,
+            rel = rel,
         );
         let res = db.raw_query(&script)?;
         for row in res.rows.iter() {
-            if row.len() < 3 {
+            if row.len() < 4 {
                 continue;
             }
             let id = match &row[0] {
@@ -741,7 +768,11 @@ pub(crate) fn collect_rebuild_sources(
                 DataValue::Uuid(UuidWrapper(u)) => TrackingHash(*u),
                 _ => continue,
             };
-            out.push((id, name.to_string(), th));
+            let namespace = match &row[3] {
+                DataValue::Uuid(UuidWrapper(u)) => *u,
+                _ => continue,
+            };
+            out.push((id, name.to_string(), th, namespace));
         }
     }
     Ok(out)
@@ -757,7 +788,7 @@ mod tests {
     use crate::{create_index_primary, DbError};
     use lazy_static::lazy_static;
     use ploke_error::Error as PlokeError;
-    use ploke_test_utils::workspace_root;
+    use ploke_test_utils::FIXTURE_NODES_CANONICAL;
     use std::collections::HashMap;
 
     struct MockCozo {
@@ -790,15 +821,13 @@ mod tests {
         // TODO: Add a mutex guard to avoid cross-contamination of tests.
         pub static ref TEST_DB_NODES: Result<Arc< Database >, PlokeError> = {
             let db = Database::init_with_schema()?;
-
-            let mut target_file = workspace_root();
-            target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+            let target_file = FIXTURE_NODES_CANONICAL.path();
             let prior_rels_vec = db.relations_vec()?;
             db.import_from_backup(&target_file, &prior_rels_vec)
                 .map_err(DbError::from)
                 .map_err(ploke_error::Error::from)?;
             create_index_primary(&db)?;
-            Ok(Arc::new( db ))
+            Ok(Arc::new(db))
         };
     }
 
@@ -830,12 +859,12 @@ fn compute_answer() -> i32 { 42 }",
         let idx = Bm25Indexer::new_from_corpus(vec![(id_a, a.clone()), (id_b, b.clone())]);
 
         // query for 'compute' should return id_b first
-        let results = idx.search("compute", 10);
+        let results = idx.search("compute", 10, RetrievalScope::LoadedWorkspace);
         assert!(!results.is_empty());
         assert_eq!(results[0].id, id_b);
 
         // query for 'add_one' (identifier) should return id_a first
-        let results2 = idx.search("add_one", 10);
+        let results2 = idx.search("add_one", 10, RetrievalScope::LoadedWorkspace);
         assert!(!results2.is_empty());
         assert_eq!(results2[0].id, id_a);
     }
@@ -855,6 +884,7 @@ fn compute_answer() -> i32 { 42 }",
                 meta: DocMeta {
                     token_length: CodeTokenizer::count_tokens_in_code(&a),
                     tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, a.as_bytes())),
+                    namespace: Uuid::new_v4(),
                 },
                 snippet: a.clone(),
                 name: String::from("alpha"),
@@ -864,6 +894,7 @@ fn compute_answer() -> i32 { 42 }",
                 meta: DocMeta {
                     token_length: CodeTokenizer::count_tokens_in_code(&b),
                     tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, b.as_bytes())),
+                    namespace: Uuid::new_v4(),
                 },
                 snippet: b.clone(),
                 name: String::from("beta"),
@@ -894,6 +925,7 @@ fn hello() { println!(\"hi\"); }",
         let meta = DocMeta {
             token_length: CodeTokenizer::count_tokens_in_code(&snippet),
             tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes())),
+            namespace: Uuid::new_v4(),
         };
         let docs = vec![DocData {
             id,
@@ -923,7 +955,7 @@ fn hello() { println!(\"hi\"); }",
         // new_from_corpus takes ownership
         let idx = Bm25Indexer::new_from_corpus(corpus);
         // ensure docs are indexed by searching
-        let res = idx.search("a", 10);
+        let res = idx.search("a", 10, RetrievalScope::LoadedWorkspace);
         assert!(!res.is_empty());
     }
 
@@ -950,10 +982,12 @@ fn hello() { println!(\"hi\"); }",
         let m1 = DocMeta {
             token_length: CodeTokenizer::count_tokens_in_code(s1),
             tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, s1.as_bytes())),
+            namespace: Uuid::new_v4(),
         };
         let m2 = DocMeta {
             token_length: CodeTokenizer::count_tokens_in_code(s2),
             tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, s2.as_bytes())),
+            namespace: Uuid::new_v4(),
         };
         let docs = vec![
             DocData {
@@ -978,6 +1012,82 @@ fn hello() { println!(\"hi\"); }",
         );
     }
 
+    #[test]
+    fn bm25_specific_crate_scope_filters_before_top_k_truncation() {
+        let mut idx = Bm25Indexer::new(10.0);
+        let namespace_a = Uuid::new_v4();
+        let namespace_b = Uuid::new_v4();
+
+        let in_scope_snippet = "fn alpha_target() { alpha_target(); }".to_string();
+        let out_of_scope_snippet =
+            "fn alpha_target_bonus() { alpha_target alpha_target alpha_target; }".to_string();
+
+        idx.index_batch(vec![
+            DocData {
+                id: Uuid::new_v4(),
+                meta: DocMeta {
+                    token_length: CodeTokenizer::count_tokens_in_code(&in_scope_snippet),
+                    tracking_hash: TrackingHash(Uuid::new_v5(
+                        &Uuid::NAMESPACE_DNS,
+                        in_scope_snippet.as_bytes(),
+                    )),
+                    namespace: namespace_a,
+                },
+                snippet: in_scope_snippet,
+                name: "alpha_target".to_string(),
+            },
+            DocData {
+                id: Uuid::new_v4(),
+                meta: DocMeta {
+                    token_length: CodeTokenizer::count_tokens_in_code(&out_of_scope_snippet),
+                    tracking_hash: TrackingHash(Uuid::new_v5(
+                        &Uuid::NAMESPACE_DNS,
+                        out_of_scope_snippet.as_bytes(),
+                    )),
+                    namespace: namespace_b,
+                },
+                snippet: out_of_scope_snippet,
+                name: "alpha_target_bonus".to_string(),
+            },
+        ]);
+
+        let unscoped = idx.search("alpha target bonus", 1, RetrievalScope::LoadedWorkspace);
+        assert_eq!(
+            unscoped.len(),
+            1,
+            "unscoped top_k=1 should truncate to one hit"
+        );
+        let unscoped_namespace = idx
+            .staged_meta
+            .get(&unscoped[0].id)
+            .map(|meta| meta.namespace)
+            .expect("unscoped hit should have staged metadata");
+        assert_eq!(
+            unscoped_namespace, namespace_b,
+            "unscoped top_k=1 should prefer the stronger out-of-scope document"
+        );
+
+        let scoped = idx.search(
+            "alpha target bonus",
+            1,
+            RetrievalScope::SpecificCrate(CrateId::new(namespace_a)),
+        );
+        assert_eq!(
+            scoped.len(),
+            1,
+            "scoped top_k=1 should still return one in-scope hit"
+        );
+        let scoped_namespace = idx
+            .staged_meta
+            .get(&scoped[0].id)
+            .map(|meta| meta.namespace)
+            .expect("scoped hit should have staged metadata");
+        assert_eq!(
+            scoped_namespace, namespace_a,
+            "crate scope must be applied before top_k truncation"
+        );
+    }
+
     #[tokio::test]
     async fn bm25_service_index_search_finalize_roundtrip() {
         let db = TEST_DB_NODES.as_ref().expect("test db init").clone();
@@ -989,6 +1099,7 @@ fn hello() { println!(\"hi\"); }",
         let meta = DocMeta {
             token_length: CodeTokenizer::count_tokens_in_code(&snippet),
             tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes())),
+            namespace: Uuid::new_v4(),
         };
         let doc = DocData {
             id,
@@ -1007,6 +1118,7 @@ fn hello() { println!(\"hi\"); }",
         tx.send(bm25_service::Bm25Cmd::Search {
             query: "xylophone".to_string(),
             top_k: 5,
+            scope: RetrievalScope::LoadedWorkspace,
             resp: resp_tx,
         })
         .await
@@ -1034,7 +1146,7 @@ fn hello() { println!(\"hi\"); }",
             "expected some primary nodes to rebuild from"
         );
         let query = triples[0].1.clone();
-        let results = idx.search(&query, 5);
+        let results = idx.search(&query, 5, RetrievalScope::LoadedWorkspace);
         assert!(
             !results.is_empty(),
             "expected non-empty results for known identifier"
@@ -1064,6 +1176,7 @@ fn hello() { println!(\"hi\"); }",
             tx.send(bm25_service::Bm25Cmd::Search {
                 query: query.clone(),
                 top_k: 5,
+                scope: RetrievalScope::LoadedWorkspace,
                 resp: resp_tx,
             })
             .await

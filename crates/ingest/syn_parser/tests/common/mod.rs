@@ -25,8 +25,7 @@ pub mod resolution; // Add resolution module // Add new module for macros
 
 pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
-    let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
+    let discovery_output = run_discovery_phase(None, &[crate_path.clone()])
         .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
 
     let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =
@@ -50,16 +49,10 @@ pub fn try_run_phases_and_collect(
     fixture_name: &str,
 ) -> Result<Vec<ParsedCodeGraph>, ploke_error::Error> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
-    let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, &[crate_path])?;
+    let discovery_output = run_discovery_phase(None, &[crate_path])?;
 
     let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
-
-    let root_graph = results_with_errors
-        .iter()
-        .filter_map(|pr| pr.as_ref().ok())
-        .find(|pr| pr.crate_context.is_some());
 
     // Collect successful results, panicking if any file failed to parse in Phase 2
     let mut results = Vec::new();
@@ -319,23 +312,14 @@ use {
     syn_parser::parser::analyze_files_parallel,
 };
 
-use ploke_common::{fixtures_crates_dir, workspace_root};
+use ploke_common::fixtures_crates_dir;
 pub use resolution::build_tree_for_tests;
-
-pub mod uuid_ids_utils;
 
 pub fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<ParsedCodeGraph, SynParserError>> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
-    let discovery_output = run_discovery_phase(&PathBuf::from("."), &[crate_path]) // Adjust project_root if needed
+    let discovery_output = run_discovery_phase(None, &[crate_path]) // Adjust project_root if needed
         .expect("Phase 1 Discovery failed");
     analyze_files_parallel(&discovery_output, 0) // num_workers often ignored by rayon bridge
-}
-
-#[test]
-#[cfg(not(feature = "type_bearing_ids"))]
-fn test_paths() {
-    let fixture_path = fixtures_dir().join("my_fixture.rs");
-    println!("Fixture path: {}", fixture_path.display());
 }
 
 pub fn print_typedef_names(code_graph: &CodeGraph) -> Vec<&str> {

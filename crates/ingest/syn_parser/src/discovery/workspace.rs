@@ -11,7 +11,7 @@ use crate::discovery::DiscoveryError;
 /// treats `workspace = true` as the only supported value, so we surface explicit errors for other
 /// values to keep the type system honest.
 #[derive(Deserialize, Debug, Clone)]
-pub(super) struct WorkspaceVersionLink {
+pub struct WorkspaceVersionLink {
     pub(super) workspace: bool,
 }
 
@@ -19,24 +19,38 @@ pub(super) struct WorkspaceVersionLink {
 /// signals that the inspected manifest isn't a workspace boundary.
 #[derive(Deserialize, Debug, Clone)]
 pub struct WorkspaceManifestMetadata {
-    workspace: Option<WorkspaceMetadataSection>,
+    pub workspace: Option<WorkspaceMetadataSection>,
 }
 
 /// Captures the `[workspace]` table when parsing ancestor manifests.
 #[derive(Deserialize, Debug, Clone)]
 pub struct WorkspaceMetadataSection {
     #[serde(skip)]
-    path: PathBuf,
-    exclude: Option<Vec<PathBuf>>,
-    resolver: Option<String>,
-    members: Vec<PathBuf>,
-    package: Option<WorkspacePackageMetadata>,
+    pub path: PathBuf,
+    pub exclude: Option<Vec<PathBuf>>,
+    pub resolver: Option<String>,
+    pub members: Vec<PathBuf>,
+    pub package: Option<WorkspacePackageMetadata>,
+}
+
+impl WorkspaceMetadataSection {
+    pub fn package_version(&self) -> Option<&str> {
+        self.package
+            .as_ref()
+            .and_then(WorkspacePackageMetadata::version)
+    }
 }
 
 /// Captures the `[workspace.package]` metadata that may hold the shared version.
 #[derive(Deserialize, Debug, Clone)]
 pub struct WorkspacePackageMetadata {
     version: Option<String>,
+}
+
+impl WorkspacePackageMetadata {
+    pub fn version(&self) -> Option<&str> {
+        self.version.as_deref()
+    }
 }
 
 /// Resolve a workspace-inherited version by loading the nearest ancestor workspace manifest.
@@ -131,34 +145,82 @@ pub fn locate_workspace_manifest(
     crate_root: &Path,
 ) -> Result<(PathBuf, WorkspaceManifestMetadata), DiscoveryError> {
     let mut current_dir = Some(crate_root);
-    let crate_path = crate_root.to_path_buf();
+    let target_crate_path = crate_root.to_path_buf();
 
     while let Some(dir) = current_dir {
         let candidate_manifest = dir.join("Cargo.toml");
-        if candidate_manifest.is_file() {
-            let content = fs::read_to_string(&candidate_manifest).map_err(|err| {
-                DiscoveryError::WorkspaceManifestRead {
-                    crate_path: crate_path.clone(),
-                    manifest_path: candidate_manifest.clone(),
-                    source: Arc::new(err),
-                }
-            })?;
-
-            let metadata: WorkspaceManifestMetadata =
-                toml::from_str(&content).map_err(|err| DiscoveryError::WorkspaceManifestParse {
-                    crate_path: crate_path.clone(),
-                    manifest_path: candidate_manifest.clone(),
-                    source: Arc::new(err),
-                })?;
-
-            if metadata.workspace.is_some() {
-                return Ok((candidate_manifest, metadata));
-            }
+        if !candidate_manifest.is_file() {
+            current_dir = dir.parent();
+            continue;
         }
+
+        let metadata = try_parse_manifest(dir).map_err(|mut e| {
+            if let DiscoveryError::WorkspaceManifestRead {
+                ref mut crate_path, ..
+            } = e
+            {
+                *crate_path = Some(target_crate_path.clone());
+            } else if let DiscoveryError::WorkspaceManifestParse {
+                ref mut crate_path, ..
+            } = e
+            {
+                *crate_path = Some(target_crate_path.clone());
+            }
+            e
+        })?;
+
+        if metadata.workspace.is_some() {
+            return Ok((candidate_manifest, metadata));
+        }
+
         current_dir = dir.parent();
     }
 
-    Err(DiscoveryError::WorkspaceManifestNotFound { crate_path })
+    Err(DiscoveryError::WorkspaceManifestNotFound {
+        crate_path: target_crate_path,
+    })
+}
+
+// TODO: Add documentation + doc test
+// + unit test (at end of file)
+pub fn try_parse_manifest(target_dir: &Path) -> Result<WorkspaceManifestMetadata, DiscoveryError> {
+    let candidate_manifest = target_dir.join("Cargo.toml");
+    let content = fs::read_to_string(&candidate_manifest).map_err(|err| {
+        DiscoveryError::WorkspaceManifestRead {
+            crate_path: None,
+            manifest_path: candidate_manifest.clone(),
+            source: Arc::new(err),
+        }
+    })?;
+
+    let mut metadata: WorkspaceManifestMetadata =
+        toml::from_str(&content).map_err(|err| DiscoveryError::WorkspaceManifestParse {
+            crate_path: None,
+            manifest_path: candidate_manifest.clone(),
+            source: Arc::new(err),
+        })?;
+
+    let workspace_root =
+        candidate_manifest
+            .parent()
+            .ok_or_else(|| DiscoveryError::ParentNotFound {
+                workspace_path: candidate_manifest.clone(),
+            })?;
+
+    if let Some(workspace) = metadata.workspace.as_mut() {
+        workspace.path = workspace_root.to_path_buf();
+        workspace.members = workspace
+            .members
+            .iter()
+            .map(|path| workspace_root.join(path))
+            .collect();
+        workspace.exclude = workspace
+            .exclude
+            .take()
+            .map(|paths| paths.iter().map(|path| workspace_root.join(path)).collect());
+    }
+
+    Ok(metadata)
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -289,6 +351,7 @@ impl std::fmt::Display for BuildStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ploke_common::workspace_root;
     use ploke_error::Error as PlokeError;
     use tempfile::tempdir;
 
@@ -392,7 +455,7 @@ members = [
 
         let (path, meta): (PathBuf, WorkspaceManifestMetadata) =
             locate_workspace_manifest(&crate_root)?;
-        println!(
+        eprintln!(
             "found workspace path: {}\nmetadata: {:#?}",
             path.display(),
             meta
@@ -400,7 +463,7 @@ members = [
 
         let (path, meta): (PathBuf, WorkspaceManifestMetadata) =
             locate_workspace_manifest(&common_root)?;
-        println!(
+        eprintln!(
             "found workspace path: {}\nmetadata: {:#?}",
             path.display(),
             meta
@@ -408,14 +471,14 @@ members = [
 
         let (path, meta): (PathBuf, WorkspaceManifestMetadata) =
             locate_workspace_manifest(&inner_root)?;
-        println!(
+        eprintln!(
             "found workspace path: {}\nmetadata: {:#?}",
             path.display(),
             meta
         );
 
-        let mut workspace_builder = WorkspaceMetaBuilder::from_dir_path(&workspace_root)?;
-        println!("workspace_builder: {:#?}", workspace_builder);
+        let workspace_builder = WorkspaceMetaBuilder::from_dir_path(&workspace_root)?;
+        eprintln!("workspace_builder: {:#?}", workspace_builder);
         assert!(workspace_builder.members.is_some(), "expect Some members");
 
         let expected_members = ["solo", "nested/common", "nested/deeper_nested/inner-crate"];
@@ -437,8 +500,7 @@ members = [
 
     #[test]
     fn simple_self() -> Result<(), PlokeError> {
-        let target_crate_root =
-            PathBuf::from("/home/brasides/code/openai-codex/ploke/ingest/syn_parser");
+        let target_crate_root: PathBuf = workspace_root().join("ingest/syn_parser");
         let (path, meta): (PathBuf, WorkspaceManifestMetadata) =
             locate_workspace_manifest(&target_crate_root)?;
         println!(
@@ -446,6 +508,30 @@ members = [
             path.display(),
             meta
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn committed_workspace_fixture_locates_nested_members() -> Result<(), PlokeError> {
+        let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_01");
+        let nested_member_root = fixture_workspace_root.join("nested/member_nested");
+
+        let (manifest_path, metadata) = locate_workspace_manifest(&nested_member_root)?;
+        let workspace = metadata
+            .workspace
+            .expect("committed fixture should parse as a workspace");
+
+        assert_eq!(manifest_path, fixture_workspace_root.join("Cargo.toml"));
+        assert_eq!(workspace.path, fixture_workspace_root);
+        assert_eq!(
+            workspace.members,
+            vec![
+                workspace.path.join("member_root"),
+                workspace.path.join("nested/member_nested"),
+            ]
+        );
+        assert_eq!(workspace.package_version(), Some("0.2.0"));
 
         Ok(())
     }

@@ -2,6 +2,7 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 
 use crate::ModelId;
+use crate::app_state::database::IndexTargetDir;
 use crate::chat_history::{ContextTokens, MessageKind};
 use crate::llm::{ChatHistoryTarget, LLMParameters, ProviderKey};
 use ploke_core::ArcStr;
@@ -115,8 +116,8 @@ pub enum StateCommand {
         new_assistant_msg_id: Uuid,
         responder: oneshot::Sender<Uuid>,
     },
-    IndexWorkspace {
-        workspace: String,
+    IndexTargetDir {
+        target_dir: Option<IndexTargetDir>,
         needs_parse: bool,
     },
     PauseIndexing,
@@ -149,7 +150,16 @@ pub enum StateCommand {
     },
     SaveDb,
     LoadDb {
-        crate_name: String,
+        workspace_ref: String,
+    },
+    LoadWorkspaceCrates {
+        workspace_ref: String,
+        crate_ref: String,
+    },
+    WorkspaceStatus,
+    WorkspaceUpdate,
+    WorkspaceRemove {
+        crate_ref: String,
     },
     ScanForChange {
         scan_tx: oneshot::Sender<Option<Vec<PathBuf>>>,
@@ -255,7 +265,7 @@ impl StateCommand {
             NavigateList { .. } => "NavigateList",
             NavigateBranch { .. } => "NavigateBranch",
             CreateAssistantMessage { .. } => "CreateAssistantMessage",
-            IndexWorkspace { .. } => "IndexWorkspace",
+            IndexTargetDir { .. } => "IndexTargetDir",
             PauseIndexing => "PauseIndexing",
             ResumeIndexing => "ResumeIndexing",
             CancelIndexing => "CancelIndexing",
@@ -269,6 +279,10 @@ impl StateCommand {
             ReadQuery { .. } => "ReadQuery",
             SaveDb => "SaveDb",
             LoadDb { .. } => "LoadDb",
+            LoadWorkspaceCrates { .. } => "LoadWorkspaceCrates",
+            WorkspaceStatus => "WorkspaceStatus",
+            WorkspaceUpdate => "WorkspaceUpdate",
+            WorkspaceRemove { .. } => "WorkspaceRemove",
             BatchPromptSearch { .. } => "BatchPromptSearch",
             Bm25Rebuild => "Bm25Rebuild",
             Bm25Search { .. } => "Bm25Search",

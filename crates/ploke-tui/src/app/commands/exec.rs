@@ -14,16 +14,15 @@
 
 use super::parser::Command;
 use crate::app::App;
+use crate::app_state::IndexTargetDir;
 use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
 use crate::llm::{self, LlmEvent, ProviderKey};
-use crate::user_config::{
-    ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url,
-};
+use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
-use ploke_core::ArcStr;
+use ploke_core::{ArcStr, RetrievalScope};
 use ploke_llm::embeddings::{EmbClientConfig, HasEmbeddingModels};
 use ploke_llm::manager::events::{embedding_models, models};
 use reqwest::Client;
@@ -238,6 +237,39 @@ pub fn execute(app: &mut App, command: Command) {
             });
         }
         Command::Update => spawn_update(app),
+        Command::LoadWorkspace(workspace_ref) => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: format!("Attempting to load workspace snapshot for {workspace_ref}..."),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+            app.send_cmd(StateCommand::LoadDb { workspace_ref });
+        }
+        Command::LoadWorkspaceCrates {
+            workspace_ref,
+            crate_ref,
+        } => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: format!(
+                    "Attempting to load crate subset '{crate_ref}' from workspace snapshot '{workspace_ref}'..."
+                ),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+            app.send_cmd(StateCommand::LoadWorkspaceCrates {
+                workspace_ref,
+                crate_ref,
+            });
+        }
+        Command::WorkspaceStatus => {
+            app.send_cmd(StateCommand::WorkspaceStatus);
+        }
+        Command::WorkspaceUpdate => {
+            app.send_cmd(StateCommand::WorkspaceUpdate);
+        }
+        Command::WorkspaceRemove(crate_ref) => {
+            app.send_cmd(StateCommand::WorkspaceRemove { crate_ref });
+        }
         Command::EditApprove(id) => {
             app.send_cmd(StateCommand::ApproveEdits { request_id: id });
         }
@@ -484,7 +516,7 @@ fn show_topic_help(app: &App, topic_prefix: &str) {
         .to_string()
     } else if t.starts_with("index") {
         r#"Indexing commands:
-  index start [directory]            - Run workspace indexing (defaults to current dir)
+  index start [path]                 - Index a crate root, or else the nearest ancestor workspace
   index pause/resume/cancel          - Pause, resume, or cancel indexing
 "#
         .to_string()
@@ -810,7 +842,13 @@ pub(crate) fn open_context_search(app: &mut App, query_id: u64, search_term: &st
         };
         if let Some(rag_service) = &state.rag {
             match rag_service
-                .get_context(&keyword_str, top_k, budget, &retrieval_strategy)
+                .get_context(
+                    &keyword_str,
+                    top_k,
+                    budget,
+                    &retrieval_strategy,
+                    RetrievalScope::LoadedWorkspace,
+                )
                 .await
             {
                 Ok(ctx_returned) => {
@@ -853,39 +891,28 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
         "help" => show_command_help(app),
         cmd if cmd.starts_with("index start") => {
             let parts: Vec<&str> = cmd.splitn(3, ' ').collect();
-            let workspace = if parts.len() >= 3 {
-                parts[2].to_string()
+            let target_dir = if parts.len() >= 3 {
+                Some(IndexTargetDir::from(parts[2]))
             } else {
-                ".".to_string()
+                None
             };
-
-            match std::fs::metadata(&workspace) {
-                Ok(metadata) if metadata.is_dir() => {
-                    app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Indexing requested for '{}'", workspace),
-                        kind: MessageKind::SysInfo,
-                        new_msg_id: Uuid::new_v4(),
-                    });
-                    app.send_cmd(StateCommand::IndexWorkspace {
-                        workspace,
-                        needs_parse: true,
-                    });
-                }
-                Ok(_) => {
-                    app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Error: '{}' is not a directory", workspace),
-                        kind: MessageKind::SysInfo,
-                        new_msg_id: Uuid::new_v4(),
-                    });
-                }
-                Err(e) => {
-                    app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Error accessing directory '{}': {}", workspace, e),
-                        kind: MessageKind::SysInfo,
-                        new_msg_id: Uuid::new_v4(),
-                    });
-                }
-            }
+            let indexing_request_msg = if let Some(index_target_dir) = target_dir.as_ref() {
+                format!(
+                    "Indexing requested for target dir: {}",
+                    index_target_dir.to_display_string()
+                )
+            } else {
+                format!("Indexing requested for pwd")
+            };
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: indexing_request_msg,
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+            app.send_cmd(StateCommand::IndexTargetDir {
+                target_dir,
+                needs_parse: true,
+            });
         }
         "index pause" => {
             app.send_cmd(StateCommand::AddMessageImmediate {
@@ -932,20 +959,43 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             });
             app.send_cmd(StateCommand::SaveState);
         }
+        cmd if cmd.starts_with("load workspace ") => {
+            match cmd.trim_start_matches("load workspace ").trim() {
+                workspace_ref if !workspace_ref.contains(' ') => {
+                    app.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: format!(
+                            "Attempting to load workspace snapshot for {workspace_ref}..."
+                        ),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                    app.send_cmd(StateCommand::LoadDb {
+                        workspace_ref: workspace_ref.to_string(),
+                    });
+                }
+                _ => {
+                    app.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: "Please enter the workspace name or workspace id you wish to load.\nSaved workspace snapshots are located via the workspace registry under your config directory.".to_string(),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                }
+            }
+        }
         cmd if cmd.starts_with("load crate") => match cmd.trim_start_matches("load crate").trim() {
-            crate_name if !crate_name.contains(' ') => {
+            workspace_ref if !workspace_ref.contains(' ') => {
                 app.send_cmd(StateCommand::AddMessageImmediate {
-                    msg: format!("Attempting to load code graph for {crate_name}..."),
+                    msg: format!("Attempting to load workspace snapshot for {workspace_ref}..."),
                     kind: MessageKind::SysInfo,
                     new_msg_id: Uuid::new_v4(),
                 });
                 app.send_cmd(StateCommand::LoadDb {
-                    crate_name: crate_name.to_string(),
+                    workspace_ref: workspace_ref.to_string(),
                 });
             }
             _ => {
                 app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: "Please enter the name of the crate you wish to load.\nThe crates with db backups are located in your default config directory.".to_string(),
+                        msg: "Please enter the workspace name or workspace id you wish to load.\nSaved workspace snapshots are located via the workspace registry under your config directory.".to_string(),
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     });

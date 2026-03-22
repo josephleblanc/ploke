@@ -423,6 +423,79 @@ impl UserConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+pub struct WorkspaceRegistry {
+    #[serde(default = "default_workspace_registry_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub entries: Vec<WorkspaceRegistryEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkspaceRegistryEntry {
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub workspace_root: std::path::PathBuf,
+    pub snapshot_file: std::path::PathBuf,
+    pub focused_root: Option<std::path::PathBuf>,
+    pub member_roots: Vec<std::path::PathBuf>,
+    pub active_embedding_set_rel: Option<String>,
+}
+
+fn default_workspace_registry_version() -> u32 {
+    1
+}
+
+impl WorkspaceRegistry {
+    pub fn load_from_path(path: &std::path::Path) -> color_eyre::Result<Self> {
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let content = std::fs::read_to_string(path)?;
+        let registry: Self = toml::from_str(&content)?;
+        Ok(registry)
+    }
+
+    pub fn save_to_path(&self, path: &std::path::Path) -> color_eyre::Result<()> {
+        let toml_str = toml::to_string_pretty(self)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let dir = path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let mut tmp = tempfile::NamedTempFile::new_in(&dir)?;
+        use std::io::Write as _;
+        tmp.write_all(toml_str.as_bytes())?;
+        tmp.flush()?;
+        tmp.as_file().sync_all()?;
+        tmp.persist(path)?;
+        Ok(())
+    }
+
+    pub fn default_registry_path() -> std::path::PathBuf {
+        dirs::config_local_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("ploke")
+            .join("workspaces.toml")
+    }
+
+    pub fn upsert(&mut self, entry: WorkspaceRegistryEntry) {
+        if let Some(existing) = self
+            .entries
+            .iter_mut()
+            .find(|existing| existing.workspace_id == entry.workspace_id)
+        {
+            *existing = entry;
+        } else {
+            self.entries.push(entry);
+            self.entries
+                .sort_by(|a, b| a.workspace_name.cmp(&b.workspace_name));
+        }
+    }
+}
+
 // Embedding configuration (unchanged)
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 /// Embedding backend configuration. Exactly one provider should be set.

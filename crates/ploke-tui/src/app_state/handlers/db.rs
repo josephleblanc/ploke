@@ -107,8 +107,8 @@ pub async fn batch_prompt_search(
     }
 }
 
-pub async fn load_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>, crate_name: String) {
-    if let Err(e) = database::load_db(state, event_bus, crate_name).await {
+pub async fn load_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>, workspace_ref: String) {
+    if let Err(e) = database::load_db(state, event_bus, workspace_ref).await {
         match e {
             ploke_error::Error::Fatal(_) => e.emit_fatal(),
             ploke_error::Error::Warning(_) | ploke_error::Error::Internal(_) => e.emit_warning(),
@@ -117,6 +117,52 @@ pub async fn load_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>, crate_nam
             }
         }
     }
+}
+
+pub async fn load_workspace_crates(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    workspace_ref: String,
+    crate_ref: String,
+) {
+    if let Err(e) =
+        database::load_workspace_crates(state, event_bus, workspace_ref, crate_ref).await
+    {
+        match e {
+            ploke_error::Error::Fatal(_) => e.emit_fatal(),
+            ploke_error::Error::Warning(_) | ploke_error::Error::Internal(_) => e.emit_warning(),
+            _ => {
+                todo!("These should never happen.")
+            }
+        }
+    }
+}
+
+pub async fn workspace_status(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
+    let _ = database::workspace_status(state, event_bus)
+        .await
+        .inspect_err(|e| {
+            e.emit_error();
+            tracing::error!("Error in WorkspaceStatus:\n{e}");
+        });
+}
+
+pub async fn workspace_update(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
+    let _ = database::workspace_update(state, event_bus)
+        .await
+        .inspect_err(|e| {
+            e.emit_error();
+            tracing::error!("Error in WorkspaceUpdate:\n{e}");
+        });
+}
+
+pub async fn workspace_remove(state: &Arc<AppState>, event_bus: &Arc<EventBus>, crate_ref: String) {
+    let _ = database::workspace_remove(state, event_bus, crate_ref)
+        .await
+        .inspect_err(|e| {
+            e.emit_error();
+            tracing::error!("Error in WorkspaceRemove:\n{e}");
+        });
 }
 
 pub async fn scan_for_change(

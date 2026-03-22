@@ -77,12 +77,7 @@ fn config_overlay_applies_message_verbosity_to_runtime_config() {
     let mut cfg = RuntimeConfig::default();
     let mut overlay = ConfigOverlayState::from_runtime_config(&cfg);
 
-    set_selected_value(
-        &mut overlay,
-        "UI",
-        "Default Message Verbosity",
-        "Custom",
-    );
+    set_selected_value(&mut overlay, "UI", "Default Message Verbosity", "Custom");
     set_selected_value(
         &mut overlay,
         "Message Verbosity",

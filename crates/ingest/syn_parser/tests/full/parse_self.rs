@@ -61,7 +61,7 @@ pub fn try_run_phases_and_collect_path(
     project_root: &Path,
     crate_path: PathBuf,
 ) -> Result<Vec<ParsedCodeGraph>, ploke_error::Error> {
-    let discovery_output = run_discovery_phase(project_root, &[crate_path.clone()])?;
+    let discovery_output = run_discovery_phase(None, &[crate_path])?;
 
     let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge

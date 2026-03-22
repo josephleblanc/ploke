@@ -1,4 +1,5 @@
 use crate::{app_state::handlers::chat, chat_history::MessageKind};
+use ploke_core::RetrievalScope;
 
 use super::*;
 
@@ -43,7 +44,10 @@ pub async fn bm25_search(
     };
 
     if let Some(rag) = &state.rag {
-        match rag.search_bm25(&query, top_k).await {
+        match rag
+            .search_bm25(&query, top_k, RetrievalScope::LoadedWorkspace)
+            .await
+        {
             Ok(results) => {
                 let lines: Vec<String> = results
                     .into_iter()
@@ -83,7 +87,10 @@ pub async fn hybrid_search(
     };
 
     if let Some(rag) = &state.rag {
-        match rag.hybrid_search(&query, top_k).await {
+        match rag
+            .hybrid_search(&query, top_k, RetrievalScope::LoadedWorkspace)
+            .await
+        {
             Ok(results) => {
                 let lines: Vec<String> = results
                     .into_iter()
@@ -207,9 +214,11 @@ pub async fn sparse_search(
 
     if let Some(rag) = &state.rag {
         let result = if strict {
-            rag.search_bm25_strict(&query, top_k).await
+            rag.search_bm25_strict(&query, top_k, RetrievalScope::LoadedWorkspace)
+                .await
         } else {
-            rag.search_bm25(&query, top_k).await
+            rag.search_bm25(&query, top_k, RetrievalScope::LoadedWorkspace)
+                .await
         };
         match result {
             Ok(results) => {
@@ -262,7 +271,10 @@ pub async fn dense_search(
     };
 
     if let Some(rag) = &state.rag {
-        match rag.search(&query, top_k).await {
+        match rag
+            .search(&query, top_k, RetrievalScope::LoadedWorkspace)
+            .await
+        {
             Ok(results) => {
                 let lines: Vec<String> = results
                     .into_iter()

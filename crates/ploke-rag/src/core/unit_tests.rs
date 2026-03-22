@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use std::{default, sync::Arc};
+    use std::{collections::BTreeMap, default, sync::Arc};
 
     use crate::{RetrievalStrategy, TokenBudget};
     use itertools::Itertools;
     use lazy_static::lazy_static;
-    use ploke_core::EmbeddingData;
+    use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
     use ploke_db::{
-        create_index_primary, create_index_primary_with_index, multi_embedding::debug::DebugAll,
-        Database,
+        Database, create_index_primary_with_index,
+        multi_embedding::{db_ext::EmbeddingExt, debug::DebugAll, hnsw_ext::HnswExt},
     };
     use ploke_embed::{
         indexer::{EmbeddingProcessor, EmbeddingSource},
@@ -17,13 +17,18 @@ mod tests {
     };
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
-    use ploke_test_utils::workspace_root;
-    use tokio::time::{sleep, Duration};
-    use tracing::{debug, Level};
+    use ploke_test_utils::{
+        FIXTURE_NODES_LOCAL_EMBEDDINGS, WS_FIXTURE_01_CANONICAL, fresh_backup_fixture_db,
+        shared_backup_fixture_db,
+    };
+    use tokio::time::{Duration, sleep};
+    use tracing::{Level, debug};
     use uuid::Uuid;
 
     use crate::{RagError, RagService};
+    use std::sync::LazyLock;
     use std::sync::Once;
+
     static TEST_TRACING: Once = Once::new();
     fn init_tracing_once() {
         TEST_TRACING.call_once(|| {
@@ -31,23 +36,46 @@ mod tests {
         });
     }
 
+    static DEFAULT_TEST_RAG: LazyLock<RagService> = LazyLock::new(|| {
+        let db = default_test_db_setup().expect("db setup");
+        init_test_rag(db)
+    });
+
+    const LOADED_WORKSPACE_SCOPE: RetrievalScope = RetrievalScope::LoadedWorkspace;
+    struct WorkspaceScopeFixture {
+        root_id: Uuid,
+        root_namespace: Uuid,
+        nested_id: Uuid,
+        nested_namespace: Uuid,
+    }
+
+    fn init_test_rag(db: Arc<Database>) -> RagService {
+        let model =
+            LocalEmbedder::new(EmbeddingConfig::default()).expect("valid default embedding config");
+        let source = EmbeddingSource::Local(model);
+        let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(source),
+        ));
+        RagService::new(db, embedding_runtime).expect("valid db and RagService constructor args")
+    }
+
+    async fn init_test_rag_bm25(db: Arc<Database>) -> RagService {
+        let rag = init_test_rag(db);
+        rag.bm25_rebuild().await.expect("bm25 rebuild must succeed");
+        rag
+    }
+
+    fn load_local_fixture_db() -> Result<Arc<Database>, Error> {
+        shared_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)
+    }
+
     async fn db_test_setup() -> Result<Arc<Database>, Error> {
-        let base_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
-        let new_db = Database::new(base_db);
-        ploke_db::multi_embedding::db_ext::load_db(&new_db, "fixture_nodes".to_string()).await?;
-        Ok(Arc::new(new_db))
+        load_local_fixture_db()
     }
 
     fn default_test_db_setup() -> Result<Arc<Database>, Error> {
-        use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
-        use tracing::info;
-
-        init_tracing_once();
-        let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
-            "fixture_nodes",
-        )?);
-
-        Ok(Arc::new(db))
+        load_local_fixture_db()
     }
 
     fn runtime_for(db: &Arc<Database>, processor: EmbeddingProcessor) -> Arc<EmbeddingRuntime> {
@@ -57,15 +85,24 @@ mod tests {
         ))
     }
 
+    fn init_test_rag_with_io(db: Arc<Database>) -> RagService {
+        let model =
+            LocalEmbedder::new(EmbeddingConfig::default()).expect("valid default embedding config");
+        let source = EmbeddingSource::Local(model);
+        let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(source),
+        ));
+        RagService::new_with_io(db, embedding_runtime, IoManagerHandle::new())
+            .expect("valid db and RagService constructor args")
+    }
+
     #[tokio::test]
     async fn test_fixture_embeddings_loaded_into_active_set() -> Result<(), Error> {
         use tracing::info;
 
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
-        ploke_db::multi_embedding::db_ext::load_db(db, "fixture_nodes".to_string()).await?;
+        let db = &DEFAULT_TEST_RAG.db;
 
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
@@ -96,16 +133,7 @@ mod tests {
     async fn dense_context_uses_multi_embedding_relations() {
         use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
 
-        // Load the multi-embedding backup directly to mirror the TUI /load path.
-        let db = Database::init_with_schema().expect("init schema");
-        let mut target_file = workspace_root();
-        target_file.push(
-            "tests/backup_dbs/fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92",
-        );
-        let prior_rels_vec = db.relations_vec().expect("relations_vec");
-        db.import_from_backup(&target_file, &prior_rels_vec)
-            .expect("import_from_backup");
-        ploke_db::create_index_primary_with_index(&db).expect("create_index_primary");
+        let db = load_local_fixture_db().expect("load local embedding fixture");
 
         // Note: if the backup lacks vectors, we still expect the legacy-path error; this test
         // asserts on that specific failure mode.
@@ -133,6 +161,7 @@ mod tests {
         let err = match db.search_similar_for_set(
             &active_embedding_set,
             ploke_db::NodeType::Function,
+            LOADED_WORKSPACE_SCOPE,
             query_vec,
             5,
             10,
@@ -228,32 +257,79 @@ mod tests {
         Ok(())
     }
 
+    fn workspace_fixture_function_rows(db: &Database) -> Result<WorkspaceScopeFixture, Error> {
+        let rows = db
+            .get_unembedded_node_data(64, 0)?
+            .into_iter()
+            .flat_map(|typed| typed.v.into_iter())
+            .collect_vec();
+        let mut by_name = BTreeMap::new();
+        for row in rows {
+            by_name.insert(row.name, (row.id, row.namespace));
+        }
+
+        let (root_id, root_namespace) = by_name.remove("root_value").ok_or_else(|| {
+            ploke_error::Error::Internal(ploke_error::internal::InternalError::CompilerError(
+                "missing root_value in workspace fixture".to_string(),
+            ))
+        })?;
+        let (nested_id, nested_namespace) = by_name.remove("nested_value").ok_or_else(|| {
+            ploke_error::Error::Internal(ploke_error::internal::InternalError::CompilerError(
+                "missing nested_value in workspace fixture".to_string(),
+            ))
+        })?;
+
+        Ok(WorkspaceScopeFixture {
+            root_id,
+            root_namespace,
+            nested_id,
+            nested_namespace,
+        })
+    }
+
+    fn load_workspace_scope_db(
+        query: &str,
+    ) -> Result<(Arc<Database>, WorkspaceScopeFixture), Error> {
+        let db = Arc::new(fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?);
+        let fixture = workspace_fixture_function_rows(db.as_ref())?;
+        let embedding_set = db.with_active_set(|set| set.clone())?;
+        db.ensure_embedding_relation(&embedding_set)?;
+
+        let embedder = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let query_vec = embedder
+            .embed_batch(&[query])?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                ploke_error::Error::Internal(ploke_error::internal::InternalError::CompilerError(
+                    "expected one query embedding".to_string(),
+                ))
+            })?;
+        let mut in_scope_vec = query_vec.clone();
+        if let Some(first) = in_scope_vec.first_mut() {
+            *first += 0.05;
+        }
+
+        db.update_embeddings_batch(vec![
+            (fixture.root_id, query_vec),
+            (fixture.nested_id, in_scope_vec),
+        ])?;
+        db.create_embedding_index(&embedding_set)?;
+
+        Ok((db, fixture))
+    }
+
     #[tokio::test]
     async fn test_search() -> Result<(), Error> {
-        // Initialize tracing for the test
         init_tracing_once();
-        // let db = TEST_DB_NODES
-        //     .as_ref()
-        //     .expect("Must set up TEST_DB_NODES correctly.");
-
-        let db_base = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
-            "fixture_nodes",
-        )?);
-        ploke_db::multi_embedding::db_ext::load_db(&db_base, "fixture_nodes".to_string()).await?;
-        ploke_db::create_index_primary(&db_base)?;
-        let db = Arc::new(db_base);
 
         let search_term = "use_all_const_static";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
-            Arc::clone(&db.active_embedding_set),
-            EmbeddingProcessor::new(source),
-        ));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
+        let rag = &DEFAULT_TEST_RAG;
+        let db = &DEFAULT_TEST_RAG.db;
 
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 15).await?;
+        let search_res: Vec<(Uuid, f32)> =
+            rag.search(search_term, 15, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -261,24 +337,16 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
         Ok(())
     }
 
     #[tokio::test]
     async fn test_bm25_rebuild() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
-
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
-            Arc::clone(&db.active_embedding_set),
-            EmbeddingProcessor::new(source),
-        ));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?;
+        let db = Arc::new(db_raw);
+        let rag = init_test_rag(Arc::clone(&db));
 
         // Should not error
         rag.bm25_rebuild().await?;
@@ -288,27 +356,20 @@ mod tests {
     #[tokio::test]
     async fn test_bm25_search_basic() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
-        // let db = db_test_setup().await?;
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?;
+        let db = Arc::new(db_raw);
+        let rag = init_test_rag(Arc::clone(&db));
 
         let search_term = "use_all_const_static";
-
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
-            Arc::clone(&db.active_embedding_set),
-            EmbeddingProcessor::new(source),
-        ));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         // Trigger a rebuild to ensure index is fresh, then retry a few times in case it's async.
         rag.bm25_rebuild().await?;
 
         let mut bm25_res: Vec<(Uuid, f32)> = Vec::new();
         for _ in 0..10 {
-            bm25_res = rag.search_bm25(search_term, 15).await?;
+            bm25_res = rag
+                .search_bm25(search_term, 15, LOADED_WORKSPACE_SCOPE)
+                .await?;
             if !bm25_res.is_empty() {
                 break;
             }
@@ -322,7 +383,7 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = bm25_res.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
         Ok(())
     }
 
@@ -330,20 +391,15 @@ mod tests {
     async fn test_hybrid_search() -> Result<(), Error> {
         init_tracing_once();
 
-        let base_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
-        let new_db = Database::new(base_db);
-        ploke_db::multi_embedding::db_ext::load_db(&new_db, "fixture_nodes".to_string()).await?;
-        let db = Arc::new(new_db);
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?;
+        let db = Arc::new(db_raw);
+        let rag = init_test_rag(Arc::clone(&db));
 
         let search_term = "use_all_const_static";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-        // Rebuild BM25 index so hybrid search uses real sparse scores rather than dense fallback.
-        rag.bm25_rebuild().await?;
-        let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15).await?;
+        let fused: Vec<(Uuid, f32)> = rag
+            .hybrid_search(search_term, 15, LOADED_WORKSPACE_SCOPE)
+            .await?;
         assert!(
             !fused.is_empty(),
             "Hybrid search returned no results for '{}'",
@@ -356,22 +412,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn hybrid_specific_crate_scope_excludes_out_of_scope_candidates_before_fusion()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let query = "root value";
+        let (db, fixture) = load_workspace_scope_db(query)?;
+        let rag = init_test_rag(Arc::clone(&db));
+
+        rag.bm25_rebuild().await?;
+
+        let unscoped = rag
+            .hybrid_search(query, 1, RetrievalScope::LoadedWorkspace)
+            .await?;
+        assert_eq!(
+            unscoped.len(),
+            1,
+            "unscoped hybrid top_k=1 should return one hit"
+        );
+        assert_eq!(
+            unscoped[0].0, fixture.root_id,
+            "unscoped hybrid search should prefer the stronger out-of-scope root_value candidate"
+        );
+
+        let scoped = rag
+            .hybrid_search(
+                query,
+                2,
+                RetrievalScope::SpecificCrate(CrateId::new(fixture.nested_namespace)),
+            )
+            .await?;
+        assert!(
+            !scoped.is_empty(),
+            "scoped hybrid search should retain an in-scope candidate"
+        );
+        assert!(
+            scoped.iter().all(|(id, _)| *id == fixture.nested_id),
+            "hybrid fusion must not admit the out-of-scope root_value candidate"
+        );
+
+        let nodes = db.get_nodes_ordered(scoped.iter().map(|(id, _)| *id).collect())?;
+        assert!(
+            nodes
+                .iter()
+                .all(|node| node.namespace == fixture.nested_namespace),
+            "scoped hybrid results must remain in the requested crate namespace"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_bm25_search_fallback() -> Result<(), Error> {
         // Initialize tracing for the test
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?;
+        let db = Arc::new(db_raw);
+        let rag = init_test_rag(Arc::clone(&db));
 
         let search_term = "use_all_const_static";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-
         // Intentionally do not call bm25_rebuild or index anything; fallback should kick in.
-        let results: Vec<(Uuid, f32)> = rag.search_bm25(search_term, 15).await?;
+        let results: Vec<(Uuid, f32)> = rag
+            .search_bm25(search_term, 15, LOADED_WORKSPACE_SCOPE)
+            .await?;
         assert!(
             !results.is_empty(),
             "BM25 fallback returned no results for '{}'",
@@ -379,25 +482,20 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = results.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
         Ok(())
     }
 
     #[tokio::test]
     async fn test_search_structs() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        let rag = &DEFAULT_TEST_RAG;
+        let db = &DEFAULT_TEST_RAG.db;
 
         let search_term = "DocumentedStruct";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> =
+            rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -412,18 +510,13 @@ mod tests {
     #[tokio::test]
     async fn test_search_enums() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        let rag = &DEFAULT_TEST_RAG;
+        let db = &DEFAULT_TEST_RAG.db;
 
         let search_term = "GenericEnum";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> =
+            rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -436,46 +529,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_search_traits() -> Result<(), Error> {
+    async fn test_search_traits_new() -> Result<(), Error> {
         init_tracing_once();
-        let db = default_test_db_setup().expect("Must set up TEST_DB_NODES correctly.");
-        // let db = TEST_DB_NODES
-        //     .as_ref()
-        //     .expect("Must set up TEST_DB_NODES correctly.");
 
-        // TODO:active-embedding-set 2025-12-15
-        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
-        // functions.
-        let active_embedding_set = db.with_active_set(|set| set.clone())?;
-        let debug_output = db.is_embedding_info_all(&active_embedding_set)?;
-        debug_output.tracing_print_all(Level::DEBUG);
-        // Ensure the fixture backup is only loaded when the dense index has not been built yet.
-        {
-            use ploke_db::multi_embedding::hnsw_ext::HnswExt;
-            let db_ref: &Database = db.as_ref();
-            let has_index = db_ref.is_hnsw_index_registered(&active_embedding_set)?;
-            debug!(target: "hnsw-already-present", ?has_index);
-            if !has_index {
-                ploke_db::multi_embedding::db_ext::load_db(
-                    db.as_ref(),
-                    "fixture_nodes".to_string(),
-                )
-                .await?;
-            }
-        }
-        let debug_output = db.is_embedding_info_all(&active_embedding_set)?;
-        debug_output.tracing_print_all(Level::DEBUG);
-        // When this test is run in isolation we still need a dense index.
-        // create_index_primary_with_index(db)?;
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?;
+        let db = Arc::new(db_raw);
+        let rag = init_test_rag_bm25(Arc::clone(&db)).await;
 
         let search_term = "ComplexGenericTrait";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> =
+            rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
 
         assert!(
             !search_res.is_empty(),
@@ -483,19 +547,14 @@ mod tests {
             search_term
         );
         let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _)| *id).collect();
-        // NOTE: The following causes the test to fail, since it seems we don't get the snippet via
-        // hnsw search for this particular item.
-        // let snippet = fetch_snippet_containing(db, ordered_node_ids, search_term).await?;
-        // assert!(
-        //     snippet.contains(search_term),
-        //     "Dense search returned a snippet without the search term '{search_term}'"
-        // );
 
         // Ensure sparse index is populated so we test BM25 behavior (not dense fallback).
         rag.bm25_rebuild().await?;
         let mut results: Vec<(Uuid, f32)> = Vec::new();
         for _ in 0..10 {
-            results = rag.search_bm25(search_term, 15).await?;
+            results = rag
+                .search_bm25(search_term, 15, LOADED_WORKSPACE_SCOPE)
+                .await?;
             if !results.is_empty() {
                 break;
             }
@@ -515,18 +574,13 @@ mod tests {
     #[tokio::test]
     async fn test_search_unions() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        let rag = &DEFAULT_TEST_RAG;
+        let db = &DEFAULT_TEST_RAG.db;
 
         let search_term = "GenericUnion";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> =
+            rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -541,18 +595,13 @@ mod tests {
     #[tokio::test]
     async fn test_search_macros() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        let rag = &DEFAULT_TEST_RAG;
+        let db = &DEFAULT_TEST_RAG.db;
 
         let search_term = "documented_macro";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> =
+            rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -567,18 +616,13 @@ mod tests {
     #[tokio::test]
     async fn test_search_type_aliases() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        let rag = &DEFAULT_TEST_RAG;
+        let db = &DEFAULT_TEST_RAG.db;
 
         let search_term = "DisplayableContainer";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> =
+            rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -593,18 +637,13 @@ mod tests {
     #[tokio::test]
     async fn test_search_constants() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        let rag = &DEFAULT_TEST_RAG;
+        let db = &DEFAULT_TEST_RAG.db;
 
         let search_term = "TOP_LEVEL_BOOL";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> =
+            rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -619,18 +658,13 @@ mod tests {
     #[tokio::test]
     async fn test_search_statics() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        let rag = &DEFAULT_TEST_RAG;
+        let db = &DEFAULT_TEST_RAG.db;
 
         let search_term = "TOP_LEVEL_COUNTER";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> =
+            rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -645,19 +679,15 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_search_generic_trait() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        // Rebuild BM25 index so hybrid search uses real sparse scores rather than dense fallback.
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?;
+        let db = Arc::new(db_raw);
+        let rag = init_test_rag(Arc::clone(&db));
 
         let search_term = "GenericSuperTrait";
-
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-        // Rebuild BM25 index so hybrid search uses real sparse scores rather than dense fallback.
-        rag.bm25_rebuild().await?;
-        let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15).await?;
+        let fused: Vec<(Uuid, f32)> = rag
+            .hybrid_search(search_term, 15, LOADED_WORKSPACE_SCOPE)
+            .await?;
         assert!(
             !fused.is_empty(),
             "Hybrid search returned no results for '{}'",
@@ -665,30 +695,72 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = fused.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_context_specific_crate_scope_does_not_materialize_out_of_scope_ids()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let query = "root value";
+        let (db, fixture) = load_workspace_scope_db(query)?;
+        let rag = init_test_rag_with_io(Arc::clone(&db));
+
+        rag.bm25_rebuild().await?;
+
+        let context = rag
+            .get_context(
+                query,
+                2,
+                &TokenBudget::default(),
+                &RetrievalStrategy::Hybrid {
+                    rrf: Default::default(),
+                    mmr: None,
+                },
+                RetrievalScope::SpecificCrate(CrateId::new(fixture.nested_namespace)),
+            )
+            .await?;
+
+        assert!(
+            !context.parts.is_empty(),
+            "scoped get_context should return at least one assembled part"
+        );
+        assert!(
+            context
+                .parts
+                .iter()
+                .all(|part| part.file_path.as_ref().contains("nested/member_nested")),
+            "get_context should only materialize snippets from the requested crate"
+        );
+        assert!(
+            context
+                .parts
+                .iter()
+                .all(|part| part.id == fixture.nested_id),
+            "context assembly must not materialize the out-of-scope root_value node"
+        );
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_bm25_search_complex_enum() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?;
+        let db = Arc::new(db_raw);
+        let rag = init_test_rag(Arc::clone(&db));
 
         let search_term = "EnumWithMixedVariants";
-
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         // Ensure BM25 index is populated
         rag.bm25_rebuild().await?;
 
         let mut bm25_res: Vec<(Uuid, f32)> = Vec::new();
         for _ in 0..10 {
-            bm25_res = rag.search_bm25(search_term, 15).await?;
+            bm25_res = rag
+                .search_bm25(search_term, 15, LOADED_WORKSPACE_SCOPE)
+                .await?;
             if !bm25_res.is_empty() {
                 break;
             }
@@ -702,25 +774,20 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = bm25_res.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
         Ok(())
     }
 
     #[tokio::test]
     async fn test_search_function_definitions() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        let rag = &DEFAULT_TEST_RAG;
+        let db = &DEFAULT_TEST_RAG.db;
 
         let search_term = "use_all_const_static";
 
-        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-        let source = EmbeddingSource::Local(model);
-        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_runtime)?;
-
-        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> =
+            rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",

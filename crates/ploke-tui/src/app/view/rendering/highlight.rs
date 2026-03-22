@@ -1305,7 +1305,7 @@ Trailing text.";
         let lines = highlight_message_lines(&help, base, 240);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-        assert!(rendered.contains("load crate <name>"));
+        assert!(rendered.contains("load workspace <name-or-id>"));
         assert!(rendered.contains("provider strictness <openrouter-only|allow-custom|allow-any>"));
         assert!(
             !rendered.contains("&lt;") && !rendered.contains("&gt;"),

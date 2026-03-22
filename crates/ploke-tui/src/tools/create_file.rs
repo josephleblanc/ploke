@@ -107,13 +107,20 @@ impl super::Tool for CreateFile {
                 .cloned()
         };
         if let Some(prop) = proposal_opt {
-            let crate_root = { ctx.state.system.read().await.focused_crate_root() };
-            tracing::debug!(crate_root = ?crate_root);
+            let primary_root = {
+                ctx.state
+                    .system
+                    .read()
+                    .await
+                    .tool_path_context()
+                    .map(|(r, _)| r)
+            };
+            tracing::debug!(primary_root = ?primary_root);
             let display_files: Vec<String> = prop
                 .files
                 .iter()
                 .map(|p| {
-                    if let Some(root) = crate_root.as_ref() {
+                    if let Some(ref root) = primary_root {
                         p.strip_prefix(root)
                             .map(|rp| rp.display().to_string())
                             .unwrap_or_else(|_| p.display().to_string())
@@ -217,41 +224,40 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
         return;
     }
 
-    // Resolve absolute path against crate root when relative
-    let crate_root = { state.system.read().await.focused_crate_root() };
-    let crate_root = match crate_root {
-        Some(root) => root,
+    // Resolve absolute path against workspace root when relative
+    let (primary_root, policy) = match state.system.read().await.tool_path_context() {
+        Some(ctx) => ctx,
         None => {
             let tool_error = tool_call_params
                 .tool_error_from_message(
-                    "no crate is focused; load a workspace before creating files",
+                    "no workspace is loaded; load a workspace before creating files",
                 )
                 .field("file_path")
-                .retry_hint("Focus a crate/workspace, then provide a crate-root-relative path.");
+                .retry_hint("Load a workspace, then provide a workspace-root-relative path.");
             tool_call_params.tool_call_failed_error(tool_error);
             return;
         }
     };
     let abs_path = {
         let p = std::path::PathBuf::from(&params.file_path);
-        match crate::utils::path_scoping::resolve_in_crate_root(&p, &crate_root) {
+        match crate::utils::path_scoping::resolve_tool_path(p.as_path(), &primary_root, &policy) {
             Ok(pb) => pb,
             Err(err) => {
                 let retry_context = json!({
                     "input_path": params.file_path.as_str(),
-                    "crate_root": crate_root.display().to_string(),
+                    "workspace_root": primary_root.display().to_string(),
                 });
                 let tool_error = tool_call_params
                     .tool_error_from_message(format!("invalid path: {}", err))
                     .field("file_path")
-                    .retry_hint("Use a workspace-relative or absolute path within the crate.")
+                    .retry_hint("Use a workspace-root-relative or absolute path under the loaded workspace.")
                     .retry_context(retry_context);
                 tool_call_params.tool_call_failed_error(tool_error);
                 return;
             }
         }
     };
-    tracing::debug!(crate_root = ?crate_root, abs_path = ?abs_path);
+    tracing::debug!(primary_root = ?primary_root, abs_path = ?abs_path);
 
     let tooling_cfg = { state.config.read().await.tooling.clone() };
     if let Err(err) = validate_file_extension_allowlist(
@@ -323,7 +329,7 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
     let after = create_req.content.clone();
     let display_path = {
         abs_path
-            .strip_prefix(&crate_root)
+            .strip_prefix(&primary_root)
             .unwrap_or(abs_path.as_path())
             .to_path_buf()
     };

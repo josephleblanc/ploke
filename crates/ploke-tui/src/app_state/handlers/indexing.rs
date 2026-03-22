@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(feature = "test_harness")]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -5,11 +6,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::app_state::{AppState, handlers};
+use crate::app_state::{AppState, IndexTargetDir, handlers};
 use crate::chat_history::MessageKind;
 use crate::error::ErrorSeverity;
 use crate::event_bus::ErrorEvent;
-use crate::parser::run_parse;
+use crate::parser::{resolve_index_target, run_parse_resolved};
 use crate::utils::parse_errors::format_parse_failure;
 use crate::{AppEvent, EventBus};
 
@@ -36,67 +37,64 @@ async fn maybe_delay_indexing_for_test() {
 pub async fn index_workspace(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
-    workspace: String,
+    target_dir: Option<IndexTargetDir>,
     needs_parse: bool,
 ) {
     let add_msg_shortcut = |msg: &str| {
         handlers::chat::add_msg_immediate(
-            &state,
-            &event_bus,
+            state,
+            event_bus,
             Uuid::new_v4(),
             msg.to_string(),
             MessageKind::SysInfo,
         )
     };
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
-    let target_dir = {
-        let focused_root = { state.system.read().await.focused_crate_root() };
-        match focused_root {
-            Some(path) => path,
-            None => match std::env::current_dir() {
-                Ok(current_dir) => {
-                    let mut pwd = current_dir;
-                    pwd.push(&workspace);
-                    pwd
-                }
-                Err(e) => {
-                    tracing::error!("Error resolving current dir: {e}");
-                    return;
-                }
-            },
+
+    let stopgap_pathbuf = target_dir.clone().map(|p| p.as_path().to_path_buf());
+
+    let resolved_target = if let Some(dir) = target_dir {
+        let anchored = {
+            let system_guard = state.system.read().await;
+            dir.resolve_against_loaded_state(&system_guard)
+        };
+        Some(anchored.unwrap_or(dir).as_path().to_path_buf())
+    } else {
+        stopgap_pathbuf.clone()
+    };
+    let resolved = match resolve_index_target(resolved_target) {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            let msg = err.to_string();
+            {
+                let mut system_guard = state.system.write().await;
+                system_guard.record_parse_failure(
+                    stopgap_pathbuf.unwrap_or_else(|| PathBuf::from("todo-add-error-handling")),
+                    msg.clone(),
+                );
+            }
+            add_msg_shortcut(&msg).await;
+            event_bus.send(AppEvent::Error(ErrorEvent {
+                message: msg,
+                severity: ErrorSeverity::Error,
+            }));
+            return;
         }
     };
 
-    // Set crate focus to the resolved target directory and update IO roots
-    let policy = {
-        let mut system_guard = state.system.write().await;
-        system_guard.set_focus_from_root(target_dir.clone());
-        system_guard.derive_path_policy(&[])
-    };
-    if let Some(policy) = policy {
-        state
-            .io_handle
-            .update_roots(Some(policy.roots), Some(policy.symlink_policy))
-            .await;
-    }
-
     if needs_parse {
-        match run_parse(Arc::clone(&state.db), Some(target_dir.clone())) {
+        match run_parse_resolved(Arc::clone(&state.db), &resolved) {
             Ok(_) => {
-                {
-                    let mut system_guard = state.system.write().await;
-                    system_guard.record_parse_success();
-                }
                 tracing::info!(
-                    "Parse of target workspace {} successful",
-                    &target_dir.display()
+                    "Parse of target {} successful",
+                    resolved.workspace_root.display()
                 );
             }
             Err(e) => {
-                let msg = format_parse_failure(&target_dir, &e);
+                let msg = format_parse_failure(&resolved.focused_root, &e);
                 {
                     let mut system_guard = state.system.write().await;
-                    system_guard.record_parse_failure(target_dir.clone(), msg.clone());
+                    system_guard.record_parse_failure(resolved.requested_path.clone(), msg.clone());
                 }
                 event_bus.send(AppEvent::Error(ErrorEvent {
                     message: msg,
@@ -106,6 +104,23 @@ pub async fn index_workspace(
                 return;
             }
         }
+    }
+
+    let policy = {
+        let mut system_guard = state.system.write().await;
+        system_guard.set_loaded_workspace(
+            resolved.workspace_root.clone(),
+            resolved.member_roots.clone(),
+            Some(resolved.focused_root.clone()),
+        );
+        system_guard.record_parse_success();
+        system_guard.derive_path_policy(&[])
+    };
+    if let Some(policy) = policy {
+        state
+            .io_handle
+            .update_roots(Some(policy.roots), Some(policy.symlink_policy))
+            .await;
     }
     tracing::info!("end parse");
 
@@ -134,7 +149,7 @@ pub async fn index_workspace(
         let res = tokio::spawn(async move {
             let indexing_result = ploke_embed::indexer::IndexerTask::index_workspace(
                 indexer_task,
-                workspace,
+                resolved.workspace_root.display().to_string(),
                 progress_tx,
                 progress_rx,
                 control_rx,
@@ -168,6 +183,53 @@ pub async fn index_workspace(
             }
         }
         tracing::info!("Indexer task returned");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app_state::IndexTargetDir;
+    use crate::app_state::core::SystemStatus;
+    use std::path::PathBuf;
+
+    /// Regression witness for the `test_update_embed` failure mode.
+    ///
+    /// The `IndexWorkspace` command historically carried a repo-relative string
+    /// while `ploke-tui` already knew the loaded crate root as an absolute path.
+    /// Re-resolving the string from process cwd silently broke that agreement.
+    /// A pass here proves `IndexTargetDir::resolve_against_loaded_state` can
+    /// recover the authoritative absolute path from loaded state.
+    #[test]
+    fn anchor_relative_target_matches_loaded_crate_suffix() {
+        let focused_root = PathBuf::from("/repo/tests/fixture_crates/fixture_update_embed");
+        let mut status = SystemStatus::default();
+        status.set_focus_from_root(focused_root.clone());
+
+        let target = IndexTargetDir::from("tests/fixture_crates/fixture_update_embed");
+        let resolved = target.resolve_against_loaded_state(&status);
+
+        assert_eq!(
+            resolved.map(|d| d.as_path().to_path_buf()),
+            Some(focused_root)
+        );
+    }
+
+    /// Anchoring logic must not invent matches for unrelated relative paths;
+    /// those should fall through to normal resolution and explicit errors.
+    #[test]
+    fn anchor_relative_target_does_not_match_unrelated_suffix() {
+        let member_root = PathBuf::from("/repo/tests/fixture_workspace/ws_fixture_01/member_root");
+        let mut status = SystemStatus::default();
+        status.set_loaded_workspace(
+            PathBuf::from("/repo/tests/fixture_workspace/ws_fixture_01"),
+            vec![member_root],
+            None,
+        );
+
+        let target = IndexTargetDir::from("other/location");
+        let resolved = target.resolve_against_loaded_state(&status);
+
+        assert!(resolved.is_none());
     }
 }
 

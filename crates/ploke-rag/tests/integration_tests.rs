@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use ploke_core::EmbeddingData;
-use ploke_db::{create_index_primary, Database};
+use ploke_db::{Database, multi_embedding::db_ext::EmbeddingExt};
 use ploke_embed::{
     indexer::{EmbeddingProcessor, EmbeddingSource},
     local::{EmbeddingConfig, LocalEmbedder},
@@ -11,21 +11,12 @@ use ploke_embed::{
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
 use ploke_rag::RagService;
-use ploke_test_utils::workspace_root;
-use tokio::time::{sleep, Duration};
+use ploke_test_utils::{FIXTURE_NODES_LOCAL_EMBEDDINGS, shared_backup_fixture_db};
+use tokio::time::{Duration, sleep};
 
 lazy_static::lazy_static! {
     pub static ref TEST_DB_NODES: Result<Arc<Database>, Error> = {
-        let db = Database::init_with_schema()?;
-
-        let mut target_file = workspace_root();
-        target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
-        let prior_rels_vec = db.relations_vec()?;
-        db.import_from_backup(&target_file, &prior_rels_vec)
-            .map_err(ploke_db::DbError::from)
-            .map_err(ploke_error::Error::from)?;
-        create_index_primary(&db)?;
-        Ok(Arc::new(db))
+        shared_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)
     };
 }
 
@@ -81,7 +72,7 @@ async fn fetch_snippet_containing(
 
 #[cfg(test)]
 mod benches {
-    use criterion::{criterion_group, criterion_main, Criterion};
+    use criterion::{Criterion, criterion_group, criterion_main};
     use std::hint::black_box;
     use tokio::runtime::Runtime;
 

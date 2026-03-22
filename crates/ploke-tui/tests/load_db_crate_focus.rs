@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};
 use ploke_embed::runtime::EmbeddingRuntime;
+use ploke_test_utils::{WS_FIXTURE_01_CANONICAL, fresh_backup_fixture_db, workspace_root};
 use ploke_tui::EventBus;
 use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState};
 use ploke_tui::event_bus::EventBusCaps;
@@ -69,4 +70,70 @@ async fn crate_focus_assigns_absolute_root_from_db() {
         .await
         .expect("crate_focus set by test");
     assert_eq!(got, abs_root);
+}
+
+#[tokio::test]
+async fn workspace_restore_assigns_loaded_workspace_membership_from_db() {
+    let db = Arc::new(
+        fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL).expect("load workspace backup fixture"),
+    );
+    let io_handle = ploke_io::IoManagerHandle::new();
+    let cfg = ploke_tui::user_config::UserConfig::default();
+    let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        cfg.load_embedding_processor().expect("embedder"),
+    ));
+    let state = Arc::new(AppState {
+        chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
+        config: ConfigState::new(RuntimeConfig::from(cfg.clone())),
+        system: SystemState::default(),
+        indexing_state: tokio::sync::RwLock::new(None),
+        indexer_task: None,
+        indexing_control: Arc::new(tokio::sync::Mutex::new(None)),
+        db: db.clone(),
+        embedder,
+        io_handle,
+        rag: None,
+        budget: ploke_rag::TokenBudget::default(),
+        proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+        create_proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+    });
+    let _event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+    ploke_tui::app_state::test_set_crate_focus_from_db(&state, "ws_fixture_root".to_string())
+        .await
+        .expect("set workspace member focus");
+
+    let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_01");
+    let expected_member_roots = vec![
+        fixture_workspace_root.join("member_root"),
+        fixture_workspace_root.join("nested/member_nested"),
+    ];
+
+    let loaded_workspace_root = state
+        .system
+        .loaded_workspace_root_for_test()
+        .await
+        .expect("loaded workspace root");
+    assert_eq!(loaded_workspace_root, fixture_workspace_root);
+
+    let loaded_member_roots = state.system.loaded_workspace_member_roots_for_test().await;
+    assert_eq!(loaded_member_roots, expected_member_roots);
+
+    let loaded_roots = state.system.loaded_workspace_member_roots_for_test().await;
+    assert!(
+        loaded_roots.contains(&fixture_workspace_root.join("member_root")),
+        "member_root should be in loaded crates"
+    );
+
+    let policy_roots = {
+        let guard = state.system.read().await;
+        guard
+            .derive_path_policy(&[])
+            .expect("workspace policy")
+            .roots
+    };
+    let mut expected_policy_roots = vec![fixture_workspace_root.clone()];
+    expected_policy_roots.extend(expected_member_roots.iter().cloned());
+    assert_eq!(policy_roots, expected_policy_roots);
 }

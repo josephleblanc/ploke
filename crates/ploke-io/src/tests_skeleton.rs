@@ -223,7 +223,7 @@ async fn test_handle_read_snippet_batch() -> Result<(), ploke_error::Error> {
     let fixture_name = "fixture_nodes";
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, std::slice::from_ref(&crate_path))
+    let discovery_output = run_discovery_phase(None, std::slice::from_ref(&crate_path))
         .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
 
     tracing::info!("🚀 Starting test");
@@ -319,17 +319,6 @@ async fn test_handle_read_snippet_batch() -> Result<(), ploke_error::Error> {
     );
 
     assert_eq!(error_count, 0, "Found {} snippet errors", error_count);
-
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore = "needs work"]
-async fn test_handle_request() -> Result<(), ploke_error::Error> {
-    let embedding_data = setup_db_full_embeddings("fixture_nodes")?;
-    let (tx, rx) = mpsc::channel(1000);
-    let io_manager = IoManager::new(rx);
-    let handle = io_manager.run();
 
     Ok(())
 }

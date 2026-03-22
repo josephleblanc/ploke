@@ -1,9 +1,9 @@
 use chrono::Utc;
 use ploke_core::file_hash::LargeFilePolicy;
-use ploke_core::{ArcStr, CrateId, CrateInfo, TrackingHash, WorkspaceRoots};
+use ploke_core::{ArcStr, CrateId, CrateInfo, TrackingHash, WorkspaceInfo, WorkspaceRoots};
 use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -101,11 +101,40 @@ impl SystemState {
         let guard = self.0.read().await;
         guard.focused_crate_root()
     }
+    #[cfg(feature = "test_harness")]
+    pub async fn loaded_workspace_root_for_test(&self) -> Option<std::path::PathBuf> {
+        let guard = self.0.read().await;
+        guard.loaded_workspace_root()
+    }
+    #[cfg(feature = "test_harness")]
+    pub async fn loaded_workspace_member_roots_for_test(&self) -> Vec<std::path::PathBuf> {
+        let guard = self.0.read().await;
+        guard.loaded_workspace_member_roots()
+    }
+    #[cfg(feature = "test_harness")]
+    pub async fn workspace_freshness_for_test(
+        &self,
+    ) -> Vec<(std::path::PathBuf, WorkspaceFreshness)> {
+        let guard = self.0.read().await;
+        let Some(loaded_workspace) = guard.loaded_workspace.as_ref() else {
+            return Vec::new();
+        };
+        loaded_workspace
+            .members
+            .crates
+            .iter()
+            .filter_map(|info| {
+                guard
+                    .workspace_freshness(*&info.id)
+                    .map(|freshness| (info.root_path.clone(), freshness))
+            })
+            .collect()
+    }
 
     pub async fn is_stale_err(&self) -> Result<(), ploke_error::Error> {
-        if self.read().await.focused_crate_stale() == Some(true) {
+        if self.read().await.any_loaded_crate_stale() {
             Err(ploke_error::Error::Domain(DomainError::Ui {
-                message: "Focused crate index is stale; reindex to query code items.".to_string(),
+                message: "Loaded crate index is stale; reindex to query code items.".to_string(),
             }))
         } else {
             Ok(())
@@ -380,13 +409,52 @@ impl AppState {
     }
 }
 
+#[derive(Debug)]
+pub struct LoadedWorkspaceState {
+    pub(crate) workspace: WorkspaceInfo,
+    pub(crate) members: WorkspaceRoots,
+}
+
+impl LoadedWorkspaceState {
+    pub fn from_member_roots(workspace_root: PathBuf, member_roots: Vec<PathBuf>) -> Self {
+        let mut members = WorkspaceRoots::default();
+        for root in member_roots {
+            members.upsert(CrateInfo::from_root_path(root));
+        }
+        Self {
+            workspace: WorkspaceInfo::from_root_path(workspace_root),
+            members,
+        }
+    }
+
+    pub fn member_roots(&self) -> Vec<PathBuf> {
+        self.members
+            .crates
+            .iter()
+            .map(|info| info.root_path.clone())
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadedCrateState {
+    pub info: CrateInfo,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WorkspaceFreshness {
+    Fresh,
+    Stale,
+}
+
 #[derive(Debug, Default)]
 pub struct SystemStatus {
-    pub(crate) workspace_roots: WorkspaceRoots,
-    pub(crate) crate_focus: Option<CrateId>,
+    pub(crate) loaded_workspace: Option<LoadedWorkspaceState>,
+    pub(crate) loaded_crates: BTreeMap<CrateId, LoadedCrateState>,
     pub(crate) crate_versions: HashMap<CrateId, u64>,
     pub(crate) crate_deps: HashMap<CrateId, Vec<CrateId>>,
     pub(crate) invalidated_crates: HashSet<CrateId>,
+    pub(crate) workspace_freshness: HashMap<CrateId, WorkspaceFreshness>,
     pub(crate) no_workspace_tip_shown: bool,
     pub(crate) last_parse_failure: Option<ParseFailure>,
     pub(crate) last_parse_success_ms: Option<i64>,
@@ -400,48 +468,166 @@ pub struct ParseFailure {
 }
 
 impl SystemStatus {
-    pub fn new(crate_focus: Option<PathBuf>) -> Self {
-        let mut workspace_roots = WorkspaceRoots::default();
-        let mut crate_versions = HashMap::new();
-        let crate_focus = crate_focus.map(|path| {
-            let info = CrateInfo::from_root_path(path);
-            let id = info.id;
-            workspace_roots.upsert(info);
-            crate_versions.entry(id).or_insert(0);
-            id
-        });
-        Self {
-            workspace_roots,
-            crate_focus,
-            crate_versions,
-            crate_deps: HashMap::new(),
-            invalidated_crates: HashSet::new(),
-            no_workspace_tip_shown: false,
-            last_parse_failure: None,
-            last_parse_success_ms: None,
+    pub fn new(crate_root: Option<PathBuf>) -> Self {
+        let mut status = Self::default();
+        if let Some(path) = crate_root {
+            let id = status.load_standalone_crate(path);
+            status.crate_versions.entry(id).or_insert(0);
         }
+        status
     }
 
+    pub fn loaded_workspace(&self) -> Option<&LoadedWorkspaceState> {
+        self.loaded_workspace.as_ref()
+    }
+
+    pub fn loaded_workspace_root(&self) -> Option<PathBuf> {
+        self.loaded_workspace
+            .as_ref()
+            .map(|loaded| loaded.workspace.root_path.clone())
+    }
+
+    pub fn loaded_workspace_member_roots(&self) -> Vec<PathBuf> {
+        self.loaded_workspace
+            .as_ref()
+            .map(LoadedWorkspaceState::member_roots)
+            .unwrap_or_default()
+    }
+
+    pub fn loaded_crate(&self, id: &CrateId) -> Option<&LoadedCrateState> {
+        self.loaded_crates.get(id)
+    }
+
+    pub fn loaded_crate_roots(&self) -> Vec<PathBuf> {
+        self.loaded_crates
+            .values()
+            .map(|lc| lc.info.root_path.clone())
+            .collect()
+    }
+
+    pub fn has_loaded_crates(&self) -> bool {
+        !self.loaded_crates.is_empty()
+    }
+
+    /// Backward-compatible accessor: returns the first loaded crate's info.
+    /// Callers that need a specific crate should use `loaded_crate(id)`.
     pub fn focused_crate(&self) -> Option<&CrateInfo> {
-        self.crate_focus
-            .and_then(|id| self.workspace_roots.find_by_id(id))
+        self.loaded_crates.values().next().map(|lc| &lc.info)
     }
 
+    /// Backward-compatible accessor: returns the first loaded crate's root path.
+    /// Callers that need a specific crate root should use `loaded_crate(id)`.
     pub fn focused_crate_root(&self) -> Option<PathBuf> {
         self.focused_crate().map(|info| info.root_path.clone())
     }
 
+    /// Backward-compatible accessor: returns the first loaded crate's name.
     pub fn focused_crate_name(&self) -> Option<&str> {
         self.focused_crate().map(|info| info.name.as_str())
     }
 
+    pub fn set_loaded_workspace(
+        &mut self,
+        workspace_root: PathBuf,
+        member_roots: Vec<PathBuf>,
+        focused_root: Option<PathBuf>,
+    ) -> Option<CrateId> {
+        let loaded_workspace =
+            LoadedWorkspaceState::from_member_roots(workspace_root, member_roots);
+        let member_ids: HashSet<_> = loaded_workspace
+            .members
+            .crates
+            .iter()
+            .map(|info| info.id)
+            .collect();
+        let focus_id = focused_root
+            .as_ref()
+            .and_then(|root| loaded_workspace.members.find_by_root_path(root))
+            .map(|info| info.id);
+
+        self.workspace_freshness
+            .retain(|crate_id, _| member_ids.contains(crate_id));
+        self.loaded_crates.clear();
+        for info in &loaded_workspace.members.crates {
+            self.crate_versions.entry(info.id).or_insert(0);
+            self.workspace_freshness
+                .insert(info.id, WorkspaceFreshness::Fresh);
+            self.loaded_crates
+                .insert(info.id, LoadedCrateState { info: info.clone() });
+        }
+
+        self.loaded_workspace = Some(loaded_workspace);
+        focus_id
+    }
+
+    /// Registers a crate root into loaded state. If the root is already a member
+    /// of the loaded workspace, adds it to `loaded_crates`. Otherwise, creates a
+    /// standalone single-member workspace and replaces existing loaded state.
     pub fn set_focus_from_root(&mut self, root: PathBuf) -> CrateId {
-        let info = CrateInfo::from_root_path(root);
+        if let Some(loaded_workspace) = self.loaded_workspace.as_ref()
+            && let Some(info) = loaded_workspace.members.find_by_root_path(&root)
+        {
+            let id = info.id;
+            self.crate_versions.entry(id).or_insert(0);
+            self.loaded_crates
+                .insert(id, LoadedCrateState { info: info.clone() });
+            return id;
+        }
+
+        self.load_standalone_crate(root)
+    }
+
+    /// Loads a single crate as a standalone (no workspace) environment.
+    /// Clears any previous loaded workspace and crate state.
+    fn load_standalone_crate(&mut self, root: PathBuf) -> CrateId {
+        let info = CrateInfo::from_root_path(root.clone());
         let id = info.id;
-        self.workspace_roots.upsert(info);
+        self.loaded_workspace = Some(LoadedWorkspaceState::from_member_roots(
+            root,
+            vec![info.root_path.clone()],
+        ));
+        self.loaded_crates.clear();
+        self.loaded_crates.insert(id, LoadedCrateState { info });
         self.crate_versions.entry(id).or_insert(0);
-        self.crate_focus = Some(id);
+        self.workspace_freshness
+            .insert(id, WorkspaceFreshness::Fresh);
         id
+    }
+
+    /// Centralized mutation entry point. All `SystemStatus` state changes should
+    /// flow through this method to ensure transitions are typed and auditable.
+    pub fn apply(&mut self, mutation: super::events::SystemMutation) {
+        use super::events::SystemMutation;
+        match mutation {
+            SystemMutation::LoadWorkspace {
+                workspace_root,
+                member_roots,
+                focused_root,
+            } => {
+                self.set_loaded_workspace(workspace_root, member_roots, focused_root);
+            }
+            SystemMutation::LoadStandaloneCrate { crate_root } => {
+                self.load_standalone_crate(crate_root);
+            }
+            SystemMutation::RecordParseSuccess => {
+                self.record_parse_success();
+            }
+            SystemMutation::RecordParseFailure {
+                target_dir,
+                message,
+            } => {
+                self.record_parse_failure(target_dir, message);
+            }
+            SystemMutation::SetWorkspaceFreshness {
+                crate_id,
+                freshness,
+            } => {
+                self.set_workspace_freshness(crate_id, freshness);
+            }
+            SystemMutation::RecordIndexComplete { crate_id } => {
+                self.record_index_complete(crate_id);
+            }
+        }
     }
 
     pub fn set_crate_deps(&mut self, crate_id: CrateId, deps: Vec<CrateId>) {
@@ -462,9 +648,23 @@ impl SystemStatus {
         *version
     }
 
-    pub fn focused_crate_stale(&self) -> Option<bool> {
-        let crate_id = self.crate_focus?;
-        Some(self.invalidated_crates.contains(&crate_id))
+    /// Returns true if any loaded crate is stale or invalidated.
+    pub fn any_loaded_crate_stale(&self) -> bool {
+        self.loaded_crates.keys().any(|id| {
+            self.invalidated_crates.contains(id)
+                || self
+                    .workspace_freshness
+                    .get(id)
+                    .is_some_and(|s| *s == WorkspaceFreshness::Stale)
+        })
+    }
+
+    pub fn set_workspace_freshness(&mut self, crate_id: CrateId, freshness: WorkspaceFreshness) {
+        self.workspace_freshness.insert(crate_id, freshness);
+    }
+
+    pub fn workspace_freshness(&self, crate_id: CrateId) -> Option<WorkspaceFreshness> {
+        self.workspace_freshness.get(&crate_id).copied()
     }
 
     pub fn record_parse_failure(&mut self, target_dir: PathBuf, message: String) {
@@ -498,15 +698,31 @@ impl SystemStatus {
     }
 
     pub fn derive_path_policy(&self, extra_read_roots: &[PathBuf]) -> Option<PathPolicy> {
-        let focus_root = self.focused_crate_root()?;
-        let mut roots = Vec::with_capacity(1 + extra_read_roots.len());
-        roots.push(focus_root);
+        let mut roots = Vec::new();
+        if let Some(ws) = self.loaded_workspace_root() {
+            roots.push(ws);
+        }
+        roots.extend(self.loaded_workspace_member_roots());
         roots.extend(extra_read_roots.iter().cloned());
+        let mut seen = BTreeSet::new();
+        roots.retain(|root| seen.insert(root.clone()));
+        if roots.is_empty() {
+            return None;
+        }
         Some(PathPolicy {
             roots,
             symlink_policy: SymlinkPolicy::DenyCrossRoot,
             require_absolute: true,
         })
+    }
+
+    /// Workspace root for joining relative tool paths, plus the full read policy (workspace + members).
+    pub fn tool_path_context(&self) -> Option<(PathBuf, PathPolicy)> {
+        let primary_root = self
+            .loaded_workspace_root()
+            .or_else(|| self.focused_crate_root())?;
+        let policy = self.derive_path_policy(&[])?;
+        Some((primary_root, policy))
     }
 }
 
@@ -529,5 +745,73 @@ mod tests {
         assert_eq!(version, 1);
         assert!(status.invalidated_crates.contains(&id_b));
         assert!(!status.invalidated_crates.contains(&id_a));
+    }
+
+    #[test]
+    fn loaded_workspace_membership_populates_loaded_crates_and_path_policy() {
+        let mut status = SystemStatus::default();
+        let workspace_root = std::env::temp_dir().join("ploke_test_workspace");
+        let member_a = workspace_root.join("crate_a");
+        let member_b = workspace_root.join("nested/crate_b");
+
+        let focused = status.set_loaded_workspace(
+            workspace_root.clone(),
+            vec![member_a.clone(), member_b.clone()],
+            Some(member_b.clone()),
+        );
+
+        assert!(
+            focused.is_some(),
+            "focus should be set to a workspace member"
+        );
+        assert_eq!(status.loaded_workspace_root(), Some(workspace_root.clone()));
+        assert_eq!(status.loaded_crates.len(), 2);
+        assert_eq!(
+            status.loaded_workspace_member_roots(),
+            vec![member_a.clone(), member_b.clone()]
+        );
+
+        let policy = status
+            .derive_path_policy(&[])
+            .expect("loaded workspace should derive a path policy");
+        assert_eq!(
+            policy.roots,
+            vec![workspace_root.clone(), member_a.clone(), member_b.clone()]
+        );
+
+        let (primary, tool_policy) = status
+            .tool_path_context()
+            .expect("tool path context should be available");
+        assert_eq!(primary, workspace_root);
+        assert_eq!(tool_policy.roots, policy.roots);
+    }
+
+    #[test]
+    fn set_focus_from_root_preserves_existing_loaded_workspace_membership() {
+        let mut status = SystemStatus::default();
+        let workspace_root = std::env::temp_dir().join("ploke_test_workspace_focus");
+        let member_a = workspace_root.join("crate_a");
+        let member_b = workspace_root.join("crate_b");
+
+        status.set_loaded_workspace(
+            workspace_root,
+            vec![member_a.clone(), member_b.clone()],
+            Some(member_a.clone()),
+        );
+        let focused_id = status.set_focus_from_root(member_b.clone());
+
+        assert!(status.loaded_crates.contains_key(&focused_id));
+        assert!(
+            status
+                .loaded_workspace_member_roots()
+                .iter()
+                .any(|root| root == &member_a)
+        );
+        assert!(
+            status
+                .loaded_workspace_member_roots()
+                .iter()
+                .any(|root| root == &member_b)
+        );
     }
 }

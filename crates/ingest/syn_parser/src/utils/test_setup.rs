@@ -1,5 +1,5 @@
 use lazy_static::lazy_static;
-use ploke_common::{fixtures_crates_dir, workspace_root};
+use ploke_common::fixtures_crates_dir;
 
 use crate::{
     discovery::run_discovery_phase,
@@ -31,8 +31,7 @@ lazy_static! {
 
 pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
-    let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
+    let discovery_output = run_discovery_phase(None, &[crate_path.clone()])
         .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
 
     let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =

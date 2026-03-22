@@ -235,6 +235,7 @@ impl RagService {
         &self,
         query: &str,
         top_k: usize,
+        scope: RetrievalScope,
     ) -> Result<Vec<(Uuid, f32)>, RagError> {
         let mut attempts: usize = 0;
 
@@ -254,6 +255,7 @@ impl RagService {
                 .send(Bm25Cmd::Search {
                     query: query.to_string(),
                     top_k,
+                    scope,
                     resp: tx,
                 })
                 .await
@@ -274,13 +276,13 @@ impl RagService {
                         query.len(),
                         top_k,
                         recv_err
-                    )))
+                    )));
                 }
                 Err(_) => {
                     return Err(RagError::Channel(format!(
                         "timeout waiting for BM25 search ({} ms)",
                         self.cfg.bm25_timeout_ms
-                    )))
+                    )));
                 }
             };
 
@@ -312,7 +314,7 @@ impl RagService {
             if use_fallback {
                 fallback_used = true;
                 debug!(bm25_results = 0, bm25_status = ?status_opt, attempts = attempts, fallback_used = fallback_used, "BM25 not ready/empty; falling back to dense search");
-                let dense_list = self.search(query, top_k).await.map_err(|e| {
+                let dense_list = self.search(query, top_k, scope).await.map_err(|e| {
                     RagError::Embed(format!(
                         "dense search failed during BM25 fallback (len={}, top_k={}): {:?}",
                         query.len(),
@@ -425,6 +427,7 @@ impl RagService {
         &self,
         query: &str,
         top_k: usize,
+        scope: RetrievalScope,
     ) -> Result<Vec<(Uuid, f32)>, RagError> {
         let status = self.bm25_status().await?;
 
@@ -433,6 +436,7 @@ impl RagService {
             .send(Bm25Cmd::Search {
                 query: query.to_string(),
                 top_k,
+                scope,
                 resp: tx,
             })
             .await
@@ -453,13 +457,13 @@ impl RagService {
                     query.len(),
                     top_k,
                     recv_err
-                )))
+                )));
             }
             Err(_) => {
                 return Err(RagError::Channel(format!(
                     "timeout waiting for BM25 search ({} ms)",
                     self.cfg.bm25_timeout_ms
-                )))
+                )));
             }
         };
 
@@ -490,6 +494,7 @@ impl RagService {
         &self,
         query: &str,
         top_k: usize,
+        scope: RetrievalScope,
     ) -> Result<Vec<(Uuid, f32)>, ploke_error::Error> {
         // Generate embedding for the query
         let embeddings = self
@@ -516,6 +521,7 @@ impl RagService {
             let args = SimilarArgs {
                 db: &self.db,
                 vector_query: &query_embedding,
+                scope,
                 k: top_k,
                 ef: params.ef, // Configurable ef value
                 ty: node_type,
@@ -553,24 +559,25 @@ impl RagService {
         top_k: usize,
         budget: &TokenBudget,
         strategy: &RetrievalStrategy,
+        scope: RetrievalScope,
     ) -> Result<AssembledContext, RagError> {
         // 1) Retrieve hits according to strategy
         let hits: Vec<(Uuid, f32)> = match strategy {
             RetrievalStrategy::Dense => self
-                .search(query, top_k)
+                .search(query, top_k, scope)
                 .await
                 .map_err(|e| RagError::Embed(format!("dense search failed: {:?}", e)))?,
             RetrievalStrategy::Sparse { strict } => {
                 let use_strict = strict.unwrap_or(self.cfg.strict_bm25_by_default);
                 if use_strict {
-                    self.search_bm25_strict(query, top_k).await?
+                    self.search_bm25_strict(query, top_k, scope).await?
                 } else {
-                    self.search_bm25(query, top_k).await?
+                    self.search_bm25(query, top_k, scope).await?
                 }
             }
             RetrievalStrategy::Hybrid { rrf, mmr } => {
-                let bm25_fut = self.search_bm25(query, top_k);
-                let dense_fut = self.search(query, top_k);
+                let bm25_fut = self.search_bm25(query, top_k, scope);
+                let dense_fut = self.search(query, top_k, scope);
                 let (bm25_res, dense_res) = tokio::join!(bm25_fut, dense_fut);
                 let bm25_list = bm25_res?;
                 let dense_list = dense_res
@@ -657,10 +664,11 @@ impl RagService {
         &self,
         query: &str,
         top_k: usize,
+        scope: RetrievalScope,
     ) -> Result<Vec<(Uuid, f32)>, RagError> {
         // Kick off both searches concurrently.
-        let bm25_fut = self.search_bm25(query, top_k);
-        let dense_fut = self.search(query, top_k);
+        let bm25_fut = self.search_bm25(query, top_k, scope);
+        let dense_fut = self.search(query, top_k, scope);
 
         let (bm25_res, dense_res) = tokio::join!(bm25_fut, dense_fut);
 

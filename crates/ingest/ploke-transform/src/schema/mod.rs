@@ -47,7 +47,7 @@ pub mod types;
 use crate::error::TransformError;
 use assoc_nodes::MethodNodeSchema;
 use cozo::{Db, MemStorage};
-use crate_node::CrateContextSchema;
+use crate_node::{CrateContextSchema, WorkspaceMetadataSchema};
 use edges::SyntacticRelationSchema;
 use itertools::Itertools;
 use meta::Bm25MetaSchema;
@@ -117,6 +117,7 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
 
     // -- crate_context --
     CrateContextSchema::create_and_insert_schema(db)?;
+    WorkspaceMetadataSchema::create_and_insert_schema(db)?;
 
     // -- bm25_doc_meta --
     Bm25MetaSchema::create_and_insert_schema(db)?;

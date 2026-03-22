@@ -13,18 +13,13 @@
 //! These entry points are intentionally narrow so downstream phases can depend on strongly typed
 //! structs instead of re-reading `Cargo.toml` or the filesystem.
 
-use itertools::Itertools;
 use ploke_core::PROJECT_NAMESPACE_UUID;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt;
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use toml;
 use uuid::Uuid;
-use walkdir::WalkDir;
 
 use crate::discovery::workspace::resolve_workspace_version;
 use crate::discovery::workspace::WorkspaceVersionLink;
@@ -53,9 +48,9 @@ use crate::discovery::DiscoveryError;
 
 /// Represents the `[package]` section of Cargo.toml.
 #[derive(Deserialize, Debug, Clone)]
-struct PackageInfo {
-    name: String,
-    version: PackageVersion,
+pub struct PackageInfo {
+    pub name: String,
+    pub version: PackageVersion,
     // edition: Option<String>, // Could be useful later
 }
 
@@ -68,7 +63,7 @@ impl fmt::Display for PackageInfo {
 /// Describes where a crate's version string originates.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
-enum PackageVersion {
+pub enum PackageVersion {
     /// Version is specified directly in the crate's `Cargo.toml`.
     Explicit(String),
     /// Version is inherited from the workspace via `version.workspace = true`.
@@ -94,7 +89,7 @@ impl PackageVersion {
     /// # Errors
     /// * [`DiscoveryError::WorkspaceVersionFlagDisabled`] if `workspace = false`.
     /// * Any error emitted by [`resolve_workspace_version`] when escalation to a workspace lookup fails.
-    fn resolve(&self, crate_root: &Path) -> Result<String, DiscoveryError> {
+    pub fn resolve(&self, crate_root: &Path) -> Result<String, DiscoveryError> {
         match self {
             PackageVersion::Explicit(version) => Ok(version.clone()),
             PackageVersion::Workspace(link) => {
@@ -609,15 +604,15 @@ pub struct DevDependencies(HashMap<String, DependencySpec>);
 
 /// Represents the overall structure of a parsed Cargo.toml manifest.
 #[derive(Deserialize, Debug)]
-struct CargoManifest {
-    package: PackageInfo,
+pub struct CargoManifest {
+    pub package: PackageInfo,
     #[serde(default)] // Use default empty map if section is missing
-    features: Features,
+    pub features: Features,
     #[serde(default)]
-    dependencies: Dependencies,
+    pub dependencies: Dependencies,
     #[serde(default)]
     #[serde(rename = "dev-dependencies")]
-    dev_dependencies: DevDependencies,
+    pub dev_dependencies: DevDependencies,
     // Add other fields like [lib], [bin] if needed later for module mapping
 }
 
@@ -640,16 +635,20 @@ pub struct CrateContext {
     pub files: Vec<PathBuf>,
     /// Parsed features from Cargo.toml.
     #[allow(unused_variables, reason = "Useful later for resolving features")]
-    features: Features,
+    pub features: Features,
     /// Parsed dependencies from Cargo.toml.
     #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
-    dependencies: Dependencies,
+    pub dependencies: Dependencies,
     /// Parsed dev-dependencies from Cargo.toml.
     #[allow(
         unused_variables,
         reason = "Useful later for resolving dev dependencies"
     )]
-    dev_dependencies: DevDependencies,
+    pub dev_dependencies: DevDependencies,
+    /// Location of workspace, if present. Defaults to `None` and skips for serde, not
+    /// reflective of Cargo.toml structure
+    #[serde(skip)]
+    pub workspace_path: Option<PathBuf>,
 }
 
 impl CrateContext {
@@ -724,6 +723,10 @@ impl DiscoveryOutput {
     /// let crate_root = root.path().join("demo");
     /// fs::create_dir_all(crate_root.join("src")).unwrap();
     /// fs::write(
+    ///     root.path().join("Cargo.toml"),
+    ///     "[workspace]\nmembers = [\"demo\"]\n",
+    /// ).unwrap();
+    /// fs::write(
     ///     crate_root.join("Cargo.toml"),
     ///     r#"[package]
     /// name = "demo"
@@ -733,7 +736,7 @@ impl DiscoveryOutput {
     /// ).unwrap();
     /// fs::write(crate_root.join("src/lib.rs"), "pub fn demo() {}").unwrap();
     ///
-    /// let discovery = run_discovery_phase(root.path(), &[crate_root.clone()]).unwrap();
+    /// let discovery = run_discovery_phase(Some(root.path()), &[crate_root.clone()]).unwrap();
     /// let context = discovery.get_crate_context(&crate_root).unwrap();
     /// assert_eq!(context.name, "demo");
     /// ```
@@ -750,6 +753,10 @@ impl DiscoveryOutput {
     /// use std::fs;
     ///
     /// let root = tempdir().unwrap();
+    /// fs::write(
+    ///     root.path().join("Cargo.toml"),
+    ///     "[workspace]\nmembers = [\"crate_a\", \"crate_b\"]\n",
+    /// ).unwrap();
     /// for (name, version) in [("crate_a", "0.1.0"), ("crate_b", "0.2.0")] {
     ///     let crate_root = root.path().join(name);
     ///     fs::create_dir_all(crate_root.join("src")).unwrap();
@@ -768,7 +775,7 @@ impl DiscoveryOutput {
     ///     .into_iter()
     ///     .map(|name| root.path().join(name))
     ///     .collect::<Vec<_>>();
-    /// let discovery = run_discovery_phase(root.path(), &crate_paths).unwrap();
+    /// let discovery = run_discovery_phase(Some(root.path()), &crate_paths).unwrap();
     ///
     /// let mut names: Vec<_> = discovery
     ///     .iter_crate_contexts()
@@ -794,6 +801,7 @@ impl DiscoveryOutput {
     /// };
     /// let discovery = DiscoveryOutput {
     ///     crate_contexts: HashMap::new(),
+    ///     workspace: None,
     ///     warnings: vec![warning.clone()],
     /// };
     ///
@@ -816,6 +824,7 @@ impl DiscoveryOutput {
     ///
     /// let discovery = DiscoveryOutput {
     ///     crate_contexts: HashMap::new(),
+    ///     workspace: None,
     ///     warnings: vec![DiscoveryError::MissingPackageName {
     ///         path: PathBuf::from("/tmp/bad/Cargo.toml"),
     ///     }],
@@ -825,6 +834,7 @@ impl DiscoveryOutput {
     ///
     /// let clean = DiscoveryOutput {
     ///     crate_contexts: HashMap::new(),
+    ///     workspace: None,
     ///     warnings: vec![],
     /// };
     /// assert!(!clean.has_warnings());
@@ -832,170 +842,6 @@ impl DiscoveryOutput {
     pub fn has_warnings(&self) -> bool {
         !self.warnings.is_empty()
     }
-}
-
-/// Runs the single-threaded discovery phase to gather context about target crates.
-///
-/// This function executes before any parallel parsing begins. It identifies
-/// target crates, parses their `Cargo.toml` files, generates namespaces,
-/// finds all `.rs` source files, and performs an initial scan for module
-/// declarations.
-///
-/// # Arguments
-/// * `_project_root` - The root path of the project being analyzed (may be used later).
-/// * `target_crates` - A slice of paths pointing to the root directories of the crates to analyze.
-///
-/// # Returns
-/// A `Result` containing the `DiscoveryOutput` on success, or the first critical
-/// `DiscoveryError` encountered during processing (e.g., `CratePathNotFound`,
-/// `Io` error reading `Cargo.toml`, `TomlParse` error, `SrcNotFound`).
-/// If successful, it means all target crates were processed without critical errors,
-/// though non-fatal warnings might still be present in `DiscoveryOutput.warnings`.
-// NOTE: Known limitations:
-// * Assuming target_crates provides absolute paths for simplicity
-//  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
-//  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
-pub fn run_discovery_phase(
-    workspace_root: &Path,     // Keep for potential future use
-    target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
-) -> Result<DiscoveryOutput, DiscoveryError> {
-    let mut crate_contexts = HashMap::new();
-    // Removed: let mut initial_module_map = HashMap::new();
-    let mut non_fatal_errors: Vec<DiscoveryError> = Vec::new(); // Collect non-fatal errors
-
-    for crate_root_path in target_crates {
-        // --- Check Crate Path Existence (Critical Error) ---
-        if !crate_root_path.exists() || !crate_root_path.is_dir() {
-            // This is considered critical, return immediately.
-            return Err(DiscoveryError::CratePathNotFound {
-                path: crate_root_path.clone(),
-            });
-            // No need to continue if the path is invalid.
-        }
-
-        // --- 3.2.2 Implement Cargo.toml Parsing (Critical Errors) ---
-        let cargo_toml_path = crate_root_path.join("Cargo.toml");
-        let cargo_content = match fs::read_to_string(&cargo_toml_path) {
-            Ok(content) => content,
-            Err(e) => {
-                // Critical error: Cannot proceed without Cargo.toml content.
-                return Err(DiscoveryError::Io {
-                    path: cargo_toml_path.clone(),
-                    source: Arc::new(e), // Wrap error in Arc
-                });
-            }
-        };
-        let manifest: CargoManifest = match toml::from_str(&cargo_content) {
-            Ok(m) => m,
-            Err(e) => {
-                // Critical error: Invalid TOML structure prevents further processing.
-                return Err(DiscoveryError::TomlParse {
-                    path: cargo_toml_path.clone(),
-                    source: Arc::new(e), // Wrap error in Arc
-                });
-            }
-        };
-
-        let CargoManifest {
-            package,
-            features,
-            dependencies,
-            dev_dependencies,
-        } = manifest;
-
-        // --- Extract Package Info (Non-Fatal Errors) ---
-        // Although PackageInfo deserialization requires name/version, we handle potential
-        // future scenarios or direct struct manipulation by checking here.
-        // For now, serde handles this, but let's keep the structure for robustness.
-        let crate_name = package.name.clone();
-        let crate_version = package.version.resolve(crate_root_path)?;
-
-        // --- 3.2.3 Implement Namespace Generation (Called below) ---
-        let namespace = derive_crate_namespace(&crate_name, &crate_version);
-
-        // --- 3.2.1 Implement File Discovery Logic ---
-        let src_path = crate_root_path.join("src");
-        let mut files = Vec::new();
-
-        if !src_path.exists() || !src_path.is_dir() {
-            // Critical error: Cannot proceed without a source directory.
-            return Err(DiscoveryError::SrcNotFound {
-                path: src_path.clone(),
-            });
-        } else {
-            // --- Perform File Discovery (Non-Fatal Walkdir Errors) ---
-            let walker = WalkDir::new(&src_path).into_iter();
-            for entry_result in walker {
-                match entry_result {
-                    Ok(entry) => {
-                        if entry.file_type().is_file()
-                            && entry.path().extension().is_some_and(|ext| ext == "rs")
-                        {
-                            files.push(entry.path().to_path_buf());
-                        }
-                    }
-                    Err(e) => {
-                        // Non-fatal: Log, collect error, and continue walking.
-                        let path = e.path().unwrap_or(&src_path).to_path_buf();
-                        // eprintln!("Warning: Error walking directory {:?}: {}", path, e);
-                        // Note: walkdir::Error might not directly implement Error needed for #[source]
-                        // depending on its structure. Wrapping it ensures compatibility.
-                        // If walkdir::Error *does* implement std::error::Error, Arc::new(e) is fine.
-                        // If not, we might need Arc::new(e.into_io_error().unwrap_or_else(...)) or similar.
-                        // Assuming walkdir::Error implements std::error::Error for now.
-                        non_fatal_errors.push(DiscoveryError::Walkdir {
-                            path,
-                            source: Arc::new(e), // Wrap error in Arc
-                        });
-                    }
-                }
-            }
-        }
-
-        // WARN: We are not including the main.rs file (and hopefully not its imports either) in
-        // the case of a project having both a main.rs and a lib.rs
-        // - This is a stopgap for now. We would like to provide the user with the ability to parse
-        // both of these code graphs into the database at the same time as separate packages in the
-        // same crate, but it is beyond our scope for now.
-        // - See [known limitation](ploke/docs/plans/uuid_refactor/01b_phase1_known_limitations.md)
-        let files = if files
-            .iter()
-            .any(|p| p.file_name().is_some_and(|f| f == "lib.rs"))
-        {
-            files
-                .into_iter()
-                .filter(|p| p.file_name().is_some_and(|f| f != "main.rs"))
-                .collect_vec()
-        } else {
-            files
-        };
-
-        // --- Combine into CrateContext (Always created, might have empty files) ---
-        let context = CrateContext {
-            name: crate_name.clone(),
-            version: crate_version,
-            namespace,
-            root_path: crate_root_path.clone(),
-            files,            // Clone needed for module mapping below
-            features,         // Add the parsed features
-            dependencies,     // Add the parsed dependencies
-            dev_dependencies, // Add the parsed dev-dependencies
-        };
-
-        // Removed: Initial Module Mapping section (scan_for_mods call)
-
-        // Add context regardless of non-fatal errors encountered for this crate.
-        crate_contexts.insert(crate_root_path.clone(), context);
-    } // End of loop for target_crates
-
-    // --- Final Check and Return ---
-    // Always return Ok if critical errors didn't occur.
-    // Non-fatal errors are packaged into the DiscoveryOutput.
-    Ok(DiscoveryOutput {
-        crate_contexts,
-        // Removed: initial_module_map,
-        warnings: non_fatal_errors, // Include collected warnings
-    })
 }
 
 /// Derives a deterministic UUID v5 namespace for a specific crate.
@@ -1015,7 +861,7 @@ pub fn derive_crate_namespace(name: &str, _version: &str) -> Uuid {
 
 #[cfg(test)]
 mod tests {
-    use ploke_common::workspace_root;
+    use std::sync::Arc;
 
     use super::*;
 
@@ -1055,35 +901,5 @@ mod tests {
 
         let ploke_err: ploke_error::Error = discovery_err.into();
         assert!(matches!(ploke_err, ploke_error::Error::Fatal(_)));
-    }
-
-    #[test]
-    // test basic toml parsing of target crate
-    fn test_toml_basic() -> Result<(), DiscoveryError> {
-        let workspace_root = workspace_root(); // Use workspace root for context
-        assert!(
-            workspace_root.is_dir(),
-            "target fixture workspace expected to be a directory"
-        );
-
-        let mut crate_dir = workspace_root.clone();
-        crate_dir.push("tests/fixture_workspace/ws_fixture_00/fixture_toml/");
-        assert!(
-            crate_dir.is_dir(),
-            "target fixture crate expected to be a directory"
-        );
-
-        let discovery_result = run_discovery_phase(&workspace_root, &[crate_dir.clone()]);
-        println!("{discovery_result:#?}");
-        let output = discovery_result?;
-        let context = output
-            .crate_contexts
-            .get(&crate_dir)
-            .expect("fixture_toml context missing");
-        assert_eq!(
-            context.version, "0.0.0",
-            "version should be inherited from workspace"
-        );
-        Ok(())
     }
 }

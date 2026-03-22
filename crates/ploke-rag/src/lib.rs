@@ -42,6 +42,7 @@
 //! Quickstart
 //! ```no_run
 //! use std::sync::Arc;
+//! use ploke_core::RetrievalScope;
 //! use ploke_rag::{RagService, RetrievalStrategy, TokenBudget};
 //! use ploke_embed::runtime::EmbeddingRuntime;
 //! use ploke_db::{Database};
@@ -51,10 +52,10 @@
 //! let rag = RagService::new(db.clone(), embedder.clone())?;
 //!
 //! // Sparse-only (lenient): falls back to dense if BM25 is unready/empty.
-//! let bm25_hits = rag.search_bm25("how to implement graph nodes", 15).await?;
+//! let bm25_hits = rag.search_bm25("how to implement graph nodes", 15, RetrievalScope::LoadedWorkspace).await?;
 //!
 //! // Hybrid: concurrent BM25 + dense, fused via weighted RRF.
-//! let fused = rag.hybrid_search("module visibility rules", 15).await?;
+//! let fused = rag.hybrid_search("module visibility rules", 15, RetrievalScope::LoadedWorkspace).await?;
 //!
 //! // Assemble a context for downstream prompting.
 //! let budget = TokenBudget { max_total: 1024, per_file_max: 512, per_part_max: 256 };
@@ -63,6 +64,7 @@
 //!     12,
 //!     &budget,
 //!     &RetrievalStrategy::Hybrid { rrf: Default::default(), mmr: None },
+//!     RetrievalScope::LoadedWorkspace,
 //! ).await?;
 //! # Ok(()) }
 //! ```
@@ -118,15 +120,16 @@ fn ensure_tracer_initialized() {
     // Tests configure tracing themselves; no-op to avoid interfering with test harness.
 }
 
-use ploke_core::EmbeddingData;
+use ploke_core::{EmbeddingData, RetrievalScope};
 use ploke_db::{
+    Database, DbError, NodeType, SimilarArgs, TypedEmbedData,
     bm25_index::bm25_service::{self, Bm25Cmd},
-    search_similar_args, Database, DbError, NodeType, SimilarArgs, TypedEmbedData,
+    search_similar_args,
 };
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerTask};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{sleep, timeout, Duration};
+use tokio::time::{Duration, sleep, timeout};
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
@@ -134,11 +137,11 @@ pub mod error;
 pub mod fusion;
 pub use error::RagError;
 pub use fusion::{
-    mmr_select, normalize_scores, rrf_fuse, MmrConfig, RrfConfig, ScoreNorm, Similarity,
+    MmrConfig, RrfConfig, ScoreNorm, Similarity, mmr_select, normalize_scores, rrf_fuse,
 };
 pub mod context;
 pub use context::{
-    assemble_context, ApproxCharTokenizer, AssemblyPolicy, Ordering, TokenBudget, TokenCounter,
+    ApproxCharTokenizer, AssemblyPolicy, Ordering, TokenBudget, TokenCounter, assemble_context,
 };
 pub mod core;
 pub use core::{NoopReranker, RagConfig, RagService, Reranker, RetrievalStrategy};

@@ -46,20 +46,20 @@ pub enum DiscoveryError {
     NonFatalErrors(Box<Vec<DiscoveryError>>), // Box to avoid large enum variant
     /// Failed to read a workspace manifest needed to resolve package version inheritance.
     #[error(
-        "Failed to read workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path}: {source}"
+        "Failed to read workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path:?}: {source}"
     )]
     WorkspaceManifestRead {
-        crate_path: PathBuf,
+        crate_path: Option<PathBuf>,
         manifest_path: PathBuf,
         #[source]
         source: Arc<std::io::Error>,
     },
     /// Failed to parse a workspace manifest needed to resolve package version inheritance.
     #[error(
-        "Failed to parse workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path}: {source}"
+        "Failed to parse workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path:?}: {source}"
     )]
     WorkspaceManifestParse {
-        crate_path: PathBuf,
+        crate_path: Option<PathBuf>,
         manifest_path: PathBuf,
         #[source]
         source: Arc<toml::de::Error>,
@@ -108,6 +108,33 @@ pub enum DiscoveryError {
         build_status: String,
     },
 
+    #[error(
+        "Workspace parsed at {workspace_path} for crate {crate_path} does not contain [{expected}] section when it was expected."
+    )]
+    WorkspaceMissingSection {
+        workspace_path: PathBuf,
+        crate_path: PathBuf,
+        expected: String,
+    },
+
+    #[error(
+        "Crate at {crate_path} resolved to workspace {discovered_workspace_path}, but discovery expected workspace {expected_workspace_path}"
+    )]
+    WorkspacePathMismatch {
+        crate_path: PathBuf,
+        expected_workspace_path: PathBuf,
+        discovered_workspace_path: PathBuf,
+    },
+
+    #[error(
+        "Discovery found multiple workspaces for one run. Expected workspace: {expected_workspace_path}. Discovered workspaces: {discovered_workspace_paths:?}. Target crates: {crate_paths:?}"
+    )]
+    MultipleWorkspacesDetected {
+        expected_workspace_path: PathBuf,
+        discovered_workspace_paths: Vec<PathBuf>,
+        crate_paths: Vec<PathBuf>,
+    },
+
     #[error("Parent directory for Cargo.toml not found")]
     ParentNotFound { workspace_path: PathBuf },
 }
@@ -117,6 +144,7 @@ impl TryFrom<DiscoveryError> for SynParserError {
 
     fn try_from(value: DiscoveryError) -> Result<Self, Self::Error> {
         use DiscoveryError::*;
+        let source_string = value.to_string();
         Ok(match value {
             MissingPackageName { path } => SynParserError::SimpleDiscovery {
                 path: path.display().to_string(),
@@ -150,18 +178,16 @@ impl TryFrom<DiscoveryError> for SynParserError {
                 manifest_path,
                 ..
             } => SynParserError::ComplexDiscovery {
-                name: crate_path.display().to_string(),
+                name: crate_path
+                    .map(|path_buf| path_buf.display().to_string())
+                    .unwrap_or_else(|| String::from("None")),
                 path: manifest_path.display().to_string(),
                 source_string: "WorkspaceManifestRead".to_string(),
             },
-            WorkspaceManifestParse {
-                crate_path,
-                manifest_path,
-                ..
-            } => SynParserError::ComplexDiscovery {
-                name: crate_path.display().to_string(),
+            WorkspaceManifestParse { manifest_path, .. } => SynParserError::ComplexDiscovery {
+                name: "WorkspaceManifestParse".to_string(),
                 path: manifest_path.display().to_string(),
-                source_string: "WorkspaceManifestParse".to_string(),
+                source_string,
             },
             WorkspaceManifestNotFound { crate_path } => SynParserError::SimpleDiscovery {
                 path: crate_path.display().to_string(),
@@ -216,6 +242,27 @@ impl TryFrom<DiscoveryError> for SynParserError {
             ParentNotFound { workspace_path } => SynParserError::SimpleDiscovery {
                 path: workspace_path.display().to_string(),
             },
+            WorkspaceMissingSection { workspace_path, .. } => SynParserError::ComplexDiscovery {
+                name: "workspace".to_string(),
+                path: workspace_path.display().to_string(),
+                source_string,
+            },
+            WorkspacePathMismatch {
+                expected_workspace_path,
+                ..
+            } => SynParserError::ComplexDiscovery {
+                name: "workspace".to_string(),
+                path: expected_workspace_path.display().to_string(),
+                source_string,
+            },
+            MultipleWorkspacesDetected {
+                expected_workspace_path,
+                ..
+            } => SynParserError::ComplexDiscovery {
+                name: "workspace".to_string(),
+                path: expected_workspace_path.display().to_string(),
+                source_string,
+            },
         })
     }
 }
@@ -236,6 +283,7 @@ impl TryFrom<DiscoveryError> for SynParserError {
 /// while providing clear error categorization for upstream error handling.
 impl From<DiscoveryError> for ploke_error::Error {
     fn from(err: DiscoveryError) -> Self {
+        let err_string = err.to_string();
         match err {
             DiscoveryError::Io { path, source } => ploke_error::FatalError::FileOperation {
                 operation: "read",
@@ -296,28 +344,22 @@ impl From<DiscoveryError> for ploke_error::Error {
                 }
                 .into()
             }
-            DiscoveryError::WorkspaceManifestRead {
-                crate_path,
-                manifest_path,
-                source,
-            } => ploke_error::FatalError::PathResolution {
-                path: format!(
-                    "Failed to read workspace manifest {} for crate {}",
-                    manifest_path.display(),
-                    crate_path.display()
-                ),
-                source: Some(source),
+            DiscoveryError::WorkspaceManifestRead { source, .. } => {
+                ploke_error::FatalError::PathResolution {
+                    path: err_string,
+                    source: Some(source),
+                }
+                .into()
             }
-            .into(),
             DiscoveryError::WorkspaceManifestParse {
                 crate_path,
                 manifest_path,
                 source,
             } => ploke_error::FatalError::PathResolution {
                 path: format!(
-                    "Failed to parse workspace manifest {} for crate {}",
+                    "Failed to parse workspace manifest {} for crate {:?}",
                     manifest_path.display(),
-                    crate_path.display()
+                    crate_path
                 ),
                 source: Some(source),
             }
@@ -399,6 +441,29 @@ impl From<DiscoveryError> for ploke_error::Error {
                 }
                 .into()
             }
+            ref err @ DiscoveryError::WorkspaceMissingSection {
+                ref workspace_path, ..
+            } => ploke_error::FatalError::PathResolution {
+                path: workspace_path.display().to_string(),
+                source: Some(Arc::new(err.clone())),
+            }
+            .into(),
+            ref err @ DiscoveryError::WorkspacePathMismatch {
+                ref expected_workspace_path,
+                ..
+            } => ploke_error::FatalError::PathResolution {
+                path: expected_workspace_path.display().to_string(),
+                source: Some(Arc::new(err.clone())),
+            }
+            .into(),
+            ref err @ DiscoveryError::MultipleWorkspacesDetected {
+                ref expected_workspace_path,
+                ..
+            } => ploke_error::FatalError::PathResolution {
+                path: expected_workspace_path.display().to_string(),
+                source: Some(Arc::new(err.clone())),
+            }
+            .into(),
         }
     }
 }

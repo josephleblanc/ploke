@@ -4652,6 +4652,7 @@ dependencies = [
  "chrono",
  "cozo",
  "log",
+ "once_cell",
  "ploke-common",
  "ploke-core",
  "ploke-db",
@@ -7833,11 +7834,19 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "cozo",
+ "ploke-db",
+ "ploke-embed",
+ "ploke-io",
  "ploke-llm",
+ "ploke-test-utils",
+ "ploke-transform",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
+ "tokio",
  "walkdir",
 ]
 

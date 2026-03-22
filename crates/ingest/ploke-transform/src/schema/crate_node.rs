@@ -13,3 +13,14 @@ define_schema!(CrateContextSchema {
     root_path: "String",
     files: "[String]",
 });
+
+define_schema!(WorkspaceMetadataSchema {
+    "workspace_metadata",
+    id: "Uuid",
+    namespace: "Uuid",
+    root_path: "String",
+    resolver: "String?",
+    members: "[String]",
+    exclude: "[String]?",
+    package_version: "String?",
+});

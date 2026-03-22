@@ -10,4 +10,12 @@ sha2 = "0.10"
 walkdir = "2.5"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 chrono = { workspace = true }
+cozo = { workspace = true }
 ploke-llm = { path = "../crates/ploke-llm" }
+ploke-db = { path = "../crates/ploke-db" }
+ploke-embed = { path = "../crates/ingest/ploke-embed" }
+ploke-io = { path = "../crates/ploke-io" }
+ploke-test-utils = { path = "../crates/test-utils" }
+ploke-transform = { path = "../crates/ingest/ploke-transform" }
+tempfile = "3.10"
+tokio = { workspace = true }

@@ -182,6 +182,25 @@ pub enum SynParserError {
     #[error("Relation conversion error: {0}")]
     TypeIdConversionError(TypeId), // Consider renaming if it's not just TypeId
 
+    #[error("Workspace manifest at {workspace_path} does not contain a [workspace] section")]
+    WorkspaceSectionMissing { workspace_path: String },
+
+    #[error(
+        "Selected crates are not all members of workspace {workspace_path}.
+-- selected_crates -- \n{:?},
+-- missing_selected_crates -- \n{:?},
+-- workspace_members -- \n{:?}",
+        selected_crates,
+        missing_selected_crates,
+        workspace_members
+    )]
+    WorkspaceSelectionMismatch {
+        workspace_path: String,
+        workspace_members: Vec<String>,
+        selected_crates: Vec<String>,
+        missing_selected_crates: Vec<String>,
+    },
+
     /// Shortest public path resolution failed for an external item.
     #[error("Shortest public path resolution failed for external item: {0}")]
     ExternalItemNotResolved(AnyNodeId),

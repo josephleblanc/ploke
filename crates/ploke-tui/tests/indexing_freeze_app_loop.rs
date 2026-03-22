@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::StreamExt;
+use ploke_tui::app_state::IndexTargetDir;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
@@ -192,8 +193,10 @@ async fn index_start_keeps_ui_responsive_in_app_loop() {
         assert!(baseline_ok, "baseline input was not processed");
 
         cmd_tx_state
-            .send(StateCommand::IndexWorkspace {
-                workspace: "tests/fixture_crates/fixture_nodes".to_string(),
+            .send(StateCommand::IndexTargetDir {
+                target_dir: Some(IndexTargetDir::new(PathBuf::from(
+                    "tests/fixture_crates/fixture_nodes",
+                ))),
                 needs_parse: true,
             })
             .await

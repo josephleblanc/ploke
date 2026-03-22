@@ -162,33 +162,35 @@ impl Tool for CodeItemLookup {
             }));
         }
 
-        let crate_root = ctx
+        let (primary_root, policy) = ctx
             .state
             .system
             .read()
             .await
-            .focused_crate_root()
+            .tool_path_context()
             .ok_or_else(|| {
                 ploke_error::Error::Domain(DomainError::Ui {
                     message:
-                        "No crate is currently focused; load a workspace before using code_item_lookup."
+                        "No workspace is loaded; load a workspace before using code_item_lookup."
                             .to_string(),
                 })
             })?;
 
-        let abs_path = params.validate_to_abs_path(&crate_root).map_err(|e| {
-            ploke_error::Error::Domain(DomainError::Ui {
-                message: format!(
-                    r#"The target file could not be found at the resolved absolute path.
+        let abs_path = params
+            .validate_to_abs_path(&primary_root, &policy)
+            .map_err(|e| {
+                ploke_error::Error::Domain(DomainError::Ui {
+                    message: format!(
+                        r#"The target file could not be found at the resolved absolute path.
 Original error message: {e} This indicates an incorrect file path. 
 Tip: consider using `request_code_context` with the item name, signature, or anticipated contents
 for a more fuzzy search."#
-                )
-                .to_string(),
-            })
-        })?;
+                    )
+                    .to_string(),
+                })
+            })?;
         let rel_path = abs_path
-            .strip_prefix(&crate_root)
+            .strip_prefix(&primary_root)
             .map_err(|e| ploke_error::Error::Internal(InternalError::InvalidState("Error stripping relative path from absolute path. This indicates and error with the ploke application itself. Please consider filing an issue at the ploke github.")))?;
 
         let mod_path: Vec<String> = params

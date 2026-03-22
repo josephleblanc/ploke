@@ -13,7 +13,7 @@ use std::{ops::ControlFlow, path::PathBuf};
 
 use once_cell::sync::Lazy;
 use ploke_core::{
-    ArcStr,
+    ArcStr, RetrievalScope,
     rag_types::{AssembledContext, ContextPart},
 };
 use tokio::sync::oneshot;
@@ -107,7 +107,13 @@ pub async fn process_with_rag(
             let mut budget = state.budget.clone();
             budget.per_part_max = profile.per_part_max_tokens;
             match rag
-                .get_context(&user_msg, profile.top_k, &budget, &retrieval_strategy)
+                .get_context(
+                    &user_msg,
+                    profile.top_k,
+                    &budget,
+                    &retrieval_strategy,
+                    RetrievalScope::LoadedWorkspace,
+                )
                 .await
             {
                 Ok(rag_ctx) => {
@@ -167,7 +173,7 @@ pub async fn process_with_rag(
     // Conversation-only fallback: prepend a short system notice then send PromptConstructed
     let (crate_loaded, first_tip): (bool, bool) = {
         let mut sys = state.system.write().await;
-        let loaded = sys.focused_crate().is_some();
+        let loaded = sys.has_loaded_crates();
         let first = !sys.no_workspace_tip_shown;
         if !loaded {
             sys.no_workspace_tip_shown = true;

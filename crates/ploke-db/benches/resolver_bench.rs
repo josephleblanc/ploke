@@ -8,7 +8,7 @@ fn bench_resolve_strict(c: &mut Criterion) {
     let mut backup = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     backup.pop(); // crates/ploke-db -> crates
     backup.pop(); // crates -> workspace root
-    backup.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+    backup.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
     if backup.exists() {
         let prior = db.relations_vec().expect("relations_vec");
         db.import_from_backup(&backup, &prior)

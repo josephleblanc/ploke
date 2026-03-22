@@ -141,15 +141,20 @@ pub async fn state_manager(
                 .await;
             }
 
-            StateCommand::IndexWorkspace {
-                workspace,
+            StateCommand::IndexTargetDir {
+                target_dir,
                 needs_parse,
             } => {
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
                 tokio::spawn(async move {
-                    handlers::indexing::index_workspace(&state, &event_bus, workspace, needs_parse)
-                        .await;
+                    handlers::indexing::index_workspace(
+                        &state,
+                        &event_bus,
+                        target_dir,
+                        needs_parse,
+                    )
+                    .await;
                 });
             }
             StateCommand::PauseIndexing => handlers::indexing::pause(&state).await,
@@ -165,15 +170,17 @@ pub async fn state_manager(
             }
             StateCommand::RecordIndexCompleted => {
                 let mut sys = state.system.write().await;
-                if let Some(crate_id) = sys.crate_focus {
+                let loaded_ids: Vec<_> = sys.loaded_crates.keys().copied().collect();
+                if loaded_ids.is_empty() {
+                    tracing::warn!("Indexing completed but no crates are loaded");
+                }
+                for crate_id in loaded_ids {
                     let version = sys.record_index_complete(crate_id);
                     tracing::debug!(
                         "Indexing complete; crate_id={:?} version={}",
                         crate_id,
                         version
                     );
-                } else {
-                    tracing::warn!("Indexing completed but no crate focus set");
                 }
             }
 
@@ -273,8 +280,24 @@ pub async fn state_manager(
                 )
                 .await;
             }
-            StateCommand::LoadDb { crate_name } => {
-                handlers::db::load_db(&state, &event_bus, crate_name).await;
+            StateCommand::LoadDb { workspace_ref } => {
+                handlers::db::load_db(&state, &event_bus, workspace_ref).await;
+            }
+            StateCommand::LoadWorkspaceCrates {
+                workspace_ref,
+                crate_ref,
+            } => {
+                handlers::db::load_workspace_crates(&state, &event_bus, workspace_ref, crate_ref)
+                    .await;
+            }
+            StateCommand::WorkspaceStatus => {
+                handlers::db::workspace_status(&state, &event_bus).await;
+            }
+            StateCommand::WorkspaceUpdate => {
+                handlers::db::workspace_update(&state, &event_bus).await;
+            }
+            StateCommand::WorkspaceRemove { crate_ref } => {
+                handlers::db::workspace_remove(&state, &event_bus, crate_ref).await;
             }
             StateCommand::ScanForChange { scan_tx } => {
                 handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;

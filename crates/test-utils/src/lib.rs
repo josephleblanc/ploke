@@ -5,7 +5,17 @@
     reason = "Stubs for later helper functions."
 )]
 
+pub mod fixture_dbs;
 pub mod nodes;
+
+pub use fixture_dbs::{
+    backup_db_fixture, fresh_backup_fixture_db, shared_backup_fixture_db,
+    validate_backup_fixture_contract, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
+    FixtureEmbeddingExpectation, FixtureImportMode, FixtureManualRecreation, FixtureStatus,
+    BACKUP_DB_FIXTURES, FIXTURE_NODES_CANONICAL, FIXTURE_NODES_LOCAL_EMBEDDINGS,
+    FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1, PLOKE_DB_ORPHANED, PLOKE_DB_PRIMARY,
+    WS_FIXTURE_01_CANONICAL,
+};
 
 use std::path::{Path, PathBuf};
 
@@ -30,8 +40,7 @@ pub struct TestTracingGuard {
 // Should return result
 pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
-    let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
+    let discovery_output = run_discovery_phase(None, &[crate_path])
         .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
 
     let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =
@@ -56,7 +65,7 @@ pub fn try_run_phases_and_collect_path(
     project_root: &Path,
     crate_path: PathBuf,
 ) -> Result<Vec<ParsedCodeGraph>, ploke_error::Error> {
-    let discovery_output = run_discovery_phase(project_root, &[crate_path.clone()])?;
+    let discovery_output = run_discovery_phase(None, &[crate_path])?;
 
     let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
@@ -266,6 +275,46 @@ pub fn setup_db_full_multi_embedding(
     ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
     tracing::info!(
         "{}: Parsing and Database Transform Complete",
+        "Setup".log_step()
+    );
+
+    setup_db_create_multi_embeddings(db)
+}
+
+#[cfg(feature = "test_setup")]
+pub fn setup_db_full_workspace_fixture(
+    fixture: &'static str,
+) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
+    use syn_parser::{parse_workspace, utils::LogStyle};
+
+    tracing::info!("Setup database with setup_db_full_workspace_fixture");
+
+    let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
+    tracing::info!("{}: Initialize", "Database".log_step());
+    db.initialize().expect("Failed to initialize database");
+    tracing::info!(
+        "{}: Create and Insert Schema",
+        "Transform/Database".log_step()
+    );
+    ploke_transform::schema::create_schema_all(&db)?;
+
+    let workspace_path = workspace_root()
+        .join("tests/fixture_workspace")
+        .join(fixture);
+    tracing::info!(
+        "{}: parse workspace fixture {}",
+        "Parse".log_step(),
+        workspace_path.display()
+    );
+    let parsed_workspace = parse_workspace(&workspace_path, None)?;
+
+    tracing::info!(
+        "{}: transform workspace fixture into db",
+        "Transform".log_step()
+    );
+    ploke_transform::transform::transform_parsed_workspace(&db, parsed_workspace)?;
+    tracing::info!(
+        "{}: Workspace fixture parsing and database transform complete",
         "Setup".log_step()
     );
 

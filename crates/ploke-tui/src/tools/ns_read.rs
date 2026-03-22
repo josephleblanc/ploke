@@ -1,4 +1,4 @@
-/// NsRead tool wiring for the TUI. Provides a non-semantic read path that enforces crate-root
+/// NsRead tool wiring for the TUI. Provides a non-semantic read path that enforces workspace-root
 /// scoping, respects configured byte caps, and applies optional line slicing before emitting a
 /// `ToolResult`. Prefer this module whenever the agent needs direct file reads outside the semantic
 /// graph (configs, docs, or Rust files that failed to index).
@@ -12,7 +12,7 @@ use crate::{tools::ToolResult, tools::tool_ui_error, utils::path_scoping};
 use ploke_io::{ReadFileRequest, ReadFileResponse, ReadRange, ReadStrategy};
 use tokio::fs;
 
-const FILE_DESC: &str = "Absolute or crate-root-relative file path.";
+const FILE_DESC: &str = "Absolute or workspace-root-relative file path.";
 const START_LINE_DESC: &str = "Optional 1-based line from which to start reading.";
 const END_LINE_DESC: &str = "Optional 1-based line at which to stop reading (inclusive).";
 const MAX_BYTES_DESC: &str = "Maximum number of UTF-8 bytes to return. Defaults to editor config.";
@@ -95,7 +95,7 @@ impl super::Tool for NsRead {
     }
 
     fn adapt_error(err: ToolInvocationError) -> ToolError {
-        let hint = "Use an absolute path or crate-root-relative file path (e.g., \"src/lib.rs\"). \
+        let hint = "Use an absolute path or workspace-root-relative file path (e.g., \"crates/my-crate/src/lib.rs\"). \
 Directories are not valid for read_file.";
         match err {
             ToolInvocationError::Exec(ploke_error::Error::Domain(
@@ -146,35 +146,38 @@ Directories are not valid for read_file.";
             }));
         }
 
-        let crate_root = ctx
+        let (primary_root, policy) = ctx
             .state
             .system
             .read()
             .await
-            .focused_crate_root()
+            .tool_path_context()
             .ok_or_else(|| {
                 ploke_error::Error::Domain(DomainError::Ui {
-                    message:
-                        "No crate is currently focused; load a workspace before using read_file."
-                            .to_string(),
+                    message: "No workspace is loaded; load a workspace before using read_file."
+                        .to_string(),
                 })
             })?;
 
         let requested_path = PathBuf::from(file.as_ref());
-        let abs_path =
-            path_scoping::resolve_in_crate_root(&requested_path, &crate_root).map_err(|err| {
-                ploke_error::Error::Domain(DomainError::Io {
-                    message: format!(
-                        "invalid path: {err}. Paths must be absolute or crate-root-relative."
-                    ),
-                })
-            })?;
+        let abs_path = path_scoping::resolve_tool_path(
+            requested_path.as_path(),
+            &primary_root,
+            &policy,
+        )
+        .map_err(|err| {
+            ploke_error::Error::Domain(DomainError::Io {
+                message: format!(
+                    "invalid path: {err}. Paths must be absolute or workspace-root-relative."
+                ),
+            })
+        })?;
 
         if let Ok(meta) = fs::metadata(&abs_path).await {
             if meta.is_dir() {
                 return Err(tool_ui_error(
                     "read_file expects a file path, not a directory. \
-Paths must be absolute or crate-root-relative (e.g., \"src/lib.rs\").",
+Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/lib.rs\").",
                 ));
             }
         }

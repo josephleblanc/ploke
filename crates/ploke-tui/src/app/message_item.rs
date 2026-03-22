@@ -243,11 +243,15 @@ fn should_render_message_with_policy<T: RenderMsg>(msg: &T, policy: &MessageRend
             if is_initial_system_message(msg.content()) && !policy.system.display_init {
                 return false;
             }
-            is_level_visible(policy.system.verbosity, infer_message_level(msg.kind(), msg.content()))
+            is_level_visible(
+                policy.system.verbosity,
+                infer_message_level(msg.kind(), msg.content()),
+            )
         }
-        MessageKind::SysInfo => {
-            is_level_visible(policy.sysinfo.verbosity, infer_message_level(msg.kind(), msg.content()))
-        }
+        MessageKind::SysInfo => is_level_visible(
+            policy.sysinfo.verbosity,
+            infer_message_level(msg.kind(), msg.content()),
+        ),
         _ => true,
     }
 }
@@ -266,10 +270,7 @@ fn render_message_content<T: RenderMsg>(
         MessageKind::User => policy.user.max_len,
         MessageKind::Assistant => {
             if policy.assistant.truncate_prev_messages && idx + 1 < path_len {
-                policy
-                    .assistant
-                    .truncated_len
-                    .or(policy.assistant.max_len)
+                policy.assistant.truncated_len.or(policy.assistant.max_len)
             } else {
                 policy.assistant.max_len
             }

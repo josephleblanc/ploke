@@ -16,16 +16,20 @@ use crate::app::App;
 /// Shared help text for commands
 #[doc = "User-visible help covering supported commands and keybindings."]
 pub const HELP_COMMANDS: &str = r#"Available commands:
-    index start [directory] - Run workspace indexing on specified directory
-                              (defaults to current dir)
+    index start [path] - Run indexing for the most specific Cargo target:
+                         crate if the path is a crate root, otherwise the nearest
+                         ancestor workspace if one is found
     index pause - Pause indexing
     index resume - Resume indexing
     index cancel - Cancel indexing
     check api - Check API key configuration
     copy - Copy selected conversation message to clipboard
     save history - Save conversation history/state
-    load crate &lt;name&gt; - Load a saved crate database by crate name
-    save db | sd - Save active crate database snapshot
+    load workspace &lt;name-or-id&gt; - Load a saved workspace snapshot by exact registry name or id
+    load crate &lt;name-or-id&gt; - Legacy alias for loading a saved workspace snapshot
+    load crates &lt;workspace-name-or-id&gt; &lt;crate-name-or-exact-root&gt; - Load one crate subset from a saved workspace snapshot into the current loaded workspace
+    save db | sd - Save the active workspace snapshot and registry entry
+    workspace rm &lt;crate-name-or-exact-root&gt; - Remove one loaded crate namespace from the current workspace
     query load | ql - Load default query from default.dl
     query load &lt;query_name&gt; &lt;file_name&gt; - Load a named query from a file
     batch [prompt_file] [out_file] [max_hits] [threshold] - Run batch prompt search
@@ -128,7 +132,7 @@ pub struct CommandEntry {
 pub const COMMAND_ENTRIES: &[CommandEntry] = &[
     CommandEntry {
         command: "index start",
-        completion: "index start [directory]",
+        completion: "index start [path]",
         description: "TODO: add description",
     },
     CommandEntry {

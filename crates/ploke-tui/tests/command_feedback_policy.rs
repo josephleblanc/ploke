@@ -63,7 +63,10 @@ async fn non_io_commands_emit_user_feedback_within_500ms() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
 
     let cases = [
-        ("verbosity profile verbose", "conversation verbosity profile set to verbose"),
+        (
+            "verbosity profile verbose",
+            "conversation verbosity profile set to verbose",
+        ),
         (
             "provider tools-only on",
             "provider tools-only enforcement enabled",
@@ -77,10 +80,11 @@ async fn non_io_commands_emit_user_feedback_within_500ms() {
         let before = snapshot_message_ids(&harness).await;
         send_slash_command(&harness, command).await;
         let expected = expected_substring.to_ascii_lowercase();
-        let seen = wait_for_new_sysinfo_matching(&harness, &before, Duration::from_millis(500), |s| {
-            s.to_ascii_lowercase().contains(expected.as_str())
-        })
-        .await;
+        let seen =
+            wait_for_new_sysinfo_matching(&harness, &before, Duration::from_millis(500), |s| {
+                s.to_ascii_lowercase().contains(expected.as_str())
+            })
+            .await;
         assert!(
             seen,
             "expected feedback for command '{}' within 500ms",
