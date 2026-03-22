@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::{Mutex as StdMutex, OnceLock};
 
@@ -14,6 +14,7 @@ use ploke_test_utils::fixture_dbs::WS_FIXTURE_01_CANONICAL;
 use ploke_io::IoManagerHandle;
 use ploke_rag::TokenBudget;
 use ploke_test_utils::workspace_root;
+use ploke_tui::app_state::IndexTargetDir;
 use ploke_tui as tui;
 use tokio::sync::{Mutex, RwLock};
 
@@ -147,7 +148,7 @@ async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata
     index_workspace(
         &state,
         &event_bus,
-        workspace_root.display().to_string(),
+        Some(IndexTargetDir::new(workspace_root.clone())),
         true,
     )
     .await;
@@ -302,7 +303,7 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
     index_workspace(
         &state,
         &event_bus,
-        workspace_root.display().to_string(),
+        Some(IndexTargetDir::new(workspace_root.clone())),
         true,
     )
     .await;
@@ -511,7 +512,7 @@ async fn workspace_load_crates_conflict_preserves_runtime_state() {
     index_workspace(
         &state,
         &event_bus,
-        workspace_root.display().to_string(),
+        Some(IndexTargetDir::new(workspace_root.clone())),
         true,
     )
     .await;

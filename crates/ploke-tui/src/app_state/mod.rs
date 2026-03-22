@@ -1,4 +1,5 @@
 mod database;
+pub use database::IndexTargetDir;
 mod models;
 
 // Re-export crate root items so submodules can `use super::*` like the prior monolithic file.

@@ -4,6 +4,7 @@ Backlinks:
 - [2026-03-20_workspaces_implementation_plan.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_implementation_plan.md)
 - [2026-03-20_workspaces_acceptance_criteria.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_acceptance_criteria.md)
 - [2026-03-20_workspaces_test_witnesses.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-20_workspaces_test_witnesses.md)
+- [2026-03-21_workspaces_implementation_review.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-21_workspaces_implementation_review.md)
 
 Use this as the current implementation status document for workspace rollout.
 Update it whenever a readiness item or phase changes state. Keep entries short:
@@ -71,6 +72,8 @@ updated.
 
 - Current implementation state: readiness and Phases 1-7 are complete; the
   next gate is Phase 8 `C7`.
+- Compact review doc for restarting later:
+  [2026-03-21_workspaces_implementation_review.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-21_workspaces_implementation_review.md).
 - `C6` now has DB-side groundwork plus real subset remove/export/import
   primitives in
   [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs):

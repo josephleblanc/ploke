@@ -2,6 +2,7 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 
 use crate::ModelId;
+use crate::app_state::database::IndexTargetDir;
 use crate::chat_history::{ContextTokens, MessageKind};
 use crate::llm::{ChatHistoryTarget, LLMParameters, ProviderKey};
 use ploke_core::ArcStr;
@@ -115,8 +116,8 @@ pub enum StateCommand {
         new_assistant_msg_id: Uuid,
         responder: oneshot::Sender<Uuid>,
     },
-    IndexWorkspace {
-        workspace: String,
+    IndexTargetDir {
+        target_dir: Option<IndexTargetDir>,
         needs_parse: bool,
     },
     PauseIndexing,
@@ -264,7 +265,7 @@ impl StateCommand {
             NavigateList { .. } => "NavigateList",
             NavigateBranch { .. } => "NavigateBranch",
             CreateAssistantMessage { .. } => "CreateAssistantMessage",
-            IndexWorkspace { .. } => "IndexWorkspace",
+            IndexTargetDir { .. } => "IndexTargetDir",
             PauseIndexing => "PauseIndexing",
             ResumeIndexing => "ResumeIndexing",
             CancelIndexing => "CancelIndexing",

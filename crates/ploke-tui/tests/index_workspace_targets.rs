@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::{Mutex as StdMutex, OnceLock};
 
+use ploke_tui::app_state::IndexTargetDir;
 use tokio::sync::{Mutex, RwLock};
 
 use ploke_db::Database;
@@ -74,7 +75,7 @@ async fn index_workspace_resolves_ancestor_workspace_from_nested_path() {
     index_workspace(
         &state,
         &event_bus,
-        nested_src.display().to_string(),
+        Some(IndexTargetDir::new(nested_src.clone())),
         true,
     )
     .await;
@@ -138,7 +139,7 @@ async fn index_workspace_failure_keeps_previous_loaded_workspace_state() {
     index_workspace(
         &state,
         &event_bus,
-        missing_target.display().to_string(),
+        Some(IndexTargetDir::new(missing_target.clone())),
         true,
     )
     .await;
@@ -159,7 +160,11 @@ async fn index_workspace_failure_keeps_previous_loaded_workspace_state() {
         .last_parse_failure()
         .cloned()
         .expect("parse failure recorded");
-    assert!(last_failure.message.contains("No crate root or workspace root was found"));
+    assert!(
+        last_failure
+            .message
+            .contains("No crate root or workspace root was found")
+    );
 }
 
 #[test]
@@ -191,7 +196,8 @@ fn resolve_index_target_absolute_fixture_path_succeeds_from_ploke_tui_crate_dir(
     let _guard = CwdGuard::set_to(&repo_root.join("crates/ploke-tui"));
     let fixture_root = repo_root.join("tests/fixture_crates/fixture_update_embed");
 
-    let resolved = resolve_index_target(Some(fixture_root.clone())).expect("absolute path resolves");
+    let resolved =
+        resolve_index_target(Some(fixture_root.clone())).expect("absolute path resolves");
 
     assert_eq!(resolved.kind, IndexTargetKind::Crate);
     assert_eq!(resolved.requested_path, fixture_root);
@@ -224,7 +230,9 @@ async fn index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_d
     index_workspace(
         &state,
         &event_bus,
-        "tests/fixture_crates/fixture_update_embed".to_string(),
+        Some(IndexTargetDir::new(PathBuf::from(
+            "tests/fixture_crates/fixture_update_embed",
+        ))),
         false,
     )
     .await;

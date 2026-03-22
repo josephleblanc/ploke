@@ -1,6 +1,7 @@
 use super::App;
 use crate::SearchEvent;
 use crate::app::view::EventSubscriber;
+use crate::app_state::IndexTargetDir;
 use crate::app_state::events::SystemEvent;
 use crate::llm::{LlmEvent, ProviderKey};
 use crate::{app_state::StateCommand, chat_history::MessageKind};
@@ -242,8 +243,8 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     }
                 }
                 SystemEvent::ReIndex { workspace } => {
-                    app.send_cmd(StateCommand::IndexWorkspace {
-                        workspace,
+                    app.send_cmd(StateCommand::IndexTargetDir {
+                        target_dir: Some(IndexTargetDir::from(workspace)),
                         needs_parse: false,
                     });
                 }

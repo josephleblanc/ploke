@@ -14,6 +14,7 @@
 
 use super::parser::Command;
 use crate::app::App;
+use crate::app_state::IndexTargetDir;
 use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
@@ -890,18 +891,23 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
         "help" => show_command_help(app),
         cmd if cmd.starts_with("index start") => {
             let parts: Vec<&str> = cmd.splitn(3, ' ').collect();
-            let workspace = if parts.len() >= 3 {
-                parts[2].to_string()
+            let target_dir = if parts.len() >= 3 {
+                Some(IndexTargetDir::from(parts[2]))
             } else {
-                ".".to_string()
+                None
+            };
+            let indexing_request_msg = if let Some(index_target_dir) = target_dir.as_ref() {
+                format!("Indexing requested for target dir: {}", index_target_dir.to_display_string())
+            } else {
+                format!("Indexing requested for pwd")
             };
             app.send_cmd(StateCommand::AddMessageImmediate {
-                msg: format!("Indexing requested for '{}'", workspace),
+                msg: indexing_request_msg,
                 kind: MessageKind::SysInfo,
                 new_msg_id: Uuid::new_v4(),
             });
-            app.send_cmd(StateCommand::IndexWorkspace {
-                workspace,
+            app.send_cmd(StateCommand::IndexTargetDir {
+                target_dir,
                 needs_parse: true,
             });
         }
@@ -954,7 +960,9 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             match cmd.trim_start_matches("load workspace ").trim() {
                 workspace_ref if !workspace_ref.contains(' ') => {
                     app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Attempting to load workspace snapshot for {workspace_ref}..."),
+                        msg: format!(
+                            "Attempting to load workspace snapshot for {workspace_ref}..."
+                        ),
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     });

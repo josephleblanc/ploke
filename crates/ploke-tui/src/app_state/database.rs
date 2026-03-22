@@ -6,8 +6,9 @@ use std::{
 
 use cozo::DataValue;
 use itertools::Itertools;
-use ploke_core::{CrateId, CrateInfo, EmbeddingData, FileData, NodeId, RetrievalScope, WorkspaceInfo};
-use ploke_error::DomainError;
+use ploke_core::{
+    CrateId, CrateInfo, EmbeddingData, FileData, NodeId, RetrievalScope, WorkspaceInfo,
+};
 use ploke_db::{
     CrateContextRow, EmbedDataVerbose, NamespaceImportConflictReport, NamespaceImportError,
     NamespaceImportResult, NamespaceRemovalResult, NodeType, RestoredEmbeddingSet, SimilarArgs,
@@ -17,6 +18,7 @@ use ploke_embed::config::OpenRouterConfig;
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
 use ploke_embed::runtime::EmbeddingRuntime;
+use ploke_error::DomainError;
 use ploke_rag::TokenBudget;
 use ploke_transform::transform::transform_parsed_graph;
 use serde::{Deserialize, Serialize};
@@ -40,8 +42,8 @@ use crate::{
     },
     parser::run_parse_no_transform,
     tracing_setup::SCAN_CHANGE,
-    utils::parse_errors::format_parse_failure,
     user_config::{WorkspaceRegistry, WorkspaceRegistryEntry},
+    utils::parse_errors::format_parse_failure,
 };
 
 use super::*;
@@ -83,12 +85,48 @@ struct RestoredWorkspaceSnapshot {
     member_roots: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone)]
+pub struct IndexTargetDir(PathBuf);
+
+impl IndexTargetDir {
+    pub fn new(path: PathBuf) -> Self {
+        Self(path)
+    }
+    pub fn as_display(&self) -> std::path::Display {
+        self.0.display()
+    }
+
+    pub fn to_display_string(&self) -> String {
+        self.as_display().to_string()
+    }
+
+    /// Delagates to PathBuf implementation
+    pub fn is_absolute(&self) -> bool {
+        self.0.is_absolute()
+    }
+
+    pub fn as_path(&self) -> &std::path::Path {
+        self.0.as_path()
+    }
+}
+
+impl From<String> for IndexTargetDir {
+    fn from(value: String) -> Self {
+        Self(PathBuf::from(value))
+    }
+}
+
+impl From<&str> for IndexTargetDir {
+    fn from(value: &str) -> Self {
+        Self(PathBuf::from(value))
+    }
+}
+
 fn restored_workspace_members_from_db(
     db: &ploke_db::Database,
 ) -> Result<Option<(PathBuf, Vec<PathBuf>)>, ploke_error::Error> {
-    let db_res = db.raw_query(
-        "?[root_path, members] := *workspace_metadata { root_path, members @ 'NOW' }",
-    )?;
+    let db_res = db
+        .raw_query("?[root_path, members] := *workspace_metadata { root_path, members @ 'NOW' }")?;
     let Some(row) = db_res.rows.first() else {
         return Ok(None);
     };
@@ -130,9 +168,8 @@ fn restored_workspace_members_from_db(
 fn restored_crate_context_rows(
     db: &ploke_db::Database,
 ) -> Result<Vec<(String, PathBuf)>, ploke_error::Error> {
-    let db_res = db.raw_query(
-        "?[name, root_path] := *crate_context { name, root_path @ 'NOW' }",
-    )?;
+    let db_res =
+        db.raw_query("?[name, root_path] := *crate_context { name, root_path @ 'NOW' }")?;
     db_res
         .rows
         .into_iter()
@@ -187,9 +224,12 @@ fn restored_workspace_snapshot_from_db(
             .map(|path| path.to_path_buf())
             .filter(|root| member_roots.iter().any(|member| member == root))
             .or_else(|| member_roots.first().cloned())
-            .ok_or_else(|| ploke_error::Error::Domain(DomainError::Ui {
-                message: "Restored workspace metadata did not contain any member roots.".to_string(),
-            }))?;
+            .ok_or_else(|| {
+                ploke_error::Error::Domain(DomainError::Ui {
+                    message: "Restored workspace metadata did not contain any member roots."
+                        .to_string(),
+                })
+            })?;
 
         return Ok(RestoredWorkspaceSnapshot {
             workspace: WorkspaceInfo::from_root_path(workspace_root),
@@ -236,7 +276,11 @@ fn workspace_registry_entry_matches_snapshot(
         }));
     }
     let registry_members = entry.member_roots.iter().cloned().collect::<BTreeSet<_>>();
-    let snapshot_members = snapshot.member_roots.iter().cloned().collect::<BTreeSet<_>>();
+    let snapshot_members = snapshot
+        .member_roots
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     if registry_members != snapshot_members {
         return Err(ploke_error::Error::Domain(DomainError::Ui {
             message: format!(
@@ -249,18 +293,21 @@ fn workspace_registry_entry_matches_snapshot(
 }
 
 fn load_workspace_registry() -> Result<WorkspaceRegistry, ploke_error::Error> {
-    WorkspaceRegistry::load_from_path(&WorkspaceRegistry::default_registry_path())
-        .map_err(|err| ploke_error::Error::Domain(DomainError::Ui {
+    WorkspaceRegistry::load_from_path(&WorkspaceRegistry::default_registry_path()).map_err(|err| {
+        ploke_error::Error::Domain(DomainError::Ui {
             message: format!("Failed to load workspace registry: {err}"),
-        }))
+        })
+    })
 }
 
 fn save_workspace_registry(registry: &WorkspaceRegistry) -> Result<(), ploke_error::Error> {
     registry
         .save_to_path(&WorkspaceRegistry::default_registry_path())
-        .map_err(|err| ploke_error::Error::Domain(DomainError::Ui {
-            message: format!("Failed to save workspace registry: {err}"),
-        }))
+        .map_err(|err| {
+            ploke_error::Error::Domain(DomainError::Ui {
+                message: format!("Failed to save workspace registry: {err}"),
+            })
+        })
 }
 
 fn resolve_workspace_registry_entry<'a>(
@@ -312,7 +359,10 @@ fn crate_name_for_root_path(
         .and_then(DataValue::get_str)
     else {
         return Err(ploke_error::Error::Domain(DomainError::Ui {
-            message: format!("No crate_context row found for loaded crate root '{}'", root_path),
+            message: format!(
+                "No crate_context row found for loaded crate root '{}'",
+                root_path
+            ),
         }));
     };
     Ok(name.to_string())
@@ -545,9 +595,11 @@ async fn current_workspace_registry_entry(
         let workspace_root = system_guard
             .loaded_workspace_root()
             .or_else(|| focused_root.clone())
-            .ok_or_else(|| ploke_error::Error::Domain(DomainError::Ui {
-                message: "No loaded crate or workspace is available to save.".to_string(),
-            }))?;
+            .ok_or_else(|| {
+                ploke_error::Error::Domain(DomainError::Ui {
+                    message: "No loaded crate or workspace is available to save.".to_string(),
+                })
+            })?;
         let member_roots = if member_roots.is_empty() {
             vec![workspace_root.clone()]
         } else {
@@ -857,8 +909,8 @@ pub(super) async fn load_db(
         }));
     })?;
     let valid_file = entry.snapshot_file.clone();
-    let (staging_db, restored_snapshot) =
-        load_staging_snapshot_from_registry_entry(entry).inspect_err(|e| {
+    let (staging_db, restored_snapshot) = load_staging_snapshot_from_registry_entry(entry)
+        .inspect_err(|e| {
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 workspace_ref: workspace_ref.clone(),
                 file_dir: Some(Arc::new(valid_file.clone())),
@@ -909,8 +961,16 @@ pub(super) async fn load_db(
         }
     };
 
-    state.db.clear_hnsw_idx().await.map_err(ploke_error::Error::from)?;
-    state.db.clear_relations().await.map_err(ploke_error::Error::from)?;
+    state
+        .db
+        .clear_hnsw_idx()
+        .await
+        .map_err(ploke_error::Error::from)?;
+    state
+        .db
+        .clear_relations()
+        .await
+        .map_err(ploke_error::Error::from)?;
     state
         .db
         .import_backup_with_embeddings(&valid_file)
@@ -1628,15 +1688,17 @@ pub(super) async fn workspace_update(
         system_guard
             .loaded_workspace_root()
             .or_else(|| system_guard.focused_crate_root())
-            .ok_or_else(|| ploke_error::Error::Domain(DomainError::Ui {
-                message: "No loaded crate or workspace is available to update.".to_string(),
-            }))?
+            .ok_or_else(|| {
+                ploke_error::Error::Domain(DomainError::Ui {
+                    message: "No loaded crate or workspace is available to update.".to_string(),
+                })
+            })?
     };
 
     crate::app_state::handlers::indexing::index_workspace(
         state,
         event_bus,
-        workspace_target.display().to_string(),
+        Some(IndexTargetDir::new(workspace_target)),
         false,
     )
     .await;
@@ -1807,7 +1869,8 @@ pub(super) async fn workspace_remove(
         .await
         .map_err(ploke_error::Error::from)?;
 
-    let restored_snapshot = restored_workspace_snapshot_from_db(&state.db, preferred_focus.as_deref())?;
+    let restored_snapshot =
+        restored_workspace_snapshot_from_db(&state.db, preferred_focus.as_deref())?;
     publish_loaded_workspace_snapshot(state, &restored_snapshot).await;
     let registry_entry = persist_current_workspace_snapshot(state).await?;
 
@@ -2049,8 +2112,9 @@ mod tests {
 
         let bus = Arc::new(EventBus::new(EventBusCaps::default()));
         save_db(&state, &bus).await;
-        let registry = WorkspaceRegistry::load_from_path(&WorkspaceRegistry::default_registry_path())
-            .expect("load workspace registry");
+        let registry =
+            WorkspaceRegistry::load_from_path(&WorkspaceRegistry::default_registry_path())
+                .expect("load workspace registry");
         let entry = registry
             .entries
             .iter()
@@ -2162,10 +2226,11 @@ mod tests {
         let workspace_root = tmp_config.path().join(workspace_name);
         std::fs::create_dir_all(&workspace_root).expect("workspace root dir");
         let workspace = WorkspaceInfo::from_root_path(workspace_root.clone());
-        let snapshot_file = tmp_config
-            .path()
-            .join("ploke/data")
-            .join(format!("{}_{}.sqlite", workspace.name, workspace.id.uuid()));
+        let snapshot_file = tmp_config.path().join("ploke/data").join(format!(
+            "{}_{}.sqlite",
+            workspace.name,
+            workspace.id.uuid()
+        ));
         std::fs::create_dir_all(snapshot_file.parent().expect("snapshot parent"))
             .expect("create snapshot dir");
 
@@ -2235,7 +2300,8 @@ mod tests {
             .await
             .expect_err("first-populated fallback should be rejected");
         assert!(
-            err.to_string().contains("refusing legacy first-populated fallback"),
+            err.to_string()
+                .contains("refusing legacy first-populated fallback"),
             "unexpected error: {err}"
         );
     }
@@ -2250,10 +2316,11 @@ mod tests {
         let workspace_root = tmp_config.path().join(workspace_name);
         std::fs::create_dir_all(&workspace_root).expect("workspace root dir");
         let workspace = WorkspaceInfo::from_root_path(workspace_root.clone());
-        let snapshot_file = tmp_config
-            .path()
-            .join("ploke/data")
-            .join(format!("{}_{}.sqlite", workspace.name, workspace.id.uuid()));
+        let snapshot_file = tmp_config.path().join("ploke/data").join(format!(
+            "{}_{}.sqlite",
+            workspace.name,
+            workspace.id.uuid()
+        ));
         std::fs::create_dir_all(snapshot_file.parent().expect("snapshot parent"))
             .expect("create snapshot dir");
 
@@ -2662,16 +2729,22 @@ mod test {
         //     eprintln!("Skipping: PLOKE_RUN_UPDATE_EMBED!=1");
         //     return Ok(());
         // }
-        init_test_tracing_with_target(TUI_SCAN_TARGET, tracing::Level::ERROR);
-        let workspace_root = workspace_root();
+        let _guard = init_test_tracing_with_target(TUI_SCAN_TARGET, tracing::Level::INFO);
+        let workspace_root = std::path::Path::new(std::env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("Error parsing workspace directory from crate `common`") // crates/
+            .parent() // workspace root
+            .expect("Failed to get workspace root")
+            .to_path_buf();
+        info!("checking workspace root: {}", workspace_root.display());
         let target_crate = "fixture_update_embed";
-        let workspace = "tests/fixture_crates/fixture_update_embed";
+        let target_dir = "tests/fixture_crates/fixture_update_embed";
 
         // ensure file begins in same state by using backup
         let backup_file = PathBuf::from(format!(
             "{}/{}/src/backup_main.bak",
             workspace_root.display(),
-            workspace
+            target_dir
         ));
         trace!(target: TUI_SCAN_TARGET, "reading from backup files: {}", backup_file.display());
         let backup_contents = std::fs::read(&backup_file)?;
@@ -2757,8 +2830,8 @@ mod test {
         });
         {
             let mut system_guard = state.system.write().await;
-            let path = workspace_root.join(workspace);
-            system_guard.set_focus_from_root(path);
+            let path = workspace_root.join(target_dir);
+            system_guard.set_focus_from_root(workspace_root.clone());
             trace!(
                 target: TUI_SCAN_TARGET,
                 "system_guard.focused_crate_root: {:?}",
@@ -2802,7 +2875,6 @@ mod test {
         let active_embedding_set = db_handle.with_active_set(|set| set.clone())?;
         let embedding_set = active_embedding_set.clone();
         let vec_rel = embedding_set.rel_name.clone();
-        // let script = r#"?[name, id, embedding] := *function{name, id, embedding @ 'NOW' }"#;
         let script = format!(
             r#"?[name, time, is_assert, maybe_null, id] := *function{{ id, at, name }}
                                 or *struct{{ id, at, name }} 
@@ -2841,8 +2913,8 @@ mod test {
         let mut initial_index_rx = event_bus.index_subscriber();
 
         cmd_tx
-            .send(StateCommand::IndexWorkspace {
-                workspace: workspace.to_string(),
+            .send(StateCommand::IndexTargetDir {
+                target_dir: Some(IndexTargetDir::from(target_dir)),
                 needs_parse: false,
             })
             .await?;
@@ -2983,7 +3055,7 @@ mod test {
 
         let mut target_file = {
             let mut system_guard = state.system.write().await;
-            system_guard.set_focus_from_root(workspace_root.join(workspace));
+            system_guard.set_focus_from_root(workspace_root.join(target_dir));
             system_guard
                 .focused_crate_root()
                 .expect("Crate focus not set")
@@ -3177,8 +3249,8 @@ mod test {
         let mut second_bg_rx = event_bus.subscribe(EventPriority::Background);
         let mut second_index_rx = event_bus.index_subscriber();
         cmd_tx
-            .send(StateCommand::IndexWorkspace {
-                workspace: workspace.to_string(),
+            .send(StateCommand::IndexTargetDir {
+                target_dir: Some(IndexTargetDir::from(target_dir)),
                 needs_parse: false,
             })
             .await?;

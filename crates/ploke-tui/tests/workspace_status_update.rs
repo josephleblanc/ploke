@@ -11,6 +11,7 @@ use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
 use ploke_rag::TokenBudget;
 use ploke_test_utils::workspace_root;
+use ploke_tui::app_state::IndexTargetDir;
 use ploke_tui as tui;
 use tokio::sync::{Mutex, RwLock};
 
@@ -124,7 +125,7 @@ async fn workspace_status_and_update_operate_per_loaded_crate() {
     index_workspace(
         &state,
         &event_bus,
-        workspace_root.display().to_string(),
+        Some(IndexTargetDir::new(workspace_root.clone())),
         true,
     )
     .await;
@@ -211,7 +212,7 @@ async fn workspace_status_reports_workspace_member_drift() {
     index_workspace(
         &state,
         &event_bus,
-        workspace_root.display().to_string(),
+        Some(IndexTargetDir::new(workspace_root.clone())),
         true,
     )
     .await;

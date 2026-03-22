@@ -141,14 +141,14 @@ pub async fn state_manager(
                 .await;
             }
 
-            StateCommand::IndexWorkspace {
-                workspace,
+            StateCommand::IndexTargetDir {
+                target_dir,
                 needs_parse,
             } => {
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
                 tokio::spawn(async move {
-                    handlers::indexing::index_workspace(&state, &event_bus, workspace, needs_parse)
+                    handlers::indexing::index_workspace(&state, &event_bus, target_dir, needs_parse)
                         .await;
                 });
             }

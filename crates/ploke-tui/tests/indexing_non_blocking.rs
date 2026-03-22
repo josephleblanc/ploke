@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use ploke_tui::app_state::IndexTargetDir;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::{Duration, timeout};
 use uuid::Uuid;
@@ -65,8 +67,10 @@ async fn index_start_does_not_block_state_manager() {
     }
 
     cmd_tx
-        .send(StateCommand::IndexWorkspace {
-            workspace: "tests/fixture_crates/fixture_nodes".to_string(),
+        .send(StateCommand::IndexTargetDir {
+            target_dir: Some(IndexTargetDir::new(PathBuf::from(
+                "tests/fixture_crates/fixture_nodes",
+            ))),
             needs_parse: false,
         })
         .await

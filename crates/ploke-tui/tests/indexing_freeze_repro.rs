@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use ploke_tui::app_state::IndexTargetDir;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::{Duration, timeout};
 use tracing::info;
@@ -106,8 +107,8 @@ async fn index_start_fixture_nodes_does_not_freeze_ui() {
         let fixture_workspace = "tests/fixture_crates/fixture_nodes";
         info!(target: "indexing_freeze_test", "sending index start for {fixture_workspace}");
         cmd_tx
-            .send(StateCommand::IndexWorkspace {
-                workspace: fixture_workspace.to_string(),
+            .send(StateCommand::IndexTargetDir {
+                target_dir: Some(IndexTargetDir::new(PathBuf::from(fixture_workspace))),
                 needs_parse: true,
             })
             .await
