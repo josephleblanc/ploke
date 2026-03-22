@@ -151,7 +151,7 @@ pub enum ToolDescr {
     )]
     NsPatch,
     #[serde(
-        rename = "Read focused-crate files before editing. Paths must be absolute or crate-root-relative. Supports optional line ranges and truncation limits to keep responses concise."
+        rename = "Read workspace files before editing. Paths must be absolute or workspace-root-relative. Supports optional line ranges and truncation limits to keep responses concise."
     )]
     NsRead,
     #[serde(
@@ -172,7 +172,7 @@ Pro tip: use it with parallel tool calls to look up as many code items as you wa
     #[serde(rename = "Run cargo check or cargo test with JSON diagnostics output.")]
     Cargo,
     #[serde(
-        rename = "List files in a directory (crate-root scoped) without shell access. Returns a structured entry list with names, kinds, and optional size/mtime metadata."
+        rename = "List files in a directory (workspace-root scoped) without shell access. Returns a structured entry list with names, kinds, and optional size/mtime metadata."
     )]
     ListDir,
 }

@@ -29,7 +29,10 @@ pub mod workspace;
 pub mod tool_types;
 
 pub use arc_str::ArcStr;
-pub use workspace::{CrateId, CrateInfo, RetrievalScope, WorkspaceId, WorkspaceInfo, WorkspaceRoots};
+pub use workspace::{
+    canonicalize_best_effort, CrateId, CrateInfo, RetrievalScope, WorkspaceId, WorkspaceInfo,
+    WorkspaceRoots,
+};
 pub mod embeddings;
 
 pub mod file_hash;

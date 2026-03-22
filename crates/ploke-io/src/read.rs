@@ -77,11 +77,6 @@ pub(crate) fn extract_snippet_str(
 // async fn process_file(file_path: PathBuf, requests: Vec<OrderedRequest>, semaphore: Arc<Semaphore>) -> Vec<(usize, Result<String, PlokeError>)> { ... }
 // async fn process_file_with_roots(file_path: PathBuf, requests: Vec<OrderedRequest>, semaphore: Arc<Semaphore>, roots: Option<Arc<Vec<PathBuf>>>) -> Vec<(usize, Result<String, PlokeError>)> { ... }
 
-// Related path policy helper (or via path_policy module):
-fn path_within_roots(path: &Path, roots: &[PathBuf]) -> bool {
-    roots.iter().any(|root| path.starts_with(root))
-}
-
 pub async fn generate_hash_for_file(
     abs_path: &Path,
     namespace: uuid::Uuid,

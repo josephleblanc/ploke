@@ -532,8 +532,14 @@ impl SystemStatus {
         member_roots: Vec<PathBuf>,
         focused_root: Option<PathBuf>,
     ) -> Option<CrateId> {
-        let loaded_workspace = LoadedWorkspaceState::from_member_roots(workspace_root, member_roots);
-        let member_ids: HashSet<_> = loaded_workspace.members.crates.iter().map(|info| info.id).collect();
+        let loaded_workspace =
+            LoadedWorkspaceState::from_member_roots(workspace_root, member_roots);
+        let member_ids: HashSet<_> = loaded_workspace
+            .members
+            .crates
+            .iter()
+            .map(|info| info.id)
+            .collect();
         let focus_id = focused_root
             .as_ref()
             .and_then(|root| loaded_workspace.members.find_by_root_path(root))
@@ -581,8 +587,7 @@ impl SystemStatus {
             vec![info.root_path.clone()],
         ));
         self.loaded_crates.clear();
-        self.loaded_crates
-            .insert(id, LoadedCrateState { info });
+        self.loaded_crates.insert(id, LoadedCrateState { info });
         self.crate_versions.entry(id).or_insert(0);
         self.workspace_freshness
             .insert(id, WorkspaceFreshness::Fresh);
@@ -693,9 +698,11 @@ impl SystemStatus {
     }
 
     pub fn derive_path_policy(&self, extra_read_roots: &[PathBuf]) -> Option<PathPolicy> {
-        let workspace_roots = self.loaded_workspace_member_roots();
-        let mut roots = Vec::with_capacity(workspace_roots.len() + extra_read_roots.len());
-        roots.extend(workspace_roots);
+        let mut roots = Vec::new();
+        if let Some(ws) = self.loaded_workspace_root() {
+            roots.push(ws);
+        }
+        roots.extend(self.loaded_workspace_member_roots());
         roots.extend(extra_read_roots.iter().cloned());
         let mut seen = BTreeSet::new();
         roots.retain(|root| seen.insert(root.clone()));
@@ -707,6 +714,15 @@ impl SystemStatus {
             symlink_policy: SymlinkPolicy::DenyCrossRoot,
             require_absolute: true,
         })
+    }
+
+    /// Workspace root for joining relative tool paths, plus the full read policy (workspace + members).
+    pub fn tool_path_context(&self) -> Option<(PathBuf, PathPolicy)> {
+        let primary_root = self
+            .loaded_workspace_root()
+            .or_else(|| self.focused_crate_root())?;
+        let policy = self.derive_path_policy(&[])?;
+        Some((primary_root, policy))
     }
 }
 
@@ -744,8 +760,11 @@ mod tests {
             Some(member_b.clone()),
         );
 
-        assert!(focused.is_some(), "focus should be set to a workspace member");
-        assert_eq!(status.loaded_workspace_root(), Some(workspace_root));
+        assert!(
+            focused.is_some(),
+            "focus should be set to a workspace member"
+        );
+        assert_eq!(status.loaded_workspace_root(), Some(workspace_root.clone()));
         assert_eq!(status.loaded_crates.len(), 2);
         assert_eq!(
             status.loaded_workspace_member_roots(),
@@ -755,7 +774,16 @@ mod tests {
         let policy = status
             .derive_path_policy(&[])
             .expect("loaded workspace should derive a path policy");
-        assert_eq!(policy.roots, vec![member_a, member_b]);
+        assert_eq!(
+            policy.roots,
+            vec![workspace_root.clone(), member_a.clone(), member_b.clone()]
+        );
+
+        let (primary, tool_policy) = status
+            .tool_path_context()
+            .expect("tool path context should be available");
+        assert_eq!(primary, workspace_root);
+        assert_eq!(tool_policy.roots, policy.roots);
     }
 
     #[test]

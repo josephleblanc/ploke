@@ -1,4 +1,5 @@
 use super::*;
+use ploke_core::canonicalize_best_effort;
 
 // Target module for path policy and security
 
@@ -17,10 +18,6 @@ impl PathPolicy {
             require_absolute: true,
         }
     }
-}
-
-fn canonicalize_best_effort(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn lexical_normalize_abs(p: &Path) -> PathBuf {

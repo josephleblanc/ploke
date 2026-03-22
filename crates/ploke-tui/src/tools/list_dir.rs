@@ -7,7 +7,7 @@ use tokio::fs;
 use super::{ToolDescr, ToolError, ToolErrorCode, ToolInvocationError, ToolName};
 use crate::{tools::ToolResult, tools::tool_io_error, tools::tool_ui_error, utils::path_scoping};
 
-const DIR_DESC: &str = "Absolute or crate-root-relative directory path.";
+const DIR_DESC: &str = "Absolute or workspace-root-relative directory path.";
 const INCLUDE_HIDDEN_DESC: &str = "Include hidden entries starting with '.' (default: false).";
 const SORT_DESC: &str = "Sort order: name (asc), mtime (newest first), size (largest first), none (filesystem order). \
 Default: name.";
@@ -107,8 +107,8 @@ impl super::Tool for ListDir {
     }
 
     fn adapt_error(err: ToolInvocationError) -> ToolError {
-        let hint = "Provide a directory path that is absolute or crate-root-relative \
-(e.g., \"src\" or \"/abs/path/to/crate/src\").";
+        let hint = "Provide a directory path that is absolute or workspace-root-relative \
+(e.g., \"crates/my-crate/src\" or \"/abs/path/to/workspace/crates/my-crate/src\").";
         match err {
             ToolInvocationError::Exec(ploke_error::Error::Domain(
                 ploke_error::DomainError::Ui { message },
@@ -152,32 +152,35 @@ impl super::Tool for ListDir {
             other => other,
         };
 
-        let crate_root = ctx
+        let (primary_root, policy) = ctx
             .state
             .system
             .read()
             .await
-            .focused_crate_root()
+            .tool_path_context()
             .ok_or_else(|| {
                 ploke_error::Error::Domain(DomainError::Ui {
-                    message:
-                        "No crate is currently focused; load a workspace before using list_dir."
-                            .to_string(),
+                    message: "No workspace is loaded; load a workspace before using list_dir."
+                        .to_string(),
                 })
             })?;
 
         let requested_path = PathBuf::from(params.dir.as_ref());
-        let abs_path =
-            path_scoping::resolve_in_crate_root(&requested_path, &crate_root).map_err(|err| {
-                ploke_error::Error::Domain(DomainError::Io {
-                    message: format!(
-                        "invalid path: {err}. Paths must be absolute or crate-root-relative."
-                    ),
-                })
-            })?;
+        let abs_path = path_scoping::resolve_tool_path(
+            requested_path.as_path(),
+            &primary_root,
+            &policy,
+        )
+        .map_err(|err| {
+            ploke_error::Error::Domain(DomainError::Io {
+                message: format!(
+                    "invalid path: {err}. Paths must be absolute or workspace-root-relative."
+                ),
+            })
+        })?;
 
         let dir_display = abs_path
-            .strip_prefix(&crate_root)
+            .strip_prefix(&primary_root)
             .unwrap_or(abs_path.as_path())
             .display()
             .to_string();
@@ -258,7 +261,7 @@ impl super::Tool for ListDir {
             });
 
             let rel_path = path
-                .strip_prefix(&crate_root)
+                .strip_prefix(&primary_root)
                 .unwrap_or(path.as_path())
                 .display()
                 .to_string();

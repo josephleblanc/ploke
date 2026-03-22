@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};
-use ploke_test_utils::{WS_FIXTURE_01_CANONICAL, fresh_backup_fixture_db, workspace_root};
 use ploke_embed::runtime::EmbeddingRuntime;
+use ploke_test_utils::{WS_FIXTURE_01_CANONICAL, fresh_backup_fixture_db, workspace_root};
 use ploke_tui::EventBus;
 use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState};
 use ploke_tui::event_bus::EventBusCaps;
@@ -133,5 +133,7 @@ async fn workspace_restore_assigns_loaded_workspace_membership_from_db() {
             .expect("workspace policy")
             .roots
     };
-    assert_eq!(policy_roots, expected_member_roots);
+    let mut expected_policy_roots = vec![fixture_workspace_root.clone()];
+    expected_policy_roots.extend(expected_member_roots.iter().cloned());
+    assert_eq!(policy_roots, expected_policy_roots);
 }

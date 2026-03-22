@@ -37,7 +37,7 @@ lazy_static::lazy_static! {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "file": { "type": "string", "description": "Absolute or crate-root-relative file path." },
+                        "file": { "type": "string", "description": "Absolute or workspace-root-relative file path." },
                         "diff": { "type": "string", "description": DIFF_DESCR },
                         "reasoning": {
                             "type": "string",
@@ -128,7 +128,7 @@ impl super::Tool for NsPatch {
     }
 
     fn adapt_error(err: ToolInvocationError) -> ToolError {
-        let hint = "Use an absolute path or crate-root-relative file path (e.g., \"Cargo.toml\").";
+        let hint = "Use an absolute path or workspace-root-relative file path (e.g., \"crates/my-crate/Cargo.toml\").";
         match err {
             ToolInvocationError::Exec(ploke_error::Error::Domain(
                 ploke_error::DomainError::Io { message },
@@ -306,7 +306,7 @@ mod tests {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "file": { "type": "string", "description": "Absolute or crate-root-relative file path." },
+                            "file": { "type": "string", "description": "Absolute or workspace-root-relative file path." },
                             "diff": { "type": "string", "description": DIFF_DESCR },
                             "reasoning": {
                                 "type": "string",

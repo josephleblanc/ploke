@@ -109,6 +109,7 @@ async fn index_workspace_resolves_ancestor_workspace_from_nested_path() {
     assert_eq!(
         policy_roots,
         vec![
+            fixture_workspace_root.clone(),
             fixture_workspace_root.join("member_root"),
             fixture_workspace_root.join("nested/member_nested"),
         ]

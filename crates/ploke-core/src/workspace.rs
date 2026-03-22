@@ -145,6 +145,7 @@ impl WorkspaceRoots {
     }
 }
 
-fn canonicalize_best_effort(path: &Path) -> PathBuf {
+/// Best-effort canonicalization for stable IDs and path policy (falls back to the input path).
+pub fn canonicalize_best_effort(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::{Mutex as StdMutex, OnceLock};
 
@@ -10,12 +10,12 @@ use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_db::multi_embedding::hnsw_ext::HnswExt;
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
-use ploke_test_utils::fixture_dbs::WS_FIXTURE_01_CANONICAL;
 use ploke_io::IoManagerHandle;
 use ploke_rag::TokenBudget;
+use ploke_test_utils::fixture_dbs::WS_FIXTURE_01_CANONICAL;
 use ploke_test_utils::workspace_root;
-use ploke_tui::app_state::IndexTargetDir;
 use ploke_tui as tui;
+use ploke_tui::app_state::IndexTargetDir;
 use tokio::sync::{Mutex, RwLock};
 
 use tui::app_state::handlers::indexing::index_workspace;
@@ -166,7 +166,10 @@ async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata
         .db
         .with_active_set(|set| set.clone())
         .expect("active embedding set");
-    state.db.setup_multi_embedding().expect("setup multi embedding");
+    state
+        .db
+        .setup_multi_embedding()
+        .expect("setup multi embedding");
     let nested_value_id = function_node_id(&state.db, "nested_value");
     let dims = state.embedder.dimensions().expect("mock embedder dims");
     state
@@ -178,7 +181,10 @@ async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata
         .create_embedding_index(&active_set)
         .expect("create hnsw");
     assert!(
-        state.db.is_hnsw_index_registered(&active_set).expect("hnsw state"),
+        state
+            .db
+            .is_hnsw_index_registered(&active_set)
+            .expect("hnsw state"),
         "test setup should start with an active HNSW registration"
     );
 
@@ -191,7 +197,11 @@ async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata
         vec![nested_root.clone()]
     );
     assert!(
-        state.system.loaded_workspace_member_roots_for_test().await.contains(&nested_root),
+        state
+            .system
+            .loaded_workspace_member_roots_for_test()
+            .await
+            .contains(&nested_root),
         "nested_root should be in loaded crates after removal"
     );
     assert_eq!(
@@ -206,14 +216,20 @@ async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata
             .derive_path_policy(&[])
             .expect("path policy after remove")
             .roots,
-        vec![nested_root.clone()]
+        vec![workspace_root.clone(), nested_root.clone()]
     );
     assert!(
-        !state.db.is_hnsw_index_registered(&active_set).expect("post-remove hnsw state"),
+        !state
+            .db
+            .is_hnsw_index_registered(&active_set)
+            .expect("post-remove hnsw state"),
         "workspace remove should leave search availability explicitly invalidated"
     );
 
-    let context_rows = state.db.list_crate_context_rows().expect("crate_context rows");
+    let context_rows = state
+        .db
+        .list_crate_context_rows()
+        .expect("crate_context rows");
     assert_eq!(context_rows.len(), 1);
     assert_eq!(context_rows[0].root_path, nested_root.display().to_string());
 
@@ -284,7 +300,9 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
     let workspace_root = repo_root.join("tests/fixture_workspace/ws_fixture_01");
     let member_root = workspace_root.join("member_root");
     let nested_root = workspace_root.join("nested/member_nested");
-    let registry_snapshot = xdg_dir.path().join("ploke/data/ws_fixture_01_source.sqlite");
+    let registry_snapshot = xdg_dir
+        .path()
+        .join("ploke/data/ws_fixture_01_source.sqlite");
     std::fs::create_dir_all(
         registry_snapshot
             .parent()
@@ -324,7 +342,10 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
         .db
         .with_active_set(|set| set.clone())
         .expect("active embedding set");
-    state.db.setup_multi_embedding().expect("setup multi embedding");
+    state
+        .db
+        .setup_multi_embedding()
+        .expect("setup multi embedding");
     let nested_value_id = function_node_id(&state.db, "nested_value");
     let dims = state.embedder.dimensions().expect("mock embedder dims");
     state
@@ -353,7 +374,10 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
         .create_embedding_index(&active_set)
         .expect("recreate hnsw before import");
     assert!(
-        state.db.is_hnsw_index_registered(&active_set).expect("hnsw state"),
+        state
+            .db
+            .is_hnsw_index_registered(&active_set)
+            .expect("hnsw state"),
         "test setup should start import with an active HNSW registration"
     );
 
@@ -369,8 +393,13 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
 
     let loaded_roots = state.system.loaded_workspace_member_roots_for_test().await;
     assert_eq!(
-        loaded_roots.iter().cloned().collect::<std::collections::BTreeSet<_>>(),
-        [member_root.clone(), nested_root.clone()].into_iter().collect()
+        loaded_roots
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [member_root.clone(), nested_root.clone()]
+            .into_iter()
+            .collect()
     );
     assert!(
         loaded_roots.contains(&nested_root),
@@ -391,10 +420,19 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
             .iter()
             .cloned()
             .collect::<std::collections::BTreeSet<_>>(),
-        [member_root.clone(), nested_root.clone()].into_iter().collect()
+        [
+            workspace_root.clone(),
+            member_root.clone(),
+            nested_root.clone(),
+        ]
+        .into_iter()
+        .collect()
     );
     assert!(
-        !state.db.is_hnsw_index_registered(&active_set).expect("post-import hnsw state"),
+        !state
+            .db
+            .is_hnsw_index_registered(&active_set)
+            .expect("post-import hnsw state"),
         "subset import should explicitly invalidate active HNSW availability"
     );
 
@@ -420,8 +458,14 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
     let entry = registry.entries.first().expect("workspace registry entry");
     assert_eq!(entry.workspace_root, workspace_root);
     assert_eq!(
-        entry.member_roots.iter().cloned().collect::<std::collections::BTreeSet<_>>(),
-        [member_root.clone(), nested_root.clone()].into_iter().collect()
+        entry
+            .member_roots
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [member_root.clone(), nested_root.clone()]
+            .into_iter()
+            .collect()
     );
     assert_eq!(entry.focused_root, Some(nested_root.clone()));
     assert!(
@@ -496,7 +540,9 @@ async fn workspace_load_crates_conflict_preserves_runtime_state() {
     let workspace_root = repo_root.join("tests/fixture_workspace/ws_fixture_01");
     let member_root = workspace_root.join("member_root");
     let nested_root = workspace_root.join("nested/member_nested");
-    let registry_snapshot = xdg_dir.path().join("ploke/data/ws_fixture_01_source.sqlite");
+    let registry_snapshot = xdg_dir
+        .path()
+        .join("ploke/data/ws_fixture_01_source.sqlite");
     std::fs::create_dir_all(
         registry_snapshot
             .parent()
@@ -536,7 +582,10 @@ async fn workspace_load_crates_conflict_preserves_runtime_state() {
         .db
         .with_active_set(|set| set.clone())
         .expect("active embedding set");
-    state.db.setup_multi_embedding().expect("setup multi embedding");
+    state
+        .db
+        .setup_multi_embedding()
+        .expect("setup multi embedding");
     let nested_value_id = function_node_id(&state.db, "nested_value");
     let dims = state.embedder.dimensions().expect("mock embedder dims");
     state
@@ -577,10 +626,17 @@ async fn workspace_load_crates_conflict_preserves_runtime_state() {
             .derive_path_policy(&[])
             .expect("path policy after failed import")
             .roots,
-        vec![member_root.clone(), nested_root.clone()]
+        vec![
+            workspace_root.clone(),
+            member_root.clone(),
+            nested_root.clone(),
+        ]
     );
     assert!(
-        state.db.is_hnsw_index_registered(&active_set).expect("post-failure hnsw state"),
+        state
+            .db
+            .is_hnsw_index_registered(&active_set)
+            .expect("post-failure hnsw state"),
         "failed subset import should leave the previous search state intact"
     );
 }

@@ -30,6 +30,7 @@ use ploke_core::{
     rag_types::{ContextPart, ContextPartKind, Modality},
 };
 use ploke_error::DomainError;
+use ploke_io::path_policy::PathPolicy;
 use ploke_rag::{RagService, RetrievalStrategy, TokenBudget};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
@@ -524,15 +525,17 @@ pub trait Tool {
 
 pub trait ValidatesAbolutePath {
     fn get_file_path(&self) -> impl AsRef<Path>;
-    fn validate_to_abs_path<T: AsRef<Path>>(
+    fn validate_to_abs_path(
         &self,
-        crate_root: T,
+        primary_root: &Path,
+        policy: &PathPolicy,
     ) -> Result<PathBuf, ploke_error::Error> {
-        path_scoping::resolve_in_crate_root(self.get_file_path(), &crate_root).map_err(|err| {
-            ploke_error::Error::Domain(DomainError::Io {
-                message: format!("invalid path: {err}"),
+        path_scoping::resolve_tool_path(self.get_file_path().as_ref(), primary_root, policy)
+            .map_err(|err| {
+                ploke_error::Error::Domain(DomainError::Io {
+                    message: format!("invalid path: {err}"),
+                })
             })
-        })
     }
 }
 
