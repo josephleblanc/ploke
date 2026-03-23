@@ -39,6 +39,8 @@ temp.md
 
 # backups of test fixtures for unit tests
 tests/backup_dbs/
+# github clones used for testing
+tests/fixture_github_clones
 
 CARGO_TEST_OUTPUT.txt
 
