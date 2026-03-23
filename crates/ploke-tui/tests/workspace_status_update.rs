@@ -60,7 +60,7 @@ fn build_state() -> Arc<AppState> {
         Arc::clone(&embedder),
         index_cancellation_token,
         index_cancel_handle,
-        8,
+        None,
     );
     Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),

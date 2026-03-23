@@ -47,6 +47,8 @@ pub struct OpenRouterBackend {
     /// the expected vector length the backend will enforce. It’s used for response validation
     /// (rejects mismatches)
     pub dimensions: usize,
+    /// Max snippets per embeddings API request (processor may split larger batches).
+    pub snippet_batch_size: usize,
     /// the optional request hint sent to OpenRouter to ask for truncated vectors. It’s not
     /// guaranteed to be honored, and many providers ignore it.
     request_dimensions: Option<u32>,
@@ -106,6 +108,7 @@ impl OpenRouterBackend {
         Ok(Self {
             model,
             dimensions: dims,
+            snippet_batch_size: cfg.snippet_batch_size.max(1),
             request_dimensions: cfg.request_dimensions.map(|d| d as u32),
             input_type: cfg.input_type.clone(),
             truncate_policy: cfg.truncate_policy,
@@ -642,6 +645,7 @@ mod tests {
             model: model.to_string(),
             dimensions: Some(dims),
             request_dimensions: None,
+            snippet_batch_size: 100,
             max_in_flight: 4,
             requests_per_second: None,
             max_attempts: 1,
@@ -769,6 +773,7 @@ mod tests {
             model: "mistralai/codestral-embed-2505".to_string(),
             dimensions: Some(1536),
             request_dimensions: None,
+            snippet_batch_size: 100,
             max_in_flight: 1,
             requests_per_second: None,
             max_attempts: 1,
@@ -912,6 +917,7 @@ mod tests {
                 model: model.to_string(),
                 dimensions: Some(dims),
                 request_dimensions: None,
+                snippet_batch_size: 100,
                 max_in_flight: 2,
                 requests_per_second: None,
                 max_attempts: 4,

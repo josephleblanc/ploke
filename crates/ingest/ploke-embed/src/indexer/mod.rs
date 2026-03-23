@@ -83,6 +83,40 @@ impl EmbeddingProcessor {
             snippets.first(),
             snippets.last(),
         );
+        if snippets.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let chunk_cap = self.snippet_batch_size();
+        if snippets.len() <= chunk_cap {
+            return self.dispatch_embeddings_single(snippets, cancel).await;
+        }
+
+        let mut all_embeddings = Vec::with_capacity(snippets.len());
+        for chunk in snippets.chunks(chunk_cap) {
+            let chunk_vec = chunk.to_vec();
+            let part = self.dispatch_embeddings_single(chunk_vec, cancel).await?;
+            all_embeddings.extend(part);
+        }
+        Ok(all_embeddings)
+    }
+
+    /// Max snippets to send per backend request (processor splits larger inputs).
+    pub fn snippet_batch_size(&self) -> usize {
+        match &self.source {
+            EmbeddingSource::Local(backend) => backend.snippet_batch_size(),
+            EmbeddingSource::OpenRouter(backend) => backend.snippet_batch_size,
+            EmbeddingSource::HuggingFace(_) => 64,
+            EmbeddingSource::OpenAI(_) => 100,
+            EmbeddingSource::Cozo(_) => 32,
+        }
+    }
+
+    async fn dispatch_embeddings_single(
+        &self,
+        snippets: Vec<String>,
+        cancel: Option<&CancellationListener>,
+    ) -> Result<Vec<Vec<f32>>, EmbedError> {
         match &self.source {
             EmbeddingSource::Local(backend) => {
                 let text_slices: Vec<&str> = snippets.iter().map(|s| s.as_str()).collect();
@@ -187,7 +221,8 @@ pub struct IndexerTask {
     // which incorrectly cancels remote embedding requests.
     #[allow(dead_code)]
     cancellation_handle: CancellationHandle,
-    pub batch_size: usize,
+    /// When `None`, DB fetch size is derived from [`EmbeddingRuntime::snippet_batch_size`].
+    pub batch_size_override: Option<usize>,
     pub bm25_tx: Option<mpsc::Sender<bm25_service::Bm25Cmd>>,
     pub cursors: Mutex<HashMap<NodeType, Uuid>>,
     pub total_processed: AtomicUsize,
@@ -200,7 +235,7 @@ impl IndexerTask {
         embedding_runtime: Arc<EmbeddingRuntime>,
         cancellation_token: CancellationToken,
         cancellation_handle: CancellationHandle,
-        batch_size: usize,
+        batch_size_override: Option<usize>,
     ) -> Self {
         Self {
             db,
@@ -208,7 +243,7 @@ impl IndexerTask {
             embedding_runtime,
             cancellation_token,
             cancellation_handle,
-            batch_size,
+            batch_size_override,
             bm25_tx: None,
             cursors: Mutex::new(HashMap::new()),
             total_processed: AtomicUsize::new(0),
@@ -218,6 +253,14 @@ impl IndexerTask {
     pub fn with_bm25_tx(mut self, bm25_tx: mpsc::Sender<bm25_service::Bm25Cmd>) -> Self {
         self.bm25_tx = Some(bm25_tx);
         self
+    }
+
+    fn effective_batch_size(&self) -> usize {
+        self.batch_size_override.unwrap_or_else(|| {
+            self.embedding_runtime
+                .snippet_batch_size()
+                .unwrap_or(8)
+        })
     }
 
     #[allow(unused_variables)]
@@ -635,7 +678,7 @@ impl IndexerTask {
         let mut rel_count = 0;
         for node_type in NodeType::primary_nodes().into_iter() {
             let fetch_size =
-                std::cmp::min(self.batch_size, num_not_proc).saturating_sub(total_counted);
+                std::cmp::min(self.effective_batch_size(), num_not_proc).saturating_sub(total_counted);
 
             if fetch_size == 0 {
                 break;
@@ -795,7 +838,7 @@ impl IndexerTask {
             shape_dimension = field::Empty,
             shape_dtype = field::Empty,
             runtime_dims = field::Empty,
-            batch_size = self.batch_size,
+            batch_size = self.effective_batch_size(),
             num_to_embed = num_to_embed,
             valid_data = valid_data.len(),
             valid_snippets = valid_snippets.len(),

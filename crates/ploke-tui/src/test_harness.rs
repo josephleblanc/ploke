@@ -73,7 +73,7 @@ lazy_static! {
             Arc::clone(&embedding_runtime),
             index_cancellation_token,
             index_cancel_handle,
-            8,
+            None,
         )
         .with_bm25_tx(bm25_cmd);
         let indexer_task = Arc::new(indexer_task);

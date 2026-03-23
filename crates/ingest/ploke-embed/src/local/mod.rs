@@ -363,6 +363,11 @@ impl LocalEmbedder {
         self.dimensions
     }
 
+    /// Preferred number of snippets per `embed_batch` pass (matches inference micro-batch size).
+    pub fn snippet_batch_size(&self) -> usize {
+        self.config.model_batch_size.max(1)
+    }
+
     pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         // TODO: NOW
         if texts.is_empty() {

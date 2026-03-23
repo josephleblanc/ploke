@@ -50,6 +50,7 @@ fn openrouter_cfg(model: &str, dims: u32) -> OpenRouterConfig {
         model: model.to_string(),
         dimensions: Some(dims as usize),
         request_dimensions: None,
+        snippet_batch_size: 100,
         max_in_flight: 1,
         requests_per_second: Some(1),
         max_attempts: 3,

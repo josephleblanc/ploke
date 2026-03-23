@@ -113,7 +113,7 @@ async fn index_start_keeps_ui_responsive_in_app_loop() {
             Arc::clone(&embedder),
             cancel_token,
             cancel_handle,
-            8,
+            None,
         ));
 
         let state = Arc::new(AppState {
@@ -244,7 +244,7 @@ async fn indexing_completed_event_does_not_block_input_when_system_read_held() {
             Arc::clone(&embedder),
             cancel_token,
             cancel_handle,
-            8,
+            None,
         ));
 
         let state = Arc::new(AppState {

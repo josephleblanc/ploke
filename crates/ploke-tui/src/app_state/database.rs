@@ -2837,7 +2837,7 @@ mod test {
             Arc::clone(&embedding_runtime), // Use configured processor
             index_cancellation_token,
             index_cancel_handle,
-            8,
+            None,
         );
 
         let rag = RagService::new(Arc::clone(&db_handle), Arc::clone(&embedding_runtime))?;

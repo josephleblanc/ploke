@@ -74,7 +74,7 @@ async fn index_start_fixture_nodes_does_not_freeze_ui() {
             Arc::clone(&embedder),
             cancel_token,
             cancel_handle,
-            8,
+            None,
         ));
 
         let state = Arc::new(AppState {

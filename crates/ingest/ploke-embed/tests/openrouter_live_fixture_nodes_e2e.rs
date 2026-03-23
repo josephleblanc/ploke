@@ -72,6 +72,7 @@ fn openrouter_cfg(model: &str, dims: u32) -> OpenRouterConfig {
         model: model.to_string(),
         dimensions: Some(dims as usize),
         request_dimensions: None,
+        snippet_batch_size: 100,
         max_in_flight: 1,
         requests_per_second: Some(1),
         max_attempts: 3,
@@ -205,7 +206,7 @@ async fn live_openrouter_fixture_nodes_index_e2e() -> Result<(), Box<dyn std::er
         embedding_runtime,
         cancellation_token,
         cancel_handle,
-        live_batch_target,
+        Some(live_batch_target),
     );
 
     let (progress_tx, mut progress_rx) = broadcast::channel(64);

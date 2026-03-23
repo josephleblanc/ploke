@@ -124,6 +124,11 @@ impl EmbeddingRuntime {
         let embedder = self.current_processor()?;
         Ok(embedder.dimensions())
     }
+
+    pub fn snippet_batch_size(&self) -> Result<usize, EmbedError> {
+        let embedder = self.current_processor()?;
+        Ok(embedder.snippet_batch_size())
+    }
 }
 
 #[cfg(test)]

@@ -576,7 +576,7 @@ fn recreate_local_embedding_fixture_db(
             embedding_runtime,
             cancellation_token,
             cancel_handle,
-            8,
+            None,
         );
         let (progress_tx, _progress_rx) = broadcast::channel(32);
         let (_control_tx, control_rx) = mpsc::channel(1);

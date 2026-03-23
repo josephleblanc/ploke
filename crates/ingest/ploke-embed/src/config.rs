@@ -47,6 +47,9 @@ pub struct OpenRouterConfig {
     /// requests may fail with "No successful provider responses" from OpenRouter.
     #[serde(default)]
     pub request_dimensions: Option<usize>,
+    /// Max snippets per OpenRouter embeddings API request (larger batches are split).
+    #[serde(default = "default_openrouter_snippet_batch_size")]
+    pub snippet_batch_size: usize,
     /// Max in-flight embedding requests.
     #[serde(default = "default_openrouter_max_in_flight")]
     pub max_in_flight: usize,
@@ -77,6 +80,7 @@ impl Default for OpenRouterConfig {
             model: String::new(),
             dimensions: None,
             request_dimensions: None,
+            snippet_batch_size: default_openrouter_snippet_batch_size(),
             max_in_flight: default_openrouter_max_in_flight(),
             requests_per_second: None,
             max_attempts: default_openrouter_max_attempts(),
@@ -89,6 +93,9 @@ impl Default for OpenRouterConfig {
     }
 }
 
+fn default_openrouter_snippet_batch_size() -> usize {
+    100
+}
 fn default_openrouter_max_in_flight() -> usize {
     2
 }
@@ -117,6 +124,7 @@ mod tests {
     #[test]
     fn openrouter_config_default_is_safe_for_runtime_use() {
         let cfg = OpenRouterConfig::default();
+        assert_eq!(cfg.snippet_batch_size, 100);
         assert_eq!(cfg.max_in_flight, 2);
         assert_eq!(cfg.max_attempts, 5);
         assert_eq!(cfg.initial_backoff_ms, 250);

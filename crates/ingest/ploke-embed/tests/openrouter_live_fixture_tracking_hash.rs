@@ -106,6 +106,7 @@ fn openrouter_cfg(model: &str, dims: usize) -> OpenRouterConfig {
         // Explicitly request the desired vector length from OpenRouter; this is distinct
         // from the local validation expectation (`dimensions`).
         request_dimensions: Some(dims),
+        snippet_batch_size: 100,
         max_in_flight: 2,
         requests_per_second: None,
         max_attempts: 5,
@@ -250,7 +251,7 @@ async fn run_fixture_tracking_hash_index(
         embedding_runtime,
         cancellation_token,
         cancel_handle,
-        8,
+        None,
     );
 
     let (progress_tx, mut progress_rx) = broadcast::channel(32);
@@ -533,7 +534,7 @@ async fn live_openrouter_dimensions_override_db_vector_len_matches_256(
         embedding_runtime,
         cancellation_token,
         cancel_handle,
-        8,
+        None,
     );
 
     let (progress_tx, mut progress_rx) = broadcast::channel(32);

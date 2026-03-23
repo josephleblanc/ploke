@@ -36,7 +36,7 @@ async fn index_start_does_not_block_state_manager() {
         Arc::clone(&embedder),
         cancel_token,
         cancel_handle,
-        8,
+        None,
     ));
 
     let state = Arc::new(AppState {

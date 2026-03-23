@@ -193,7 +193,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         Arc::clone(&embedding_runtime), // Use configured processor
         index_cancellation_token,
         index_cancel_handle,
-        8,
+        None,
     )
     .with_bm25_tx(bm25_cmd);
     let indexer_task = Arc::new(indexer_task);
