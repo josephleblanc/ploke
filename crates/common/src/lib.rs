@@ -25,3 +25,11 @@ pub fn fixtures_crates_dir() -> PathBuf {
 pub fn malformed_fixtures_dir() -> PathBuf {
     workspace_root().join("tests/malformed_fixtures")
 }
+
+/// Gets the absolute path to the fixture_github_clones directory.
+///
+/// This directory holds real-world crates cloned from GitHub, used for
+/// robustness and integration testing against production-grade Rust code.
+pub fn fixture_github_clones_dir() -> PathBuf {
+    workspace_root().join("tests/fixture_github_clones")
+}

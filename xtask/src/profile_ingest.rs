@@ -255,7 +255,7 @@ struct JsonNode {
     children: Vec<JsonNode>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TimedNode {
     name: String,
     elapsed: Duration,
@@ -311,6 +311,49 @@ fn build_tree(flat: Vec<FinishedRecord>) -> Vec<TimedNode> {
         .collect()
 }
 
+/// Time spent in `node` that is not accounted for by its direct children.
+fn self_time(node: &TimedNode) -> Duration {
+    let children_sum: Duration = node.children.iter().map(|c| c.elapsed).sum();
+    node.elapsed.saturating_sub(children_sum)
+}
+
+/// Collapse same-named siblings under each parent into a single aggregated node.
+///
+/// Siblings that share a name are merged: their `elapsed` times are summed and
+/// their children lists are concatenated (then recursively merged). A `(×N)`
+/// suffix is appended to the name so the multiplicity remains visible.
+fn merge_siblings(nodes: Vec<TimedNode>) -> Vec<TimedNode> {
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: HashMap<String, Vec<TimedNode>> = HashMap::new();
+    for node in nodes {
+        if !groups.contains_key(&node.name) {
+            order.push(node.name.clone());
+        }
+        groups.entry(node.name.clone()).or_default().push(node);
+    }
+    order
+        .into_iter()
+        .map(|name| {
+            let group = groups.remove(&name).unwrap();
+            let count = group.len();
+            if count == 1 {
+                let mut node = group.into_iter().next().unwrap();
+                node.children = merge_siblings(node.children);
+                node
+            } else {
+                let elapsed: Duration = group.iter().map(|n| n.elapsed).sum();
+                let all_children: Vec<TimedNode> =
+                    group.into_iter().flat_map(|n| n.children).collect();
+                TimedNode {
+                    name: format!("{name} (\u{d7}{count})"),
+                    elapsed,
+                    children: merge_siblings(all_children),
+                }
+            }
+        })
+        .collect()
+}
+
 fn collect_stage_nodes<'a>(node: &'a TimedNode, out: &mut HashMap<&'static str, &'a TimedNode>) {
     match node.name.as_str() {
         "parse" => {
@@ -353,8 +396,7 @@ fn to_json_node(n: &TimedNode, global: Duration) -> JsonNode {
     }
 }
 
-const DISPLAY_WIDTH: usize = 56;
-const NAME_COL: usize = 36;
+const MIN_NAME_COL: usize = 36;
 
 fn capitalize_first(s: &str) -> String {
     let mut c = s.chars();
@@ -364,6 +406,26 @@ fn capitalize_first(s: &str) -> String {
     }
 }
 
+/// Compute the widest label (prefix + connector + name) in the tree,
+/// respecting the same depth limit used for display.
+fn max_tree_label_width(
+    node: &TimedNode,
+    depth: usize,
+    depth_remaining: Option<usize>,
+) -> usize {
+    let indent = if depth == 0 { 0 } else { 3 * depth };
+    let width = indent + node.name.len();
+
+    if depth_remaining == Some(0) {
+        return width;
+    }
+    let next_depth = depth_remaining.map(|d| d.saturating_sub(1));
+    node.children
+        .iter()
+        .map(|ch| max_tree_label_width(ch, depth + 1, next_depth))
+        .fold(width, usize::max)
+}
+
 fn print_node(
     node: &TimedNode,
     global: Duration,
@@ -371,6 +433,7 @@ fn print_node(
     connector: &str,
     is_stage: bool,
     depth_remaining: Option<usize>,
+    name_col: usize,
 ) {
     let name = if is_stage {
         capitalize_first(&node.name)
@@ -378,12 +441,20 @@ fn print_node(
         node.name.clone()
     };
     let label = format!("{prefix}{connector}{name}");
+    // Show exclusive (self) time in parentheses only when the node has children;
+    // a leaf's self-time is trivially equal to its total, so the column is blank.
+    let self_part = if !node.children.is_empty() {
+        format!(" ({:>6}ms)", self_time(node).as_millis())
+    } else {
+        "           ".to_string() // 11 spaces – same width as " (123456ms)"
+    };
     println!(
-        "{:<width$} {:>8}ms {:>6.1}%",
+        "{:<width$} {:>8}ms{} {:>6.1}%",
         label,
         node.elapsed.as_millis(),
+        self_part,
         pct(node.elapsed, global),
-        width = NAME_COL,
+        width = name_col,
     );
 
     if depth_remaining == Some(0) {
@@ -400,45 +471,88 @@ fn print_node(
     let count = node.children.len();
     for (i, ch) in node.children.iter().enumerate() {
         let conn = if i == count - 1 { "└─ " } else { "├─ " };
-        print_node(ch, global, &child_prefix, conn, false, next_depth);
+        print_node(ch, global, &child_prefix, conn, false, next_depth, name_col);
     }
 }
 
-fn print_report(forest: &[TimedNode], global: Duration, verbosity: u8, stages_sum: Duration) {
+fn print_report(
+    forest: &[TimedNode],
+    global: Duration,
+    verbosity: u8,
+    stages_sum: Duration,
+    stopwatch: &HashMap<&str, Duration>,
+) {
     let max_depth = match verbosity {
         1 => Some(0),
         2 => Some(1),
         _ => None,
     };
 
-    println!("{}", "═".repeat(DISPLAY_WIDTH));
+    let name_col = forest
+        .iter()
+        .map(|t| max_tree_label_width(t, 0, max_depth))
+        .max()
+        .unwrap_or(0)
+        .max(MIN_NAME_COL)
+        + 2; // gap between name column and numbers
+    // " 99999999ms (123456ms) 9999.9%" = 1+8+2+11+1+6+1 = 30
+    let display_width = name_col + 30;
+
+    println!("{}", "═".repeat(display_width));
     for tree in forest {
-        print_node(tree, global, "", "", true, max_depth);
+        print_node(tree, global, "", "", true, max_depth, name_col);
+    }
+
+    if !stopwatch.is_empty() {
+        let stage_map = find_stage_nodes(forest);
+        let header = "─── Stopwatch check ";
+        println!("{header}{}", "─".repeat(display_width.saturating_sub(header.len())));
+        for &key in &["parse", "transform", "embed"] {
+            let Some(&sw) = stopwatch.get(key) else {
+                continue;
+            };
+            let span_ms = stage_map
+                .get(key)
+                .map(|n| n.elapsed.as_millis())
+                .unwrap_or(0) as i128;
+            let wall_ms = sw.as_millis() as i128;
+            let drift = wall_ms - span_ms;
+            let sign = if drift >= 0 { "+" } else { "" };
+            println!(
+                "  {:<12} span: {:>7}ms  wall: {:>7}ms  Δ {}{}ms",
+                capitalize_first(key),
+                span_ms,
+                wall_ms,
+                sign,
+                drift,
+            );
+        }
     }
 
     let overhead = global.saturating_sub(stages_sum);
-    println!("{}", "─".repeat(DISPLAY_WIDTH));
+    println!("{}", "─".repeat(display_width));
+    // Footer rows: no self-time column – pad with 11 spaces to preserve alignment.
     println!(
-        "{:<width$} {:>8}ms {:>6.1}%",
+        "{:<width$} {:>8}ms            {:>6.1}%",
         "Stages total",
         stages_sum.as_millis(),
         pct(stages_sum, global),
-        width = NAME_COL,
+        width = name_col,
     );
     println!(
-        "{:<width$} {:>8}ms {:>6.1}%",
+        "{:<width$} {:>8}ms            {:>6.1}%",
         "Overhead",
         overhead.as_millis(),
         pct(overhead, global),
-        width = NAME_COL,
+        width = name_col,
     );
     println!(
         "{:<width$} {:>8}ms",
         "Wall time",
         global.as_millis(),
-        width = NAME_COL,
+        width = name_col,
     );
-    println!("{}", "═".repeat(DISPLAY_WIDTH));
+    println!("{}", "═".repeat(display_width));
 }
 
 #[derive(Debug, Clone)]
@@ -583,140 +697,171 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
     let mut parsed_workspace: Option<ParsedWorkspace> = None;
     let mut parsed_crate: Option<ParserOutput> = None;
     let mut db: Option<Arc<Database>> = None;
+    let mut stopwatch: HashMap<&str, Duration> = HashMap::new();
 
     if run_parse {
-        let _span = info_span!("parse").entered();
-        match &resolved {
-            ResolvedProfileTarget::Workspace { workspace_root, .. } => {
-                let pw = parse_workspace(workspace_root, None)
-                    .map_err(|e| XtaskError::new(format!("parse_workspace: {e}")))?;
-                parsed_workspace = Some(pw);
-            }
-            ResolvedProfileTarget::Crate { crate_root } => {
-                let po = try_run_phases_and_merge(crate_root)
-                    .map_err(|e| XtaskError::new(format!("try_run_phases_and_merge: {e}")))?;
-                parsed_crate = Some(po);
+        let sw = Instant::now();
+        {
+            let _span = info_span!("parse").entered();
+            match &resolved {
+                ResolvedProfileTarget::Workspace { workspace_root, .. } => {
+                    let pw = parse_workspace(workspace_root, None)
+                        .map_err(|e| XtaskError::new(format!("parse_workspace: {e}")))?;
+                    parsed_workspace = Some(pw);
+                }
+                ResolvedProfileTarget::Crate { crate_root } => {
+                    let po = try_run_phases_and_merge(crate_root)
+                        .map_err(|e| XtaskError::new(format!("try_run_phases_and_merge: {e}")))?;
+                    parsed_crate = Some(po);
+                }
             }
         }
+        stopwatch.insert("parse", sw.elapsed());
     }
 
     if run_transform {
-        let _span = info_span!("transform").entered();
-        let d = Arc::new(
-            Database::init_with_schema().map_err(|e| XtaskError::new(format!("init db: {e}")))?,
-        );
-        match &resolved {
-            ResolvedProfileTarget::Workspace { .. } => {
-                let pw = parsed_workspace.take().ok_or_else(|| {
-                    XtaskError::new("internal: missing parsed workspace for transform".to_string())
-                })?;
-                transform_parsed_workspace(&d, pw)
-                    .map_err(|e| XtaskError::new(format!("transform_parsed_workspace: {e}")))?;
+        let sw = Instant::now();
+        {
+            let _span = info_span!("transform").entered();
+            let d = {
+                let _db_span = info_span!("init_db").entered();
+                Arc::new(
+                    Database::init_with_schema()
+                        .map_err(|e| XtaskError::new(format!("init db: {e}")))?,
+                )
+            };
+            match &resolved {
+                ResolvedProfileTarget::Workspace { .. } => {
+                    let pw = parsed_workspace.take().ok_or_else(|| {
+                        XtaskError::new(
+                            "internal: missing parsed workspace for transform".to_string(),
+                        )
+                    })?;
+                    transform_parsed_workspace(&d, pw)
+                        .map_err(|e| XtaskError::new(format!("transform_parsed_workspace: {e}")))?;
+                }
+                ResolvedProfileTarget::Crate { .. } => {
+                    let mut po = parsed_crate.take().ok_or_else(|| {
+                        XtaskError::new(
+                            "internal: missing parsed crate for transform".to_string(),
+                        )
+                    })?;
+                    let merged = po.extract_merged_graph().ok_or_else(|| {
+                        XtaskError::new("missing merged graph after parse".to_string())
+                    })?;
+                    let tree = po.extract_module_tree().ok_or_else(|| {
+                        XtaskError::new("missing module tree after parse".to_string())
+                    })?;
+                    transform_parsed_graph(&d, merged, &tree)
+                        .map_err(|e| XtaskError::new(format!("transform_parsed_graph: {e}")))?;
+                }
             }
-            ResolvedProfileTarget::Crate { .. } => {
-                let mut po = parsed_crate.take().ok_or_else(|| {
-                    XtaskError::new("internal: missing parsed crate for transform".to_string())
-                })?;
-                let merged = po.extract_merged_graph().ok_or_else(|| {
-                    XtaskError::new("missing merged graph after parse".to_string())
-                })?;
-                let tree = po.extract_module_tree().ok_or_else(|| {
-                    XtaskError::new("missing module tree after parse".to_string())
-                })?;
-                transform_parsed_graph(&d, merged, &tree)
-                    .map_err(|e| XtaskError::new(format!("transform_parsed_graph: {e}")))?;
-            }
+            db = Some(d);
         }
-        db = Some(d);
+        stopwatch.insert("transform", sw.elapsed());
     }
 
     if run_embed {
-        let _span = info_span!("embed").entered();
-        let d = db
-            .as_ref()
-            .ok_or_else(|| XtaskError::new("embed stage requires transform stage".to_string()))?;
-        let or_cfg = OpenRouterConfig {
-            model: OPENROUTER_MODEL.to_string(),
-            dimensions: Some(OPENROUTER_DIMS as usize),
-            request_dimensions: None,
-            ..Default::default()
-        };
-        let backend_init = OpenRouterBackend::new(&or_cfg)
-            .map_err(|e| XtaskError::new(format!("OpenRouter backend: {e}")))?;
-        let processor_init = EmbeddingProcessor::new(EmbeddingSource::OpenRouter(backend_init));
-        let backend_active = OpenRouterBackend::new(&or_cfg)
-            .map_err(|e| XtaskError::new(format!("OpenRouter backend (activate): {e}")))?;
-        let proc_arc = Arc::new(EmbeddingProcessor::new(EmbeddingSource::OpenRouter(
-            backend_active,
-        )));
-        let embedding_set = EmbeddingSet::new(
-            EmbeddingProviderSlug::new_from_str("openrouter"),
-            EmbeddingModelId::new_from_str(OPENROUTER_MODEL),
-            EmbeddingShape::new_dims_default(OPENROUTER_DIMS),
-        );
-        let runtime = Arc::new(EmbeddingRuntime::from_shared_set(
-            Arc::clone(&d.active_embedding_set),
-            processor_init,
-        ));
-        runtime
-            .activate(d.as_ref(), embedding_set, Arc::clone(&proc_arc))
-            .map_err(|e| XtaskError::new(format!("activate embedding runtime: {e}")))?;
+        let sw = Instant::now();
+        {
+            let _span = info_span!("embed").entered();
+            let d = db.as_ref().ok_or_else(|| {
+                XtaskError::new("embed stage requires transform stage".to_string())
+            })?;
+            let or_cfg = OpenRouterConfig {
+                model: OPENROUTER_MODEL.to_string(),
+                dimensions: Some(OPENROUTER_DIMS as usize),
+                request_dimensions: None,
+                ..Default::default()
+            };
+            let backend_init = OpenRouterBackend::new(&or_cfg)
+                .map_err(|e| XtaskError::new(format!("OpenRouter backend: {e}")))?;
+            let processor_init =
+                EmbeddingProcessor::new(EmbeddingSource::OpenRouter(backend_init));
+            let backend_active = OpenRouterBackend::new(&or_cfg)
+                .map_err(|e| XtaskError::new(format!("OpenRouter backend (activate): {e}")))?;
+            let proc_arc = Arc::new(EmbeddingProcessor::new(EmbeddingSource::OpenRouter(
+                backend_active,
+            )));
+            let embedding_set = EmbeddingSet::new(
+                EmbeddingProviderSlug::new_from_str("openrouter"),
+                EmbeddingModelId::new_from_str(OPENROUTER_MODEL),
+                EmbeddingShape::new_dims_default(OPENROUTER_DIMS),
+            );
+            let runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+                Arc::clone(&d.active_embedding_set),
+                processor_init,
+            ));
+            runtime
+                .activate(d.as_ref(), embedding_set, Arc::clone(&proc_arc))
+                .map_err(|e| XtaskError::new(format!("activate embedding runtime: {e}")))?;
 
-        create_index_primary(d.as_ref())
-            .map_err(|e| XtaskError::new(format!("create_index_primary: {e}")))?;
+            create_index_primary(d.as_ref())
+                .map_err(|e| XtaskError::new(format!("create_index_primary: {e}")))?;
 
-        let (cancellation_token, cancel_handle) = CancellationToken::new();
-        let indexer = IndexerTask::new(
-            Arc::clone(d),
-            IoManagerHandle::new(),
-            runtime,
-            cancellation_token,
-            cancel_handle,
-            None,
-        );
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| XtaskError::new(format!("tokio runtime: {e}")))?;
+            let (cancellation_token, cancel_handle) = CancellationToken::new();
+            let indexer = IndexerTask::new(
+                Arc::clone(d),
+                IoManagerHandle::new(),
+                runtime,
+                cancellation_token,
+                cancel_handle,
+                None,
+            );
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| XtaskError::new(format!("tokio runtime: {e}")))?;
 
-        rt.block_on(async move {
-            let (progress_tx, _progress_rx) = broadcast::channel(32);
-            let (_control_tx, control_rx) = mpsc::channel(4);
-            let task = Arc::new(indexer);
-            task.run(Arc::new(progress_tx), control_rx)
-                .await
-                .map_err(|e| XtaskError::new(format!("indexer run: {e}")))
-        })?;
+            rt.block_on(async move {
+                let (progress_tx, _progress_rx) = broadcast::channel(32);
+                let (_control_tx, control_rx) = mpsc::channel(4);
+                let task = Arc::new(indexer);
+                task.run(Arc::new(progress_tx), control_rx)
+                    .await
+                    .map_err(|e| XtaskError::new(format!("indexer run: {e}")))
+            })?;
+        }
+        stopwatch.insert("embed", sw.elapsed());
     }
 
     let global_elapsed = global_start.elapsed();
     let flat = timing_layer.take_finished();
     let forest = build_tree(flat);
 
-    let stage_map = find_stage_nodes(&forest);
-    let stages_sum = stage_map
-        .get("parse")
-        .map(|n| n.elapsed)
-        .unwrap_or_default()
-        + stage_map
-            .get("transform")
+    // Derive JSON output and stage timings from the raw (unmerged) tree so that
+    // the persisted record faithfully reflects the actual span structure.
+    let (stages_sum, stage_json, full_forest) = {
+        let stage_map = find_stage_nodes(&forest);
+        let stages_sum = stage_map
+            .get("parse")
             .map(|n| n.elapsed)
             .unwrap_or_default()
-        + stage_map
-            .get("embed")
-            .map(|n| n.elapsed)
-            .unwrap_or_default();
+            + stage_map
+                .get("transform")
+                .map(|n| n.elapsed)
+                .unwrap_or_default()
+            + stage_map
+                .get("embed")
+                .map(|n| n.elapsed)
+                .unwrap_or_default();
+        let stage_json: Vec<JsonNode> = ["parse", "transform", "embed"]
+            .into_iter()
+            .filter_map(|k| stage_map.get(k).map(|n| to_json_node(n, global_elapsed)))
+            .collect();
+        // Full span tree always persisted for offline analysis; verbosity only affects stdout.
+        let full_forest: Vec<JsonNode> = forest
+            .iter()
+            .map(|t| to_json_node(t, global_elapsed))
+            .collect();
+        (stages_sum, stage_json, full_forest)
+    };
 
-    let stage_json: Vec<JsonNode> = ["parse", "transform", "embed"]
-        .into_iter()
-        .filter_map(|k| stage_map.get(k).map(|n| to_json_node(n, global_elapsed)))
-        .collect();
-
-    // Full span tree always persisted for offline analysis; verbosity only affects stdout.
-    let full_forest: Vec<JsonNode> = forest
-        .iter()
-        .map(|t| to_json_node(t, global_elapsed))
-        .collect();
+    // Merge same-named siblings for the terminal display so repeated calls to the
+    // same function (e.g. multiple `next_batch` iterations) collapse into one row.
+    // Stage root nodes appear exactly once each so their names are unchanged and
+    // `find_stage_nodes` (called inside `print_report`) still works correctly.
+    let display_forest = merge_siblings(forest);
 
     let report = ProfileReport {
         target: target_name.clone(),
@@ -757,7 +902,7 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
     println!("Ploke:  {}", ploke_git.as_deref().unwrap_or("n/a"));
     println!("Wrote {}", out_path.display());
 
-    print_report(&forest, global_elapsed, cfg.verbosity, stages_sum);
+    print_report(&display_forest, global_elapsed, cfg.verbosity, stages_sum, &stopwatch);
 
     if cfg.json_stdout {
         println!("{}", json);

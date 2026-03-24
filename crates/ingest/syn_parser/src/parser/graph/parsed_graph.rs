@@ -493,15 +493,43 @@ Remaining ids to prune: {}",
 
         // -- handle pruning relations
         let relations_count_pre = self.relations().len();
+
+        // Build a set of all graph relations for O(1) membership checks.
+        // `pruned_relations` may contain tree-construction relations (e.g. `ResolvesToDefinition`,
+        // `CustomPath`) that were added to `ModuleTree::tree_relations` during tree building but
+        // were never inserted into `ParsedCodeGraph::graph.relations`.  We must only attempt to
+        // remove relations that actually live in the graph; tree-only relations have nothing to
+        // remove and must not be counted in the assertion.
+        let graph_rel_set: HashSet<_> = self.relations().iter().copied().collect();
+
+        // Verify the assumption underlying graph_pruned_count: if the graph contains duplicate
+        // SyntacticRelations the HashSet will be smaller than the Vec, which would cause
+        // graph_pruned_count to undercount and the final assert_eq to pass spuriously.
+        #[cfg(feature = "validate")]
+        assert_eq!(
+            graph_rel_set.len(),
+            relations_count_pre,
+            "Duplicate SyntacticRelations detected in graph.relations before pruning: \
+             HashSet size ({}) != Vec size ({}). graph_pruned_count would undercount.",
+            graph_rel_set.len(),
+            relations_count_pre,
+        );
+        let graph_pruned_count = pruned_items
+            .pruned_relations
+            .iter()
+            .filter(|tr| graph_rel_set.contains(tr.rel()))
+            .count();
+
         self.relations_mut().retain(|r| {
             !pruned_items
                 .pruned_relations
                 .contains(&TreeRelation::new(*r))
         });
+
         assert_eq!(
             relations_count_pre - self.relations().len(),
-            pruned_items.pruned_relations.len(),
-            "Count of expected pruned relations vs. pruned relations does not match."
+            graph_pruned_count,
+            "Count of expected pruned graph relations vs. actually pruned relations does not match."
         );
     }
 
