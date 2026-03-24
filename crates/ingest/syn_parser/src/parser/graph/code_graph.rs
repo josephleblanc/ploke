@@ -6,7 +6,7 @@ use crate::parser::{
     // Updated node types
     nodes::{
         ConstNode, FunctionNode, ImplNode, ImportNode, MacroNode, ModuleNode, StaticNode,
-        TraitNode, TypeDefNode,
+        TraitNode, TypeDefNode, UnresolvedNode,
     },
     relations::SyntacticRelation, // Use new relation enum
     types::TypeNode,
@@ -39,6 +39,8 @@ pub struct CodeGraph {
     // Macros defined in the code
     pub macros: Vec<MacroNode>,
     pub use_statements: Vec<ImportNode>,
+    // Unresolved items (e.g., from include! macros that couldn't be expanded)
+    pub unresolved_nodes: Vec<UnresolvedNode>,
 }
 
 impl GraphAccess for CodeGraph {
@@ -139,6 +141,14 @@ impl GraphAccess for CodeGraph {
     fn use_statements_mut(&mut self) -> &mut Vec<ImportNode> {
         &mut self.use_statements
     }
+
+    fn unresolved_nodes(&self) -> &[UnresolvedNode] {
+        &self.unresolved_nodes
+    }
+
+    fn unresolved_nodes_mut(&mut self) -> &mut Vec<UnresolvedNode> {
+        &mut self.unresolved_nodes
+    }
 }
 
 impl CodeGraph {
@@ -164,6 +174,7 @@ impl CodeGraph {
                                                  // Removed values append
         self.macros.append(&mut other.macros);
         self.use_statements.append(&mut other.use_statements);
+        self.unresolved_nodes.append(&mut other.unresolved_nodes);
         Ok(())
     }
 }

@@ -7,10 +7,12 @@ use syn_parser::{discovery::workspace::WorkspaceMetadataSection, ParsedWorkspace
 
 use crate::error::TransformError;
 use crate::schema::crate_node::WorkspaceMetadataSchema;
+use tracing::instrument;
 
 use super::transform_parsed_graph;
 
 /// Transforms workspace metadata into a database row and then transforms each parsed crate graph.
+#[instrument(skip_all, fields(crate_count = parsed_workspace.crates.len()))]
 pub fn transform_parsed_workspace(
     db: &Db<MemStorage>,
     parsed_workspace: ParsedWorkspace,

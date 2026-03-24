@@ -1,4 +1,5 @@
 use crate::schema::primary_nodes_multi::TraitNodeSchema;
+use tracing::instrument;
 
 use crate::{
     macro_traits::CommonFields, schema::assoc_nodes::MethodNodeSchema,
@@ -7,6 +8,7 @@ use crate::{
 
 use super::*;
 
+#[instrument(skip_all)]
 pub(super) fn transform_traits(
     db: &Db<MemStorage>,
     traits: Vec<TraitNode>,

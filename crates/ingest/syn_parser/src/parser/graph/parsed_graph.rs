@@ -7,7 +7,7 @@ use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
-use tracing::trace;
+use tracing::{info_span, instrument, trace};
 
 use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 
@@ -90,21 +90,28 @@ impl ParsedCodeGraph {
             .flatten() // Flatten the outer iterator
     }
 
+    #[instrument(skip_all, fields(graph_count = graphs.len()))]
     pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, SynParserError> {
         for graph in graphs.iter() {
             log::debug!(target: "buggy_c", "Buggy First Context: {:#?}", graph.crate_context);
         }
-        let mut new_graph = graphs.pop().ok_or(SynParserError::MergeRequiresInput)?;
+        let mut new_graph = {
+            let _span = info_span!("merge_new_pop_seed_graph").entered();
+            graphs.pop().ok_or(SynParserError::MergeRequiresInput)?
+        };
 
         // Preserve crate context from any graph
         let mut found_context = new_graph.crate_context.take();
         trace!(target: "buggy", "First Context: {:#?}", new_graph.crate_context);
-        for mut graph in graphs {
-            if found_context.is_none() {
-                log::trace!(target: "buggy", "Merging Context: {:#?}", graph.crate_context);
-                found_context = graph.crate_context.take();
+        {
+            let _span = info_span!("merge_new_append_graphs", remaining_graphs = graphs.len()).entered();
+            for mut graph in graphs {
+                if found_context.is_none() {
+                    log::trace!(target: "buggy", "Merging Context: {:#?}", graph.crate_context);
+                    found_context = graph.crate_context.take();
+                }
+                new_graph.append_all(graph)?;
             }
-            new_graph.append_all(graph)?;
         }
 
         log::trace!(target: "buggy", "Penult Context: {:#?}", new_graph.crate_context);
@@ -492,15 +499,43 @@ Remaining ids to prune: {}",
 
         // -- handle pruning relations
         let relations_count_pre = self.relations().len();
+
+        // Build a set of all graph relations for O(1) membership checks.
+        // `pruned_relations` may contain tree-construction relations (e.g. `ResolvesToDefinition`,
+        // `CustomPath`) that were added to `ModuleTree::tree_relations` during tree building but
+        // were never inserted into `ParsedCodeGraph::graph.relations`.  We must only attempt to
+        // remove relations that actually live in the graph; tree-only relations have nothing to
+        // remove and must not be counted in the assertion.
+        let graph_rel_set: HashSet<_> = self.relations().iter().copied().collect();
+
+        // Verify the assumption underlying graph_pruned_count: if the graph contains duplicate
+        // SyntacticRelations the HashSet will be smaller than the Vec, which would cause
+        // graph_pruned_count to undercount and the final assert_eq to pass spuriously.
+        #[cfg(feature = "validate")]
+        assert_eq!(
+            graph_rel_set.len(),
+            relations_count_pre,
+            "Duplicate SyntacticRelations detected in graph.relations before pruning: \
+             HashSet size ({}) != Vec size ({}). graph_pruned_count would undercount.",
+            graph_rel_set.len(),
+            relations_count_pre,
+        );
+        let graph_pruned_count = pruned_items
+            .pruned_relations
+            .iter()
+            .filter(|tr| graph_rel_set.contains(tr.rel()))
+            .count();
+
         self.relations_mut().retain(|r| {
             !pruned_items
                 .pruned_relations
                 .contains(&TreeRelation::new(*r))
         });
+
         assert_eq!(
             relations_count_pre - self.relations().len(),
-            pruned_items.pruned_relations.len(),
-            "Count of expected pruned relations vs. pruned relations does not match."
+            graph_pruned_count,
+            "Count of expected pruned graph relations vs. actually pruned relations does not match."
         );
     }
 
@@ -527,9 +562,22 @@ Remaining ids to prune: {}",
     /// Returns any error encountered during tree construction, path resolution,
     /// or pruning (in creating the items to prune within build_module_tree).
     /// - JL Reviewed, Jul 28, 2025
+    #[instrument(skip(self))]
     pub fn build_tree_and_prune(&mut self) -> Result<ModuleTree, ploke_error::Error> {
-        let (tree, pruned_items) = self.build_module_tree()?;
-        self.prune(pruned_items);
+        let (tree, pruned_items) = {
+            let _span = info_span!("build_module_tree").entered();
+            self.build_module_tree()?
+        };
+        {
+            let _span = info_span!(
+                "prune_graph_from_tree",
+                pruned_modules = pruned_items.pruned_module_ids.len(),
+                pruned_items = pruned_items.pruned_item_ids.len(),
+                pruned_relations = pruned_items.pruned_relations.len()
+            )
+            .entered();
+            self.prune(pruned_items);
+        }
         Ok(tree)
     }
 
@@ -700,6 +748,15 @@ impl GraphAccess for ParsedCodeGraph {
     fn use_statements_mut(&mut self) -> &mut Vec<ImportNode> {
         &mut self.graph.use_statements
     }
+
+    fn unresolved_nodes(&self) -> &[UnresolvedNode] {
+        &self.graph.unresolved_nodes
+    }
+
+    fn unresolved_nodes_mut(&mut self) -> &mut Vec<UnresolvedNode> {
+        &mut self.graph.unresolved_nodes
+    }
+
 
     // Removed prune_items method to keep ParsedCodeGraph immutable for now.
 }

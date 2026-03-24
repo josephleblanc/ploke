@@ -1,10 +1,12 @@
 use crate::schema::primary_nodes_multi::ImplNodeSchema;
+use tracing::instrument;
 
 use crate::{macro_traits::CommonFields, schema::assoc_nodes::MethodNodeSchema};
 
 use super::*;
 
 /// Transforms impl nodes into the impls relation
+#[instrument(skip_all)]
 pub(super) fn transform_impls(
     db: &Db<MemStorage>,
     impls: Vec<ImplNode>,

@@ -17,7 +17,8 @@ use super::*;
 pub use internal::{
     ConstNodeId, EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamNodeId, ImplNodeId,
     ImportNodeId, MacroNodeId, MethodNodeId, ModuleNodeId, ParamNodeId, ReexportNodeId,
-    StaticNodeId, StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
+    StaticNodeId, StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, UnresolvedNodeId,
+    VariantNodeId,
 };
 // --- traits ---
 // Re-export marker traits (adjust list as needed)

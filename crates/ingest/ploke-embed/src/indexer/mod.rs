@@ -256,11 +256,8 @@ impl IndexerTask {
     }
 
     fn effective_batch_size(&self) -> usize {
-        self.batch_size_override.unwrap_or_else(|| {
-            self.embedding_runtime
-                .snippet_batch_size()
-                .unwrap_or(8)
-        })
+        self.batch_size_override
+            .unwrap_or_else(|| self.embedding_runtime.snippet_batch_size().unwrap_or(8))
     }
 
     #[allow(unused_variables)]
@@ -677,8 +674,8 @@ impl IndexerTask {
 
         let mut rel_count = 0;
         for node_type in NodeType::primary_nodes().into_iter() {
-            let fetch_size =
-                std::cmp::min(self.effective_batch_size(), num_not_proc).saturating_sub(total_counted);
+            let fetch_size = std::cmp::min(self.effective_batch_size(), num_not_proc)
+                .saturating_sub(total_counted);
 
             if fetch_size == 0 {
                 break;

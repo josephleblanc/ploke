@@ -1,4 +1,5 @@
 use crate::schema::primary_nodes_multi::ModuleNodeSchema;
+use tracing::instrument;
 
 use std::path::PathBuf;
 
@@ -27,6 +28,7 @@ pub struct FileModuleNode {
     name_space: Uuid,
 }
 
+#[instrument(skip_all)]
 pub(super) fn transform_modules(
     db: &Db<MemStorage>,
     modules: Vec<ModuleNode>,

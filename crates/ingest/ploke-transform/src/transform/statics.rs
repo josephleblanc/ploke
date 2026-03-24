@@ -1,9 +1,11 @@
 use crate::schema::primary_nodes_multi::StaticNodeSchema;
+use tracing::instrument;
 
 use crate::macro_traits::CommonFields;
 
 use super::*;
 
+#[instrument(skip_all)]
 pub(super) fn transform_statics(
     db: &Db<MemStorage>,
     statics: Vec<StaticNode>,

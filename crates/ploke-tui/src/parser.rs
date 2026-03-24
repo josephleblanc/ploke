@@ -170,6 +170,7 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), S
     run_parse_resolved(db, &resolved)
 }
 
+#[instrument(skip(db), fields(target = %resolved.requested_path.display(), kind = ?resolved.kind))]
 pub fn run_parse_resolved(
     db: Arc<Database>,
     resolved: &ResolvedIndexTarget,

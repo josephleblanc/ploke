@@ -250,6 +250,11 @@ impl GeneratesAnyNodeId for VisitorState {
             // have a NodeId of some kind, and this will do for now, but we also want to
             // distinguish between an ExternCrate statement and something else... probably.
             ItemKind::ExternCrate => ImportNodeId(node_id).into(),
+            ItemKind::Unresolved => {
+                // UnresolvedNodeId is created directly without going through the normal
+                // generate_synthetic_node_id path since we need special handling for unresolved items
+                UnresolvedNodeId(node_id).into()
+            }
         }
     }
 
@@ -728,6 +733,20 @@ define_internal_node_id!(
         markers: [],
     }
 ); // No specific category yet, just TypedId
+define_internal_node_id!(
+    struct UnresolvedNodeId {
+        markers: [],
+    }
+); // For unresolved imports/re-exports - NOT a primary node
+
+impl UnresolvedNodeId {
+    /// Creates a new UnresolvedNodeId. This is crate-visible to allow
+    /// creation during module tree resolution when an import cannot be resolved.
+    #[inline]
+    pub(crate) fn new(id: NodeId) -> Self {
+        Self(id)
+    }
+}
    // --- Category ID Enums ---
 
 use ploke_core::ItemKind; // Need ItemKind for kind() methods
@@ -893,6 +912,7 @@ define_category_enum!(
         (Macro, MacroNodeId, ItemKind::Macro),
         (Import, ImportNodeId, ItemKind::Import),
         (Module, ModuleNodeId, ItemKind::Module),
+        (Unresolved, UnresolvedNodeId, ItemKind::Unresolved),
     ]
 );
 // Adding this for simplicity, since I think it should work to help us be generic over both the
@@ -950,6 +970,8 @@ pub enum AnyNodeId {
     GenericParam(GenericParamNodeId),
     // Other IDs
     Reexport(ReexportNodeId),
+    // Unresolved nodes (for items that couldn't be resolved, e.g., from include! macros)
+    Unresolved(UnresolvedNodeId),
     // Add any other specific ID types here as they are created
 }
 impl AnyTypedId for AnyNodeId {}
@@ -982,6 +1004,8 @@ impl AnyNodeId {
             AnyNodeId::GenericParam(id) => id.base_id(),
             // Other IDs
             AnyNodeId::Reexport(id) => id.base_id(),
+            // Unresolved nodes
+            AnyNodeId::Unresolved(id) => id.base_id(),
         }
     }
 }
@@ -1011,6 +1035,8 @@ impl Display for AnyNodeId {
             AnyNodeId::GenericParam(id) => write!(f, "AnyNodeId::GenericParam({})", id),
             // Other IDs
             AnyNodeId::Reexport(id) => write!(f, "AnyNodeId::Reexport({})", id),
+            // Unresolved nodes
+            AnyNodeId::Unresolved(id) => write!(f, "AnyNodeId::Unresolved({})", id),
         }
     }
 }
@@ -1129,6 +1155,13 @@ impl From<ReexportNodeId> for AnyNodeId {
         AnyNodeId::Reexport(id)
     }
 }
+// Unresolved nodes
+impl From<UnresolvedNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: UnresolvedNodeId) -> Self {
+        AnyNodeId::Unresolved(id)
+    }
+}
 
 // --- Error Type for AnyNodeId Conversion ---
 
@@ -1182,3 +1215,5 @@ impl_try_from_any_node_id!(ParamNodeId, Param);
 impl_try_from_any_node_id!(GenericParamNodeId, GenericParam);
 // Other IDs
 impl_try_from_any_node_id!(ReexportNodeId, Reexport);
+// Unresolved nodes
+impl_try_from_any_node_id!(UnresolvedNodeId, Unresolved);

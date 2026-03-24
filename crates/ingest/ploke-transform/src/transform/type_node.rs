@@ -1,10 +1,12 @@
 use ploke_core::TypeKind;
 use syn_parser::{resolve::Colorize, utils::LogStyleDebug};
+use tracing::instrument;
 
 use crate::schema::types::*;
 
 use super::*;
 
+#[instrument(skip_all)]
 pub(super) fn transform_types(
     db: &Db<MemStorage>,
     type_nodes: Vec<TypeNode>,

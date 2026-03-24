@@ -32,6 +32,7 @@ use module::transform_modules;
 use statics::transform_statics;
 use std::collections::BTreeMap;
 use structs::transform_structs;
+use tracing::instrument;
 use traits::transform_traits;
 use type_alias::transform_type_aliases;
 use type_node::transform_types;
@@ -117,6 +118,7 @@ pub fn transform_code_graph(
 }
 
 /// Transforms a CodeGraph into CozoDB relations, inserts into the cozo database
+#[instrument(skip_all)]
 pub fn transform_parsed_graph(
     db: &Db<MemStorage>,
     parsed_graph: ParsedCodeGraph,
@@ -159,6 +161,7 @@ pub fn transform_parsed_graph(
     Ok(())
 }
 
+#[instrument(skip_all)]
 fn transform_defined_types(
     db: &Db<MemStorage>,
     defined_types: Vec<TypeDefNode>,

@@ -80,10 +80,12 @@
 
 use cozo::{Db, MemStorage};
 use syn_parser::parser::relations::SyntacticRelation;
+use tracing::instrument;
 
 use super::*;
 use crate::schema::edges::SyntacticRelationSchema;
 
+#[instrument(skip_all)]
 pub(super) fn transform_relations(
     db: &Db<MemStorage>,
     relations: Vec<SyntacticRelation>,
