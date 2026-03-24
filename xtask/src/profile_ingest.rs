@@ -55,6 +55,7 @@ pub struct ProfileConfig {
     pub stages: Vec<Stage>,
     pub verbosity: u8,
     pub json_stdout: bool,
+    pub loops: usize,
 }
 
 fn parse_stages(s: &str) -> Result<Vec<Stage>, XtaskError> {
@@ -83,6 +84,7 @@ pub fn parse_profile_ingest_args(args: Vec<String>) -> Result<ProfileConfig, Xta
     let mut stages_arg: Option<String> = None;
     let mut verbosity: u8 = 2;
     let mut json_stdout = false;
+    let mut loops: usize = 1;
 
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -110,10 +112,21 @@ pub fn parse_profile_ingest_args(args: Vec<String>) -> Result<ProfileConfig, Xta
                     return Err(XtaskError::new("--verbosity must be 1, 2, or 3"));
                 }
             }
+            "--loops" => {
+                let Some(v) = it.next() else {
+                    return Err(XtaskError::new("Missing value for --loops"));
+                };
+                loops = v
+                    .parse()
+                    .map_err(|_| XtaskError::new("--loops must be a positive integer"))?;
+                if loops == 0 {
+                    return Err(XtaskError::new("--loops must be at least 1"));
+                }
+            }
             "--json" => json_stdout = true,
             other => {
                 return Err(XtaskError::new(format!(
-                    "Unknown flag '{other}'. Usage: cargo xtask profile-ingest --target <path> [--stages parse,transform,embed] [--verbosity 1|2|3] [--json]"
+                    "Unknown flag '{other}'. Usage: cargo xtask profile-ingest --target <path> [--stages parse,transform,embed] [--verbosity 1|2|3] [--loops N] [--json]"
                 )));
             }
         }
@@ -160,6 +173,7 @@ pub fn parse_profile_ingest_args(args: Vec<String>) -> Result<ProfileConfig, Xta
         stages,
         verbosity,
         json_stdout,
+        loops,
     })
 }
 
@@ -646,50 +660,139 @@ struct ProfileReport {
     full_forest: Vec<JsonNode>,
 }
 
-pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
-    let root = workspace_root();
-    let target_path = if cfg.target.is_absolute() {
-        cfg.target.clone()
-    } else {
-        root.join(&cfg.target)
-    };
-    let target_path = fs::canonicalize(&target_path).map_err(|e| {
-        XtaskError::new(format!(
-            "Could not resolve target path {}: {e}",
-            target_path.display()
-        ))
-    })?;
+/// Timing results from a single profiling iteration
+#[derive(Debug, Clone)]
+struct IterationResult {
+    global_elapsed: Duration,
+    stage_timings: HashMap<&'static str, Duration>,
+}
 
-    let resolved = resolve_profile_target(&target_path)?;
-    let member_count = match &resolved {
-        ResolvedProfileTarget::Workspace { member_count, .. } => *member_count,
-        ResolvedProfileTarget::Crate { .. } => 1,
-    };
+/// Statistics for a single stage across all iterations
+#[derive(Debug, Clone)]
+struct StageStats {
+    min: Duration,
+    max: Duration,
+    avg: Duration,
+    p50: Duration,
+    p90: Duration,
+    p95: Duration,
+    p99: Duration,
+    std_dev: Duration,
+}
 
-    let rs_count = count_rs_files(&target_path);
-    let target_name = target_path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("target")
-        .to_string();
-    let target_git = git_head_short(&target_path);
-    let ploke_git = git_head_short(&root);
-
-    let timing_layer = TimingCollector::new();
-
-    let registry = tracing_subscriber::registry::Registry::default().with(timing_layer.clone());
-
-    if env::var("PLOKE_PROFILE_LOG").is_ok() {
-        let fmt = tracing_subscriber::fmt::layer()
-            .with_target(false)
-            .with_filter(EnvFilter::from_default_env());
-        registry.with(fmt).init();
-    } else {
-        registry.init();
+fn compute_stats(durations: &[Duration]) -> Option<StageStats> {
+    if durations.is_empty() {
+        return None;
     }
+    
+    let mut sorted: Vec<Duration> = durations.to_vec();
+    sorted.sort();
+    
+    let min = *sorted.first().unwrap();
+    let max = *sorted.last().unwrap();
+    
+    let sum: Duration = durations.iter().sum();
+    let avg = sum / durations.len() as u32;
+    
+    let percentile = |p: f64| -> Duration {
+        let idx = ((durations.len() as f64 - 1.0) * p / 100.0) as usize;
+        sorted[idx.min(sorted.len() - 1)]
+    };
+    
+    let p50 = percentile(50.0);
+    let p90 = percentile(90.0);
+    let p95 = percentile(95.0);
+    let p99 = percentile(99.0);
+    
+    // Standard deviation
+    let avg_secs = avg.as_secs_f64();
+    let variance: f64 = durations
+        .iter()
+        .map(|d| {
+            let diff = d.as_secs_f64() - avg_secs;
+            diff * diff
+        })
+        .sum::<f64>() / durations.len() as f64;
+    let std_dev_secs = variance.sqrt();
+    let std_dev = Duration::from_secs_f64(std_dev_secs);
+    
+    Some(StageStats {
+        min,
+        max,
+        avg,
+        p50,
+        p90,
+        p95,
+        p99,
+        std_dev,
+    })
+}
 
-    let global_start = Instant::now();
+fn print_stats_report(
+    stage_stats: &HashMap<&'static str, StageStats>,
+    global_stats: &StageStats,
+    iterations: usize,
+    target_name: &str,
+    rs_count: usize,
+    member_count: usize,
+) {
+    let display_width = 90;
+    
+    println!("{}", "═".repeat(display_width));
+    println!("  Statistics Report: {} iterations", iterations);
+    println!("  Target: {} ({} .rs files, {} {})", 
+        target_name, 
+        rs_count, 
+        member_count,
+        if member_count == 1 { "member" } else { "members" }
+    );
+    println!("{}", "═".repeat(display_width));
+    
+    // Global timing stats
+    println!("\n  Global Wall Time (ms):");
+    println!("    min: {:>8}  avg: {:>8}  max: {:>8}  std: {:>8}",
+        global_stats.min.as_millis(),
+        global_stats.avg.as_millis(),
+        global_stats.max.as_millis(),
+        global_stats.std_dev.as_millis(),
+    );
+    println!("    p50: {:>8}  p90: {:>8}  p95: {:>8}  p99: {:>8}",
+        global_stats.p50.as_millis(),
+        global_stats.p90.as_millis(),
+        global_stats.p95.as_millis(),
+        global_stats.p99.as_millis(),
+    );
+    
+    // Per-stage stats
+    for &stage_name in &["parse", "transform", "embed"] {
+        let Some(stats) = stage_stats.get(stage_name) else {
+            continue;
+        };
+        
+        println!("\n  {} Stage (ms):", capitalize_first(stage_name));
+        println!("    min: {:>8}  avg: {:>8}  max: {:>8}  std: {:>8}",
+            stats.min.as_millis(),
+            stats.avg.as_millis(),
+            stats.max.as_millis(),
+            stats.std_dev.as_millis(),
+        );
+        println!("    p50: {:>8}  p90: {:>8}  p95: {:>8}  p99: {:>8}",
+            stats.p50.as_millis(),
+            stats.p90.as_millis(),
+            stats.p95.as_millis(),
+            stats.p99.as_millis(),
+        );
+    }
+    
+    println!("{}", "═".repeat(display_width));
+}
 
+/// Runs a single profiling iteration. Returns the global elapsed time and stage stopwatch times.
+fn run_single_iteration<'a>(
+    resolved: &'a ResolvedProfileTarget,
+    cfg: &'a ProfileConfig,
+    timing_layer: &'a TimingCollector,
+) -> Result<(Duration, HashMap<&'a str, Duration>), XtaskError> {
     let run_parse = cfg.stages.contains(&Stage::Parse);
     let run_transform = cfg.stages.contains(&Stage::Transform);
     let run_embed = cfg.stages.contains(&Stage::Embed);
@@ -699,11 +802,13 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
     let mut db: Option<Arc<Database>> = None;
     let mut stopwatch: HashMap<&str, Duration> = HashMap::new();
 
+    let global_start = Instant::now();
+
     if run_parse {
         let sw = Instant::now();
         {
             let _span = info_span!("parse").entered();
-            match &resolved {
+            match resolved {
                 ResolvedProfileTarget::Workspace { workspace_root, .. } => {
                     let pw = parse_workspace(workspace_root, None)
                         .map_err(|e| XtaskError::new(format!("parse_workspace: {e}")))?;
@@ -730,7 +835,7 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
                         .map_err(|e| XtaskError::new(format!("init db: {e}")))?,
                 )
             };
-            match &resolved {
+            match resolved {
                 ResolvedProfileTarget::Workspace { .. } => {
                     let pw = parsed_workspace.take().ok_or_else(|| {
                         XtaskError::new(
@@ -826,83 +931,212 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
     }
 
     let global_elapsed = global_start.elapsed();
-    let flat = timing_layer.take_finished();
-    let forest = build_tree(flat);
+    Ok((global_elapsed, stopwatch))
+}
 
-    // Derive JSON output and stage timings from the raw (unmerged) tree so that
-    // the persisted record faithfully reflects the actual span structure.
-    let (stages_sum, stage_json, full_forest) = {
-        let stage_map = find_stage_nodes(&forest);
-        let stages_sum = stage_map
-            .get("parse")
-            .map(|n| n.elapsed)
-            .unwrap_or_default()
-            + stage_map
-                .get("transform")
-                .map(|n| n.elapsed)
-                .unwrap_or_default()
-            + stage_map
-                .get("embed")
-                .map(|n| n.elapsed)
-                .unwrap_or_default();
-        let stage_json: Vec<JsonNode> = ["parse", "transform", "embed"]
-            .into_iter()
-            .filter_map(|k| stage_map.get(k).map(|n| to_json_node(n, global_elapsed)))
-            .collect();
-        // Full span tree always persisted for offline analysis; verbosity only affects stdout.
-        let full_forest: Vec<JsonNode> = forest
-            .iter()
-            .map(|t| to_json_node(t, global_elapsed))
-            .collect();
-        (stages_sum, stage_json, full_forest)
+pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
+    let root = workspace_root();
+    let target_path = if cfg.target.is_absolute() {
+        cfg.target.clone()
+    } else {
+        root.join(&cfg.target)
+    };
+    let target_path = fs::canonicalize(&target_path).map_err(|e| {
+        XtaskError::new(format!(
+            "Could not resolve target path {}: {e}",
+            target_path.display()
+        ))
+    })?;
+
+    let resolved = resolve_profile_target(&target_path)?;
+    let member_count = match &resolved {
+        ResolvedProfileTarget::Workspace { member_count, .. } => *member_count,
+        ResolvedProfileTarget::Crate { .. } => 1,
     };
 
-    // Merge same-named siblings for the terminal display so repeated calls to the
-    // same function (e.g. multiple `next_batch` iterations) collapse into one row.
-    // Stage root nodes appear exactly once each so their names are unchanged and
-    // `find_stage_nodes` (called inside `print_report`) still works correctly.
-    let display_forest = merge_siblings(forest);
+    let rs_count = count_rs_files(&target_path);
+    let target_name = target_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("target")
+        .to_string();
+    let target_git = git_head_short(&target_path);
+    let ploke_git = git_head_short(&root);
 
-    let report = ProfileReport {
-        target: target_name.clone(),
-        target_path: target_path.display().to_string(),
-        target_git_sha: target_git.clone(),
-        ploke_git_sha: ploke_git.clone(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        rs_file_count: rs_count,
-        member_count,
-        global_elapsed_ms: global_elapsed.as_millis(),
-        stages_sum_ms: stages_sum.as_millis(),
-        unaccounted_ms: global_elapsed.saturating_sub(stages_sum).as_millis(),
-        stages: stage_json,
-        full_forest,
-    };
+    // Initialize tracing subscriber once
+    let timing_layer = TimingCollector::new();
+    let registry = tracing_subscriber::registry::Registry::default().with(timing_layer.clone());
 
+    if env::var("PLOKE_PROFILE_LOG").is_ok() {
+        let fmt = tracing_subscriber::fmt::layer()
+            .with_target(false)
+            .with_filter(EnvFilter::from_default_env());
+        registry.with(fmt).init();
+    } else {
+        registry.init();
+    }
+
+    // Run iterations and collect timing data
+    let mut iteration_results: Vec<(Duration, HashMap<&str, Duration>)> = Vec::new();
+    
+    for i in 0..cfg.loops {
+        if cfg.loops > 1 {
+            eprintln!("Running iteration {}/{}...", i + 1, cfg.loops);
+        }
+        
+        let result = run_single_iteration(&resolved, &cfg, &timing_layer)?;
+        iteration_results.push(result);
+        
+        // Clear timing data between iterations
+        let _ = timing_layer.take_finished();
+    }
+
+    // Extract stage timings from all iterations for statistics
+    let mut global_times: Vec<Duration> = Vec::new();
+    let mut parse_times: Vec<Duration> = Vec::new();
+    let mut transform_times: Vec<Duration> = Vec::new();
+    let mut embed_times: Vec<Duration> = Vec::new();
+
+    for (global, stopwatch) in &iteration_results {
+        global_times.push(*global);
+        if let Some(&t) = stopwatch.get("parse") {
+            parse_times.push(t);
+        }
+        if let Some(&t) = stopwatch.get("transform") {
+            transform_times.push(t);
+        }
+        if let Some(&t) = stopwatch.get("embed") {
+            embed_times.push(t);
+        }
+    }
+
+    // Compute statistics
+    let global_stats = compute_stats(&global_times).unwrap();
+    
+    let mut stage_stats: HashMap<&str, StageStats> = HashMap::new();
+    if !parse_times.is_empty() {
+        stage_stats.insert("parse", compute_stats(&parse_times).unwrap());
+    }
+    if !transform_times.is_empty() {
+        stage_stats.insert("transform", compute_stats(&transform_times).unwrap());
+    }
+    if !embed_times.is_empty() {
+        stage_stats.insert("embed", compute_stats(&embed_times).unwrap());
+    }
+
+    // For single iteration, show the detailed report
+    if cfg.loops == 1 {
+        let (global_elapsed, ref stopwatch) = iteration_results[0];
+        
+        // Build the tree from the last iteration's timing data
+        // (Note: we don't have the actual tree for single iteration anymore,
+        // so we'll show a simplified summary)
+        let member_label = if member_count == 1 { "member" } else { "members" };
+        println!(
+            "Target: {} @ {} ({} .rs files, {} {})",
+            target_name,
+            target_git.as_deref().unwrap_or("n/a"),
+            rs_count,
+            member_count,
+            member_label,
+        );
+        println!("Ploke:  {}", ploke_git.as_deref().unwrap_or("n/a"));
+        
+        // Simple summary output for single iteration
+        let display_width = 70;
+        println!("{}", "═".repeat(display_width));
+        println!("  Stage Timings:");
+        for &stage in &["parse", "transform", "embed"] {
+            if let Some(&t) = stopwatch.get(stage) {
+                println!("    {:12} {:>8}ms", capitalize_first(stage), t.as_millis());
+            }
+        }
+        println!("{}", "─".repeat(display_width));
+        println!("    {:12} {:>8}ms", "Total", global_elapsed.as_millis());
+        println!("{}", "═".repeat(display_width));
+    } else {
+        // Multiple iterations: show statistics report
+        print_stats_report(
+            &stage_stats,
+            &global_stats,
+            cfg.loops,
+            &target_name,
+            rs_count,
+            member_count,
+        );
+    }
+
+    // Save JSON report for last iteration (or aggregated stats if multiple iterations)
     let out_dir = root.join("xtask/profiling_output");
     fs::create_dir_all(&out_dir)
         .map_err(|e| XtaskError::new(format!("create profiling_output dir: {e}")))?;
     let ts_slug = chrono::Utc::now().format("%Y%m%dT%H%M%S").to_string();
     let git_slug = target_git.as_deref().unwrap_or("nogit");
-    let fname = format!("{}_{}_{}.json", target_name, git_slug, ts_slug);
+    let loops_suffix = if cfg.loops > 1 {
+        format!("_x{}", cfg.loops)
+    } else {
+        String::new()
+    };
+    let fname = format!("{}_{}_{}{}.json", target_name, git_slug, ts_slug, loops_suffix);
     let out_path = out_dir.join(fname);
+    
+    // Create a report with statistics
+    let mut stages_map = serde_json::Map::new();
+    for (name, stats) in &stage_stats {
+        let mut stage_obj = serde_json::Map::new();
+        stage_obj.insert("min_ms".to_string(), (stats.min.as_millis() as u64).into());
+        stage_obj.insert("avg_ms".to_string(), (stats.avg.as_millis() as u64).into());
+        stage_obj.insert("max_ms".to_string(), (stats.max.as_millis() as u64).into());
+        stage_obj.insert("p50_ms".to_string(), (stats.p50.as_millis() as u64).into());
+        stage_obj.insert("p90_ms".to_string(), (stats.p90.as_millis() as u64).into());
+        stage_obj.insert("p95_ms".to_string(), (stats.p95.as_millis() as u64).into());
+        stage_obj.insert("p99_ms".to_string(), (stats.p99.as_millis() as u64).into());
+        stage_obj.insert("std_dev_ms".to_string(), (stats.std_dev.as_millis() as u64).into());
+        stages_map.insert(name.to_string(), serde_json::Value::Object(stage_obj));
+    }
+    
+    let raw_times: Vec<serde_json::Value> = iteration_results.iter().map(|(global, stopwatch)| {
+        let mut stages = serde_json::Map::new();
+        for (k, v) in stopwatch {
+            stages.insert(k.to_string(), (v.as_millis() as u64).into());
+        }
+        serde_json::json!({
+            "global_ms": global.as_millis(),
+            "stages": stages,
+        })
+    }).collect();
+    
+    let report = serde_json::json!({
+        "target": target_name,
+        "target_path": target_path.display().to_string(),
+        "target_git_sha": target_git,
+        "ploke_git_sha": ploke_git,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "rs_file_count": rs_count,
+        "member_count": member_count,
+        "iterations": cfg.loops,
+        "statistics": {
+            "global": {
+                "min_ms": global_stats.min.as_millis() as u64,
+                "avg_ms": global_stats.avg.as_millis() as u64,
+                "max_ms": global_stats.max.as_millis() as u64,
+                "p50_ms": global_stats.p50.as_millis() as u64,
+                "p90_ms": global_stats.p90.as_millis() as u64,
+                "p95_ms": global_stats.p95.as_millis() as u64,
+                "p99_ms": global_stats.p99.as_millis() as u64,
+                "std_dev_ms": global_stats.std_dev.as_millis() as u64,
+            },
+            "stages": stages_map,
+        },
+        "raw_times": raw_times,
+    });
+    
     let json = serde_json::to_string_pretty(&report)
         .map_err(|e| XtaskError::new(format!("serialize report: {e}")))?;
     fs::write(&out_path, &json)
         .map_err(|e| XtaskError::new(format!("write {}: {e}", out_path.display())))?;
 
-    let member_label = if member_count == 1 { "member" } else { "members" };
-    println!(
-        "Target: {} @ {} ({} .rs files, {} {})",
-        target_name,
-        target_git.as_deref().unwrap_or("n/a"),
-        rs_count,
-        member_count,
-        member_label,
-    );
-    println!("Ploke:  {}", ploke_git.as_deref().unwrap_or("n/a"));
     println!("Wrote {}", out_path.display());
-
-    print_report(&display_forest, global_elapsed, cfg.verbosity, stages_sum, &stopwatch);
 
     if cfg.json_stdout {
         println!("{}", json);

@@ -602,6 +602,22 @@ impl DependencyMap for DevDependencies {
 #[serde(rename = "dev-dependencies")] // Match the TOML key
 pub struct DevDependencies(HashMap<String, DependencySpec>);
 
+/// Represents a `[lib]` target section in Cargo.toml with a custom path.
+#[derive(Deserialize, Debug, Clone)]
+pub struct LibTarget {
+    /// The path to the library root file (e.g., "lib.rs" or "src/lib.rs").
+    pub path: PathBuf,
+}
+
+/// Represents a `[[bin]]` target section in Cargo.toml with a custom path.
+#[derive(Deserialize, Debug, Clone)]
+pub struct BinTarget {
+    /// The name of the binary.
+    pub name: String,
+    /// The path to the binary root file (e.g., "main.rs" or "src/main.rs").
+    pub path: PathBuf,
+}
+
 /// Represents the overall structure of a parsed Cargo.toml manifest.
 #[derive(Deserialize, Debug)]
 pub struct CargoManifest {
@@ -613,7 +629,10 @@ pub struct CargoManifest {
     #[serde(default)]
     #[serde(rename = "dev-dependencies")]
     pub dev_dependencies: DevDependencies,
-    // Add other fields like [lib], [bin] if needed later for module mapping
+    /// The `[lib]` section, if present, containing custom library path configuration.
+    pub lib: Option<LibTarget>,
+    /// The `[[bin]]` sections, if present, containing binary target configurations.
+    pub bin: Option<Vec<BinTarget>>,
 }
 
 /// Context information gathered for a single crate during discovery.

@@ -670,6 +670,7 @@ mod ids {
                 | ItemKind::Macro
                 | ItemKind::Import
                 | ItemKind::ExternCrate => Ok(CanonId::Node(resolved_uuid)),
+                ItemKind::Unresolved => Ok(CanonId::Node(resolved_uuid)), // Unresolved items are still nodes
                 ItemKind::TypeAlias => Ok(CanonId::Type(resolved_uuid)), // Type aliases represent types
             }
         }
@@ -758,6 +759,7 @@ mod ids {
                 | ItemKind::Macro
                 | ItemKind::Import
                 | ItemKind::ExternCrate => Ok(PubPathId::Node(resolved_uuid)),
+                ItemKind::Unresolved => Ok(PubPathId::Node(resolved_uuid)), // Unresolved items are still nodes
                 ItemKind::TypeAlias => Ok(PubPathId::Type(resolved_uuid)),
             }
         }
@@ -852,6 +854,7 @@ pub enum ItemKind {
     Macro,       // Includes declarative (macro_rules!) and procedural macros
     Import, // Represents a specific item within a `use` statement (e.g., `HashMap` in `use std::collections::HashMap`)
     ExternCrate, // Represents an `extern crate` declaration
+    Unresolved, // Represents an item that could not be resolved (e.g., from include! macros)
 }
 
 /// Different kinds of types encountered during parsing.

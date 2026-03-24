@@ -43,7 +43,7 @@ use itertools::Itertools;
 use ploke_core::TypeId;
 
 use colored::*;
-use log::{error, trace}; // Import error macro
+use tracing::{error, trace}; // Import error macro
 use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::TypePath;
@@ -56,8 +56,8 @@ pub struct CodeVisitor<'a> {
     state: &'a mut VisitorState,
 }
 
-const LOG_TARGET_TRACE: &str = "visitor_trace"; // Define log target for trace logs
-const LOG_TARGET_STACK_TRACE: &str = "stack_trace";
+const VISITOR_TARGET_TRACE: &str = "visitor_trace"; // Define log target for trace logs
+const VISITOR_TARGET_STACK_TRACE: &str = "stack_trace";
 
 impl<'a> CodeVisitor<'a> {
     pub fn new(state: &'a mut VisitorState) -> Self {
@@ -125,7 +125,7 @@ impl<'a> CodeVisitor<'a> {
                         item_kind: ItemKind::Import,
                     };
                     // Log the error before returning
-                    error!(target: LOG_TARGET_TRACE, "{}", err);
+                    error!(target: VISITOR_TARGET_TRACE, "{}", err);
                     return Err(err);
                 }
                 // If registration succeeded, unwrap and proceed
@@ -187,7 +187,7 @@ impl<'a> CodeVisitor<'a> {
                         item_name: visible_name.clone(),
                         item_kind: ItemKind::Import,
                     };
-                    error!(target: LOG_TARGET_TRACE, "{}", err);
+                    error!(target: VISITOR_TARGET_TRACE, "{}", err);
                     return Err(err);
                 }
                 let (import_any_id, _) = registration_result.unwrap();
@@ -247,7 +247,7 @@ impl<'a> CodeVisitor<'a> {
                         item_name: glob_name_err_msg.join("::"),
                         item_kind: ItemKind::Import,
                     };
-                    error!(target: LOG_TARGET_TRACE, "{}", err);
+                    error!(target: VISITOR_TARGET_TRACE, "{}", err);
                     return Err(err);
                 }
                 let (import_any_id, _) = registration_result.unwrap();
@@ -330,11 +330,11 @@ impl<'a> CodeVisitor<'a> {
                 })
                 .unwrap_or_else(|| "<None>".to_string());
 
-            trace!(target: LOG_TARGET_TRACE, "{}", "--- Module Stack Debug ---".dimmed());
-            trace!(target: LOG_TARGET_TRACE, "  Current Mod: {} ({})", current_mod.name.cyan(), current_mod.id.to_string().magenta());
-            trace!(target: LOG_TARGET_TRACE, "  Items: [{}]", items_str);
-            trace!(target: LOG_TARGET_TRACE, "  All Modules: {:?}", modules); // Keep this simple for now
-            trace!(target: LOG_TARGET_TRACE, "{}", "--------------------------".dimmed());
+            trace!(target: VISITOR_TARGET_TRACE, "{}", "--- Module Stack Debug ---".dimmed());
+            trace!(target: VISITOR_TARGET_TRACE, "  Current Mod: {} ({})", current_mod.name.cyan(), current_mod.id.to_string().magenta());
+            trace!(target: VISITOR_TARGET_TRACE, "  Items: [{}]", items_str);
+            trace!(target: VISITOR_TARGET_TRACE, "  All Modules: {:?}", modules); // Keep this simple for now
+            trace!(target: VISITOR_TARGET_TRACE, "{}", "--------------------------".dimmed());
         }
     }
 
@@ -358,7 +358,7 @@ impl<'a> CodeVisitor<'a> {
                 })
                 .unwrap_or_else(|| "<None>".to_string());
 
-            trace!(target: LOG_TARGET_STACK_TRACE, "  [PUSH ITEM] Mod: {} -> Item: {} ({}) | Items now: [{}]",
+            trace!(target: VISITOR_TARGET_STACK_TRACE, "  [PUSH ITEM] Mod: {} -> Item: {} ({}) | Items now: [{}]",
                 current_mod.name.cyan(),
                 name.yellow(),
                 pr_id.to_string().magenta(),
@@ -366,13 +366,13 @@ impl<'a> CodeVisitor<'a> {
             );
         } else {
             // Log warning instead of panic
-            log::warn!(target: LOG_TARGET_TRACE, "Could not find containing module for node with name {}, id {}", name, pr_id);
+            tracing::warn!(target: VISITOR_TARGET_TRACE, "Could not find containing module for node with name {}, id {}", name, pr_id);
         }
     }
     // Removed #[cfg(feature = "verbose_debug")]
     fn debug_new_id(&mut self, name: &str, node_id: AnyNodeId) {
         if let Some(current_mod) = self.state.code_graph.modules.last() {
-            trace!(target: LOG_TARGET_TRACE, "  [NEW ID] In Mod: {} -> Item: {} ({})",
+            trace!(target: VISITOR_TARGET_TRACE, "  [NEW ID] In Mod: {} -> Item: {} ({})",
                 current_mod.name.cyan(),
                 name.yellow(),
                 node_id.to_string().magenta()
@@ -381,7 +381,7 @@ impl<'a> CodeVisitor<'a> {
     }
     // Removed #[cfg(feature = "verbose_debug")]
     fn log_push(&self, stack_name: &str, stack: &[String]) {
-        trace!(target: LOG_TARGET_STACK_TRACE, "  [PUSH STACK] {}: {} -> {:?}",
+        trace!(target: VISITOR_TARGET_STACK_TRACE, "  [PUSH STACK] {}: {} -> {:?}",
             stack_name.blue(),
             stack.last().unwrap_or(&"<empty>".to_string()).green(),
             stack
@@ -390,7 +390,7 @@ impl<'a> CodeVisitor<'a> {
 
     // Removed #[cfg(feature = "verbose_debug")]
     fn log_pop(&self, stack_name: &str, popped: Option<String>, stack: &[String]) {
-        trace!(target: LOG_TARGET_STACK_TRACE, "  [POP STACK] {}: {} -> {:?}",
+        trace!(target: VISITOR_TARGET_STACK_TRACE, "  [POP STACK] {}: {} -> {:?}",
             stack_name.blue(),
             popped.unwrap_or("<empty>".to_string()).red(),
             stack
@@ -450,8 +450,8 @@ impl<'a> CodeVisitor<'a> {
                     }
                     ModuleKind::Declaration { .. } => {
                         // Cannot add items to a declaration, log warning
-                        log::warn!(
-                            target: LOG_TARGET_TRACE,
+                        tracing::warn!(
+                            target: VISITOR_TARGET_TRACE,
                             "Attempted to add item '{}' ({:?}) to a module declaration node '{}' ({}). Item not added to list.",
                             item_name, item_kind, parent_mod.name, parent_mod.id
                         );
@@ -461,8 +461,8 @@ impl<'a> CodeVisitor<'a> {
                 }
             }
             None => {
-                log::warn!(
-                target: LOG_TARGET_TRACE,
+                tracing::warn!(
+                target: VISITOR_TARGET_TRACE,
                 "Could not find parent module for item '{}' ({:?}) using current_module_path {:?}. Item not added to module list.",
                 item_name, item_kind, self.state.current_module_path
                 );
@@ -481,7 +481,7 @@ impl<'a> CodeVisitor<'a> {
             .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
                                                           // primary, secondary, associated, etc.
         self.state.current_scope_cfgs = cfgs.to_vec();
-        trace!(target: LOG_TARGET_TRACE, ">>> Entering Primary Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
+        trace!(target: VISITOR_TARGET_TRACE, ">>> Entering Primary Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
     }
 
     /// Helper to push secondary scope and log (using trace!)
@@ -497,7 +497,7 @@ impl<'a> CodeVisitor<'a> {
             .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
                                                           // primary, secondary, associated, etc.
         self.state.current_scope_cfgs = cfgs.to_vec();
-        trace!(target: LOG_TARGET_TRACE, ">>> Entering Secondary Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
+        trace!(target: VISITOR_TARGET_TRACE, ">>> Entering Secondary Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
     }
 
     /// Helper function to push associated scope and log (using trace!)
@@ -513,7 +513,7 @@ impl<'a> CodeVisitor<'a> {
             .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
                                                           // primary, secondary, associated, etc.
         self.state.current_scope_cfgs = cfgs.to_vec();
-        trace!(target: LOG_TARGET_TRACE, ">>> Entering Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
+        trace!(target: VISITOR_TARGET_TRACE, ">>> Entering Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
     }
 
     // Helper to pop scope and log (using trace!)
@@ -522,7 +522,7 @@ impl<'a> CodeVisitor<'a> {
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
                                                                                         // primary, secondary, associated, etc.
-        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Primary Scope: {} ({}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
+        trace!(target: VISITOR_TARGET_TRACE, "<<< Exiting Primary Scope: {} ({}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
             popped_cfgs,
@@ -534,7 +534,7 @@ impl<'a> CodeVisitor<'a> {
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
                                                                                         // primary, secondary, associated, etc.
-        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Secondary Scope: {} ({}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
+        trace!(target: VISITOR_TARGET_TRACE, "<<< Exiting Secondary Scope: {} ({}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
             popped_cfgs,
@@ -550,7 +550,7 @@ impl<'a> CodeVisitor<'a> {
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
                                                                                         // primary, secondary, associated, etc.
-        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Assoc Scope: {} ({:?}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
+        trace!(target: VISITOR_TARGET_TRACE, "<<< Exiting Assoc Scope: {} ({:?}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
             popped_cfgs,
@@ -2172,22 +2172,22 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .current_primary_defn_scope
             .last()
             .is_some_and(|tyid| tyid.kind() == ItemKind::Module);
-        log::trace!(target: "some_target",
+        tracing::trace!(target: "some_target",
             "
 is_in_module_scope: {}
 current_primary_defn_scope is module: {:?}", 
             is_in_module_scope,
             self.state.current_primary_defn_scope.last());
         if !is_in_module_scope {
-            log::trace!(target: "some_target", "
+            tracing::trace!(target: "some_target", "
 use statement primary scope: {:?}
 use statement ident: {:?}
 ", self.state.current_primary_defn_scope, use_item.tree.to_token_stream().to_string());
-            log::trace!(target: "some_target", "use statement : {:?}", self.state.current_primary_defn_scope);
+            tracing::trace!(target: "some_target", "use statement : {:?}", self.state.current_primary_defn_scope);
             return;
         }
         let item_clone = use_item.clone().to_token_stream().to_string();
-        log::trace!("use statement: {}", item_clone);
+        tracing::trace!("use statement: {}", item_clone);
         #[cfg(feature = "cfg_eval")]
         {
             use crate::parser::visitor::attribute_processing::should_include_item;
@@ -2221,7 +2221,7 @@ use statement ident: {:?}
         let imports_result =
             self.process_use_tree(&use_item.tree, base_path, cfg_bytes.as_deref(), &vis_kind);
 
-        log::trace!(target: LOG_TARGET_TRACE, "{:?}", imports_result);
+        tracing::trace!(target: VISITOR_TARGET_TRACE, "{:?}", imports_result);
         // Get a mutable reference to the graph only once
         let graph = &mut self.state.code_graph;
         let current_module_path = &self.state.current_module_path;
@@ -2267,11 +2267,11 @@ use statement ident: {:?}
                 }
                 Err(err) => {
                     // Log the error from process_use_tree, but don't stop parsing
-                    error!(target: LOG_TARGET_TRACE, "Error processing use tree: {}", err);
+                    error!(target: VISITOR_TARGET_TRACE, "Error processing use tree: {}", err);
                 }
             }
         } else {
-            log::warn!(target: LOG_TARGET_TRACE, "Could not find parent module for use statement at path {:?}. Imports not added.", current_module_path);
+            tracing::warn!(target: VISITOR_TARGET_TRACE, "Could not find parent module for use statement at path {:?}. Imports not added.", current_module_path);
         }
         // Continue visiting
         visit::visit_item_use(self, use_item);

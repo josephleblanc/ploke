@@ -71,6 +71,7 @@ impl VisitorState {
                 statics: Vec::new(), // Initialize statics
                 macros: Vec::new(),
                 use_statements: Vec::new(),
+                unresolved_nodes: Vec::new(),
             },
             // New values needed for Uuid generation of Synthetic NodeId/TypeId variants
             crate_namespace,

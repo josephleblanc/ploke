@@ -60,6 +60,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.10"                                                                  # For creating temporary files/dirs in tests
 env_logger = "0.11"                                                                # Add env_logger for test logging
 tracing-subscriber = { workspace = true }
+tracing-appender = "0.2"                                                           # For file-based tracing output
 ploke-test-macros = { path = "../../../proc_macros/syn_parser/ploke-test-macros" } # Add dependency on the
 
 [[bench]]

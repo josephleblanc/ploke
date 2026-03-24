@@ -13,6 +13,9 @@ use syn_parser::{
 // Tracing helper
 // ---------------------------------------------------------------------------
 
+/// Log file directory for test tracing output.
+const LOG_DIR: &str = "/home/brasides/code/ploke/logs";
+
 /// Initialize `tracing-subscriber` for a single test run.
 ///
 /// Captures the log targets that are instrumented in the pipeline:
@@ -20,19 +23,72 @@ use syn_parser::{
 /// - `mod_tree_build` – module-tree construction and pruning stages
 /// - `buggy` / `buggy_c` – crate-context tracking during merge
 ///
+/// Output is written to both:
+/// - Console (via `with_test_writer` for cargo test output)
+/// - Log files in `LOG_DIR` (one file per test invocation with timestamp)
+///
 /// The subscriber is silently ignored if another test in the same process
 /// already initialized it (`try_init` returns `Err` instead of panicking).
 fn init_tracing() {
-    use tracing_subscriber::{fmt, EnvFilter};
+    use std::sync::Arc;
+    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+
+    // Create log directory if it doesn't exist
+    let _ = std::fs::create_dir_all(LOG_DIR);
+
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         // Default: TRACE on the targets we care about, WARN for everything else.
         EnvFilter::new(
-            "debug_dup=trace,mod_tree_build=debug,buggy=trace,buggy_c=debug,warn",
+            "debug_dup=trace,mod_tree_build=trace,buggy=trace,buggy_c=debug,visitor_trace=trace,stack_trace=trace,warn",
         )
     });
-    let _ = fmt::Subscriber::builder()
-        .with_env_filter(filter)
+
+    // File appender for "debug_dup" target
+    let debug_dup_file = tracing_appender::rolling::never(
+        LOG_DIR,
+        format!("debug_dup_{}.log", std::process::id()),
+    );
+    let debug_dup_layer = fmt::layer()
+        .with_writer(debug_dup_file)
+        .with_ansi(false)
+        .with_target(true)
+        .with_level(true)
+        .with_filter(EnvFilter::new("debug_dup=trace"));
+
+    // File appender for "mod_tree_build" target  
+    let mod_tree_file = tracing_appender::rolling::never(
+        LOG_DIR,
+        format!("mod_tree_build_{}.log", std::process::id()),
+    );
+    let mod_tree_layer = fmt::layer()
+        .with_writer(mod_tree_file)
+        .with_ansi(false)
+        .with_target(true)
+        .with_level(true)
+        .with_filter(EnvFilter::new("mod_tree_build=trace"));
+
+    let catchall_file = tracing_appender::rolling::never(
+        LOG_DIR,
+        format!("catchall_{}.log", std::process::id()),
+    );
+
+    let catchall_layer = fmt::layer()
+        .with_writer(catchall_file)
+        .with_ansi(false)
+        .with_target(true)
+        .with_level(true)
+        .with_filter(EnvFilter::new("trace"));
+
+    // Console layer for test output
+    let console_layer = fmt::layer()
         .with_test_writer()
+        .with_filter(filter);
+
+    let _ = tracing_subscriber::registry()
+        .with(debug_dup_layer)
+        .with(mod_tree_layer)
+        .with(catchall_layer)
+        .with(console_layer)
         .try_init();
 }
 
@@ -280,6 +336,7 @@ fn diagnose_prune_counts_serde_github_clone() {
                     | AnyNodeId::Field(_)
                     | AnyNodeId::Param(_)
                     | AnyNodeId::GenericParam(_)
+                    | AnyNodeId::Method(_) // Methods are stored inside Impl/Trait nodes, not top-level
             )
         })
         .collect_vec();
@@ -497,6 +554,7 @@ fn diagnose_phantom_prune_ids_serde_github_clone() {
                     | AnyNodeId::Field(_)
                     | AnyNodeId::Param(_)
                     | AnyNodeId::GenericParam(_)
+                    | AnyNodeId::Method(_) // Methods are stored inside Impl/Trait nodes, not top-level
             )
         })
         .collect_vec();
@@ -546,6 +604,7 @@ fn diagnose_phantom_prune_ids_serde_github_clone() {
             AnyNodeId::Param(_) => "Param",
             AnyNodeId::GenericParam(_) => "GenericParam",
             AnyNodeId::Reexport(_) => "Reexport",
+            AnyNodeId::Unresolved(_) => "Unresolved",
         };
         *by_variant.entry(key).or_default() += 1;
     }
@@ -1246,3 +1305,1191 @@ fn diagnose_serde_crate_root_module() {
     }
 }
 
+
+
+// ===========================================================================
+// parse_workspace tests
+// ===========================================================================
+
+/// Tests `parse_workspace` on the serde workspace fixture.
+///
+/// This test exercises the workspace-level parsing pipeline against the full
+/// serde github clone workspace, which contains multiple members:
+/// - serde
+/// - serde_core
+/// - serde_derive
+/// - serde_derive_internals
+/// - test_suite
+///
+/// The test initializes tracing to capture detailed logs for debugging
+/// parse/merge/tree-building failures that may occur with production code.
+///
+/// Run with: cargo test -p syn_parser --test mod parse_workspace_serde_github_clone -- --nocapture
+#[test]
+#[ignore = "We don't handle parsing macro_rules, which would be required to correctly parse this target"]
+fn parse_workspace_serde_github_clone() {
+    init_tracing();
+
+    use syn_parser::parse_workspace;
+
+    let serde_workspace_path = fixture_github_clones_dir().join("serde");
+
+    eprintln!("\n=== Testing parse_workspace on serde workspace ===");
+    eprintln!("Workspace path: {}", serde_workspace_path.display());
+
+    let result = parse_workspace(&serde_workspace_path, None);
+
+    match &result {
+        Ok(parsed_workspace) => {
+            eprintln!("\nparse_workspace succeeded!");
+            eprintln!("Workspace root: {}", parsed_workspace.workspace.path.display());
+            eprintln!("Number of members: {}", parsed_workspace.workspace.members.len());
+            eprintln!("Number of crates parsed: {}", parsed_workspace.crates.len());
+            
+            for (i, parsed_crate) in parsed_workspace.crates.iter().enumerate() {
+                let root_path = &parsed_crate.crate_context.root_path;
+                let has_graph = parsed_crate.parser_output.merged_graph.is_some();
+                let has_tree = parsed_crate.parser_output.module_tree.is_some();
+                eprintln!(
+                    "  Crate {}: root={} graph={} tree={}",
+                    i,
+                    root_path.display(),
+                    if has_graph { "✓" } else { "✗" },
+                    if has_tree { "✓" } else { "✗" }
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("\nparse_workspace FAILED:\n{e:#?}");
+        }
+    }
+
+    assert!(
+        result.is_ok(),
+        "parse_workspace failed on serde github clone workspace:\n{:#?}",
+        result.err()
+    );
+}
+
+// ===========================================================================
+// Pruning count mismatch diagnostics
+// ===========================================================================
+
+/// Diagnostic test to investigate pruning count mismatches.
+/// 
+/// This test runs with trace-level logging enabled and prints detailed
+/// information about the pruning counts.
+///
+/// Run with: cargo test -p syn_parser --test mod diagnose_prune_count_mismatch_serde -- --nocapture
+#[test]
+fn diagnose_prune_count_mismatch_serde() {
+    // Set up tracing with trace level for debug_dup and mod_tree_build
+    // Logs are written to /home/brasides/code/ploke/logs/
+    init_tracing();
+
+    use syn_parser::{
+        parser::{
+            graph::{GraphNode, ParsedCodeGraph},
+            nodes::{AnyNodeId, AsAnyNodeId},
+        },
+        resolve::PruningResult,
+        GraphAccess,
+    };
+
+    let graphs = collect_serde_graphs();
+    let merged = ParsedCodeGraph::merge_new(graphs).expect("merge_new should succeed for serde");
+
+    let (_, pruning): (_, PruningResult) = merged
+        .build_module_tree()
+        .expect("build_module_tree should succeed for serde");
+
+    // Count by variant
+    let mut by_variant: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
+    for id in &pruning.pruned_item_ids {
+        let key = match id {
+            AnyNodeId::Function(_) => "Function",
+            AnyNodeId::Struct(_) => "Struct",
+            AnyNodeId::Enum(_) => "Enum",
+            AnyNodeId::Union(_) => "Union",
+            AnyNodeId::TypeAlias(_) => "TypeAlias",
+            AnyNodeId::Trait(_) => "Trait",
+            AnyNodeId::Impl(_) => "Impl",
+            AnyNodeId::Const(_) => "Const",
+            AnyNodeId::Static(_) => "Static",
+            AnyNodeId::Macro(_) => "Macro",
+            AnyNodeId::Import(_) => "Import",
+            AnyNodeId::Module(_) => "Module",
+            AnyNodeId::Method(_) => "Method",
+            AnyNodeId::Field(_) => "Field",
+            AnyNodeId::Variant(_) => "Variant",
+            AnyNodeId::Param(_) => "Param",
+            AnyNodeId::GenericParam(_) => "GenericParam",
+            AnyNodeId::Reexport(_) => "Reexport",
+            AnyNodeId::Unresolved(_) => "Unresolved",
+        };
+        *by_variant.entry(key).or_default() += 1;
+    }
+
+    // Count unresolved nodes
+    let unresolved_count = pruning.unresolved_nodes.len();
+    
+    eprintln!("\n=== Pruning Count Diagnostic for serde ===");
+    eprintln!("pruned_item_ids count: {}", pruning.pruned_item_ids.len());
+    eprintln!("unresolved_nodes count: {}", unresolved_count);
+    eprintln!("By variant: {by_variant:#?}");
+    eprintln!("\nUnresolved nodes:");
+    for node in &pruning.unresolved_nodes {
+        eprintln!("  id={} path={:?} reason={:?}", node.id, node.path, node.reason);
+    }
+    
+    // Now test the actual prune function to identify the mismatch
+    eprintln!("\n=== Testing prune() function ===");
+    
+    // Filter out secondary IDs like the prune function does
+    let pruned_item_ids: Vec<AnyNodeId> = pruning
+        .pruned_item_ids
+        .iter()
+        .copied()
+        .filter(|id| {
+            !matches!(
+                id,
+                AnyNodeId::Variant(_)
+                    | AnyNodeId::Field(_)
+                    | AnyNodeId::Param(_)
+                    | AnyNodeId::GenericParam(_)
+            )
+        })
+        .collect();
+    
+    eprintln!("pruned_item_ids after filtering secondary: {}", pruned_item_ids.len());
+    
+    // Count how many of each type are in pruned_item_ids
+    let mut pruned_by_variant: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
+    for id in &pruned_item_ids {
+        let key = match id {
+            AnyNodeId::Function(_) => "Function",
+            AnyNodeId::Struct(_) => "Struct",
+            AnyNodeId::Enum(_) => "Enum",
+            AnyNodeId::Union(_) => "Union",
+            AnyNodeId::TypeAlias(_) => "TypeAlias",
+            AnyNodeId::Trait(_) => "Trait",
+            AnyNodeId::Impl(_) => "Impl",
+            AnyNodeId::Const(_) => "Const",
+            AnyNodeId::Static(_) => "Static",
+            AnyNodeId::Macro(_) => "Macro",
+            AnyNodeId::Import(_) => "Import",
+            AnyNodeId::Module(_) => "Module",
+            AnyNodeId::Method(_) => "Method",
+            AnyNodeId::Field(_) => "Field",
+            AnyNodeId::Variant(_) => "Variant",
+            AnyNodeId::Param(_) => "Param",
+            AnyNodeId::GenericParam(_) => "GenericParam",
+            AnyNodeId::Reexport(_) => "Reexport",
+            AnyNodeId::Unresolved(_) => "Unresolved",
+        };
+        *pruned_by_variant.entry(key).or_default() += 1;
+    }
+    eprintln!("pruned_item_ids by variant: {pruned_by_variant:#?}");
+    
+    // Methods are stored inside Impl/Trait nodes, not in a top-level Vec
+    // So they won't be removed by the retain() calls
+    let method_count = pruned_item_ids.iter().filter(|id| matches!(id, AnyNodeId::Method(_))).count();
+    eprintln!("Method IDs in pruned_item_ids (not in top-level collection): {}", method_count);
+    
+    // Expected actual removals = pruned_item_ids - methods (since methods aren't in top-level Vec)
+    let expected_removals = pruned_item_ids.len() - method_count;
+    eprintln!("Expected actual removals (pruned_item_ids - methods): {}", expected_removals);
+    
+    // Check which IDs in pruned_item_ids are NOT in any top-level collection
+    // These would be "phantom" IDs that can't be removed
+    let all_top_level_ids: std::collections::HashSet<AnyNodeId> = merged
+        .functions()
+        .iter()
+        .map(|n| n.id.as_any())
+        .chain(merged.defined_types().iter().map(|n| n.any_id()))
+        .chain(merged.consts().iter().map(|n| n.id.as_any()))
+        .chain(merged.statics().iter().map(|n| n.id.as_any()))
+        .chain(merged.macros().iter().map(|n| n.id.as_any()))
+        .chain(merged.use_statements().iter().map(|n| n.id.as_any()))
+        .chain(merged.impls().iter().map(|n| n.id.as_any()))
+        .chain(merged.traits().iter().map(|n| n.id.as_any()))
+        .chain(merged.modules().iter().map(|n| n.id.as_any()))
+        .collect();
+    
+    let phantom_ids: Vec<AnyNodeId> = pruned_item_ids
+        .iter()
+        .copied()
+        .filter(|id| !all_top_level_ids.contains(id))
+        .collect();
+    
+    eprintln!("\nPhantom IDs (in pruned_item_ids but not in any top-level collection): {}", phantom_ids.len());
+    
+    // Group phantom IDs by variant
+    let mut phantom_by_variant: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
+    for id in &phantom_ids {
+        let key = match id {
+            AnyNodeId::Function(_) => "Function",
+            AnyNodeId::Struct(_) => "Struct",
+            AnyNodeId::Enum(_) => "Enum",
+            AnyNodeId::Union(_) => "Union",
+            AnyNodeId::TypeAlias(_) => "TypeAlias",
+            AnyNodeId::Trait(_) => "Trait",
+            AnyNodeId::Impl(_) => "Impl",
+            AnyNodeId::Const(_) => "Const",
+            AnyNodeId::Static(_) => "Static",
+            AnyNodeId::Macro(_) => "Macro",
+            AnyNodeId::Import(_) => "Import",
+            AnyNodeId::Module(_) => "Module",
+            AnyNodeId::Method(_) => "Method",
+            AnyNodeId::Field(_) => "Field",
+            AnyNodeId::Variant(_) => "Variant",
+            AnyNodeId::Param(_) => "Param",
+            AnyNodeId::GenericParam(_) => "GenericParam",
+            AnyNodeId::Reexport(_) => "Reexport",
+            AnyNodeId::Unresolved(_) => "Unresolved",
+        };
+        *phantom_by_variant.entry(key).or_default() += 1;
+    }
+    eprintln!("Phantom IDs by variant: {phantom_by_variant:#?}");
+    
+    // The expected difference
+    eprintln!("\nExpected difference (phantom IDs that can't be removed): {}", phantom_ids.len());
+    eprintln!("If phantom count matches the assertion failure difference, we've found the issue!");
+}
+
+
+// ===========================================================================
+// Non-standard crate layout test
+// ===========================================================================
+
+/// Tests that discovery correctly finds the crate root file (lib.rs/main.rs)
+/// even when it is NOT located in the `src/` directory.
+///
+/// The `serde_derive_internals` crate has a non-standard layout where:
+/// - The `lib.rs` file is at the crate root (not in `src/`)
+/// - Additional modules are in `src/` directory
+/// - The `Cargo.toml` specifies `[lib] path = "lib.rs"`
+///
+/// This test will fail if discovery only walks the `src/` directory and
+/// misses the root lib.rs file. When the root file is missed, no graph
+/// will have a `crate_context`, causing `merge_new` to fail validation.
+#[test]
+fn discovery_finds_non_standard_crate_root() {
+    use syn_parser::discovery::run_discovery_phase;
+
+    let crate_path = fixture_github_clones_dir()
+        .join("serde")
+        .join("serde_derive_internals");
+
+    // Verify the fixture has the expected non-standard layout
+    let lib_rs_at_root = crate_path.join("lib.rs").exists();
+    let src_dir = crate_path.join("src");
+    let lib_rs_in_src = src_dir.join("lib.rs").exists();
+    
+    assert!(
+        lib_rs_at_root,
+        "Test fixture setup: lib.rs should exist at crate root for this test"
+    );
+    assert!(
+        !lib_rs_in_src,
+        "Test fixture setup: lib.rs should NOT be in src/ for this test"
+    );
+    assert!(
+        src_dir.join("mod.rs").exists(),
+        "Test fixture setup: src/mod.rs should exist for this test"
+    );
+
+    // Run discovery phase
+    let discovery = run_discovery_phase(None, &[crate_path.clone()])
+        .expect("Discovery should succeed for serde_derive_internals");
+
+    let ctx = discovery
+        .get_crate_context(&crate_path)
+        .expect("CrateContext must be present for serde_derive_internals");
+
+    // Check that lib.rs at the root is included in discovered files
+    let root_lib_rs = crate_path.join("lib.rs");
+    let has_root_lib_rs = ctx.files.iter().any(|p| p == &root_lib_rs);
+    
+    // Check that src/mod.rs is also included
+    let src_mod_rs = src_dir.join("mod.rs");
+    let has_src_mod_rs = ctx.files.iter().any(|p| p == &src_mod_rs);
+
+    // These assertions will fail with the current implementation
+    // because discovery only walks the `src/` directory
+    assert!(
+        has_root_lib_rs,
+        "Discovery must find lib.rs at crate root (non-standard layout). \
+         Files discovered: {:?}",
+        ctx.files
+    );
+    assert!(
+        has_src_mod_rs,
+        "Discovery must find src/mod.rs. \
+         Files discovered: {:?}",
+        ctx.files
+    );
+}
+
+/// Tests that after parsing, at least one graph has the crate context.
+/// This ensures `set_root_context` is called for the root module file.
+#[test]
+fn parse_non_standard_layout_crate_context() {
+    use syn_parser::{
+        discovery::run_discovery_phase,
+        parser::analyze_files_parallel,
+    };
+
+    let crate_path = fixture_github_clones_dir()
+        .join("serde")
+        .join("serde_derive_internals");
+
+    // Phase 1: Discovery
+    let discovery = match run_discovery_phase(None, &[crate_path.clone()]) {
+        Ok(d) => d,
+        Err(e) => {
+            // If discovery fails due to missing src/, skip the test
+            // This will happen until we fix discovery
+            eprintln!("Discovery failed (expected until fix is implemented): {e}");
+            return;
+        }
+    };
+
+    // Phase 2: Parse files
+    let results = analyze_files_parallel(&discovery, 0);
+    let graphs: Vec<ParsedCodeGraph> = results
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect();
+
+    // Count how many graphs have crate context
+    let graphs_with_context = graphs
+        .iter()
+        .filter(|g| g.crate_context.is_some())
+        .count();
+
+    // At least one graph (the root lib.rs) should have crate context
+    assert!(
+        graphs_with_context >= 1,
+        "At least one graph must have crate_context (from root lib.rs), \
+         but found {} graphs with context out of {} total graphs. \
+         This indicates discovery did not find the root lib.rs file.",
+        graphs_with_context,
+        graphs.len()
+    );
+}
+
+
+// ===========================================================================
+// NEW Diagnostic tests for prune count mismatch
+// ===========================================================================
+
+/// Comprehensive diagnostic showing exactly which items cause the prune count mismatch.
+///
+/// This test prints:
+/// 1. Items in pruned_item_ids but NOT found in graph (should be empty)
+/// 2. Items in pruned_item_ids FOUND in graph (these were supposed to be removed)
+/// 3. Items NOT in pruned_item_ids but WERE ACTUALLY REMOVED (orphan methods)
+/// 4. Summary of which impl/trait blocks own the orphan methods
+#[test]
+#[ignore = "We don't handle parsing macro_rules, which would be required to correctly parse this target"]
+fn detailed_prune_mismatch_analysis() {
+    init_tracing();
+
+    use itertools::Itertools;
+    use syn_parser::{
+        parser::{
+            graph::{GraphNode, ParsedCodeGraph},
+            nodes::{AnyNodeId, AsAnyNodeId},
+        },
+        resolve::PruningResult,
+        GraphAccess,
+    };
+
+    let graphs = collect_serde_graphs();
+    let merged = ParsedCodeGraph::merge_new(graphs).expect("merge_new should succeed for serde");
+
+    let (_, pruning): (_, PruningResult) = merged
+        .build_module_tree()
+        .expect("build_module_tree should succeed for serde");
+
+    // Filter out secondary IDs
+    let pruned_item_ids: Vec<AnyNodeId> = pruning
+        .pruned_item_ids
+        .iter()
+        .copied()
+        .filter(|id| {
+            !matches!(
+                id,
+                AnyNodeId::Variant(_)
+                    | AnyNodeId::Field(_)
+                    | AnyNodeId::Param(_)
+                    | AnyNodeId::GenericParam(_)
+            )
+        })
+        .collect_vec();
+
+    // Build a map of all top-level node IDs to their names
+    let mut node_info: std::collections::HashMap<AnyNodeId, String> = std::collections::HashMap::new();
+    
+    for n in merged.functions() {
+        node_info.insert(n.id.as_any(), format!("fn {}", n.name));
+    }
+    for n in merged.defined_types() {
+        node_info.insert(n.any_id(), format!("type {}", n.name()));
+    }
+    for n in merged.consts() {
+        node_info.insert(n.id.as_any(), format!("const {}", n.name));
+    }
+    for n in merged.statics() {
+        node_info.insert(n.id.as_any(), format!("static {}", n.name));
+    }
+    for n in merged.macros() {
+        node_info.insert(n.id.as_any(), format!("macro {}", n.name));
+    }
+    for n in merged.use_statements() {
+        node_info.insert(n.id.as_any(), format!("use {}", n.visible_name));
+    }
+    for n in merged.impls() {
+        node_info.insert(n.id.as_any(), format!("impl {}", n.name()));
+    }
+    for n in merged.traits() {
+        node_info.insert(n.id.as_any(), format!("trait {}", n.name));
+    }
+    for n in merged.modules() {
+        node_info.insert(n.id.as_any(), format!("mod {}", n.name));
+    }
+
+    // Collect method info from impls and traits
+    let mut method_info: std::collections::HashMap<AnyNodeId, (String, String)> = std::collections::HashMap::new();
+    for imp in merged.impls() {
+        for m in &imp.methods {
+            method_info.insert(
+                m.id.as_any(),
+                (format!("method {}", m.name), format!("impl {}", imp.name()))
+            );
+        }
+    }
+    for tr in merged.traits() {
+        for m in &tr.methods {
+            method_info.insert(
+                m.id.as_any(),
+                (format!("method {}", m.name), format!("trait {}", tr.name))
+            );
+        }
+    }
+
+    // Categorize pruned_item_ids
+    let mut found_in_graph: Vec<(AnyNodeId, String)> = Vec::new();
+    let mut not_in_graph: Vec<AnyNodeId> = Vec::new();
+    
+    for id in &pruned_item_ids {
+        if let Some(name) = node_info.get(id) {
+            found_in_graph.push((*id, name.clone()));
+        } else if let Some((name, container)) = method_info.get(id) {
+            // Method in pruned_item_ids - this is unusual
+            found_in_graph.push((*id, format!("{} (in {})", name, container)));
+        } else {
+            not_in_graph.push(*id);
+        }
+    }
+
+    // Count methods that would be removed (orphan methods)
+    let mut orphan_methods: Vec<(AnyNodeId, String, String)> = Vec::new();
+    let removed_impl_ids: std::collections::HashSet<AnyNodeId> = pruned_item_ids
+        .iter()
+        .filter(|id| matches!(id, AnyNodeId::Impl(_)))
+        .copied()
+        .collect();
+    let removed_trait_ids: std::collections::HashSet<AnyNodeId> = pruned_item_ids
+        .iter()
+        .filter(|id| matches!(id, AnyNodeId::Trait(_)))
+        .copied()
+        .collect();
+
+    for imp in merged.impls() {
+        if removed_impl_ids.contains(&imp.id.as_any()) {
+            for m in &imp.methods {
+                let method_any_id = m.id.as_any();
+                if !pruned_item_ids.contains(&method_any_id) {
+                    orphan_methods.push((
+                        method_any_id,
+                        m.name.clone(),
+                        format!("impl {}", imp.name())
+                    ));
+                }
+            }
+        }
+    }
+
+    for tr in merged.traits() {
+        if removed_trait_ids.contains(&tr.id.as_any()) {
+            for m in &tr.methods {
+                let method_any_id = m.id.as_any();
+                if !pruned_item_ids.contains(&method_any_id) {
+                    orphan_methods.push((
+                        method_any_id,
+                        m.name.clone(),
+                        format!("trait {}", tr.name)
+                    ));
+                }
+            }
+        }
+    }
+
+    // Print detailed report
+    eprintln!("\n========== PRUNE MISMATCH ANALYSIS ==========\n");
+    
+    eprintln!("Summary:");
+    eprintln!("  pruned_item_ids (non-secondary): {}", pruned_item_ids.len());
+    eprintln!("  found in graph: {}", found_in_graph.len());
+    eprintln!("  NOT in graph (phantom): {}", not_in_graph.len());
+    eprintln!("  orphan methods (removed but NOT in pruned_item_ids): {}", orphan_methods.len());
+    eprintln!("  expected total_count_diff: {}", pruned_item_ids.len() + orphan_methods.len());
+    eprintln!();
+
+    // Show first 20 found items
+    eprintln!("--- Sample of items in pruned_item_ids that ARE in graph (first 20) ---");
+    for (id, name) in found_in_graph.iter().take(20) {
+        eprintln!("  {:?} | {}", id, name);
+    }
+    if found_in_graph.len() > 20 {
+        eprintln!("  ... and {} more", found_in_graph.len() - 20);
+    }
+    eprintln!();
+
+    // Show orphan methods grouped by container
+    eprintln!("--- Orphan methods (in removed impls/traits but NOT in pruned_item_ids) ---");
+    eprintln!("  Total orphan methods: {}", orphan_methods.len());
+    eprintln!();
+
+    // Group by container
+    let mut by_container: std::collections::HashMap<String, Vec<(AnyNodeId, String)>> = std::collections::HashMap::new();
+    for (id, name, container) in &orphan_methods {
+        by_container.entry(container.clone())
+            .or_default()
+            .push((*id, name.clone()));
+    }
+
+    // Show impls/traits with most orphan methods
+    let mut container_counts: Vec<(String, usize)> = by_container.iter()
+        .map(|(k, v)| (k.clone(), v.len()))
+        .collect();
+    container_counts.sort_by(|a, b| b.1.cmp(&a.1));
+
+    eprintln!("  Top containers by orphan method count:");
+    for (container, count) in container_counts.iter().take(10) {
+        eprintln!("    {}: {} methods", container, count);
+    }
+    eprintln!();
+
+    // Show sample orphan methods from the top container
+    if let Some((top_container, _)) = container_counts.first() {
+        eprintln!("  Sample orphan methods from {} (first 10):", top_container);
+        if let Some(methods) = by_container.get(top_container) {
+            for (id, name) in methods.iter().take(10) {
+                eprintln!("    {:?} | {}", id, name);
+            }
+        }
+    }
+    eprintln!();
+
+    // Show phantom IDs (should be empty)
+    if !not_in_graph.is_empty() {
+        eprintln!("--- WARNING: Phantom IDs (in pruned_item_ids but NOT in graph) ---");
+        for id in &not_in_graph {
+            eprintln!("  {:?}", id);
+        }
+    }
+
+    eprintln!("========== END ANALYSIS ==========\n");
+
+    // The key assertion: orphan methods should explain the entire difference
+    assert!(
+        orphan_methods.len() > 0,
+        "Expected orphan methods to explain the count mismatch. If this is 0, there's another bug."
+    );
+}
+
+/// Identifies the specific impl and trait blocks that contain orphan methods.
+///
+/// This test lists every impl/trait that is being pruned, along with:
+/// - Number of methods in the impl/trait
+/// - Number of those methods that are NOT in pruned_item_ids (orphans)
+/// - The file path of the impl/trait
+#[test]
+fn identify_impls_and_traits_with_orphan_methods() {
+    init_tracing();
+
+    use itertools::Itertools;
+    use syn_parser::{
+        parser::{
+            graph::{GraphNode, ParsedCodeGraph},
+            nodes::{AnyNodeId, AsAnyNodeId},
+        },
+        resolve::PruningResult,
+        GraphAccess,
+    };
+
+    let graphs = collect_serde_graphs();
+    let merged = ParsedCodeGraph::merge_new(graphs).expect("merge_new should succeed for serde");
+
+    let (_, pruning): (_, PruningResult) = merged
+        .build_module_tree()
+        .expect("build_module_tree should succeed for serde");
+
+    let pruned_item_ids: std::collections::HashSet<AnyNodeId> = pruning
+        .pruned_item_ids
+        .iter()
+        .copied()
+        .collect();
+
+    eprintln!("\n========== IMPLS AND TRAITS WITH ORPHAN METHODS ==========\n");
+
+    // Analyze impls
+    eprintln!("--- Impl Blocks ---");
+    let mut total_impl_orphans = 0;
+    let mut impls_with_orphans = 0;
+
+    for imp in merged.impls() {
+        let imp_id = imp.id.as_any();
+        if !pruned_item_ids.contains(&imp_id) {
+            continue; // This impl is not being pruned
+        }
+
+        let total_methods = imp.methods.len();
+        let orphan_methods: Vec<_> = imp.methods.iter()
+            .filter(|m| !pruned_item_ids.contains(&m.id.as_any()))
+            .map(|m| &m.name)
+            .collect();
+
+        if !orphan_methods.is_empty() {
+            eprintln!("\n  Impl: {}", imp.name());
+            eprintln!("    Total methods: {}", total_methods);
+            eprintln!("    Orphan methods: {} ({}%)", 
+                orphan_methods.len(),
+                (orphan_methods.len() * 100) / total_methods
+            );
+            eprintln!("    Method names: {:?}", orphan_methods);
+            total_impl_orphans += orphan_methods.len();
+            impls_with_orphans += 1;
+        }
+    }
+
+    eprintln!("\n  Summary: {} impls with orphans, {} total orphan methods", 
+        impls_with_orphans, total_impl_orphans);
+
+    // Analyze traits
+    eprintln!("\n--- Trait Blocks ---");
+    let mut total_trait_orphans = 0;
+    let mut traits_with_orphans = 0;
+
+    for tr in merged.traits() {
+        let tr_id = tr.id.as_any();
+        if !pruned_item_ids.contains(&tr_id) {
+            continue; // This trait is not being pruned
+        }
+
+        let total_methods = tr.methods.len();
+        let orphan_methods: Vec<_> = tr.methods.iter()
+            .filter(|m| !pruned_item_ids.contains(&m.id.as_any()))
+            .map(|m| &m.name)
+            .collect();
+
+        if !orphan_methods.is_empty() {
+            eprintln!("\n  Trait: {}", tr.name);
+            eprintln!("    Total methods: {}", total_methods);
+            eprintln!("    Orphan methods: {} ({}%)", 
+                orphan_methods.len(),
+                (orphan_methods.len() * 100) / total_methods
+            );
+            eprintln!("    Method names: {:?}", orphan_methods);
+            total_trait_orphans += orphan_methods.len();
+            traits_with_orphans += 1;
+        }
+    }
+
+    eprintln!("\n  Summary: {} traits with orphans, {} total orphan methods", 
+        traits_with_orphans, total_trait_orphans);
+
+    let total_orphans = total_impl_orphans + total_trait_orphans;
+    eprintln!("\n========== TOTAL ==========");
+    eprintln!("  Total orphan methods: {}", total_orphans);
+    eprintln!("  Impl orphans: {} ({}%)", total_impl_orphans, 
+        if total_orphans > 0 { (total_impl_orphans * 100) / total_orphans } else { 0 });
+    eprintln!("  Trait orphans: {} ({}%)", total_trait_orphans,
+        if total_orphans > 0 { (total_trait_orphans * 100) / total_orphans } else { 0 });
+    eprintln!("===========================\n");
+}
+
+
+// ===========================================================================
+// Targeted diagnostic for the 13-item mismatch (1001 vs 988)
+// ===========================================================================
+
+/// Identifies the exact 13 items causing the count mismatch.
+///
+/// The assertion failure shows:
+///   left: 1001 (total_count_diff - items actually removed)
+///   right: 988 (pruned_item_ids.len() - items expected to be removed)
+///
+/// This test identifies:
+/// 1. Which items are counted in total_count_diff but NOT in pruned_item_ids
+/// 2. The names and types of these items
+#[test]
+fn identify_the_13_missing_items() {
+    init_tracing();
+
+    use itertools::Itertools;
+    use syn_parser::{
+        parser::{
+            graph::{GraphNode, ParsedCodeGraph},
+            nodes::{AnyNodeId, AsAnyNodeId},
+        },
+        resolve::PruningResult,
+        GraphAccess,
+    };
+
+    let graphs = collect_serde_graphs();
+    let merged = ParsedCodeGraph::merge_new(graphs).expect("merge_new should succeed for serde");
+
+    let (_, pruning): (_, PruningResult) = merged
+        .build_module_tree()
+        .expect("build_module_tree should succeed for serde");
+
+    // Get the filtered pruned_item_ids (same as prune() function)
+    let pruned_item_initial = pruning.pruned_item_ids.len();
+    let pruned_item_ids: Vec<AnyNodeId> = pruning
+        .pruned_item_ids
+        .iter()
+        .copied()
+        .filter(|id| {
+            !matches!(
+                id,
+                AnyNodeId::Variant(_)
+                    | AnyNodeId::Field(_)
+                    | AnyNodeId::Param(_)
+                    | AnyNodeId::GenericParam(_)
+            )
+        })
+        .collect_vec();
+
+    eprintln!("\n========== THE 13 MISSING ITEMS ANALYSIS ==========\n");
+    eprintln!("Initial pruned_item_ids: {}", pruned_item_initial);
+    eprintln!("After filtering secondary IDs: {}", pruned_item_ids.len());
+    eprintln!("Expected mismatch (from previous test): 13 items");
+    eprintln!();
+
+    // Count by variant
+    let method_ids_in_pruned: Vec<_> = pruned_item_ids.iter()
+        .filter(|id| matches!(id, AnyNodeId::Method(_)))
+        .copied()
+        .collect();
+
+    eprintln!("Method IDs in pruned_item_ids: {}", method_ids_in_pruned.len());
+    eprintln!();
+
+    // Now simulate the pruning to find what would be removed
+    // Count items removed from each category
+    let funcs_removed = merged.functions().iter()
+        .filter(|n| pruned_item_ids.contains(&n.id.as_any()))
+        .count();
+    let types_removed = merged.defined_types().iter()
+        .filter(|n| pruned_item_ids.contains(&n.any_id()))
+        .count();
+    let consts_removed = merged.consts().iter()
+        .filter(|n| pruned_item_ids.contains(&n.id.as_any()))
+        .count();
+    let statics_removed = merged.statics().iter()
+        .filter(|n| pruned_item_ids.contains(&n.id.as_any()))
+        .count();
+    let macros_removed = merged.macros().iter()
+        .filter(|n| pruned_item_ids.contains(&n.id.as_any()))
+        .count();
+    let use_removed = merged.use_statements().iter()
+        .filter(|n| pruned_item_ids.contains(&n.id.as_any()))
+        .count();
+    let impls_removed = merged.impls().iter()
+        .filter(|n| pruned_item_ids.contains(&n.id.as_any()))
+        .count();
+    let traits_removed = merged.traits().iter()
+        .filter(|n| pruned_item_ids.contains(&n.id.as_any()))
+        .count();
+
+    // For methods, count in removed impls/traits
+    let methods_before: usize = merged.impls().iter().flat_map(|i| i.methods.iter())
+        .chain(merged.traits().iter().flat_map(|t| t.methods.iter()))
+        .count();
+    let methods_after: usize = merged.impls().iter()
+        .filter(|n| !pruned_item_ids.contains(&n.id.as_any()))
+        .flat_map(|i| i.methods.iter())
+        .chain(
+            merged.traits().iter()
+                .filter(|n| !pruned_item_ids.contains(&n.id.as_any()))
+                .flat_map(|t| t.methods.iter())
+        )
+        .count();
+    let methods_removed = methods_before - methods_after;
+
+    // Non-file modules
+    let nonfile_mods_removed = merged.modules().iter()
+        .filter(|m| !m.is_file_based())
+        .filter(|m| pruned_item_ids.contains(&m.id.as_any()))
+        .count();
+
+    let total_simulated = funcs_removed + types_removed + consts_removed + statics_removed
+        + macros_removed + use_removed + impls_removed + traits_removed
+        + methods_removed + nonfile_mods_removed;
+
+    eprintln!("--- Simulated removal counts ---");
+    eprintln!("  Functions: {}", funcs_removed);
+    eprintln!("  Defined Types: {}", types_removed);
+    eprintln!("  Consts: {}", consts_removed);
+    eprintln!("  Statics: {}", statics_removed);
+    eprintln!("  Macros: {}", macros_removed);
+    eprintln!("  Use Statements: {}", use_removed);
+    eprintln!("  Impls: {}", impls_removed);
+    eprintln!("  Traits: {}", traits_removed);
+    eprintln!("  Methods (from removed impls/traits): {}", methods_removed);
+    eprintln!("  Non-file Modules: {}", nonfile_mods_removed);
+    eprintln!("  TOTAL: {}", total_simulated);
+    eprintln!("  pruned_item_ids.len(): {}", pruned_item_ids.len());
+    eprintln!("  DIFFERENCE: {}", total_simulated as i64 - pruned_item_ids.len() as i64);
+    eprintln!();
+
+    // Now check: are the method IDs in pruned_item_ids ACTUALLY in the graph?
+    let method_ids_in_graph: Vec<_> = merged.impls().iter()
+        .flat_map(|i| i.methods.iter().map(|m| (m.id.as_any(), &m.name, format!("impl {}", i.name()))))
+        .chain(
+            merged.traits().iter()
+                .flat_map(|t| t.methods.iter().map(|m| (m.id.as_any(), &m.name, format!("trait {}", t.name))))
+        )
+        .collect();
+
+    let method_id_set: std::collections::HashSet<_> = method_ids_in_graph.iter()
+        .map(|(id, _, _)| *id)
+        .collect();
+
+    let method_ids_in_pruned_not_in_graph: Vec<_> = method_ids_in_pruned.iter()
+        .filter(|id| !method_id_set.contains(id))
+        .collect();
+
+    eprintln!("--- Method ID verification ---");
+    eprintln!("  Method IDs in pruned_item_ids: {}", method_ids_in_pruned.len());
+    eprintln!("  Method IDs in graph: {}", method_id_set.len());
+    eprintln!("  Method IDs in pruned but NOT in graph: {}", method_ids_in_pruned_not_in_graph.len());
+    eprintln!();
+
+    // The key question: are the Method IDs in pruned_item_ids actually present in the graph?
+    // If they ARE present, they should be removed by the retain calls
+    // If they are NOT present, they're "phantom" method IDs
+
+    let mut phantom_method_ids = Vec::new();
+    let mut real_method_ids_in_pruned = Vec::new();
+
+    for id in &method_ids_in_pruned {
+        if let Some((_, name, container)) = method_ids_in_graph.iter()
+            .find(|(mid, _, _)| mid == id) {
+            real_method_ids_in_pruned.push((id, name.clone(), container.clone()));
+        } else {
+            phantom_method_ids.push(id);
+        }
+    }
+
+    eprintln!("--- Method ID classification ---");
+    eprintln!("  Real method IDs in pruned_item_ids: {}", real_method_ids_in_pruned.len());
+    eprintln!("  Phantom method IDs: {}", phantom_method_ids.len());
+    eprintln!();
+
+    if !phantom_method_ids.is_empty() {
+        eprintln!("  WARNING: Phantom method IDs found:");
+        for id in &phantom_method_ids {
+            eprintln!("    {:?}", id);
+        }
+    }
+
+    // The key insight: methods are stored INSIDE impls/traits
+    // When an impl is removed, its methods are gone too
+    // So the "removed count" includes: 1 (for the impl) + N (for its methods)
+    // But pruned_item_ids might contain: 1 (for the impl) + N (for the method IDs)
+    // These should match! If they don't, there's a bug.
+
+    // Let's check if there are impls/trait IDs in pruned_item_ids that don't exist in the graph
+    let impl_id_set: std::collections::HashSet<_> = merged.impls().iter()
+        .map(|i| i.id.as_any())
+        .collect();
+    let trait_id_set: std::collections::HashSet<_> = merged.traits().iter()
+        .map(|t| t.id.as_any())
+        .collect();
+
+    let impl_ids_in_pruned: Vec<_> = pruned_item_ids.iter()
+        .filter(|id| matches!(id, AnyNodeId::Impl(_)))
+        .collect();
+    let trait_ids_in_pruned: Vec<_> = pruned_item_ids.iter()
+        .filter(|id| matches!(id, AnyNodeId::Trait(_)))
+        .collect();
+
+    let phantom_impl_ids: Vec<_> = impl_ids_in_pruned.iter()
+        .filter(|id| !impl_id_set.contains(id))
+        .collect();
+    let phantom_trait_ids: Vec<_> = trait_ids_in_pruned.iter()
+        .filter(|id| !trait_id_set.contains(id))
+        .collect();
+
+    eprintln!("--- Impl/Trait phantom check ---");
+    eprintln!("  Impl IDs in pruned: {}, phantom: {}", impl_ids_in_pruned.len(), phantom_impl_ids.len());
+    eprintln!("  Trait IDs in pruned: {}, phantom: {}", trait_ids_in_pruned.len(), phantom_trait_ids.len());
+    eprintln!();
+
+    eprintln!("========== END ANALYSIS ==========\n");
+}
+
+/// Counts exact module IDs in pruned_item_ids
+#[test]
+fn count_modules_in_pruned_ids() {
+    init_tracing();
+
+    use itertools::Itertools;
+    use syn_parser::{
+        parser::{
+            graph::ParsedCodeGraph,
+            nodes::{AnyNodeId, AsAnyNodeId},
+        },
+        resolve::PruningResult,
+        GraphAccess,
+    };
+
+    let graphs = collect_serde_graphs();
+    let merged = ParsedCodeGraph::merge_new(graphs).expect("merge_new should succeed for serde");
+
+    let (_, pruning): (_, PruningResult) = merged
+        .build_module_tree()
+        .expect("build_module_tree should succeed for serde");
+
+    // Filter out secondary IDs
+    let pruned_item_ids: Vec<AnyNodeId> = pruning
+        .pruned_item_ids
+        .iter()
+        .copied()
+        .filter(|id| {
+            !matches!(
+                id,
+                AnyNodeId::Variant(_)
+                    | AnyNodeId::Field(_)
+                    | AnyNodeId::Param(_)
+                    | AnyNodeId::GenericParam(_)
+            )
+        })
+        .collect_vec();
+
+    let module_ids: Vec<_> = pruned_item_ids.iter()
+        .filter(|id| matches!(id, AnyNodeId::Module(_)))
+        .collect();
+
+    eprintln!("\n=== Module IDs in pruned_item_ids ===");
+    eprintln!("Total: {}", module_ids.len());
+    for id in &module_ids {
+        // Find the module name
+        if let Some(m) = merged.modules().iter().find(|m| m.id.as_any() == **id) {
+            let file_path = m.file_path().map(|p| p.display().to_string()).unwrap_or_else(|| "<inline>".to_string());
+            eprintln!("  {:?} - {} (file_based: {}, path: {})", id, m.name, m.is_file_based(), file_path);
+        } else {
+            eprintln!("  {:?} - <not found in graph>", id);
+        }
+    }
+    eprintln!("=====================================\n");
+}
+
+
+/// Analyzes the differences between pruned_module_ids and pruned_item_ids
+/// to understand which modules are in one set but not the other.
+///
+/// For each item that is in pruned_module_ids but not in pruned_item_ids,
+/// and for every item that is in pruned_item_ids but not in pruned_module_ids:
+/// 1. Print the module path of that item
+/// 2. Print the file path of that item
+/// 3. Print whether that item is file-based or not file-based
+/// 4. Print if that item has Contains, Imports, or ResolvesToModule relations
+#[test]
+fn analyze_pruned_module_vs_item_ids_serde() {
+    init_tracing();
+
+    use syn_parser::{
+        parser::{
+            graph::ParsedCodeGraph,
+            nodes::{AnyNodeId, AsAnyNodeId},
+            relations::SyntacticRelation,
+        },
+        resolve::{RelationIndexer, TreeRelation},
+        GraphAccess,
+    };
+
+    let graphs = collect_serde_graphs();
+    let merged = ParsedCodeGraph::merge_new(graphs).expect("merge_new should succeed for serde");
+
+    let (tree, pruning) = merged
+        .build_module_tree()
+        .expect("build_module_tree should succeed for serde");
+
+    // Convert pruned_module_ids to AnyNodeId for comparison
+    let pruned_module_ids_any: std::collections::HashSet<AnyNodeId> = pruning
+        .pruned_module_ids
+        .iter()
+        .map(|id| id.as_any())
+        .collect();
+
+    // Items in pruned_module_ids but NOT in pruned_item_ids
+    let in_modules_not_items: Vec<AnyNodeId> = pruned_module_ids_any
+        .iter()
+        .copied()
+        .filter(|id| !pruning.pruned_item_ids.contains(id))
+        .collect();
+
+    // Items in pruned_item_ids but NOT in pruned_module_ids  
+    let in_items_not_modules: Vec<AnyNodeId> = pruning
+        .pruned_item_ids
+        .iter()
+        .copied()
+        .filter(|id| !pruned_module_ids_any.contains(id))
+        .collect();
+
+    eprintln!("\n========================================");
+    eprintln!("ANALYSIS: pruned_module_ids vs pruned_item_ids");
+    eprintln!("========================================");
+    eprintln!("Total pruned_module_ids: {}", pruning.pruned_module_ids.len());
+    eprintln!("Total pruned_item_ids: {}", pruning.pruned_item_ids.len());
+    eprintln!();
+
+    // Print items in pruned_module_ids but NOT in pruned_item_ids
+    eprintln!("--- Items in pruned_module_ids but NOT in pruned_item_ids ({}) ---", in_modules_not_items.len());
+    for id in &in_modules_not_items {
+        if let AnyNodeId::Module(module_id) = id {
+            if let Some(m) = merged.modules().iter().find(|m| &m.id == module_id) {
+                let file_path = m.file_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<inline>".to_string());
+                
+                // Get relations from tree
+                let mut has_contains = false;
+                let mut has_module_imports = false;
+                if let Some(iter) = tree.get_iter_relations_from(id) {
+                    for tr in iter {
+                        if matches!(tr.rel(), SyntacticRelation::Contains { .. }) {
+                            has_contains = true;
+                        }
+                        if matches!(tr.rel(), SyntacticRelation::ModuleImports { .. }) {
+                            has_module_imports = true;
+                        }
+                    }
+                }
+                let mut has_resolves_to = false;
+                for tr in tree.get_iter_relations_to(id) {
+                    if matches!(tr.rel(), 
+                        SyntacticRelation::ResolvesToDefinition { .. } | 
+                        SyntacticRelation::CustomPath { .. }) {
+                        has_resolves_to = true;
+                    }
+                }
+                
+                eprintln!("  Module: {} (id: {:?})", m.name, module_id);
+                eprintln!("    - Path: {}", m.path().join("::"));
+                eprintln!("    - File: {}", file_path);
+                eprintln!("    - File-based: {}", m.is_file_based());
+                eprintln!("    - Has Contains relations: {}", has_contains);
+                eprintln!("    - Has ModuleImports relations: {}", has_module_imports);
+                eprintln!("    - Has ResolvesToDefinition/CustomPath TO it: {}", has_resolves_to);
+                eprintln!();
+            } else {
+                eprintln!("  {:?} - <module not found in graph>", id);
+            }
+        } else {
+            eprintln!("  {:?} - <not a module id>", id);
+        }
+    }
+
+    // Print items in pruned_item_ids but NOT in pruned_module_ids
+    eprintln!("--- Items in pruned_item_ids but NOT in pruned_module_ids ({}) ---", in_items_not_modules.len());
+    
+    // Group by type for readability
+    let module_ids: Vec<_> = in_items_not_modules.iter()
+        .filter(|id| matches!(id, AnyNodeId::Module(_)))
+        .collect();
+    let other_ids: Vec<_> = in_items_not_modules.iter()
+        .filter(|id| !matches!(id, AnyNodeId::Module(_)))
+        .collect();
+    
+    eprintln!("  MODULES in this category: {}", module_ids.len());
+    for id in &module_ids {
+        if let AnyNodeId::Module(module_id) = id {
+            if let Some(m) = merged.modules().iter().find(|m| &m.id == module_id) {
+                let file_path = m.file_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<inline>".to_string());
+                
+                let mut has_contains = false;
+                let mut has_module_imports = false;
+                if let Some(iter) = tree.get_iter_relations_from(id) {
+                    for tr in iter {
+                        if matches!(tr.rel(), SyntacticRelation::Contains { .. }) {
+                            has_contains = true;
+                        }
+                        if matches!(tr.rel(), SyntacticRelation::ModuleImports { .. }) {
+                            has_module_imports = true;
+                        }
+                    }
+                }
+                let mut has_resolves_to = false;
+                for tr in tree.get_iter_relations_to(id) {
+                    if matches!(tr.rel(), 
+                        SyntacticRelation::ResolvesToDefinition { .. } | 
+                        SyntacticRelation::CustomPath { .. }) {
+                        has_resolves_to = true;
+                    }
+                }
+                
+                eprintln!("    Module: {} (id: {:?})", m.name, module_id);
+                eprintln!("      - Path: {}", m.path().join("::"));
+                eprintln!("      - File: {}", file_path);
+                eprintln!("      - File-based: {}", m.is_file_based());
+                eprintln!("      - Has Contains relations: {}", has_contains);
+                eprintln!("      - Has ModuleImports relations: {}", has_module_imports);
+                eprintln!("      - Has ResolvesToDefinition/CustomPath TO it: {}", has_resolves_to);
+                eprintln!();
+            }
+        }
+    }
+    
+    eprintln!("  NON-MODULE items in this category: {}", other_ids.len());
+    // Show counts by type
+    use std::collections::HashMap;
+    let mut by_type: HashMap<&str, usize> = HashMap::new();
+    for id in &other_ids {
+        let type_name = match id {
+            AnyNodeId::Function(_) => "Function",
+            AnyNodeId::Struct(_) => "Struct",
+            AnyNodeId::Enum(_) => "Enum",
+            AnyNodeId::Union(_) => "Union",
+            AnyNodeId::TypeAlias(_) => "TypeAlias",
+            AnyNodeId::Trait(_) => "Trait",
+            AnyNodeId::Impl(_) => "Impl",
+            AnyNodeId::Const(_) => "Const",
+            AnyNodeId::Static(_) => "Static",
+            AnyNodeId::Macro(_) => "Macro",
+            AnyNodeId::Import(_) => "Import",
+            AnyNodeId::Module(_) => "Module",
+            AnyNodeId::Method(_) => "Method",
+            AnyNodeId::Field(_) => "Field",
+            AnyNodeId::Variant(_) => "Variant",
+            AnyNodeId::Param(_) => "Param",
+            AnyNodeId::GenericParam(_) => "GenericParam",
+            AnyNodeId::Reexport(_) => "Reexport",
+            AnyNodeId::Unresolved(_) => "Unresolved",
+        };
+        *by_type.entry(type_name).or_default() += 1;
+    }
+    for (type_name, count) in by_type.iter().filter(|(_, c)| **c > 0) {
+        eprintln!("    {}: {}", type_name, count);
+    }
+    
+    eprintln!("========================================");
+}

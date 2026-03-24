@@ -59,6 +59,8 @@ pub trait GraphAccess {
                                                        // Removed values_mut()
     fn macros_mut(&mut self) -> &mut Vec<MacroNode>;
     fn use_statements_mut(&mut self) -> &mut Vec<ImportNode>;
+    fn unresolved_nodes(&self) -> &[UnresolvedNode];
+    fn unresolved_nodes_mut(&mut self) -> &mut Vec<UnresolvedNode>;
 
     // ----- Secondary node methods -----
     fn find_methods_in_module(
@@ -859,6 +861,13 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                     .iter()
                     .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
+            )
+            // --- Add UnresolvedNode search ---
+            .chain(
+                self.unresolved_nodes()
+                    .iter()
+                    .filter(move |n| n.id.as_any() == item_id)
+                    .map(|n| n as &dyn GraphNode),
             );
 
         // Check for uniqueness using the iterator
@@ -1077,6 +1086,9 @@ pub trait GraphNode {
     fn as_import(&self) -> Option<&ImportNode> {
         None
     }
+    fn as_unresolved(&self) -> Option<&UnresolvedNode> {
+        None
+    }
     fn kind_matches(&self, kind: ItemKind) -> bool {
         match kind {
             ItemKind::Function => self.as_function().is_some(), // Matches standalone functions
@@ -1092,6 +1104,9 @@ pub trait GraphNode {
             ItemKind::Static => self.as_static().is_some(), // Updated
             ItemKind::Macro => self.as_macro().is_some(),
             ItemKind::Import => self.as_import().is_some(),
+            // Note: Unresolved items are handled specially - they represent
+            // items that couldn't be resolved, not items that are syntactically
+            // present in the source code.
             ItemKind::ExternCrate => {
                 // kind of a hack job. needs cleaner solution
                 if let Some(import_node) = self.as_import() {

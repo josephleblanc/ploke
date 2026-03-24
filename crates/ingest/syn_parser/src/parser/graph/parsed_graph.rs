@@ -731,6 +731,15 @@ impl GraphAccess for ParsedCodeGraph {
         &mut self.graph.use_statements
     }
 
+    fn unresolved_nodes(&self) -> &[UnresolvedNode] {
+        &self.graph.unresolved_nodes
+    }
+
+    fn unresolved_nodes_mut(&mut self) -> &mut Vec<UnresolvedNode> {
+        &mut self.graph.unresolved_nodes
+    }
+
+
     // Removed prune_items method to keep ParsedCodeGraph immutable for now.
 }
 

@@ -3,7 +3,7 @@ pub mod single_crate;
 pub mod workspace;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -89,6 +89,8 @@ pub fn run_discovery_phase(
             features,
             dependencies,
             dev_dependencies,
+            lib,
+            bin,
         } = manifest;
 
         // --- Extract Package Info (Non-Fatal Errors) ---
@@ -100,14 +102,28 @@ pub fn run_discovery_phase(
 
         // --- File Discovery Logic ---
         let src_path = crate_root_path.join("src");
-        let mut files = Vec::new();
+        let mut files_set: HashSet<PathBuf> = HashSet::new();
 
-        if !src_path.exists() || !src_path.is_dir() {
-            // Critical error: Cannot proceed without a source directory.
-            return Err(DiscoveryError::SrcNotFound {
-                path: src_path.clone(),
-            });
-        } else {
+        // --- Add custom lib path if specified (for non-standard layouts) ---
+        if let Some(lib_target) = lib {
+            let lib_path = crate_root_path.join(lib_target.path);
+            if lib_path.exists() && lib_path.is_file() {
+                files_set.insert(lib_path);
+            }
+        }
+
+        // --- Add custom bin paths if specified ---
+        if let Some(bin_targets) = bin {
+            for bin_target in bin_targets {
+                let bin_path = crate_root_path.join(bin_target.path);
+                if bin_path.exists() && bin_path.is_file() {
+                    files_set.insert(bin_path);
+                }
+            }
+        }
+
+        // --- Walk src/ directory if it exists ---
+        if src_path.exists() && src_path.is_dir() {
             // --- Perform File Discovery (Non-Fatal Walkdir Errors) ---
             let walker = WalkDir::new(&src_path).into_iter();
             for entry_result in walker {
@@ -116,7 +132,7 @@ pub fn run_discovery_phase(
                         if entry.file_type().is_file()
                             && entry.path().extension().is_some_and(|ext| ext == "rs") =>
                     {
-                        files.push(entry.path().to_path_buf());
+                        files_set.insert(entry.path().to_path_buf());
                     }
                     Ok(_non_rust_file) => {
                         // non-rust file is fine, doesn't need a warning
@@ -132,6 +148,16 @@ pub fn run_discovery_phase(
                 }
             }
         }
+
+        // Ensure we found at least one source file
+        if files_set.is_empty() {
+            return Err(DiscoveryError::SrcNotFound {
+                path: src_path.clone(),
+            });
+        }
+
+        // Convert HashSet to Vec for further processing
+        let mut files: Vec<PathBuf> = files_set.into_iter().collect();
 
         // WARN: We are not including the main.rs file (and hopefully not its imports either) in
         // the case of a project having both a main.rs and a lib.rs

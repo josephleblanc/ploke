@@ -5,6 +5,7 @@ mod impls;
 mod import;
 mod macros;
 mod module;
+mod unresolved;
 mod statics;
 mod structs;
 mod traits;
@@ -34,6 +35,7 @@ pub use function::{FunctionNode, MethodNode, ParamData}; // Added MethodNode
 pub use impls::ImplNode;
 pub use import::{ImportKind, ImportNode};
 pub use macros::{MacroKind, MacroNode, ProcMacroKind};
+pub use unresolved::{UnresolvedNode, UnresolvedReason};
 pub use module::{ModDisc, ModuleKind, ModuleNode};
 pub use statics::StaticNode;
 pub use structs::{FieldNode, StructNode};

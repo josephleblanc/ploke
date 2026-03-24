@@ -23,7 +23,7 @@ use crate::parser::{
     nodes::{AnyNodeId, AsAnyNodeId, ImportNodeId, ReexportNodeId}, // Removed GraphNode import
 };
 use crate::parser::{
-    nodes::{ImportNode, ModuleNodeId, NodePath},
+    nodes::{ImportNode, ModuleNodeId, NodePath, UnresolvedNode},
     relations::SyntacticRelation,
 };
 pub use colored::Colorize;
@@ -90,7 +90,7 @@ impl std::fmt::Display for UnlinkedModuleInfo {
     }
 }
 
-/// Holds the IDs and relations pruned from the ModuleTree.
+/// Holds the IDs and relations pruned from the ModuleTree, plus any unresolved items.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct PruningResult {
     // Renamed struct
@@ -101,6 +101,8 @@ pub struct PruningResult {
     pub pruned_item_ids: HashSet<AnyNodeId>, // Changed: Use AnyNodeId
     /// The actual TreeRelation instances that were removed from the ModuleTree.
     pub pruned_relations: Vec<TreeRelation>,
+    /// Unresolved nodes created during resolution (e.g., for items from include! macros)
+    pub unresolved_nodes: Vec<UnresolvedNode>,
 }
 
 // Add near other public structs/enums related to ModuleTree resolution

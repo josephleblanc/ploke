@@ -6336,6 +6336,7 @@ dependencies = [
  "tokio",
  "toml 0.8.20",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
  "uuid",
  "walkdir",

@@ -66,6 +66,10 @@ fn run() -> Result<(), XtaskError> {
         Some("extract-tokens-log") => extract_tokens_log(args.collect()),
         Some("profile-ingest") => profile_ingest::parse_profile_ingest_args(args.collect())
             .and_then(profile_ingest::run_profile_ingest),
+        Some("profile-ingest-help") => {
+            print_profile_ingest_help();
+            Ok(())
+        }
         Some("help") | Some("-h") | Some("--help") => {
             print_usage();
             Ok(())
@@ -114,7 +118,30 @@ fn print_usage() {
     eprintln!(
         "xtask helpers\n\
          Usage: cargo xtask <command>\n\
-         Commands:\n  verify-fixtures          Ensure required local test assets are staged\n  verify-backup-dbs       Validate registered backup DB fixtures used by tests\n  recreate-backup-db      Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures       Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  regen-embedding-models   Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n           extract-tokens-log       Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest           Cold-start parse/transform/embed timing (see --target, --stages, --verbosity)\n  help                     Show this message"
+         Commands:\n  verify-fixtures          Ensure required local test assets are staged\n  verify-backup-dbs       Validate registered backup DB fixtures used by tests\n  recreate-backup-db      Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures       Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  regen-embedding-models   Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  extract-tokens-log       Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest           Cold-start parse/transform/embed timing (see --target, --stages, --verbosity, --loops)\n  profile-ingest-help      Show detailed help for profile-ingest command\n  help                     Show this message"
+    );
+}
+
+fn print_profile_ingest_help() {
+    eprintln!(
+        "profile-ingest: Cold-start performance profiling for ploke ingestion pipeline\n\n\
+         Usage: cargo xtask profile-ingest --target <path> [OPTIONS]\n\n\
+         Required:\n\
+         --target <path>          Path to crate or workspace to profile\n\n\
+         Options:\n\
+         --stages <list>          Comma-separated: parse,transform,embed (default: parse,transform)\n\
+         --verbosity 1|2|3        Output detail level (default: 2)\n\
+         --loops <N>              Number of iterations to run (default: 1)\n\
+         --json                   Output full JSON report to stdout\n\n\
+         Environment:\n\
+         OPENROUTER_API_KEY       Required for --stages embed\n\
+         PLOKE_PROFILE_LOG=1      Enable tracing output during profiling\n\n\
+         Examples:\n\
+         cargo xtask profile-ingest --target tests/fixture_crates/fixture_nodes\n\
+         cargo xtask profile-ingest --target ./my-crate --stages parse,transform,embed\n\
+         cargo xtask profile-ingest --target ./my-crate --loops 10 --stages parse,transform\n\n\
+         When --loops > 1, the command runs multiple iterations and reports statistics\n\
+         (min, max, avg, p50, p90, p95, p99, std dev) for each stage and total time."
     );
 }
 
