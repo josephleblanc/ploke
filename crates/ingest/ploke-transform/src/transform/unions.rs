@@ -1,9 +1,11 @@
 use crate::schema::primary_nodes_multi::UnionNodeSchema;
+use tracing::instrument;
 
 use crate::{macro_traits::CommonFields, schema::secondary_nodes::FieldNodeSchema};
 
 use super::{secondary_nodes::process_fields, *};
 
+#[instrument(skip_all)]
 pub(super) fn transform_unions(
     db: &Db<MemStorage>,
     unions: Vec<UnionNode>,

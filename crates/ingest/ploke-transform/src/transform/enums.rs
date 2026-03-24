@@ -1,4 +1,5 @@
 use crate::schema::primary_nodes_multi::EnumNodeSchema;
+use tracing::instrument;
 
 use crate::{
     macro_traits::CommonFields,
@@ -7,6 +8,7 @@ use crate::{
 
 use super::{secondary_nodes::process_fields, *};
 
+#[instrument(skip_all)]
 pub(super) fn transform_enums(
     db: &Db<MemStorage>,
     enums: Vec<EnumNode>,

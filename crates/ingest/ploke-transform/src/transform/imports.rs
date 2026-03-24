@@ -1,4 +1,5 @@
 use syn_parser::utils::LogStyleDebug;
+use tracing::instrument;
 
 use crate::schema::primary_nodes_multi::ImportNodeSchema;
 
@@ -7,6 +8,7 @@ use crate::utils::log_db_error;
 
 use super::*;
 
+#[instrument(skip_all)]
 pub(super) fn transform_imports(
     db: &Db<MemStorage>,
     imports: Vec<ImportNode>,

@@ -7,7 +7,7 @@ use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
-use tracing::trace;
+use tracing::{instrument, trace};
 
 use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 
@@ -90,6 +90,7 @@ impl ParsedCodeGraph {
             .flatten() // Flatten the outer iterator
     }
 
+    #[instrument(skip_all, fields(graph_count = graphs.len()))]
     pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, SynParserError> {
         for graph in graphs.iter() {
             log::debug!(target: "buggy_c", "Buggy First Context: {:#?}", graph.crate_context);
@@ -527,6 +528,7 @@ Remaining ids to prune: {}",
     /// Returns any error encountered during tree construction, path resolution,
     /// or pruning (in creating the items to prune within build_module_tree).
     /// - JL Reviewed, Jul 28, 2025
+    #[instrument(skip(self))]
     pub fn build_tree_and_prune(&mut self) -> Result<ModuleTree, ploke_error::Error> {
         let (tree, pruned_items) = self.build_module_tree()?;
         self.prune(pruned_items);

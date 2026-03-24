@@ -1,5 +1,7 @@
 use std::sync::{Arc, RwLock};
 
+use tracing::instrument;
+
 use crate::cancel_token::CancellationListener;
 use crate::error::EmbedError;
 use crate::indexer::EmbeddingProcessor;
@@ -109,6 +111,7 @@ impl EmbeddingRuntime {
         embedder.generate_embeddings(snippets).await
     }
 
+    #[instrument(skip_all, fields(snippet_count = snippets.len()))]
     pub async fn generate_embeddings_with_cancel(
         &self,
         snippets: Vec<String>,

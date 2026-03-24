@@ -1277,6 +1277,32 @@ dependencies = [
 
 [[package]]
 name = "criterion"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2b12d017a929603d80db1831cd3a24082f8137ce19c69e6447f54f5fc8d692f"
+dependencies = [
+ "anes",
+ "cast",
+ "ciborium",
+ "clap",
+ "criterion-plot 0.5.0",
+ "is-terminal",
+ "itertools 0.10.5",
+ "num-traits",
+ "once_cell",
+ "oorandom",
+ "plotters",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tinytemplate",
+ "walkdir",
+]
+
+[[package]]
+name = "criterion"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1c047a62b0cc3e145fa84415a3191f628e980b194c2755aa12300a4e6cbd928"
@@ -1285,7 +1311,7 @@ dependencies = [
  "cast",
  "ciborium",
  "clap",
- "criterion-plot",
+ "criterion-plot 0.6.0",
  "itertools 0.13.0",
  "num-traits",
  "oorandom",
@@ -1297,6 +1323,16 @@ dependencies = [
  "tinytemplate",
  "tokio",
  "walkdir",
+]
+
+[[package]]
+name = "criterion-plot"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
+dependencies = [
+ "cast",
+ "itertools 0.10.5",
 ]
 
 [[package]]
@@ -2492,7 +2528,7 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.1.3",
+ "windows-link 0.2.1",
  "windows-result",
 ]
 
@@ -3250,6 +3286,15 @@ name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7943c866cc5cd64cbc25b2e01621d07fa8eb2a1a23160ee81ce38704e97b8ecf"
+
+[[package]]
+name = "itertools"
+version = "0.10.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
+dependencies = [
+ "either",
+]
 
 [[package]]
 name = "itertools"
@@ -4467,7 +4512,7 @@ dependencies = [
  "bm25",
  "clap",
  "cozo",
- "criterion",
+ "criterion 0.7.0",
  "crossbeam-channel",
  "dirs 6.0.0",
  "itertools 0.14.0",
@@ -4609,7 +4654,7 @@ dependencies = [
 name = "ploke-rag"
 version = "0.1.0"
 dependencies = [
- "criterion",
+ "criterion 0.7.0",
  "itertools 0.14.0",
  "lazy_static",
  "ploke-core",
@@ -4673,10 +4718,12 @@ name = "ploke-transform"
 version = "0.1.0"
 dependencies = [
  "cozo",
+ "criterion 0.5.1",
  "env_logger 0.11.8",
  "itertools 0.14.0",
  "ploke-common",
  "ploke-core",
+ "ploke-db",
  "ploke-error",
  "ploke-test-utils",
  "serde",
@@ -4698,7 +4745,7 @@ dependencies = [
  "color-eyre",
  "config",
  "cozo",
- "criterion",
+ "criterion 0.7.0",
  "crossterm 0.29.0",
  "dirs 6.0.0",
  "dotenvy",
@@ -6263,6 +6310,7 @@ dependencies = [
  "anyhow",
  "colored 3.0.0",
  "cozo",
+ "criterion 0.5.1",
  "dashmap 6.1.0",
  "derive_test_helpers",
  "env_logger 0.11.8",
@@ -7835,6 +7883,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "cozo",
+ "ploke-core",
  "ploke-db",
  "ploke-embed",
  "ploke-io",
@@ -7845,8 +7894,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "syn_parser",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "walkdir",
 ]
 

@@ -4,6 +4,7 @@ use ploke_core::ItemKind;
 use quote::ToTokens;
 use std::{collections::HashMap, hash::Hasher};
 use syn::visit::Visit;
+use tracing::instrument;
 mod attribute_processing;
 mod cfg_evaluator;
 mod code_visitor;
@@ -469,6 +470,7 @@ fn debug_relationships(visitor: &CodeVisitor<'_>) {
 /// Process multiple files in parallel using rayon
 ///
 /// Takes DiscoveryOutput and distributes work to analyze_file_phase2.
+#[instrument(skip_all, fields(crate_count = discovery_output.crate_contexts.len()))]
 pub fn analyze_files_parallel(
     discovery_output: &DiscoveryOutput, // Takes output from Phase 1
     _num_workers: usize, // May not be directly used if relying on rayon's default pool size

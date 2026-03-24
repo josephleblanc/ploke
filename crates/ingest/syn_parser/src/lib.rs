@@ -62,7 +62,9 @@ pub use parser::graph::{GraphAccess, ParsedCodeGraph};
 pub use resolve::module_tree::ModuleTree;
 
 use crate::discovery::workspace::{try_parse_manifest, WorkspaceMetadataSection};
+use tracing::instrument;
 
+#[instrument(skip(selected_crates), fields(target = %target_workspace_dir.display()))]
 pub fn parse_workspace(
     target_workspace_dir: &Path,
     selected_crates: Option<&[&Path]>,
@@ -163,6 +165,7 @@ fn normalize_selected_crates(workspace_root: &Path, selected_crates: &[&Path]) -
 /// The target is assumed to be a single crate which may or may not be in a workspace. However, the
 /// target dir itself must be the crate root, and is assumed to contain a crate-level (as opposed
 /// to workspace-level) `Cargo.toml` file.
+#[instrument(fields(target = %target_crate_dir.display()))]
 pub fn try_run_phases_and_resolve(
     target_crate_dir: &Path,
 ) -> Result<Vec<ParsedCodeGraph>, SynParserError> {

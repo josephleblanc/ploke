@@ -42,6 +42,8 @@ const EMBEDDING_MODELS_FIXTURE: &str = "fixtures/openrouter/embeddings_models.js
 const EMBEDDING_MODELS_META: &str = "fixtures/openrouter/embeddings_models.meta.json";
 const RAG_FIXTURE_PREFIX: &str = "fixture_nodes_";
 
+mod profile_ingest;
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -62,6 +64,8 @@ fn run() -> Result<(), XtaskError> {
         Some("setup-rag-fixtures") => setup_rag_fixtures(),
         Some("regen-embedding-models") => regen_embedding_models(),
         Some("extract-tokens-log") => extract_tokens_log(args.collect()),
+        Some("profile-ingest") => profile_ingest::parse_profile_ingest_args(args.collect())
+            .and_then(profile_ingest::run_profile_ingest),
         Some("help") | Some("-h") | Some("--help") => {
             print_usage();
             Ok(())
@@ -110,7 +114,7 @@ fn print_usage() {
     eprintln!(
         "xtask helpers\n\
          Usage: cargo xtask <command>\n\
-         Commands:\n  verify-fixtures          Ensure required local test assets are staged\n  verify-backup-dbs       Validate registered backup DB fixtures used by tests\n  recreate-backup-db      Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures       Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  regen-embedding-models   Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  extract-tokens-log       Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  help                     Show this message"
+         Commands:\n  verify-fixtures          Ensure required local test assets are staged\n  verify-backup-dbs       Validate registered backup DB fixtures used by tests\n  recreate-backup-db      Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures       Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  regen-embedding-models   Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n           extract-tokens-log       Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest           Cold-start parse/transform/embed timing (see --target, --stages, --verbosity)\n  help                     Show this message"
     );
 }
 

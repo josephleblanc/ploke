@@ -1,10 +1,12 @@
 use crate::schema::primary_nodes_multi::ConstNodeSchema;
+use tracing::instrument;
 
 use crate::{macro_traits::CommonFields, utils::log_db_error};
 
 use super::*;
 
 /// Transforms value nodes into the values relation
+#[instrument(skip_all)]
 pub(super) fn transform_consts(
     db: &Db<MemStorage>,
     consts: Vec<ConstNode>,

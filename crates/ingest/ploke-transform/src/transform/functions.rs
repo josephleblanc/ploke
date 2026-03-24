@@ -1,5 +1,6 @@
 use cozo::Num;
 use itertools::Itertools;
+use tracing::instrument;
 // crate-local imports
 use crate::schema::primary_nodes_multi::FunctionNodeSchema;
 
@@ -9,6 +10,7 @@ pub const LOG_TARGET_TRANSFORM: &str = "transform";
 
 use super::*;
 /// Transforms function nodes into the functions relation
+#[instrument(skip_all)]
 pub(super) fn transform_functions(
     db: &Db<MemStorage>,
     functions: Vec<FunctionNode>,

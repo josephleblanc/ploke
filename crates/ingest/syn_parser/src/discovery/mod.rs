@@ -14,6 +14,7 @@ pub use single_crate::*;
 pub use workspace::{locate_workspace_manifest, resolve_workspace_version};
 
 use itertools::Itertools as _;
+use tracing::instrument;
 use walkdir::WalkDir;
 
 use crate::discovery::workspace::WorkspaceManifestMetadata;
@@ -39,6 +40,7 @@ use crate::discovery::workspace::WorkspaceManifestMetadata;
 // * Assuming target_crates provides absolute paths for simplicity
 //  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
 //  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
+#[instrument(skip_all)]
 pub fn run_discovery_phase(
     workspace_root: Option<&Path>,
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories

@@ -42,6 +42,9 @@ tests/backup_dbs/
 # github clones used for testing
 tests/fixture_github_clones
 
+# xtask profiling JSON output
+xtask/profiling_output/
+
 CARGO_TEST_OUTPUT.txt
 
 # deprecated files

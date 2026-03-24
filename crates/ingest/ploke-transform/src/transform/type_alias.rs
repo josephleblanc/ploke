@@ -1,9 +1,11 @@
 use crate::schema::primary_nodes_multi::TypeAliasNodeSchema;
+use tracing::instrument;
 
 use crate::macro_traits::CommonFields;
 
 use super::*;
 
+#[instrument(skip_all)]
 pub(super) fn transform_type_aliases(
     db: &Db<MemStorage>,
     type_aliases: Vec<TypeAliasNode>,

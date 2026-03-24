@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use tracing::instrument;
 
 use syn_parser::discovery::CrateContext;
 
@@ -7,6 +8,7 @@ use crate::schema::crate_node::CrateContextSchema;
 use super::*;
 
 /// Transforms a CrateContext into a node in the database using CrateContextSchema
+#[instrument(skip_all)]
 pub(super) fn transform_crate_context(
     db: &Db<MemStorage>,
     crate_context: CrateContext,

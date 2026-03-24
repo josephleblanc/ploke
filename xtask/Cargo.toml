@@ -16,6 +16,10 @@ ploke-db = { path = "../crates/ploke-db" }
 ploke-embed = { path = "../crates/ingest/ploke-embed" }
 ploke-io = { path = "../crates/ploke-io" }
 ploke-test-utils = { path = "../crates/test-utils" }
+ploke-core = { workspace = true }
 ploke-transform = { path = "../crates/ingest/ploke-transform" }
+syn_parser = { path = "../crates/ingest/syn_parser" }
 tempfile = "3.10"
 tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
