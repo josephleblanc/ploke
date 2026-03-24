@@ -31,6 +31,7 @@ use syn_parser::{
     parse_workspace, try_run_phases_and_merge,
 };
 use tokio::sync::{broadcast, mpsc};
+use tracing::field::{Field, Visit};
 use tracing::info_span;
 use tracing_subscriber::{
     EnvFilter, Layer, layer::SubscriberExt, prelude::*, registry::LookupSpan,
@@ -186,6 +187,9 @@ struct AllocatedId(u64);
 #[derive(Clone, Copy)]
 struct ParentAlloc(Option<u64>);
 
+#[derive(Clone)]
+struct SpanFields(String);
+
 static NEXT_SPAN_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
@@ -222,7 +226,7 @@ where
 {
     fn on_new_span(
         &self,
-        _attrs: &tracing::span::Attributes<'_>,
+        attrs: &tracing::span::Attributes<'_>,
         id: &tracing::span::Id,
         ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
@@ -234,6 +238,11 @@ where
             .parent()
             .and_then(|p| p.extensions().get::<AllocatedId>().map(|a| a.0));
         let mut ext = span.extensions_mut();
+        let mut visitor = SpanFieldVisitor::default();
+        attrs.record(&mut visitor);
+        if !visitor.fields.is_empty() {
+            ext.insert(SpanFields(visitor.fields.join(", ")));
+        }
         ext.insert(SpanStart(Instant::now()));
         ext.insert(AllocatedId(my_id));
         ext.insert(ParentAlloc(parent_id));
@@ -246,7 +255,11 @@ where
         let start = span.extensions().get::<SpanStart>().map(|s| s.0);
         let my_id = span.extensions().get::<AllocatedId>().map(|a| a.0);
         let parent_id = span.extensions().get::<ParentAlloc>().and_then(|p| p.0);
-        let name = span.metadata().name().to_string();
+        let name = if let Some(fields) = span.extensions().get::<SpanFields>() {
+            format!("{} [{}]", span.metadata().name(), fields.0)
+        } else {
+            span.metadata().name().to_string()
+        };
         if let (Some(start), Some(my_id)) = (start, my_id) {
             let elapsed = start.elapsed();
             if let Ok(mut g) = self.finished.lock() {
@@ -261,12 +274,32 @@ where
     }
 }
 
-#[derive(Debug, Serialize)]
-struct JsonNode {
-    name: String,
-    elapsed_ms: u128,
-    pct: f64,
-    children: Vec<JsonNode>,
+#[derive(Default)]
+struct SpanFieldVisitor {
+    fields: Vec<String>,
+}
+
+impl Visit for SpanFieldVisitor {
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.fields.push(format!("{}={value}", field.name()));
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.fields.push(format!("{}={value}", field.name()));
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.fields.push(format!("{}={value}", field.name()));
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.fields
+            .push(format!("{}={}", field.name(), value.replace(',', ";")));
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.fields.push(format!("{}={value:?}", field.name()));
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +307,14 @@ struct TimedNode {
     name: String,
     elapsed: Duration,
     children: Vec<TimedNode>,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonNode {
+    name: String,
+    elapsed_ms: u128,
+    pct: f64,
+    children: Vec<JsonNode>,
 }
 
 fn build_tree(flat: Vec<FinishedRecord>) -> Vec<TimedNode> {
@@ -458,9 +499,9 @@ fn print_node(
     // Show exclusive (self) time in parentheses only when the node has children;
     // a leaf's self-time is trivially equal to its total, so the column is blank.
     let self_part = if !node.children.is_empty() {
-        format!(" ({:>6}ms)", self_time(node).as_millis())
+        format!("{:>11}", format!("({}ms)", self_time(node).as_millis()))
     } else {
-        "           ".to_string() // 11 spaces – same width as " (123456ms)"
+        "           ".to_string() // 11 spaces – same width as "(123456ms)"
     };
     println!(
         "{:<width$} {:>8}ms{} {:>6.1}%",
@@ -660,13 +701,6 @@ struct ProfileReport {
     full_forest: Vec<JsonNode>,
 }
 
-/// Timing results from a single profiling iteration
-#[derive(Debug, Clone)]
-struct IterationResult {
-    global_elapsed: Duration,
-    stage_timings: HashMap<&'static str, Duration>,
-}
-
 /// Statistics for a single stage across all iterations
 #[derive(Debug, Clone)]
 struct StageStats {
@@ -787,11 +821,23 @@ fn print_stats_report(
     println!("{}", "═".repeat(display_width));
 }
 
+fn format_stage_list(stages: &[Stage]) -> String {
+    stages
+        .iter()
+        .map(|stage| match stage {
+            Stage::Parse => "parse",
+            Stage::Transform => "transform",
+            Stage::Embed => "embed",
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// Runs a single profiling iteration. Returns the global elapsed time and stage stopwatch times.
 fn run_single_iteration<'a>(
     resolved: &'a ResolvedProfileTarget,
     cfg: &'a ProfileConfig,
-    timing_layer: &'a TimingCollector,
+    _timing_layer: &'a TimingCollector,
 ) -> Result<(Duration, HashMap<&'a str, Duration>), XtaskError> {
     let run_parse = cfg.stages.contains(&Stage::Parse);
     let run_transform = cfg.stages.contains(&Stage::Transform);
@@ -810,6 +856,8 @@ fn run_single_iteration<'a>(
             let _span = info_span!("parse").entered();
             match resolved {
                 ResolvedProfileTarget::Workspace { workspace_root, .. } => {
+                    let target_rel = cfg.target.display().to_string();
+                    let _span = info_span!("parse_workspace", workspace = %target_rel).entered();
                     let pw = parse_workspace(workspace_root, None)
                         .map_err(|e| XtaskError::new(format!("parse_workspace: {e}")))?;
                     parsed_workspace = Some(pw);
@@ -963,6 +1011,13 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
     let target_git = git_head_short(&target_path);
     let ploke_git = git_head_short(&root);
 
+    let target_arg = cfg.target.display();
+    let stages_arg = format_stage_list(&cfg.stages);
+    eprintln!(
+        "Repro: cargo run --package xtask -- profile-ingest --target {target_arg} --stages {stages_arg} --verbosity {} --loops {} --json",
+        cfg.verbosity, cfg.loops
+    );
+
     // Initialize tracing subscriber once
     let timing_layer = TimingCollector::new();
     let registry = tracing_subscriber::registry::Registry::default().with(timing_layer.clone());
@@ -987,9 +1042,14 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
         let result = run_single_iteration(&resolved, &cfg, &timing_layer)?;
         iteration_results.push(result);
         
-        // Clear timing data between iterations
-        let _ = timing_layer.take_finished();
+        // Clear timing data between iterations, but keep the last one for detailed reporting
+        if i < cfg.loops - 1 {
+            let _ = timing_layer.take_finished();
+        }
     }
+    
+    // Get the timing data from the last iteration for detailed breakdown
+    let last_iteration_timing_data = timing_layer.take_finished();
 
     // Extract stage timings from all iterations for statistics
     let mut global_times: Vec<Duration> = Vec::new();
@@ -1024,13 +1084,23 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
         stage_stats.insert("embed", compute_stats(&embed_times).unwrap());
     }
 
+    // Build the tree from the last iteration's timing data for detailed reporting
+    let timing_forest = if !last_iteration_timing_data.is_empty() {
+        build_tree(last_iteration_timing_data)
+    } else {
+        Vec::new()
+    };
+    
+    // Merge same-named siblings for cleaner terminal display
+    let display_forest = merge_siblings(timing_forest.clone());
+    
     // For single iteration, show the detailed report
     if cfg.loops == 1 {
         let (global_elapsed, ref stopwatch) = iteration_results[0];
         
-        // Build the tree from the last iteration's timing data
-        // (Note: we don't have the actual tree for single iteration anymore,
-        // so we'll show a simplified summary)
+        // Calculate stages sum for overhead calculation
+        let stages_sum: Duration = stopwatch.values().copied().sum();
+        
         let member_label = if member_count == 1 { "member" } else { "members" };
         println!(
             "Target: {} @ {} ({} .rs files, {} {})",
@@ -1042,18 +1112,23 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
         );
         println!("Ploke:  {}", ploke_git.as_deref().unwrap_or("n/a"));
         
-        // Simple summary output for single iteration
-        let display_width = 70;
-        println!("{}", "═".repeat(display_width));
-        println!("  Stage Timings:");
-        for &stage in &["parse", "transform", "embed"] {
-            if let Some(&t) = stopwatch.get(stage) {
-                println!("    {:12} {:>8}ms", capitalize_first(stage), t.as_millis());
+        // If we have detailed timing data and verbosity is enabled, show the tree breakdown
+        if !display_forest.is_empty() && cfg.verbosity > 0 {
+            print_report(&display_forest, global_elapsed, cfg.verbosity, stages_sum, stopwatch);
+        } else {
+            // Simple summary output for single iteration
+            let display_width = 70;
+            println!("{}", "═".repeat(display_width));
+            println!("  Stage Timings:");
+            for &stage in &["parse", "transform", "embed"] {
+                if let Some(&t) = stopwatch.get(stage) {
+                    println!("    {:12} {:>8}ms", capitalize_first(stage), t.as_millis());
+                }
             }
+            println!("{}", "─".repeat(display_width));
+            println!("    {:12} {:>8}ms", "Total", global_elapsed.as_millis());
+            println!("{}", "═".repeat(display_width));
         }
-        println!("{}", "─".repeat(display_width));
-        println!("    {:12} {:>8}ms", "Total", global_elapsed.as_millis());
-        println!("{}", "═".repeat(display_width));
     } else {
         // Multiple iterations: show statistics report
         print_stats_report(
@@ -1064,6 +1139,14 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
             rs_count,
             member_count,
         );
+        
+        // Also show detailed breakdown from last iteration if verbosity is high
+        if !display_forest.is_empty() && cfg.verbosity > 0 {
+            let (last_global, last_stopwatch) = &iteration_results[iteration_results.len() - 1];
+            let stages_sum: Duration = last_stopwatch.values().copied().sum();
+            println!("\n  Detailed breakdown (last iteration):");
+            print_report(&display_forest, *last_global, cfg.verbosity, stages_sum, last_stopwatch);
+        }
     }
 
     // Save JSON report for last iteration (or aggregated stats if multiple iterations)
@@ -1106,6 +1189,22 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
         })
     }).collect();
     
+    // Get last iteration's global time for the timing tree percentages
+    let (last_global, _) = &iteration_results[iteration_results.len() - 1];
+    
+    // Generate full timing tree for offline analysis (unmerged to preserve full detail)
+    let full_forest: Vec<JsonNode> = timing_forest
+        .iter()
+        .map(|t| to_json_node(t, *last_global))
+        .collect();
+    
+    // Generate stage tree (top-level stages with children)
+    let stage_forest: Vec<JsonNode> = timing_forest
+        .iter()
+        .filter(|t| matches!(t.name.as_str(), "parse" | "transform" | "embed"))
+        .map(|t| to_json_node(t, *last_global))
+        .collect();
+    
     let report = serde_json::json!({
         "target": target_name,
         "target_path": target_path.display().to_string(),
@@ -1129,6 +1228,10 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
             "stages": stages_map,
         },
         "raw_times": raw_times,
+        "timing_tree": {
+            "stages": stage_forest,
+            "full_forest": full_forest,
+        },
     });
     
     let json = serde_json::to_string_pretty(&report)

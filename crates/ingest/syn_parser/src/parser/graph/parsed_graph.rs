@@ -7,7 +7,7 @@ use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
-use tracing::{instrument, trace};
+use tracing::{info_span, instrument, trace};
 
 use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 
@@ -95,17 +95,23 @@ impl ParsedCodeGraph {
         for graph in graphs.iter() {
             log::debug!(target: "buggy_c", "Buggy First Context: {:#?}", graph.crate_context);
         }
-        let mut new_graph = graphs.pop().ok_or(SynParserError::MergeRequiresInput)?;
+        let mut new_graph = {
+            let _span = info_span!("merge_new_pop_seed_graph").entered();
+            graphs.pop().ok_or(SynParserError::MergeRequiresInput)?
+        };
 
         // Preserve crate context from any graph
         let mut found_context = new_graph.crate_context.take();
         trace!(target: "buggy", "First Context: {:#?}", new_graph.crate_context);
-        for mut graph in graphs {
-            if found_context.is_none() {
-                log::trace!(target: "buggy", "Merging Context: {:#?}", graph.crate_context);
-                found_context = graph.crate_context.take();
+        {
+            let _span = info_span!("merge_new_append_graphs", remaining_graphs = graphs.len()).entered();
+            for mut graph in graphs {
+                if found_context.is_none() {
+                    log::trace!(target: "buggy", "Merging Context: {:#?}", graph.crate_context);
+                    found_context = graph.crate_context.take();
+                }
+                new_graph.append_all(graph)?;
             }
-            new_graph.append_all(graph)?;
         }
 
         log::trace!(target: "buggy", "Penult Context: {:#?}", new_graph.crate_context);
@@ -558,8 +564,20 @@ Remaining ids to prune: {}",
     /// - JL Reviewed, Jul 28, 2025
     #[instrument(skip(self))]
     pub fn build_tree_and_prune(&mut self) -> Result<ModuleTree, ploke_error::Error> {
-        let (tree, pruned_items) = self.build_module_tree()?;
-        self.prune(pruned_items);
+        let (tree, pruned_items) = {
+            let _span = info_span!("build_module_tree").entered();
+            self.build_module_tree()?
+        };
+        {
+            let _span = info_span!(
+                "prune_graph_from_tree",
+                pruned_modules = pruned_items.pruned_module_ids.len(),
+                pruned_items = pruned_items.pruned_item_ids.len(),
+                pruned_relations = pruned_items.pruned_relations.len()
+            )
+            .entered();
+            self.prune(pruned_items);
+        }
         Ok(tree)
     }
 

@@ -606,7 +606,13 @@ pub struct DevDependencies(HashMap<String, DependencySpec>);
 #[derive(Deserialize, Debug, Clone)]
 pub struct LibTarget {
     /// The path to the library root file (e.g., "lib.rs" or "src/lib.rs").
+    /// Defaults to "src/lib.rs" if not specified, per Cargo convention.
+    #[serde(default = "default_lib_path")]
     pub path: PathBuf,
+}
+
+fn default_lib_path() -> PathBuf {
+    PathBuf::from("src/lib.rs")
 }
 
 /// Represents a `[[bin]]` target section in Cargo.toml with a custom path.
@@ -920,5 +926,41 @@ mod tests {
 
         let ploke_err: ploke_error::Error = discovery_err.into();
         assert!(matches!(ploke_err, ploke_error::Error::Fatal(_)));
+    }
+
+    #[test]
+    fn test_lib_target_default_path() {
+        // Test that [lib] section without explicit path defaults to "src/lib.rs"
+        let cargo_toml = r#"
+[package]
+name = "test-proc-macro"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+"#;
+
+        let manifest: CargoManifest = toml::from_str(cargo_toml).expect("Should parse manifest with [lib] but no path");
+        let lib = manifest.lib.expect("Should have lib section");
+        assert_eq!(lib.path, PathBuf::from("src/lib.rs"), "Default path should be src/lib.rs");
+    }
+
+    #[test]
+    fn test_lib_target_explicit_path() {
+        // Test that explicit path in [lib] is respected
+        let cargo_toml = r#"
+[package]
+name = "test-crate"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/my_lib.rs"
+"#;
+
+        let manifest: CargoManifest = toml::from_str(cargo_toml).expect("Should parse manifest with explicit lib path");
+        let lib = manifest.lib.expect("Should have lib section");
+        assert_eq!(lib.path, PathBuf::from("src/my_lib.rs"), "Explicit path should be preserved");
     }
 }

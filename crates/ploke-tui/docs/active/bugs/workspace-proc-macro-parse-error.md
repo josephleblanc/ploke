@@ -1,10 +1,20 @@
 # Workspace parsing fails on proc-macro crates with `[lib]` sections
 
+## Status: **FIXED** ✅
+
 ## Summary
 - Symptom: `cargo xtask profile-ingest --target .` fails when run on the ploke workspace root
 - Error: `TOML parse error: missing field 'path'` for proc-macro crates
 - Affected crates: `syn_parser_macros`, `ploke-test-macros`, `derive_test_helpers`, `ploke-db-derive`
-- Likely impact: Cannot profile the entire ploke workspace; must profile individual crates
+- Fix: Made `path` field optional in `LibTarget` with default value of `"src/lib.rs"` (per Cargo spec)
+
+## Fix Details
+- **File modified:** `crates/ingest/syn_parser/src/discovery/single_crate.rs`
+- **Change:** Added `#[serde(default = "default_lib_path")]` to `LibTarget.path` field
+- **Default function:** `default_lib_path()` returns `PathBuf::from("src/lib.rs")`
+- **Tests added:** 
+  - `test_lib_target_default_path` - verifies `[lib]` without path defaults to `src/lib.rs`
+  - `test_lib_target_explicit_path` - verifies explicit path is preserved
 
 ## Evidence
 ```
