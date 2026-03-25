@@ -31,7 +31,7 @@ const LOG_DIR: &str = "/home/brasides/code/ploke/logs";
 /// The subscriber is silently ignored if another test in the same process
 /// already initialized it (`try_init` returns `Err` instead of panicking).
 fn init_tracing() {
-    use std::sync::Arc;
+    
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
     // Create log directory if it doesn't exist
@@ -1332,7 +1332,7 @@ fn diagnose_serde_crate_root_module() {
 #[test]
 // #[ignore = "We don't handle parsing macro_rules, which would be required to correctly parse this target"]
 fn parse_workspace_serde_github_clone() {
-    init_tracing();
+    // init_tracing();
 
     use syn_parser::parse_workspace;
 
@@ -2324,7 +2324,7 @@ fn analyze_pruned_module_vs_item_ids_serde() {
             nodes::{AnyNodeId, AsAnyNodeId},
             relations::SyntacticRelation,
         },
-        resolve::{RelationIndexer, TreeRelation},
+        resolve::RelationIndexer,
         GraphAccess,
     };
 

@@ -14,7 +14,7 @@ pub use single_crate::*;
 pub use workspace::{locate_workspace_manifest, resolve_workspace_version};
 
 use itertools::Itertools as _;
-use tracing::{info_span, instrument, span};
+use tracing::instrument;
 use walkdir::WalkDir;
 
 use crate::discovery::workspace::WorkspaceManifestMetadata;
@@ -158,7 +158,7 @@ pub fn run_discovery_phase(
         }
 
         // Convert HashSet to Vec for further processing
-        let mut files: Vec<PathBuf> = files_set.into_iter().collect();
+        let files: Vec<PathBuf> = files_set.into_iter().collect();
 
         // WARN: We are not including the main.rs file (and hopefully not its imports either) in
         // the case of a project having both a main.rs and a lib.rs

@@ -1,5 +1,8 @@
 # Repository Guidelines
 
+## Rust version
+We are using rust version 2024 in all crates.
+
 ## Correctness Guardrails
 - Do not relax internal correctness, consistency, validation, schema, or import semantics without explicit user approval first.
 - If a possible fix would make the system more permissive, tolerate previously invalid states, silently skip expected data, or weaken invariants, stop and ask before implementing it.

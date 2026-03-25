@@ -95,7 +95,7 @@ use {
 /// Analyze a single file for Phase 2 (UUID Path) - The Worker Function
 /// Receives context from analyze_files_parallel.
 #[cfg(feature = "cfg_eval")]
-#[instrument(skip(crate_context),root_module_name = ?root_module_name)]
+#[instrument(skip(crate_context), fields(root_module_name))]
 pub fn analyze_file_phase2(
     file_path: PathBuf,
     crate_namespace: Uuid,            // Context passed from caller

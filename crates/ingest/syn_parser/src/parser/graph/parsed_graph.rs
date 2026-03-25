@@ -7,7 +7,7 @@ use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
-use tracing::{info, info_span, instrument, trace};
+use tracing::{info, info_span, instrument};
 
 use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 
@@ -447,7 +447,7 @@ impl ParsedCodeGraph {
         if unique_pruned_item_ids.len() != pruned_item_ids.len() {
             tracing::info!("pruned_item_ids: unique: {}, total: {}", unique_pruned_item_ids.len(), pruned_item_ids.len());
         }
-        let unresolved_pruned_result_count = pruned_items.unresolved_nodes.len();
+        let _unresolved_pruned_result_count = pruned_items.unresolved_nodes.len();
         if prune_counts.count_resolved() != pruned_item_ids.len() {
             tracing::error!("{prune_counts:#?}");
             tracing::error!(
@@ -535,11 +535,7 @@ impl ParsedCodeGraph {
     /// Returns any error encountered during tree construction, path resolution,
     /// or pruning (in creating the items to prune within build_module_tree).
     /// - JL Reviewed, Jul 28, 2025
-    #[instrument(
-        graph_relation_count = %merged.relations().len(),
-        graph_module_count = %merged.modules().len(),
-        skip(self)
-    )]
+    #[instrument(skip(self), fields(pruned_relations, pruned_modules, pruned_items))]
     pub fn build_tree_and_prune(&mut self) -> Result<ModuleTree, ploke_error::Error> {
         let (tree, pruned_items) = {
             let _span = info_span!("build_module_tree").entered();
@@ -874,6 +870,7 @@ struct PruneCounts {
     type_graph: usize,
     impls: usize,
     traits: usize,
+    #[allow(dead_code)]
     relations: usize,
     file_modules: usize,
     non_file_modules: usize,

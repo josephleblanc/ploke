@@ -58,7 +58,7 @@ crate_test!(new_parse_ty_mcp, "ploke-ty-mcp", build_tree);
 crate_test!(new_parse_test_utils, "test-utils", build_tree);
 
 pub fn try_run_phases_and_collect_path(
-    project_root: &Path,
+    _project_root: &Path,
     crate_path: PathBuf,
 ) -> Result<Vec<ParsedCodeGraph>, ploke_error::Error> {
     let discovery_output = run_discovery_phase(None, &[crate_path])?;

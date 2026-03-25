@@ -447,7 +447,7 @@ pub(super) fn is_accessible(tree: &ModuleTree, source: ModuleNodeId, target: Mod
             tree.log_access(&log_ctx, "Crate Visibility", true);
             true // Crate is always accessible within the same ModuleTree
         }
-        VisibilityKind::Restricted(ref restricted_path_vec) => {
+        VisibilityKind::Restricted(restricted_path_vec) => {
             // Attempt to resolve the restriction path to a ModuleNodeId
             let restriction_path = match NodePath::try_from(restricted_path_vec.clone()) {
                 Ok(p) => p,

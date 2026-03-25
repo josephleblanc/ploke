@@ -1,9 +1,9 @@
 [package]
 name = "syn_parser"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "A Rust code parser and analyzer using syn"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Joseph LeBlanc <joseph.t.leblanc@protonmail.com>"]
 
 [dependencies]
 # Parsing and code generation

@@ -345,7 +345,7 @@ pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_er
 }
 pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, SynParserError> {
     let parsed_graphs = try_run_phases_and_resolve(target_crate)?;
-    let parsed_file_count = parsed_graphs.len();
+    let _parsed_file_count = parsed_graphs.len();
     let mut merged = {
         ParsedCodeGraph::merge_new(parsed_graphs)?
     };
