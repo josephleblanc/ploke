@@ -1,0 +1,479 @@
+# Multi-Agent Task Coordination
+
+**Date:** 2026-03-24  
+**Task Title:** *(To be filled in)*  
+**Task Description:** *(To be filled in)*  
+**Related Planning Files:** *(To be filled in)*
+
+---
+
+## Overview
+
+This directory serves as a central coordination hub for sub-agents working on this task.
+
+## Quick Links
+
+- [Task Description](#task-description)
+- [Guidelines for Sub-Agents](#guidelines-for-sub-agents)
+- [Progress Log](#progress-log)
+- [Open Questions](#open-questions)
+
+## Task Description
+
+We are building an application that primarily uses an interactive terminal
+front-end, but that is not suitable for agents to evaluate the current
+application status.
+
+To allow agents to efficiently test the application, you are all tasked with
+expanding our `xtask` crate with command-line features that are intended to
+primarily be used by agents to run key functions and pipelines used across the
+ploke workspace and receive concise, useful information that can provide
+immediate feedback.
+
+### A. Desired Functionality
+
+The commands in `xtask` are intended to expose functionality from key functions across the workspace, such as:
+
+1. Run parsing commands from our parsing pipeline
+
+- `syn_parser::discovery::run_discovery_phase`
+- `syn_parser::try_run_phases_and_resolve`
+- `syn_parser::try_run_phases_and_merge`
+- `syn_parser::parse_workspace`
+
+These commands each have an output that is not usually directly exposed to the
+user, but can provide quick diagnostic information.
+
+The commands that run these functions should allow additional commands to be
+entered to display that output with various filters or increased verbosity.
+While you should not change the logic of these commands in this task, you
+should add `tracing::instrument` fields or parameters to these functions and
+the functions they call to gain access to additional run-time feedback for
+these commands.
+
+This is already partially implemented in `xtask` in a command that provides a
+minimal performance evaluation of the execution time for parts of the pipeline,
+and can serve as an example for the desired approach of these `xtask` tools.
+
+2. Transform to db
+
+- `ploke_transform::transform_parsed_graph`
+
+Similarly to A.1, we should add tracing instrumentation throughout this
+execution path wherever it does not exist to provide timing information and
+additional context.
+
+This will need to be run in addition to the parsing commands, as it depends on
+parsing output.
+
+3. Run ingestion pipeline up to embeddings
+
+Again similar to A.1, we should add tracing instrumentation throughout. There
+is already a minimal setup for timing, but we will want to add more
+configuration values as command-line args that allow this to be run with more
+configuration options.
+
+This command should load an environmental variable from `env` that is different
+from the key used elsewhere, and will be `TEST_OPENROUTER_API_KEY` by default.
+No overrides should be accepted, and it should be noted in the in-line comments
+that this is by design. This key will be setup specifically for agents, and
+have a budget that they are welcome to access. (I, the user, will handle the
+api key setup, but you can assume that either the `TEST_OPENROUTER_API_KEY` is
+configured in the environment or I do not want the key to be used)
+
+4. Run the database from ingest pipeline or save/load a backup
+
+This should expose commands from `ploke-db` that can be used together with the parsing pipeline (see the `ploke-test-utils` and usage in various integration tests for examples on setup and initialization), and then allow for several built-in queries and database operations like:
+- `save_db`
+- `load_db`
+- `load_fixture`
+- perform hnsw indexing
+- count all nodes in database
+- there are several tests in `ploke-db` that either use test utils or have
+reusable patterns that can be used for various database diagnostics. We can
+pick the low-hanging fruit on these for now.
+- perform a `bm25` index rebuild
+- perform hnsw indexing rebuild
+- run an arbitrary query entered as the command-line argument
+
+5. A headless, command-line `ploke-tui` to run individual commands
+
+Different from the other commands, this will be a separate module in
+`ploke-tui` due to the build time complexity and heavy dependencies involved.
+However, there should be refrences in the documentation in `xtask` regarding
+these commands, along with any shared agent documentation on testing,
+evaluating workspace-wide capabilites, or performance checks.
+
+We need a set of commands that will:
+- build and run the `ploke-tui::App` in a "headless mode" using
+`ratatui::backend::TestBackend`
+- Allow an "input" argument that is processed as user input and then the key command for "Enter" is sent to simulate entering something to the app's input box, and wait on a timeout (short by default but variable from the command args) for the response and prints the output to stdout
+  - this command will want to add additional subscribers to some events, and allow for waiting on confirmation that they have arrived (again by default on a short timer). Since most events are sent over a `broadcast` channel this should be fairly straightforward. Those events should show up in the `xtask` command output when a flag or option is set.
+- Should also allow for keycodes to be sent, such as `<Esc>`, or keycode combinations such as `Ctrl+f`
+- gracefully shut down
+- should use default config values, but accept an override defined in `xtask`
+
+6. Execute tool calls bypassing typical `ploke-tui` channels
+
+This should provide commands that allow the tools in `ploke-tui` to be used by accepting either of:
+- a set of input args (parsed into json by the `xtask` application)
+- json entered through the commandline
+- json loaded from a file
+
+Rather than run through the pre-existing process of the LLM tool call loop in
+`ploke-tui`, this command will run that individual tool once with the provided
+command, for example `ns_read`, `code_item_lookup`, etc, by directly calling
+the methods involved in tool call handling within `ploke-tui`.
+
+These commands will still necessitate standing up some of the `ploke-tui` actors, but a minimal set can be used per-tool for isolated testing.
+
+### B. Documentation and Feedback
+
+Because this set of commands is intended for use by agents, it is very
+important that we include robust documentation both in-line with the `xtask`
+functions and through feedback upon executing a command.
+
+1. Every command provides useful information, even when entered incorrectly
+  - provide recovery paths, e.g. "No target file entered, please enter a target
+  file using a path relative to <ploke-tui workspace dir>"
+  - validate inputs, provide feedback
+  - if `cozo` returns an error, forward it to the terminal so the agent knows
+  what went wrong
+2. Every command has some way to provide more transparency whenever possible
+  - E.g. including options for timing on functions helps performance
+  - a `tracing::subscriber` can and should record output to a log file whose
+  path is provided to the agent with a hint like "tracing log persisted to
+  `<path>` was X lines long, to use `rg` or `grep` on it try searching for
+  <examples with accurate potential targets>
+  verbosity used were..."
+3. Include a clear and unambiguous `help` command with up-to-date information.
+Persist a "last updated" log file and automatically prompt the agent to review
+the `xtask` crate's implementation of the `help` command for staleness every 48
+hours.
+4. Persist usage statistics in long-term logging
+  - Helps us learn over time which commands are used or not
+5. Experimental: Try adding a rolling suggestion every 50 times any command is run with "auto-generated suggestion: provide quick feedback or suggestions? Check <path to .md feedback file> and don't forget to be honest."
+  - This will both provide insight into whether the agent introspection on this
+  topic is helpful, and possibly improve the commands.
+
+Further, where feasible, output should be persisted for later grepping or
+review.
+
+### C. Invariants
+
+For each command, there exists:
+
+1. Feedback to `stdout` with at least one of:
+  - error + corrective/helpful feedback
+  - output from a function that exists in another crate in the ploke workspace
+  - instructions on how to use `xtask`
+  - fresh data on workspace state (e.g. check presence of backup databases)
+
+2. If a command has output from a function that exists in another crate in the ploke workspace, there exists:
+  - at least one argument (in addition to the specifying command) to provide a
+  target/config/etc
+  - if a default config exists, there exists at least one optional flag to
+  specify that config, which overrides the default
+
+3. An entry in a `help` command with a short description of the command.
+
+To ensure these invariants hold, a new enum should be constructed for the
+command input.
+
+### D. Error Handling
+
+Error handling should be `ploke_error::Error`, and should additionally always include the following:
+- Recovery path: Either 
+  - point the agent to what failed in the underlying call (in the case of an unexpected failure) or 
+  - provide a helpful message with enriched context so the agent knows what
+  went wrong with its input, e.g. "file path `<path>` does not exist", "cozo
+  query error: `<propogated cozo + ploke error>`, your input query: <input
+  query>, underlying database used was `<provenance>` underlying command was
+  ploke_db::Database::count_all_nodes in <filepath to underlying function
+  definition>"
+
+### E. Tests
+
+1. Before adding any new tests, document
+- `docs/active/agents/2026-03-24-coordination/2026-03-25-test_matrix.md`
+- underlying function(s) or data structures being tested
+- expected functionality
+- invariants
+- fail states
+- edge cases
+
+2. Search, review, and run related tests
+- fill out the above points with references to existing tests
+- run the related tests and record date + test pass/fail
+
+3. if existing tests insufficient (likely)
+- answer: what hypothesis does this test prove or disprove? 
+  - Be precise
+- Why does this test prove something useful?
+  - Treat this as a mini-proof: "To Prove: That a Id is always unique. If a
+  NodeId is a deterministically generated hash and the inputs are unique, then
+  the NodeId is always unique. Input A is unique as witnessed by `test1`, input
+  B is unique as witnessed by `test2`, and NodeId only has inputs A and B,
+  therefore NodeId is unique."
+- Under what conditions would this test not prove correctness of the underlying
+property being tested?
+
+4. Write the test
+- Write targeted tests for each implementation within the same file.
+- Keep integration tests in a `xtask/tests` directory and keep them logically
+organized
+- before adding a new test util, check `crates/test-utils` (named crate `ploke-test-utils`)
+- check for similar test utils in other crates, follow a similar pattern or move to ploke-test-utils
+- for fixtures, use shared fixture statics where possible (see `docs/testing/BACKUP_DB_FIXTURES.rs`)
+
+### F. Out of Scope
+
+This is not intended to be a REPL, or to re-implement `ploke-tui`, but rather
+provide a complementary set of commands that can be directly run once to
+receive some output to stdout on a timeout.
+
+The underlying crates for the ploke workspace should not be directly edited
+outside of adding tracing instrumentation or enriching error handling. These
+commands are intended to wrap the current functionality of the crates in this
+workspace in agent-accessible commands, not address underlying issues or
+features in those crates themselves.
+
+### G. Organization of new modules
+
+We will create a new directory in `xtask` to handle the those commands which
+are only related to a single crate, e.g. `ploke-db` is `xtask-db`, etc.
+
+This allows us to parallelize implementation.
+
+## Milestones
+
+### M.1 Survey crates for functions to use for commands
+
+This milestone can be done in parallel for each crate.
+
+0. Setup basic book-keeping for first few items
+
+- Create a document with a list of all commands to be entered
+  - [ ] Created
+  - Document Location: `<fill in>`
+
+- Fill out the list with details from A.1-A.7 to populate the list of commands
+with a name and short description.
+
+- Create checklist of crates in workspace with
+  - started
+  - finished
+
+For each crate, sub-agents fan-out
+
+1. Survey candidate commands identified for inclusion
+  - AGENT_INSTRUCTION: Monitor sub-agents, fill in doc name, update "list" with
+  doc file path and link in this doc.
+  - SUBAGENT_INSTRUCTION: add a check to first "started" checklist crate in list and begin.
+  - For each function described in A.1-A.4, identify the function in a ploke
+  member crate to be used.
+  - For each command described in A.1-A.4, identify an appropriate function or function(s) in each crate and select candidates for usage in commands
+  - Add functions identified and which crate they are from to the document with
+  all commands to be entered.
+  - SUBAGENT_INSTRUCTION: add a finished check your crate in list and move to M.1.2.
+
+2. Once all crates are finished with first pass, identify key functions not in list
+  - AGENT_INSTRUCTION: Monitor sub-agents, review list for updates as
+  sub-agents contribute, check for overlapping edits and correct
+  - SUBAGENT_INSTRUCTION: for any key function in your crate that to include as
+  an `xtask` command, add to list
+
+sub-agents fan-in
+
+3. Once all crates have been reviewed for M.1.1 and M.1.2:
+  - Review list of commands
+  - Identify commands that require cross-crate functionality not addressed in M.1.1 and M.1.2
+  - Identify utility commands not identified in A.1-A.4 and M.1.1-M.1.2
+  - Add names and short descriptions to list with crates + functions required
+  for these cross-commands
+
+sub-agents fan-out
+
+4. For each cross-crate command, gather required function information
+  - AGENT_INSTRUCTION: dispatch sub-agents per command, monitor sub-agents, curate + check list quality
+  - SUBAGENT_INSTRUCTION: for your command, gather references and information
+  for functions required to implement command, fill in list for your command.
+
+sub-agents fan-in
+
+5. Review list of commands and referenced functions in document
+  - AGENT_INSTRUCTION: spawn below sub-agents and monitor:
+    - accuracy agent: reviews list + commands for accuracy to underlying
+    functions, identifies any quirks or special considerations about the
+    input/output types, adds notes to commands list
+    - task adherence agent: reviews list + commands for task adherence to
+    A.1-A.4 and M.1.1-M.1.3, verifies progress, provides evaluation and
+    possible corrections to main agent. Adds notes on task adherence to new
+    doc.
+
+
+### M.2 Design Architecture + Documentation
+
+sub-agent fan-out
+
+1. Multi-agent Review + design
+  - AGENT_INSTRUCTION: dispatch sub-agents with different roles + pointing them
+  towards relevant documentation. Ensures each sub-agent produces the described
+  document and that it is saved as a .md file in the appropriate location. Use
+  3 architecture agents run in parallel, 1 logical test agent.
+    - architecture agent: tasked with designing the architecture + struct +
+    data types (structs, traits) for modules in `xtask` as per A.1-A.4, 
+      - each of the three parallel architecture agents creates separate doc for
+      proposed arch + any new types/traits
+    - logical and test design agent: evaluates command list and underlying
+    functions to identify logical design requirements of tests. proof-oriented.
+    Cannot yet provide actual tests, but can identify the necessary conditions
+    for a test to be valuable for a given command.
+      - provides a doc with necessary conditions to test for each command in
+      list
+
+sub-agent fan-in
+sub-agent fan-out
+
+2. Design consolidation
+  - AGENT_INSTRUCTION: creates and provides skeleton review doc for sub-agents,
+  spawn five agents with same instructions, monitors agents
+    - instructs all five sub-agents to evaluate the three architecture plans
+    produced in M.2.1 and provide a recommendation with reasoning. Concerns are
+    correctness, long-term maintainability, modularity, extensibility,
+    adherence to plan
+    - each agent outputs their review, appending to same skeleton doc
+    - once all agents are complete, they read full review doc with all five
+    reviews, and append their choice of which of the three architecture plans
+    should be chosen + any caveats
+
+sub-agents fan-in
+main agent compact
+
+### M.3 Implement Architecture Foundation
+
+sub-agents fan-out
+
+1. Implement Types + Plan next steps
+  - AGENT_INSTRUCTION: start and monitor sub-agents, watch for multi-agent
+  editing conflicts and resolve. Creates 3 or more engineering agents and
+  dispatch according to chosen proposed arch from M.2.2
+    - bookkeeping agent: reviews contents of `docs/active/agents/2026-03-24-coordination/`
+      - creates a "table of contents" document with summaries of docs
+      - updates inter-file links
+      - checks progress updates are being made
+    - planning agent: plans out M.6 in line with A.5-A.6 and other
+    planning/architecture docs, writes proposed M.6 in new doc for later review
+    - engineering agents: implement the proposed arch setup as directed by main agent, 
+      - defining types, 
+      - creating module structure, 
+      - adding docs to defined types, 
+      - adding skeletons for commands + functions and `todo!` 
+      - Once finished, overall architecture skeleton for all commands should be
+      in place and compile + have documentation describing what each type and
+      function is but should not be functional
+
+sub-agents fan-in
+
+sub-agents fan-out
+
+2. Add TDD tests
+  - AGENT_INSTRUCTION: start and monitor sub-agents, create one architecture
+  agent, one test-review agent, and three test-writing agents.
+    - architecture agent reviews proposed architecture + its reviews, and
+    resolves conflicts between proposed architecture, this planning document,
+    and the implementation, checking for quality, robustness, task adherence
+    - test-writing agents write tests in line with test design doc created in
+    in M.2.1 for non-functional but compiling commands and other functions,
+    using the type system, proposed arch, and identifying and evaluating test
+    fixtures.
+      - Created tests should compile should not pass until the implementation
+      is able to add the functionality required by the test.
+    - test-reviewing agent creates and updates a test tracking doc in
+    `xtask/tests/test_matrix.md`, links to unit tests, evaluates coverage,
+    identifies gaps, reviews test design doc from M.2.1 in view of
+    implementation details, updates and builds on M.2.1 test design doc to
+    clarify + ensure high test quality and coverage
+
+sub-agent fan-in
+main agent compact
+
+### M.4 Full Implementation
+
+sub-agent fan-out
+
+1. Fill out implementation
+  - AGENT_INSTRUCTION: reviews updated arch and test docs from M.3.2, directs
+  sub-agents to implement full arch + tests, creates multiple (3+) engineering
+  agents, oversees conflicts
+    - engineering agents: implement full plan in line with M.1.9 docs
+      - there should be enough design work completed to fill out the full
+      implementation by this point, but it might require some test-implement
+      loops
+      - run tests and iterate
+    - if major blockers are discovered, prefer documenting the blockers and
+    stopping over relaxing task requirements or otherwise weakening test logic
+
+sub-agent fan-in
+
+sub-agent fan-out
+
+2. Expand tests, debug
+  - AGENT_INSTRUCTION: reviews updated arch and test docs from M.1.10, directs
+  sub-agents to implement full arch + tests, creates engineering agents,
+  oversees conflicts, creates a task adherence agent, creates a testing agent,
+  create a UX agent, creates a dedicated documentation agent
+    - testing agent: review and ensure test matrix updated, evaluate suite of
+    tests, check for duplication or overlap, design + implement or search for
+    test helpers if noticable repeated code or testing patterns, possibly add
+    testing macros depending on how much there is to do and how bad the test
+    bloat is. Must produce a coverage report in a new document.
+    - task adherence agent evaluates impelemntation against planning docs,
+    identifies and evaluates severity of any deviations, provides feedback
+    and/or actionable response depending on findings in new document.
+    - UX agent evaluates UX by both checking doc comment coverage and calling
+    the command-line `xtask` commands to perform live tests and identify gaps
+    - engineering agents: implement full plan in line with M.1.10 docs
+      - keep implementing or polish or write more tests or add documentation
+      - run tests and iterate
+    - if major blockers are discovered, prefer documenting the blockers and
+    stopping over relaxing task requirements or otherwise weakening test logic
+
+sub-agent fan-in
+
+3. Polish, add documentation
+    - AGENT_INSTRUCTION: You can fill in this section, it should be fairly
+    clear what to do. Main output needed here is a summary and review + at
+    least one sub-agent do to book-keeping by updating table of contents in
+    task directory
+
+### M.5 Expand into `ploke-tui` app commands A.5-A-6
+
+13. todo
+
+## Guidelines for Sub-Agents
+
+When working on this task:
+
+1. Check this document first for context and current state
+2. Log your progress in the [Progress Log](#progress-log) section
+3. If you encounter blockers or questions, add them to [Open Questions](#open-questions)
+4. Create a new document in `docs/agents/2026-03-24-coordingation/sub-agents/` with a summary of:
+  - your task (date)
+  - files touched
+  - any issues encountered
+  - additional implementation notes or concerns
+  - test passes/failures (if any)
+5. Report completion status back to the main agent and reference the document you created
+
+
+## Progress Log
+
+| Date | Sub-Agent | Status | Notes |
+|------|-----------|--------|-------|
+| 2026-03-24 | — | Initialized | Coordination directory created |
+
+## Open Questions
+
+| Date | Question | Asked By | Status |
+|------|----------|----------|--------|

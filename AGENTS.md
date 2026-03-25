@@ -3,6 +3,11 @@
 ## Rust version
 We are using rust version 2024 in all crates.
 
+## Shared Agent Documents
+- When the user asks you to create a new document, you should use the `docs/active/agents` directory, unless directed otherwise.
+- Shared agent documents are in `docs/active/agents`
+- See `docs/active/agents/readme.md` for naming conventions of files and directories, and further details.
+
 ## Correctness Guardrails
 - Do not relax internal correctness, consistency, validation, schema, or import semantics without explicit user approval first.
 - If a possible fix would make the system more permissive, tolerate previously invalid states, silently skip expected data, or weaken invariants, stop and ask before implementing it.
