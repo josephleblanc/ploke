@@ -60,7 +60,7 @@ pub use error::XtaskError;
 pub use executor::{
     Command, CommandCategory, CommandExecutor, CommandRegistry, ExecutorConfig, ResourceRequirements,
 };
-pub use test_harness::{expect_command_ok, CommandTestHarness};
+pub use test_harness::{expect_command_ok, CommandTestHarness, IsolatedFixtureCopy};
 pub use usage::{UsageStats, UsageTracker};
 
 /// Version of the xtask crate.

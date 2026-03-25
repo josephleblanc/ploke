@@ -21,6 +21,14 @@
 //! - `db list-relations` - List relations in database
 //! - `db embedding-status` - Show embedding status
 
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+use std::time::Instant;
+
+use cozo::DataValue;
+use ploke_db::Database;
+use ploke_test_utils::fixture_dbs::backup_db_fixture;
+
 use super::{CommandContext, OutputFormat, XtaskError};
 use crate::executor::Command;
 use std::path::PathBuf;
@@ -115,9 +123,24 @@ impl Command for Save {
         false
     }
 
-    fn execute(&self, _ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
-        // Implementation skeleton - full implementation in M.4
-        todo!("Save command implementation")
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let db = open_db(ctx, self.db.as_ref())?;
+        if let Some(parent) = self.output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        db.write_backup_to_path(&self.output)?;
+        let msg = if self.compress {
+            format!(
+                "Wrote Cozo backup to {} (compress flag not yet applied to export format)",
+                self.output.display()
+            )
+        } else {
+            format!("Wrote Cozo backup to {}", self.output.display())
+        };
+        Ok(DbOutput::Success {
+            message: msg,
+            path: Some(self.output.clone()),
+        })
     }
 }
 
@@ -155,9 +178,20 @@ impl Command for Load {
         false
     }
 
-    fn execute(&self, _ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
-        // Implementation skeleton - full implementation in M.4
-        todo!("Load command implementation")
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let _db = ctx.get_database(Some(self.path.as_path()))?;
+        if self.verify {
+            let rels = _db.relations_vec()?;
+            if rels.is_empty() {
+                return Err(XtaskError::Database(
+                    "Load verify failed: database has no relations after import".into(),
+                ));
+            }
+        }
+        Ok(DbOutput::Success {
+            message: format!("restored database from {}", self.path.display()),
+            path: Some(self.path.clone()),
+        })
     }
 }
 
@@ -195,9 +229,37 @@ impl Command for LoadFixture {
         false
     }
 
-    fn execute(&self, _ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
-        // Implementation skeleton - full implementation in M.4
-        todo!("LoadFixture command implementation")
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let fixture = backup_db_fixture(self.fixture.trim()).ok_or_else(|| {
+            let ids = ploke_test_utils::fixture_dbs::BACKUP_DB_FIXTURES
+                .iter()
+                .map(|f| f.id)
+                .collect::<Vec<_>>()
+                .join(", ");
+            XtaskError::validation(format!("Unknown fixture id `{}`", self.fixture)).with_recovery(
+                format!("Use a registered fixture id from docs/testing/BACKUP_DB_FIXTURES.md (examples: {ids})."),
+            )
+        })?;
+
+        let _db = ctx.get_database_from_fixture(fixture)?;
+        if self.verify {
+            let rels = _db.relations_vec()?;
+            if rels.is_empty() {
+                return Err(XtaskError::Database(
+                    "Fixture verify failed: no relations after import".into(),
+                ));
+            }
+        }
+
+        let index_note = if self.index {
+            " HNSW primary index was ensured during fixture import."
+        } else {
+            ""
+        };
+        Ok(DbOutput::Success {
+            message: format!("Loaded fixture `{}`.{}", self.fixture, index_note),
+            path: Some(fixture.path()),
+        })
     }
 }
 
@@ -235,9 +297,64 @@ impl Command for CountNodes {
         false
     }
 
-    fn execute(&self, _ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
-        // Implementation skeleton - full implementation in M.4
-        todo!("CountNodes command implementation")
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let db = open_db(ctx, self.db.as_ref())?;
+
+        let pending_embeddings = if self.pending {
+            Some(db.count_pending_embeddings().unwrap_or(0))
+        } else {
+            None
+        };
+
+        let mut by_kind: HashMap<String, usize> = HashMap::new();
+
+        let total = match self.kind {
+            None | Some(NodeKind::All) => {
+                let mut sum = 0usize;
+                for (label, rel) in node_relation_pairs() {
+                    if let Ok(n) = count_relation_rows(&db, rel) {
+                        if n > 0 {
+                            by_kind.insert((*label).to_string(), n);
+                            sum += n;
+                        }
+                    }
+                }
+                sum
+            }
+            Some(NodeKind::Function) => {
+                let n = count_relation_rows(&db, "function")?;
+                by_kind.insert("Function".to_string(), n);
+                n
+            }
+            Some(NodeKind::Type) => {
+                let mut sum = 0usize;
+                for (label, rel) in [
+                    ("Struct", "struct"),
+                    ("Enum", "enum"),
+                    ("Union", "union"),
+                    ("TypeAlias", "type_alias"),
+                ] {
+                    if let Ok(n) = count_relation_rows(&db, rel) {
+                        if n > 0 {
+                            by_kind.insert(label.to_string(), n);
+                            sum += n;
+                        }
+                    }
+                }
+                sum
+            }
+            Some(NodeKind::Module) => {
+                let n = count_relation_rows(&db, "module")?;
+                by_kind.insert("Module".to_string(), n);
+                n
+            }
+        };
+
+        Ok(DbOutput::NodeCount {
+            total,
+            by_kind,
+            pending_embeddings,
+        })
     }
 }
 
@@ -395,9 +512,30 @@ impl Command for Query {
         false
     }
 
-    fn execute(&self, _ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
-        // Implementation skeleton - full implementation in M.4
-        todo!("Query command implementation")
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let db = open_db(ctx, self.db.as_ref())?;
+        let params = query_params_map(&self.param);
+        let start = Instant::now();
+        let qr = if self.mutable {
+            if params.is_empty() {
+                db.raw_query_mut(&self.query)
+            } else {
+                db.raw_query_mut_params(&self.query, params)
+            }
+        } else if params.is_empty() {
+            db.raw_query(&self.query)
+        } else {
+            db.raw_query_params(&self.query, params)
+        }
+        .map_err(|e| cozo_error_with_query(e, &self.query))?;
+        let duration_ms = start.elapsed().as_millis() as u64;
+        let columns = qr.headers.clone();
+        let rows = data_values_to_json_rows(&qr);
+        Ok(DbOutput::QueryResult {
+            rows,
+            columns,
+            duration_ms,
+        })
     }
 }
 
@@ -431,9 +569,28 @@ impl Command for Stats {
         false
     }
 
-    fn execute(&self, _ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
-        // Implementation skeleton - full implementation in M.4
-        todo!("Stats command implementation")
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let db = open_db(ctx, self.db.as_ref())?;
+        let rels = db.relations_vec()?;
+        let category = format!("{:?}", self.category);
+        let data = match self.category {
+            StatsCategory::All => serde_json::json!({
+                "relation_count": rels.len(),
+            }),
+            StatsCategory::Nodes => serde_json::json!({
+                "note": "Use db count-nodes for node counts",
+            }),
+            StatsCategory::Relations => serde_json::json!({
+                "relation_count": rels.len(),
+            }),
+            StatsCategory::Embeddings => serde_json::json!({
+                "pending_embeddings": db.count_pending_embeddings().unwrap_or(0),
+            }),
+            StatsCategory::Indexes => serde_json::json!({
+                "hnsw_indices": rels.iter().filter(|r| r.ends_with(":hnsw_idx")).count(),
+            }),
+        };
+        Ok(DbOutput::DatabaseStats { category, data })
     }
 }
 
@@ -471,9 +628,26 @@ impl Command for ListRelations {
         false
     }
 
-    fn execute(&self, _ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
-        // Implementation skeleton - full implementation in M.4
-        todo!("ListRelations command implementation")
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let db = open_db(ctx, self.db.as_ref())?;
+        let names = db.relations_vec()?;
+        let relations = names
+            .into_iter()
+            .filter(|n| !self.no_hnsw || !n.ends_with(":hnsw_idx"))
+            .map(|name| {
+                let row_count = if self.counts {
+                    count_relation_rows(&db, &name).ok()
+                } else {
+                    None
+                };
+                RelationInfo {
+                    is_hnsw: name.ends_with(":hnsw_idx"),
+                    name,
+                    row_count,
+                }
+            })
+            .collect();
+        Ok(DbOutput::RelationsList { relations })
     }
 }
 
@@ -511,9 +685,16 @@ impl Command for EmbeddingStatus {
         false
     }
 
-    fn execute(&self, _ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
-        // Implementation skeleton - full implementation in M.4
-        todo!("EmbeddingStatus command implementation")
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let db = open_db(ctx, self.db.as_ref())?;
+        let pending = db.count_pending_embeddings()?;
+        let functions = count_relation_rows(&db, "function").unwrap_or(0);
+        Ok(DbOutput::EmbeddingStatus {
+            total_nodes: functions,
+            embedded: functions.saturating_sub(pending),
+            pending,
+            sets: vec![],
+        })
     }
 }
 
@@ -603,6 +784,61 @@ pub struct EmbeddingSetInfo {
     pub dimensions: usize,
     pub model: String,
     pub count: usize,
+}
+
+fn open_db(ctx: &CommandContext, db: Option<&PathBuf>) -> Result<Arc<Database>, XtaskError> {
+    ctx.get_database(db.map(PathBuf::as_path))
+}
+
+fn count_relation_rows(db: &Database, relation: &str) -> Result<usize, XtaskError> {
+    let script = format!("?[id] := *{relation} {{ id }}");
+    let qr = db
+        .raw_query(&script)
+        .map_err(|e| XtaskError::Database(e.to_string()))?;
+    Ok(qr.rows.len())
+}
+
+fn node_relation_pairs() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("Function", "function"),
+        ("Module", "module"),
+        ("Enum", "enum"),
+        ("Trait", "trait"),
+        ("Impl", "impl"),
+        ("Const", "const"),
+        ("Static", "static"),
+        ("Macro", "macro"),
+        ("Struct", "struct"),
+        ("TypeAlias", "type_alias"),
+        ("Union", "union"),
+        ("Import", "import"),
+    ]
+}
+
+fn cozo_error_with_query(e: impl std::fmt::Display, query: &str) -> XtaskError {
+    XtaskError::Database(format!(
+        "cozo query error: {e} | your input query: {query:?} | underlying: ploke_db::Database::raw_query / raw_query_mut"
+    ))
+}
+
+fn query_params_map(param: &[(String, String)]) -> BTreeMap<String, DataValue> {
+    param
+        .iter()
+        .map(|(k, v)| (k.clone(), DataValue::Str(v.clone().into())))
+        .collect()
+}
+
+fn data_values_to_json_rows(qr: &ploke_db::QueryResult) -> Vec<serde_json::Value> {
+    qr.rows
+        .iter()
+        .map(|row| {
+            serde_json::Value::Array(
+                row.iter()
+                    .map(|c| serde_json::Value::String(format!("{c:?}")))
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 /// Parse a key=value pair for command line arguments

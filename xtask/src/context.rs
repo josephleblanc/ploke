@@ -6,10 +6,13 @@
 //! The context uses [`once_cell::sync::OnceCell`] for thread-safe lazy initialization,
 //! ensuring resources are only created when actually needed.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
+use ploke_db::{create_index_primary, Database};
+use ploke_test_utils::fixture_dbs::{FixtureDb, FixtureImportMode};
 
 use crate::error::XtaskError;
 
@@ -99,6 +102,15 @@ impl CommandContext {
         pool.get_or_create(path)
     }
 
+    /// Load a registered backup fixture (see `ploke-test-utils` / `docs/testing/BACKUP_DB_FIXTURES.md`).
+    pub fn get_database_from_fixture(
+        &self,
+        fixture: &'static FixtureDb,
+    ) -> Result<Arc<Database>, XtaskError> {
+        let pool = self.database_pool()?;
+        pool.get_from_fixture(fixture)
+    }
+
     /// Get or create the embedding runtime.
     ///
     /// The embedding runtime is created on first access and cached for subsequent calls.
@@ -182,65 +194,120 @@ impl Default for CommandContext {
     }
 }
 
-/// Placeholder database pool.
-///
-/// This is a simplified implementation. The full implementation will integrate
-/// with ploke_db for actual database management.
+/// Database pool: one shared in-memory database and cached file-backed imports.
 pub struct DatabasePool {
-    /// In-memory database instance.
     in_memory: std::sync::RwLock<Option<Arc<Database>>>,
+    by_path: std::sync::RwLock<HashMap<PathBuf, Arc<Database>>>,
 }
 
 impl DatabasePool {
     /// Create a new database pool.
-    ///
-    /// # Errors
-    /// Returns an error if the pool cannot be initialized.
     pub fn new() -> Result<Arc<Self>, XtaskError> {
         Ok(Arc::new(Self {
             in_memory: std::sync::RwLock::new(None),
+            by_path: std::sync::RwLock::new(HashMap::new()),
         }))
     }
 
-    /// Get or create a database.
-    ///
-    /// If `path` is `None`, returns the in-memory database.
-    /// If `path` is provided, returns a database at that path (creating it if needed).
+    fn load_plain_backup(path: &Path) -> Result<Arc<Database>, XtaskError> {
+        let db = Database::init_with_schema()?;
+        let prior = db.relations_vec()?;
+        db.import_from_backup(path, &prior)
+            .map_err(|e| XtaskError::Database(e.to_string()))?;
+        create_index_primary(&db)?;
+        Ok(Arc::new(db))
+    }
+
+    fn load_backup_with_embeddings(path: &Path) -> Result<Arc<Database>, XtaskError> {
+        let db = Database::init_with_schema()?;
+        db.import_backup_with_embeddings(path)
+            .map_err(|e| XtaskError::Database(e.to_string()))?;
+        create_index_primary(&db)?;
+        Ok(Arc::new(db))
+    }
+
+    /// Load a registered fixture with the correct import mode and primary index policy.
+    pub fn get_from_fixture(&self, fixture: &'static FixtureDb) -> Result<Arc<Database>, XtaskError> {
+        let key = fixture.path().canonicalize().map_err(|e| {
+            XtaskError::validation(format!(
+                "Could not resolve fixture database path {}: {}",
+                fixture.path().display(),
+                e
+            ))
+        })?;
+
+        {
+            let guard = self.by_path.read().unwrap();
+            if let Some(db) = guard.get(&key) {
+                return Ok(Arc::clone(db));
+            }
+        }
+
+        let db_arc = match fixture.import_mode {
+            FixtureImportMode::PlainBackup => Self::load_plain_backup(&key)?,
+            FixtureImportMode::BackupWithEmbeddings => Self::load_backup_with_embeddings(&key)?,
+        };
+
+        let mut guard = self.by_path.write().unwrap();
+        if let Some(db) = guard.get(&key) {
+            return Ok(Arc::clone(db));
+        }
+        guard.insert(key, Arc::clone(&db_arc));
+        Ok(db_arc)
+    }
+
+    /// In-memory schema (empty) or import from a Cozo backup file on disk.
     pub fn get_or_create(&self, path: Option<&Path>) -> Result<Arc<Database>, XtaskError> {
         match path {
             None => {
-                // In-memory database
                 let mut guard = self.in_memory.write().unwrap();
                 if let Some(ref db) = *guard {
-                    Ok(Arc::clone(db))
-                } else {
-                    let db = Arc::new(Database::new_in_memory()?);
-                    *guard = Some(Arc::clone(&db));
-                    Ok(db)
+                    return Ok(Arc::clone(db));
                 }
+                let db = Arc::new(Database::init_with_schema()?);
+                *guard = Some(Arc::clone(&db));
+                Ok(db)
             }
-            Some(_path) => {
-                // Persistent database - full implementation would use ploke_db
-                todo!("Persistent database support not yet implemented")
+            Some(p) => {
+                let key = p.canonicalize().map_err(|e| {
+                    XtaskError::validation(format!(
+                        "Database path `{}` could not be resolved: {}",
+                        p.display(),
+                        e
+                    ))
+                    .with_recovery(
+                        "Ensure the backup file exists (copy a registered fixture from tests/backup_dbs/ if needed). Use an absolute path or a path relative to the current working directory.",
+                    )
+                })?;
+
+                {
+                    let guard = self.by_path.read().unwrap();
+                    if let Some(db) = guard.get(&key) {
+                        return Ok(Arc::clone(db));
+                    }
+                }
+
+                if !key.is_file() {
+                    return Err(
+                        XtaskError::validation(format!(
+                            "Database backup file `{}` does not exist or is not a file",
+                            key.display()
+                        ))
+                        .with_recovery(
+                            "Check the path or use `db load-fixture <id>` with a registered fixture id (see `cargo xtask help-topic db`).",
+                        ),
+                    );
+                }
+
+                let db_arc = Self::load_plain_backup(&key)?;
+                let mut guard = self.by_path.write().unwrap();
+                if let Some(db) = guard.get(&key) {
+                    return Ok(Arc::clone(db));
+                }
+                guard.insert(key, Arc::clone(&db_arc));
+                Ok(db_arc)
             }
         }
-    }
-}
-
-/// Placeholder database type.
-///
-/// This will be replaced with the actual ploke_db::Database integration.
-pub struct Database;
-
-impl Database {
-    /// Create a new in-memory database.
-    ///
-    /// # Errors
-    /// Returns an error if the database cannot be created.
-    pub fn new_in_memory() -> Result<Self, XtaskError> {
-        // Placeholder implementation
-        // Full implementation will use ploke_db::Database::init_with_schema()
-        Ok(Self)
     }
 }
 
@@ -331,12 +398,8 @@ mod tests {
     #[test]
     fn test_validate_resources() {
         let ctx = CommandContext::new().unwrap();
-        // Should succeed with no resources needed
         assert!(ctx.validate_resources(false, false).is_ok());
-
-        // These will try to initialize resources, which are placeholders
-        // So they'll return errors currently
-        // assert!(ctx.validate_resources(true, false).is_ok());
+        assert!(ctx.validate_resources(true, false).is_ok());
     }
 
     #[test]
@@ -360,10 +423,17 @@ mod tests {
     }
 
     #[test]
-    fn test_database_new_in_memory() {
-        let db = Database::new_in_memory().unwrap();
-        // Just verify creation succeeds
-        drop(db);
+    fn test_context_loads_canonical_fixture() {
+        use ploke_test_utils::FIXTURE_NODES_CANONICAL;
+
+        let ctx = CommandContext::new().unwrap();
+        let db = ctx
+            .get_database_from_fixture(&FIXTURE_NODES_CANONICAL)
+            .expect("canonical fixture should load");
+        let qr = db
+            .raw_query("?[count(id)] := *function { id }")
+            .expect("fixture should contain function rows");
+        assert!(!qr.rows.is_empty());
     }
 
     #[test]

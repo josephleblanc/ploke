@@ -180,13 +180,17 @@ fn context_handles_resource_errors() {
         .expect("embedding_runtime should return Ok in default test context");
 }
 
-/// Persistent DB path still uses `todo!()` in `DatabasePool::get_or_create` (`context.rs`).
-/// When ploke_db integration lands, replace this with a real open-or-create test.
+/// Opening a non-existent backup path returns a validation error with recovery (not a panic).
 #[test]
-#[should_panic(expected = "Persistent database support not yet implemented")]
-fn context_persistent_database_panics_until_implemented() {
+fn context_rejects_missing_backup_file_path() {
     let ctx = CommandContext::new().unwrap();
-    let _ = ctx.get_database(Some(Path::new("/tmp/ploke_xtask_persistent_test.db")));
+    let err = ctx
+        .get_database(Some(Path::new(
+            "/nonexistent/ploke_xtask_no_such_backup.sqlite",
+        )))
+        .expect_err("missing backup file must error");
+    assert!(err.is_validation() || err.to_string().contains("does not exist"));
+    assert!(err.recovery_suggestion().is_some());
 }
 
 // =============================================================================

@@ -12,9 +12,17 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use ploke_test_utils::fixture_dbs::FixtureDb;
+
 use crate::context::CommandContext;
 use crate::error::XtaskError;
 use crate::executor::{Command, CommandExecutor, ExecutorConfig};
+
+/// Keeps a temp directory alive while tests use a copied backup SQLite file.
+pub struct IsolatedFixtureCopy {
+    _dir: tempfile::TempDir,
+    pub db_path: PathBuf,
+}
 
 /// Unwrap a successful command executor result for fail-until-impl tests.
 ///
@@ -328,6 +336,16 @@ impl CommandTestHarness {
             executor: CommandExecutor::new(config)?,
             fixtures_dir,
         })
+    }
+
+    /// Copy a registered backup fixture into a unique temp file (see `ploke_test_utils` / `BACKUP_DB_FIXTURES.md`).
+    pub fn isolated_fixture_copy(
+        fixture: &'static FixtureDb,
+    ) -> Result<IsolatedFixtureCopy, XtaskError> {
+        let dir = tempfile::TempDir::new().map_err(|e| XtaskError::Io(e.to_string()))?;
+        let dst = dir.path().join("fixture.sqlite");
+        std::fs::copy(fixture.path(), &dst).map_err(|e| XtaskError::Io(e.to_string()))?;
+        Ok(IsolatedFixtureCopy { _dir: dir, db_path: dst })
     }
 
     /// Run a command test with the given expected result.

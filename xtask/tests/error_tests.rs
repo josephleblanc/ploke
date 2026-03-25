@@ -493,6 +493,30 @@ fn result_error_handling_patterns() {
 }
 
 // =============================================================================
+// ploke_error integration (PRIMARY_TASK_SPEC §D)
+// =============================================================================
+
+/// To Prove: `ploke_error::Error` converts to `XtaskError` for workspace command boundaries.
+#[test]
+fn error_from_ploke_error_maps_for_database_domain() {
+    use ploke_error::DomainError;
+
+    let pe = ploke_error::Error::from(DomainError::Db {
+        message: "fixture probe failed".into(),
+    });
+    let xe: XtaskError = pe.into();
+    let s = xe.to_string();
+    assert!(
+        s.contains("fixture probe failed"),
+        "display should carry ploke_error content: {s}"
+    );
+    assert!(
+        xe.recovery_suggestion().is_some(),
+        "mapped errors should still offer recovery hints where applicable: {xe:?}"
+    );
+}
+
+// =============================================================================
 // Error Report Tests (print_report is tested manually)
 // =============================================================================
 

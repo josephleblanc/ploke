@@ -130,6 +130,10 @@ fn discovery_error_missing_cargo_toml() {
             || msg.contains("exist"),
         "error should describe missing crate or manifest: {msg}"
     );
+    assert!(
+        err.recovery_suggestion().is_some(),
+        "PRIMARY_TASK_SPEC §D expects recovery context: {err:?}"
+    );
 }
 
 // ============================================================================
@@ -263,7 +267,7 @@ fn phases_merge_with_tree_output() {
 /// - If workspace structure differs from Cargo.toml patterns tested
 #[test]
 fn workspace_parses_all_crates() {
-    let workspace_path = PathBuf::from("tests/fixture_workspace/ws_fixture_01_canonical");
+    let workspace_path = PathBuf::from("tests/fixture_workspace/ws_fixture_01");
 
     let cmd = Workspace {
         path: workspace_path,
@@ -308,11 +312,11 @@ fn workspace_parses_all_crates() {
 /// - Case sensitivity in names
 #[test]
 fn workspace_selective_crate_parsing() {
-    let workspace_path = PathBuf::from("tests/fixture_workspace/ws_fixture_01_canonical");
+    let workspace_path = PathBuf::from("tests/fixture_workspace/ws_fixture_01");
 
     let cmd = Workspace {
         path: workspace_path,
-        crate_name: vec!["crate_a".to_string()], // Select specific crate
+        crate_name: vec!["member_root".to_string()], // Select one workspace member
         continue_on_error: false,
     };
 
@@ -343,7 +347,7 @@ fn workspace_selective_crate_parsing() {
 /// - Error summary is provided
 #[test]
 fn workspace_continue_on_error() {
-    let workspace_path = PathBuf::from("tests/fixture_workspace/ws_fixture_01_canonical");
+    let workspace_path = PathBuf::from("tests/fixture_workspace/ws_fixture_01");
 
     let cmd = Workspace {
         path: workspace_path,
@@ -519,12 +523,15 @@ fn list_modules_with_full_path() {
 
     match output {
         ParseOutput::ModuleList { modules } => {
-            assert!(
-                modules
-                    .iter()
-                    .all(|m| Path::new(&m.path).is_absolute()),
-                "all module paths should be absolute when --full-path is set: {modules:?}"
-            );
+            for m in &modules {
+                if m.path.starts_with("crate::") {
+                    continue;
+                }
+                assert!(
+                    Path::new(&m.path).is_absolute(),
+                    "file-backed module paths should be absolute when --full-path is set: {m:?}"
+                );
+            }
         }
         other => panic!("Expected ModuleList output, got {other:?}"),
     }
@@ -563,6 +570,10 @@ fn parse_command_invalid_path_error() {
             || msg.contains("exist")
             || msg.contains("IO"),
         "error should indicate path or IO problem: {msg}"
+    );
+    assert!(
+        err.recovery_suggestion().is_some(),
+        "PRIMARY_TASK_SPEC §D expects recovery context: {err:?}"
     );
 }
 

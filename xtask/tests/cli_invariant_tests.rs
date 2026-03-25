@@ -1,0 +1,56 @@
+//! Tests for PRIMARY_TASK_SPEC §C using the clap [`xtask::cli::Cli`] surface.
+//!
+//! Note: The `xtask` binary entrypoint ([`main.rs`](../src/main.rs)) still dispatches legacy
+//! workspace helpers; agent-facing `parse` / `db` commands are exercised here via the same `Cli`
+//! type the library uses until the binary is unified.
+
+use clap::Parser;
+use clap::error::ErrorKind;
+
+use xtask::cli::Cli;
+
+#[test]
+fn cli_root_help_shows_parse_and_db() {
+    let err = Cli::try_parse_from(["xtask", "--help"]).expect_err("clap emits DisplayHelp");
+    assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+    let s = err.to_string();
+    assert!(s.contains("parse"), "§C.3: {s}");
+    assert!(s.contains("db"), "§C.3: {s}");
+}
+
+#[test]
+fn cli_parse_help_lists_subcommands() {
+    let err = Cli::try_parse_from(["xtask", "parse", "--help"]).expect_err("DisplayHelp");
+    assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+    let s = err.to_string();
+    assert!(s.contains("discovery"), "{s}");
+}
+
+#[test]
+fn cli_db_help_lists_subcommands() {
+    let err = Cli::try_parse_from(["xtask", "db", "--help"]).expect_err("DisplayHelp");
+    assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+    let s = err.to_string();
+    assert!(s.contains("count"), "{s}");
+}
+
+#[test]
+fn cli_parse_discovery_help_documents_path_target() {
+    let err = Cli::try_parse_from(["xtask", "parse", "discovery", "--help"]).expect_err("DisplayHelp");
+    assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+    let s = err.to_string();
+    assert!(
+        s.contains("PATH") || s.to_lowercase().contains("path"),
+        "§C.2 path/target documentation: {s}"
+    );
+}
+
+#[test]
+fn cli_unknown_subcommand_produces_clap_error() {
+    let err = Cli::try_parse_from(["xtask", "__not_a_real_command__"]).expect_err("unknown");
+    let s = err.to_string();
+    assert!(
+        !s.trim().is_empty(),
+        "§C.1: user-visible feedback on bad input: {s}"
+    );
+}

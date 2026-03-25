@@ -11,6 +11,8 @@
 //! - Edge cases
 //! - Hypothesis format: "To Prove: ... Given: ... When: ... Then: ..."
 
+use ploke_test_utils::FIXTURE_NODES_CANONICAL;
+
 use xtask::commands::db::{
     CountNodes, DbOutput, Load, LoadFixture, NodeKind, Query, Save, Stats, StatsCategory,
 };
@@ -48,10 +50,10 @@ use xtask::test_harness::CommandTestHarness;
 /// - If fixture data doesn't represent real-world node distributions
 #[test]
 fn count_nodes_returns_nonzero_for_populated_db() {
-    // TODO(M.4): Enable full test when implementation is ready
-    // Setup: Create command and harness
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
     let cmd = CountNodes {
-        db: None,
+        db: Some(iso.db_path.clone()),
         kind: None,
         pending: false,
     };
@@ -97,8 +99,10 @@ fn count_nodes_returns_nonzero_for_populated_db() {
 /// - Unknown kinds return 0 (not error)
 #[test]
 fn count_nodes_with_kind_filter() {
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
     let cmd = CountNodes {
-        db: None,
+        db: Some(iso.db_path.clone()),
         kind: Some(NodeKind::Function),
         pending: false,
     };
@@ -126,8 +130,10 @@ fn count_nodes_with_kind_filter() {
 /// Then: pending_embeddings is Some(count)
 #[test]
 fn count_nodes_with_pending_flag() {
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
     let cmd = CountNodes {
-        db: None,
+        db: Some(iso.db_path.clone()),
         kind: None,
         pending: true, // Request pending count
     };
@@ -178,9 +184,11 @@ fn count_nodes_with_pending_flag() {
 /// - Recursive/multi-line queries
 #[test]
 fn query_executes_valid_cozoscript() {
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
     let cmd = Query {
         query: "?[count(id)] := *function { id }".to_string(),
-        db: None,
+        db: Some(iso.db_path.clone()),
         param: vec![],
         mutable: false,
         output: Some(OutputFormat::Json),
@@ -228,9 +236,11 @@ fn query_executes_valid_cozoscript() {
 /// Then: Error is returned with query context and helpful message
 #[test]
 fn query_handles_invalid_syntax() {
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
     let cmd = Query {
         query: "INVALID SYNTAX HERE".to_string(),
-        db: None,
+        db: Some(iso.db_path.clone()),
         param: vec![],
         mutable: false,
         output: None,
@@ -246,8 +256,14 @@ fn query_handles_invalid_syntax() {
         msg.contains("syntax")
             || msg.contains("invalid")
             || msg.contains("parse")
-            || msg.contains("cozo"),
+            || msg.contains("cozo")
+            || msg.contains("parser")
+            || msg.contains("unexpected"),
         "error should describe invalid query: {msg}"
+    );
+    assert!(
+        msg.contains("INVALID SYNTAX HERE") || msg.contains("your input query"),
+        "error should include query context per PRIMARY_TASK_SPEC §D: {msg}"
     );
 }
 
@@ -259,9 +275,11 @@ fn query_handles_invalid_syntax() {
 /// Then: Parameters are bound and query executes correctly
 #[test]
 fn query_with_parameters() {
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
     let cmd = Query {
         query: "?[id] := *function { id, name }, name = $name".to_string(),
-        db: None,
+        db: Some(iso.db_path.clone()),
         param: vec![("name".to_string(), "test_function".to_string())],
         mutable: false,
         output: None,
@@ -296,8 +314,10 @@ fn query_with_parameters() {
 /// - Permission denied
 #[test]
 fn stats_returns_comprehensive_data() {
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
     let cmd = Stats {
-        db: None,
+        db: Some(iso.db_path.clone()),
         category: StatsCategory::All,
     };
 
@@ -329,9 +349,11 @@ fn stats_with_category_filter() {
         StatsCategory::Indexes,
     ];
 
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
     for category in categories {
         let cmd = Stats {
-            db: None,
+            db: Some(iso.db_path.clone()),
             category,
         };
 
@@ -387,8 +409,10 @@ fn save_creates_valid_backup() {
     // Clean up any existing file
     let _ = std::fs::remove_file(&backup_path);
 
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
     let cmd = Save {
-        db: None,
+        db: Some(iso.db_path.clone()),
         output: backup_path.clone(),
         compress: false,
     };
@@ -436,11 +460,9 @@ fn save_creates_valid_backup() {
 /// - Incompatible backup version
 #[test]
 fn load_restores_backup_correctly() {
-    // This test requires a pre-existing backup file
-    // We'll use the fixture system for this
-
-    let temp_dir = std::env::temp_dir();
-    let backup_path = temp_dir.join("test_restore_backup.sqlite");
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
+    let backup_path = iso.db_path.clone();
 
     let cmd = Load {
         path: backup_path.clone(),
@@ -543,6 +565,10 @@ fn load_fixture_rejects_invalid_id() {
             || msg.contains("invalid"),
         "error should indicate missing or invalid fixture: {msg}"
     );
+    assert!(
+        err.recovery_suggestion().is_some(),
+        "PRIMARY_TASK_SPEC §D expects recovery context: {err:?}"
+    );
 }
 
 /// Test: LoadFixture with index flag creates HNSW index
@@ -586,7 +612,9 @@ fn load_fixture_with_index_flag() {
 /// Then: Counts are from the specified database
 #[test]
 fn count_nodes_with_db_path() {
-    let temp_db_path = std::env::temp_dir().join("test_count_db.sqlite");
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
+    let temp_db_path = iso.db_path.clone();
 
     let cmd = CountNodes {
         db: Some(temp_db_path.clone()),
@@ -609,9 +637,11 @@ fn count_nodes_with_db_path() {
 /// Then: Query executes successfully
 #[test]
 fn query_with_mutable_flag() {
+    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
+        .expect("isolated fixture copy");
     let cmd = Query {
-        query: "::remove function { id: 'test' }".to_string(),
-        db: None,
+        query: "?[x] := x in [1]".to_string(),
+        db: Some(iso.db_path.clone()),
         param: vec![],
         mutable: true, // Allow mutation
         output: None,

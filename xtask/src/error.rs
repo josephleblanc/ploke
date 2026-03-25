@@ -119,6 +119,7 @@ impl XtaskError {
             Self::Database(_) => Some("Check database connectivity and permissions."),
             Self::Io(_) => Some("Check file permissions and disk space."),
             Self::Internal(_) => Some("This may be a bug. Please report it."),
+            Self::Parse(_) => Some("Check the crate path and Cargo.toml; try `cargo xtask help-topic parse`."),
             _ => None,
         }
     }
@@ -208,6 +209,18 @@ impl From<std::io::Error> for XtaskError {
 impl From<serde_json::Error> for XtaskError {
     fn from(err: serde_json::Error) -> Self {
         Self::Serialization(err.to_string())
+    }
+}
+
+impl From<ploke_error::Error> for XtaskError {
+    fn from(err: ploke_error::Error) -> Self {
+        Self::Database(err.to_string())
+    }
+}
+
+impl From<ploke_db::DbError> for XtaskError {
+    fn from(err: ploke_db::DbError) -> Self {
+        Self::Database(err.to_string())
     }
 }
 
