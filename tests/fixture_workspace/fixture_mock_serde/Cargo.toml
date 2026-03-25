@@ -1,0 +1,18 @@
+[workspace]
+members = [
+    "mock_serde",
+    "mock_serde_core",
+    "mock_serde_derive",
+    "mock_serde_derive_internals",
+]
+resolver = "2"
+
+[patch.crates-io]
+mock_serde = { path = "mock_serde" }
+mock_serde_core = { path = "mock_serde_core" }
+mock_serde_derive = { path = "mock_serde_derive" }
+
+[workspace.dependencies]
+proc-macro2 = { version = "1.0.74", default-features = false }
+quote = { version = "1.0.35", default-features = false }
+syn = { version = "2.0.81", default-features = false, features = ["clone-impls", "derive", "parsing", "printing", "proc-macro", "full"] }

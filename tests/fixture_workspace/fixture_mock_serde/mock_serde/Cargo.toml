@@ -1,0 +1,19 @@
+[package]
+name = "mock_serde"
+version = "0.1.0"
+edition = "2021"
+description = "Mock serde crate for testing workspace analysis"
+build = "build.rs"
+
+[dependencies]
+mock_serde_core = { path = "../mock_serde_core", default-features = false }
+mock_serde_derive = { version = "0.1", optional = true, path = "../mock_serde_derive" }
+
+[features]
+default = ["std"]
+# Provide derive(Serialize, Deserialize) macros.
+derive = ["mock_serde_derive"]
+# Provide impls for common standard library types.
+std = ["mock_serde_core/std"]
+# Provide impls for types in alloc.
+alloc = ["mock_serde_core/alloc"]

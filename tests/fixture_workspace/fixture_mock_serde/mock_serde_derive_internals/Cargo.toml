@@ -1,0 +1,13 @@
+[package]
+name = "mock_serde_derive_internals"
+version = "0.1.0"
+edition = "2021"
+description = "Mock AST representation used by derive macros. Non-standard layout."
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true, features = ["clone-impls", "derive", "parsing", "printing"] }
