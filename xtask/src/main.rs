@@ -42,7 +42,15 @@ const EMBEDDING_MODELS_FIXTURE: &str = "fixtures/openrouter/embeddings_models.js
 const EMBEDDING_MODELS_META: &str = "fixtures/openrouter/embeddings_models.meta.json";
 const RAG_FIXTURE_PREFIX: &str = "fixture_nodes_";
 
+// Library modules
+mod cli;
+mod commands;
+mod context;
+mod error;
+mod executor;
 mod profile_ingest;
+mod test_harness;
+mod usage;
 
 fn main() -> ExitCode {
     match run() {
@@ -85,34 +93,8 @@ fn run() -> Result<(), XtaskError> {
     }
 }
 
-#[derive(Debug)]
-struct XtaskError(String);
-
-impl XtaskError {
-    fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
-    }
-}
-
-impl std::fmt::Display for XtaskError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl Error for XtaskError {}
-
-impl From<String> for XtaskError {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&str> for XtaskError {
-    fn from(value: &str) -> Self {
-        Self(value.to_string())
-    }
-}
+// Use XtaskError from the error module
+use error::XtaskError;
 
 fn print_usage() {
     eprintln!(

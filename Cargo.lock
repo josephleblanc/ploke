@@ -7884,10 +7884,14 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "clap",
  "cozo",
+ "dirs 5.0.1",
+ "once_cell",
  "ploke-core",
  "ploke-db",
  "ploke-embed",
+ "ploke-error",
  "ploke-io",
  "ploke-llm",
  "ploke-test-utils",
