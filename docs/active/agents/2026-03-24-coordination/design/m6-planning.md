@@ -1,7 +1,7 @@
 # Milestone M.5 planning: Expand into `ploke-tui` app commands (A.5–A.6)
 
 **Date:** 2026-03-25  
-**README milestone:** **M.5** (sections A.5–A.6; see [README.md](../README.md))  
+**PRIMARY_TASK_SPEC milestone:** **M.5** (sections A.5–A.6; see [PRIMARY_TASK_SPEC.md](../PRIMARY_TASK_SPEC.md))
 **Entry pointer:** [m5-planning.md](../m5-planning.md) (this file’s topic; body lives here)  
 **Filename note:** This document is stored as `m6-planning.md` to avoid breaking existing links; treat **M.5** as the spec milestone name.  
 **Status:** Planning Phase  
@@ -1046,7 +1046,7 @@ pub trait ToolCommand: Command {
 
 | Document | Purpose |
 |----------|---------|
-| `../README.md` | Main specification (A.5-A.6) |
+| `../PRIMARY_TASK_SPEC.md` | Main specification (A.5-A.6) |
 | `../sub-agents/survey-ploke_tui.md` | TUI survey results |
 | `architecture-decision.md` | Selected architecture |
 | `test-design-requirements.md` | Test design for all commands |

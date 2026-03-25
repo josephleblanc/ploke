@@ -6,7 +6,7 @@
 
 ## Overview
 
-This document tracks the mapping between desired xtask commands (from README.md sections A.1-A.4) and the actual functions available in ploke workspace crates.
+This document tracks the mapping between desired xtask commands (from PRIMARY_TASK_SPEC.md sections A.1-A.4) and the actual functions available in ploke workspace crates.
 
 ### Legend: survey vs `xtask` implementation
 

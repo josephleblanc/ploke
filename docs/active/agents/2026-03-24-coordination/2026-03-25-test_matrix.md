@@ -1,20 +1,20 @@
 # Test matrix for `xtask` commands
 
 **Date:** 2026-03-25  
-**Task spec:** [README.md](./README.md) section E  
+**Task spec:** [PRIMARY_TASK_SPEC.md](./PRIMARY_TASK_SPEC.md) section E  
 **Branch:** `feature/xtask-commands`
 
 ## Canonical location
 
-Per README §E.1, this file under `docs/active/agents/2026-03-24-coordination/` is the **primary** test matrix for coordination and agent workflow.
+Per PRIMARY_TASK_SPEC §E.1, this file under `docs/active/agents/2026-03-24-coordination/` is the **primary** test matrix for coordination and agent workflow.
 
-The README milestone M.3.2 also mentions `xtask/tests/test_matrix.md`. That path holds a **short pointer** to this document only (no duplicate matrix). If tooling is added under `xtask/tests/`, extend this file and link the new tests here.
+The PRIMARY_TASK_SPEC milestone M.3.2 also mentions `xtask/tests/test_matrix.md`. That path holds a **short pointer** to this document only (no duplicate matrix). If tooling is added under `xtask/tests/`, extend this file and link the new tests here.
 
 ---
 
 ## Scope and status summary
 
-| Test file | README areas | Role | Current state |
+| Test file | PRIMARY_TASK_SPEC areas | Role | Current state |
 |-----------|----------------|------|---------------|
 | [error_tests.rs](../../../../xtask/tests/error_tests.rs) | D (error shape), C invariants indirectly | Unit/integration-style tests for `XtaskError`, `RecoveryHint`, `ErrorCode` | **Runs:** exercises real error types; not yet `ploke_error::Error` |
 | [context_tests.rs](../../../../xtask/tests/context_tests.rs) | A.1–A.4 (resource prep), architecture | `CommandContext` lifecycle, workspace root, lazy resources | **Runs / partial:** several tests note M.4 follow-up; persistent DB path hits `todo!()` in context |
@@ -26,7 +26,7 @@ The README milestone M.3.2 also mentions `xtask/tests/test_matrix.md`. That path
 
 ---
 
-## Per-file notes (README E.1 style)
+## Per-file notes (PRIMARY_TASK_SPEC E.1 style)
 
 ### `error_tests.rs`
 
@@ -35,7 +35,7 @@ The README milestone M.3.2 also mentions `xtask/tests/test_matrix.md`. That path
 - **Invariants:** error variants round-trip for tests that assert matching.
 - **Fail states:** IO / validation paths return predictable `XtaskError` shapes.
 - **Edge cases:** nested sources, `CommandFailed` formatting.
-- **Gap vs README §D:** no `ploke_error::Error` integration yet — document as M.4 work.
+- **Gap vs PRIMARY_TASK_SPEC §D:** no `ploke_error::Error` integration yet — document as M.4 work.
 
 ### `context_tests.rs`
 
@@ -58,7 +58,7 @@ The README milestone M.3.2 also mentions `xtask/tests/test_matrix.md`. That path
 
 - **Underlying targets:** [`commands/parse.rs`](../../../../xtask/src/commands/parse.rs), syn_parser APIs from survey docs.
 - **Expected functionality:** each subcommand calls the surveyed function and returns serializable diagnostics.
-- **Invariants:** invalid paths → structured `XtaskError` with recovery text (README B/D).
+- **Invariants:** invalid paths → structured `XtaskError` with recovery text (PRIMARY_TASK_SPEC B/D).
 - **Fail states:** parse errors from `syn_parser` surfaced to stdout/stderr per spec.
 - **Current state:** tests largely `todo!()` pending M.4 implementation.
 
@@ -66,7 +66,7 @@ The README milestone M.3.2 also mentions `xtask/tests/test_matrix.md`. That path
 
 - **Underlying targets:** [`commands/db.rs`](../../../../xtask/src/commands/db.rs), `ploke_db`, `ploke_test_utils` fixtures.
 - **Expected functionality:** backup/restore, fixture load, indexes, queries, stats per [survey-ploke_db.md](./sub-agents/survey-ploke_db.md).
-- **Invariants:** cozo errors forwarded (README B.1); fixture paths validated.
+- **Invariants:** cozo errors forwarded (PRIMARY_TASK_SPEC B.1); fixture paths validated.
 - **Fail states:** missing backup file; invalid query; schema mismatch.
 - **Current state:** file header states commands return `todo!()`; tests document expected transition when stubs are removed.
 
@@ -74,7 +74,7 @@ The README milestone M.3.2 also mentions `xtask/tests/test_matrix.md`. That path
 
 ## Hypothesis template (for new rows)
 
-When adding tests, keep README E.3 discipline:
+When adding tests, keep PRIMARY_TASK_SPEC E.3 discipline:
 
 1. **To prove:** …  
 2. **Why useful:** …  

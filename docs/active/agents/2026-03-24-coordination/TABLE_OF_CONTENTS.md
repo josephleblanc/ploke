@@ -14,7 +14,7 @@ This directory (`docs/active/agents/2026-03-24-coordination/`) serves as the cen
 
 | Need To... | Go To |
 |------------|-------|
-| Understand the task requirements | [README.md](./README.md) |
+| Understand the task requirements | [PRIMARY_TASK_SPEC.md](./PRIMARY_TASK_SPEC.md) |
 | Check current progress | [progress.md](./progress.md) |
 | See command-function mappings | [2026-03-25-command-matrix.md](./2026-03-25-command-matrix.md) |
 | See test matrix vs `xtask` tests | [2026-03-25-test_matrix.md](./2026-03-25-test_matrix.md) |
@@ -42,11 +42,11 @@ This directory (`docs/active/agents/2026-03-24-coordination/`) serves as the cen
 
 | Document | Status | Description | Lines |
 |----------|--------|-------------|-------|
-| [README.md](./README.md) | 🟢 Final | **PRIMARY TASK SPEC** - Sections A-G defining all requirements | 525 |
+| [PRIMARY_TASK_SPEC.md](./PRIMARY_TASK_SPEC.md) | 🟢 Final | **PRIMARY TASK SPEC** - Sections A-G defining all requirements | 525 |
 | [progress.md](./progress.md) | 🟡 Draft | Progress tracker with milestone status and assignments | - |
-| [PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md) | 🟡 Draft | Executive summary, codebase truth, README adherence snapshot | - |
+| [PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md) | 🟡 Draft | Executive summary, codebase truth, PRIMARY_TASK_SPEC adherence snapshot | - |
 | [TABLE_OF_CONTENTS.md](./TABLE_OF_CONTENTS.md) | 🟡 Draft | This document - comprehensive navigation guide | - |
-| [m5-planning.md](./m5-planning.md) | 🟡 Draft | Entry pointer for README **M.5** (A.5–A.6); body in design/m6-planning.md | - |
+| [m5-planning.md](./m5-planning.md) | 🟡 Draft | Entry pointer for PRIMARY_TASK_SPEC **M.5** (A.5–A.6); body in design/m6-planning.md | - |
 
 ### Supporting Documents
 
@@ -54,7 +54,7 @@ This directory (`docs/active/agents/2026-03-24-coordination/`) serves as the cen
 |----------|--------|-------------|-------|
 | [TASK_ADHERENCE_PROMPT.md](./TASK_ADHERENCE_PROMPT.md) | 🟢 Final | Instructions for task adherence agents | 41 |
 | [2026-03-25-command-matrix.md](./2026-03-25-command-matrix.md) | 🟡 Draft | Survey mappings + **`xtask` impl** column (A.1–A.6); cross-crate section | - |
-| [2026-03-25-test_matrix.md](./2026-03-25-test_matrix.md) | 🟡 Draft | Test matrix per README §E; links `xtask/tests/*.rs` | - |
+| [2026-03-25-test_matrix.md](./2026-03-25-test_matrix.md) | 🟡 Draft | Test matrix per PRIMARY_TASK_SPEC §E; links `xtask/tests/*.rs` | - |
 | [execution_path_trace.md](./execution_path_trace.md) | 🟢 Final | Research tracing execution from `/index start` to `CodeVisitor` | 395 |
 
 ---
@@ -118,7 +118,7 @@ This directory (`docs/active/agents/2026-03-24-coordination/`) serves as the cen
 |----------|--------|---------|-------|
 | [design/consolidated-reviews.md](./design/consolidated-reviews.md) | 🟢 Final | Review Agent 3's detailed analysis | 148 |
 | [design/architecture-decision.md](./design/architecture-decision.md) | 🟢 Final | **FINAL DECISION** - Proposal 3 with modifications | 164 |
-| [design/m6-planning.md](./design/m6-planning.md) | 🟡 Draft | README **M.5** (A.5–A.6) implementation planning; entry [m5-planning.md](./m5-planning.md) | - |
+| [design/m6-planning.md](./design/m6-planning.md) | 🟡 Draft | PRIMARY_TASK_SPEC **M.5** (A.5–A.6) implementation planning; entry [m5-planning.md](./m5-planning.md) | - |
 
 ### Task Adherence Reports
 
@@ -141,18 +141,18 @@ This directory (`docs/active/agents/2026-03-24-coordination/`) serves as the cen
 | Role | Status | Output / location |
 |------|--------|-------------------|
 | Bookkeeping | Complete | This TOC, PROJECT_SUMMARY, progress updates |
-| Planning (README M.5) | Complete (draft) | [m5-planning.md](./m5-planning.md), [design/m6-planning.md](./design/m6-planning.md) |
+| Planning (PRIMARY_TASK_SPEC M.5) | Complete (draft) | [m5-planning.md](./m5-planning.md), [design/m6-planning.md](./design/m6-planning.md) |
 | Engineering | Partial | `xtask/src`: `error`, `context`, `executor`, `usage`, `cli`, `commands/{mod,parse,db}`, `test_harness`; `main.rs` not wired to `Cli` |
 | Binary entry | Gap | Legacy string dispatch only |
 
-**Note:** README milestone **M.5** names the ploke-tui expansion. The planning file is stored as `design/m6-planning.md` for stable links; the title inside matches **M.5**.
+**Note:** PRIMARY_TASK_SPEC milestone **M.5** names the ploke-tui expansion. The planning file is stored as `design/m6-planning.md` for stable links; the title inside matches **M.5**.
 
 ### M.3.2 — Tests + matrix
 
 | Deliverable | Status |
 |-------------|--------|
 | Integration tests under `xtask/tests/` | Partial (several `todo!(M.4)` placeholders) |
-| [2026-03-25-test_matrix.md](./2026-03-25-test_matrix.md) | Seeded (canonical per README §E.1) |
+| [2026-03-25-test_matrix.md](./2026-03-25-test_matrix.md) | Seeded (canonical per PRIMARY_TASK_SPEC §E.1) |
 | [xtask/tests/test_matrix.md](../../../../xtask/tests/test_matrix.md) | Pointer to coordination matrix |
 | Strict TDD “fail until impl” | Not uniform across suite |
 
@@ -310,7 +310,7 @@ M.2 (Design):
 M.3+ (Implementation):
   progress.md (current status)
   PROJECT_SUMMARY.md (summary + adherence)
-  m5-planning.md → design/m6-planning.md (README M.5)
+  m5-planning.md → design/m6-planning.md (PRIMARY_TASK_SPEC M.5)
   2026-03-25-test_matrix.md
 ```
 
@@ -318,7 +318,7 @@ M.3+ (Implementation):
 
 ```
 Requirements:
-  README.md (A-G sections)
+  PRIMARY_TASK_SPEC.md (A-G sections)
   TASK_ADHERENCE_PROMPT.md
 
 Planning:

@@ -1203,4 +1203,4 @@ When writing tests in M.3.2, agents must:
 - [Test Matrix](../2026-03-25-test_matrix.md) - To be filled by test-writing agents
 - [Cross-Crate Commands](../sub-agents/cross-crate-commands.md) - Pipeline details
 - [BACKUP_DB_FIXTURES.md](../../../../testing/BACKUP_DB_FIXTURES.md) - Fixture registry
-- [README.md](../README.md) - Main specification
+- [PRIMARY_TASK_SPEC.md](../PRIMARY_TASK_SPEC.md) - Main specification

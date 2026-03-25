@@ -3,13 +3,13 @@
 **Date:** 2026-03-25  
 **Task:** xtask commands feature for agent-accessible diagnostics  
 **Branch:** feature/xtask-commands  
-**Doc/code alignment pass:** 2026-03-25 (see [PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md) — codebase truth + README adherence)
+**Doc/code alignment pass:** 2026-03-25 (see [PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md) — codebase truth + PRIMARY_TASK_SPEC adherence)
 
 ---
 
 ## Current milestone: M.3 — Implement architecture foundation
 
-**Summary:** Foundation modules, clap CLI (`parse` / `db` / `help-topic`), and integration tests exist under `xtask/`, but most command bodies are `todo!()`, the binary entrypoint does not dispatch the new CLI, and several README requirements (e.g. `ploke_error::Error`, usage wiring) are not yet met. See **Doc/code alignment** below.
+**Summary:** Foundation modules, clap CLI (`parse` / `db` / `help-topic`), and integration tests exist under `xtask/`, but most command bodies are `todo!()`, the binary entrypoint does not dispatch the new CLI, and several PRIMARY_TASK_SPEC requirements (e.g. `ploke_error::Error`, usage wiring) are not yet met. See **Doc/code alignment** below.
 
 ### M.3.1 — Implement types + plan next steps
 
@@ -21,7 +21,7 @@
 |------|--------|----------------|
 | Bookkeeping | Complete | [TABLE_OF_CONTENTS.md](./TABLE_OF_CONTENTS.md), [PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md) |
 | Planning (M.5 / A.5–A.6) | Complete (draft) | [m5-planning.md](./m5-planning.md) → [design/m6-planning.md](./design/m6-planning.md) |
-| Engineering — core | Partial | [error.rs](../../../../xtask/src/error.rs), [context.rs](../../../../xtask/src/context.rs): present; `ploke_error` not integrated per README §D |
+| Engineering — core | Partial | [error.rs](../../../../xtask/src/error.rs), [context.rs](../../../../xtask/src/context.rs): present; `ploke_error` not integrated per PRIMARY_TASK_SPEC §D |
 | Engineering — executor / usage | Partial | [executor.rs](../../../../xtask/src/executor.rs), [usage.rs](../../../../xtask/src/usage.rs): present; async path and some registry paths still `todo!()`; CLI does not call `UsageTracker` |
 | Engineering — commands / CLI | Partial | [commands/mod.rs](../../../../xtask/src/commands/mod.rs), [parse.rs](../../../../xtask/src/commands/parse.rs), [db.rs](../../../../xtask/src/commands/db.rs), [cli.rs](../../../../xtask/src/cli.rs): clap surface exists; execute bodies stubbed |
 | Binary entry | Gap | [main.rs](../../../../xtask/src/main.rs): legacy string commands only; **does not** call `Cli::run()` |
@@ -33,8 +33,8 @@
 
 Integration tests exist under [`xtask/tests/`](../../../../xtask/tests/) (`context_tests`, `error_tests`, `executor_tests`, `parse_commands`, `db_commands`). Many scenarios are placeholders or expect M.4 implementation; this is **not** strict “tests fail until impl” TDD across the board.
 
-**Canonical test matrix (README §E.1):** [2026-03-25-test_matrix.md](./2026-03-25-test_matrix.md).  
-**M.3.2 mention in README** of `xtask/tests/test_matrix.md`: optional pointer only — see test matrix doc for resolution.
+**Canonical test matrix (PRIMARY_TASK_SPEC §E.1):** [2026-03-25-test_matrix.md](./2026-03-25-test_matrix.md).  
+**M.3.2 mention in PRIMARY_TASK_SPEC** of `xtask/tests/test_matrix.md`: optional pointer only — see test matrix doc for resolution.
 
 ---
 
@@ -45,8 +45,8 @@ Integration tests exist under [`xtask/tests/`](../../../../xtask/tests/) (`conte
 | Dual CLI | Legacy `cargo xtask <string>` vs library `Cli` / clap subcommands; only legacy is wired in `main` |
 | A.1–A.4 behavior | Stubs (`todo!()`) in `commands/parse.rs`, `commands/db.rs` |
 | A.2 / A.3 CLI modules | Not present as `commands/transform.rs` or `commands/ingest.rs` |
-| README §D `ploke_error::Error` | Not used in `xtask` today (`XtaskError` is local) |
-| README §B usage / rolling suggestions | `UsageTracker` exists; not integrated in `cli::Cli::execute` |
+| PRIMARY_TASK_SPEC §D `ploke_error::Error` | Not used in `xtask` today (`XtaskError` is local) |
+| PRIMARY_TASK_SPEC §B usage / rolling suggestions | `UsageTracker` exists; not integrated in `cli::Cli::execute` |
 | M.5 / A.5–A.6 | Planned in [design/m6-planning.md](./design/m6-planning.md); no `tui` / `tool` commands in crate yet |
 
 ---
@@ -107,7 +107,7 @@ Integration tests exist under [`xtask/tests/`](../../../../xtask/tests/) (`conte
 
 | Milestone | Description | Status |
 |-----------|-------------|--------|
-| M.4 | Full implementation (replace stubs, wire `main` → `Cli`, tracing, README §B–§D gaps) | Not started |
+| M.4 | Full implementation (replace stubs, wire `main` → `Cli`, tracing, PRIMARY_TASK_SPEC §B–§D gaps) | Not started |
 | M.5 | Expand into `ploke-tui` (A.5–A.6); see [m5-planning.md](./m5-planning.md) | Not started (planning doc draft exists) |
 
 ---

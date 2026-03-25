@@ -936,4 +936,4 @@ pub async fn execute_db_query(
 
 ---
 
-*This architecture proposal is designed to meet the requirements in README.md Sections A-G while providing a solid foundation for future extension.*
+*This architecture proposal is designed to meet the requirements in PRIMARY_TASK_SPEC.md Sections A-G while providing a solid foundation for future extension.*

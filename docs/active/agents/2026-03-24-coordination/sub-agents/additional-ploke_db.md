@@ -8,7 +8,7 @@
 
 ## Overview
 
-This document identifies additional functions in the `ploke_db` crate that would be valuable for agent diagnostics but were not included in the original A.4 list from the README. These functions provide capabilities for database introspection, index status checking, workspace metadata queries, and integrity validation.
+This document identifies additional functions in the `ploke_db` crate that would be valuable for agent diagnostics but were not included in the original A.4 list from the PRIMARY_TASK_SPEC. These functions provide capabilities for database introspection, index status checking, workspace metadata queries, and integrity validation.
 
 ---
 

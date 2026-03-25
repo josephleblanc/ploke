@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-25  
 **Sub-Agent:** ploke_db Survey  
-**Task:** Document all functions relevant to database commands (A.4) from the README
+**Task:** Document all functions relevant to database commands (A.4) from the PRIMARY_TASK_SPEC
 
 ---
 

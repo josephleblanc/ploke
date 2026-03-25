@@ -12,7 +12,7 @@
 
 **Status:** ✅ COMPLETE - PROCEED TO M.3
 
-Milestone M.2 has been successfully completed. All required sub-agents have delivered their outputs, a unanimous consensus has been reached on the architecture selection, and the chosen design comprehensively addresses all requirements specified in README.md Sections A-G.
+Milestone M.2 has been successfully completed. All required sub-agents have delivered their outputs, a unanimous consensus has been reached on the architecture selection, and the chosen design comprehensively addresses all requirements specified in PRIMARY_TASK_SPEC.md Sections A-G.
 
 ---
 
@@ -75,7 +75,7 @@ The consolidated review is documented in:
 
 ---
 
-## Architecture Coverage Analysis: README.md Sections A-G
+## Architecture Coverage Analysis: PRIMARY_TASK_SPEC.md Sections A-G
 
 ### Section A: Desired Functionality
 
@@ -201,7 +201,7 @@ The consolidated review is documented in:
    - 5 review agents completed evaluations
    - Unanimous consensus for Proposal 3 achieved
 
-2. **Complete Coverage of README Sections A-G:**
+2. **Complete Coverage of PRIMARY_TASK_SPEC Sections A-G:**
    - All functional requirements (A.1-A.6) addressed
    - All documentation requirements (B.1-B.5) addressed
    - All invariants (C.1-C.3) addressed
@@ -261,7 +261,7 @@ The consolidated review is documented in:
 - [x] M.2.2: 5 review agents completed
 - [x] Unanimous consensus for Proposal 3 confirmed
 - [x] Architecture decision document created
-- [x] All README.md Sections A-G addressed
+- [x] All PRIMARY_TASK_SPEC.md Sections A-G addressed
 - [x] No critical blockers identified
 - [x] Clear action items defined for M.3
 

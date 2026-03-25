@@ -9,7 +9,7 @@
 
 ## Summary
 
-Surveyed the `ploke_transform` crate to identify functions for the transform commands described in README section A.2. Found 2 primary public functions:
+Surveyed the `ploke_transform` crate to identify functions for the transform commands described in PRIMARY_TASK_SPEC section A.2. Found 2 primary public functions:
 - `transform_parsed_graph` - transforms a single parsed crate graph to CozoDB
 - `transform_parsed_workspace` - transforms a full workspace with multiple crates to CozoDB
 

@@ -395,7 +395,7 @@ sub-agents fan-out
       - updates inter-file links
       - checks progress updates are being made
     - planning agent: plans out M.6 in line with A.5-A.6 and other
-    planning/architecture docs, writes proposed M.6 in new doc for later review
+    planning/architecture docs, writes proposed M.5 in new doc for later review
     - engineering agents: implement the proposed arch setup as directed by main agent, 
       - defining types, 
       - creating module structure, 
@@ -450,7 +450,7 @@ sub-agent fan-out
   - AGENT_INSTRUCTION: reviews updated arch and test docs from M.3.2, directs
   sub-agents to implement full arch + tests, creates multiple (3+) engineering
   agents, oversees conflicts
-    - engineering agents: implement full plan in line with M.1.9 docs
+    - engineering agents: implement full plan in line with M.1.2 docs
       - there should be enough design work completed to fill out the full
       implementation by this point, but it might require some test-implement
       loops
@@ -503,7 +503,7 @@ sub-agent fan-in
     least one sub-agent do to book-keeping by updating table of contents in
     task directory
 
-### M.5 Expand into `ploke-tui` app commands A.5-A-6
+### M.5 Expand into `ploke-tui` app commands A.5-A.6
 
 13. todo
 

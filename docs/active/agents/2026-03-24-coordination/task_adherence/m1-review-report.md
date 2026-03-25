@@ -32,7 +32,7 @@ All six crates identified in the task spec have been surveyed:
 
 ### A.1 Parsing Commands (syn_parser) - VERIFIED
 
-All four target functions from README section A.1 are documented:
+All four target functions from PRIMARY_TASK_SPEC section A.1 are documented:
 - ✅ `run_discovery_phase` - Discovery phase for workspace/crate analysis
 - ✅ `try_run_phases_and_resolve` - Parse and resolve without merging
 - ✅ `try_run_phases_and_merge` - Parse, resolve, and merge graphs
@@ -49,23 +49,23 @@ Each function includes:
 
 ### A.2 Transform Commands (ploke_transform) - VERIFIED
 
-Target function from README section A.2 is documented:
+Target function from PRIMARY_TASK_SPEC section A.2 is documented:
 - ✅ `transform_parsed_graph` - Transform parsed graph to CozoDB
 - ✅ `transform_parsed_workspace` - Transform workspace to CozoDB (bonus)
 - ✅ `create_schema_all` - Supporting function for schema creation
 
 ### A.3 Embedding Commands (ploke_embed) - VERIFIED
 
-Target functions from README section A.3 are documented:
+Target functions from PRIMARY_TASK_SPEC section A.3 are documented:
 - ✅ `EmbeddingProcessor::new` - Process embeddings
 - ✅ `IndexerTask::run` - Run indexing task
 - ✅ Environment variable `TEST_OPENROUTER_API_KEY` requirement documented
 
-**Note:** The document correctly notes that `TEST_OPENROUTER_API_KEY` is NOT yet implemented in the codebase but is a requirement for the xtask command implementation. This is per README section A.3 specification.
+**Note:** The document correctly notes that `TEST_OPENROUTER_API_KEY` is NOT yet implemented in the codebase but is a requirement for the xtask command implementation. This is per PRIMARY_TASK_SPEC section A.3 specification.
 
 ### A.4 Database Commands (ploke_db) - VERIFIED
 
-All target functions from README section A.4 are documented:
+All target functions from PRIMARY_TASK_SPEC section A.4 are documented:
 - ✅ `save_db` - Via `db.db.backup_db()` (cozo method)
 - ✅ `load_db` - Via `db.db.restore_backup()` (cozo method)
 - ✅ `load_fixture` - `fresh_backup_fixture_db` from ploke_test_utils
@@ -278,7 +278,7 @@ Survey documents note the planned `xtask-db`, `xtask-parse`, etc. module structu
 
 ### Minor Observations (Non-Blocking)
 
-1. **M.1.4 skipped in progress tracker**: The progress tracker marks M.1.4 as "Skipped (covered in M.1.3)". The README specifies M.1.4 should "gather required function information" for cross-crate commands. This work is indeed present in M.1.3's cross-crate-commands.md document. This consolidation is reasonable and doesn't impact quality.
+1. **M.1.4 skipped in progress tracker**: The progress tracker marks M.1.4 as "Skipped (covered in M.1.3)". The PRIMARY_TASK_SPEC specifies M.1.4 should "gather required function information" for cross-crate commands. This work is indeed present in M.1.3's cross-crate-commands.md document. This consolidation is reasonable and doesn't impact quality.
 
 2. **A.5-A.6 in single survey**: The ploke_tui survey combines A.5 (Headless TUI) and A.6 (Tool Calls) into one document. This is a reasonable organizational choice given both are in the same crate.
 
@@ -333,7 +333,7 @@ The work completed for M.1 aligns well with the task spec. No corrective action 
 ### Primary Documents
 | Document | Purpose | Lines |
 |----------|---------|-------|
-| `README.md` | Task specification | 525 |
+| `PRIMARY_TASK_SPEC.md` | Task specification | 525 |
 | `progress.md` | Progress tracker | 72 |
 | `2026-03-25-command-matrix.md` | Command-function mapping | 379 |
 

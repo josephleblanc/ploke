@@ -10,7 +10,7 @@
 
 ### Executive Summary
 
-After thorough analysis of all three architecture proposals against the requirements in README.md Sections A-G and the test design requirements, I provide the following assessment.
+After thorough analysis of all three architecture proposals against the requirements in PRIMARY_TASK_SPEC.md Sections A-G and the test design requirements, I provide the following assessment.
 
 ---
 
