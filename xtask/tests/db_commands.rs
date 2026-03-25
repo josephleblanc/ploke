@@ -571,12 +571,13 @@ fn load_fixture_rejects_invalid_id() {
     );
 }
 
-/// Test: LoadFixture with index flag creates HNSW index
+/// Test: LoadFixture with `--index` documents the request in the success message
 ///
-/// To Prove: That load-fixture --index creates HNSW index after loading
-/// Given: A fixture with embeddings
-/// When: Command executes with --index flag
-/// Then: HNSW index is created
+/// **Acceptance scope today:** The command appends index/HNSW wording to the success string; it does **not**
+/// assert that a real HNSW build ran (see `LoadFixture::execute` in `commands/db.rs`). A stricter acceptance
+/// test should query the database for index state once implementation creates indexes here.
+///
+/// To Prove: That `--index` is reflected in agent-visible output for this code path.
 #[test]
 fn load_fixture_with_index_flag() {
     let cmd = LoadFixture {

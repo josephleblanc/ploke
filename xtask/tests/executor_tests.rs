@@ -227,11 +227,9 @@ fn executor_validates_prerequisites() {
 /// Then: Usage tracker records all executions
 #[test]
 fn executor_tracks_usage() {
-    // TODO(M.4): Complete implementation - usage tracking integration needs work
     let executor = CommandExecutor::new(ExecutorConfig::default()).unwrap();
     let counter = Arc::new(AtomicUsize::new(0));
 
-    // Execute command multiple times
     for _ in 0..5 {
         let command = TestTrackingCommand {
             counter: Arc::clone(&counter),
@@ -239,8 +237,16 @@ fn executor_tracks_usage() {
         let _ = executor.execute(command);
     }
 
-    // Verify command was executed 5 times
     assert_eq!(counter.load(Ordering::SeqCst), 5);
+
+    let usage_count = executor
+        .usage_tracker()
+        .total_command_count()
+        .expect("usage total_command_count");
+    assert!(
+        usage_count >= 5,
+        "executor should record each run in UsageTracker (buffer and/or log): got {usage_count}"
+    );
 }
 
 /// To Prove: Executor handles command failures gracefully

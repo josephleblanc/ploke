@@ -6,4 +6,4 @@ The canonical test matrix for the xtask commands feature (README §E.1) is maint
 
 This file exists so references to `xtask/tests/test_matrix.md` from milestone text resolve to a single source of truth.
 
-Integration tests also include [`cli_invariant_tests.rs`](cli_invariant_tests.rs) (PRIMARY_TASK_SPEC §C); see the canonical matrix for details.
+Integration tests also include [`cli_invariant_tests.rs`](cli_invariant_tests.rs) (PRIMARY_TASK_SPEC §C) and [`command_acceptance_parse.rs`](command_acceptance_parse.rs) / [`command_acceptance_db.rs`](command_acceptance_db.rs); see the canonical matrix for the **Command acceptance index**.

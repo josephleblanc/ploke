@@ -1,8 +1,7 @@
 //! Tests for PRIMARY_TASK_SPEC §C using the clap [`xtask::cli::Cli`] surface.
 //!
-//! Note: The `xtask` binary entrypoint ([`main.rs`](../src/main.rs)) still dispatches legacy
-//! workspace helpers; agent-facing `parse` / `db` commands are exercised here via the same `Cli`
-//! type the library uses until the binary is unified.
+//! Note: The `xtask` binary ([`main.rs`](../src/main.rs)) dispatches a few legacy workspace
+//! helpers first, then parses the rest with the same [`xtask::cli::Cli`] type used here.
 
 use clap::Parser;
 use clap::error::ErrorKind;
