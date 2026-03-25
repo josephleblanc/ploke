@@ -7,7 +7,7 @@ use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
-use tracing::{info_span, instrument, trace};
+use tracing::{info, info_span, instrument, trace};
 
 use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 
@@ -92,36 +92,30 @@ impl ParsedCodeGraph {
 
     #[instrument(skip_all, fields(graph_count = graphs.len()))]
     pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, SynParserError> {
-        for graph in graphs.iter() {
-            log::debug!(target: "buggy_c", "Buggy First Context: {:#?}", graph.crate_context);
-        }
         let mut new_graph = {
-            let _span = info_span!("merge_new_pop_seed_graph").entered();
             graphs.pop().ok_or(SynParserError::MergeRequiresInput)?
         };
 
         // Preserve crate context from any graph
         let mut found_context = new_graph.crate_context.take();
-        trace!(target: "buggy", "First Context: {:#?}", new_graph.crate_context);
-        {
-            let _span = info_span!("merge_new_append_graphs", remaining_graphs = graphs.len()).entered();
             for mut graph in graphs {
                 if found_context.is_none() {
-                    log::trace!(target: "buggy", "Merging Context: {:#?}", graph.crate_context);
                     found_context = graph.crate_context.take();
+        if let Some(ref ctx) = found_context {
+            tracing::info!("name: {}, root_file: {:?}, files: {:#?}", ctx.name, ctx.root_file(), ctx.files);
+        } else {
+            tracing::info!("no crate_context found");
+        }
                 }
                 new_graph.append_all(graph)?;
             }
-        }
 
-        log::trace!(target: "buggy", "Penult Context: {:#?}", new_graph.crate_context);
         new_graph.crate_context = found_context;
-        log::trace!(target: "buggy", "Last Context: {:#?}", new_graph.crate_context);
 
         #[cfg(feature = "validate")]
         {
             ParsedCodeGraph::debug_relationships(&new_graph);
-            log::debug!(target: "validate",
+            tracing::debug!(target: "validate",
                 "{} <- {}",
                 "Validating".log_step(),
                 new_graph.root_file().unwrap().display(),
@@ -185,10 +179,12 @@ impl ParsedCodeGraph {
     // We need a new Relation to represent that connection, but it will be in a different set of
     // logical relations, whereas all of these relations are meant to be syntactically accurate.
     // Changed back to &self as graph is immutable again.
+    #[instrument(skip_all, fields(self.file_path = ?self.file_path.as_path()))]
     pub fn build_module_tree(&self) -> Result<(ModuleTree, PruningResult), SynParserError> {
         #[cfg(feature = "validate")]
         assert!(self.validate_unique_rels());
         let root_module = self.get_root_module_checked()?;
+        info!(module_name = root_module.name);
         let mut tree = ModuleTree::new_from_root(root_module)?;
         // 1: Register all modules with their containment info
         for module in self.modules() {
@@ -298,6 +294,7 @@ impl ParsedCodeGraph {
     ///
     /// - reviewed by JL Jul 27, 2025
     /// - edited by JL Jul 28, 2025 (added limitation re: secondary nodes)
+    #[instrument(skip_all, fields(self.file_path = ?self.file_path.as_path()))]
     fn prune(&mut self, pruned_items: PruningResult) {
         // WARN: We are pruning all the unused items from the unlinked files, but that does not
         // include the unused types currently, meaning we could be ending up with unlinked types?
@@ -310,12 +307,13 @@ impl ParsedCodeGraph {
         // inefficient and hamfisted for now. Improve this later.
         //
         // -- handle pruning items
-        let mut total_count_diff = 0;
+        let mut prune_counts = PruneCounts::default();
+        tracing::info!(unresolved_count = %self.unresolved_nodes().len(), unresolved_pruned = %pruned_items.unresolved_nodes.len());
 
         // WARN: We are not currently tracking the Field, Variant, GenericParam, or ExternCrate at
         // this granularity, removing them from the number of items being counted before and after
         // removal, since they are subfields of struct, enum, union, and TypeAlias(?)
-        let pruned_item_initial = pruned_items.pruned_item_ids.len();
+        prune_counts.pruned_items_initial = pruned_items.pruned_item_ids.len();
         let pruned_item_ids = pruned_items
             .pruned_item_ids
             .iter()
@@ -327,78 +325,37 @@ impl ParsedCodeGraph {
                     && !matches!(id, AnyNodeId::GenericParam(_))
             })
             .collect_vec();
-        let removed_secondary_ids = pruned_item_initial - pruned_item_ids.len();
-        trace!(target: "debug_dup", "\n{} {}
-Item ids to prune total before removing secondary ids: {}
-Number of ignored Variants/Fields/Param/GenericParam: {}
-Remaining ids to prune: {}",
-            "Ignore".log_warning(),
-            "Secondary Nodes".log_step(),
-            format!("{}", pruned_item_initial).log_path(),
-            format!("{}", removed_secondary_ids).log_path(),
-            format!("{}", pruned_item_ids.len()).log_path(),
-        );
+        prune_counts.removed_secondary_ids = prune_counts.pruned_items_initial- pruned_item_ids.len();
 
-        trace!(target: "debug_dup", "\nBegin removing items\ntotal_count_diff: {total_count_diff}");
         let func_count_pre = self.functions().len();
         self.functions_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
-        total_count_diff += func_count_pre - self.functions().len();
-        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
-            "functions".log_step(),
-            format!("{}", func_count_pre - self.functions().len() ).log_path(),
-            "functions",
-        );
+        prune_counts.functions = func_count_pre - self.functions().len();
 
         let defined_types_count_pre = self.defined_types().len();
         self.defined_types_mut()
             .retain(|defty| !pruned_item_ids.contains(&defty.any_id()));
-        total_count_diff += defined_types_count_pre - self.defined_types().len();
-        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
-            "defined_types".log_step(),
-            format!("{}", defined_types_count_pre - self.defined_types().len() ).log_path(),
-            "defined_types",
-        );
+        prune_counts.defined_types = defined_types_count_pre - self.defined_types().len();
 
         let consts_count_pre = self.consts().len();
         self.consts_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
-        total_count_diff += consts_count_pre - self.consts().len();
-        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
-            "consts".log_step(),
-            format!("{}", consts_count_pre - self.consts().len() ).log_path(),
-            "consts",
-        );
+        prune_counts.consts = consts_count_pre - self.consts().len();
 
         let statics_count_pre = self.statics().len();
         self.statics_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
-        total_count_diff += statics_count_pre - self.statics().len();
-        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
-            "statics".log_step(),
-            format!("{}", statics_count_pre - self.statics().len() ).log_path(),
-            "statics",
-        );
+        prune_counts.statics = statics_count_pre - self.statics().len();
 
         let macros_count_pre = self.macros().len();
         self.macros_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
-        total_count_diff += macros_count_pre - self.macros().len();
-        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
-            "macros".log_step(),
-            format!("{}", macros_count_pre - self.macros().len() ).log_path(),
-            "macros",
-        );
+        prune_counts.macros += macros_count_pre - self.macros().len();
 
         let use_statements_count_pre = self.use_statements().len();
         self.use_statements_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
-        total_count_diff += use_statements_count_pre - self.use_statements().len();
-        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
-            "use_statements".log_step(),
-            format!("{}", use_statements_count_pre - self.use_statements().len() ).log_path(),
-            "use_statements",
-        );
+        prune_counts.use_statements = use_statements_count_pre - self.use_statements().len();
 
         let methods_count_pre = self
             .impls()
@@ -409,90 +366,106 @@ Remaining ids to prune: {}",
         let impls_count_pre = self.impls().len();
         self.impls_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
-        total_count_diff += impls_count_pre - self.impls().len();
-        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
-            "impls".log_step(),
-            format!("{}", impls_count_pre - self.impls().len() ).log_path(),
-            "impls",
-        );
+        prune_counts.impls = impls_count_pre - self.impls().len();
 
         let traits_count_pre = self.traits().len();
         self.traits_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
-        total_count_diff += traits_count_pre - self.traits().len();
-        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
-            "traits".log_step(),
-            format!("{}", traits_count_pre - self.traits().len() ).log_path(),
-            "traits",
-        );
+        prune_counts.traits = traits_count_pre - self.traits().len();
+
         let methods_count_post = self
             .impls()
             .iter()
             .flat_map(|imp| imp.methods.iter())
             .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
             .count();
-        total_count_diff += methods_count_pre - methods_count_post;
-        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
-            "methods".log_step(),
-            format!("{}", methods_count_pre - methods_count_post ).log_path(),
-            "methods",
-        );
+        prune_counts.methods = methods_count_pre - methods_count_post;
 
         // -- handle pruning module ids
         // file-based modules
         let modules_files_pre = self.modules().len();
         self.modules_mut()
             .retain(|m| !pruned_items.pruned_module_ids.contains(&m.id));
-        let removed_file_mods_count = modules_files_pre - self.modules().len();
-        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
-            "file-based modules".log_step(),
-            format!("{}", modules_files_pre - self.modules().len() ).log_path(),
-            "file-based modules",
-        );
+        prune_counts.file_modules = modules_files_pre - self.modules().len();
 
         // non-file-based modules (inline and declaration)
         let nonfile_modules_count_pre = self.modules().len();
         self.modules_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
-        let removed_nonfile_mods_count = nonfile_modules_count_pre - self.modules().len();
-        total_count_diff += removed_nonfile_mods_count;
-        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
-            "non file-based modules".log_step(),
-            format!("{}", removed_nonfile_mods_count ).log_path(),
-            "non file-based modules",
-        );
+        prune_counts.non_file_modules = nonfile_modules_count_pre - self.modules().len();
         assert_eq!(
-            removed_file_mods_count,
+            prune_counts.file_modules,
             pruned_items.pruned_module_ids.len(),
-            // pruned_items.pruned_module_ids.len() + pruned_item_ids.iter().filter(|i| matches!(i, AnyNodeId::Module(_) )).count(),
             "Count of expected pruned modules vs. pruned modules does not match."
         );
-        // trace!(target: "debug_dup", "\nCount of removed_nonfile_mods_count: {removed_nonfile_mods_count}");
 
+        prune_counts.type_graph = self.type_graph().len();
+
+        let total_count_diff = prune_counts.diff_initial_resolved().abs() as usize;
         let mut removed_items = Vec::new();
         if total_count_diff != pruned_item_ids.len() {
             for item in pruned_item_ids.iter() {
                 if self.find_node_unique(*item).is_ok() {
-                    log::error!("Node not removed: {}", item);
+                    tracing::error!("Node not removed: {}", item);
                 }
             }
             for item in pruned_item_ids.iter() {
                 if self.find_node_unique(*item).is_err() {
                     removed_items.push(item);
-                    log::trace!(target: "debug_dup", "\nNode removed: {}", item);
+                    tracing::trace!(target: "debug_dup", "\nNode removed: {}", item);
                 }
             }
             for item in pruned_item_ids
                 .iter()
                 .filter(|i| !removed_items.contains(i))
             {
-                log::error!(target: "debug_dup", "\nNode not found or removed: {}", item);
+                tracing::error!("\nNode contained by a removed node not found or removed: {}", item);
             }
-            trace!(target: "debug_dup", "Number of removed items: {}", removed_items.len());
+            tracing::trace!(target: "debug_dup", "Number of removed items: {}", removed_items.len());
+        }
+        let all_graph_ids = self.graph.functions.iter().map(|n| n.any_id())
+            .chain(self.graph.defined_types.iter().map(|tydef| tydef.any_id()))
+            .chain(self.graph.impls.iter().map(|n| n.any_id()))
+            .chain(self.graph.traits.iter().map(|n| n.any_id()))
+            .chain(self.graph.modules.iter().map(|n| n.any_id()))
+            .chain(self.graph.consts.iter().map(|n| n.any_id()))
+            .chain(self.graph.statics.iter().map(|n| n.any_id()))
+            .chain(self.graph.macros.iter().map(|n| n.any_id()))
+            .chain(self.graph.use_statements.iter().map(|n| n.any_id()))
+            .chain(self.graph.unresolved_nodes.iter().map(|n| n.any_id()));
+        let mut any_found = false;
+        for id in all_graph_ids {
+            if pruned_item_ids.contains(&id) {
+                tracing::info!("Found overlap: {id}");
+                any_found = true;
+            }
+        }
+        if !any_found {
+            tracing::info!("No intersection between pruned_item_ids and all_graph_ids");
+        }
+        let unique_pruned_item_ids = pruned_item_ids.iter().unique().collect_vec();
+        if unique_pruned_item_ids.len() != pruned_item_ids.len() {
+            tracing::info!("pruned_item_ids: unique: {}, total: {}", unique_pruned_item_ids.len(), pruned_item_ids.len());
+        }
+        let unresolved_pruned_result_count = pruned_items.unresolved_nodes.len();
+        if prune_counts.count_resolved() != pruned_item_ids.len() {
+            tracing::error!("{prune_counts:#?}");
+            tracing::error!(
+                diff_resolved = %prune_counts.diff_initial_resolved(), 
+                diff_all = %prune_counts.diff_initial_all(), 
+                unresolved_removed_count = %prune_counts.unresolved_nodes, 
+                unresolved_prune_result_count = %prune_counts.unresolved_nodes, 
+                pruned_count = %pruned_item_ids.len(),
+                removed_count = %removed_items.len()
+            );
+        } else {
+            tracing::info!(diff_resolved = %prune_counts.diff_initial_resolved(), 
+                pruned_count = %pruned_item_ids.len(),
+                removed_count = %removed_items.len());
         }
         assert_eq!(
             // total_count_diff + removed_mods_count,
-            total_count_diff,
+            prune_counts.count_resolved(),
             pruned_item_ids.len(),
             "Count of expected pruned items vs. pruned items does not match."
         );
@@ -562,7 +535,11 @@ Remaining ids to prune: {}",
     /// Returns any error encountered during tree construction, path resolution,
     /// or pruning (in creating the items to prune within build_module_tree).
     /// - JL Reviewed, Jul 28, 2025
-    #[instrument(skip(self))]
+    #[instrument(
+        graph_relation_count = %merged.relations().len(),
+        graph_module_count = %merged.modules().len(),
+        skip(self)
+    )]
     pub fn build_tree_and_prune(&mut self) -> Result<ModuleTree, ploke_error::Error> {
         let (tree, pruned_items) = {
             let _span = info_span!("build_module_tree").entered();
@@ -885,5 +862,58 @@ mod tests {
             "Expect all modules to be accounted for post-pruning"
         );
         Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct PruneCounts {
+    pruned_items_initial: usize,
+    removed_secondary_ids: usize,
+    functions: usize,
+    defined_types: usize,
+    type_graph: usize,
+    impls: usize,
+    traits: usize,
+    relations: usize,
+    file_modules: usize,
+    non_file_modules: usize,
+    consts: usize,
+    statics: usize,
+    macros: usize,
+    use_statements: usize,
+    unresolved_nodes: usize,
+    methods: usize,
+}
+
+impl PruneCounts {
+    fn count_resolved(&self) -> usize {
+        self.functions 
+        + self.defined_types 
+        + self.consts 
+        + self.statics 
+        + self.macros 
+        + self.use_statements 
+        + self.impls 
+        + self.traits 
+        + self.methods 
+        + self.non_file_modules
+        // self.removed_secondary_ids
+        // + self.file_modules 
+    }
+    
+    fn count_unresolved(&self) -> usize {
+        self.unresolved_nodes
+    }
+
+    fn count_all_removed(&self) -> usize {
+        self.count_resolved() + self.count_unresolved()
+    }
+
+    fn diff_initial_resolved(&self) -> isize {
+        self.pruned_items_initial as isize - self.count_resolved() as isize
+    }
+
+    fn diff_initial_all(&self) -> isize {
+        self.pruned_items_initial as isize - self.count_all_removed() as isize
     }
 }

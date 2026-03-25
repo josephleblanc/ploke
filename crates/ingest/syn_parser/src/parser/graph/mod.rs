@@ -704,7 +704,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                         Some(t as &dyn GraphNode)
                     }
                     TypeDefNode::Union(u) if u.id.as_any() == item_id => Some(u as &dyn GraphNode),
-                    _ => None,
+                    _ => { unreachable!()}
                 })
             })
             .or_else(|| {
@@ -760,6 +760,13 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
             // --- Add ImportNode search ---
             .or_else(|| {
                 self.use_statements()
+                    .iter()
+                    .find(|n| n.id.as_any() == item_id)
+                    .map(|n| n as &dyn GraphNode)
+            })
+            // --- Add ImportNode search ---
+            .or_else(|| {
+                self.unresolved_nodes()
                     .iter()
                     .find(|n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode)
