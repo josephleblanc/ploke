@@ -16,6 +16,12 @@ use crate::context::CommandContext;
 use crate::error::XtaskError;
 use crate::executor::{Command, CommandExecutor, ExecutorConfig};
 
+/// Unwrap a successful command executor result for fail-until-impl tests.
+///
+/// Use this instead of `match` arms that treat placeholder or stub errors as a passing state.
+pub fn expect_command_ok<T>(result: Result<T, XtaskError>, context: &'static str) -> T {
+    result.unwrap_or_else(|e| panic!("{context}: {e}"))
+}
 
 /// Trait for commands that support testing.
 ///

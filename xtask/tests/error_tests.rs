@@ -135,7 +135,8 @@ fn error_from_io_error() {
 /// Then: Returns XtaskError::Serialization
 #[test]
 fn error_from_json_error() {
-    let json_result: Result<serde_json::Value, _> = serde_json::from_str("not valid json");
+    let json_result: std::result::Result<serde_json::Value, serde_json::Error> =
+        serde_json::from_str("not valid json");
     let json_err = json_result.unwrap_err();
     let err: XtaskError = json_err.into();
 
@@ -274,7 +275,8 @@ fn recovery_hint_format() {
 /// Then: Returns true only for Validation variant
 #[test]
 fn error_is_validation() {
-    assert!(XtaskError::validation("test").into::<XtaskError>().is_validation());
+    let err: XtaskError = XtaskError::validation("test").into();
+    assert!(err.is_validation());
     assert!(!XtaskError::new("test").is_validation());
     assert!(!XtaskError::Io("test".to_string()).is_validation());
     assert!(!XtaskError::Internal("test".to_string()).is_validation());
@@ -289,7 +291,8 @@ fn error_is_io() {
     let io_err = io::Error::new(io::ErrorKind::Other, "test");
     assert!(XtaskError::from(io_err).is_io());
     assert!(!XtaskError::new("test").is_io());
-    assert!(!XtaskError::validation("test").into::<XtaskError>().is_io());
+    let v_err: XtaskError = XtaskError::validation("test").into();
+    assert!(!v_err.is_io());
 }
 
 /// To Prove: XtaskError::is_internal() correctly identifies internal errors
@@ -337,10 +340,8 @@ fn error_display_formats() {
         XtaskError::Resource("not found".to_string()).to_string(),
         "Resource error: not found"
     );
-    assert_eq!(
-        XtaskError::validation("invalid").into::<XtaskError>().to_string(),
-        "Validation error: invalid"
-    );
+    let validation_err: XtaskError = XtaskError::validation("invalid").into();
+    assert_eq!(validation_err.to_string(), "Validation error: invalid");
     assert_eq!(
         XtaskError::CommandFailed {
             command: "cmd".to_string(),

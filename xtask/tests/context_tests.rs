@@ -6,7 +6,6 @@
 use std::path::Path;
 
 use xtask::context::CommandContext;
-use xtask::error::XtaskError;
 
 // =============================================================================
 // CommandContext Tests
@@ -18,7 +17,6 @@ use xtask::error::XtaskError;
 /// Then: Returns a valid context with temp directory
 #[test]
 fn context_can_be_created() {
-    // TODO(M.4): Complete implementation - context creation needs stabilization
     let ctx = CommandContext::new().unwrap();
 
     // Context should have a valid temp directory
@@ -42,7 +40,6 @@ fn context_implements_default() {
 /// Then: Pool is created and cached
 #[test]
 fn context_lazy_initializes_database_pool() {
-    // TODO(M.4): Complete implementation - database pool integration with ploke_db
     let ctx = CommandContext::new().unwrap();
 
     // First call should initialize the pool
@@ -65,14 +62,11 @@ fn context_lazy_initializes_database_pool() {
 /// Then: Returns an in-memory database
 #[test]
 fn context_provides_in_memory_database() {
-    // TODO(M.4): Complete implementation - Database::new_in_memory() is a placeholder
     let ctx = CommandContext::new().unwrap();
 
-    // Get in-memory database (path = None)
-    let db = ctx.get_database(None::<&Path>);
-
-    // Currently this returns a placeholder, should work in M.4
-    assert!(db.is_ok() || db.is_err());
+    let _db = ctx
+        .get_database(None::<&Path>)
+        .expect("in-memory database must be available via get_database(None)");
 }
 
 /// To Prove: CommandContext lazily initializes embedding runtime
@@ -81,18 +75,15 @@ fn context_provides_in_memory_database() {
 /// Then: Runtime is created and cached
 #[test]
 fn context_lazy_initializes_embedding_runtime() {
-    // TODO(M.4): Complete implementation - embedding runtime integration with ploke_embed
     let ctx = CommandContext::new().unwrap();
 
-    // First call should initialize the runtime
-    let rt1 = ctx.embedding_runtime();
-
-    // Currently may succeed with placeholder or fail
-    if rt1.is_ok() {
-        // Second call should return cached runtime
-        let rt2 = ctx.embedding_runtime().unwrap();
-        assert!(std::sync::Arc::ptr_eq(&rt1.unwrap(), &rt2));
-    }
+    let rt1 = ctx
+        .embedding_runtime()
+        .expect("embedding runtime must initialize (placeholder)");
+    let rt2 = ctx
+        .embedding_runtime()
+        .expect("cached embedding runtime");
+    assert!(std::sync::Arc::ptr_eq(&rt1, &rt2));
 }
 
 /// To Prove: CommandContext provides IO manager handle
@@ -101,7 +92,6 @@ fn context_lazy_initializes_embedding_runtime() {
 /// Then: Returns a valid IoManagerHandle
 #[test]
 fn context_provides_io_manager() {
-    // TODO(M.4): Complete implementation - IoManagerHandle integration with ploke_io
     let ctx = CommandContext::new().unwrap();
 
     // Get IO manager
@@ -164,16 +154,16 @@ fn context_provides_temp_dir() {
 /// Then: Validates each resource type appropriately
 #[test]
 fn context_validates_resources() {
-    // TODO(M.4): Complete implementation - full resource validation
     let ctx = CommandContext::new().unwrap();
 
-    // No resources needed - should always succeed
-    assert!(ctx.validate_resources(false, false).is_ok());
-
-    // Database needed - may succeed or fail depending on implementation
-    let result = ctx.validate_resources(true, false);
-    // In M.4, this should consistently succeed
-    assert!(result.is_ok() || result.is_err());
+    ctx.validate_resources(false, false)
+        .expect("validate_resources with no requirements must succeed");
+    ctx.validate_resources(true, false)
+        .expect("database pool must be available when validate_resources needs database");
+    ctx.validate_resources(false, true)
+        .expect("embedding runtime must be available when validate_resources needs it");
+    ctx.validate_resources(true, true)
+        .expect("validate_resources must succeed when both resources are required");
 }
 
 /// To Prove: CommandContext handles resource initialization errors gracefully
@@ -182,24 +172,21 @@ fn context_validates_resources() {
 /// Then: Returns meaningful error on failure
 #[test]
 fn context_handles_resource_errors() {
-    // TODO(M.4): Complete implementation - error handling refinement
     let ctx = CommandContext::new().unwrap();
 
-    // Try to access resources that might not be available
-    // Should return XtaskError, not panic
-    let db_result = ctx.database_pool();
-    match db_result {
-        Ok(_) | Err(_) => {
-            // Both are acceptable for now
-        }
-    }
+    ctx.database_pool()
+        .expect("database_pool should return Ok in default test context");
+    ctx.embedding_runtime()
+        .expect("embedding_runtime should return Ok in default test context");
+}
 
-    let rt_result = ctx.embedding_runtime();
-    match rt_result {
-        Ok(_) | Err(_) => {
-            // Both are acceptable for now
-        }
-    }
+/// Persistent DB path still uses `todo!()` in `DatabasePool::get_or_create` (`context.rs`).
+/// When ploke_db integration lands, replace this with a real open-or-create test.
+#[test]
+#[should_panic(expected = "Persistent database support not yet implemented")]
+fn context_persistent_database_panics_until_implemented() {
+    let ctx = CommandContext::new().unwrap();
+    let _ = ctx.get_database(Some(Path::new("/tmp/ploke_xtask_persistent_test.db")));
 }
 
 // =============================================================================
@@ -276,18 +263,9 @@ fn context_is_thread_safe() {
 /// Then: Returns descriptive XtaskError on failure
 #[test]
 fn context_creation_error_handling() {
-    // Context creation should generally succeed
-    // If it fails, error should be descriptive
-    match CommandContext::new() {
-        Ok(_) => {
-            // Expected in normal conditions
-        }
-        Err(e) => {
-            // Error should be meaningful
-            let msg = e.to_string();
-            assert!(!msg.is_empty());
-        }
-    }
+    let ctx = CommandContext::new()
+        .expect("CommandContext::new must succeed in the test workspace");
+    assert!(ctx.workspace_root().is_ok());
 }
 
 /// To Prove: Context handles double-initialization gracefully

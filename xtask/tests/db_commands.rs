@@ -1,7 +1,7 @@
 //! Database command tests for xtask (Category A.4)
 //!
-//! These tests follow the TDD approach - they compile but will NOT pass until
-//! implementation is added in Milestone M.4.
+//! Fail-until-impl: success paths use [`xtask::expect_command_ok`]; tests fail
+//! (panic from `todo!()` in commands or `expect` on `Err`) until M.4.
 //!
 //! Each test documents:
 //! - Underlying function(s) being tested
@@ -11,17 +11,12 @@
 //! - Edge cases
 //! - Hypothesis format: "To Prove: ... Given: ... When: ... Then: ..."
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-
 use xtask::commands::db::{
     CountNodes, DbOutput, Load, LoadFixture, NodeKind, Query, Save, Stats, StatsCategory,
 };
 use xtask::commands::OutputFormat;
-use xtask::context::CommandContext;
-use xtask::executor::{Command, CommandExecutor, ExecutorConfig};
-use xtask::test_harness::{CommandTestHarness, ExpectedResult, TestCase};
-use xtask::XtaskError;
+use xtask::expect_command_ok;
+use xtask::test_harness::CommandTestHarness;
 
 // ============================================================================
 // Test A.4.1: CountNodes Command
@@ -63,52 +58,30 @@ fn count_nodes_returns_nonzero_for_populated_db() {
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
 
-    // Execute command (currently returns todo!())
-    let result = harness.executor().execute(cmd);
+    let output = expect_command_ok(
+        harness.executor().execute(cmd),
+        "db count-nodes must succeed once implemented",
+    );
 
-    // For now, we expect the command to fail with "not yet implemented"
-    // After M.4 implementation, this should succeed
-    match result {
-        Ok(output) => {
-            // After M.4: Verify output
-            if let DbOutput::NodeCount {
-                total,
-                by_kind,
-                pending_embeddings,
-            } = output
-            {
-                // Invariants
-                assert!(total > 0, "Node count should be positive for populated DB");
-                assert!(
-                    !by_kind.is_empty(),
-                    "Should have nodes categorized by kind"
-                );
+    let DbOutput::NodeCount {
+        total,
+        by_kind,
+        pending_embeddings: _,
+    } = output
+    else {
+        panic!("Expected NodeCount output variant");
+    };
 
-                // Verify sum equals total
-                let sum_by_kind: usize = by_kind.values().sum();
-                assert_eq!(
-                    total, sum_by_kind,
-                    "Total should equal sum of counts by kind"
-                );
-
-                // Pending should be Some when pending flag is true
-                if pending_embeddings.is_some() {
-                    // Validate pending count is reasonable
-                }
-            } else {
-                panic!("Expected NodeCount output variant");
-            }
-        }
-        Err(e) => {
-            // Expected in M.3 - implementation not yet ready
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented") || err_str.contains("todo"),
-                "Expected 'not yet implemented' error, got: {}",
-                err_str
-            );
-        }
-    }
+    assert!(total > 0, "Node count should be positive for populated DB");
+    assert!(
+        !by_kind.is_empty(),
+        "Should have nodes categorized by kind"
+    );
+    let sum_by_kind: usize = by_kind.values().sum();
+    assert_eq!(
+        total, sum_by_kind,
+        "Total should equal sum of counts by kind"
+    );
 }
 
 /// Test: CountNodes with kind filter returns filtered count
@@ -131,28 +104,18 @@ fn count_nodes_with_kind_filter() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
+    let output = expect_command_ok(
+        harness.executor().execute(cmd),
+        "db count-nodes with kind filter must succeed once implemented",
+    );
 
-    // TODO(M.4): Verify filtering logic
-    match result {
-        Ok(output) => {
-            if let DbOutput::NodeCount { total, by_kind, .. } = output {
-                // With filter, total should equal specific kind count
-                assert!(
-                    by_kind.contains_key("Function"),
-                    "Should have Function key when filtering by function"
-                );
-            }
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented") || err_str.contains("todo"),
-                "Expected 'not yet implemented' error, got: {}",
-                err_str
-            );
-        }
-    }
+    let DbOutput::NodeCount { by_kind, .. } = output else {
+        panic!("Expected NodeCount output variant");
+    };
+    assert!(
+        by_kind.contains_key("Function"),
+        "Should have Function key when filtering by function"
+    );
 }
 
 /// Test: CountNodes with pending embeddings flag
@@ -170,27 +133,21 @@ fn count_nodes_with_pending_flag() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
+    let output = expect_command_ok(
+        harness.executor().execute(cmd),
+        "db count-nodes with --pending must succeed once implemented",
+    );
 
-    // TODO(M.4): Verify pending count is returned
-    match result {
-        Ok(output) => {
-            if let DbOutput::NodeCount { pending_embeddings, .. } = output {
-                assert!(
-                    pending_embeddings.is_some(),
-                    "pending_embeddings should be Some when --pending flag is used"
-                );
-            }
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented") || err_str.contains("todo"),
-                "Expected 'not yet implemented' error, got: {}",
-                err_str
-            );
-        }
-    }
+    let DbOutput::NodeCount {
+        pending_embeddings, ..
+    } = output
+    else {
+        panic!("Expected NodeCount output variant");
+    };
+    assert!(
+        pending_embeddings.is_some(),
+        "pending_embeddings should be Some when --pending flag is used"
+    );
 }
 
 // ============================================================================
@@ -230,53 +187,37 @@ fn query_executes_valid_cozoscript() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
+    let output = expect_command_ok(
+        harness.executor().execute(cmd),
+        "db query must succeed once implemented",
+    );
 
-    // TODO(M.4): Verify query execution
-    match result {
-        Ok(output) => {
-            if let DbOutput::QueryResult {
-                rows,
-                columns,
-                duration_ms,
-            } = output
-            {
-                // Invariants
-                assert!(!columns.is_empty(), "Query result should have columns");
-                assert_eq!(
-                    columns.len(),
-                    1,
-                    "Count query should return single column"
-                );
+    let DbOutput::QueryResult {
+        rows,
+        columns,
+        duration_ms,
+    } = output
+    else {
+        panic!("Expected QueryResult output variant");
+    };
 
-                // Verify row structure
-                for row in &rows {
-                    // Each row should be a JSON object with column keys
-                    assert!(
-                        row.is_object() || row.is_array(),
-                        "Row should be JSON object or array"
-                    );
-                }
-
-                // Duration should be reasonable
-                assert!(
-                    duration_ms < 60000,
-                    "Query took too long: {} ms",
-                    duration_ms
-                );
-            } else {
-                panic!("Expected QueryResult output variant");
-            }
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented") || err_str.contains("todo"),
-                "Expected 'not yet implemented' error, got: {}",
-                err_str
-            );
-        }
+    assert!(!columns.is_empty(), "Query result should have columns");
+    assert_eq!(
+        columns.len(),
+        1,
+        "Count query should return single column"
+    );
+    for row in &rows {
+        assert!(
+            row.is_object() || row.is_array(),
+            "Row should be JSON object or array"
+        );
     }
+    assert!(
+        duration_ms < 60000,
+        "Query took too long: {} ms",
+        duration_ms
+    );
 }
 
 /// Test: Query command handles invalid queries gracefully
@@ -296,28 +237,18 @@ fn query_handles_invalid_syntax() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
-
-    // TODO(M.4): Expect this to fail with a specific error
-    match result {
-        Ok(_) => {
-            // In M.4, this should actually fail - but for now if it passes,
-            // we note the implementation needs error handling
-            println!("WARNING: Invalid query succeeded - error handling needed");
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            // Should contain helpful context
-            assert!(
-                err_str.contains("not yet implemented")
-                    || err_str.contains("todo")
-                    || err_str.contains("syntax")
-                    || err_str.contains("invalid"),
-                "Error should indicate syntax problem or not implemented: {}",
-                err_str
-            );
-        }
-    }
+    let err = harness
+        .executor()
+        .execute(cmd)
+        .expect_err("invalid CozoScript must produce an error once Query is implemented");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("syntax")
+            || msg.contains("invalid")
+            || msg.contains("parse")
+            || msg.contains("cozo"),
+        "error should describe invalid query: {msg}"
+    );
 }
 
 /// Test: Query command with parameters
@@ -337,22 +268,10 @@ fn query_with_parameters() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
-
-    // TODO(M.4): Verify parameter binding
-    match result {
-        Ok(_) => {
-            // Parameters were bound successfully
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented") || err_str.contains("todo"),
-                "Expected 'not yet implemented' error, got: {}",
-                err_str
-            );
-        }
-    }
+    expect_command_ok(
+        harness.executor().execute(cmd),
+        "db query with parameters must succeed once implemented",
+    );
 }
 
 // ============================================================================
@@ -383,34 +302,16 @@ fn stats_returns_comprehensive_data() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
+    let output = expect_command_ok(
+        harness.executor().execute(cmd),
+        "db stats must succeed once implemented",
+    );
 
-    // TODO(M.4): Verify stats structure
-    match result {
-        Ok(output) => {
-            if let DbOutput::DatabaseStats { category, data } = output {
-                assert_eq!(category, "All", "Category should match input");
-
-                // Data should be a JSON object with stats
-                assert!(data.is_object(), "Stats data should be a JSON object");
-
-                // Expected fields (implementation dependent)
-                // - node_count
-                // - relation_count
-                // - embedding_count (if embeddings exist)
-            } else {
-                panic!("Expected DatabaseStats output variant");
-            }
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented") || err_str.contains("todo"),
-                "Expected 'not yet implemented' error, got: {}",
-                err_str
-            );
-        }
-    }
+    let DbOutput::DatabaseStats { category, data } = output else {
+        panic!("Expected DatabaseStats output variant");
+    };
+    assert_eq!(category, "All", "Category should match input");
+    assert!(data.is_object(), "Stats data should be a JSON object");
 }
 
 /// Test: Stats command with specific category
@@ -435,27 +336,19 @@ fn stats_with_category_filter() {
         };
 
         let harness = CommandTestHarness::new().expect("Failed to create test harness");
-        let result = harness.executor().execute(cmd);
+        let output = expect_command_ok(
+            harness.executor().execute(cmd),
+            "db stats with category filter must succeed once implemented",
+        );
 
-        match result {
-            Ok(output) => {
-                if let DbOutput::DatabaseStats { category: cat, .. } = output {
-                    // Category in output should match input
-                    assert_eq!(
-                        cat,
-                        format!("{:?}", category),
-                        "Output category should match input"
-                    );
-                }
-            }
-            Err(e) => {
-                let err_str = e.to_string();
-                assert!(
-                    err_str.contains("not yet implemented") || err_str.contains("todo"),
-                    "Expected 'not yet implemented' error, got: {}",
-                    err_str
-                );
-            }
+        if let DbOutput::DatabaseStats { category: cat, .. } = output {
+            assert_eq!(
+                cat,
+                format!("{category:?}"),
+                "Output category should match input"
+            );
+        } else {
+            panic!("Expected DatabaseStats output variant");
         }
     }
 }
@@ -501,47 +394,28 @@ fn save_creates_valid_backup() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
+    let output = expect_command_ok(
+        harness.executor().execute(cmd),
+        "db save must succeed once implemented",
+    );
 
-    // TODO(M.4): Verify backup creation
-    match result {
-        Ok(output) => {
-            if let DbOutput::Success { message, path } = output {
-                // Verify file was created
-                assert!(
-                    backup_path.exists(),
-                    "Backup file should exist after save: {}",
-                    backup_path.display()
-                );
+    let DbOutput::Success { path, .. } = output else {
+        panic!("Expected Success output variant");
+    };
 
-                // Verify file is not empty
-                let metadata = std::fs::metadata(&backup_path).expect("Failed to read metadata");
-                assert!(metadata.len() > 0, "Backup file should not be empty");
-
-                // Verify path in output
-                assert_eq!(
-                    path.as_ref().map(|p| p.to_str().unwrap()),
-                    Some(backup_path.to_str().unwrap()),
-                    "Output should contain backup path"
-                );
-
-                // Cleanup
-                let _ = std::fs::remove_file(&backup_path);
-            } else {
-                panic!("Expected Success output variant");
-            }
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented") || err_str.contains("todo"),
-                "Expected 'not yet implemented' error, got: {}",
-                err_str
-            );
-            // Cleanup if file was partially created
-            let _ = std::fs::remove_file(&backup_path);
-        }
-    }
+    assert!(
+        backup_path.exists(),
+        "Backup file should exist after save: {}",
+        backup_path.display()
+    );
+    let metadata = std::fs::metadata(&backup_path).expect("Failed to read metadata");
+    assert!(metadata.len() > 0, "Backup file should not be empty");
+    assert_eq!(
+        path.as_ref().map(|p| p.to_str().unwrap()),
+        Some(backup_path.to_str().unwrap()),
+        "Output should contain backup path"
+    );
+    let _ = std::fs::remove_file(&backup_path);
 }
 
 /// Test: Load command restores database from backup
@@ -575,31 +449,18 @@ fn load_restores_backup_correctly() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
+    let output = expect_command_ok(
+        harness.executor().execute(cmd),
+        "db load must succeed for a valid backup path once implemented",
+    );
 
-    // TODO(M.4): Verify restoration
-    match result {
-        Ok(output) => {
-            if let DbOutput::Success { message, .. } = output {
-                // Verify should have completed
-                assert!(
-                    message.contains("restored") || message.contains("loaded"),
-                    "Success message should indicate restoration: {}",
-                    message
-                );
-            }
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented")
-                    || err_str.contains("todo")
-                    || err_str.contains("No such file"),
-                "Expected 'not yet implemented' or file not found error, got: {}",
-                err_str
-            );
-        }
-    }
+    let DbOutput::Success { message, .. } = output else {
+        panic!("Expected Success output variant");
+    };
+    assert!(
+        message.contains("restored") || message.contains("loaded"),
+        "Success message should indicate restoration: {message}"
+    );
 }
 
 // ============================================================================
@@ -640,30 +501,18 @@ fn load_fixture_loads_valid_fixture() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
+    let output = expect_command_ok(
+        harness.executor().execute(cmd),
+        "db load-fixture must succeed for a valid fixture id once implemented",
+    );
 
-    // TODO(M.4): Verify fixture loading
-    match result {
-        Ok(output) => {
-            if let DbOutput::Success { message, .. } = output {
-                assert!(
-                    message.contains(fixture_id) || message.contains("loaded"),
-                    "Success message should reference fixture: {}",
-                    message
-                );
-            }
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented")
-                    || err_str.contains("todo")
-                    || err_str.contains("fixture"),
-                "Expected 'not yet implemented' or fixture-related error, got: {}",
-                err_str
-            );
-        }
-    }
+    let DbOutput::Success { message, .. } = output else {
+        panic!("Expected Success output variant");
+    };
+    assert!(
+        message.contains(fixture_id) || message.contains("loaded"),
+        "Success message should reference fixture: {message}"
+    );
 }
 
 /// Test: LoadFixture with invalid fixture ID fails gracefully
@@ -683,27 +532,17 @@ fn load_fixture_rejects_invalid_id() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
-
-    // TODO(M.4): Expect failure with helpful message
-    match result {
-        Ok(_) => {
-            panic!("LoadFixture should fail for invalid fixture ID");
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            // Error should mention the invalid fixture
-            assert!(
-                err_str.contains("not yet implemented")
-                    || err_str.contains("todo")
-                    || err_str.contains(invalid_fixture_id)
-                    || err_str.contains("invalid")
-                    || err_str.contains("not found"),
-                "Error should indicate invalid fixture: {}",
-                err_str
-            );
-        }
-    }
+    let err = harness.executor().execute(cmd).expect_err(
+        "LoadFixture must reject an unknown fixture id once implemented",
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains(invalid_fixture_id)
+            || msg.contains("not found")
+            || msg.contains("unknown")
+            || msg.contains("invalid"),
+        "error should indicate missing or invalid fixture: {msg}"
+    );
 }
 
 /// Test: LoadFixture with index flag creates HNSW index
@@ -721,29 +560,18 @@ fn load_fixture_with_index_flag() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
+    let output = expect_command_ok(
+        harness.executor().execute(cmd),
+        "db load-fixture with --index must succeed once implemented",
+    );
 
-    // TODO(M.4): Verify index creation
-    match result {
-        Ok(output) => {
-            if let DbOutput::Success { message, .. } = output {
-                // Message should mention index
-                assert!(
-                    message.contains("index") || message.contains("HNSW"),
-                    "Success message should mention index creation: {}",
-                    message
-                );
-            }
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented") || err_str.contains("todo"),
-                "Expected 'not yet implemented' error, got: {}",
-                err_str
-            );
-        }
-    }
+    let DbOutput::Success { message, .. } = output else {
+        panic!("Expected Success output variant");
+    };
+    assert!(
+        message.contains("index") || message.contains("HNSW"),
+        "Success message should mention index creation: {message}"
+    );
 }
 
 // ============================================================================
@@ -767,22 +595,10 @@ fn count_nodes_with_db_path() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
-
-    // TODO(M.4): Verify specific database is used
-    match result {
-        Ok(_) => {
-            // Database at specific path was accessed
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented") || err_str.contains("todo"),
-                "Expected 'not yet implemented' error, got: {}",
-                err_str
-            );
-        }
-    }
+    expect_command_ok(
+        harness.executor().execute(cmd),
+        "db count-nodes with --db path must succeed once implemented",
+    );
 }
 
 /// Test: Query with mutable flag
@@ -802,22 +618,10 @@ fn query_with_mutable_flag() {
     };
 
     let harness = CommandTestHarness::new().expect("Failed to create test harness");
-    let result = harness.executor().execute(cmd);
-
-    // TODO(M.4): Verify mutable query execution
-    match result {
-        Ok(_) => {
-            // Mutable query executed
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("not yet implemented") || err_str.contains("todo"),
-                "Expected 'not yet implemented' error, got: {}",
-                err_str
-            );
-        }
-    }
+    expect_command_ok(
+        harness.executor().execute(cmd),
+        "db query with --mutable must complete once implemented",
+    );
 }
 
 // ============================================================================
@@ -870,25 +674,10 @@ fn backup_restore_roundtrip() {
 */
 
 // ============================================================================
-// Module documentation notes
+// Module documentation notes (M.4)
 // ============================================================================
-
-/// Notes for M.4 Implementation:
-///
-/// 1. All commands currently return `todo!("... implementation")`
-/// 2. Tests verify the todo!() is triggered and fail gracefully
-/// 3. After implementation:
-///    - Remove todo!() calls in commands/db.rs
-///    - Enable full assertion blocks in tests
-///    - Add integration tests using real fixtures
-///    - Consider adding property-based tests for query results
-///
-/// Fixture Requirements:
-/// - FIXTURE_NODES_CANONICAL: For basic count/query tests
-/// - FIXTURE_NODES_LOCAL_EMBEDDINGS: For embedding-related tests
-/// - PLOKE_DB_PRIMARY: For real-world data tests
-///
-/// Performance Considerations:
-/// - Backup/restore tests may be slow; consider #[ignore] for CI
-/// - Query tests should complete in < 1 second
-/// - Stats tests should be fast (< 100ms)
+//
+// 1. Command bodies still use `todo!("... implementation")`; executing them panics until removed.
+// 2. Success-oriented tests use `expect_command_ok` and fail until commands return `Ok` with real output.
+// 3. After implementation: remove todo!() in commands/db.rs; keep output assertions; add fixture integration tests.
+// Fixtures: FIXTURE_NODES_CANONICAL, FIXTURE_NODES_LOCAL_EMBEDDINGS, PLOKE_DB_PRIMARY.

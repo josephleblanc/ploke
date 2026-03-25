@@ -17,10 +17,10 @@ The PRIMARY_TASK_SPEC milestone M.3.2 also mentions `xtask/tests/test_matrix.md`
 | Test file | PRIMARY_TASK_SPEC areas | Role | Current state |
 |-----------|----------------|------|---------------|
 | [error_tests.rs](../../../../xtask/tests/error_tests.rs) | D (error shape), C invariants indirectly | Unit/integration-style tests for `XtaskError`, `RecoveryHint`, `ErrorCode` | **Runs:** exercises real error types; not yet `ploke_error::Error` |
-| [context_tests.rs](../../../../xtask/tests/context_tests.rs) | A.1–A.4 (resource prep), architecture | `CommandContext` lifecycle, workspace root, lazy resources | **Runs / partial:** several tests note M.4 follow-up; persistent DB path hits `todo!()` in context |
+| [context_tests.rs](../../../../xtask/tests/context_tests.rs) | A.1–A.4 (resource prep), architecture | `CommandContext` lifecycle, workspace root, lazy resources | **Runs:** concrete resource assertions; `context_persistent_database_panics_until_implemented` documents `todo!()` on persistent path |
 | [executor_tests.rs](../../../../xtask/tests/executor_tests.rs) | Architecture (M.2), C | `CommandExecutor`, `CommandRegistry`, `MaybeAsync`, sync commands | **Runs / partial:** registry construction from args and async `block()` still `todo!()` in executor |
-| [parse_commands.rs](../../../../xtask/tests/parse_commands.rs) | A.1, E | Parse subcommands: discovery, phases-merge, workspace, stats, list-modules | **Placeholders:** many tests end in `todo!("... M.4")` until `commands/parse.rs` is implemented |
-| [db_commands.rs](../../../../xtask/tests/db_commands.rs) | A.4, E | DB subcommands: save, load, fixtures, indexes, query, stats | **Expect stubs:** documents that commands return `todo!()`; asserts structured failure until M.4 |
+| [parse_commands.rs](../../../../xtask/tests/parse_commands.rs) | A.1, E | Parse subcommands: discovery, phases-merge, workspace, stats, list-modules | **Fail-until-impl:** calls `execute` + `expect` on success; fails until `commands/parse.rs` is implemented |
+| [db_commands.rs](../../../../xtask/tests/db_commands.rs) | A.4, E | DB subcommands: save, load, fixtures, indexes, query, stats | **Fail-until-impl:** success-oriented tests use `expect` on `Ok` only; negative tests assert `Err` with concrete checks |
 
 **Design reference:** proof-oriented conditions and command-level expectations: [design/test-design-requirements.md](./design/test-design-requirements.md).
 
@@ -60,7 +60,7 @@ The PRIMARY_TASK_SPEC milestone M.3.2 also mentions `xtask/tests/test_matrix.md`
 - **Expected functionality:** each subcommand calls the surveyed function and returns serializable diagnostics.
 - **Invariants:** invalid paths → structured `XtaskError` with recovery text (PRIMARY_TASK_SPEC B/D).
 - **Fail states:** parse errors from `syn_parser` surfaced to stdout/stderr per spec.
-- **Current state:** tests largely `todo!()` pending M.4 implementation.
+- **Current state:** tests invoke `Command::execute` and `expect` success where appropriate; failures come from stub `todo!()` or unmet assertions until M.4.
 
 ### `db_commands.rs`
 
@@ -68,7 +68,7 @@ The PRIMARY_TASK_SPEC milestone M.3.2 also mentions `xtask/tests/test_matrix.md`
 - **Expected functionality:** backup/restore, fixture load, indexes, queries, stats per [survey-ploke_db.md](./sub-agents/survey-ploke_db.md).
 - **Invariants:** cozo errors forwarded (PRIMARY_TASK_SPEC B.1); fixture paths validated.
 - **Fail states:** missing backup file; invalid query; schema mismatch.
-- **Current state:** file header states commands return `todo!()`; tests document expected transition when stubs are removed.
+- **Current state:** success paths use `expect` on `Ok` only (no stub-tolerant `Err` branches); until M.4, `todo!()` in commands panics during execute.
 
 ---
 
@@ -87,3 +87,4 @@ When adding tests, keep PRIMARY_TASK_SPEC E.3 discipline:
 | Date | Change |
 |------|--------|
 | 2026-03-25 | Initial population; canonical path + pointer to `xtask/tests/test_matrix.md` |
+| 2026-03-25 | Matrix updated for fail-until-impl policy (`parse_commands`, `db_commands`) |

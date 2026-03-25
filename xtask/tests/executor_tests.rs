@@ -212,15 +212,13 @@ fn executor_runs_async_command() {
 /// Then: Prerequisites are validated before command runs
 #[test]
 fn executor_validates_prerequisites() {
-    // TODO(M.4): Complete implementation - validate_prerequisites() needs full implementation
     let executor = CommandExecutor::new(ExecutorConfig::default()).unwrap();
     let command = TestDbCommand;
 
-    // Should validate prerequisites before execution
-    let result = executor.execute(command);
-    // Currently may fail because database pool implementation is a placeholder
-    // In M.4, this should succeed or fail with proper error
-    assert!(result.is_ok() || result.is_err());
+    let out = executor
+        .execute(command)
+        .expect("TestDbCommand must succeed when database pool is available in tests");
+    assert_eq!(out, "db access ok");
 }
 
 /// To Prove: Executor properly tracks usage statistics
@@ -369,6 +367,25 @@ fn registry_returns_none_for_unknown_command() {
 
     assert!(!registry.contains("unknown-command"));
     assert!(registry.get("unknown-command").is_none());
+}
+
+/// Invoking the registered factory exercises the `todo!()` in `CommandRegistry::register`.
+/// When argument parsing is implemented, replace this with a real construction test.
+#[test]
+fn registry_factory_panics_until_command_construction_implemented() {
+    let mut registry = CommandRegistry::new();
+    registry.register::<TestSyncCommand>();
+    let factory = registry
+        .get("test-sync")
+        .expect("test-sync should be registered");
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = factory(&[]);
+    }))
+    .is_err();
+    assert!(
+        panicked,
+        "factory should panic until command construction from args is implemented"
+    );
 }
 
 // =============================================================================
