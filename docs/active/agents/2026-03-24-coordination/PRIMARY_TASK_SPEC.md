@@ -54,7 +54,7 @@ This is already partially implemented in `xtask` in a command that provides a
 minimal performance evaluation of the execution time for parts of the pipeline,
 and can serve as an example for the desired approach of these `xtask` tools.
 
-2. Transform to db
+1. Transform to db
 
 - `ploke_transform::transform_parsed_graph`
 
@@ -65,7 +65,7 @@ additional context.
 This will need to be run in addition to the parsing commands, as it depends on
 parsing output.
 
-3. Run ingestion pipeline up to embeddings
+1. Run ingestion pipeline up to embeddings
 
 Again similar to A.1, we should add tracing instrumentation throughout. There
 is already a minimal setup for timing, but we will want to add more
@@ -80,9 +80,10 @@ have a budget that they are welcome to access. (I, the user, will handle the
 api key setup, but you can assume that either the `TEST_OPENROUTER_API_KEY` is
 configured in the environment or I do not want the key to be used)
 
-4. Run the database from ingest pipeline or save/load a backup
+1. Run the database from ingest pipeline or save/load a backup
 
 This should expose commands from `ploke-db` that can be used together with the parsing pipeline (see the `ploke-test-utils` and usage in various integration tests for examples on setup and initialization), and then allow for several built-in queries and database operations like:
+
 - `save_db`
 - `load_db`
 - `load_fixture`
@@ -95,7 +96,7 @@ pick the low-hanging fruit on these for now.
 - perform hnsw indexing rebuild
 - run an arbitrary query entered as the command-line argument
 
-5. A headless, command-line `ploke-tui` to run individual commands
+1. A headless, command-line `ploke-tui` to run individual commands
 
 Different from the other commands, this will be a separate module in
 `ploke-tui` due to the build time complexity and heavy dependencies involved.
@@ -104,6 +105,7 @@ these commands, along with any shared agent documentation on testing,
 evaluating workspace-wide capabilites, or performance checks.
 
 We need a set of commands that will:
+
 - build and run the `ploke-tui::App` in a "headless mode" using
 `ratatui::backend::TestBackend`
 - Allow an "input" argument that is processed as user input and then the key command for "Enter" is sent to simulate entering something to the app's input box, and wait on a timeout (short by default but variable from the command args) for the response and prints the output to stdout
@@ -112,9 +114,10 @@ We need a set of commands that will:
 - gracefully shut down
 - should use default config values, but accept an override defined in `xtask`
 
-6. Execute tool calls bypassing typical `ploke-tui` channels
+1. Execute tool calls bypassing typical `ploke-tui` channels
 
 This should provide commands that allow the tools in `ploke-tui` to be used by accepting either of:
+
 - a set of input args (parsed into json by the `xtask` application)
 - json entered through the commandline
 - json loaded from a file
@@ -134,7 +137,7 @@ functions and through feedback upon executing a command.
 
 1. Every command provides useful information, even when entered incorrectly
   - provide recovery paths, e.g. "No target file entered, please enter a target
-  file using a path relative to <ploke-tui workspace dir>"
+  file using a path relative to "
   - validate inputs, provide feedback
   - if `cozo` returns an error, forward it to the terminal so the agent knows
   what went wrong
@@ -143,15 +146,17 @@ functions and through feedback upon executing a command.
   - a `tracing::subscriber` can and should record output to a log file whose
   path is provided to the agent with a hint like "tracing log persisted to
   `<path>` was X lines long, to use `rg` or `grep` on it try searching for
-  <examples with accurate potential targets>
   verbosity used were..."
 3. Include a clear and unambiguous `help` command with up-to-date information.
+
 Persist a "last updated" log file and automatically prompt the agent to review
 the `xtask` crate's implementation of the `help` command for staleness every 48
 hours.
 4. Persist usage statistics in long-term logging
-  - Helps us learn over time which commands are used or not
-5. Experimental: Try adding a rolling suggestion every 50 times any command is run with "auto-generated suggestion: provide quick feedback or suggestions? Check <path to .md feedback file> and don't forget to be honest."
+
+- Helps us learn over time which commands are used or not
+
+1. Experimental: Try adding a rolling suggestion every 50 times any command is run with "auto-generated suggestion: provide quick feedback or suggestions? Check <path to .md feedback file> and don't forget to be honest."
   - This will both provide insight into whether the agent introspection on this
   topic is helpful, and possibly improve the commands.
 
@@ -167,13 +172,11 @@ For each command, there exists:
   - output from a function that exists in another crate in the ploke workspace
   - instructions on how to use `xtask`
   - fresh data on workspace state (e.g. check presence of backup databases)
-
 2. If a command has output from a function that exists in another crate in the ploke workspace, there exists:
   - at least one argument (in addition to the specifying command) to provide a
   target/config/etc
   - if a default config exists, there exists at least one optional flag to
   specify that config, which overrides the default
-
 3. An entry in a `help` command with a short description of the command.
 
 To ensure these invariants hold, a new enum should be constructed for the
@@ -182,18 +185,18 @@ command input.
 ### D. Error Handling
 
 Error handling should be `ploke_error::Error`, and should additionally always include the following:
+
 - Recovery path: Either 
   - point the agent to what failed in the underlying call (in the case of an unexpected failure) or 
   - provide a helpful message with enriched context so the agent knows what
   went wrong with its input, e.g. "file path `<path>` does not exist", "cozo
-  query error: `<propogated cozo + ploke error>`, your input query: <input
-  query>, underlying database used was `<provenance>` underlying command was
-  ploke_db::Database::count_all_nodes in <filepath to underlying function
-  definition>"
+  query error: `<propogated cozo + ploke error>`, your input query: , underlying database used was `<provenance>` underlying command was
+  ploke_db::Database::count_all_nodes in "
 
 ### E. Tests
 
 1. Before adding any new tests, document
+
 - `docs/active/agents/2026-03-24-coordination/2026-03-25-test_matrix.md`
 - underlying function(s) or data structures being tested
 - expected functionality
@@ -201,11 +204,13 @@ Error handling should be `ploke_error::Error`, and should additionally always in
 - fail states
 - edge cases
 
-2. Search, review, and run related tests
+1. Search, review, and run related tests
+
 - fill out the above points with references to existing tests
 - run the related tests and record date + test pass/fail
 
-3. if existing tests insufficient (likely)
+1. if existing tests insufficient (likely)
+
 - answer: what hypothesis does this test prove or disprove? 
   - Be precise
 - Why does this test prove something useful?
@@ -217,7 +222,8 @@ Error handling should be `ploke_error::Error`, and should additionally always in
 - Under what conditions would this test not prove correctness of the underlying
 property being tested?
 
-4. Write the test
+1. Write the test
+
 - Write targeted tests for each implementation within the same file.
 - Keep integration tests in a `xtask/tests` directory and keep them logically
 organized
@@ -277,7 +283,6 @@ For each crate, sub-agents fan-out
   and create a new branch
   - AGENT_INSTRUCTION: READ and TAKE SERIOUSLY the recommendation of the task
   adherence agent.
-
 2. Once all crates are finished with first pass, identify key functions not in list
   - AGENT_INSTRUCTION: Monitor sub-agents, review list for updates as
   sub-agents contribute, check for overlapping edits and correct
@@ -292,7 +297,7 @@ For each crate, sub-agents fan-out
 
 sub-agents fan-in
 
-3. Once all crates have been reviewed for M.1.1 and M.1.2:
+1. Once all crates have been reviewed for M.1.1 and M.1.2:
   - Review list of commands
   - Identify commands that require cross-crate functionality not addressed in M.1.1 and M.1.2
   - Identify utility commands not identified in A.1-A.4 and M.1.1-M.1.2
@@ -307,7 +312,7 @@ sub-agents fan-in
 
 sub-agents fan-out
 
-4. For each cross-crate command, gather required function information
+1. For each cross-crate command, gather required function information
   - AGENT_INSTRUCTION: dispatch sub-agents per command, monitor sub-agents, curate + check list quality
   - SUBAGENT_INSTRUCTION: for your command, gather references and information
   for functions required to implement command, fill in list for your command.
@@ -320,7 +325,7 @@ sub-agents fan-out
 
 sub-agents fan-in
 
-5. Review list of commands and referenced functions in document
+1. Review list of commands and referenced functions in document
   - AGENT_INSTRUCTION: spawn below sub-agents and monitor:
     - accuracy agent: reviews list + commands for accuracy to underlying
     functions, identifies any quirks or special considerations about the
@@ -330,7 +335,6 @@ sub-agents fan-in
     A.1-A.4 and M.1.1-M.1.3, verifies progress, provides evaluation and
     possible corrections to main agent. Adds notes on task adherence to new
     doc.
-
 
 ### M.2 Design Architecture + Documentation
 
@@ -361,7 +365,7 @@ sub-agent fan-out
 sub-agent fan-in
 sub-agent fan-out
 
-2. Design consolidation
+1. Design consolidation
   - AGENT_INSTRUCTION: creates and provides skeleton review doc for sub-agents,
   spawn five agents with same instructions, monitors agents
     - instructs all five sub-agents to evaluate the three architecture plans
@@ -415,7 +419,7 @@ sub-agents fan-in
 
 sub-agents fan-out
 
-2. Add TDD tests
+1. Add TDD tests
   - AGENT_INSTRUCTION: start and monitor sub-agents, create one architecture
   agent, one test-review agent, and three test-writing agents.
     - architecture agent reviews proposed architecture + its reviews, and
@@ -425,7 +429,7 @@ sub-agents fan-out
     in M.2.1 for non-functional but compiling commands and other functions,
     using the type system, proposed arch, and identifying and evaluating test
     fixtures.
-      - Created tests should compile should not pass until the implementation
+      - Created tests should compile and should not pass until the implementation  
       is able to add the functionality required by the test.
     - test-reviewing agent creates and updates a test tracking doc in
     `xtask/tests/test_matrix.md`, links to unit tests, evaluates coverage,
@@ -468,7 +472,7 @@ sub-agent fan-in
 
 sub-agent fan-out
 
-2. Expand tests, debug
+1. Expand tests, debug
   - AGENT_INSTRUCTION: reviews updated arch and test docs from M.1.10, directs
   sub-agents to implement full arch + tests, creates engineering agents,
   oversees conflicts, creates a task adherence agent, creates a testing agent,
@@ -497,15 +501,15 @@ sub-agent fan-out
 
 sub-agent fan-in
 
-3. Polish, add documentation
-    - AGENT_INSTRUCTION: You can fill in this section, it should be fairly
-    clear what to do. Main output needed here is a summary and review + at
-    least one sub-agent do to book-keeping by updating table of contents in
-    task directory
+1. Polish, add documentation
+  - AGENT_INSTRUCTION: You can fill in this section, it should be fairly
+  clear what to do. Main output needed here is a summary and review + at
+  least one sub-agent do to book-keeping by updating table of contents in
+  task directory
 
 ### M.5 Expand into `ploke-tui` app commands A.5-A.6
 
-13. todo
+1. todo
 
 ## Guidelines for Sub-Agents
 
@@ -523,3 +527,4 @@ When working on this task:
   - additional implementation notes or concerns
   - test passes/failures (if any)
 5. Report completion status back to the main agent and reference the document you created
+
