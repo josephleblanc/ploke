@@ -704,7 +704,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                         Some(t as &dyn GraphNode)
                     }
                     TypeDefNode::Union(u) if u.id.as_any() == item_id => Some(u as &dyn GraphNode),
-                    _ => { unreachable!()}
+                    _ => { None }
                 })
             })
             .or_else(|| {
