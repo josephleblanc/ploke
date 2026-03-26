@@ -56,6 +56,7 @@ pub mod usage;
 
 // Re-export commonly used types
 pub use context::CommandContext;
+pub use error::PARSE_FAILURE_DIAGNOSTIC_HINT;
 pub use error::XtaskError;
 pub use executor::{
     Command, CommandCategory, CommandExecutor, CommandRegistry, ExecutorConfig, ResourceRequirements,

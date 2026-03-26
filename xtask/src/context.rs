@@ -71,6 +71,43 @@ impl CommandContext {
         })
     }
 
+    /// Create a new command context with an optional workspace-root override.
+    ///
+    /// When `workspace_root` is provided, relative paths (e.g. in `parse` commands)
+    /// are resolved against this root instead of the compiled-in ploke workspace root.
+    pub fn new_with_workspace_root(workspace_root: Option<PathBuf>) -> Result<Self, XtaskError> {
+        let ctx = Self::new()?;
+
+        if let Some(root) = workspace_root {
+            if !root.exists() {
+                return Err(XtaskError::validation(format!(
+                    "Workspace root `{}` does not exist",
+                    root.display()
+                ))
+                .into());
+            }
+            if !root.is_dir() {
+                return Err(XtaskError::validation(format!(
+                    "Workspace root `{}` is not a directory",
+                    root.display()
+                ))
+                .into());
+            }
+            let canon = root.canonicalize().map_err(|e| {
+                XtaskError::validation(format!(
+                    "Could not canonicalize workspace root `{}`: {e}",
+                    root.display()
+                ))
+            })?;
+
+            ctx.workspace_root
+                .set(canon)
+                .map_err(|_| XtaskError::new("Workspace root already initialized"))?;
+        }
+
+        Ok(ctx)
+    }
+
     /// Get or create the database pool.
     ///
     /// The database pool is created on first access and cached for subsequent calls.

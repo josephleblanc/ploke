@@ -33,6 +33,18 @@ fn cli_parse_debug_help_lists_nested_subcommands() {
     let s = err.to_string();
     assert!(s.contains("manifest") || s.to_lowercase().contains("manifest"), "{s}");
     assert!(s.contains("workspace") || s.to_lowercase().contains("workspace"), "{s}");
+    assert!(
+        s.contains("logical-paths") || s.contains("logical"),
+        "path diagnostic subcommands: {s}"
+    );
+    assert!(
+        s.contains("modules-premerge") || s.contains("premerge"),
+        "path diagnostic subcommands: {s}"
+    );
+    assert!(
+        s.contains("path-collisions") || s.contains("collisions"),
+        "path diagnostic subcommands: {s}"
+    );
 }
 
 #[test]

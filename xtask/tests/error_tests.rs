@@ -223,6 +223,10 @@ fn error_recovery_suggestion() {
     let err = XtaskError::Internal("bug".to_string());
     assert!(err.recovery_suggestion().is_some());
 
+    // Parse: diagnostic text is included in Display only (avoids doubling in print_report).
+    let err = XtaskError::Parse("failed".to_string());
+    assert!(err.recovery_suggestion().is_none());
+
     // Generic errors have no suggestion
     let err = XtaskError::new("generic");
     assert!(err.recovery_suggestion().is_none());
@@ -320,9 +324,15 @@ fn error_display_formats() {
         XtaskError::Generic("test".to_string()).to_string(),
         "test"
     );
-    assert_eq!(
-        XtaskError::Parse("syntax error".to_string()).to_string(),
-        "Parse error: syntax error"
+    let parse_err = XtaskError::Parse("syntax error".to_string());
+    let parse_s = parse_err.to_string();
+    assert!(
+        parse_s.starts_with("Parse error: syntax error"),
+        "got: {parse_s}"
+    );
+    assert!(
+        parse_s.contains("parse debug"),
+        "expected diagnostic hint in Display: {parse_s}"
     );
     assert_eq!(
         XtaskError::Transform("transform failed".to_string()).to_string(),

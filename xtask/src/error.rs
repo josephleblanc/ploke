@@ -6,6 +6,15 @@
 use std::error::Error;
 use std::fmt;
 
+/// Appended to [`XtaskError::Parse`] in `Display` so CLI users see next diagnostic steps.
+///
+/// Kept out of [`XtaskError::recovery_suggestion`] for `Parse` to avoid duplicating this block when
+/// using [`XtaskError::print_report`], which prints both `Display` and recovery.
+pub const PARSE_FAILURE_DIAGNOSTIC_HINT: &str = "\
+Hint: See `cargo xtask help parse` and `cargo xtask parse debug --help`. \
+For parse/workspace failures, run `parse debug workspace <PATH>`; for a failing crate root, run \
+`parse debug logical-paths`, `parse debug modules-premerge`, and `parse debug path-collisions`.";
+
 /// Unified error type for xtask commands.
 ///
 /// This enum provides a consistent error type that can represent:
@@ -119,7 +128,8 @@ impl XtaskError {
             Self::Database(_) => Some("Check database connectivity and permissions."),
             Self::Io(_) => Some("Check file permissions and disk space."),
             Self::Internal(_) => Some("This may be a bug. Please report it."),
-            Self::Parse(_) => Some("Check the crate path and Cargo.toml; try `cargo xtask help-topic parse`."),
+            // Full guidance is included in `Display` for `Parse` (see `fmt::Display`).
+            Self::Parse(_) => None,
             _ => None,
         }
     }
@@ -165,7 +175,7 @@ impl fmt::Display for XtaskError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Generic(msg) => write!(f, "{}", msg),
-            Self::Parse(msg) => write!(f, "Parse error: {}", msg),
+            Self::Parse(msg) => write!(f, "Parse error: {}\n\n{}", msg, PARSE_FAILURE_DIAGNOSTIC_HINT),
             Self::Transform(msg) => write!(f, "Transform error: {}", msg),
             Self::Database(msg) => write!(f, "Database error: {}", msg),
             Self::Embedding(msg) => write!(f, "Embedding error: {}", msg),
@@ -432,7 +442,9 @@ mod tests {
     #[test]
     fn test_display() {
         let err = XtaskError::Parse("syntax error".to_string());
-        assert_eq!(err.to_string(), "Parse error: syntax error");
+        let s = err.to_string();
+        assert!(s.starts_with("Parse error: syntax error"), "{s}");
+        assert!(s.contains("parse debug"), "{s}");
 
         let err = XtaskError::Database("connection failed".to_string());
         assert_eq!(err.to_string(), "Database error: connection failed");

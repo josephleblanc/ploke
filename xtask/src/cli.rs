@@ -71,8 +71,8 @@ impl Cli {
     ///
     /// Returns an error if command execution fails
     pub fn execute(self) -> Result<(), XtaskError> {
-        // Build command context
-        let ctx = CommandContext::new()?;
+        // Build command context (allow workspace override from CLI)
+        let ctx = CommandContext::new_with_workspace_root(self.workspace.clone())?;
 
         // Execute the subcommand
         let output = match self.command {
@@ -224,7 +224,7 @@ SUBCOMMANDS:
     workspace        Parse entire workspace
     stats            Show parsing statistics
     list-modules     List all modules in parsed code
-    debug            Debug manifest, discovery file lists, workspace members, pipeline stages
+    debug            Debug manifest, discovery, workspace probe, pipeline, and path diagnostics
 
 EXAMPLES:
     # Discover crates in a workspace
@@ -242,6 +242,20 @@ EXAMPLES:
     # Debug workspace layout and per-member pipeline (JSON)
     cargo xtask --format json parse debug manifest ./workspace
     cargo xtask parse debug workspace ./workspace --skip-merge
+
+    # Path diagnostics on a single crate (agents: use after a parse failure)
+    cargo xtask --format json parse debug logical-paths ./my-crate
+    cargo xtask --format json parse debug modules-premerge ./my-crate
+    cargo xtask --format json parse debug path-collisions ./my-crate
+
+PARSE DEBUG SUBCOMMANDS (see also `cargo xtask parse debug --help`):
+    manifest           Cargo.toml workspace / members summary
+    discovery          Per-crate file list and symlink hints
+    workspace          Per workspace member: discovery / resolve / merge stages
+    pipeline           Single crate: resolve vs merge
+    logical-paths      Each discovered .rs file -> Phase 2 derived logical path (matches parallel parse)
+    modules-premerge   Resolve only: all ModuleNodes grouped by source file
+    path-collisions    After merge: logical paths claimed by more than one module node
 "#
     );
 }

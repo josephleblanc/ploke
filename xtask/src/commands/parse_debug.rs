@@ -1,7 +1,13 @@
 //! `parse debug` — structured diagnostics for discovery and pipeline failures.
 //!
 //! Uses [`syn_parser::discovery::try_parse_manifest`], [`syn_parser::discovery::run_discovery_phase`],
-//! [`syn_parser::try_run_phases_and_resolve`], and [`syn_parser::try_run_phases_and_merge`].
+//! [`syn_parser::logical_module_path_for_file`], [`syn_parser::try_run_phases_and_resolve`],
+//! [`syn_parser::try_run_phases_and_merge`], and [`syn_parser::ParsedCodeGraph::merge_new`].
+//!
+//! **Agent-oriented workflow:** When `parse workspace` / `parse phases-*` fails, run
+//! `parse debug workspace` on the same path, then `parse debug logical-paths`,
+//! `parse debug modules-premerge`, and `parse debug path-collisions` on the failing crate root
+//! to see derived paths, per-file module nodes, and post-merge path duplicates.
 #![allow(missing_docs)]
 
 use std::collections::{HashMap, HashSet};
@@ -12,13 +18,17 @@ use clap::{Args, Subcommand};
 use serde::Serialize;
 
 use syn_parser::discovery::{run_discovery_phase, try_parse_manifest};
-use syn_parser::{try_run_phases_and_merge, try_run_phases_and_resolve};
+use syn_parser::parser::nodes::ModuleNode;
+use syn_parser::{
+    logical_module_path_for_file, try_run_phases_and_merge, try_run_phases_and_resolve,
+    ParsedCodeGraph,
+};
 
 use super::parse::{count_code_graph_nodes, resolve_parse_path};
 use super::{CommandContext, XtaskError};
 use crate::executor::Command;
 
-/// `parse debug …` — nested subcommands (manifest, discovery, workspace, pipeline).
+/// `parse debug …` — nested subcommands (manifest, discovery, workspace, pipeline, path diagnostics).
 #[derive(Debug, Clone, Args)]
 pub struct ParseDebugCli {
     #[command(subcommand)]
@@ -66,6 +76,16 @@ pub enum ParseDebugCmd {
 
     /// On a single **crate root**, report resolve vs merge success separately (same crate, two stages).
     Pipeline(DebugPipeline),
+
+    /// For a **crate root**, list each discovered `.rs` file and the logical module path Phase 2 assigns
+    /// ([`syn_parser::logical_module_path_for_file`]), same heuristic as parallel parse.
+    LogicalPaths(DebugLogicalPaths),
+
+    /// For a **crate root**, run resolve only and dump every `ModuleNode` per parsed file (pre-merge).
+    ModulesPremerge(DebugModulesPremerge),
+
+    /// For a **crate root**, merge graphs and list logical paths held by more than one module node.
+    PathCollisions(DebugPathCollisions),
 }
 
 impl ParseDebugCmd {
@@ -75,6 +95,9 @@ impl ParseDebugCmd {
             ParseDebugCmd::Discovery(_) => "parse debug discovery",
             ParseDebugCmd::Workspace(_) => "parse debug workspace",
             ParseDebugCmd::Pipeline(_) => "parse debug pipeline",
+            ParseDebugCmd::LogicalPaths(_) => "parse debug logical-paths",
+            ParseDebugCmd::ModulesPremerge(_) => "parse debug modules-premerge",
+            ParseDebugCmd::PathCollisions(_) => "parse debug path-collisions",
         }
     }
 
@@ -84,6 +107,9 @@ impl ParseDebugCmd {
             ParseDebugCmd::Discovery(c) => c.execute(ctx)?,
             ParseDebugCmd::Workspace(c) => c.execute(ctx)?,
             ParseDebugCmd::Pipeline(c) => c.execute(ctx)?,
+            ParseDebugCmd::LogicalPaths(c) => c.execute(ctx)?,
+            ParseDebugCmd::ModulesPremerge(c) => c.execute(ctx)?,
+            ParseDebugCmd::PathCollisions(c) => c.execute(ctx)?,
         };
         Ok(super::parse::ParseOutput::Debug(out))
     }
@@ -586,6 +612,284 @@ impl Command for DebugPipeline {
     }
 }
 
+// --- logical paths (per discovered file, Phase 2 heuristic) ---
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct DebugLogicalPaths {
+    /// Crate root directory (contains `Cargo.toml`)
+    #[arg(value_name = "CRATE_PATH")]
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugLogicalPathsOut {
+    pub crate_root: String,
+    pub src_dir: String,
+    pub package_name: Option<String>,
+    pub file_count: usize,
+    /// Logical path strings (`crate::...`) that appear for more than one source file.
+    pub duplicate_derived_path_displays: Vec<String>,
+    pub files: Vec<LogicalPathEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LogicalPathEntry {
+    pub path: String,
+    pub canonical_path: Option<String>,
+    pub derived_logical_path: Vec<String>,
+    pub derived_logical_path_display: String,
+}
+
+impl Command for DebugLogicalPaths {
+    type Output = DebugOutput;
+    type Error = XtaskError;
+
+    fn name(&self) -> &'static str {
+        "parse debug logical-paths"
+    }
+
+    fn category(&self) -> crate::executor::CommandCategory {
+        crate::executor::CommandCategory::Parse
+    }
+
+    fn requires_async(&self) -> bool {
+        false
+    }
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let canon = resolve_parse_path(ctx, &self.path)?;
+        let discovery = run_discovery_phase(None, &[canon.clone()]).map_err(|e| {
+            XtaskError::Parse(format!("Discovery failed (needed for file list): {e}"))
+        })?;
+        let ctx_c = discovery
+            .get_crate_context(&canon)
+            .ok_or_else(|| XtaskError::Parse("Discovery returned no context for crate root".into()))?;
+        let src_dir = canon.join("src");
+        let src_dir_s = src_dir.display().to_string();
+
+        let mut paths_sorted: Vec<PathBuf> = ctx_c.files.clone();
+        paths_sorted.sort();
+
+        let mut path_counts: HashMap<String, usize> = HashMap::new();
+        let mut files = Vec::with_capacity(paths_sorted.len());
+        for file_path in &paths_sorted {
+            let derived = logical_module_path_for_file(&src_dir, file_path);
+            let display = derived.join("::");
+            *path_counts.entry(display.clone()).or_insert(0) += 1;
+            let canonical_path = std::fs::canonicalize(file_path)
+                .ok()
+                .map(|p| p.display().to_string());
+            files.push(LogicalPathEntry {
+                path: file_path.display().to_string(),
+                canonical_path,
+                derived_logical_path: derived,
+                derived_logical_path_display: display,
+            });
+        }
+
+        let mut duplicate_derived_path_displays: Vec<String> = path_counts
+            .into_iter()
+            .filter(|(_, c)| *c > 1)
+            .map(|(k, _)| k)
+            .collect();
+        duplicate_derived_path_displays.sort();
+
+        Ok(DebugOutput::LogicalPaths(DebugLogicalPathsOut {
+            crate_root: canon.display().to_string(),
+            src_dir: src_dir_s,
+            package_name: Some(ctx_c.name.clone()),
+            file_count: files.len(),
+            duplicate_derived_path_displays,
+            files,
+        }))
+    }
+}
+
+// --- modules pre-merge (per ParsedCodeGraph) ---
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct DebugModulesPremerge {
+    /// Crate root directory
+    #[arg(value_name = "CRATE_PATH")]
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugModulesPremergeOut {
+    pub crate_root: String,
+    pub graph_count: usize,
+    pub total_module_nodes: usize,
+    pub graphs: Vec<PremergeGraphSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PremergeGraphSummary {
+    pub source_file: String,
+    pub module_count: usize,
+    pub modules: Vec<ModuleNodeSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModuleNodeSummary {
+    pub id: String,
+    pub name: String,
+    pub path: Vec<String>,
+    pub path_display: String,
+    pub is_declaration: bool,
+    pub is_file_based: bool,
+    pub module_file_path: Option<String>,
+}
+
+impl Command for DebugModulesPremerge {
+    type Output = DebugOutput;
+    type Error = XtaskError;
+
+    fn name(&self) -> &'static str {
+        "parse debug modules-premerge"
+    }
+
+    fn category(&self) -> crate::executor::CommandCategory {
+        crate::executor::CommandCategory::Parse
+    }
+
+    fn requires_async(&self) -> bool {
+        false
+    }
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let canon = resolve_parse_path(ctx, &self.path)?;
+        let graphs = try_run_phases_and_resolve(&canon)
+            .map_err(|e| XtaskError::Parse(format!("Resolve phase failed: {e}")))?;
+
+        let mut total_module_nodes = 0usize;
+        let mut summaries = Vec::with_capacity(graphs.len());
+        for pg in &graphs {
+            let mut modules: Vec<ModuleNodeSummary> = pg
+                .graph
+                .modules
+                .iter()
+                .map(|m| {
+                    let path_display = m.path.join("::");
+                    ModuleNodeSummary {
+                        id: m.id.to_string(),
+                        name: m.name.clone(),
+                        path: m.path.clone(),
+                        path_display,
+                        is_declaration: m.is_decl(),
+                        is_file_based: m.is_file_based(),
+                        module_file_path: m.file_path().map(|p| p.display().to_string()),
+                    }
+                })
+                .collect();
+            modules.sort_by(|a, b| a.path_display.cmp(&b.path_display));
+            total_module_nodes += modules.len();
+            summaries.push(PremergeGraphSummary {
+                source_file: pg.file_path.display().to_string(),
+                module_count: modules.len(),
+                modules,
+            });
+        }
+        summaries.sort_by(|a, b| a.source_file.cmp(&b.source_file));
+
+        Ok(DebugOutput::ModulesPremerge(DebugModulesPremergeOut {
+            crate_root: canon.display().to_string(),
+            graph_count: graphs.len(),
+            total_module_nodes,
+            graphs: summaries,
+        }))
+    }
+}
+
+// --- path collisions after merge ---
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct DebugPathCollisions {
+    /// Crate root directory
+    #[arg(value_name = "CRATE_PATH")]
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugPathCollisionsOut {
+    pub crate_root: String,
+    pub merged_module_count: usize,
+    pub collision_group_count: usize,
+    pub collisions: Vec<PathCollisionGroup>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PathCollisionGroup {
+    pub path: Vec<String>,
+    pub path_display: String,
+    pub modules: Vec<ModuleNodeSummary>,
+}
+
+impl Command for DebugPathCollisions {
+    type Output = DebugOutput;
+    type Error = XtaskError;
+
+    fn name(&self) -> &'static str {
+        "parse debug path-collisions"
+    }
+
+    fn category(&self) -> crate::executor::CommandCategory {
+        crate::executor::CommandCategory::Parse
+    }
+
+    fn requires_async(&self) -> bool {
+        false
+    }
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let canon = resolve_parse_path(ctx, &self.path)?;
+        let graphs = try_run_phases_and_resolve(&canon)
+            .map_err(|e| XtaskError::Parse(format!("Resolve phase failed: {e}")))?;
+        let merged = ParsedCodeGraph::merge_new(graphs)
+            .map_err(|e| XtaskError::Parse(format!("Merge failed: {e}")))?;
+
+        let modules = &merged.graph.modules;
+        let mut by_path: HashMap<String, Vec<&ModuleNode>> = HashMap::new();
+        for m in modules {
+            let key = m.path.join("::");
+            by_path.entry(key).or_default().push(m);
+        }
+
+        let mut collisions: Vec<PathCollisionGroup> = by_path
+            .into_iter()
+            .filter(|(_, v)| v.len() > 1)
+            .map(|(path_display, group)| {
+                let path = group[0].path.clone();
+                let mut mods: Vec<ModuleNodeSummary> = group
+                    .iter()
+                    .map(|m| ModuleNodeSummary {
+                        id: m.id.to_string(),
+                        name: m.name.clone(),
+                        path: m.path.clone(),
+                        path_display: m.path.join("::"),
+                        is_declaration: m.is_decl(),
+                        is_file_based: m.is_file_based(),
+                        module_file_path: m.file_path().map(|p| p.display().to_string()),
+                    })
+                    .collect();
+                mods.sort_by(|a, b| a.id.cmp(&b.id));
+                PathCollisionGroup {
+                    path,
+                    path_display,
+                    modules: mods,
+                }
+            })
+            .collect();
+        collisions.sort_by(|a, b| a.path_display.cmp(&b.path_display));
+
+        Ok(DebugOutput::PathCollisions(DebugPathCollisionsOut {
+            crate_root: canon.display().to_string(),
+            merged_module_count: modules.len(),
+            collision_group_count: collisions.len(),
+            collisions,
+        }))
+    }
+}
+
 /// Unified JSON-friendly payload for `parse debug` (see [`ParseOutput::Debug`](super::parse::ParseOutput::Debug)).
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -594,6 +898,9 @@ pub enum DebugOutput {
     Discovery(DebugDiscoveryOut),
     WorkspaceProbe(DebugWorkspaceProbeOut),
     Pipeline(DebugPipelineOut),
+    LogicalPaths(DebugLogicalPathsOut),
+    ModulesPremerge(DebugModulesPremergeOut),
+    PathCollisions(DebugPathCollisionsOut),
 }
 
 fn path_relative_to(root: &Path, path: &Path) -> String {

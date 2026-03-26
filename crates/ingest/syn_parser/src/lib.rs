@@ -50,7 +50,7 @@ use parser::analyze_files_parallel;
 // Re-export key items for easier access
 pub use discovery::CrateContext;
 pub use discovery::try_parse_manifest;
-pub use parser::visitor::analyze_file_phase2;
+pub use parser::visitor::{analyze_file_phase2, logical_module_path_for_file};
 pub use parser::{create_parser_channel, CodeGraph, ParserMessage};
 use ploke_common::fixtures_crates_dir;
 pub use ploke_core::TypeId; // Re-export the enum/struct from ploke-core
