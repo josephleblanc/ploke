@@ -253,6 +253,9 @@ PARSE DEBUG SUBCOMMANDS (see also `cargo xtask parse debug --help`):
     discovery          Per-crate file list and symlink hints
     workspace          Per workspace member: discovery / resolve / merge stages
     pipeline           Single crate: resolve vs merge
+    cargo-targets      Cargo package target inventory (`cargo metadata`)
+    workspace-members  Workspace member target/layout classification
+    discovery-rules    Explain syn_parser source discovery include/exclude rules
     logical-paths      Each discovered .rs file -> Phase 2 derived logical path (matches parallel parse)
     modules-premerge   Resolve only: all ModuleNodes grouped by source file
     path-collisions    After merge: logical paths claimed by more than one module node

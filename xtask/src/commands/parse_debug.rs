@@ -14,9 +14,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use cargo_metadata::Metadata;
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
+use syn_parser::discovery::CargoManifest;
 use syn_parser::discovery::{run_discovery_phase, try_parse_manifest};
 use syn_parser::parser::nodes::ModuleNode;
 use syn_parser::{
@@ -86,6 +88,15 @@ pub enum ParseDebugCmd {
 
     /// For a **crate root**, merge graphs and list logical paths held by more than one module node.
     PathCollisions(DebugPathCollisions),
+
+    /// Inspect Cargo package targets for a crate/workspace path.
+    CargoTargets(DebugCargoTargets),
+
+    /// Classify workspace members by target/layout shape from Cargo metadata.
+    WorkspaceMembers(DebugWorkspaceMembers),
+
+    /// Explain source discovery rules used by syn_parser for a crate.
+    DiscoveryRules(DebugDiscoveryRules),
 }
 
 impl ParseDebugCmd {
@@ -98,6 +109,9 @@ impl ParseDebugCmd {
             ParseDebugCmd::LogicalPaths(_) => "parse debug logical-paths",
             ParseDebugCmd::ModulesPremerge(_) => "parse debug modules-premerge",
             ParseDebugCmd::PathCollisions(_) => "parse debug path-collisions",
+            ParseDebugCmd::CargoTargets(_) => "parse debug cargo-targets",
+            ParseDebugCmd::WorkspaceMembers(_) => "parse debug workspace-members",
+            ParseDebugCmd::DiscoveryRules(_) => "parse debug discovery-rules",
         }
     }
 
@@ -110,6 +124,9 @@ impl ParseDebugCmd {
             ParseDebugCmd::LogicalPaths(c) => c.execute(ctx)?,
             ParseDebugCmd::ModulesPremerge(c) => c.execute(ctx)?,
             ParseDebugCmd::PathCollisions(c) => c.execute(ctx)?,
+            ParseDebugCmd::CargoTargets(c) => c.execute(ctx)?,
+            ParseDebugCmd::WorkspaceMembers(c) => c.execute(ctx)?,
+            ParseDebugCmd::DiscoveryRules(c) => c.execute(ctx)?,
         };
         Ok(super::parse::ParseOutput::Debug(out))
     }
@@ -901,6 +918,9 @@ pub enum DebugOutput {
     LogicalPaths(DebugLogicalPathsOut),
     ModulesPremerge(DebugModulesPremergeOut),
     PathCollisions(DebugPathCollisionsOut),
+    CargoTargets(DebugCargoTargetsOut),
+    WorkspaceMembers(DebugWorkspaceMembersOut),
+    DiscoveryRules(DebugDiscoveryRulesOut),
 }
 
 fn path_relative_to(root: &Path, path: &Path) -> String {
@@ -917,5 +937,459 @@ fn symlink_info(path: &Path) -> (bool, Option<String>) {
             (true, target)
         }
         _ => (false, None),
+    }
+}
+
+// --- cargo targets ---
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct DebugCargoTargets {
+    /// Crate or workspace path (must contain `Cargo.toml`)
+    #[arg(value_name = "WORKSPACE_OR_CRATE_PATH")]
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugCargoTargetsOut {
+    pub input_path: String,
+    pub manifest_path: String,
+    pub workspace_root: String,
+    pub package_count: usize,
+    pub packages: Vec<CargoPackageSummary>,
+    pub tests_only_packages: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CargoPackageSummary {
+    pub name: String,
+    pub manifest_path: String,
+    pub is_workspace_member: bool,
+    pub targets: Vec<CargoTargetSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CargoTargetSummary {
+    pub name: String,
+    pub kind: Vec<String>,
+    pub crate_types: Vec<String>,
+    pub src_path: String,
+}
+
+impl Command for DebugCargoTargets {
+    type Output = DebugOutput;
+    type Error = XtaskError;
+
+    fn name(&self) -> &'static str {
+        "parse debug cargo-targets"
+    }
+
+    fn category(&self) -> crate::executor::CommandCategory {
+        crate::executor::CommandCategory::Parse
+    }
+
+    fn requires_async(&self) -> bool {
+        false
+    }
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let canon = resolve_debug_target_path(ctx, &self.path)?;
+        let metadata = load_cargo_metadata(&canon)?;
+        let workspace_members: HashSet<_> = metadata.workspace_members.iter().cloned().collect();
+
+        let mut warnings = Vec::new();
+        let mut packages = Vec::with_capacity(metadata.packages.len());
+        let mut tests_only_packages = Vec::new();
+        for pkg in &metadata.packages {
+            let is_workspace_member = workspace_members.contains(&pkg.id);
+            let targets: Vec<CargoTargetSummary> = pkg
+                .targets
+                .iter()
+                .map(|t| CargoTargetSummary {
+                    name: t.name.to_string(),
+                    kind: t.kind.iter().map(|k| k.to_string()).collect(),
+                    crate_types: t.crate_types.iter().map(|ct| ct.to_string()).collect(),
+                    src_path: t.src_path.as_std_path().display().to_string(),
+                })
+                .collect();
+
+            let has_lib = pkg
+                .targets
+                .iter()
+                .any(|t| {
+                    t.kind.iter().any(|k| {
+                        let ks = k.to_string();
+                        ks == "lib" || ks == "proc-macro"
+                    })
+                });
+            let has_bin = pkg
+                .targets
+                .iter()
+                .any(|t| t.kind.iter().any(|k| k.to_string() == "bin"));
+            if !has_lib && !has_bin {
+                tests_only_packages.push(pkg.name.to_string());
+                warnings.push(format!(
+                    "package `{}` has no lib/bin targets (tests/examples/benches only)",
+                    pkg.name.to_string()
+                ));
+            }
+
+            packages.push(CargoPackageSummary {
+                name: pkg.name.to_string(),
+                manifest_path: pkg.manifest_path.as_std_path().display().to_string(),
+                is_workspace_member,
+                targets,
+            });
+        }
+        packages.sort_by(|a, b| a.name.cmp(&b.name));
+        tests_only_packages.sort();
+        warnings.sort();
+
+        Ok(DebugOutput::CargoTargets(DebugCargoTargetsOut {
+            input_path: canon.display().to_string(),
+            manifest_path: canon.join("Cargo.toml").display().to_string(),
+            workspace_root: metadata.workspace_root.as_std_path().display().to_string(),
+            package_count: packages.len(),
+            packages,
+            tests_only_packages,
+            warnings,
+        }))
+    }
+}
+
+// --- workspace members classification ---
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct DebugWorkspaceMembers {
+    /// Workspace root path (must contain `Cargo.toml`)
+    #[arg(value_name = "WORKSPACE_PATH")]
+    pub path: PathBuf,
+    /// Include classification fields for each workspace member.
+    #[arg(long)]
+    pub classify: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugWorkspaceMembersOut {
+    pub workspace_root: String,
+    pub member_count: usize,
+    pub members: Vec<WorkspaceMemberClassified>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceMemberClassified {
+    pub name: String,
+    pub manifest_path: String,
+    pub member_root: String,
+    pub has_lib_target: bool,
+    pub has_bin_targets: bool,
+    pub has_test_targets: bool,
+    pub has_example_targets: bool,
+    pub has_bench_targets: bool,
+    pub lib_src_path: Option<String>,
+    pub bin_src_paths: Vec<String>,
+    pub has_src_dir: bool,
+    pub has_tests_dir: bool,
+    pub has_build_rs: bool,
+    pub classification: Option<String>,
+}
+
+impl Command for DebugWorkspaceMembers {
+    type Output = DebugOutput;
+    type Error = XtaskError;
+
+    fn name(&self) -> &'static str {
+        "parse debug workspace-members"
+    }
+
+    fn category(&self) -> crate::executor::CommandCategory {
+        crate::executor::CommandCategory::Parse
+    }
+
+    fn requires_async(&self) -> bool {
+        false
+    }
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let canon = resolve_debug_target_path(ctx, &self.path)?;
+        let metadata = load_cargo_metadata(&canon)?;
+        let members: HashSet<_> = metadata.workspace_members.iter().cloned().collect();
+        let mut out_members = Vec::new();
+
+        for pkg in metadata.packages.iter().filter(|p| members.contains(&p.id)) {
+            let member_root = pkg
+                .manifest_path
+                .as_std_path()
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| XtaskError::Internal("Package manifest missing parent directory".into()))?;
+            let has_lib_target = pkg
+                .targets
+                .iter()
+                .any(|t| {
+                    t.kind.iter().any(|k| {
+                        let ks = k.to_string();
+                        ks == "lib" || ks == "proc-macro"
+                    })
+                });
+            let has_bin_targets = pkg
+                .targets
+                .iter()
+                .any(|t| t.kind.iter().any(|k| k.to_string() == "bin"));
+            let has_test_targets = pkg
+                .targets
+                .iter()
+                .any(|t| t.kind.iter().any(|k| k.to_string() == "test"));
+            let has_example_targets = pkg
+                .targets
+                .iter()
+                .any(|t| t.kind.iter().any(|k| k.to_string() == "example"));
+            let has_bench_targets = pkg
+                .targets
+                .iter()
+                .any(|t| t.kind.iter().any(|k| k.to_string() == "bench"));
+            let lib_src_path = pkg
+                .targets
+                .iter()
+                .find(|t| {
+                    t.kind.iter().any(|k| {
+                        let ks = k.to_string();
+                        ks == "lib" || ks == "proc-macro"
+                    })
+                })
+                .map(|t| t.src_path.as_std_path().display().to_string());
+            let mut bin_src_paths: Vec<String> = pkg
+                .targets
+                .iter()
+                .filter(|t| t.kind.iter().any(|k| k.to_string() == "bin"))
+                .map(|t| t.src_path.as_std_path().display().to_string())
+                .collect();
+            bin_src_paths.sort();
+
+            let has_src_dir = member_root.join("src").is_dir();
+            let has_tests_dir = member_root.join("tests").is_dir();
+            let has_build_rs = member_root.join("build.rs").is_file();
+
+            let classification = if self.classify {
+                Some(classify_member(
+                    has_lib_target,
+                    has_bin_targets,
+                    has_test_targets,
+                    has_example_targets,
+                    has_bench_targets,
+                    has_tests_dir,
+                ))
+            } else {
+                None
+            };
+
+            out_members.push(WorkspaceMemberClassified {
+                name: pkg.name.to_string(),
+                manifest_path: pkg.manifest_path.as_std_path().display().to_string(),
+                member_root: member_root.display().to_string(),
+                has_lib_target,
+                has_bin_targets,
+                has_test_targets,
+                has_example_targets,
+                has_bench_targets,
+                lib_src_path,
+                bin_src_paths,
+                has_src_dir,
+                has_tests_dir,
+                has_build_rs,
+                classification,
+            });
+        }
+        out_members.sort_by(|a, b| a.name.cmp(&b.name));
+
+        Ok(DebugOutput::WorkspaceMembers(DebugWorkspaceMembersOut {
+            workspace_root: metadata.workspace_root.as_std_path().display().to_string(),
+            member_count: out_members.len(),
+            members: out_members,
+        }))
+    }
+}
+
+// --- discovery rules explainer ---
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct DebugDiscoveryRules {
+    /// Crate root path (must contain `Cargo.toml`)
+    #[arg(value_name = "CRATE_PATH")]
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugDiscoveryRulesOut {
+    pub crate_root: String,
+    pub manifest_path: String,
+    pub src_scan_root: String,
+    pub custom_lib_path: Option<String>,
+    pub custom_bin_paths: Vec<String>,
+    pub candidate_sources: Vec<DiscoveryRuleCandidate>,
+    pub include_rules: Vec<String>,
+    pub exclusion_rules: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiscoveryRuleCandidate {
+    pub source: String,
+    pub path: String,
+    pub exists: bool,
+    pub is_file: bool,
+    pub is_dir: bool,
+}
+
+impl Command for DebugDiscoveryRules {
+    type Output = DebugOutput;
+    type Error = XtaskError;
+
+    fn name(&self) -> &'static str {
+        "parse debug discovery-rules"
+    }
+
+    fn category(&self) -> crate::executor::CommandCategory {
+        crate::executor::CommandCategory::Parse
+    }
+
+    fn requires_async(&self) -> bool {
+        false
+    }
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let canon = resolve_debug_target_path(ctx, &self.path)?;
+        let manifest_path = canon.join("Cargo.toml");
+        let manifest_str = std::fs::read_to_string(&manifest_path)
+            .map_err(|e| XtaskError::Resource(format!("Failed to read {}: {e}", manifest_path.display())))?;
+        let manifest: CargoManifest = toml::from_str(&manifest_str)
+            .map_err(|e| XtaskError::Parse(format!("Failed to parse {}: {e}", manifest_path.display())))?;
+
+        let src_scan_root = canon.join("src");
+        let custom_lib_path = manifest
+            .lib
+            .as_ref()
+            .map(|lib| canon.join(&lib.path).display().to_string());
+        let mut custom_bin_paths: Vec<String> = manifest
+            .bin
+            .as_ref()
+            .map(|bins| {
+                bins.iter()
+                    .map(|b| canon.join(&b.path).display().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        custom_bin_paths.sort();
+
+        let mut candidates = Vec::new();
+        candidates.push(candidate_for("src_walk", &src_scan_root));
+        if let Some(ref lib) = manifest.lib {
+            candidates.push(candidate_for("lib_target", &canon.join(&lib.path)));
+        }
+        if let Some(ref bins) = manifest.bin {
+            for b in bins {
+                candidates.push(candidate_for("bin_target", &canon.join(&b.path)));
+            }
+        }
+
+        Ok(DebugOutput::DiscoveryRules(DebugDiscoveryRulesOut {
+            crate_root: canon.display().to_string(),
+            manifest_path: manifest_path.display().to_string(),
+            src_scan_root: src_scan_root.display().to_string(),
+            custom_lib_path,
+            custom_bin_paths,
+            candidate_sources: candidates,
+            include_rules: vec![
+                "Include explicit `[lib].path` when it exists and is a file.".into(),
+                "Include explicit `[[bin]].path` entries when they exist and are files.".into(),
+                "If `src/` exists and is a directory, recursively include `*.rs` files under `src/`.".into(),
+                "Discovery errors with `SrcNotFound` when no source files are collected.".into(),
+            ],
+            exclusion_rules: vec![
+                "When discovered files include `lib.rs`, `main.rs` files are filtered out.".into(),
+                "Non-Rust files are ignored during `src/` walk.".into(),
+            ],
+        }))
+    }
+}
+
+fn resolve_debug_target_path(ctx: &CommandContext, path: &Path) -> Result<PathBuf, XtaskError> {
+    let p = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        ctx.workspace_root()?.join(path)
+    };
+    if !p.exists() {
+        return Err(
+            XtaskError::validation(format!(
+                "Path `{}` does not exist (resolved to `{}`)",
+                path.display(),
+                p.display()
+            ))
+            .with_recovery("Provide a valid crate/workspace directory path."),
+        );
+    }
+    if !p.is_dir() {
+        return Err(
+            XtaskError::validation(format!("Path `{}` must be a directory", p.display()))
+                .with_recovery("Pass the crate or workspace root directory."),
+        );
+    }
+    let canon = p
+        .canonicalize()
+        .map_err(|e| XtaskError::Resource(format!("Could not canonicalize {}: {e}", p.display())))?;
+    let manifest = canon.join("Cargo.toml");
+    if !manifest.is_file() {
+        return Err(
+            XtaskError::validation(format!(
+                "No Cargo.toml found at `{}` for this debug command",
+                canon.display()
+            ))
+            .with_recovery("Pass the crate/workspace root that contains Cargo.toml."),
+        );
+    }
+    Ok(canon)
+}
+
+fn load_cargo_metadata(target_dir: &Path) -> Result<Metadata, XtaskError> {
+    let manifest_path = target_dir.join("Cargo.toml");
+    cargo_metadata::MetadataCommand::new()
+        .manifest_path(&manifest_path)
+        .current_dir(target_dir)
+        .no_deps()
+        .exec()
+        .map_err(|e| XtaskError::Parse(format!("cargo metadata failed for {}: {e}", manifest_path.display())))
+}
+
+fn classify_member(
+    has_lib_target: bool,
+    has_bin_targets: bool,
+    has_test_targets: bool,
+    has_example_targets: bool,
+    has_bench_targets: bool,
+    has_tests_dir: bool,
+) -> String {
+    if has_lib_target || has_bin_targets {
+        return "normal".into();
+    }
+    if has_test_targets || has_tests_dir {
+        return "tests_only".into();
+    }
+    if has_example_targets {
+        return "examples_only".into();
+    }
+    if has_bench_targets {
+        return "benches_only".into();
+    }
+    "missing_sources".into()
+}
+
+fn candidate_for(source: &str, path: &Path) -> DiscoveryRuleCandidate {
+    let md = std::fs::metadata(path).ok();
+    DiscoveryRuleCandidate {
+        source: source.to_string(),
+        path: path.display().to_string(),
+        exists: md.is_some(),
+        is_file: md.as_ref().is_some_and(std::fs::Metadata::is_file),
+        is_dir: md.as_ref().is_some_and(std::fs::Metadata::is_dir),
     }
 }
