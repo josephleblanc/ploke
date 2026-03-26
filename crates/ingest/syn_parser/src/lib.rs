@@ -335,10 +335,12 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>
 /// [`run_phases_and_collect`].
 pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_error::Error> {
     let parsed_graphs = run_phases_and_collect(fixture_name)?;
-    let mut merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let tree = merged.build_tree_and_prune().map_err(|err| {
-        SynParserError::InternalState(format!("Failed to build module tree: {err}"))
-    })?;
+    let partition = ParsedCodeGraph::partition_by_selected_roots(parsed_graphs)?;
+    let selected_root = partition.select_default_root_path()?.to_path_buf();
+    let mut merged = partition.merge_for_root(&selected_root)?;
+    let tree = merged
+        .build_tree_and_prune_for_root_path(&selected_root)
+        .map_err(|err| SynParserError::InternalState(format!("Failed to build module tree: {err}")))?;
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),
@@ -347,9 +349,9 @@ pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_er
 pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, SynParserError> {
     let parsed_graphs = try_run_phases_and_resolve(target_crate)?;
     let _parsed_file_count = parsed_graphs.len();
-    let mut merged = {
-        ParsedCodeGraph::merge_new(parsed_graphs)?
-    };
+    let partition = ParsedCodeGraph::partition_by_selected_roots(parsed_graphs)?;
+    let selected_root = partition.select_default_root_path()?.to_path_buf();
+    let mut merged = partition.merge_for_root(&selected_root)?;
     let tree = {
         let graph_relation_count = merged.relations().len();
         let graph_module_count = merged.modules().len();
@@ -359,7 +361,7 @@ pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, Syn
             graph_module_count
         )
         .entered();
-        merged.build_tree_and_prune()
+        merged.build_tree_and_prune_for_root_path(&selected_root)
     }
     .map_err(|err| SynParserError::InternalState(format!("Failed to build module tree: {err}")))?;
     Ok(ParserOutput {
@@ -477,6 +479,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::discovery::{run_discovery_phase_with_target, TargetKind, TargetSelector};
 
     fn create_workspace_fixture_with_members(members: &[(&str, &str)]) -> tempfile::TempDir {
         let tmp = tempdir().unwrap();
@@ -801,5 +804,88 @@ edition = "2021"
         expected_roots.sort();
 
         assert_eq!(crate_roots, expected_roots);
+    }
+
+    #[test]
+    fn selector_limits_phase2_to_selected_target_roots() {
+        let tmp = tempdir().unwrap();
+        let crate_root = tmp.path().join("targeted_pkg");
+        fs::create_dir_all(crate_root.join("src")).unwrap();
+        fs::create_dir_all(crate_root.join("tests")).unwrap();
+        fs::write(
+            crate_root.join("Cargo.toml"),
+            r#"[package]
+name = "targeted_pkg"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        fs::write(crate_root.join("src/lib.rs"), "pub fn keep() {}\n").unwrap();
+        fs::write(
+            crate_root.join("tests/integration.rs"),
+            "fn selected_only() {}\n",
+        )
+        .unwrap();
+
+        let selector = TargetSelector {
+            kind: TargetKind::Test,
+            name: "integration".to_string(),
+        };
+        let discovery = run_discovery_phase_with_target(
+            None,
+            std::slice::from_ref(&crate_root),
+            Some(&selector),
+        )
+        .unwrap();
+        let parsed = analyze_files_parallel(&discovery, 0);
+
+        let parsed_files = parsed
+            .into_iter()
+            .map(|res| res.expect("selected target should parse"))
+            .map(|graph| graph.file_path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(parsed_files.len(), 1, "expected only selected target root");
+        assert!(
+            parsed_files[0].ends_with("tests/integration.rs"),
+            "phase2 should parse selected test target root"
+        );
+    }
+
+    #[test]
+    fn phase2_skips_non_primary_targets_when_primary_exists() {
+        let tmp = tempdir().unwrap();
+        let crate_root = tmp.path().join("mixed_targets_pkg");
+        fs::create_dir_all(crate_root.join("src")).unwrap();
+        fs::create_dir_all(crate_root.join("benches")).unwrap();
+        fs::write(
+            crate_root.join("Cargo.toml"),
+            r#"[package]
+name = "mixed_targets_pkg"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        fs::write(crate_root.join("src/lib.rs"), "pub fn keep() {}\n").unwrap();
+        fs::write(crate_root.join("benches/bench_a.rs"), "fn bench_a() {}\n").unwrap();
+
+        let discovery = run_discovery_phase(None, std::slice::from_ref(&crate_root)).unwrap();
+        let parsed = analyze_files_parallel(&discovery, 0);
+        let parsed_files = parsed
+            .into_iter()
+            .map(|res| res.expect("primary targets should parse"))
+            .map(|graph| graph.file_path)
+            .collect::<Vec<_>>();
+
+        assert!(
+            parsed_files.iter().any(|p| p.ends_with("src/lib.rs")),
+            "expected lib source to be parsed"
+        );
+        assert!(
+            !parsed_files.iter().any(|p| p.ends_with("benches/bench_a.rs")),
+            "legacy-safe parse mode should skip benches when lib/bin exists"
+        );
     }
 }

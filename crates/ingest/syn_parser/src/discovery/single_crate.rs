@@ -51,6 +51,14 @@ use crate::discovery::DiscoveryError;
 pub struct PackageInfo {
     pub name: String,
     pub version: PackageVersion,
+    #[serde(default)]
+    pub autobins: Option<bool>,
+    #[serde(default)]
+    pub autotests: Option<bool>,
+    #[serde(default)]
+    pub autoexamples: Option<bool>,
+    #[serde(default)]
+    pub autobenches: Option<bool>,
     // edition: Option<String>, // Could be useful later
 }
 
@@ -624,6 +632,61 @@ pub struct BinTarget {
     pub path: PathBuf,
 }
 
+/// Represents an explicit `[[test]]` target section in Cargo.toml.
+#[derive(Deserialize, Debug, Clone)]
+pub struct TestTarget {
+    /// Optional target name. If omitted, discovery derives one from the root file stem.
+    pub name: Option<String>,
+    /// The path to the test crate root file.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+}
+
+/// Represents an explicit `[[example]]` target section in Cargo.toml.
+#[derive(Deserialize, Debug, Clone)]
+pub struct ExampleTarget {
+    /// Optional target name. If omitted, discovery derives one from the root file stem.
+    pub name: Option<String>,
+    /// The path to the example crate root file.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+}
+
+/// Represents an explicit `[[bench]]` target section in Cargo.toml.
+#[derive(Deserialize, Debug, Clone)]
+pub struct BenchTarget {
+    /// Optional target name. If omitted, discovery derives one from the root file stem.
+    pub name: Option<String>,
+    /// The path to the benchmark crate root file.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+}
+
+/// Cargo target kind surfaced by discovery.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
+pub enum TargetKind {
+    Lib,
+    Bin,
+    Test,
+    Example,
+    Bench,
+}
+
+/// A discovered target root emitted for a crate.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+pub struct TargetSpec {
+    pub kind: TargetKind,
+    pub name: String,
+    pub root: PathBuf,
+}
+
+/// Optional selector to focus discovery output on one target.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+pub struct TargetSelector {
+    pub kind: TargetKind,
+    pub name: String,
+}
+
 /// Represents the overall structure of a parsed Cargo.toml manifest.
 #[derive(Deserialize, Debug)]
 pub struct CargoManifest {
@@ -639,6 +702,15 @@ pub struct CargoManifest {
     pub lib: Option<LibTarget>,
     /// The `[[bin]]` sections, if present, containing binary target configurations.
     pub bin: Option<Vec<BinTarget>>,
+    /// The `[[test]]` sections, if present, containing integration test target configurations.
+    #[serde(default)]
+    pub test: Option<Vec<TestTarget>>,
+    /// The `[[example]]` sections, if present, containing example target configurations.
+    #[serde(default)]
+    pub example: Option<Vec<ExampleTarget>>,
+    /// The `[[bench]]` sections, if present, containing benchmark target configurations.
+    #[serde(default)]
+    pub bench: Option<Vec<BenchTarget>>,
 }
 
 /// Context information gathered for a single crate during discovery.
@@ -658,6 +730,8 @@ pub struct CrateContext {
     pub root_path: PathBuf,
     /// List of all `.rs` files found within the crate's source directories.
     pub files: Vec<PathBuf>,
+    /// Enumerated Cargo target roots discovered for this crate.
+    pub targets: Vec<TargetSpec>,
     /// Parsed features from Cargo.toml.
     #[allow(unused_variables, reason = "Useful later for resolving features")]
     pub features: Features,

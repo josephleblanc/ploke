@@ -38,6 +38,51 @@ pub struct ParsedCodeGraph {
     pub crate_context: Option<CrateContext>,
 }
 
+#[derive(Debug, Clone)]
+pub struct RootGraphPartition {
+    pub root_graphs: Vec<ParsedCodeGraph>,
+    pub merged_non_root_graph: Option<ParsedCodeGraph>,
+    pub selected_root_paths: Vec<PathBuf>,
+}
+
+impl RootGraphPartition {
+    pub fn select_default_root_path(&self) -> Result<&Path, SynParserError> {
+        self.selected_root_paths
+            .iter()
+            .min_by(|a, b| root_selection_key(a).cmp(&root_selection_key(b)))
+            .map(PathBuf::as_path)
+            .ok_or(SynParserError::MergeRequiresInput)
+    }
+
+    pub fn merge_for_root(&self, selected_root: &Path) -> Result<ParsedCodeGraph, SynParserError> {
+        let root_graph = self
+            .root_graphs
+            .iter()
+            .find(|graph| graph.file_path == selected_root)
+            .cloned()
+            .ok_or_else(|| {
+                SynParserError::ParsedGraphError(ParsedGraphError::RootFileNotFound(
+                    selected_root.to_path_buf(),
+                ))
+            })?;
+
+        let mut to_merge = vec![root_graph];
+        if let Some(non_root) = &self.merged_non_root_graph {
+            to_merge.push(non_root.clone());
+        }
+        ParsedCodeGraph::merge_new(to_merge)
+    }
+}
+
+fn root_selection_key(path: &Path) -> (u8, PathBuf) {
+    let rank = match path.file_name().and_then(|name| name.to_str()) {
+        Some("main.rs") => 0,
+        Some("lib.rs") => 1,
+        _ => 2,
+    };
+    (rank, path.to_path_buf())
+}
+
 impl ParsedCodeGraph {
     pub fn new(file_path: PathBuf, crate_namespace: Uuid, graph: CodeGraph) -> Self {
         Self {
@@ -91,7 +136,69 @@ impl ParsedCodeGraph {
     }
 
     #[instrument(skip_all, fields(graph_count = graphs.len()))]
+    pub fn partition_by_selected_roots(
+        graphs: Vec<Self>,
+    ) -> Result<RootGraphPartition, SynParserError> {
+        if graphs.is_empty() {
+            return Err(SynParserError::MergeRequiresInput);
+        }
+
+        let selected_root_paths: HashSet<PathBuf> = graphs
+            .iter()
+            .filter(|graph| graph.crate_context.is_some())
+            .map(|graph| graph.file_path.clone())
+            .collect();
+
+        if selected_root_paths.is_empty() {
+            return Err(SynParserError::ParsedGraphError(
+                ParsedGraphError::MissingCrateContext,
+            ));
+        }
+
+        let mut ordered_selected_roots = selected_root_paths.into_iter().collect_vec();
+        ordered_selected_roots.sort_by_key(|path| root_selection_key(path));
+
+        let mut root_graphs = Vec::new();
+        let mut non_root_graphs = Vec::new();
+        for graph in graphs {
+            if ordered_selected_roots.contains(&graph.file_path) {
+                root_graphs.push(graph);
+            } else {
+                non_root_graphs.push(graph);
+            }
+        }
+
+        let merged_non_root_graph = if non_root_graphs.is_empty() {
+            None
+        } else {
+            Some(ParsedCodeGraph::merge_new(non_root_graphs)?)
+        };
+
+        Ok(RootGraphPartition {
+            root_graphs,
+            merged_non_root_graph,
+            selected_root_paths: ordered_selected_roots,
+        })
+    }
+
+    #[instrument(skip_all, fields(graph_count = graphs.len()))]
     pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, SynParserError> {
+        let selected_root_paths: HashSet<PathBuf> = graphs
+            .iter()
+            .filter(|graph| graph.crate_context.is_some())
+            .map(|graph| graph.file_path.clone())
+            .collect();
+        if selected_root_paths.len() > 1 {
+            let selected_root = selected_root_paths
+                .iter()
+                .min_by(|a, b| root_selection_key(a).cmp(&root_selection_key(b)))
+                .expect("selected_root_paths is non-empty when len() > 1")
+                .clone();
+            graphs.retain(|graph| {
+                graph.crate_context.is_none() || graph.file_path == selected_root
+            });
+        }
+
         let mut new_graph = {
             graphs.pop().ok_or(SynParserError::MergeRequiresInput)?
         };
@@ -183,7 +290,31 @@ impl ParsedCodeGraph {
     pub fn build_module_tree(&self) -> Result<(ModuleTree, PruningResult), SynParserError> {
         #[cfg(feature = "validate")]
         assert!(self.validate_unique_rels());
-        let root_module = self.get_root_module_checked()?;
+        let root_module = match self.get_root_module_checked() {
+            Ok(root) => root,
+            Err(SynParserError::ParsedGraphError(ParsedGraphError::RootFileNotFound(_))) => {
+                self.select_default_root_module()?
+            }
+            Err(err) => return Err(err),
+        };
+        self.build_module_tree_from_root_module(root_module)
+    }
+
+    #[instrument(skip_all, fields(self.file_path = ?self.file_path.as_path(), root_file = ?root_file))]
+    pub fn build_module_tree_for_root_path(
+        &self,
+        root_file: &Path,
+    ) -> Result<(ModuleTree, PruningResult), SynParserError> {
+        #[cfg(feature = "validate")]
+        assert!(self.validate_unique_rels());
+        let root_module = self.find_module_by_file_path_checked(root_file)?;
+        self.build_module_tree_from_root_module(root_module)
+    }
+
+    fn build_module_tree_from_root_module(
+        &self,
+        root_module: &ModuleNode,
+    ) -> Result<(ModuleTree, PruningResult), SynParserError> {
         info!(module_name = root_module.name);
         let mut tree = ModuleTree::new_from_root(root_module)?;
         // 1: Register all modules with their containment info
@@ -271,6 +402,16 @@ impl ParsedCodeGraph {
         //  - Contains: Module --> contained items
         //  - Imports:
         Ok((tree, pruned_items))
+    }
+
+    fn select_default_root_module(&self) -> Result<&ModuleNode, SynParserError> {
+        self.modules()
+            .iter()
+            .filter(|module| module.path() == &vec!["crate".to_string()])
+            .filter_map(|module| module.file_path().map(|path| (module, path)))
+            .min_by(|(_, a), (_, b)| root_selection_key(a).cmp(&root_selection_key(b)))
+            .map(|(module, _)| module)
+            .ok_or(SynParserError::RootModuleNotFound)
     }
 
     /// Removes every node and relation that belongs to a module that was pruned
@@ -581,6 +722,28 @@ impl ParsedCodeGraph {
         Ok(tree)
     }
 
+    #[instrument(skip(self), fields(pruned_relations, pruned_modules, pruned_items, root_file = ?root_file))]
+    pub fn build_tree_and_prune_for_root_path(
+        &mut self,
+        root_file: &Path,
+    ) -> Result<ModuleTree, ploke_error::Error> {
+        let (tree, pruned_items) = {
+            let _span = info_span!("build_module_tree_for_root").entered();
+            self.build_module_tree_for_root_path(root_file)?
+        };
+        {
+            let _span = info_span!(
+                "prune_graph_from_tree",
+                pruned_modules = pruned_items.pruned_module_ids.len(),
+                pruned_items = pruned_items.pruned_item_ids.len(),
+                pruned_relations = pruned_items.pruned_relations.len()
+            )
+            .entered();
+            self.prune(pruned_items);
+        }
+        Ok(tree)
+    }
+
     #[allow(clippy::boxed_local, clippy::box_collection)]
     fn handle_unlinked_modules(&self, unlinked_infos: Vec<UnlinkedModuleInfo>) {
         if !unlinked_infos.is_empty() {
@@ -632,7 +795,12 @@ impl ParsedCodeGraph {
 
         // Find the module by its file path.
         // find_module_by_file_path_checked already returns Result<&ModuleNode, SynParserError>
-        self.find_module_by_file_path_checked(root_path)
+        self.find_module_by_file_path_checked(root_path).map_err(|err| match err {
+            SynParserError::InternalState(_) => SynParserError::ParsedGraphError(
+                ParsedGraphError::RootFileNotFound(root_path.to_path_buf()),
+            ),
+            _ => err,
+        })
     }
 
     // TODO: This is kind of a hack job, be more thorough.
@@ -774,7 +942,9 @@ fn log_build_tree_processing_module(module: &ModuleNode) {
 #[cfg(test)]
 mod tests {
     use anyhow::{Ok, Result};
+    use tempfile::tempdir;
 
+    use crate::{discovery::run_discovery_phase, parser::analyze_files_parallel};
     use crate::utils::test_setup::run_phases_and_collect;
 
     use super::*;
@@ -885,6 +1055,135 @@ mod tests {
             "Expect all modules to be accounted for post-pruning"
         );
         Ok(())
+    }
+
+    #[test]
+    fn partition_by_selected_roots_keeps_root_and_non_root_graphs_separate() {
+        let tmp = tempdir().unwrap();
+        let crate_root = tmp.path().join("split_roots_pkg");
+        std::fs::create_dir_all(crate_root.join("src")).unwrap();
+        std::fs::write(
+            crate_root.join("Cargo.toml"),
+            r#"[package]
+name = "split_roots_pkg"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::write(crate_root.join("src/lib.rs"), "pub mod shared;\n").unwrap();
+        std::fs::write(crate_root.join("src/main.rs"), "mod shared;\nfn main() {}\n").unwrap();
+        std::fs::write(crate_root.join("src/shared.rs"), "pub fn ping() {}\n").unwrap();
+
+        let discovery = run_discovery_phase(None, std::slice::from_ref(&crate_root)).unwrap();
+        let parsed = analyze_files_parallel(&discovery, 0)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        let partition = ParsedCodeGraph::partition_by_selected_roots(parsed).unwrap();
+
+        assert_eq!(partition.root_graphs.len(), 2);
+        assert_eq!(partition.selected_root_paths.len(), 2);
+        assert!(partition
+            .selected_root_paths
+            .iter()
+            .any(|p| p.ends_with("src/main.rs")));
+        assert!(partition
+            .selected_root_paths
+            .iter()
+            .any(|p| p.ends_with("src/lib.rs")));
+        assert!(partition.merged_non_root_graph.is_some());
+    }
+
+    #[test]
+    fn selected_root_policy_prefers_main_then_lib_then_deterministic_first() {
+        let partition = RootGraphPartition {
+            root_graphs: vec![],
+            merged_non_root_graph: None,
+            selected_root_paths: vec![
+                PathBuf::from("/tmp/z.rs"),
+                PathBuf::from("/tmp/lib.rs"),
+                PathBuf::from("/tmp/main.rs"),
+            ],
+        };
+        assert_eq!(
+            partition
+                .select_default_root_path()
+                .unwrap()
+                .file_name()
+                .and_then(|f| f.to_str()),
+            Some("main.rs")
+        );
+
+        let partition = RootGraphPartition {
+            root_graphs: vec![],
+            merged_non_root_graph: None,
+            selected_root_paths: vec![PathBuf::from("/tmp/lib.rs"), PathBuf::from("/tmp/a.rs")],
+        };
+        assert_eq!(
+            partition
+                .select_default_root_path()
+                .unwrap()
+                .file_name()
+                .and_then(|f| f.to_str()),
+            Some("lib.rs")
+        );
+
+        let partition = RootGraphPartition {
+            root_graphs: vec![],
+            merged_non_root_graph: None,
+            selected_root_paths: vec![PathBuf::from("/tmp/b.rs"), PathBuf::from("/tmp/a.rs")],
+        };
+        assert_eq!(
+            partition.select_default_root_path().unwrap(),
+            Path::new("/tmp/a.rs")
+        );
+    }
+
+    #[test]
+    fn peeled_root_builds_tree_without_duplicate_crate_roots() {
+        let tmp = tempdir().unwrap();
+        let crate_root = tmp.path().join("peeled_root_pkg");
+        std::fs::create_dir_all(crate_root.join("src")).unwrap();
+        std::fs::write(
+            crate_root.join("Cargo.toml"),
+            r#"[package]
+name = "peeled_root_pkg"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::write(crate_root.join("src/lib.rs"), "pub mod shared;\n").unwrap();
+        std::fs::write(crate_root.join("src/main.rs"), "mod shared;\nfn main() {}\n").unwrap();
+        std::fs::write(crate_root.join("src/shared.rs"), "pub fn ping() {}\n").unwrap();
+
+        let discovery = run_discovery_phase(None, std::slice::from_ref(&crate_root)).unwrap();
+        let parsed = analyze_files_parallel(&discovery, 0)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let partition = ParsedCodeGraph::partition_by_selected_roots(parsed).unwrap();
+        let selected_root = partition.select_default_root_path().unwrap().to_path_buf();
+
+        let mut merged = partition.merge_for_root(&selected_root).unwrap();
+        merged
+            .build_tree_and_prune_for_root_path(&selected_root)
+            .unwrap();
+
+        let crate_root_modules = merged
+            .modules()
+            .iter()
+            .filter(|module| module.path() == &vec!["crate".to_string()])
+            .collect_vec();
+        assert_eq!(crate_root_modules.len(), 1);
+        assert_eq!(
+            crate_root_modules[0]
+                .file_path()
+                .expect("crate root should be file-based"),
+            &selected_root
+        );
     }
 }
 
