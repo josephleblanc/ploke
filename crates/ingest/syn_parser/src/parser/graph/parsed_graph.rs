@@ -314,6 +314,10 @@ impl ParsedCodeGraph {
         // this granularity, removing them from the number of items being counted before and after
         // removal, since they are subfields of struct, enum, union, and TypeAlias(?)
         prune_counts.pruned_items_initial = pruned_items.pruned_item_ids.len();
+        // Exclude secondary IDs and `Method`: methods live on `ImplNode` / `TraitNode` and are
+        // removed when the parent is dropped; `retain` does not consult method IDs. Counting
+        // `Method` in `len()` would inflate the expected removal count (see
+        // `diagnose_prune_counts_serde_github_clone`).
         let pruned_item_ids = pruned_items
             .pruned_item_ids
             .iter()
@@ -323,9 +327,29 @@ impl ParsedCodeGraph {
                     && !matches!(id, AnyNodeId::Field(_))
                     && !matches!(id, AnyNodeId::Param(_))
                     && !matches!(id, AnyNodeId::GenericParam(_))
+                    && !matches!(id, AnyNodeId::Method(_))
             })
             .collect_vec();
         prune_counts.removed_secondary_ids = prune_counts.pruned_items_initial- pruned_item_ids.len();
+
+        // Methods live under `ImplNode` / `TraitNode`; module-tree BFS does not put their IDs in
+        // `pruned_item_ids`, but removing an impl/trait removes all nested methods. Those removals
+        // are counted in `prune_counts.methods` and must be added to the expected total.
+        // See `diagnose_prune_counts_serde_github_clone` in tests/full/github_clones.rs.
+        let pruned_id_set: HashSet<AnyNodeId> = pruned_item_ids.iter().copied().collect();
+        let orphan_method_count: usize = self
+            .impls()
+            .iter()
+            .filter(|n| pruned_id_set.contains(&n.id.as_any()))
+            .flat_map(|imp| imp.methods.iter())
+            .chain(
+                self.traits()
+                    .iter()
+                    .filter(|n| pruned_id_set.contains(&n.id.as_any()))
+                    .flat_map(|tr| tr.methods.iter()),
+            )
+            .filter(|m| !pruned_id_set.contains(&m.id.as_any()))
+            .count();
 
         let func_count_pre = self.functions().len();
         self.functions_mut()
@@ -401,9 +425,9 @@ impl ParsedCodeGraph {
 
         prune_counts.type_graph = self.type_graph().len();
 
-        let total_count_diff = prune_counts.diff_initial_resolved().abs() as usize;
+        let expected_resolved_removals = pruned_item_ids.len() + orphan_method_count;
         let mut removed_items = Vec::new();
-        if total_count_diff != pruned_item_ids.len() {
+        if prune_counts.count_resolved() != expected_resolved_removals {
             for item in pruned_item_ids.iter() {
                 if self.find_node_unique(*item).is_ok() {
                     tracing::error!("Node not removed: {}", item);
@@ -448,26 +472,29 @@ impl ParsedCodeGraph {
             tracing::info!("pruned_item_ids: unique: {}, total: {}", unique_pruned_item_ids.len(), pruned_item_ids.len());
         }
         let _unresolved_pruned_result_count = pruned_items.unresolved_nodes.len();
-        if prune_counts.count_resolved() != pruned_item_ids.len() {
+        if prune_counts.count_resolved() != expected_resolved_removals {
             tracing::error!("{prune_counts:#?}");
             tracing::error!(
-                diff_resolved = %prune_counts.diff_initial_resolved(), 
-                diff_all = %prune_counts.diff_initial_all(), 
-                unresolved_removed_count = %prune_counts.unresolved_nodes, 
-                unresolved_prune_result_count = %prune_counts.unresolved_nodes, 
+                diff_resolved = %prune_counts.diff_initial_resolved(),
+                diff_all = %prune_counts.diff_initial_all(),
+                unresolved_removed_count = %prune_counts.unresolved_nodes,
+                unresolved_prune_result_count = %prune_counts.unresolved_nodes,
                 pruned_count = %pruned_item_ids.len(),
+                orphan_method_count = %orphan_method_count,
+                expected_resolved_removals = %expected_resolved_removals,
                 removed_count = %removed_items.len()
             );
         } else {
-            tracing::info!(diff_resolved = %prune_counts.diff_initial_resolved(), 
+            tracing::info!(diff_resolved = %prune_counts.diff_initial_resolved(),
                 pruned_count = %pruned_item_ids.len(),
+                orphan_method_count = %orphan_method_count,
                 removed_count = %removed_items.len());
         }
         assert_eq!(
-            // total_count_diff + removed_mods_count,
             prune_counts.count_resolved(),
-            pruned_item_ids.len(),
-            "Count of expected pruned items vs. pruned items does not match."
+            expected_resolved_removals,
+            "Count of resolved pruned items (incl. nested methods of removed impls/traits) should equal \
+             pruned_item_ids.len() + orphan_method_count; see diagnose_prune_counts_serde_github_clone."
         );
 
         // -- handle pruning relations

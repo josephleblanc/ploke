@@ -45,6 +45,9 @@ pub enum Parse {
 
     /// List all modules in parsed code
     ListModules(ListModules),
+
+    /// Debug discovery and pipeline stages (manifest, file lists, per-member status)
+    Debug(crate::commands::parse_debug::ParseDebugCli),
 }
 
 impl Parse {
@@ -57,11 +60,15 @@ impl Parse {
             Parse::Workspace(cmd) => cmd.execute(ctx),
             Parse::Stats(cmd) => cmd.execute(ctx),
             Parse::ListModules(cmd) => cmd.execute(ctx),
+            Parse::Debug(cmd) => cmd.execute(ctx),
         }
     }
 }
 
-fn resolve_parse_path(ctx: &CommandContext, path: &Path) -> Result<PathBuf, XtaskError> {
+/// Resolve a user-supplied path relative to the ploke workspace root and validate `Cargo.toml`.
+///
+/// Exposed for [`parse_debug`](crate::commands::parse_debug) helpers and other crate-local tooling.
+pub fn resolve_parse_path(ctx: &CommandContext, path: &Path) -> Result<PathBuf, XtaskError> {
     let p = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -97,7 +104,8 @@ fn resolve_parse_path(ctx: &CommandContext, path: &Path) -> Result<PathBuf, Xtas
     Ok(canon)
 }
 
-fn count_code_graph_nodes(g: &CodeGraph) -> usize {
+/// Count nodes in a resolved [`CodeGraph`] (used by phase summaries and debug helpers).
+pub fn count_code_graph_nodes(g: &CodeGraph) -> usize {
     g.functions.len()
         + g.defined_types.len()
         + g.type_graph.len()
@@ -530,6 +538,8 @@ pub enum ParseOutput {
     ModuleList {
         modules: Vec<ModuleInfo>,
     },
+    /// Structured debug output from `parse debug` (manifest, discovery dump, workspace probe, pipeline)
+    Debug(crate::commands::parse_debug::DebugOutput),
     /// Error output
     Error {
         message: String,

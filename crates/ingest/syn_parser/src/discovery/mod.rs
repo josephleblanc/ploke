@@ -11,13 +11,13 @@ use std::{
 
 pub use error::*;
 pub use single_crate::*;
-pub use workspace::{locate_workspace_manifest, resolve_workspace_version};
+pub use workspace::{
+    locate_workspace_manifest, resolve_workspace_version, try_parse_manifest, WorkspaceManifestMetadata,
+};
 
 use itertools::Itertools as _;
 use tracing::instrument;
 use walkdir::WalkDir;
-
-use crate::discovery::workspace::WorkspaceManifestMetadata;
 
 /// Runs the single-threaded discovery phase to gather context about target crates.
 ///

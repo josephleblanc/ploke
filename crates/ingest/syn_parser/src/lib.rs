@@ -49,6 +49,7 @@ use itertools::Itertools;
 use parser::analyze_files_parallel;
 // Re-export key items for easier access
 pub use discovery::CrateContext;
+pub use discovery::try_parse_manifest;
 pub use parser::visitor::analyze_file_phase2;
 pub use parser::{create_parser_channel, CodeGraph, ParserMessage};
 use ploke_common::fixtures_crates_dir;
@@ -61,7 +62,7 @@ pub use parser::nodes::test_ids::TestIds;
 pub use parser::graph::{GraphAccess, ParsedCodeGraph};
 pub use resolve::module_tree::ModuleTree;
 
-use crate::discovery::workspace::{try_parse_manifest, WorkspaceMetadataSection};
+use crate::discovery::workspace::WorkspaceMetadataSection;
 use tracing::{info_span, instrument};
 
 #[instrument(skip_all, fields(workspace = %target_workspace_dir.file_name()

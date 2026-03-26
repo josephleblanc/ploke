@@ -224,6 +224,7 @@ SUBCOMMANDS:
     workspace        Parse entire workspace
     stats            Show parsing statistics
     list-modules     List all modules in parsed code
+    debug            Debug manifest, discovery file lists, workspace members, pipeline stages
 
 EXAMPLES:
     # Discover crates in a workspace
@@ -237,6 +238,10 @@ EXAMPLES:
 
     # Parse entire workspace
     cargo xtask parse workspace ./workspace --crate-name my-crate
+
+    # Debug workspace layout and per-member pipeline (JSON)
+    cargo xtask --format json parse debug manifest ./workspace
+    cargo xtask parse debug workspace ./workspace --skip-merge
 "#
     );
 }

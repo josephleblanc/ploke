@@ -31,6 +31,7 @@ use serde::Serialize;
 // Re-export command modules
 pub mod db;
 pub mod parse;
+pub mod parse_debug;
 
 // Re-export types from core architecture
 pub use crate::context::CommandContext;
