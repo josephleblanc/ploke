@@ -341,6 +341,7 @@ async fn test_default_post_completions() -> Result<()> {
             messages: vec![msg],
             ..Default::default()
         },
+        llm_params: LLMParameters::default().with_max_tokens(128),
         ..Default::default()
     };
 
@@ -366,9 +367,27 @@ async fn test_default_post_completions() -> Result<()> {
     let is_success = response.status().is_success();
     eprintln!("is_success: {}", is_success);
     eprintln!("status: {}", response.status());
+    eprintln!("headers: {:#?}", response.headers());
+    eprintln!(
+        "content-type: {:?}",
+        response.headers().get(reqwest::header::CONTENT_TYPE)
+    );
+    eprintln!(
+        "transfer-encoding: {:?}",
+        response.headers().get(reqwest::header::TRANSFER_ENCODING)
+    );
 
     // let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
     let response_value: serde_json::Value = response.json().await?;
+    let chosen_model = response_value
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("<missing>");
+    let chosen_provider = response_value
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("<missing>");
+    eprintln!("chosen: model={chosen_model} provider={chosen_provider}");
     eprintln!("{}", response_value);
 
     if std::env::var("WRITE_MODE").unwrap_or_default() == "1" {
