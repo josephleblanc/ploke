@@ -1330,7 +1330,7 @@ fn diagnose_serde_crate_root_module() {
 ///
 /// Run with: cargo test -p syn_parser --test mod parse_workspace_serde_github_clone -- --nocapture
 #[test]
-// #[ignore = "We don't handle parsing macro_rules, which would be required to correctly parse this target"]
+#[ignore = "Needs functional cfg_args + path parsing, crate root selection via parsing workspace Cargo.toml for test directory"]
 fn parse_workspace_serde_github_clone() {
     // init_tracing();
 
