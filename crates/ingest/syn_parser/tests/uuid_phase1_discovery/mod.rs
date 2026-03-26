@@ -3,3 +3,4 @@
 // when the `uuid_ids` feature is enabled.
 
 mod discovery_tests;
+mod mock_serde_discovery;

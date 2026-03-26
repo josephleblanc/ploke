@@ -49,7 +49,8 @@ use itertools::Itertools;
 use parser::analyze_files_parallel;
 // Re-export key items for easier access
 pub use discovery::CrateContext;
-pub use parser::visitor::analyze_file_phase2;
+pub use discovery::try_parse_manifest;
+pub use parser::visitor::{analyze_file_phase2, logical_module_path_for_file};
 pub use parser::{create_parser_channel, CodeGraph, ParserMessage};
 use ploke_common::fixtures_crates_dir;
 pub use ploke_core::TypeId; // Re-export the enum/struct from ploke-core
@@ -61,9 +62,14 @@ pub use parser::nodes::test_ids::TestIds;
 pub use parser::graph::{GraphAccess, ParsedCodeGraph};
 pub use resolve::module_tree::ModuleTree;
 
-use crate::discovery::workspace::{try_parse_manifest, WorkspaceMetadataSection};
-use tracing::info_span;
+use crate::discovery::workspace::WorkspaceMetadataSection;
+use tracing::{info_span, instrument};
 
+#[instrument(skip_all, fields(workspace = %target_workspace_dir.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("No filename")
+        .to_string()
+))]
 pub fn parse_workspace(
     target_workspace_dir: &Path,
     selected_crates: Option<&[&Path]>,
@@ -74,6 +80,7 @@ pub fn parse_workspace(
         .and_then(|name| name.to_str())
         .unwrap_or("No filename")
         .to_string();
+
     let path = path_buf.display().to_string();
     let workspace_metadata =
         try_parse_manifest(&path_buf).map_err(|e| SynParserError::ComplexDiscovery {
@@ -88,6 +95,7 @@ pub fn parse_workspace(
             .ok_or(SynParserError::WorkspaceSectionMissing {
                 workspace_path: path_buf.display().to_string(),
             })?;
+    tracing::info!(target: "dbg_serde", "{workspace_data:#?}");
 
     let normalized_selected_crates =
         selected_crates.map(|crates| normalize_selected_crates(&workspace_data.path, crates));
@@ -129,13 +137,11 @@ pub fn parse_workspace(
                 .is_none_or(|selected| selected.contains(&member.to_path_buf()))
         })
         .map(|member| {
-            let member_name = member
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("<unknown>");
+            let rel_path = member.strip_prefix(target_workspace_dir)
+                .unwrap_or(member).to_str().unwrap_or("name unknown");
             let _span = info_span!(
                 "try_run_phases_and_merge",
-                member_name = %member_name
+                rel_path = %rel_path
             )
             .entered();
             try_run_phases_and_merge(member)
@@ -175,6 +181,7 @@ fn normalize_selected_crates(workspace_root: &Path, selected_crates: &[&Path]) -
 /// The target is assumed to be a single crate which may or may not be in a workspace. However, the
 /// target dir itself must be the crate root, and is assumed to contain a crate-level (as opposed
 /// to workspace-level) `Cargo.toml` file.
+#[instrument()]
 pub fn try_run_phases_and_resolve(
     target_crate_dir: &Path,
 ) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
@@ -188,7 +195,6 @@ pub fn try_run_phases_and_resolve(
         .and_then(|name| name.to_str())
         .unwrap_or("No filename")
         .to_string();
-    let _span = info_span!("try_run_phases_and_resolve", crate_name = %name).entered();
     let path = path_buf.display().to_string();
     let discovery_output =
         run_discovery_phase(None, &[path_buf]).map_err(|e| SynParserError::ComplexDiscovery {
@@ -338,21 +344,10 @@ pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_er
         module_tree: Some(tree),
     })
 }
-
 pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, SynParserError> {
-    let crate_name = target_crate
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("<unknown>");
-    let _span = info_span!(
-        "try_run_phases_and_merge",
-        crate_name = %crate_name
-    )
-    .entered();
     let parsed_graphs = try_run_phases_and_resolve(target_crate)?;
-    let parsed_file_count = parsed_graphs.len();
+    let _parsed_file_count = parsed_graphs.len();
     let mut merged = {
-        let _span = info_span!("merge_new", parsed_file_count).entered();
         ParsedCodeGraph::merge_new(parsed_graphs)?
     };
     let tree = {
@@ -366,9 +361,7 @@ pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, Syn
         .entered();
         merged.build_tree_and_prune()
     }
-    .map_err(|err| {
-        SynParserError::InternalState(format!("Failed to build module tree: {err}"))
-    })?;
+    .map_err(|err| SynParserError::InternalState(format!("Failed to build module tree: {err}")))?;
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),

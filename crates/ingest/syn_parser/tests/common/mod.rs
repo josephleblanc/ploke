@@ -308,7 +308,7 @@ fn strs_to_strings(strs: &[&str]) -> Vec<String> {
 }
 
 use {
-    std::path::PathBuf, syn_parser::discovery::run_discovery_phase,
+    syn_parser::discovery::run_discovery_phase,
     syn_parser::parser::analyze_files_parallel,
 };
 

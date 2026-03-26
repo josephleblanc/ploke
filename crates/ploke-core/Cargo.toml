@@ -1,7 +1,7 @@
 [package]
 name = "ploke-core"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Core data types and constants for the ploke project"
 authors = ["Your Name <your.email@example.com>"]                    # Please update author info
 

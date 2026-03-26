@@ -1,5 +1,13 @@
 # Repository Guidelines
 
+## Rust version
+We are using rust version 2024 in all crates.
+
+## Shared Agent Documents
+- When the user asks you to create a new document, you should use the `docs/active/agents` directory, unless directed otherwise.
+- Shared agent documents are in `docs/active/agents`
+- See `docs/active/agents/readme.md` for naming conventions of files and directories, and further details.
+
 ## Correctness Guardrails
 - Do not relax internal correctness, consistency, validation, schema, or import semantics without explicit user approval first.
 - If a possible fix would make the system more permissive, tolerate previously invalid states, silently skip expected data, or weaken invariants, stop and ask before implementing it.
@@ -16,3 +24,9 @@
 ## Test Execution
 - When running tests, use a sub-agent to execute the test command and report the output back to the main agent.
 - Use follow-up sub-agent test runs for retries or narrowed repros when needed, so the main thread keeps only the summarized result and next action.
+
+### Fail-until-impl (strict tests)
+- Do not use tautological assertions (`is_ok() || is_err()`, match arms that accept both outcomes with no further checks).
+- For behavior tests that require real output, do not add `Err` branches that pass on placeholder or “not yet implemented” messages; assert success with `expect`/`unwrap` on `Ok` and real invariants, or use intentional negative tests with `assert!(result.is_err())` plus concrete error expectations.
+- Prefer exercising production entrypoints (`Command::execute`, executor paths) rather than failing only inside the test with `todo!()`.
+- Until implementation exists, failure may be a panic from `todo!()` in the code under test or an `expect` on `Ok` that is not yet satisfied; do not paper over that with stub-tolerant matches.

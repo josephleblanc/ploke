@@ -10,6 +10,12 @@ A document may contain multiple entries, each headed by the above information.
 
 Each created document should also be linked to a planning document.
 
+- Re: creating a new directory
+
+Follow the established pattern of the current date (yyyy-mm-dd) at the
+beginning of the directory name, then the current git branch name or a short
+descriptive name if the date and git name are taken.
+
 - Re: open-questions.md
 
 Open questions may be addressed to either the main agent directly, or through

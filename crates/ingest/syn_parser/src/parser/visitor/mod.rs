@@ -25,23 +25,20 @@ use crate::{
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
 
-/// Helper function to derive the logical module path from a file path relative to src
+/// Derives the logical module path for a source file the same way Phase 2 parallel parsing does.
 ///
-/// Examples:
-///  `some/user/dir/crate_name/src/main.rs` -> ["crate"]
-///  `some/user/dir/crate_name/src/lib.rs` -> ["crate"]
-///  `some/user/dir/crate_name/src/mod_one.rs` -> ["crate", "mod_one"]
-///  `some/user/dir/crate_name/src/mod_two/mod.rs` -> ["crate", "mod_two"]
-///  `some/user/dir/crate_name/src/mod_two/some_mod.rs` -> ["crate", "mod_two", "some_mod"]
-///  `some/user/dir/crate_name/src/mod_two/mod_three/mod.rs` -> ["crate", "mod_two", "mod_three"]
-///  .. etc
-///  
-// Goes through the file path provided by Phase 1's DiscoveryOutput, and processes the string into
-// the module path for the given file. Note that this is a helpful step in later resolution
-// handled in Phase 3, but is not sufficient to develop a fully reliable module path due to the
-// possibility of the #[path = ..] attribute.
-// DO NOT USE FOR NodeId::Resolved CREATION OR TypeId::Resolved, defer resolution to Phase 3
-fn derive_logical_path(crate_src_dir: &Path, file_path: &Path) -> Vec<String> {
+/// Must stay in sync with [`analyze_files_parallel`]. External tools (e.g. `xtask parse debug
+/// logical-paths`) use this to explain per-file path assignment before merge.
+///
+/// Examples (paths under the crate `src` directory):
+///  `.../src/main.rs` / `lib.rs` -> `["crate"]`
+///  `.../src/foo.rs` -> `["crate", "foo"]`
+///  `.../src/foo/mod.rs` -> `["crate", "foo"]`
+///
+/// Does not apply `#[path = "..."]` on `mod` items; the module tree resolves those later.
+///
+/// Do not use for `NodeId::Resolved` / `TypeId::Resolved` construction.
+pub fn logical_module_path_for_file(crate_src_dir: &Path, file_path: &Path) -> Vec<String> {
     let mut logical_path = vec!["crate".to_string()];
 
     // Get the path relative to the src directory
@@ -95,6 +92,7 @@ use {
 /// Analyze a single file for Phase 2 (UUID Path) - The Worker Function
 /// Receives context from analyze_files_parallel.
 #[cfg(feature = "cfg_eval")]
+#[instrument(skip(crate_context), fields(root_module_name))]
 pub fn analyze_file_phase2(
     file_path: PathBuf,
     crate_namespace: Uuid,            // Context passed from caller
@@ -495,7 +493,7 @@ pub fn analyze_files_parallel(
 
             crate_context.files.par_iter().map(move |file_path| {
                 // Derive the logical path for this file
-                let logical_path = derive_logical_path(&src_dir, file_path);
+                let logical_path = logical_module_path_for_file(&src_dir, file_path);
 
                 // Call the single-file worker function with its specific context + logical path
                 #[cfg(not(feature = "cfg_eval"))]

@@ -1,0 +1,18 @@
+[package]
+name = "mock_serde_core"
+version = "0.1.0"
+edition = "2021"
+description = "Mock serde_core - core traits without derive support"
+
+[features]
+default = ["std"]
+std = []
+alloc = []
+
+[dev-dependencies]
+mock_serde = { path = "../mock_serde" }
+mock_serde_derive = { path = "../mock_serde_derive" }
+
+# This ensures version lockstep between mock_serde and mock_serde_derive
+[target.'cfg(any())'.dependencies]
+mock_serde_derive = { version = "=0.1.0", path = "../mock_serde_derive" }

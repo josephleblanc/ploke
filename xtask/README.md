@@ -3,6 +3,12 @@
 The `xtask` pattern gives us a typed place to stash repo automation so every
 developer/agent runs the same commands via `cargo xtask <command>`.
 
+## Project status (paused work)
+
+The original multi-command `xtask` expansion spec is currently **paused** after a partial implementation and a detour into real-world parser debugging. The canonical wrap-up/status document is:
+
+- [`docs/active/agents/2026-03-26-xtask-wrapup-paused-work.md`](/home/brasides/code/ploke/docs/active/agents/2026-03-26-xtask-wrapup-paused-work.md)
+
 ## Available commands
 
 - `cargo xtask verify-fixtures`

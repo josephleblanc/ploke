@@ -3,13 +3,19 @@ name = "xtask"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Unstable/paused commands and tests. Enable only when resuming PRIMARY_TASK_SPEC work
+# that is intentionally incomplete in the default build.
+xtask_unstable = []
+
 [dependencies]
+clap = { version = "4.5", features = ["derive", "env", "cargo"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
 walkdir = "2.5"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
-chrono = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
 cozo = { workspace = true }
 ploke-llm = { path = "../crates/ploke-llm" }
 ploke-db = { path = "../crates/ploke-db" }
@@ -17,9 +23,21 @@ ploke-embed = { path = "../crates/ingest/ploke-embed" }
 ploke-io = { path = "../crates/ploke-io" }
 ploke-test-utils = { path = "../crates/test-utils" }
 ploke-core = { workspace = true }
+ploke-error = { path = "../crates/ploke-error" }
 ploke-transform = { path = "../crates/ingest/ploke-transform" }
 syn_parser = { path = "../crates/ingest/syn_parser" }
 tempfile = "3.10"
+once_cell = "1.20"
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+cargo_metadata = "0.22"
+toml = "0.8"
+
+[lib]
+name = "xtask"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"

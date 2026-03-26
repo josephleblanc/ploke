@@ -684,23 +684,6 @@ fn git_head_short(dir: &Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-#[derive(Serialize)]
-struct ProfileReport {
-    target: String,
-    target_path: String,
-    target_git_sha: Option<String>,
-    ploke_git_sha: Option<String>,
-    timestamp: String,
-    rs_file_count: usize,
-    member_count: usize,
-    global_elapsed_ms: u128,
-    stages_sum_ms: u128,
-    unaccounted_ms: u128,
-    stages: Vec<JsonNode>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    full_forest: Vec<JsonNode>,
-}
-
 /// Statistics for a single stage across all iterations
 #[derive(Debug, Clone)]
 struct StageStats {

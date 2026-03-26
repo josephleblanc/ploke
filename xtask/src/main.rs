@@ -22,7 +22,6 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     env,
-    error::Error,
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -37,88 +36,101 @@ use tokio::{
 };
 use walkdir::WalkDir;
 
+use clap::Parser;
+
 const EMBEDDING_MODELS_URL: &str = "https://openrouter.ai/api/v1/embeddings/models";
 const EMBEDDING_MODELS_FIXTURE: &str = "fixtures/openrouter/embeddings_models.json";
 const EMBEDDING_MODELS_META: &str = "fixtures/openrouter/embeddings_models.meta.json";
 const RAG_FIXTURE_PREFIX: &str = "fixture_nodes_";
 
+// Library modules
+mod cli;
+mod commands;
+mod context;
+mod error;
+mod executor;
 mod profile_ingest;
 
+enum DispatchError {
+    Xtask(XtaskError),
+    Clap(clap::Error),
+}
+
 fn main() -> ExitCode {
-    match run() {
+    match dispatch() {
         Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
+        Err(DispatchError::Xtask(err)) => {
             eprintln!("{err}");
+            if err.is_validation() {
+                if let Some(recovery) = err.recovery_suggestion() {
+                    eprintln!("\nRecovery: {recovery}");
+                }
+            }
             ExitCode::FAILURE
+        }
+        Err(DispatchError::Clap(err)) => {
+            let _ = err.print();
+            clap_exit_code(&err)
         }
     }
 }
 
-fn run() -> Result<(), XtaskError> {
-    let mut args = env::args().skip(1);
-    match args.next().as_deref() {
-        Some("verify-fixtures") => verify_fixtures(),
-        Some("verify-backup-dbs") => verify_backup_dbs(args.collect()),
-        Some("recreate-backup-db") => recreate_backup_db(args.collect()),
-        Some("repair-backup-db-schema") => repair_backup_db_schema(args.collect()),
-        Some("setup-rag-fixtures") => setup_rag_fixtures(),
-        Some("regen-embedding-models") => regen_embedding_models(),
-        Some("extract-tokens-log") => extract_tokens_log(args.collect()),
-        Some("profile-ingest") => profile_ingest::parse_profile_ingest_args(args.collect())
-            .and_then(profile_ingest::run_profile_ingest),
-        Some("profile-ingest-help") => {
+fn clap_exit_code(err: &clap::Error) -> ExitCode {
+    let code = err.exit_code();
+    if code == 0 {
+        ExitCode::SUCCESS
+    } else if (1..=255).contains(&code) {
+        ExitCode::from(code as u8)
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn dispatch() -> Result<(), DispatchError> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() <= 1 {
+        print_combined_usage();
+        return Ok(());
+    }
+
+    let tail: Vec<String> = args.iter().skip(2).cloned().collect();
+    match args[1].as_str() {
+        "verify-fixtures" => verify_fixtures().map_err(DispatchError::Xtask),
+        "verify-backup-dbs" => verify_backup_dbs(tail).map_err(DispatchError::Xtask),
+        "recreate-backup-db" => recreate_backup_db(tail).map_err(DispatchError::Xtask),
+        "repair-backup-db-schema" => repair_backup_db_schema(tail).map_err(DispatchError::Xtask),
+        "setup-rag-fixtures" => setup_rag_fixtures().map_err(DispatchError::Xtask),
+        "regen-embedding-models" => regen_embedding_models().map_err(DispatchError::Xtask),
+        "extract-tokens-log" => extract_tokens_log(tail).map_err(DispatchError::Xtask),
+        "profile-ingest" => profile_ingest::parse_profile_ingest_args(tail)
+            .and_then(profile_ingest::run_profile_ingest)
+            .map_err(DispatchError::Xtask),
+        "profile-ingest-help" => {
             print_profile_ingest_help();
             Ok(())
         }
-        Some("help") | Some("-h") | Some("--help") => {
-            print_usage();
-            Ok(())
-        }
-        None => {
-            print_usage();
-            Ok(())
-        }
-        Some(other) => {
-            print_usage();
-            Err(XtaskError::new(format!("Unknown command '{other}'.")))
+        _ => {
+            let cli = cli::Cli::try_parse_from(args).map_err(DispatchError::Clap)?;
+            cli.execute().map_err(DispatchError::Xtask)
         }
     }
 }
 
-#[derive(Debug)]
-struct XtaskError(String);
+// Use XtaskError from the error module
+use error::XtaskError;
 
-impl XtaskError {
-    fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
-    }
-}
-
-impl std::fmt::Display for XtaskError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl Error for XtaskError {}
-
-impl From<String> for XtaskError {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&str> for XtaskError {
-    fn from(value: &str) -> Self {
-        Self(value.to_string())
-    }
+fn print_combined_usage() {
+    print_usage();
+    eprintln!();
+    eprintln!("For `parse`, `db`, and other structured commands:");
+    eprintln!("  cargo xtask --help");
 }
 
 fn print_usage() {
     eprintln!(
         "xtask helpers\n\
          Usage: cargo xtask <command>\n\
-         Commands:\n  verify-fixtures          Ensure required local test assets are staged\n  verify-backup-dbs       Validate registered backup DB fixtures used by tests\n  recreate-backup-db      Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures       Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  regen-embedding-models   Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  extract-tokens-log       Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest           Cold-start parse/transform/embed timing (see --target, --stages, --verbosity, --loops)\n  profile-ingest-help      Show detailed help for profile-ingest command\n  help                     Show this message"
+         Commands:\n  verify-fixtures          Ensure required local test assets are staged\n  verify-backup-dbs       Validate registered backup DB fixtures used by tests\n  recreate-backup-db      Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures       Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  regen-embedding-models   Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  extract-tokens-log       Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest           Cold-start parse/transform/embed timing (see --target, --stages, --verbosity, --loops)\n  profile-ingest-help      Show detailed help for profile-ingest command"
     );
 }
 

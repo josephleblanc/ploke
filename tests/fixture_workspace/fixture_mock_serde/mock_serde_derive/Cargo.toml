@@ -1,0 +1,17 @@
+[package]
+name = "mock_serde_derive"
+version = "0.1.0"
+edition = "2021"
+description = "Mock proc-macro crate for derive(Serialize, Deserialize)"
+
+[lib]
+name = "mock_serde_derive"
+proc-macro = true
+
+[dependencies]
+proc-macro2 = { workspace = true, features = ["proc-macro"] }
+quote = { workspace = true, features = ["proc-macro"] }
+syn = { workspace = true, features = ["clone-impls", "derive", "parsing", "printing", "proc-macro"] }
+
+[dev-dependencies]
+mock_serde = { path = "../mock_serde" }

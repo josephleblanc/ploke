@@ -1143,8 +1143,7 @@ impl ModuleTree {
                     };
                     self.add_rel(relation.into());
                     
-                    log::debug!(
-                        target: LOG_TARGET_MOD_TREE_BUILD,
+                    tracing::debug!(
                         "link_definition_imports: created UnresolvedNode {} for import {:?} in module {:?}: {}",
                         unresolved_id,
                         path_segments,

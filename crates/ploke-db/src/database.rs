@@ -1783,6 +1783,39 @@ target[id] := input[id_str], id = to_uuid(id_str)
         Ok(QueryResult::from(result))
     }
 
+    /// Execute immutable CozoScript with named parameters.
+    pub fn raw_query_params(
+        &self,
+        script: &str,
+        params: BTreeMap<String, cozo::DataValue>,
+    ) -> Result<QueryResult, DbError> {
+        let result = self
+            .db
+            .run_script(script, params, cozo::ScriptMutability::Immutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        Ok(QueryResult::from(result))
+    }
+
+    /// Execute mutable CozoScript with named parameters.
+    pub fn raw_query_mut_params(
+        &self,
+        script: &str,
+        params: BTreeMap<String, cozo::DataValue>,
+    ) -> Result<QueryResult, DbError> {
+        let result = self
+            .db
+            .run_script(script, params, cozo::ScriptMutability::Mutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        Ok(QueryResult::from(result))
+    }
+
+    /// Write a Cozo backup of the current database to `path`.
+    pub fn write_backup_to_path(&self, path: impl AsRef<std::path::Path>) -> Result<(), DbError> {
+        self.db
+            .backup_db(path.as_ref())
+            .map_err(|e| DbError::Cozo(e.to_string()))
+    }
+
     /// Ensure the relation used to persist the active embedding set for a crate exists.
     fn ensure_active_embedding_relation(&self) -> Result<(), DbError> {
         let rels = self

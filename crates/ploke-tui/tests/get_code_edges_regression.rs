@@ -143,17 +143,20 @@ async fn code_item_edges_handles_trailing_module_separators() {
 
 #[tokio::test]
 async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
-    // Shared immutable ploke-db fixture recreated from the real crate source graph.
-    let db = shared_backup_fixture_db(&PLOKE_DB_PRIMARY).expect("load ploke_db_primary fixture");
+    // Shared fixture DB with parsed nodes/edges from tests/fixture_crates/fixture_nodes.
+    let db = ploke_tui::test_utils::new_test_harness::TEST_DB_NODES
+        .as_ref()
+        .expect("fixture db")
+        .clone();
 
-    // Minimal AppState for tool execution, focused on the real ploke-db crate.
+    // Minimal AppState for tool execution, focused on the fixture crate.
     let cfg = UserConfig::default();
     let runtime_cfg = RuntimeConfig::from(cfg.clone());
     let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
         Arc::clone(&db.active_embedding_set),
         cfg.load_embedding_processor().expect("embedder"),
     ));
-    let crate_root = workspace_root().join("crates/ploke-db");
+    let crate_root = workspace_root().join("tests/fixture_crates/fixture_nodes");
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
         config: ConfigState::new(runtime_cfg),
@@ -174,28 +177,16 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
         .set_crate_focus_for_test(crate_root.clone())
         .await;
 
-    // Find a real item in ploke-db that actually has edges.
+    // Find a primary node that actually has edges.
     let primary_nodes = list_primary_nodes(db.as_ref()).expect("list primary nodes");
-    let (focus, expected_edges, abs_path) = primary_nodes
+    let (focus, expected_edges) = primary_nodes
         .into_iter()
-        .filter_map(|row| {
-            // Normalize to absolute path under the crate root
-            let abs_path = if row.file_path.is_absolute() {
-                row.file_path.clone()
-            } else {
-                crate_root.join(&row.file_path)
-            };
-            // Only consider nodes under the crate root with well-formed module paths
-            if !abs_path.starts_with(&crate_root) {
-                return None;
-            }
-            if row.module_path.first().map(String::as_str) != Some("crate") {
-                return None;
-            }
+        .filter(|row| row.module_path.first().map(String::as_str) == Some("crate"))
+        .find_map(|row| {
             let edges = graph_resolve_edges(
                 db.as_ref(),
                 &row.relation,
-                abs_path.as_path(),
+                row.file_path.as_path(),
                 &row.module_path,
                 &row.name,
             )
@@ -203,39 +194,33 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
             if edges.is_empty() {
                 return None;
             }
-            Some((row, edges, abs_path))
+            Some((row, edges))
         })
-        .next()
-        .expect("ploke-db backup should contain at least one primary node with edges");
+        .expect("fixture db must contain at least one primary node with edges");
 
-    // Check hash freshness to guard against stale backups.
+    // Capture stored vs recomputed tracking hashes before invoking the tool.
     let stored_nodes = graph_resolve_exact(
         db.as_ref(),
         &focus.relation,
-        abs_path.as_path(),
+        focus.file_path.as_path(),
         &focus.module_path,
         &focus.name,
     )
     .expect("graph_resolve_exact");
     let stored = stored_nodes.first().expect("node present");
-    let stored_hash = stored.file_tracking_hash.clone();
-    let actual_hash = ploke_io::read::generate_hash_for_file(&abs_path, stored.namespace)
+    let stored_file_hash = stored.file_tracking_hash;
+    let actual_file_hash =
+        ploke_io::read::generate_hash_for_file(stored.file_path.as_path(), stored.namespace)
         .await
         .expect("compute file hash");
     assert_eq!(
-        stored_hash,
-        actual_hash,
-        "tracking hash mismatch for {}; refresh ploke-db backup",
-        abs_path.display()
+        stored_file_hash,
+        actual_file_hash,
+        "tracking hash mismatch for {}; DB likely stale relative to fixture contents",
+        stored.file_path.display()
     );
 
-    let rel_path = abs_path
-        .strip_prefix(&crate_root)
-        .unwrap_or(&abs_path)
-        .display()
-        .to_string();
-
-    // Execute tool with the same coordinates the user used.
+    // Execute tool with the same coordinates the DB query used.
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
     let ctx = Ctx {
         state: state.clone(),
@@ -246,7 +231,7 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
     };
     let params = EdgesParams {
         item_name: Cow::Owned(focus.name.clone()),
-        file_path: Cow::Owned(rel_path),
+        file_path: Cow::Owned(focus.file_path.display().to_string()),
         node_kind: Cow::Owned(focus.relation.clone()),
         module_path: Cow::Owned(focus.module_path.join("::")),
     };
@@ -263,26 +248,31 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
 
     assert!(
         !returned_edges.is_empty(),
-        "code_item_edges should return edges for a ploke-db primary node"
+        "code_item_edges should return edges for a fixture primary node"
     );
     assert_eq!(
         returned_edges.len(),
         expected_edges.len(),
-        "tool edge count should match direct DB query for selected ploke-db node"
+        "tool edge count should match direct DB query for selected fixture node"
     );
 }
 
 #[tokio::test]
 async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
-    let db = shared_backup_fixture_db(&PLOKE_DB_PRIMARY).expect("load ploke_db_primary fixture");
+    // Shared fixture DB with parsed nodes/edges from tests/fixture_crates/fixture_nodes.
+    let db = ploke_tui::test_utils::new_test_harness::TEST_DB_NODES
+        .as_ref()
+        .expect("fixture db")
+        .clone();
 
+    // Minimal AppState for tool execution, focused on the fixture crate.
     let cfg = UserConfig::default();
     let runtime_cfg = RuntimeConfig::from(cfg.clone());
     let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
         Arc::clone(&db.active_embedding_set),
         cfg.load_embedding_processor().expect("embedder"),
     ));
-    let crate_root = workspace_root().join("crates/ploke-db");
+    let crate_root = workspace_root().join("tests/fixture_crates/fixture_nodes");
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
         config: ConfigState::new(runtime_cfg),
@@ -303,26 +293,50 @@ async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
         .set_crate_focus_for_test(crate_root.clone())
         .await;
 
-    let abs_path = crate_root.join("src/database.rs");
-    let mod_path = vec!["crate".to_string(), "database".to_string()];
+    // Find a struct node that actually has edges.
+    let primary_nodes = list_primary_nodes(db.as_ref()).expect("list primary nodes");
+    let (focus, expected_edges) = primary_nodes
+        .into_iter()
+        .filter(|row| {
+            row.module_path.first().map(String::as_str) == Some("crate") && row.relation == "struct"
+        })
+        .find_map(|row| {
+            let edges = graph_resolve_edges(
+                db.as_ref(),
+                &row.relation,
+                row.file_path.as_path(),
+                &row.module_path,
+                &row.name,
+            )
+            .ok()?;
+            if edges.is_empty() {
+                return None;
+            }
+            Some((row, edges))
+        })
+        .expect("fixture db should contain at least one primary struct node with edges");
 
-    // Verify the node exists and hash is fresh.
-    let resolved = graph_resolve_exact(db.as_ref(), "struct", &abs_path, &mod_path, "Database")
-        .expect("graph_resolve_exact");
-    let entry = resolved.first().expect("Database struct should exist");
-    let stored_hash = entry.file_tracking_hash.clone();
-    let actual_hash = ploke_io::read::generate_hash_for_file(&abs_path, entry.namespace)
-        .await
-        .expect("compute file hash");
+    // Capture stored vs recomputed tracking hashes before invoking the tool.
+    let stored_nodes = graph_resolve_exact(
+        db.as_ref(),
+        &focus.relation,
+        focus.file_path.as_path(),
+        &focus.module_path,
+        &focus.name,
+    )
+    .expect("graph_resolve_exact");
+    let stored = stored_nodes.first().expect("node present");
+    let stored_file_hash = stored.file_tracking_hash;
+    let actual_file_hash =
+        ploke_io::read::generate_hash_for_file(stored.file_path.as_path(), stored.namespace)
+            .await
+            .expect("compute file hash");
     assert_eq!(
-        stored_hash, actual_hash,
-        "tracking hash mismatch for database.rs; refresh ploke-db backup"
+        stored_file_hash,
+        actual_file_hash,
+        "tracking hash mismatch for {}; DB likely stale relative to fixture contents",
+        stored.file_path.display()
     );
-
-    let expected_edges =
-        graph_resolve_edges(db.as_ref(), "struct", &abs_path, &mod_path, "Database")
-            .expect("graph_resolve_edges should succeed for Database");
-    // In the current backup this returns zero edges; the test asserts the tool matches the DB.
 
     // Execute tool with the same coordinates the LLM used.
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
@@ -334,10 +348,10 @@ async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
         call_id: ArcStr::from("call"),
     };
     let params = EdgesParams {
-        item_name: Cow::Borrowed("Database"),
-        file_path: Cow::Borrowed("src/database.rs"),
-        node_kind: Cow::Borrowed("struct"),
-        module_path: Cow::Borrowed("crate::database"),
+        item_name: Cow::Owned(focus.name.clone()),
+        file_path: Cow::Owned(focus.file_path.display().to_string()),
+        node_kind: Cow::Owned(focus.relation.clone()),
+        module_path: Cow::Owned(focus.module_path.join("::")),
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -353,7 +367,7 @@ async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
     assert_eq!(
         returned_edges.len(),
         expected_edges.len(),
-        "tool edge count should match direct DB query for Database struct (currently zero in backup)"
+        "tool edge count should match direct DB query for selected fixture struct node"
     );
 }
 

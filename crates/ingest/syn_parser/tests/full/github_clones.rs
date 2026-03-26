@@ -8,6 +8,7 @@ use syn_parser::{
     parser::graph::ParsedCodeGraph,
     try_run_phases_and_merge,
 };
+use tracing_subscriber::fmt::format::FmtSpan;
 
 // ---------------------------------------------------------------------------
 // Tracing helper
@@ -30,7 +31,7 @@ const LOG_DIR: &str = "/home/brasides/code/ploke/logs";
 /// The subscriber is silently ignored if another test in the same process
 /// already initialized it (`try_init` returns `Err` instead of panicking).
 fn init_tracing() {
-    use std::sync::Arc;
+    
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
     // Create log directory if it doesn't exist
@@ -39,7 +40,7 @@ fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         // Default: TRACE on the targets we care about, WARN for everything else.
         EnvFilter::new(
-            "debug_dup=trace,mod_tree_build=trace,buggy=trace,buggy_c=debug,visitor_trace=trace,stack_trace=trace,warn",
+            "info,dbg_serde=debug,try_run_phases_and_merge,try_run_phases_and_resolve,discovery",
         )
     });
 
@@ -53,7 +54,7 @@ fn init_tracing() {
         .with_ansi(false)
         .with_target(true)
         .with_level(true)
-        .with_filter(EnvFilter::new("debug_dup=trace"));
+        .with_filter(EnvFilter::new("debug_dup=debug"));
 
     // File appender for "mod_tree_build" target  
     let mod_tree_file = tracing_appender::rolling::never(
@@ -65,7 +66,7 @@ fn init_tracing() {
         .with_ansi(false)
         .with_target(true)
         .with_level(true)
-        .with_filter(EnvFilter::new("mod_tree_build=trace"));
+        .with_filter(EnvFilter::new("mod_tree_build=debug"));
 
     let catchall_file = tracing_appender::rolling::never(
         LOG_DIR,
@@ -77,11 +78,14 @@ fn init_tracing() {
         .with_ansi(false)
         .with_target(true)
         .with_level(true)
-        .with_filter(EnvFilter::new("trace"));
+        .with_filter(EnvFilter::new("info"));
 
     // Console layer for test output
     let console_layer = fmt::layer()
         .with_test_writer()
+        .with_line_number(true)
+        .with_span_events(FmtSpan::ACTIVE)
+        .pretty()
         .with_filter(filter);
 
     let _ = tracing_subscriber::registry()
@@ -1326,9 +1330,9 @@ fn diagnose_serde_crate_root_module() {
 ///
 /// Run with: cargo test -p syn_parser --test mod parse_workspace_serde_github_clone -- --nocapture
 #[test]
-#[ignore = "We don't handle parsing macro_rules, which would be required to correctly parse this target"]
+#[ignore = "Needs functional cfg_args + path parsing, crate root selection via parsing workspace Cargo.toml for test directory"]
 fn parse_workspace_serde_github_clone() {
-    init_tracing();
+    // init_tracing();
 
     use syn_parser::parse_workspace;
 
@@ -2320,7 +2324,7 @@ fn analyze_pruned_module_vs_item_ids_serde() {
             nodes::{AnyNodeId, AsAnyNodeId},
             relations::SyntacticRelation,
         },
-        resolve::{RelationIndexer, TreeRelation},
+        resolve::RelationIndexer,
         GraphAccess,
     };
 
