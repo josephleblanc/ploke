@@ -297,7 +297,7 @@ For each crate, sub-agents fan-out
 
 sub-agents fan-in
 
-1. Once all crates have been reviewed for M.1.1 and M.1.2:
+3. Once all crates have been reviewed for M.1.1 and M.1.2:
   - Review list of commands
   - Identify commands that require cross-crate functionality not addressed in M.1.1 and M.1.2
   - Identify utility commands not identified in A.1-A.4 and M.1.1-M.1.2
@@ -312,7 +312,7 @@ sub-agents fan-in
 
 sub-agents fan-out
 
-1. For each cross-crate command, gather required function information
+4. For each cross-crate command, gather required function information
   - AGENT_INSTRUCTION: dispatch sub-agents per command, monitor sub-agents, curate + check list quality
   - SUBAGENT_INSTRUCTION: for your command, gather references and information
   for functions required to implement command, fill in list for your command.
@@ -325,7 +325,7 @@ sub-agents fan-out
 
 sub-agents fan-in
 
-1. Review list of commands and referenced functions in document
+5. Review list of commands and referenced functions in document
   - AGENT_INSTRUCTION: spawn below sub-agents and monitor:
     - accuracy agent: reviews list + commands for accuracy to underlying
     functions, identifies any quirks or special considerations about the
@@ -472,7 +472,7 @@ sub-agent fan-in
 
 sub-agent fan-out
 
-1. Expand tests, debug
+2. Expand tests, debug
   - AGENT_INSTRUCTION: reviews updated arch and test docs from M.1.10, directs
   sub-agents to implement full arch + tests, creates engineering agents,
   oversees conflicts, creates a task adherence agent, creates a testing agent,
@@ -501,7 +501,7 @@ sub-agent fan-out
 
 sub-agent fan-in
 
-1. Polish, add documentation
+3. Polish, add documentation
   - AGENT_INSTRUCTION: You can fill in this section, it should be fairly
   clear what to do. Main output needed here is a summary and review + at
   least one sub-agent do to book-keeping by updating table of contents in

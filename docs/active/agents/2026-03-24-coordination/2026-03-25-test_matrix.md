@@ -22,7 +22,7 @@ The PRIMARY_TASK_SPEC milestone M.3.2 also mentions `xtask/tests/test_matrix.md`
 | **Unblocks green** | Minimal commands / modules / behavior that must be correct for this test to pass *as its gate type implies*; `N/A` for Structural or Gap-signal where not applicable. |
 | **Notes** | Edge cases, overlap with other tests, or misleading coverage. |
 
-**Weak / gap-signal highlights:** `load_fixture_with_index_flag` (message-only “index” today; docstring states scope; see [`LoadFixture`](../../../../xtask/src/commands/db.rs)), `registry_factory_panics_until_command_construction_implemented` (Gap-signal). `executor_tracks_usage` now asserts `UsageTracker::total_command_count` (still does not parse JSONL contents line-by-line).
+**Weak / gap-signal highlights:** `load_fixture_with_index_flag` (message-only “index” today; docstring states scope; see [`LoadFixture`](../../../../xtask/src/commands/db.rs)), `registry_factory_panics_until_command_construction_implemented` (**Gated / Gap-signal:** requires `--features xtask_unstable`). `executor_tracks_usage` now asserts `UsageTracker::total_command_count` (still does not parse JSONL contents line-by-line).
 
 ---
 
@@ -47,9 +47,9 @@ Maps each agent-facing [`Cli`](../../../../xtask/src/cli.rs) subcommand to the t
 | `db stats` | [`stats_returns_comprehensive_data`](../../../../xtask/tests/db_commands.rs) | fixture DB | `DatabaseStats` populated |
 | `db list-relations` | [`acceptance_db_list_relations_success`](../../../../xtask/tests/command_acceptance_db.rs), [`acceptance_db_list_relations_with_counts`](../../../../xtask/tests/command_acceptance_db.rs) | isolated `FIXTURE_NODES_CANONICAL` | Non-empty `RelationsList`; `--counts` → at least one `row_count: Some` (not all names support count query) |
 | `db embedding-status` | [`acceptance_db_embedding_status_success`](../../../../xtask/tests/command_acceptance_db.rs) | isolated `FIXTURE_NODES_CANONICAL` | `total_nodes > 0`; `embedded == total_nodes.saturating_sub(pending)` |
-| `db hnsw-build` | [`acceptance_db_hnsw_build_panics_until_implemented`](../../../../xtask/tests/command_acceptance_db.rs) | N/A | **Gap-signal:** `catch_unwind` until `todo!` removed |
-| `db hnsw-rebuild` | [`acceptance_db_hnsw_rebuild_panics_until_implemented`](../../../../xtask/tests/command_acceptance_db.rs) | N/A | **Gap-signal** |
-| `db bm25-rebuild` | [`acceptance_db_bm25_rebuild_panics_until_implemented`](../../../../xtask/tests/command_acceptance_db.rs) | N/A | **Gap-signal** |
+| `db hnsw-build` | [`acceptance_db_hnsw_build_panics_until_implemented`](../../../../xtask/tests/command_acceptance_db.rs) | N/A | **Gated / Gap-signal:** requires `--features xtask_unstable`; `catch_unwind` until `todo!` removed |
+| `db hnsw-rebuild` | [`acceptance_db_hnsw_rebuild_panics_until_implemented`](../../../../xtask/tests/command_acceptance_db.rs) | N/A | **Gated / Gap-signal:** requires `--features xtask_unstable` |
+| `db bm25-rebuild` | [`acceptance_db_bm25_rebuild_panics_until_implemented`](../../../../xtask/tests/command_acceptance_db.rs) | N/A | **Gated / Gap-signal:** requires `--features xtask_unstable` |
 | `help-topic` | (none) | — | Optional future: capture stdout |
 
 ---
@@ -178,7 +178,7 @@ Maps each agent-facing [`Cli`](../../../../xtask/src/cli.rs) subcommand to the t
 | `registry_organizes_by_category` | M.4 | 2026-03-25 PASS | Behavior-gated | Category buckets | |
 | `registry_generates_help` | C.3 (registry) | 2026-03-25 PASS | Behavior-gated | `generate_help()` | |
 | `registry_returns_none_for_unknown_command` | M.4 | 2026-03-25 PASS | Structural | Empty registry lookup | |
-| `registry_factory_panics_until_command_construction_implemented` | M.3/M.4 | 2026-03-25 PASS | **Gap-signal** | N/A (pass means factory still panics) | Replace when `CommandRegistry` builds commands from args ([`executor.rs`](../../../../xtask/src/executor.rs) `todo!`). |
+| `registry_factory_panics_until_command_construction_implemented` | M.3/M.4 | 2026-03-25 PASS | **Gated / Gap-signal** | N/A (pass means factory still panics) | Requires `--features xtask_unstable`. Replace when `CommandRegistry` builds commands from args ([`executor.rs`](../../../../xtask/src/executor.rs) `todo!`). |
 | `maybe_async_ready_holds_value` | M.3 | 2026-03-25 PASS | Structural | `MaybeAsync::Ready` | |
 | `maybe_async_from_value` | M.3 | 2026-03-25 PASS | Structural | `From` into `Ready` | |
 | `maybe_async_into_future_ready` | M.3 | 2026-03-25 PASS | Structural | `into_future` on `Ready` | |
@@ -233,9 +233,9 @@ Maps each agent-facing [`Cli`](../../../../xtask/src/cli.rs) subcommand to the t
 | `acceptance_db_list_relations_success` | A.4, E | 2026-03-25 PASS | Behavior-gated | `db list-relations` + fixture DB | |
 | `acceptance_db_list_relations_with_counts` | A.4 | 2026-03-25 PASS | Behavior-gated | `--counts` → at least one `row_count: Some` | Some relations omit count when generic count query fails (`.ok()`). |
 | `acceptance_db_embedding_status_success` | A.4 | 2026-03-25 PASS | Behavior-gated | `db embedding-status` + current count semantics | |
-| `acceptance_db_hnsw_build_panics_until_implemented` | A.4 | 2026-03-25 PASS | Gap-signal | N/A | Replace with Ok + DB checks when `HnswBuild` implemented. |
-| `acceptance_db_hnsw_rebuild_panics_until_implemented` | A.4 | 2026-03-25 PASS | Gap-signal | N/A | |
-| `acceptance_db_bm25_rebuild_panics_until_implemented` | A.4 | 2026-03-25 PASS | Gap-signal | N/A | |
+| `acceptance_db_hnsw_build_panics_until_implemented` | A.4 | 2026-03-25 PASS | **Gated / Gap-signal** | N/A | Requires `--features xtask_unstable`. Replace with Ok + DB checks when `HnswBuild` implemented. |
+| `acceptance_db_hnsw_rebuild_panics_until_implemented` | A.4 | 2026-03-25 PASS | **Gated / Gap-signal** | N/A | Requires `--features xtask_unstable`. |
+| `acceptance_db_bm25_rebuild_panics_until_implemented` | A.4 | 2026-03-25 PASS | **Gated / Gap-signal** | N/A | Requires `--features xtask_unstable`. |
 
 ---
 

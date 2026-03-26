@@ -141,18 +141,6 @@ impl Command for Discovery {
     type Output = ParseOutput;
     type Error = XtaskError;
 
-    fn name(&self) -> &'static str {
-        "parse discovery"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
-
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let _ = (self.warnings, self.include_tests);
         let canon = resolve_parse_path(ctx, &self.path)?;
@@ -188,18 +176,6 @@ pub struct PhasesResolve {
 impl Command for PhasesResolve {
     type Output = ParseOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "parse phases-resolve"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let _ = (&self.detailed, &self.output);
@@ -239,18 +215,6 @@ pub struct PhasesMerge {
 impl Command for PhasesMerge {
     type Output = ParseOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "parse phases-merge"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let _ = (self.tree, self.validate);
@@ -297,18 +261,6 @@ pub struct Workspace {
 impl Command for Workspace {
     type Output = ParseOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "parse workspace"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let _ = self.continue_on_error;
@@ -357,18 +309,6 @@ pub struct Stats {
 impl Command for Stats {
     type Output = ParseOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "parse stats"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_parse_path(ctx, &self.path)?;
@@ -450,18 +390,6 @@ impl Command for ListModules {
     type Output = ParseOutput;
     type Error = XtaskError;
 
-    fn name(&self) -> &'static str {
-        "parse list-modules"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
-
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_parse_path(ctx, &self.path)?;
         let out = try_run_phases_and_merge(&canon).map_err(|e| XtaskError::Parse(e.to_string()))?;
@@ -518,39 +446,48 @@ pub enum NodeTypeFilter {
 pub enum ParseOutput {
     /// Discovery phase output
     Discovery {
+        /// Number of crates discovered under the target.
         crates_found: usize,
+        /// Workspace root used for discovery (after canonicalization).
         workspace_root: PathBuf,
+        /// Human-readable warning strings (only present when enabled).
         warnings: Vec<String>,
     },
     /// Phase execution output
     PhaseResult {
+        /// Whether the requested phase(s) completed successfully.
         success: bool,
+        /// Total number of nodes parsed/emitted by the pipeline.
         nodes_parsed: usize,
+        /// Total number of relations found/emitted by the pipeline.
         relations_found: usize,
+        /// Wall-clock duration of the operation in milliseconds.
         duration_ms: u64,
     },
     /// Statistics output
     Stats {
+        /// Total number of nodes in the parsed graph.
         total_nodes: usize,
+        /// Node counts broken down by node type name.
         by_type: std::collections::HashMap<String, usize>,
     },
     /// Module list output
     ModuleList {
+        /// Modules discovered in the parsed graph.
         modules: Vec<ModuleInfo>,
     },
     /// Structured debug output from `parse debug` (manifest, discovery dump, workspace probe, pipeline)
     Debug(crate::commands::parse_debug::DebugOutput),
-    /// Error output
-    Error {
-        message: String,
-    },
 }
 
 /// Module information for list output
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ModuleInfo {
+    /// Module name (e.g. `my_mod`).
     pub name: String,
+    /// Module path (e.g. `src/my_mod.rs` or logical module path depending on subcommand).
     pub path: String,
+    /// Whether this module is the crate root module.
     pub is_root: bool,
 }
 
@@ -565,8 +502,8 @@ mod tests {
             warnings: false,
             include_tests: false,
         };
-        assert_eq!(cmd.name(), "parse discovery");
-        assert!(!cmd.requires_async());
+        let ctx = CommandContext::new().unwrap();
+        let _ = cmd.execute(&ctx);
     }
 
     #[test]

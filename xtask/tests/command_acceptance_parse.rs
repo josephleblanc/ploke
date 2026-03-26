@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 
 use xtask::commands::parse::{ParseOutput, PhasesResolve};
-use xtask::expect_command_ok;
-use xtask::test_harness::CommandTestHarness;
+use xtask::context::CommandContext;
+use xtask::executor::Command as _;
 
 /// `tests/fixture_crates/fixture_nodes`: small crate used elsewhere for phases-merge acceptance.
 const FIXTURE_NODES: &str = "tests/fixture_crates/fixture_nodes";
@@ -23,11 +23,10 @@ fn acceptance_parse_phases_resolve_success_fixture_nodes() {
         output: None,
     };
 
-    let harness = CommandTestHarness::new().expect("CommandTestHarness");
-    let output = expect_command_ok(
-        harness.executor().execute(cmd),
-        "parse phases-resolve must succeed for fixture_nodes",
-    );
+    let ctx = CommandContext::new().expect("CommandContext");
+    let output = cmd
+        .execute(&ctx)
+        .expect("parse phases-resolve must succeed for fixture_nodes");
 
     match output {
         ParseOutput::PhaseResult {
@@ -58,10 +57,9 @@ fn acceptance_parse_phases_resolve_rejects_missing_path() {
         output: None,
     };
 
-    let harness = CommandTestHarness::new().expect("CommandTestHarness");
-    let err = harness
-        .executor()
-        .execute(cmd)
+    let ctx = CommandContext::new().expect("CommandContext");
+    let err = cmd
+        .execute(&ctx)
         .expect_err("phases-resolve must fail for missing path");
 
     let msg = err.to_string();

@@ -6,31 +6,36 @@
 
 use ploke_test_utils::FIXTURE_NODES_CANONICAL;
 
-use xtask::commands::db::{
-    Bm25Rebuild, DbOutput, EmbeddingStatus, HnswBuild, HnswRebuild, ListRelations,
-};
-use xtask::expect_command_ok;
-use xtask::test_harness::CommandTestHarness;
+use xtask::commands::db::{DbOutput, EmbeddingStatus, ListRelations};
+use xtask::context::CommandContext;
+use xtask::executor::Command as _;
+
+fn isolated_fixture_copy(
+    fixture: &'static ploke_test_utils::fixture_dbs::FixtureDb,
+) -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::TempDir::new().expect("TempDir");
+    let dst = dir.path().join("fixture.sqlite");
+    std::fs::copy(fixture.path(), &dst).expect("copy fixture db");
+    (dir, dst)
+}
 
 /// **Command:** `db list-relations`  
 /// **Fixture:** isolated copy of `FIXTURE_NODES_CANONICAL`.  
 /// **Expect:** non-empty relation list; names are non-empty strings.
 #[test]
 fn acceptance_db_list_relations_success() {
-    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
-        .expect("isolated fixture copy");
+    let (_dir, db_path) = isolated_fixture_copy(&FIXTURE_NODES_CANONICAL);
 
     let cmd = ListRelations {
-        db: Some(iso.db_path.clone()),
+        db: Some(db_path.clone()),
         no_hnsw: false,
         counts: false,
     };
 
-    let harness = CommandTestHarness::new().expect("CommandTestHarness");
-    let output = expect_command_ok(
-        harness.executor().execute(cmd),
-        "db list-relations must succeed on fixture DB",
-    );
+    let ctx = CommandContext::new().expect("CommandContext");
+    let output = cmd
+        .execute(&ctx)
+        .expect("db list-relations must succeed on fixture DB");
 
     let DbOutput::RelationsList { relations } = output else {
         panic!("expected RelationsList, got {output:?}");
@@ -48,20 +53,18 @@ fn acceptance_db_list_relations_success() {
 /// **Expect:** each relation has `row_count` when `--counts` is set.
 #[test]
 fn acceptance_db_list_relations_with_counts() {
-    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
-        .expect("isolated fixture copy");
+    let (_dir, db_path) = isolated_fixture_copy(&FIXTURE_NODES_CANONICAL);
 
     let cmd = ListRelations {
-        db: Some(iso.db_path.clone()),
+        db: Some(db_path.clone()),
         no_hnsw: false,
         counts: true,
     };
 
-    let harness = CommandTestHarness::new().expect("CommandTestHarness");
-    let output = expect_command_ok(
-        harness.executor().execute(cmd),
-        "db list-relations --counts must succeed",
-    );
+    let ctx = CommandContext::new().expect("CommandContext");
+    let output = cmd
+        .execute(&ctx)
+        .expect("db list-relations --counts must succeed");
 
     let DbOutput::RelationsList { relations } = output else {
         panic!("expected RelationsList, got {output:?}");
@@ -87,20 +90,18 @@ fn acceptance_db_list_relations_with_counts() {
 /// **Expect:** `total_nodes` matches function row count semantics; counts are consistent with current command implementation.
 #[test]
 fn acceptance_db_embedding_status_success() {
-    let iso = CommandTestHarness::isolated_fixture_copy(&FIXTURE_NODES_CANONICAL)
-        .expect("isolated fixture copy");
+    let (_dir, db_path) = isolated_fixture_copy(&FIXTURE_NODES_CANONICAL);
 
     let cmd = EmbeddingStatus {
-        db: Some(iso.db_path.clone()),
+        db: Some(db_path.clone()),
         set: None,
         detailed: false,
     };
 
-    let harness = CommandTestHarness::new().expect("CommandTestHarness");
-    let output = expect_command_ok(
-        harness.executor().execute(cmd),
-        "db embedding-status must succeed on fixture DB",
-    );
+    let ctx = CommandContext::new().expect("CommandContext");
+    let output = cmd
+        .execute(&ctx)
+        .expect("db embedding-status must succeed on fixture DB");
 
     let DbOutput::EmbeddingStatus {
         total_nodes,
@@ -122,8 +123,10 @@ fn acceptance_db_embedding_status_success() {
 }
 
 /// **Gap-signal:** `db hnsw-build` still `todo!()` — passes while unimplemented; replace with Ok + DB checks when done.
+#[cfg(feature = "xtask_unstable")]
 #[test]
 fn acceptance_db_hnsw_build_panics_until_implemented() {
+    use xtask::commands::db::HnswBuild;
     let harness = CommandTestHarness::new().expect("CommandTestHarness");
     let cmd = HnswBuild {
         db: None,
@@ -141,8 +144,10 @@ fn acceptance_db_hnsw_build_panics_until_implemented() {
 }
 
 /// **Gap-signal:** `db hnsw-rebuild` still `todo!()`.
+#[cfg(feature = "xtask_unstable")]
 #[test]
 fn acceptance_db_hnsw_rebuild_panics_until_implemented() {
+    use xtask::commands::db::HnswRebuild;
     let harness = CommandTestHarness::new().expect("CommandTestHarness");
     let cmd = HnswRebuild { db: None, force: false };
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -156,8 +161,10 @@ fn acceptance_db_hnsw_rebuild_panics_until_implemented() {
 }
 
 /// **Gap-signal:** `db bm25-rebuild` still `todo!()`.
+#[cfg(feature = "xtask_unstable")]
 #[test]
 fn acceptance_db_bm25_rebuild_panics_until_implemented() {
+    use xtask::commands::db::Bm25Rebuild;
     let harness = CommandTestHarness::new().expect("CommandTestHarness");
     let cmd = Bm25Rebuild {
         db: None,

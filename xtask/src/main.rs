@@ -22,7 +22,6 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     env,
-    error::Error,
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -51,8 +50,6 @@ mod context;
 mod error;
 mod executor;
 mod profile_ingest;
-mod test_harness;
-mod usage;
 
 enum DispatchError {
     Xtask(XtaskError),
@@ -64,6 +61,11 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(DispatchError::Xtask(err)) => {
             eprintln!("{err}");
+            if err.is_validation() {
+                if let Some(recovery) = err.recovery_suggestion() {
+                    eprintln!("\nRecovery: {recovery}");
+                }
+            }
             ExitCode::FAILURE
         }
         Err(DispatchError::Clap(err)) => {

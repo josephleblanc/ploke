@@ -41,18 +41,6 @@ impl Command for ParseDebugCli {
     type Output = super::parse::ParseOutput;
     type Error = XtaskError;
 
-    fn name(&self) -> &'static str {
-        self.cmd.name()
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
-
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         self.cmd.run(ctx)
     }
@@ -100,21 +88,6 @@ pub enum ParseDebugCmd {
 }
 
 impl ParseDebugCmd {
-    pub(crate) fn name(&self) -> &'static str {
-        match self {
-            ParseDebugCmd::Manifest(_) => "parse debug manifest",
-            ParseDebugCmd::Discovery(_) => "parse debug discovery",
-            ParseDebugCmd::Workspace(_) => "parse debug workspace",
-            ParseDebugCmd::Pipeline(_) => "parse debug pipeline",
-            ParseDebugCmd::LogicalPaths(_) => "parse debug logical-paths",
-            ParseDebugCmd::ModulesPremerge(_) => "parse debug modules-premerge",
-            ParseDebugCmd::PathCollisions(_) => "parse debug path-collisions",
-            ParseDebugCmd::CargoTargets(_) => "parse debug cargo-targets",
-            ParseDebugCmd::WorkspaceMembers(_) => "parse debug workspace-members",
-            ParseDebugCmd::DiscoveryRules(_) => "parse debug discovery-rules",
-        }
-    }
-
     fn run(&self, ctx: &CommandContext) -> Result<super::parse::ParseOutput, XtaskError> {
         let out = match self {
             ParseDebugCmd::Manifest(c) => c.execute(ctx)?,
@@ -155,18 +128,6 @@ pub struct DebugManifestOut {
 impl Command for DebugManifest {
     type Output = DebugOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "parse debug manifest"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_parse_path(ctx, &self.path)?;
@@ -240,18 +201,6 @@ pub struct FileEntry {
 impl Command for DebugDiscovery {
     type Output = DebugOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "parse debug discovery"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_parse_path(ctx, &self.path)?;
@@ -382,18 +331,6 @@ pub struct StageResult {
 impl Command for DebugWorkspace {
     type Output = DebugOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "parse debug workspace"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let ws = resolve_parse_path(ctx, &self.path)?;
@@ -548,18 +485,6 @@ impl Command for DebugPipeline {
     type Output = DebugOutput;
     type Error = XtaskError;
 
-    fn name(&self) -> &'static str {
-        "parse debug pipeline"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
-
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_parse_path(ctx, &self.path)?;
 
@@ -661,18 +586,6 @@ impl Command for DebugLogicalPaths {
     type Output = DebugOutput;
     type Error = XtaskError;
 
-    fn name(&self) -> &'static str {
-        "parse debug logical-paths"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
-
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_parse_path(ctx, &self.path)?;
         let discovery = run_discovery_phase(None, &[canon.clone()]).map_err(|e| {
@@ -761,18 +674,6 @@ impl Command for DebugModulesPremerge {
     type Output = DebugOutput;
     type Error = XtaskError;
 
-    fn name(&self) -> &'static str {
-        "parse debug modules-premerge"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
-
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_parse_path(ctx, &self.path)?;
         let graphs = try_run_phases_and_resolve(&canon)
@@ -844,18 +745,6 @@ pub struct PathCollisionGroup {
 impl Command for DebugPathCollisions {
     type Output = DebugOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "parse debug path-collisions"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_parse_path(ctx, &self.path)?;
@@ -980,18 +869,6 @@ impl Command for DebugCargoTargets {
     type Output = DebugOutput;
     type Error = XtaskError;
 
-    fn name(&self) -> &'static str {
-        "parse debug cargo-targets"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
-
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_debug_target_path(ctx, &self.path)?;
         let metadata = load_cargo_metadata(&canon)?;
@@ -1097,18 +974,6 @@ pub struct WorkspaceMemberClassified {
 impl Command for DebugWorkspaceMembers {
     type Output = DebugOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "parse debug workspace-members"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_debug_target_path(ctx, &self.path)?;
@@ -1243,18 +1108,6 @@ pub struct DiscoveryRuleCandidate {
 impl Command for DebugDiscoveryRules {
     type Output = DebugOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "parse debug discovery-rules"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Parse
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_debug_target_path(ctx, &self.path)?;

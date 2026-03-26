@@ -97,11 +97,6 @@ impl Cli {
         Ok(())
     }
 
-    /// Run the CLI from environment arguments
-    pub fn run() -> Result<(), XtaskError> {
-        let cli = Self::parse();
-        cli.execute()
-    }
 }
 
 /// Available commands
@@ -153,32 +148,6 @@ impl HelpTopicCommand {
             _ => print_general_help(),
         }
     }
-}
-
-/// Find the workspace root directory
-fn find_workspace_root() -> Result<PathBuf, crate::error::XtaskError> {
-    let mut current = std::env::current_dir()?;
-
-    loop {
-        let cargo_toml = current.join("Cargo.toml");
-        if cargo_toml.exists() {
-            let contents = std::fs::read_to_string(&cargo_toml).ok();
-            if contents
-                .as_ref()
-                .map(|c| c.contains("[workspace]"))
-                .unwrap_or(false)
-            {
-                return Ok(current);
-            }
-        }
-
-        match current.parent() {
-            Some(parent) => current = parent.to_path_buf(),
-            None => break,
-        }
-    }
-
-    Err(XtaskError::new("Could not find workspace root"))
 }
 
 fn print_general_help() {
@@ -264,6 +233,11 @@ PARSE DEBUG SUBCOMMANDS (see also `cargo xtask parse debug --help`):
 }
 
 fn print_db_help() {
+    #[cfg(not(feature = "xtask_unstable"))]
+    const INDEX_SUBCOMMANDS: &str = "";
+    #[cfg(feature = "xtask_unstable")]
+    const INDEX_SUBCOMMANDS: &str = "    hnsw-build        Build HNSW index (unstable)\n    hnsw-rebuild      Rebuild HNSW index (unstable)\n    bm25-rebuild      Rebuild BM25 index (unstable)\n";
+
     println!(
         r#"db - Database operations and queries
 
@@ -272,9 +246,7 @@ SUBCOMMANDS:
     load              Load database from backup file
     load-fixture      Load a fixture database
     count-nodes       Count nodes in database
-    hnsw-build        Build HNSW index
-    hnsw-rebuild      Rebuild HNSW index
-    bm25-rebuild      Rebuild BM25 index
+{INDEX_SUBCOMMANDS}\
     query             Execute CozoDB query
     stats             Show database statistics
     list-relations    List relations in database
@@ -297,6 +269,11 @@ EXAMPLES:
 }
 
 fn print_examples() {
+    #[cfg(not(feature = "xtask_unstable"))]
+    const INDEX_EXAMPLES: &str = "";
+    #[cfg(feature = "xtask_unstable")]
+    const INDEX_EXAMPLES: &str = "\n4. Build indexes:\n    cargo xtask db hnsw-build\n    cargo xtask db bm25-rebuild\n";
+
     println!(
         r#"ploke xtask - Common usage examples
 
@@ -315,10 +292,7 @@ WORKFLOW EXAMPLES:
 3. Load a test fixture:
     cargo xtask db load-fixture fixture_nodes_canonical
     cargo xtask db count-nodes --kind function
-
-4. Build indexes:
-    cargo xtask db hnsw-build
-    cargo xtask db bm25-rebuild
+{INDEX_EXAMPLES}\
 
 OUTPUT FORMATS:
 

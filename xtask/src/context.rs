@@ -38,17 +38,8 @@ pub struct CommandContext {
     /// Database pool - lazy initialized.
     database_pool: OnceCell<Arc<DatabasePool>>,
 
-    /// Embedding runtime - lazy initialized.
-    embedding_runtime: OnceCell<Arc<EmbeddingRuntimeManager>>,
-
-    /// IO manager - shared across commands.
-    io_manager: OnceCell<IoManagerHandle>,
-
     /// Workspace root detection cache.
     workspace_root: OnceCell<std::path::PathBuf>,
-
-    /// Temporary directory for intermediate files.
-    temp_dir: tempfile::TempDir,
 }
 
 impl CommandContext {
@@ -57,17 +48,10 @@ impl CommandContext {
     /// The context starts empty, with all resources being created on first access.
     ///
     /// # Errors
-    /// Returns an error if the temporary directory cannot be created.
     pub fn new() -> Result<Self, XtaskError> {
-        let temp_dir = tempfile::tempdir()
-            .map_err(|e| XtaskError::new(format!("Failed to create temp dir: {e}")))?;
-
         Ok(Self {
             database_pool: OnceCell::new(),
-            embedding_runtime: OnceCell::new(),
-            io_manager: OnceCell::new(),
             workspace_root: OnceCell::new(),
-            temp_dir,
         })
     }
 
@@ -148,33 +132,6 @@ impl CommandContext {
         pool.get_from_fixture(fixture)
     }
 
-    /// Get or create the embedding runtime.
-    ///
-    /// The embedding runtime is created on first access and cached for subsequent calls.
-    ///
-    /// # Errors
-    /// Returns an error if the embedding runtime cannot be created.
-    pub fn embedding_runtime(&self) -> Result<Arc<EmbeddingRuntimeManager>, XtaskError> {
-        if let Some(runtime) = self.embedding_runtime.get() {
-            return Ok(Arc::clone(runtime));
-        }
-
-        let runtime = EmbeddingRuntimeManager::new()?;
-        self.embedding_runtime
-            .set(runtime.clone())
-            .map_err(|_| XtaskError::new("Embedding runtime already initialized"))?;
-        Ok(runtime)
-    }
-
-    /// Get the IO manager.
-    ///
-    /// The IO manager is created on first access and cached for subsequent calls.
-    pub fn io_manager(&self) -> IoManagerHandle {
-        self.io_manager
-            .get_or_init(IoManagerHandle::new)
-            .clone()
-    }
-
     /// Get the workspace root.
     ///
     /// This is detected by looking for the Cargo.toml file.
@@ -194,39 +151,10 @@ impl CommandContext {
             .map_err(|_| XtaskError::new("Workspace root already initialized"))?;
         Ok(self.workspace_root.get().unwrap().as_path())
     }
-
-    /// Get the temporary directory.
-    pub fn temp_dir(&self) -> &tempfile::TempDir {
-        &self.temp_dir
-    }
-
-    /// Validate that required resources are available.
-    ///
-    /// This is called by the executor before running a command to ensure
-    /// all required resources can be initialized.
-    ///
-    /// # Arguments
-    /// * `needs_database` - Whether to validate database access
-    /// * `needs_embedding_runtime` - Whether to validate embedding runtime access
-    pub fn validate_resources(
-        &self,
-        needs_database: bool,
-        needs_embedding_runtime: bool,
-    ) -> Result<(), XtaskError> {
-        if needs_database {
-            self.database_pool()?;
-        }
-        if needs_embedding_runtime {
-            self.embedding_runtime()?;
-        }
-        Ok(())
-    }
 }
 
 impl Default for CommandContext {
     fn default() -> Self {
-        // This will panic if temp dir creation fails, but that's acceptable
-        // for Default impl which should only be used in tests
         Self::new().expect("Failed to create CommandContext")
     }
 }
@@ -348,42 +276,6 @@ impl DatabasePool {
     }
 }
 
-/// Placeholder embedding runtime manager.
-///
-/// This is a simplified implementation. The full implementation will integrate
-/// with ploke_embed for actual embedding management.
-pub struct EmbeddingRuntimeManager;
-
-impl EmbeddingRuntimeManager {
-    /// Create a new embedding runtime manager.
-    ///
-    /// # Errors
-    /// Returns an error if the manager cannot be initialized.
-    pub fn new() -> Result<Arc<Self>, XtaskError> {
-        Ok(Arc::new(Self))
-    }
-}
-
-/// Placeholder IO manager handle.
-///
-/// This is a simplified implementation. The full implementation will integrate
-/// with ploke_io for actual IO management.
-#[derive(Clone)]
-pub struct IoManagerHandle;
-
-impl IoManagerHandle {
-    /// Create a new IO manager handle.
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for IoManagerHandle {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Find the workspace root directory.
 ///
 /// This is duplicated from lib.rs to avoid conflicts with main.rs's workspace_root().
@@ -414,30 +306,7 @@ mod tests {
         assert!(ctx.workspace_root().is_ok());
     }
 
-    #[test]
-    fn test_io_manager() {
-        let ctx = CommandContext::new().unwrap();
-        let io1 = ctx.io_manager();
-        let io2 = ctx.io_manager();
-        // Both should be the same instance (cloned)
-        // We can't really test this without internal state, but it compiles
-        drop(io1);
-        drop(io2);
-    }
-
-    #[test]
-    fn test_temp_dir() {
-        let ctx = CommandContext::new().unwrap();
-        let temp = ctx.temp_dir();
-        assert!(temp.path().exists());
-    }
-
-    #[test]
-    fn test_validate_resources() {
-        let ctx = CommandContext::new().unwrap();
-        assert!(ctx.validate_resources(false, false).is_ok());
-        assert!(ctx.validate_resources(true, false).is_ok());
-    }
+    // Resource validation and IO/embedding managers are intentionally absent in the paused build.
 
     #[test]
     fn test_database_pool_new() {
@@ -450,14 +319,6 @@ mod tests {
         assert!(Arc::ptr_eq(&db, &db2));
     }
 
-    #[test]
-    fn test_io_manager_handle() {
-        let handle = IoManagerHandle::new();
-        let cloned = handle.clone();
-        // Just verify they can be created and cloned
-        drop(handle);
-        drop(cloned);
-    }
 
     #[test]
     fn test_context_loads_canonical_fixture() {
@@ -473,10 +334,4 @@ mod tests {
         assert!(!qr.rows.is_empty());
     }
 
-    #[test]
-    fn test_embedding_runtime_manager() {
-        let mgr = EmbeddingRuntimeManager::new().unwrap();
-        // Just verify creation succeeds
-        drop(mgr);
-    }
 }

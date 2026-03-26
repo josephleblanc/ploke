@@ -7948,7 +7948,6 @@ dependencies = [
  "chrono",
  "clap",
  "cozo",
- "dirs 5.0.1",
  "once_cell",
  "ploke-core",
  "ploke-db",

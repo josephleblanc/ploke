@@ -7,9 +7,8 @@ use xtask::commands::parse_debug::{
     DebugCargoTargets, DebugDiscoveryRules, DebugLogicalPaths, DebugModulesPremerge,
     DebugOutput, DebugPathCollisions, DebugWorkspaceMembers, ParseDebugCli, ParseDebugCmd,
 };
-use xtask::executor::Command;
-use xtask::expect_command_ok;
-use xtask::test_harness::CommandTestHarness;
+use xtask::context::CommandContext;
+use xtask::executor::Command as _;
 
 const FIXTURE_NODES: &str = "tests/fixture_crates/fixture_nodes";
 const FIXTURE_WORKSPACE: &str = "tests/fixture_workspace/fixture_mock_serde";
@@ -22,11 +21,8 @@ fn parse_debug_logical_paths_succeeds_on_fixture() {
             path: PathBuf::from(FIXTURE_NODES),
         }),
     };
-    let harness = CommandTestHarness::new().expect("harness");
-    let out = expect_command_ok(
-        harness.executor().execute(cmd),
-        "parse debug logical-paths",
-    );
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd.execute(&ctx).expect("parse debug logical-paths");
     match out {
         ParseOutput::Debug(DebugOutput::LogicalPaths(o)) => {
             assert!(!o.crate_root.is_empty());
@@ -44,11 +40,8 @@ fn parse_debug_modules_premerge_succeeds_on_fixture() {
             path: PathBuf::from(FIXTURE_NODES),
         }),
     };
-    let harness = CommandTestHarness::new().expect("harness");
-    let out = expect_command_ok(
-        harness.executor().execute(cmd),
-        "parse debug modules-premerge",
-    );
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd.execute(&ctx).expect("parse debug modules-premerge");
     match out {
         ParseOutput::Debug(DebugOutput::ModulesPremerge(o)) => {
             assert!(o.graph_count > 0);
@@ -66,11 +59,8 @@ fn parse_debug_path_collisions_succeeds_on_fixture() {
             path: PathBuf::from(FIXTURE_NODES),
         }),
     };
-    let harness = CommandTestHarness::new().expect("harness");
-    let out = expect_command_ok(
-        harness.executor().execute(cmd),
-        "parse debug path-collisions",
-    );
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd.execute(&ctx).expect("parse debug path-collisions");
     match out {
         ParseOutput::Debug(DebugOutput::PathCollisions(o)) => {
             assert!(o.merged_module_count > 0);
@@ -89,11 +79,8 @@ fn parse_debug_cargo_targets_succeeds_on_fixture_workspace() {
             path: PathBuf::from(FIXTURE_WORKSPACE),
         }),
     };
-    let harness = CommandTestHarness::new().expect("harness");
-    let out = expect_command_ok(
-        harness.executor().execute(cmd),
-        "parse debug cargo-targets",
-    );
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd.execute(&ctx).expect("parse debug cargo-targets");
     match out {
         ParseOutput::Debug(DebugOutput::CargoTargets(o)) => {
             assert!(!o.workspace_root.is_empty());
@@ -116,11 +103,10 @@ fn parse_debug_workspace_members_classify_reports_tests_only() {
             classify: true,
         }),
     };
-    let harness = CommandTestHarness::new().expect("harness");
-    let out = expect_command_ok(
-        harness.executor().execute(cmd),
-        "parse debug workspace-members --classify",
-    );
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd
+        .execute(&ctx)
+        .expect("parse debug workspace-members --classify");
     match out {
         ParseOutput::Debug(DebugOutput::WorkspaceMembers(o)) => {
             assert!(o.member_count > 0, "workspace should expose members");
@@ -143,11 +129,8 @@ fn parse_debug_discovery_rules_reports_src_and_manifest_targets() {
             path: PathBuf::from(FIXTURE_NODES),
         }),
     };
-    let harness = CommandTestHarness::new().expect("harness");
-    let out = expect_command_ok(
-        harness.executor().execute(cmd),
-        "parse debug discovery-rules",
-    );
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd.execute(&ctx).expect("parse debug discovery-rules");
     match out {
         ParseOutput::Debug(DebugOutput::DiscoveryRules(o)) => {
             assert!(

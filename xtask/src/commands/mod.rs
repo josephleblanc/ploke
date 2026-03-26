@@ -9,7 +9,6 @@
 //! ## Architecture
 //!
 //! This module integrates with the core xtask architecture from `lib.rs`:
-//! - [`crate::executor::Command`] trait - Core command interface
 //! - [`crate::context::CommandContext`] - Resource management
 //! - [`crate::error::XtaskError`] - Error handling
 //! - [`OutputFormat`] - CLI output formatting
@@ -35,14 +34,12 @@ pub mod parse_debug;
 
 // Re-export types from core architecture
 pub use crate::context::CommandContext;
-pub use crate::error::{ErrorCode, RecoveryHint, XtaskError};
-pub use crate::executor::Command;
+pub use crate::error::XtaskError;
 
 /// Output format for command results.
 ///
 /// This type is used by the CLI to determine how to format command output.
-/// It is separate from the core [`crate::executor::OutputFormatter`] trait
-/// to provide CLI-specific formatting options.
+/// It is separate from any executor framework to provide CLI-specific formatting options.
 #[derive(Debug, Clone, Copy, Default, Serialize, clap::ValueEnum)]
 pub enum OutputFormat {
     /// Human-readable formatted output with colors and indentation

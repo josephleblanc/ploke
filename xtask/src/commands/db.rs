@@ -48,13 +48,16 @@ pub enum Db {
     /// Count nodes in database
     CountNodes(CountNodes),
 
-    /// Build HNSW index
+    /// Build HNSW index (unstable; paused)
+    #[cfg(feature = "xtask_unstable")]
     HnswBuild(HnswBuild),
 
-    /// Rebuild HNSW index
+    /// Rebuild HNSW index (unstable; paused)
+    #[cfg(feature = "xtask_unstable")]
     HnswRebuild(HnswRebuild),
 
-    /// Rebuild BM25 index
+    /// Rebuild BM25 index (unstable; paused)
+    #[cfg(feature = "xtask_unstable")]
     Bm25Rebuild(Bm25Rebuild),
 
     /// Execute arbitrary CozoDB query
@@ -78,8 +81,11 @@ impl Db {
             Db::Load(cmd) => cmd.execute(ctx),
             Db::LoadFixture(cmd) => cmd.execute(ctx),
             Db::CountNodes(cmd) => cmd.execute(ctx),
+            #[cfg(feature = "xtask_unstable")]
             Db::HnswBuild(cmd) => cmd.execute(ctx),
+            #[cfg(feature = "xtask_unstable")]
             Db::HnswRebuild(cmd) => cmd.execute(ctx),
+            #[cfg(feature = "xtask_unstable")]
             Db::Bm25Rebuild(cmd) => cmd.execute(ctx),
             Db::Query(cmd) => cmd.execute(ctx),
             Db::Stats(cmd) => cmd.execute(ctx),
@@ -110,18 +116,6 @@ pub struct Save {
 impl Command for Save {
     type Output = DbOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "db save"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Database
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let db = open_db(ctx, self.db.as_ref())?;
@@ -166,18 +160,6 @@ impl Command for Load {
     type Output = DbOutput;
     type Error = XtaskError;
 
-    fn name(&self) -> &'static str {
-        "db load"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Database
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
-
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let _db = ctx.get_database(Some(self.path.as_path()))?;
         if self.verify {
@@ -216,18 +198,6 @@ pub struct LoadFixture {
 impl Command for LoadFixture {
     type Output = DbOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "db load-fixture"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Database
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let fixture = backup_db_fixture(self.fixture.trim()).ok_or_else(|| {
@@ -284,18 +254,6 @@ pub struct CountNodes {
 impl Command for CountNodes {
     type Output = DbOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "db count-nodes"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Database
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let db = open_db(ctx, self.db.as_ref())?;
@@ -361,6 +319,7 @@ impl Command for CountNodes {
 /// HNSW build command
 ///
 /// Builds the HNSW index for vector similarity search.
+#[cfg(feature = "xtask_unstable")]
 #[derive(Debug, Clone, clap::Args)]
 pub struct HnswBuild {
     /// Database path
@@ -376,21 +335,10 @@ pub struct HnswBuild {
     pub dimensions: Option<usize>,
 }
 
+#[cfg(feature = "xtask_unstable")]
 impl Command for HnswBuild {
     type Output = DbOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "db hnsw-build"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Database
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, _ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         // Implementation skeleton - full implementation in M.4
@@ -401,6 +349,7 @@ impl Command for HnswBuild {
 /// HNSW rebuild command
 ///
 /// Rebuilds the HNSW index from scratch.
+#[cfg(feature = "xtask_unstable")]
 #[derive(Debug, Clone, clap::Args)]
 pub struct HnswRebuild {
     /// Database path
@@ -412,21 +361,10 @@ pub struct HnswRebuild {
     pub force: bool,
 }
 
+#[cfg(feature = "xtask_unstable")]
 impl Command for HnswRebuild {
     type Output = DbOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "db hnsw-rebuild"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Database
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, _ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         // Implementation skeleton - full implementation in M.4
@@ -437,6 +375,7 @@ impl Command for HnswRebuild {
 /// BM25 rebuild command
 ///
 /// Rebuilds the BM25 full-text search index.
+#[cfg(feature = "xtask_unstable")]
 #[derive(Debug, Clone, clap::Args)]
 pub struct Bm25Rebuild {
     /// Database path
@@ -448,21 +387,10 @@ pub struct Bm25Rebuild {
     pub batch_size: usize,
 }
 
+#[cfg(feature = "xtask_unstable")]
 impl Command for Bm25Rebuild {
     type Output = DbOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "db bm25-rebuild"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Database
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, _ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         // Implementation skeleton - full implementation in M.4
@@ -499,18 +427,6 @@ pub struct Query {
 impl Command for Query {
     type Output = DbOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "db query"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Database
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let db = open_db(ctx, self.db.as_ref())?;
@@ -556,18 +472,6 @@ pub struct Stats {
 impl Command for Stats {
     type Output = DbOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "db stats"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Database
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let db = open_db(ctx, self.db.as_ref())?;
@@ -616,18 +520,6 @@ impl Command for ListRelations {
     type Output = DbOutput;
     type Error = XtaskError;
 
-    fn name(&self) -> &'static str {
-        "db list-relations"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Database
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
-
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let db = open_db(ctx, self.db.as_ref())?;
         let names = db.relations_vec()?;
@@ -672,18 +564,6 @@ pub struct EmbeddingStatus {
 impl Command for EmbeddingStatus {
     type Output = DbOutput;
     type Error = XtaskError;
-
-    fn name(&self) -> &'static str {
-        "db embedding-status"
-    }
-
-    fn category(&self) -> crate::executor::CommandCategory {
-        crate::executor::CommandCategory::Database
-    }
-
-    fn requires_async(&self) -> bool {
-        false
-    }
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let db = open_db(ctx, self.db.as_ref())?;
@@ -734,36 +614,51 @@ pub enum StatsCategory {
 pub enum DbOutput {
     /// Success with message
     Success {
+        /// Human-readable success message.
         message: String,
+        /// Optional filesystem path related to the operation (e.g. backup destination).
         #[serde(skip_serializing_if = "Option::is_none")]
         path: Option<PathBuf>,
     },
     /// Node count output
     NodeCount {
+        /// Total nodes matching the query/filter.
         total: usize,
+        /// Node counts broken down by kind name.
         by_kind: std::collections::HashMap<String, usize>,
+        /// Optional count of nodes pending embeddings (when relevant to the query).
         pending_embeddings: Option<usize>,
     },
     /// Query result output
     QueryResult {
+        /// Rows returned by the query (JSON-friendly representation).
         rows: Vec<serde_json::Value>,
+        /// Column names corresponding to each row.
         columns: Vec<String>,
+        /// Wall-clock query duration in milliseconds.
         duration_ms: u64,
     },
     /// Statistics output
     DatabaseStats {
+        /// Stats category name (stringified form of the filter).
         category: String,
+        /// Stats payload (structure depends on `category`).
         data: serde_json::Value,
     },
     /// Relations list output
     RelationsList {
+        /// Relation metadata entries.
         relations: Vec<RelationInfo>,
     },
     /// Embedding status output
     EmbeddingStatus {
+        /// Total nodes considered in the status summary.
         total_nodes: usize,
+        /// Count of nodes with embeddings present.
         embedded: usize,
+        /// Count of nodes still pending embeddings.
         pending: usize,
+        /// Per-embedding-set details.
         sets: Vec<EmbeddingSetInfo>,
     },
 }
@@ -771,18 +666,25 @@ pub enum DbOutput {
 /// Relation information
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RelationInfo {
+    /// Relation name (Cozo relation identifier).
     pub name: String,
+    /// Optional row count (present when `--counts` is requested).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub row_count: Option<usize>,
+    /// Whether this relation is an HNSW index relation.
     pub is_hnsw: bool,
 }
 
 /// Embedding set information
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct EmbeddingSetInfo {
+    /// Embedding set name.
     pub name: String,
+    /// Embedding vector dimensions.
     pub dimensions: usize,
+    /// Embedding model identifier.
     pub model: String,
+    /// Number of embeddings in this set.
     pub count: usize,
 }
 
@@ -866,8 +768,8 @@ mod tests {
             kind: Some(NodeKind::Function),
             pending: true,
         };
-        assert_eq!(cmd.name(), "db count-nodes");
-        assert!(!cmd.requires_async());
+        let ctx = CommandContext::new().unwrap();
+        let _ = cmd.execute(&ctx);
     }
 
     #[test]
