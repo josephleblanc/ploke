@@ -7,11 +7,13 @@ use std::path::PathBuf;
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability, UuidWrapper};
 use ploke_db::{CodeSnippet, Database, QueryBuilder, to_uuid};
 use ploke_error::Error;
-use ploke_transform::schema::primary_nodes::StructNodeSchema;
 use ploke_transform::transform::insert_structural_compilation_unit_slice;
+use ploke_transform::schema::primary_nodes::StructNodeSchema;
 use syn_parser::compilation_unit::{
     CompilationUnitKey, CompilationUnitTargetKind, StructuralCompilationUnitSlice,
 };
+use syn_parser::compilation_unit::{compilation_unit_keys_for_targets, default_target_triple};
+use syn_parser::compilation_unit::build_structural_compilation_unit_slices;
 use uuid::Uuid;
 
 use crate::common::test_helpers;
@@ -215,6 +217,73 @@ fn test_filter_by_compilation_units_or_clause_for_syntax_edges() -> Result<(), E
         cu_b
     );
     assert_eq!(or_clause, format!("({a} or {b})"));
+
+    Ok(())
+}
+
+#[test]
+fn test_fixture_based_membership_rows_diverge_per_target_compilation_unit() -> Result<(), Error> {
+    let db = test_helpers::setup_test_db();
+    let parsed_graphs = ploke_test_utils::test_run_phases_and_collect("fixture_multi_target_cu");
+    let ctx = parsed_graphs
+        .iter()
+        .find_map(|g| g.crate_context.as_ref())
+        .expect("crate context");
+    let keys = compilation_unit_keys_for_targets(
+        ctx.namespace,
+        &ctx.targets,
+        default_target_triple(),
+        "dev".to_string(),
+        vec![],
+    );
+    let lib_key = keys
+        .iter()
+        .find(|k| k.target_kind == CompilationUnitTargetKind::Lib)
+        .expect("lib key")
+        .clone();
+    let bin_key = keys
+        .iter()
+        .find(|k| k.target_kind == CompilationUnitTargetKind::Bin)
+        .expect("bin key")
+        .clone();
+
+    let slices = build_structural_compilation_unit_slices(parsed_graphs.clone(), &keys)
+        .expect("build slices");
+    for slice in &slices {
+        insert_structural_compilation_unit_slice(&db, slice).expect("insert slice");
+    }
+    let ploke_db = Database::new(db);
+    let rows = ploke_db
+        .raw_query("?[cu_id, node_id] := *compilation_unit_enabled_node { cu_id, node_id }")?;
+    let mut by_cu: std::collections::HashMap<Uuid, HashSet<Uuid>> = std::collections::HashMap::new();
+    for row in rows.rows {
+        let cu_id = to_uuid(&row[0])?;
+        let node_id = to_uuid(&row[1])?;
+        by_cu.entry(cu_id).or_default().insert(node_id);
+    }
+
+    let lib_nodes = by_cu
+        .get(&lib_key.compilation_unit_id())
+        .expect("lib cu membership");
+    let bin_nodes = by_cu
+        .get(&bin_key.compilation_unit_id())
+        .expect("bin cu membership");
+    assert!(!lib_nodes.is_empty());
+    assert!(!bin_nodes.is_empty());
+    assert_ne!(lib_nodes, bin_nodes);
+
+    let lib_clause = QueryBuilder::new()
+        .structs()
+        .filter_by_compilation_unit(lib_key.compilation_unit_id())
+        .filters()
+        .join(", ");
+    assert_eq!(
+        lib_clause,
+        format!(
+            "*compilation_unit_enabled_node {{ cu_id: '{}', node_id: id }}",
+            lib_key.compilation_unit_id()
+        )
+    );
 
     Ok(())
 }

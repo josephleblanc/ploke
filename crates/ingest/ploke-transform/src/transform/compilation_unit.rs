@@ -219,12 +219,16 @@ fn insert_meta(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use cozo::ScriptMutability;
     use cozo::{Db, MemStorage};
     use ploke_test_utils::test_run_phases_and_collect;
     use syn_parser::{
         compilation_unit::{
-            build_structural_compilation_unit_slice, compilation_unit_key_from_target,
-            default_target_triple,
+            CompilationUnitTargetKind, build_structural_compilation_unit_slice,
+            build_structural_compilation_unit_slices, compilation_unit_key_from_target,
+            compilation_unit_keys_for_targets, default_target_triple,
         },
         discovery::TargetKind,
         parser::ParsedCodeGraph,
@@ -332,5 +336,65 @@ mod tests {
             assert!(!filtered_without.enabled_node_ids.contains(&id));
         }
         assert!(filtered_with.enabled_node_ids.len() >= filtered_without.enabled_node_ids.len());
+    }
+
+    #[test]
+    fn fixture_multi_target_persists_distinct_lib_and_bin_membership_rows() {
+        let db = Db::new(MemStorage::default()).expect("db");
+        db.initialize().expect("init");
+        create_schema_all(&db).expect("schema");
+
+        let parsed_graphs = test_run_phases_and_collect("fixture_multi_target_cu");
+        let ctx = parsed_graphs
+            .iter()
+            .find_map(|g| g.crate_context.as_ref())
+            .expect("crate context");
+        let keys = compilation_unit_keys_for_targets(
+            ctx.namespace,
+            &ctx.targets,
+            default_target_triple(),
+            "dev".to_string(),
+            vec![],
+        );
+        let slices =
+            build_structural_compilation_unit_slices(parsed_graphs, &keys).expect("build slices");
+        for slice in &slices {
+            insert_structural_compilation_unit_slice(&db, slice).expect("insert slice");
+        }
+
+        let mut observed: HashMap<uuid::Uuid, HashSet<uuid::Uuid>> = HashMap::new();
+        let rows = db
+            .run_script(
+                "?[cu_id, node_id] := *compilation_unit_enabled_node{cu_id, node_id}",
+                Default::default(),
+                ScriptMutability::Immutable,
+            )
+            .expect("query");
+        for row in rows.rows {
+            let cu_id = match &row[0] {
+                cozo::DataValue::Uuid(v) => v.0,
+                other => panic!("expected uuid cu_id, got {other:?}"),
+            };
+            let node_id = match &row[1] {
+                cozo::DataValue::Uuid(v) => v.0,
+                other => panic!("expected uuid node_id, got {other:?}"),
+            };
+            observed.entry(cu_id).or_default().insert(node_id);
+        }
+
+        let lib_id = keys
+            .iter()
+            .find(|k| k.target_kind == CompilationUnitTargetKind::Lib)
+            .expect("lib key")
+            .compilation_unit_id();
+        let bin_id = keys
+            .iter()
+            .find(|k| k.target_kind == CompilationUnitTargetKind::Bin)
+            .expect("bin key")
+            .compilation_unit_id();
+
+        assert!(observed.contains_key(&lib_id));
+        assert!(observed.contains_key(&bin_id));
+        assert_ne!(observed.get(&lib_id), observed.get(&bin_id));
     }
 }
