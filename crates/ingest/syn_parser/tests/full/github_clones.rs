@@ -1925,7 +1925,6 @@ fn detailed_prune_mismatch_analysis() {
 fn identify_impls_and_traits_with_orphan_methods() {
     init_tracing();
 
-    use itertools::Itertools;
     use syn_parser::{
         parser::{
             graph::{GraphNode, ParsedCodeGraph},
@@ -2194,7 +2193,7 @@ fn identify_the_13_missing_items() {
     for id in &method_ids_in_pruned {
         if let Some((_, name, container)) = method_ids_in_graph.iter()
             .find(|(mid, _, _)| mid == id) {
-            real_method_ids_in_pruned.push((id, name.clone(), container.clone()));
+            real_method_ids_in_pruned.push((id, (*name).clone(), container.clone()));
         } else {
             phantom_method_ids.push(id);
         }

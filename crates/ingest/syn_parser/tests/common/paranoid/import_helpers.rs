@@ -102,14 +102,27 @@ pub fn find_import_node_paranoid<'a>(
     let import_id = import_node.id;
     let item_cfgs = &import_node.cfgs; // Get the import statement's own CFGs
 
-    // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
-    //    The ID is generated based on the *visible name* (or "<glob>") and ItemKind.
-    let id_gen_name = if import_node.is_glob {
-        "<glob>" // Use the placeholder name used during generation
-    } else {
-        &import_node.visible_name // Use the visible name for ID regeneration
+    // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind.
+    //    Match `process_use_tree` / `visit_item_extern_crate`: full source path (or glob string),
+    //    not the visible binding name alone.
+    let id_gen_name: String = match import_node.kind {
+        syn_parser::parser::nodes::ImportKind::ExternCrate => import_node.visible_name.clone(),
+        syn_parser::parser::nodes::ImportKind::UseStatement(_) => {
+            if import_node.is_glob {
+                import_node.visible_name.clone()
+            } else if import_node.is_self_import {
+                format!("{}::{{self}}", import_node.source_path.join("::"))
+            } else if import_node.original_name.is_some() {
+                format!(
+                    "{}::{}",
+                    import_node.source_path.join("::"),
+                    import_node.visible_name
+                )
+            } else {
+                import_node.source_path.join("::")
+            }
+        }
     };
-    // Handle all variants of ImportKind
     let item_kind = match import_node.kind {
         syn_parser::parser::nodes::ImportKind::UseStatement(_) => ItemKind::Import,
         syn_parser::parser::nodes::ImportKind::ExternCrate => ItemKind::ExternCrate,
@@ -132,7 +145,7 @@ pub fn find_import_node_paranoid<'a>(
         crate_namespace,
         file_path,            // Use the file_path from the target_data
         expected_module_path, // Use the module's definition path for context hashing
-        id_gen_name,          // Use visible name or "<glob>" for ID generation
+        id_gen_name.as_str(),
         item_kind,            // Pass the correct ItemKind
         Some(module_node.id), // Pass the containing module's ID as parent scope
         cfg_bytes.as_deref(), // Pass calculated CFG bytes

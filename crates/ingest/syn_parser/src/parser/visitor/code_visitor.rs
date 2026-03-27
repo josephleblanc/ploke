@@ -112,9 +112,17 @@ impl<'a> CodeVisitor<'a> {
                     use_name // This is the visible name in this case
                 };
 
+                // Synthetic import IDs hash a full-path key (not the visible binding name) so
+                // distinct imports that share a leaf (e.g. `io::Result` vs `fmt::Result`) stay unique.
+                let id_key = if is_self_import {
+                    format!("{}::{{self}}", full_path.join("::"))
+                } else {
+                    full_path.join("::")
+                };
+
                 // Register the new node ID (but don't get parent ID, handled later)
                 let registration_result = self.register_new_node_id(
-                    &checked_name,
+                    &id_key,
                     ItemKind::Import,
                     cfg_bytes, // Pass down received cfg_bytes
                 );
@@ -164,23 +172,29 @@ impl<'a> CodeVisitor<'a> {
 
                 let span = rename.extract_span_bytes();
 
-                // Register the new node ID
-                let registration_result = if visible_name.as_str() == "_" {
+                if visible_name.as_str() == "_" {
                     // salt original name with "_" to prevent conflicts when both the anonymous and
                     // a named import are used in the same file, e.g. both `use X` and `use X as _`
                     original_name.push_str("::_");
-                    self.register_new_node_id(
-                        &original_name,
-                        ItemKind::Import,
-                        cfg_bytes, // Pass down received cfg_bytes
-                    )
-                } else {
-                    self.register_new_node_id(
-                        &visible_name,
-                        ItemKind::Import,
-                        cfg_bytes, // Pass down received cfg_bytes
-                    )
-                };
+                }
+
+                let mut source_path = base_path; // Take ownership
+                source_path.push(original_name.clone());
+
+                // Full source path disambiguates `use a::X as Y` vs `use b::X as Y`; append the
+                // visible binding so two renames of the same path (`as A` vs `as B`) stay distinct.
+                let id_key = format!(
+                    "{}::{}",
+                    source_path.join("::"),
+                    visible_name
+                );
+
+                // Register using a path-qualified key (not the visible binding alone).
+                let registration_result = self.register_new_node_id(
+                    &id_key,
+                    ItemKind::Import,
+                    cfg_bytes, // Pass down received cfg_bytes
+                );
                 // Check if registration failed
                 if registration_result.is_none() {
                     let err = CodeVisitorError::RegistrationFailed {
@@ -194,8 +208,8 @@ impl<'a> CodeVisitor<'a> {
                 let import_node_id: ImportNodeId = import_any_id.try_into().map_err(|e| {
                     // Use the logging trait method
                     self.state
-                        .log_import_id_conversion_error(&visible_name, &base_path, e); // Use base_path for context here
-                                                                                       // Return the specific CodeVisitorError variant
+                        .log_import_id_conversion_error(&visible_name, &source_path, e);
+                    // Return the specific CodeVisitorError variant
                     CodeVisitorError::IdConversionFailed {
                         item_name: visible_name.clone(),
                         item_kind: ItemKind::Import,
@@ -203,10 +217,6 @@ impl<'a> CodeVisitor<'a> {
                         source_error: e,
                     }
                 })?; // Use ? to propagate the error
-
-                // The source path uses the original name.
-                let mut source_path = base_path; // Take ownership
-                source_path.push(original_name.clone());
 
                 let import_node = ImportNode {
                     id: import_node_id,
@@ -231,7 +241,7 @@ impl<'a> CodeVisitor<'a> {
                 // the `original_name`.
                 // WARN: Using a simple "*" for the name, as we did previously, leads to id
                 // collisions among globs in the same module path. Instead we need to use the
-                // entire path of the glob import.
+                // entire path of the glob import. `full_path_string` is the canonical synthetic-ID input.
                 let mut full_path_string = base_path.join("::");
                 full_path_string.push_str("::*");
                 let registration_result = self.register_new_node_id(

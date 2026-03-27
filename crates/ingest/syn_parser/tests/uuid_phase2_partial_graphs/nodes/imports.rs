@@ -496,7 +496,7 @@ lazy_static! {
         m.insert("crate::imports::TupleStruct", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "TupleStruct",
+            ident: "crate::structs::TupleStruct",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -505,7 +505,7 @@ lazy_static! {
         m.insert("crate::imports::HashMap", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "HashMap",
+            ident: "std::collections::HashMap",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -513,7 +513,7 @@ lazy_static! {
         m.insert("crate::imports::fmt", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "fmt",
+            ident: "std::fmt",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -521,7 +521,7 @@ lazy_static! {
         m.insert("crate::imports::Arc", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "Arc",
+            ident: "std::sync::Arc",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -529,7 +529,7 @@ lazy_static! {
         m.insert("crate::imports::MySimpleStruct", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "MySimpleStruct",
+            ident: "crate::structs::SampleStruct::MySimpleStruct",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -537,7 +537,7 @@ lazy_static! {
         m.insert("crate::imports::IoResult", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "IoResult",
+            ident: "std::io::Result::IoResult",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -545,7 +545,7 @@ lazy_static! {
         m.insert("crate::imports::EnumWithData", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "EnumWithData",
+            ident: "crate::enums::EnumWithData",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -553,7 +553,7 @@ lazy_static! {
         m.insert("crate::imports::SampleEnum1", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "SampleEnum1",
+            ident: "crate::enums::SampleEnum1",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -561,7 +561,7 @@ lazy_static! {
         m.insert("crate::imports::MyGenTrait", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "MyGenTrait",
+            ident: "crate::traits::GenericTrait::MyGenTrait",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -569,7 +569,7 @@ lazy_static! {
         m.insert("crate::imports::SimpleTrait", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "SimpleTrait",
+            ident: "crate::traits::SimpleTrait",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -577,7 +577,7 @@ lazy_static! {
         m.insert("crate::imports::CrateVisibleStruct", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "CrateVisibleStruct",
+            ident: "crate::structs::SampleStruct::CrateVisibleStruct",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -585,7 +585,7 @@ lazy_static! {
         m.insert("crate::imports::sub_imports::restricted_scope::RestrictedTraitAlias", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "RestrictedTraitAlias",
+            ident: "crate::traits::SimpleTrait::RestrictedTraitAlias",
             expected_cfg: None,
             expected_path: &["crate", "imports", "sub_imports", "restricted_scope"],
             item_kind: ItemKind::Import,
@@ -593,7 +593,7 @@ lazy_static! {
         m.insert("crate::imports::CfgStructAlias", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "CfgStructAlias",
+            ident: "crate::structs::CfgOnlyStruct::CfgStructAlias",
             expected_cfg: Some(&["feature = \"fixture_nodes_cfg\""]),
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -601,7 +601,7 @@ lazy_static! {
         m.insert("crate::imports::CfgTraitAlias", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "CfgTraitAlias",
+            ident: "crate::traits::SimpleTrait::CfgTraitAlias",
             expected_cfg: Some(&["feature = \"fixture_nodes_cfg\""]),
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -609,7 +609,7 @@ lazy_static! {
         m.insert("crate::imports::UnitStruct", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "UnitStruct",
+            ident: "crate::structs::UnitStruct",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -617,7 +617,7 @@ lazy_static! {
         m.insert("crate::imports::EnumVariant1", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "EnumVariant1",
+            ident: "crate::enums::SampleEnum1::Variant1::EnumVariant1",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -625,7 +625,7 @@ lazy_static! {
         m.insert("crate::imports::TOP_LEVEL_BOOL", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "TOP_LEVEL_BOOL",
+            ident: "crate::const_static::TOP_LEVEL_BOOL",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -633,7 +633,7 @@ lazy_static! {
         m.insert("crate::imports::TOP_LEVEL_COUNTER", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "TOP_LEVEL_COUNTER",
+            ident: "crate::const_static::TOP_LEVEL_COUNTER",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -641,7 +641,7 @@ lazy_static! {
         m.insert("crate::imports::IntOrFloat", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "IntOrFloat",
+            ident: "crate::unions::IntOrFloat",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -649,7 +649,7 @@ lazy_static! {
         m.insert("crate::imports::documented_macro", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "documented_macro",
+            ident: "crate::macros::documented_macro",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -657,7 +657,7 @@ lazy_static! {
         m.insert("crate::imports::TraitsMod", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "TraitsMod",
+            ident: "crate::traits::TraitsMod",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -665,7 +665,7 @@ lazy_static! {
         m.insert("crate::imports::fs", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "fs",
+            ident: "std::fs::{self}",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -673,7 +673,7 @@ lazy_static! {
         m.insert("crate::imports::File", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "File",
+            ident: "std::fs::File",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -681,7 +681,7 @@ lazy_static! {
         m.insert("crate::imports::Path", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "Path",
+            ident: "std::path::Path",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -689,7 +689,7 @@ lazy_static! {
         m.insert("crate::imports::PathBuf", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "PathBuf",
+            ident: "std::path::PathBuf",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -715,7 +715,7 @@ lazy_static! {
         m.insert("crate::imports::SubItem", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "SubItem",
+            ident: "self::sub_imports::SubItem",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -723,7 +723,7 @@ lazy_static! {
         m.insert("crate::imports::AttributedStruct", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "AttributedStruct",
+            ident: "super::structs::AttributedStruct",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -731,7 +731,7 @@ lazy_static! {
         m.insert("crate::imports::SimpleId", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "SimpleId",
+            ident: "crate::type_alias::SimpleId",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -739,7 +739,7 @@ lazy_static! {
         m.insert("crate::imports::Duration", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "Duration",
+            ident: "::std::time::Duration",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -763,7 +763,7 @@ lazy_static! {
         m.insert("crate::imports::trait_chain::ChainPublicTraitAlias", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "ChainPublicTraitAlias",
+            ident: "super::trait_chain_stage::StageOneTraitAlias::ChainPublicTraitAlias",
             expected_cfg: None,
             expected_path: &["crate", "imports", "trait_chain"],
             item_kind: ItemKind::Import,
@@ -771,7 +771,7 @@ lazy_static! {
         m.insert("crate::imports::trait_chain_stage::StageOneTraitAlias", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "StageOneTraitAlias",
+            ident: "crate::traits::SimpleTrait::StageOneTraitAlias",
             expected_cfg: None,
             expected_path: &["crate", "imports", "trait_chain_stage"],
             item_kind: ItemKind::Import,
@@ -781,7 +781,7 @@ lazy_static! {
         m.insert("crate::imports::sub_imports::fmt", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "fmt",
+            ident: "super::fmt",
             expected_cfg: None,
             expected_path: &["crate", "imports", "sub_imports"],
             item_kind: ItemKind::Import,
@@ -789,7 +789,7 @@ lazy_static! {
         m.insert("crate::imports::sub_imports::DocumentedEnum", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "DocumentedEnum",
+            ident: "crate::enums::DocumentedEnum",
             expected_cfg: None,
             expected_path: &["crate", "imports", "sub_imports"],
             item_kind: ItemKind::Import,
@@ -797,7 +797,7 @@ lazy_static! {
         m.insert("crate::imports::sub_imports::Arc", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "Arc",
+            ident: "std::sync::Arc",
             expected_cfg: None,
             expected_path: &["crate", "imports", "sub_imports"],
             item_kind: ItemKind::Import,
@@ -805,7 +805,7 @@ lazy_static! {
         m.insert("crate::imports::sub_imports::NestedItem", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "NestedItem",
+            ident: "self::nested_sub::NestedItem",
             expected_cfg: None,
             expected_path: &["crate", "imports", "sub_imports"],
             item_kind: ItemKind::Import,
@@ -813,7 +813,7 @@ lazy_static! {
         m.insert("crate::imports::sub_imports::TupleStruct", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "TupleStruct",
+            ident: "super::super::structs::TupleStruct",
             expected_cfg: None,
             expected_path: &["crate", "imports", "sub_imports"],
             item_kind: ItemKind::Import,
