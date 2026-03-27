@@ -3,7 +3,7 @@ pub mod single_crate;
 pub mod workspace;
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
+    collections::{hash_map::Entry, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -12,8 +12,8 @@ use std::{
 pub use error::*;
 pub use single_crate::*;
 pub use workspace::{
-    WorkspaceManifestMetadata, locate_workspace_manifest, resolve_workspace_version,
-    try_parse_manifest,
+    locate_workspace_manifest, resolve_workspace_version, try_parse_manifest,
+    WorkspaceManifestMetadata,
 };
 
 use itertools::Itertools as _;
@@ -354,8 +354,6 @@ pub fn run_discovery_phase_with_target(
 
         let mut files = files;
         files.sort();
-        let target_root_reachable_files =
-            collect_target_root_reachable_files(&files, &target_specs);
 
         let located_workspace_path: Option<PathBuf> = if let Some(workspace_path) = workspace_root {
             let metadata = cached_workspaces.iter().find(|w| {
@@ -403,7 +401,7 @@ pub fn run_discovery_phase_with_target(
                             crate_path: crate_root_path.to_path_buf(),
                             workspace_path: manifest_path,
                             expected: String::from("workspace"),
-                        });
+                        })
                     }
                 }
             }
@@ -420,7 +418,6 @@ pub fn run_discovery_phase_with_target(
             workspace_path: located_workspace_path,
             files, // Clone needed for module mapping below
             targets: target_specs,
-            target_root_reachable_files,
             features,         // Add the parsed features
             dependencies,     // Add the parsed dependencies
             dev_dependencies, // Add the parsed dev-dependencies
@@ -603,111 +600,6 @@ fn target_precedence_key(target: &TargetSpec) -> (u8, &str) {
         TargetKind::Bench => 4,
     };
     (kind_rank, target.name.as_str())
-}
-
-fn collect_target_root_reachable_files(
-    files: &[PathBuf],
-    targets: &[TargetSpec],
-) -> HashMap<PathBuf, Vec<PathBuf>> {
-    let known_files: HashSet<PathBuf> = files.iter().cloned().collect();
-    let mut reachable_by_root: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-
-    for target in targets {
-        let mut queue = VecDeque::from([target.root.clone()]);
-        let mut seen = HashSet::new();
-        let mut ordered = Vec::new();
-
-        while let Some(file_path) = queue.pop_front() {
-            if !seen.insert(file_path.clone()) {
-                continue;
-            }
-            ordered.push(file_path.clone());
-
-            for child in referenced_module_files(&file_path) {
-                if (known_files.contains(&child) || child.exists()) && !seen.contains(&child) {
-                    queue.push_back(child);
-                }
-            }
-        }
-
-        reachable_by_root.insert(target.root.clone(), ordered);
-    }
-
-    reachable_by_root
-}
-
-fn referenced_module_files(file_path: &Path) -> Vec<PathBuf> {
-    let source = match fs::read_to_string(file_path) {
-        Ok(source) => source,
-        Err(_) => return Vec::new(),
-    };
-    let parsed = match syn::parse_file(&source) {
-        Ok(parsed) => parsed,
-        Err(_) => return Vec::new(),
-    };
-
-    let mut resolved = Vec::new();
-    collect_referenced_modules_from_items(
-        &parsed.items,
-        &module_base_dir_for_file(file_path),
-        &mut resolved,
-    );
-    resolved
-}
-
-fn collect_referenced_modules_from_items(
-    items: &[syn::Item],
-    current_base_dir: &Path,
-    resolved: &mut Vec<PathBuf>,
-) {
-    for item in items {
-        if let syn::Item::Mod(item_mod) = item {
-            if item_mod.content.is_none() {
-                if let Some(path) =
-                    resolve_module_path(current_base_dir, &item_mod.ident.to_string())
-                {
-                    resolved.push(path);
-                }
-                continue;
-            }
-
-            if let Some((_, nested_items)) = &item_mod.content {
-                let nested_base_dir = current_base_dir.join(item_mod.ident.to_string());
-                collect_referenced_modules_from_items(nested_items, &nested_base_dir, resolved);
-            }
-        }
-    }
-}
-
-fn module_base_dir_for_file(file_path: &Path) -> PathBuf {
-    let parent = file_path.parent().unwrap_or(file_path);
-    let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
-        return parent.to_path_buf();
-    };
-
-    if file_name == "mod.rs" || file_name == "lib.rs" || file_name == "main.rs" {
-        return parent.to_path_buf();
-    }
-
-    let stem = file_path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or_default();
-    parent.join(stem)
-}
-
-fn resolve_module_path(base_dir: &Path, module_name: &str) -> Option<PathBuf> {
-    let module_rs = base_dir.join(format!("{module_name}.rs"));
-    if module_rs.exists() {
-        return Some(module_rs);
-    }
-
-    let module_mod_rs = base_dir.join(module_name).join("mod.rs");
-    if module_mod_rs.exists() {
-        return Some(module_mod_rs);
-    }
-
-    None
 }
 
 /// Output of the entire discovery phase, containing context for all target crates.
