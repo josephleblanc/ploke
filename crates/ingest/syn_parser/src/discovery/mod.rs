@@ -3,7 +3,7 @@ pub mod single_crate;
 pub mod workspace;
 
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -12,8 +12,8 @@ use std::{
 pub use error::*;
 pub use single_crate::*;
 pub use workspace::{
-    locate_workspace_manifest, resolve_workspace_version, try_parse_manifest,
-    WorkspaceManifestMetadata,
+    WorkspaceManifestMetadata, locate_workspace_manifest, resolve_workspace_version,
+    try_parse_manifest,
 };
 
 use itertools::Itertools as _;
@@ -401,7 +401,7 @@ pub fn run_discovery_phase_with_target(
                             crate_path: crate_root_path.to_path_buf(),
                             workspace_path: manifest_path,
                             expected: String::from("workspace"),
-                        })
+                        });
                     }
                 }
             }
@@ -1064,5 +1064,54 @@ path = "src/main.rs"
             "implicit bin name should win by deterministic precedence"
         );
         Ok(())
+    }
+
+    #[test]
+    fn discovery_with_glob_workspace_member_expands_simple_wildcard() {
+        let tmp = tempdir().unwrap();
+        let workspace_root = tmp.path().join("glob_ws");
+        let crate_root = workspace_root.join("crates/member_one");
+
+        fs::create_dir_all(crate_root.join("src")).unwrap();
+        fs::write(
+            workspace_root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            crate_root.join("Cargo.toml"),
+            r#"[package]
+name = "member_one"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        fs::write(crate_root.join("src/lib.rs"), "pub fn demo() {}\n").unwrap();
+
+        let workspace_metadata = try_parse_manifest(&workspace_root)
+            .expect("workspace fixture should parse")
+            .workspace
+            .expect("workspace section should be present");
+        let expanded_member_path = workspace_metadata
+            .members
+            .first()
+            .expect("workspace should include one member")
+            .clone();
+
+        assert_eq!(workspace_metadata.members.len(), 1);
+        assert_eq!(expanded_member_path, crate_root);
+
+        let discovery = run_discovery_phase_with_target(
+            Some(&workspace_root),
+            std::slice::from_ref(&expanded_member_path),
+            None,
+        )
+        .expect("expanded member path should be discoverable");
+
+        assert!(
+            discovery.crate_contexts.contains_key(&expanded_member_path),
+            "discovery output should include expanded workspace member path"
+        );
     }
 }

@@ -1,0 +1,13 @@
+[package]
+name = "ploke-mbe"
+version = "0.1.0"
+edition = "2024"
+description = "Declarative macro parsing primitives for ploke"
+authors = ["Joseph LeBlanc <joseph.t.leblanc@protonmail.com>"]
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
+thiserror = { workspace = true }
+

@@ -77,12 +77,11 @@ pub fn transform_union_crate_and_structural_masks(
             .merge_for_root(&slice.key.target_root)
             .map_err(|e| TransformError::Transformation(e.to_string()))?;
         let active_cfg = ActiveCfg::from_compilation_unit_key(&slice.key);
-        let cfg_refined =
-            syn_parser::compilation_unit::filter_structural_slice_by_cfg(
-                &merged_for_slice,
-                slice,
-                &active_cfg,
-            );
+        let cfg_refined = syn_parser::compilation_unit::filter_structural_slice_by_cfg(
+            &merged_for_slice,
+            slice,
+            &active_cfg,
+        );
         insert_structural_compilation_unit_slice(db, &cfg_refined)?;
     }
     Ok(())
@@ -113,8 +112,8 @@ mod tests {
         create_schema_all(&db).expect("schema");
 
         let parsed_graphs = test_run_phases_and_collect("fixture_cfg_cu");
-        let partition = ParsedCodeGraph::partition_by_selected_roots(parsed_graphs.clone())
-            .expect("partition");
+        let partition =
+            ParsedCodeGraph::partition_by_selected_roots(parsed_graphs.clone()).expect("partition");
         let root = partition
             .select_default_root_path()
             .expect("root")
@@ -151,9 +150,8 @@ mod tests {
         let expected_counts = structural
             .iter()
             .map(|slice| {
-                let partition =
-                    ParsedCodeGraph::partition_by_selected_roots(parsed_graphs.clone())
-                        .expect("partition");
+                let partition = ParsedCodeGraph::partition_by_selected_roots(parsed_graphs.clone())
+                    .expect("partition");
                 let merged = partition
                     .merge_for_root(&slice.key.target_root)
                     .expect("merged");

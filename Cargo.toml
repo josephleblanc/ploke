@@ -32,6 +32,7 @@ exclude = [
 resolver = "2"
 members = [
     "crates/ingest/syn_parser",
+    "crates/ingest/ploke-mbe",
     "crates/ingest/ploke-transform",
     "crates/ingest/ploke-embed",
     "crates/ploke-db",

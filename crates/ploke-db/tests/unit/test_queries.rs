@@ -7,13 +7,13 @@ use std::path::PathBuf;
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability, UuidWrapper};
 use ploke_db::{CodeSnippet, Database, QueryBuilder, to_uuid};
 use ploke_error::Error;
-use ploke_transform::transform::insert_structural_compilation_unit_slice;
 use ploke_transform::schema::primary_nodes::StructNodeSchema;
+use ploke_transform::transform::insert_structural_compilation_unit_slice;
+use syn_parser::compilation_unit::build_structural_compilation_unit_slices;
 use syn_parser::compilation_unit::{
     CompilationUnitKey, CompilationUnitTargetKind, StructuralCompilationUnitSlice,
 };
 use syn_parser::compilation_unit::{compilation_unit_keys_for_targets, default_target_triple};
-use syn_parser::compilation_unit::build_structural_compilation_unit_slices;
 use uuid::Uuid;
 
 use crate::common::test_helpers;
@@ -255,7 +255,8 @@ fn test_fixture_based_membership_rows_diverge_per_target_compilation_unit() -> R
     let ploke_db = Database::new(db);
     let rows = ploke_db
         .raw_query("?[cu_id, node_id] := *compilation_unit_enabled_node { cu_id, node_id }")?;
-    let mut by_cu: std::collections::HashMap<Uuid, HashSet<Uuid>> = std::collections::HashMap::new();
+    let mut by_cu: std::collections::HashMap<Uuid, HashSet<Uuid>> =
+        std::collections::HashMap::new();
     for row in rows.rows {
         let cu_id = to_uuid(&row[0])?;
         let node_id = to_uuid(&row[1])?;

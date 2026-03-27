@@ -275,8 +275,10 @@ impl QueryBuilder {
     /// Intended for datalog queries where the selected node’s `id` matches `node_id` in the
     /// membership row (same logic variable name `id`).
     pub fn filter_by_compilation_unit(mut self, cu_id: Uuid) -> Self {
-        self.filters
-            .push(compilation_unit_membership_clause(self.selected_node, cu_id));
+        self.filters.push(compilation_unit_membership_clause(
+            self.selected_node,
+            cu_id,
+        ));
         self
     }
 
@@ -289,11 +291,10 @@ impl QueryBuilder {
         match cu_ids.len() {
             0 => {}
             1 => {
-                self.filters
-                    .push(compilation_unit_membership_clause(
-                        self.selected_node,
-                        cu_ids[0],
-                    ));
+                self.filters.push(compilation_unit_membership_clause(
+                    self.selected_node,
+                    cu_ids[0],
+                ));
             }
             _ => {
                 let inner = cu_ids

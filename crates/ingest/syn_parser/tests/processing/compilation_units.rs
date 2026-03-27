@@ -8,7 +8,10 @@ use syn_parser::compilation_unit::{
 use syn_parser::discovery::TargetKind;
 use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::graph::{GraphAccess, GraphNode};
-fn enabled_function_names(graph: &ParsedCodeGraph, enabled_ids: &HashSet<uuid::Uuid>) -> Vec<String> {
+fn enabled_function_names(
+    graph: &ParsedCodeGraph,
+    enabled_ids: &HashSet<uuid::Uuid>,
+) -> Vec<String> {
     let mut names = graph
         .functions()
         .iter()
@@ -150,7 +153,9 @@ fn structural_slices_support_custom_lib_path_targets() {
         lib_key.target_root
     );
     assert!(
-        bin_key.target_root.ends_with("fixture_unusual_lib/src/main.rs"),
+        bin_key
+            .target_root
+            .ends_with("fixture_unusual_lib/src/main.rs"),
         "expected bin target root in src/main.rs, got {:?}",
         bin_key.target_root
     );

@@ -7,6 +7,8 @@ use ploke_common::fixture_github_clones_dir;
 use syn_parser::{parser::graph::ParsedCodeGraph, try_run_phases_and_merge};
 use tracing_subscriber::fmt::format::FmtSpan;
 
+use crate::common::{WorkspaceParsePair, parse_workspace_both};
+
 // ---------------------------------------------------------------------------
 // Tracing helper
 // ---------------------------------------------------------------------------
@@ -1391,29 +1393,24 @@ fn diagnose_serde_crate_root_module() {
 fn parse_workspace_serde_github_clone() {
     // init_tracing();
 
-    use syn_parser::parse_workspace;
-
     let serde_workspace_path = fixture_github_clones_dir().join("serde");
 
     eprintln!("\n=== Testing parse_workspace on serde workspace ===");
     eprintln!("Workspace path: {}", serde_workspace_path.display());
 
-    let result = parse_workspace(&serde_workspace_path, None);
+    let result = parse_workspace_both(&serde_workspace_path, None, None);
 
     match &result {
-        Ok(parsed_workspace) => {
-            eprintln!("\nparse_workspace succeeded!");
-            eprintln!(
-                "Workspace root: {}",
-                parsed_workspace.workspace.path.display()
-            );
+        Ok(pair) => {
+            eprintln!("\nparse_workspace_both succeeded!");
+            eprintln!("Workspace root: {}", pair.default.workspace.path.display());
             eprintln!(
                 "Number of members: {}",
-                parsed_workspace.workspace.members.len()
+                pair.default.workspace.members.len()
             );
-            eprintln!("Number of crates parsed: {}", parsed_workspace.crates.len());
+            eprintln!("Number of crates parsed: {}", pair.default.crates.len());
 
-            for (i, parsed_crate) in parsed_workspace.crates.iter().enumerate() {
+            for (i, parsed_crate) in pair.default.crates.iter().enumerate() {
                 let root_path = &parsed_crate.crate_context.root_path;
                 let has_graph = parsed_crate.parser_output.merged_graph.is_some();
                 let has_tree = parsed_crate.parser_output.module_tree.is_some();
@@ -1427,15 +1424,76 @@ fn parse_workspace_serde_github_clone() {
             }
         }
         Err(e) => {
-            eprintln!("\nparse_workspace FAILED:\n{e:#?}");
+            eprintln!("\nparse_workspace_both FAILED:\n{e:#?}");
         }
     }
 
     assert!(
         result.is_ok(),
-        "parse_workspace failed on serde github clone workspace:\n{:#?}",
+        "parse_workspace_both failed on serde github clone workspace:\n{:#?}",
         result.err()
     );
+}
+
+fn assert_parsed_workspace_invariants(pair: &WorkspaceParsePair) {
+    assert!(
+        !pair.default.crates.is_empty(),
+        "expected default workspace parse to return >=1 crates"
+    );
+    assert!(
+        !pair.configured.crates.is_empty(),
+        "expected configured workspace parse to return >=1 crates"
+    );
+
+    for parsed_crate in &pair.default.crates {
+        assert!(
+            parsed_crate.parser_output.merged_graph.is_some(),
+            "default parse missing merged graph for {}",
+            parsed_crate.crate_context.root_path.display()
+        );
+        assert!(
+            parsed_crate.parser_output.module_tree.is_some(),
+            "default parse missing module tree for {}",
+            parsed_crate.crate_context.root_path.display()
+        );
+    }
+
+    for parsed_crate in &pair.configured.crates {
+        assert!(
+            parsed_crate.parser_output.merged_graph.is_some(),
+            "configured parse missing merged graph for {}",
+            parsed_crate.crate_context.root_path.display()
+        );
+        assert!(
+            parsed_crate.parser_output.module_tree.is_some(),
+            "configured parse missing module tree for {}",
+            parsed_crate.crate_context.root_path.display()
+        );
+    }
+}
+
+#[test]
+#[ignore = "Workspace members use globs (e.g. `axum-*`) which syn_parser workspace parsing does not expand yet"]
+fn parse_workspace_axum_github_clone() {
+    let ws = fixture_github_clones_dir().join("axum");
+    let pair = parse_workspace_both(&ws, None, None).expect("axum workspace should parse");
+    assert_parsed_workspace_invariants(&pair);
+}
+
+#[test]
+#[ignore = "Workspace members use globs (e.g. `crates/*`) and include compile_fail crates; syn_parser workspace parsing currently treats these as literal paths"]
+fn parse_workspace_bevy_github_clone() {
+    let ws = fixture_github_clones_dir().join("bevy");
+    let pair = parse_workspace_both(&ws, None, None).expect("bevy workspace should parse");
+    assert_parsed_workspace_invariants(&pair);
+}
+
+#[test]
+#[ignore = "Known failure: duplicate macro node/relations during workspace parse (see panic in ParsedCodeGraph validation)"]
+fn parse_workspace_tokio_github_clone() {
+    let ws = fixture_github_clones_dir().join("tokio");
+    let pair = parse_workspace_both(&ws, None, None).expect("tokio workspace should parse");
+    assert_parsed_workspace_invariants(&pair);
 }
 
 // ===========================================================================

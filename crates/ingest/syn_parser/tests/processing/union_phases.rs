@@ -41,8 +41,7 @@ fn union_baseline_fields() {
 
     let merged = out.merged_graph.take().expect("merged graph");
     out.module_tree.take().expect("module tree");
-    out
-        .parsed_graphs_for_masks
+    out.parsed_graphs_for_masks
         .take()
         .expect("parsed_graphs_for_masks");
     out.compilation_units.take().expect("compilation_units");
@@ -116,14 +115,18 @@ fn union_baseline_cu_keys() {
 
     let a: HashSet<_> = cu.into_iter().collect();
     let b: HashSet<_> = expected.into_iter().collect();
-    assert_eq!(a, b, "compilation unit keys should match baseline enumeration");
+    assert_eq!(
+        a, b,
+        "compilation unit keys should match baseline enumeration"
+    );
 }
 
 // `try_run_phases_union_for_crate` (dimensions from env): merged graph, masks, and non-empty CU list.
 #[test]
 fn union_crate() {
     let crate_root = fixture_cfg_cu_root();
-    let mut out = try_run_phases_union_for_crate(&crate_root).expect("try_run_phases_union_for_crate");
+    let mut out =
+        try_run_phases_union_for_crate(&crate_root).expect("try_run_phases_union_for_crate");
 
     let merged = out.merged_graph.take().expect("merged graph");
     out.module_tree.take().expect("module tree");

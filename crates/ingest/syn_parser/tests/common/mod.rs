@@ -12,6 +12,9 @@ use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 use syn_parser::parser::{ExtractSpan, ParsedCodeGraph, nodes::*};
 use syn_parser::utils::LogStyle; // Added LogStyle imports
 use syn_parser::utils::logging::LOG_TEST_ID_REGEN;
+use syn_parser::{
+    ParseWorkspaceConfig, TargetSelector, parse_workspace, parse_workspace_with_config,
+};
 use thiserror::Error; // Ensure thiserror is imported
 
 pub mod debug_printers;
@@ -333,6 +336,37 @@ pub fn print_typedef_names(code_graph: &CodeGraph) -> Vec<&str> {
 }
 
 pub const FIXTURES_DIR: &str = "tests/fixtures";
+
+/// Output for [`parse_workspace_both`].
+pub struct WorkspaceParsePair {
+    pub default: syn_parser::ParsedWorkspace,
+    pub configured: syn_parser::ParsedWorkspace,
+}
+
+/// Test helper that runs **both** workspace parsing entrypoints:
+/// - [`syn_parser::parse_workspace`]
+/// - [`syn_parser::parse_workspace_with_config`]
+///
+/// This is useful for ensuring changes keep the default path and the configurable path consistent.
+pub fn parse_workspace_both(
+    workspace_root: &Path,
+    selected_crates: Option<&[&Path]>,
+    target_selector: Option<&TargetSelector>,
+) -> Result<WorkspaceParsePair, SynParserError> {
+    let default = parse_workspace(workspace_root, selected_crates)?;
+    let configured = parse_workspace_with_config(
+        workspace_root,
+        &ParseWorkspaceConfig {
+            selected_crates,
+            target_selector,
+        },
+    )?;
+
+    Ok(WorkspaceParsePair {
+        default,
+        configured,
+    })
+}
 
 #[derive(Error, Debug)]
 pub enum TestError {

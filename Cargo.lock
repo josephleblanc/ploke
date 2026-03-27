@@ -4701,6 +4701,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ploke-mbe"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "ploke-rag"
 version = "0.1.0"
 dependencies = [
