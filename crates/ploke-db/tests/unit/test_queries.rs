@@ -121,6 +121,26 @@ fn test_compilation_unit_membership_rows_and_filter_contract() -> Result<(), Err
 }
 
 #[test]
+fn test_filter_by_compilation_unit_uses_edge_membership_for_syntax_edges() -> Result<(), Error> {
+    let cu_id = Uuid::new_v4();
+    let clause = QueryBuilder::new()
+        .syntax_edges()
+        .filter_by_compilation_unit(cu_id)
+        .filters()
+        .join(", ");
+
+    assert_eq!(
+        clause,
+        format!(
+            "*compilation_unit_enabled_edge {{ cu_id: '{}', source_id, target_id, relation_kind }}",
+            cu_id
+        )
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_filter_by_compilation_units_or_clause_contract() -> Result<(), Error> {
     let db = test_helpers::setup_test_db();
     let ns = Uuid::new_v4();
@@ -169,6 +189,29 @@ fn test_filter_by_compilation_units_or_clause_contract() -> Result<(), Error> {
     );
     let b = format!(
         "*compilation_unit_enabled_node {{ cu_id: '{}', node_id: id }}",
+        cu_b
+    );
+    assert_eq!(or_clause, format!("({a} or {b})"));
+
+    Ok(())
+}
+
+#[test]
+fn test_filter_by_compilation_units_or_clause_for_syntax_edges() -> Result<(), Error> {
+    let cu_a = Uuid::new_v4();
+    let cu_b = Uuid::new_v4();
+    let or_clause = QueryBuilder::new()
+        .syntax_edges()
+        .filter_by_compilation_units(&[cu_a, cu_b])
+        .filters()
+        .join(", ");
+
+    let a = format!(
+        "*compilation_unit_enabled_edge {{ cu_id: '{}', source_id, target_id, relation_kind }}",
+        cu_a
+    );
+    let b = format!(
+        "*compilation_unit_enabled_edge {{ cu_id: '{}', source_id, target_id, relation_kind }}",
         cu_b
     );
     assert_eq!(or_clause, format!("({a} or {b})"));

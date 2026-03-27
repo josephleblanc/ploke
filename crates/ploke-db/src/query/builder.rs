@@ -28,13 +28,25 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub const LOG_TARGET_QUERY_BUILDER: &str = "query_builder";
 
-fn compilation_unit_membership_clause(cu_id: Uuid) -> String {
-    // Join to `*struct { id, ... }` / other primary relations via `node_id: id` (same logic
-    // variable as the row's `id`). Do not use `@ 'NOW'` on `node_id`.
-    format!(
-        "*compilation_unit_enabled_node {{ cu_id: '{}', node_id: id }}",
-        cu_id
-    )
+fn compilation_unit_membership_clause(node_type: Option<NodeType>, cu_id: Uuid) -> String {
+    match node_type {
+        Some(NodeType::SyntaxEdge) => {
+            // Join to `*syntax_edge { source_id, target_id, relation_kind, ... }` by matching
+            // the edge identity tuple. Do not use `@ 'NOW'` on join fields.
+            format!(
+                "*compilation_unit_enabled_edge {{ cu_id: '{}', source_id, target_id, relation_kind }}",
+                cu_id
+            )
+        }
+        _ => {
+            // Join to `*struct { id, ... }` / other primary relations via `node_id: id` (same
+            // logic variable as the row's `id`). Do not use `@ 'NOW'` on `node_id`.
+            format!(
+                "*compilation_unit_enabled_node {{ cu_id: '{}', node_id: id }}",
+                cu_id
+            )
+        }
+    }
 }
 
 /// Main query builder struct
@@ -246,6 +258,12 @@ impl QueryBuilder {
         self
     }
 
+    /// Select syntax edges to query
+    pub fn syntax_edges(mut self) -> Self {
+        self.selected_node = Some(NodeType::SyntaxEdge);
+        self
+    }
+
     /// Filter by name (exact match)
     pub fn with_name(mut self, name: &str) -> Self {
         self.filters.push(format!("name = '{}'", name));
@@ -257,7 +275,8 @@ impl QueryBuilder {
     /// Intended for datalog queries where the selected node’s `id` matches `node_id` in the
     /// membership row (same logic variable name `id`).
     pub fn filter_by_compilation_unit(mut self, cu_id: Uuid) -> Self {
-        self.filters.push(compilation_unit_membership_clause(cu_id));
+        self.filters
+            .push(compilation_unit_membership_clause(self.selected_node, cu_id));
         self
     }
 
@@ -271,12 +290,15 @@ impl QueryBuilder {
             0 => {}
             1 => {
                 self.filters
-                    .push(compilation_unit_membership_clause(cu_ids[0]));
+                    .push(compilation_unit_membership_clause(
+                        self.selected_node,
+                        cu_ids[0],
+                    ));
             }
             _ => {
                 let inner = cu_ids
                     .iter()
-                    .map(|id| compilation_unit_membership_clause(*id))
+                    .map(|id| compilation_unit_membership_clause(self.selected_node, *id))
                     .collect::<Vec<_>>()
                     .join(" or ");
                 self.filters.push(format!("({inner})"));
