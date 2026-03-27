@@ -52,4 +52,3 @@ pub fn expand_simple_workspace_member(workspace_root: &Path, member_path: &Path)
         expanded
     }
 }
-

@@ -10,6 +10,7 @@ use std::{
 };
 
 pub use error::*;
+use serde::Serialize;
 pub use single_crate::*;
 pub use workspace::{
     WorkspaceManifestMetadata, locate_workspace_manifest, resolve_workspace_version,
@@ -613,7 +614,7 @@ fn target_precedence_key(target: &TargetSpec) -> (u8, &str) {
 /// context by the parallel parsing phase (Phase 2). If Phase 2 required
 /// concurrent *writes* to this shared structure, `dashmap::DashMap` would be
 /// necessary.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DiscoveryOutput {
     /// Context information for each successfully discovered crate, keyed by the absolute crate
     /// root path.
@@ -1151,7 +1152,11 @@ edition = "2021"
             .workspace
             .expect("workspace section should be present");
 
-        assert_eq!(workspace_metadata.members.len(), 2, "expected two glob matches");
+        assert_eq!(
+            workspace_metadata.members.len(),
+            2,
+            "expected two glob matches"
+        );
         assert_eq!(workspace_metadata.members[0], axum_core);
         assert_eq!(workspace_metadata.members[1], axum_extra);
 
@@ -1169,5 +1174,24 @@ edition = "2021"
                 member.display()
             );
         }
+    }
+
+    #[test]
+    fn discovery_output_serializes_warning_errors_as_strings() {
+        let discovery = DiscoveryOutput {
+            crate_contexts: HashMap::new(),
+            workspace: None,
+            warnings: vec![DiscoveryError::NonFatalErrors(Box::new(vec![
+                DiscoveryError::MissingPackageName {
+                    path: PathBuf::from("/tmp/bad/Cargo.toml"),
+                },
+            ]))],
+        };
+
+        let json = serde_json::to_string(&discovery).expect("discovery output should serialize");
+        assert!(json.contains("crate_contexts"));
+        assert!(json.contains("warnings"));
+        assert!(json.contains("NonFatalErrors"));
+        assert!(json.contains("MissingPackageName"));
     }
 }

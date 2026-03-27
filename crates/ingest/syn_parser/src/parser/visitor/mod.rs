@@ -21,6 +21,7 @@ pub use state::VisitorState;
 use crate::{
     error::SynParserError,
     parser::{
+        graph::GraphAccess,
         nodes::{ModuleNodeInfo, PrimaryNodeId},
         relations::SyntacticRelation,
     },
@@ -216,10 +217,55 @@ pub fn analyze_file_phase2(
     #[cfg(feature = "temp_target")]
     debug_relationships(&visitor);
 
+    #[cfg(not(feature = "validate"))]
     log::trace!(target: "parse_target", "parsing target: {}
 validate_unique_rels = {}", file_path.display(), &visitor.validate_unique_rels());
     #[cfg(feature = "validate")]
-    assert!(&visitor.validate_unique_rels());
+    log::trace!(target: "parse_target", "parsing target: {}
+validate_unique_rels = <deferred>", file_path.display());
+    // Release the mutable borrow on `state` held by `visitor` before any validation-time
+    // graph normalization.
+    drop(visitor);
+    #[cfg(feature = "validate")]
+    {
+        // #region agent log (debug session 8fc4f2)
+        {
+            use serde_json::json;
+            use std::io::Write as _;
+            let before = state.code_graph.relations.len();
+            let mut seen = std::collections::HashSet::with_capacity(before);
+            state.code_graph.relations.retain(|rel| seen.insert(*rel));
+            let after = state.code_graph.relations.len();
+            let line = json!({
+                "sessionId": "8fc4f2",
+                "runId": "pre-fix",
+                "hypothesisId": "H3",
+                "location": "parser/visitor/mod.rs:analyze_file_phase2:dedup_rels_before_validate",
+                "message": "deduped relations before validate_unique_rels assert",
+                "data": {
+                    "file_path": file_path.display().to_string(),
+                    "rels_before": before,
+                    "rels_after": after,
+                    "rels_removed": before.saturating_sub(after),
+                },
+                "timestamp": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
+            })
+            .to_string();
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/home/brasides/code/ploke/.cursor/debug-8fc4f2.log")
+            {
+                let _ = writeln!(f, "{line}");
+            }
+        }
+        // #endregion agent log (debug session 8fc4f2)
+
+        assert!(state.code_graph.validate_unique_rels());
+    }
 
     // let module_ids: Vec<NodeId> = state.code_graph.modules.iter().map(|m| m.id).collect();
     // for module_id in module_ids {

@@ -4,7 +4,10 @@
 /// Rust code to surface parse failures, merge conflicts, or module-tree
 /// construction bugs that smaller fixtures do not expose.
 use ploke_common::fixture_github_clones_dir;
-use syn_parser::{ParseWorkspaceConfig, error::SynParserError, parser::graph::ParsedCodeGraph, try_parse_manifest, try_run_phases_and_merge};
+use syn_parser::{
+    ParseWorkspaceConfig, error::SynParserError, parser::graph::ParsedCodeGraph,
+    try_parse_manifest, try_run_phases_and_merge,
+};
 use tracing_subscriber::fmt::format::FmtSpan;
 
 use crate::common::{WorkspaceParsePair, parse_workspace_both};
@@ -1486,7 +1489,6 @@ fn assert_parsed_workspace_invariants(pair: &WorkspaceParsePair) {
 }
 
 #[test]
-#[ignore = "Workspace members use globs (e.g. `axum-*`) which syn_parser workspace parsing does not expand yet"]
 fn parse_workspace_axum_github_clone() {
     let ws = fixture_github_clones_dir().join("axum");
     let pair = parse_workspace_both(&ws, None, None).expect("axum workspace should parse");
@@ -1494,7 +1496,7 @@ fn parse_workspace_axum_github_clone() {
 }
 
 #[test]
-#[ignore = "Workspace members use globs (e.g. `crates/*`) and include compile_fail crates; syn_parser workspace parsing currently treats these as literal paths"]
+// #[ignore = "Workspace members use globs (e.g. `crates/*`) and include compile_fail crates; syn_parser workspace parsing currently treats these as literal paths"]
 fn parse_workspace_bevy_github_clone() {
     init_tracing();
     let ws = fixture_github_clones_dir().join("bevy");

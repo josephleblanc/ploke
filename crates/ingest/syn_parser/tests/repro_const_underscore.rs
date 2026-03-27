@@ -13,8 +13,8 @@
 //! without depending on spans/byte offsets.
 use std::fs;
 
-use syn_parser::{ParseWorkspaceConfig, parse_workspace_with_config};
 use syn_parser::error::SynParserError;
+use syn_parser::{ParseWorkspaceConfig, parse_workspace_with_config};
 use tempfile::tempdir;
 
 fn parse_temp_workspace_with_single_member(lib_rs_contents: &str) -> Result<(), SynParserError> {
@@ -129,4 +129,3 @@ const DYNHASH_DYN_COMPAT_CHECK: Option<Box<dyn DynHash>> = None;
         panic!("unexpected panic while parsing named-const crate: {panic_msg}");
     }
 }
-

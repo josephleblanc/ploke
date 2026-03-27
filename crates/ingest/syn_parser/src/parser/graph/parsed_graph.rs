@@ -5,6 +5,8 @@ use crate::{
     },
 };
 use anyhow::Result;
+use serde_json::json;
+use std::io::Write as _;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -86,6 +88,32 @@ fn root_selection_key(path: &Path) -> (u8, PathBuf) {
 }
 
 impl ParsedCodeGraph {
+    // #region agent log (debug session 08aa18)
+    fn agent_log(hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
+        let line = json!({
+            "sessionId": "08aa18",
+            "runId": "bevy-trace",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+        })
+        .to_string();
+
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/home/brasides/code/ploke/.cursor/debug-08aa18.log")
+        {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+    // #endregion agent log (debug session 08aa18)
+
     pub fn new(file_path: PathBuf, crate_namespace: Uuid, graph: CodeGraph) -> Self {
         Self {
             file_path,
@@ -231,6 +259,18 @@ impl ParsedCodeGraph {
 
     #[instrument(skip_all, fields(graph_count = graphs.len()))]
     pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, SynParserError> {
+        // #region agent log (debug session 08aa18)
+        Self::agent_log(
+            "H1",
+            "parsed_graph.rs:merge_new:entry",
+            "merge_new called",
+            json!({
+                "graphs_len": graphs.len(),
+                "graphs_with_context": graphs.iter().filter(|g| g.crate_context.is_some()).count(),
+            }),
+        );
+        // #endregion agent log (debug session 08aa18)
+
         let selected_root_paths: HashSet<PathBuf> = graphs
             .iter()
             .filter(|graph| graph.crate_context.is_some())
@@ -269,14 +309,30 @@ impl ParsedCodeGraph {
 
         new_graph.crate_context = found_context;
 
+        // #region agent log (debug session 08aa18)
+        Self::agent_log(
+            "H1",
+            "parsed_graph.rs:merge_new:post_append",
+            "merge_new finished append_all loop",
+            json!({
+                "has_crate_context": new_graph.crate_context.is_some(),
+                "root_file_result": format!("{:?}", new_graph.root_file().map(|p| p.display().to_string())),
+            }),
+        );
+        // #endregion agent log (debug session 08aa18)
+
         #[cfg(feature = "validate")]
         {
             ParsedCodeGraph::debug_relationships(&new_graph);
-            tracing::debug!(target: "validate",
-                "{} <- {}",
-                "Validating".log_step(),
-                new_graph.root_file().unwrap().display(),
-            );
+            if let Ok(root_file) = new_graph.root_file() {
+                tracing::debug!(target: "validate",
+                    "{} <- {}",
+                    "Validating".log_step(),
+                    root_file.display(),
+                );
+            } else {
+                tracing::debug!(target: "validate", "{} <- <no root file>", "Validating".log_step());
+            }
             assert!(new_graph.validate_unique_rels());
         }
 

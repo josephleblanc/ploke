@@ -1,11 +1,13 @@
 //! Tests for `parse debug` path diagnostics (logical-paths, modules-premerge, path-collisions).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
+use tempfile::TempDir;
 use xtask::commands::parse::ParseOutput;
 use xtask::commands::parse_debug::{
-    DebugCargoTargets, DebugDiscoveryRules, DebugLogicalPaths, DebugModulesPremerge, DebugOutput,
-    DebugPathCollisions, DebugWorkspaceMembers, ParseDebugCli, ParseDebugCmd,
+    DebugCargoTargets, DebugCorpus, DebugDiscoveryRules, DebugLogicalPaths, DebugModulesPremerge,
+    DebugOutput, DebugPathCollisions, DebugWorkspaceMembers, ParseDebugCli, ParseDebugCmd,
 };
 use xtask::context::CommandContext;
 use xtask::executor::Command as _;
@@ -145,4 +147,192 @@ fn parse_debug_discovery_rules_reports_src_and_manifest_targets() {
         }
         other => panic!("unexpected output: {other:?}"),
     }
+}
+
+#[test]
+fn parse_debug_corpus_clones_and_parses_local_git_repo() {
+    let temp = TempDir::new().expect("tempdir");
+    let source_repo = temp.path().join("mini_repo");
+    init_local_git_crate(&source_repo);
+
+    let list_file = temp.path().join("targets.txt");
+    std::fs::write(&list_file, format!("{}\n", source_repo.display())).expect("write list file");
+
+    let checkout_dir = temp.path().join("checkouts");
+    let cmd = ParseDebugCli {
+        cmd: ParseDebugCmd::Corpus(DebugCorpus {
+            list_files: vec![list_file],
+            checkout_dir,
+            limit: 0,
+            skip_clone: false,
+            skip_merge: false,
+        }),
+    };
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd.execute(&ctx).expect("parse debug corpus");
+    match out {
+        ParseOutput::Debug(DebugOutput::Corpus(o)) => {
+            assert_eq!(o.processed_targets, 1, "expected one processed target");
+            assert_eq!(o.single_crate_targets, 1, "expected one crate target");
+            assert_eq!(o.workspace_targets, 0, "did not expect workspace targets");
+            assert_eq!(o.clone_failures, 0, "unexpected clone failure: {o:#?}");
+            assert_eq!(
+                o.discovery_failures, 0,
+                "unexpected discovery failure: {o:#?}"
+            );
+            assert_eq!(o.resolve_failures, 0, "unexpected resolve failure: {o:#?}");
+            assert_eq!(o.merge_failures, 0, "unexpected merge failure: {o:#?}");
+            let target = o.targets.first().expect("one target result");
+            assert!(target.clone.ok, "clone status should be ok: {target:#?}");
+            assert_eq!(target.repository_kind, "single_crate");
+            assert_eq!(target.recommended_parser, "try_run_phases_and_merge");
+            assert!(
+                target.discovery.as_ref().is_some_and(|d| d.ok),
+                "discovery should succeed: {target:#?}"
+            );
+            assert!(
+                target.resolve.as_ref().is_some_and(|r| r.ok),
+                "resolve should succeed: {target:#?}"
+            );
+            assert!(
+                target.merge.as_ref().is_some_and(|m| m.ok),
+                "merge should succeed: {target:#?}"
+            );
+            assert!(target.commit_sha.is_some(), "expected HEAD commit SHA");
+        }
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_debug_corpus_classifies_workspace_repo_without_running_single_crate_pipeline() {
+    let temp = TempDir::new().expect("tempdir");
+    let source_repo = temp.path().join("mini_workspace");
+    init_local_git_workspace(&source_repo);
+
+    let list_file = temp.path().join("targets_workspace.txt");
+    std::fs::write(&list_file, format!("{}\n", source_repo.display())).expect("write list file");
+
+    let checkout_dir = temp.path().join("checkouts");
+    let cmd = ParseDebugCli {
+        cmd: ParseDebugCmd::Corpus(DebugCorpus {
+            list_files: vec![list_file],
+            checkout_dir,
+            limit: 0,
+            skip_clone: false,
+            skip_merge: false,
+        }),
+    };
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd.execute(&ctx).expect("parse debug corpus workspace");
+    match out {
+        ParseOutput::Debug(DebugOutput::Corpus(o)) => {
+            assert_eq!(o.processed_targets, 1, "expected one processed target");
+            assert_eq!(o.single_crate_targets, 0, "did not expect crate targets");
+            assert_eq!(o.workspace_targets, 1, "expected one workspace target");
+            assert_eq!(o.clone_failures, 0, "unexpected clone failure: {o:#?}");
+            assert_eq!(
+                o.discovery_failures, 0,
+                "workspace should not hit discovery"
+            );
+            assert_eq!(o.resolve_failures, 0, "workspace should not hit resolve");
+            assert_eq!(o.merge_failures, 0, "workspace should not hit merge");
+            let target = o.targets.first().expect("one target result");
+            assert_eq!(target.repository_kind, "workspace");
+            assert_eq!(target.recommended_parser, "parse_workspace_with_config");
+            assert_eq!(target.workspace_member_count, Some(1));
+            assert!(target.classification_error.is_none(), "{target:#?}");
+            assert!(target.discovery.is_none(), "{target:#?}");
+            assert!(target.resolve.is_none(), "{target:#?}");
+            assert!(target.merge.is_none(), "{target:#?}");
+        }
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+fn init_local_git_crate(repo_dir: &Path) {
+    std::fs::create_dir_all(repo_dir.join("src")).expect("create src dir");
+    std::fs::write(
+        repo_dir.join("Cargo.toml"),
+        r#"[package]
+name = "mini_repo"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+"#,
+    )
+    .expect("write Cargo.toml");
+    std::fs::write(
+        repo_dir.join("src/lib.rs"),
+        "pub fn answer() -> usize { 42 }\n",
+    )
+    .expect("write lib.rs");
+
+    run_git(repo_dir, &["init"]);
+    run_git(repo_dir, &["add", "."]);
+    run_git(
+        repo_dir,
+        &[
+            "-c",
+            "user.name=ploke-test",
+            "-c",
+            "user.email=ploke@example.com",
+            "commit",
+            "-m",
+            "initial",
+        ],
+    );
+}
+
+fn init_local_git_workspace(repo_dir: &Path) {
+    std::fs::create_dir_all(repo_dir.join("member/src")).expect("create workspace member src");
+    std::fs::write(
+        repo_dir.join("Cargo.toml"),
+        r#"[workspace]
+members = ["member"]
+resolver = "2"
+"#,
+    )
+    .expect("write workspace Cargo.toml");
+    std::fs::write(
+        repo_dir.join("member/Cargo.toml"),
+        r#"[package]
+name = "member"
+version = "0.1.0"
+edition = "2024"
+"#,
+    )
+    .expect("write member Cargo.toml");
+    std::fs::write(
+        repo_dir.join("member/src/lib.rs"),
+        "pub fn workspace_member() -> usize { 7 }\n",
+    )
+    .expect("write member lib.rs");
+
+    run_git(repo_dir, &["init"]);
+    run_git(repo_dir, &["add", "."]);
+    run_git(
+        repo_dir,
+        &[
+            "-c",
+            "user.name=ploke-test",
+            "-c",
+            "user.email=ploke@example.com",
+            "commit",
+            "-m",
+            "initial",
+        ],
+    );
+}
+
+fn run_git(repo_dir: &Path, args: &[&str]) {
+    let status = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(args)
+        .status()
+        .expect("spawn git");
+    assert!(status.success(), "git {:?} failed with {status}", args);
 }

@@ -147,7 +147,7 @@ impl Features {
 
 /// Represents a dependency specification, which can be a simple version string
 /// or a more detailed table.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(untagged)] // Allows parsing either a string or a table
 pub enum DependencySpec {
     /// A simple version string, e.g. `"1.0"`.
@@ -291,7 +291,7 @@ impl DependencySpec {
 }
 
 /// Represents the `[dependencies]` section.
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone, Default, Serialize)]
 pub struct Dependencies(pub HashMap<String, DependencySpec>); // Made inner map public for direct access if needed
 
 /// A trait for accessing dependency information.
@@ -606,7 +606,7 @@ impl DependencyMap for DevDependencies {
 }
 
 /// Represents the `[dev-dependencies]` section.
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone, Default, Serialize)]
 #[serde(rename = "dev-dependencies")] // Match the TOML key
 pub struct DevDependencies(HashMap<String, DependencySpec>);
 
@@ -717,7 +717,7 @@ pub struct CargoManifest {
 ///
 /// This struct automatically implements `Send + Sync` because all its members
 /// (`String`, `Uuid`, `PathBuf`, `Vec<PathBuf>`) are `Send + Sync`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CrateContext {
     /// The simple name of the crate (e.g., "syn_parser").
     pub name: String,
@@ -794,7 +794,7 @@ impl CrateContext {
 /// context by the parallel parsing phase (Phase 2). If Phase 2 required
 /// concurrent *writes* to this shared structure, `dashmap::DashMap` would be
 /// necessary.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DiscoveryOutput {
     /// Context information for each successfully discovered crate, keyed by the absolute crate
     /// root path.

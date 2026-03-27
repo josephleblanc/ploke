@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use serde::Serialize;
 use toml;
 
 use crate::error::SynParserError;
@@ -264,6 +266,15 @@ impl TryFrom<DiscoveryError> for SynParserError {
                 source_string,
             },
         })
+    }
+}
+
+impl Serialize for DiscoveryError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("{self:?}"))
     }
 }
 

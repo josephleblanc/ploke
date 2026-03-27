@@ -19,6 +19,8 @@ use crate::parser::nodes::*;
 use crate::utils::{LogStyle, LogStyleDebug};
 use ploke_core::{ItemKind, TypeId, TypeKind};
 use serde::Deserialize;
+use serde_json::json;
+use std::io::Write as _;
 use uuid::Uuid;
 
 use crate::parser::{
@@ -92,6 +94,35 @@ pub trait GraphAccess {
             } else {
                 tracing::debug!(target: "debug_dup", "DUPLICATE: {}", rel);
                 dups.push(*rel);
+                // #region agent log (debug session 8fc4f2)
+                {
+                    let line = json!({
+                        "sessionId": "8fc4f2",
+                        "runId": "pre-fix",
+                        "hypothesisId": "H1",
+                        "location": "parser/graph/mod.rs:validate_unique_rels:dups_push",
+                        "message": "duplicate relation observed",
+                        "data": {
+                            "rel_debug": format!("{rel:?}"),
+                            "rel_display": format!("{rel}"),
+                            "source": format!("{:?}", rel.source()),
+                            "target": format!("{:?}", rel.target()),
+                        },
+                        "timestamp": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0),
+                    })
+                    .to_string();
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open("/home/brasides/code/ploke/.cursor/debug-8fc4f2.log")
+                    {
+                        let _ = writeln!(f, "{line}");
+                    }
+                }
+                // #endregion agent log (debug session 8fc4f2)
             }
             acc
         });
@@ -103,6 +134,36 @@ pub trait GraphAccess {
         for dup in &dups {
             debug!(target: "dup", "{:#?}", dup);
             if let Err(e) = self.find_node_unique(dup.target()) {
+                // #region agent log (debug session 8fc4f2)
+                {
+                    let line = json!({
+                        "sessionId": "8fc4f2",
+                        "runId": "pre-fix",
+                        "hypothesisId": "H2",
+                        "location": "parser/graph/mod.rs:validate_unique_rels:find_node_unique_target_err",
+                        "message": "duplicate relation target not found by find_node_unique",
+                        "data": {
+                            "dup_rel_debug": format!("{dup:?}"),
+                            "dup_rel_display": format!("{dup}"),
+                            "target_any_id": format!("{:?}", dup.target()),
+                            "source_any_id": format!("{:?}", dup.source()),
+                            "find_node_unique_err": format!("{e}"),
+                        },
+                        "timestamp": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0),
+                    })
+                    .to_string();
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open("/home/brasides/code/ploke/.cursor/debug-8fc4f2.log")
+                    {
+                        let _ = writeln!(f, "{line}");
+                    }
+                }
+                // #endregion agent log (debug session 8fc4f2)
                 match ImplNodeId::try_from(dup.target()) {
                     Ok(id) => {
                         let dup_impls = self.impls().iter().filter(|imp| imp.id() == id).inspect(|imp| debug!(target: "debug_dup", "dup impls | span: {:?}, name: {}, id: {}", imp.span(), imp.name(), imp.id())).map(|imp| (imp.id(), imp.span()));
@@ -140,7 +201,7 @@ dup_accounted: {}",
                 }
             }
             let target = self.find_node_unique(dup.target()).unwrap_or_else(|e| {
-                let non_unique_target = self.find_any_node(dup.target().as_any());
+                let _non_unique_target = self.find_any_node(dup.target().as_any());
                 self.debug_relationships();
                 panic!(
                     "Expected unique relations, found duplicate with error: {}",

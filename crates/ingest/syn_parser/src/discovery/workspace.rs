@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use itertools::Itertools;
 use ploke_core::workspace_glob::expand_simple_workspace_member;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::discovery::DiscoveryError;
 
@@ -18,13 +18,13 @@ pub struct WorkspaceVersionLink {
 
 /// Partial view of a manifest that may or may not declare workspace metadata. `workspace = None`
 /// signals that the inspected manifest isn't a workspace boundary.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Serialize)]
 pub struct WorkspaceManifestMetadata {
     pub workspace: Option<WorkspaceMetadataSection>,
 }
 
 /// Captures the `[workspace]` table when parsing ancestor manifests.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Serialize)]
 pub struct WorkspaceMetadataSection {
     #[serde(skip)]
     pub path: PathBuf,
@@ -43,7 +43,7 @@ impl WorkspaceMetadataSection {
 }
 
 /// Captures the `[workspace.package]` metadata that may hold the shared version.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Serialize)]
 pub struct WorkspacePackageMetadata {
     version: Option<String>,
 }

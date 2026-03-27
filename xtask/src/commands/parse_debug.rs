@@ -10,8 +10,9 @@
 //! to see derived paths, per-file module nodes, and post-merge path duplicates.
 #![allow(missing_docs)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::time::Instant;
 
 use cargo_metadata::Metadata;
@@ -85,6 +86,9 @@ pub enum ParseDebugCmd {
 
     /// Explain source discovery rules used by syn_parser for a crate.
     DiscoveryRules(DebugDiscoveryRules),
+
+    /// Clone and parse a corpus of GitHub targets listed in one or more text files.
+    Corpus(DebugCorpus),
 }
 
 impl ParseDebugCmd {
@@ -100,6 +104,7 @@ impl ParseDebugCmd {
             ParseDebugCmd::CargoTargets(c) => c.execute(ctx)?,
             ParseDebugCmd::WorkspaceMembers(c) => c.execute(ctx)?,
             ParseDebugCmd::DiscoveryRules(c) => c.execute(ctx)?,
+            ParseDebugCmd::Corpus(c) => c.execute(ctx)?,
         };
         Ok(super::parse::ParseOutput::Debug(out))
     }
@@ -823,6 +828,7 @@ pub enum DebugOutput {
     CargoTargets(DebugCargoTargetsOut),
     WorkspaceMembers(DebugWorkspaceMembersOut),
     DiscoveryRules(DebugDiscoveryRulesOut),
+    Corpus(DebugCorpusOut),
 }
 
 fn path_relative_to(root: &Path, path: &Path) -> String {
@@ -1175,6 +1181,670 @@ impl Command for DebugDiscoveryRules {
                 "Non-Rust files are ignored during `src/` walk.".into(),
             ],
         }))
+    }
+}
+
+// --- corpus harness ---
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct DebugCorpus {
+    /// Additional list file(s) of targets (`owner/repo(.git)`, URL, or local git path).
+    ///
+    /// When omitted, defaults to `top_100_stars.txt` and `top_100_downloads.txt`
+    /// from the workspace root.
+    #[arg(long = "list-file", value_name = "PATH")]
+    pub list_files: Vec<PathBuf>,
+
+    /// Directory used to store cloned repositories.
+    #[arg(
+        long,
+        value_name = "DIR",
+        default_value = "tests/fixture_github_clones/corpus"
+    )]
+    pub checkout_dir: PathBuf,
+
+    /// Max number of unique targets to process after deduplication (0 = unlimited).
+    #[arg(long, default_value_t = 0)]
+    pub limit: usize,
+
+    /// Reuse only already-cloned repos; do not run `git clone`.
+    #[arg(long)]
+    pub skip_clone: bool,
+
+    /// Stop after discovery + resolve (skip merge / module-tree build).
+    #[arg(long)]
+    pub skip_merge: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugCorpusOut {
+    pub checkout_root: String,
+    pub list_files: Vec<String>,
+    pub requested_entries: usize,
+    pub unique_targets: usize,
+    pub processed_targets: usize,
+    pub single_crate_targets: usize,
+    pub workspace_targets: usize,
+    pub skipped_targets: usize,
+    pub cloned_targets: usize,
+    pub reused_targets: usize,
+    pub clone_failures: usize,
+    pub discovery_failures: usize,
+    pub resolve_failures: usize,
+    pub merge_failures: usize,
+    pub panic_failures: usize,
+    pub targets: Vec<CorpusTargetResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CorpusTargetResult {
+    pub target: String,
+    pub normalized_repo: String,
+    pub clone_url: String,
+    pub datasets: Vec<String>,
+    pub checkout_path: String,
+    pub repository_kind: String,
+    pub recommended_parser: String,
+    pub workspace_member_count: Option<usize>,
+    pub classification_error: Option<String>,
+    pub clone: CorpusCloneStatus,
+    pub commit_sha: Option<String>,
+    pub discovery: Option<CorpusStageResult>,
+    pub resolve: Option<CorpusStageResult>,
+    pub merge: Option<CorpusStageResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CorpusCloneStatus {
+    pub ok: bool,
+    pub action: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CorpusStageResult {
+    pub ok: bool,
+    pub panic: bool,
+    pub failure_kind: Option<String>,
+    pub error: Option<String>,
+    pub duration_ms: u64,
+    pub nodes_parsed: Option<usize>,
+    pub relations_found: Option<usize>,
+    pub file_count: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct CorpusTargetSpec {
+    original: String,
+    normalized_repo: String,
+    clone_url: String,
+    datasets: BTreeSet<String>,
+    checkout_slug: String,
+}
+
+#[derive(Debug, Clone)]
+struct CorpusCheckoutClassification {
+    repository_kind: String,
+    recommended_parser: String,
+    workspace_member_count: Option<usize>,
+    classification_error: Option<String>,
+    should_run_single_crate_pipeline: bool,
+}
+
+impl Command for DebugCorpus {
+    type Output = DebugOutput;
+    type Error = XtaskError;
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let workspace_root = ctx.workspace_root()?;
+        let checkout_root = if self.checkout_dir.is_absolute() {
+            self.checkout_dir.clone()
+        } else {
+            workspace_root.join(&self.checkout_dir)
+        };
+        std::fs::create_dir_all(&checkout_root).map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to create corpus checkout dir {}: {e}",
+                checkout_root.display()
+            ))
+        })?;
+
+        let list_files = if self.list_files.is_empty() {
+            vec![
+                workspace_root.join("top_100_stars.txt"),
+                workspace_root.join("top_100_downloads.txt"),
+            ]
+        } else {
+            self.list_files
+                .iter()
+                .map(|p| {
+                    if p.is_absolute() {
+                        p.clone()
+                    } else {
+                        workspace_root.join(p)
+                    }
+                })
+                .collect()
+        };
+
+        let mut requested_entries = 0usize;
+        let mut target_map: HashMap<String, CorpusTargetSpec> = HashMap::new();
+        for list_file in &list_files {
+            let dataset_name = list_file
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let content = std::fs::read_to_string(list_file).map_err(|e| {
+                XtaskError::Resource(format!(
+                    "Failed to read corpus list {}: {e}",
+                    list_file.display()
+                ))
+            })?;
+            for raw in content.lines() {
+                let line = raw.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                requested_entries += 1;
+                let parsed = parse_corpus_target(line)?;
+                let key = parsed.normalized_repo.clone();
+                target_map
+                    .entry(key)
+                    .and_modify(|existing| {
+                        existing.datasets.insert(dataset_name.clone());
+                    })
+                    .or_insert_with(|| {
+                        let mut datasets = BTreeSet::new();
+                        datasets.insert(dataset_name.clone());
+                        CorpusTargetSpec {
+                            original: parsed.original,
+                            normalized_repo: parsed.normalized_repo,
+                            clone_url: parsed.clone_url,
+                            datasets,
+                            checkout_slug: parsed.checkout_slug,
+                        }
+                    });
+            }
+        }
+
+        let unique_targets = target_map.len();
+        let mut specs: Vec<CorpusTargetSpec> = target_map.into_values().collect();
+        specs.sort_by(|a, b| a.normalized_repo.cmp(&b.normalized_repo));
+        if self.limit > 0 && specs.len() > self.limit {
+            specs.truncate(self.limit);
+        }
+
+        let mut targets = Vec::with_capacity(specs.len());
+        let mut single_crate_targets = 0usize;
+        let mut workspace_targets = 0usize;
+        let mut skipped_targets = 0usize;
+        let mut cloned_targets = 0usize;
+        let mut reused_targets = 0usize;
+        let mut clone_failures = 0usize;
+        let mut discovery_failures = 0usize;
+        let mut resolve_failures = 0usize;
+        let mut merge_failures = 0usize;
+        let mut panic_failures = 0usize;
+
+        for spec in specs {
+            let checkout_path = checkout_root.join(&spec.checkout_slug);
+            let clone = ensure_corpus_checkout(&spec, &checkout_path, self.skip_clone)?;
+            match clone.action.as_str() {
+                "cloned" => cloned_targets += 1,
+                "reused" => reused_targets += 1,
+                "skipped_missing" => skipped_targets += 1,
+                _ => {}
+            }
+            if !clone.ok {
+                clone_failures += 1;
+                targets.push(CorpusTargetResult {
+                    target: spec.original,
+                    normalized_repo: spec.normalized_repo,
+                    clone_url: spec.clone_url,
+                    datasets: spec.datasets.into_iter().collect(),
+                    checkout_path: checkout_path.display().to_string(),
+                    repository_kind: "unknown".into(),
+                    recommended_parser: "unknown".into(),
+                    workspace_member_count: None,
+                    classification_error: Some(
+                        "clone failed before manifest classification".into(),
+                    ),
+                    clone,
+                    commit_sha: None,
+                    discovery: Some(CorpusStageResult {
+                        ok: false,
+                        panic: false,
+                        failure_kind: Some("clone".into()),
+                        error: Some("clone step did not produce a usable checkout".into()),
+                        duration_ms: 0,
+                        nodes_parsed: None,
+                        relations_found: None,
+                        file_count: None,
+                    }),
+                    resolve: None,
+                    merge: None,
+                });
+                continue;
+            }
+
+            let commit_sha = git_stdout(&checkout_path, &["rev-parse", "HEAD"]).ok();
+            let classification = classify_corpus_checkout(&checkout_path);
+            match classification.repository_kind.as_str() {
+                "workspace" => workspace_targets += 1,
+                "single_crate" => single_crate_targets += 1,
+                _ => {}
+            }
+            if !classification.should_run_single_crate_pipeline {
+                targets.push(CorpusTargetResult {
+                    target: spec.original,
+                    normalized_repo: spec.normalized_repo,
+                    clone_url: spec.clone_url,
+                    datasets: spec.datasets.into_iter().collect(),
+                    checkout_path: checkout_path.display().to_string(),
+                    repository_kind: classification.repository_kind,
+                    recommended_parser: classification.recommended_parser,
+                    workspace_member_count: classification.workspace_member_count,
+                    classification_error: classification.classification_error,
+                    clone,
+                    commit_sha,
+                    discovery: None,
+                    resolve: None,
+                    merge: None,
+                });
+                continue;
+            }
+
+            let discovery = run_corpus_discovery_stage(&checkout_path);
+            if !discovery.ok {
+                discovery_failures += 1;
+                if discovery.panic {
+                    panic_failures += 1;
+                }
+                targets.push(CorpusTargetResult {
+                    target: spec.original,
+                    normalized_repo: spec.normalized_repo,
+                    clone_url: spec.clone_url,
+                    datasets: spec.datasets.into_iter().collect(),
+                    checkout_path: checkout_path.display().to_string(),
+                    repository_kind: classification.repository_kind.clone(),
+                    recommended_parser: classification.recommended_parser.clone(),
+                    workspace_member_count: classification.workspace_member_count,
+                    classification_error: classification.classification_error.clone(),
+                    clone,
+                    commit_sha,
+                    discovery: Some(discovery),
+                    resolve: None,
+                    merge: None,
+                });
+                continue;
+            }
+
+            let resolve = run_corpus_stage(|| {
+                let graphs =
+                    try_run_phases_and_resolve(&checkout_path).map_err(|e| e.to_string())?;
+                let nodes: usize = graphs
+                    .iter()
+                    .map(|pg| count_code_graph_nodes(&pg.graph))
+                    .sum();
+                let rels: usize = graphs.iter().map(|pg| pg.graph.relations.len()).sum();
+                Ok(CorpusStageMetrics {
+                    nodes_parsed: Some(nodes),
+                    relations_found: Some(rels),
+                    file_count: None,
+                })
+            });
+            if !resolve.ok {
+                resolve_failures += 1;
+                if resolve.panic {
+                    panic_failures += 1;
+                }
+            }
+
+            let merge = if !self.skip_merge && resolve.ok {
+                let stage = run_corpus_stage(|| {
+                    let out =
+                        try_run_phases_and_merge(&checkout_path).map_err(|e| e.to_string())?;
+                    let (nodes, rels) = if let Some(ref mg) = out.merged_graph {
+                        (
+                            Some(count_code_graph_nodes(&mg.graph)),
+                            Some(mg.graph.relations.len()),
+                        )
+                    } else {
+                        (None, None)
+                    };
+                    Ok(CorpusStageMetrics {
+                        nodes_parsed: nodes,
+                        relations_found: rels,
+                        file_count: None,
+                    })
+                });
+                if !stage.ok {
+                    merge_failures += 1;
+                    if stage.panic {
+                        panic_failures += 1;
+                    }
+                }
+                Some(stage)
+            } else {
+                None
+            };
+
+            targets.push(CorpusTargetResult {
+                target: spec.original,
+                normalized_repo: spec.normalized_repo,
+                clone_url: spec.clone_url,
+                datasets: spec.datasets.into_iter().collect(),
+                checkout_path: checkout_path.display().to_string(),
+                repository_kind: classification.repository_kind,
+                recommended_parser: classification.recommended_parser,
+                workspace_member_count: classification.workspace_member_count,
+                classification_error: classification.classification_error,
+                clone,
+                commit_sha,
+                discovery: Some(discovery),
+                resolve: Some(resolve),
+                merge,
+            });
+        }
+
+        Ok(DebugOutput::Corpus(DebugCorpusOut {
+            checkout_root: checkout_root.display().to_string(),
+            list_files: list_files.iter().map(|p| p.display().to_string()).collect(),
+            requested_entries,
+            unique_targets,
+            processed_targets: targets.len(),
+            single_crate_targets,
+            workspace_targets,
+            skipped_targets,
+            cloned_targets,
+            reused_targets,
+            clone_failures,
+            discovery_failures,
+            resolve_failures,
+            merge_failures,
+            panic_failures,
+            targets,
+        }))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ParsedCorpusTarget {
+    original: String,
+    normalized_repo: String,
+    clone_url: String,
+    checkout_slug: String,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CorpusStageMetrics {
+    nodes_parsed: Option<usize>,
+    relations_found: Option<usize>,
+    file_count: Option<usize>,
+}
+
+fn parse_corpus_target(input: &str) -> Result<ParsedCorpusTarget, XtaskError> {
+    let original = input.trim().to_string();
+    if original.is_empty() {
+        return Err(XtaskError::validation("empty corpus target line").into());
+    }
+
+    let source = original.trim_end_matches('/');
+    let (normalized_repo, clone_url, checkout_slug) =
+        if source.starts_with("http://") || source.starts_with("https://") {
+            let slug = url_slug(source).ok_or_else(|| {
+                XtaskError::validation(format!("Unsupported corpus URL format `{source}`"))
+            })?;
+            (
+                slug.clone(),
+                source.to_string(),
+                slug.replace('/', "__").replace(".git", ""),
+            )
+        } else if source.starts_with("./") || source.starts_with("../") || source.starts_with('/') {
+            let path = Path::new(source);
+            let repo = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| {
+                    XtaskError::validation(format!(
+                        "Local corpus target `{source}` has no final path component"
+                    ))
+                })?
+                .trim_end_matches(".git")
+                .to_string();
+            (
+                repo.clone(),
+                path.to_string_lossy().to_string(),
+                repo.replace('/', "__"),
+            )
+        } else {
+            let slug = source.trim_end_matches(".git");
+            let mut parts = slug.split('/');
+            let owner = parts.next().ok_or_else(|| {
+                XtaskError::validation(format!("Corpus target `{source}` is missing an owner"))
+            })?;
+            let repo = parts.next().ok_or_else(|| {
+                XtaskError::validation(format!("Corpus target `{source}` is missing a repo"))
+            })?;
+            if parts.next().is_some() {
+                return Err(XtaskError::validation(format!(
+                    "Corpus target `{source}` must be `owner/repo(.git)` or a URL"
+                ))
+                .into());
+            }
+            let normalized = format!("{owner}/{repo}");
+            (
+                normalized.clone(),
+                format!("https://github.com/{normalized}.git"),
+                normalized.replace('/', "__"),
+            )
+        };
+
+    Ok(ParsedCorpusTarget {
+        original,
+        normalized_repo,
+        clone_url,
+        checkout_slug,
+    })
+}
+
+fn url_slug(source: &str) -> Option<String> {
+    let without_scheme = source.split_once("://")?.1;
+    let path = without_scheme.split_once('/')?.1;
+    let trimmed = path.trim_end_matches('/');
+    let trimmed = trimmed.trim_end_matches(".git");
+    let mut parts = trimmed.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    Some(format!("{owner}/{repo}"))
+}
+
+fn ensure_corpus_checkout(
+    spec: &CorpusTargetSpec,
+    checkout_path: &Path,
+    skip_clone: bool,
+) -> Result<CorpusCloneStatus, XtaskError> {
+    if checkout_path.join(".git").is_dir() {
+        return Ok(CorpusCloneStatus {
+            ok: true,
+            action: "reused".into(),
+            error: None,
+        });
+    }
+    if checkout_path.exists() && !checkout_path.join(".git").is_dir() {
+        return Ok(CorpusCloneStatus {
+            ok: false,
+            action: "invalid_existing_path".into(),
+            error: Some(format!(
+                "Checkout path {} exists but is not a git repository",
+                checkout_path.display()
+            )),
+        });
+    }
+    if skip_clone {
+        return Ok(CorpusCloneStatus {
+            ok: false,
+            action: "skipped_missing".into(),
+            error: Some(format!(
+                "Checkout {} does not exist and --skip-clone was set",
+                checkout_path.display()
+            )),
+        });
+    }
+    if let Some(parent) = checkout_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to create checkout parent {}: {e}",
+                parent.display()
+            ))
+        })?;
+    }
+    let output = ProcessCommand::new("git")
+        .arg("clone")
+        .arg("--depth")
+        .arg("1")
+        .arg(&spec.clone_url)
+        .arg(checkout_path)
+        .output()
+        .map_err(|e| XtaskError::Resource(format!("Failed to spawn git clone: {e}")))?;
+    if output.status.success() {
+        Ok(CorpusCloneStatus {
+            ok: true,
+            action: "cloned".into(),
+            error: None,
+        })
+    } else {
+        Ok(CorpusCloneStatus {
+            ok: false,
+            action: "clone_failed".into(),
+            error: Some(stderr_or_status(&output)),
+        })
+    }
+}
+
+fn git_stdout(repo_dir: &Path, args: &[&str]) -> Result<String, XtaskError> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(args)
+        .output()
+        .map_err(|e| XtaskError::Resource(format!("Failed to spawn git {:?}: {e}", args)))?;
+    if !output.status.success() {
+        return Err(XtaskError::Parse(format!(
+            "git {:?} failed for {}: {}",
+            args,
+            repo_dir.display(),
+            stderr_or_status(&output)
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn stderr_or_status(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        format!("process exited with status {}", output.status)
+    } else {
+        stderr
+    }
+}
+
+fn classify_corpus_checkout(checkout_path: &Path) -> CorpusCheckoutClassification {
+    match try_parse_manifest(checkout_path) {
+        Ok(metadata) => {
+            if let Some(workspace) = metadata.workspace {
+                CorpusCheckoutClassification {
+                    repository_kind: "workspace".into(),
+                    recommended_parser: "parse_workspace_with_config".into(),
+                    workspace_member_count: Some(workspace.members.len()),
+                    classification_error: None,
+                    should_run_single_crate_pipeline: false,
+                }
+            } else {
+                CorpusCheckoutClassification {
+                    repository_kind: "single_crate".into(),
+                    recommended_parser: "try_run_phases_and_merge".into(),
+                    workspace_member_count: None,
+                    classification_error: None,
+                    should_run_single_crate_pipeline: true,
+                }
+            }
+        }
+        Err(err) => CorpusCheckoutClassification {
+            repository_kind: "unknown".into(),
+            recommended_parser: "try_run_phases_and_merge".into(),
+            workspace_member_count: None,
+            classification_error: Some(err.to_string()),
+            should_run_single_crate_pipeline: true,
+        },
+    }
+}
+
+fn run_corpus_discovery_stage(crate_root: &Path) -> CorpusStageResult {
+    run_corpus_stage(|| {
+        let out =
+            run_discovery_phase(None, &[crate_root.to_path_buf()]).map_err(|e| e.to_string())?;
+        let file_count = out
+            .crate_contexts
+            .get(crate_root)
+            .map(|c| c.files.len())
+            .or_else(|| out.crate_contexts.values().next().map(|c| c.files.len()));
+        Ok(CorpusStageMetrics {
+            file_count,
+            ..CorpusStageMetrics::default()
+        })
+    })
+}
+
+fn run_corpus_stage<F>(op: F) -> CorpusStageResult
+where
+    F: FnOnce() -> Result<CorpusStageMetrics, String>,
+{
+    let start = Instant::now();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(op));
+    let duration_ms = start.elapsed().as_millis() as u64;
+    match outcome {
+        Ok(Ok(metrics)) => CorpusStageResult {
+            ok: true,
+            panic: false,
+            failure_kind: None,
+            error: None,
+            duration_ms,
+            nodes_parsed: metrics.nodes_parsed,
+            relations_found: metrics.relations_found,
+            file_count: metrics.file_count,
+        },
+        Ok(Err(err)) => CorpusStageResult {
+            ok: false,
+            panic: false,
+            failure_kind: Some("error".into()),
+            error: Some(err),
+            duration_ms,
+            nodes_parsed: None,
+            relations_found: None,
+            file_count: None,
+        },
+        Err(panic) => CorpusStageResult {
+            ok: false,
+            panic: true,
+            failure_kind: Some("panic".into()),
+            error: Some(panic_payload_string(panic)),
+            duration_ms,
+            nodes_parsed: None,
+            relations_found: None,
+            file_count: None,
+        },
+    }
+}
+
+fn panic_payload_string(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(msg) = payload.downcast_ref::<&str>() {
+        (*msg).to_string()
+    } else if let Some(msg) = payload.downcast_ref::<String>() {
+        msg.clone()
+    } else {
+        "panic payload was not a string".into()
     }
 }
 

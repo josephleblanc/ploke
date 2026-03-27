@@ -432,7 +432,7 @@ pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, Syn
 
 /// Like [`try_run_phases_and_merge`], but passes `selected_target` through to discovery (see
 /// [`try_run_phases_and_resolve_with_target`]).
-#[instrument(skip(selected_target))]
+#[instrument()]
 pub fn try_run_phases_and_merge_with_target(
     target_crate: &Path,
     selected_target: Option<&TargetSelector>,
