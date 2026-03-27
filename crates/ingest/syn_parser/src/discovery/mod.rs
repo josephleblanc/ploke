@@ -1114,4 +1114,60 @@ edition = "2021"
             "discovery output should include expanded workspace member path"
         );
     }
+
+    #[test]
+    fn discovery_with_glob_workspace_member_expands_prefix_star_suffix_dirs() {
+        let tmp = tempdir().unwrap();
+        let workspace_root = tmp.path().join("glob_ws_prefix_suffix");
+
+        let axum_core = workspace_root.join("axum-core");
+        let axum_extra = workspace_root.join("axum-extra");
+
+        for member in [&axum_core, &axum_extra] {
+            fs::create_dir_all(member.join("src")).unwrap();
+            fs::write(
+                member.join("Cargo.toml"),
+                format!(
+                    r#"[package]
+name = "{}"
+version = "0.1.0"
+edition = "2021"
+"#,
+                    member.file_name().unwrap().to_string_lossy()
+                ),
+            )
+            .unwrap();
+            fs::write(member.join("src/lib.rs"), "pub fn demo() {}\n").unwrap();
+        }
+
+        fs::write(
+            workspace_root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"axum-*\"]\n",
+        )
+        .unwrap();
+
+        let workspace_metadata = try_parse_manifest(&workspace_root)
+            .expect("workspace fixture should parse")
+            .workspace
+            .expect("workspace section should be present");
+
+        assert_eq!(workspace_metadata.members.len(), 2, "expected two glob matches");
+        assert_eq!(workspace_metadata.members[0], axum_core);
+        assert_eq!(workspace_metadata.members[1], axum_extra);
+
+        let discovery = run_discovery_phase_with_target(
+            Some(&workspace_root),
+            &workspace_metadata.members,
+            None,
+        )
+        .expect("expanded member paths should be discoverable");
+
+        for member in [&axum_core, &axum_extra] {
+            assert!(
+                discovery.crate_contexts.contains_key(member),
+                "discovery output should include expanded workspace member path {}",
+                member.display()
+            );
+        }
+    }
 }

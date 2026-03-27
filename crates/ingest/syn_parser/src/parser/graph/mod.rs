@@ -90,7 +90,7 @@ pub trait GraphAccess {
             if !acc.contains(rel) {
                 acc.push(*rel);
             } else {
-                log::debug!(target: "debug_dup", "DUPLICATE: {}", rel);
+                tracing::debug!(target: "debug_dup", "DUPLICATE: {}", rel);
                 dups.push(*rel);
             }
             acc
@@ -140,6 +140,7 @@ dup_accounted: {}",
                 }
             }
             let target = self.find_node_unique(dup.target()).unwrap_or_else(|e| {
+                let non_unique_target = self.find_any_node(dup.target().as_any());
                 self.debug_relationships();
                 panic!(
                     "Expected unique relations, found duplicate with error: {}",
@@ -212,7 +213,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
             acc
         });
         let has_duplicate = unique_rels.len() == self.relations().len();
-        log::debug!(target: "temp",
+        tracing::debug!(target: "debug_dup",
             "{} {} {}: {} | {}: {} | {}: {}",
             "Relations are unique?".log_header(),
             if has_duplicate {
@@ -247,7 +248,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         for (rel, count) in rel_map {
             if count > 1 {
                 // Use helper methods to get base NodeIds
-                log::debug!(target: "temp",
+                tracing::debug!(target: "temp",
                     "{} | {}: {} | {} -> {} | {:?}", // Log the full relation variant
                     "Duplicate!".log_header(),
                     "Count".log_step(),
@@ -1184,6 +1185,24 @@ pub trait GraphNode {
 
         // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam | ItemKind::ExternCrate
         // are not directly represented as top-level GraphNode types this way.
+    }
+
+    fn tracing_node_debug(&self) {
+        tracing::debug!(target: "graph_node",
+            name = %self.name(),
+            id = ?self.any_id().to_string(),
+            kind = ?self.kind(),
+            visibility = %self.visibility(),
+        );
+    }
+
+    fn tracing_node_error(&self) {
+        tracing::error!(target: "graph_node",
+            name = %self.name(),
+            id = ?self.any_id().to_string(),
+            kind = ?self.kind(),
+            visibility = %self.visibility(),
+        );
     }
 
     fn log_node_debug(&self) {

@@ -29,6 +29,7 @@ mod arc_str;
 
 pub mod rag_types;
 pub mod workspace;
+pub mod workspace_glob;
 
 #[cfg(feature = "json")]
 pub mod tool_types;

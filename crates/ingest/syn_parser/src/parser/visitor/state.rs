@@ -50,6 +50,9 @@ pub struct VisitorState {
     /// Active configuration for cfg evaluation
     #[cfg(feature = "cfg_eval")]
     pub active_cfg: crate::parser::visitor::cfg_evaluator::ActiveCfg,
+
+    /// Ordinal for disambiguating anonymous items like `const _` within this file.
+    pub(crate) anon_const_ordinal: usize,
 }
 
 impl VisitorState {
@@ -90,6 +93,7 @@ impl VisitorState {
             active_cfg: crate::parser::visitor::cfg_evaluator::ActiveCfg::from_crate_context(
                 crate_context,
             ),
+            anon_const_ordinal: 0,
         }
     }
 

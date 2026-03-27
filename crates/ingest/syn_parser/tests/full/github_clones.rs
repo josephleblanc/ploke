@@ -4,7 +4,7 @@
 /// Rust code to surface parse failures, merge conflicts, or module-tree
 /// construction bugs that smaller fixtures do not expose.
 use ploke_common::fixture_github_clones_dir;
-use syn_parser::{parser::graph::ParsedCodeGraph, try_run_phases_and_merge};
+use syn_parser::{ParseWorkspaceConfig, error::SynParserError, parser::graph::ParsedCodeGraph, try_parse_manifest, try_run_phases_and_merge};
 use tracing_subscriber::fmt::format::FmtSpan;
 
 use crate::common::{WorkspaceParsePair, parse_workspace_both};
@@ -40,7 +40,7 @@ fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         // Default: TRACE on the targets we care about, WARN for everything else.
         EnvFilter::new(
-            "info,dbg_serde=debug,try_run_phases_and_merge,try_run_phases_and_resolve,discovery",
+            "info,dbg_serde=debug,try_run_phases_and_merge,try_run_phases_and_resolve,discovery,validate_rels=trace",
         )
     });
 
@@ -66,6 +66,18 @@ fn init_tracing() {
         .with_level(true)
         .with_filter(EnvFilter::new("mod_tree_build=debug"));
 
+    // File appender for relation-validation diagnostics
+    let validate_rels_file = tracing_appender::rolling::never(
+        LOG_DIR,
+        format!("validate_rels_{}.log", std::process::id()),
+    );
+    let validate_rels_layer = fmt::layer()
+        .with_writer(validate_rels_file)
+        .with_ansi(false)
+        .with_target(true)
+        .with_level(true)
+        .with_filter(EnvFilter::new("validate_rels=trace"));
+
     let catchall_file =
         tracing_appender::rolling::never(LOG_DIR, format!("catchall_{}.log", std::process::id()));
 
@@ -87,6 +99,7 @@ fn init_tracing() {
     let _ = tracing_subscriber::registry()
         .with(debug_dup_layer)
         .with(mod_tree_layer)
+        .with(validate_rels_layer)
         .with(catchall_layer)
         .with(console_layer)
         .try_init();
@@ -1483,9 +1496,93 @@ fn parse_workspace_axum_github_clone() {
 #[test]
 #[ignore = "Workspace members use globs (e.g. `crates/*`) and include compile_fail crates; syn_parser workspace parsing currently treats these as literal paths"]
 fn parse_workspace_bevy_github_clone() {
+    init_tracing();
     let ws = fixture_github_clones_dir().join("bevy");
     let pair = parse_workspace_both(&ws, None, None).expect("bevy workspace should parse");
     assert_parsed_workspace_invariants(&pair);
+}
+
+#[test]
+fn parse_bevy_cu_only() -> Result<(), SynParserError> {
+    init_tracing();
+    let ws = fixture_github_clones_dir().join("bevy");
+    let _ = syn_parser::parse_workspace_with_config(&ws, &ParseWorkspaceConfig::default())?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "Diagnostic helper: isolate which bevy workspace member first triggers duplicate-node panic"]
+fn diagnose_workspace_bevy_member_min_repro() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let ws = fixture_github_clones_dir().join("bevy");
+    let workspace = try_parse_manifest(&ws)
+        .expect("bevy workspace manifest should parse")
+        .workspace
+        .expect("bevy fixture should contain [workspace]");
+
+    let mut panic_members = Vec::new();
+    for member in &workspace.members {
+        let selected = [member.as_path()];
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            parse_workspace_both(&ws, Some(&selected), None)
+        }));
+        match result {
+            Ok(Ok(_pair)) => {}
+            Ok(Err(e)) => {
+                eprintln!(
+                    "member returned error (no panic): {} => {e:#?}",
+                    member.display()
+                );
+            }
+            Err(panic_payload) => {
+                let panic_msg = if let Some(msg) = panic_payload.downcast_ref::<&str>() {
+                    (*msg).to_string()
+                } else if let Some(msg) = panic_payload.downcast_ref::<String>() {
+                    msg.clone()
+                } else {
+                    "<non-string panic payload>".to_string()
+                };
+                eprintln!("member panicked: {} => {}", member.display(), panic_msg);
+                panic_members.push((member.clone(), panic_msg));
+                break;
+            }
+        }
+    }
+
+    assert!(
+        panic_members.is_empty(),
+        "first panicking bevy member: {} => {}",
+        panic_members[0].0.display(),
+        panic_members[0].1
+    );
+}
+
+#[test]
+#[ignore = "Known failure repro: bevy_ecs crate panics with duplicate-node validation"]
+fn repro_bevy_ecs_duplicate_node_panic() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let crate_path = fixture_github_clones_dir().join("bevy/crates/bevy_ecs");
+    let panic_result = catch_unwind(AssertUnwindSafe(|| {
+        let _ = try_run_phases_and_merge(&crate_path);
+    }));
+
+    let panic_payload = panic_result.expect_err("bevy_ecs should currently panic");
+    let panic_msg = if let Some(msg) = panic_payload.downcast_ref::<&str>() {
+        (*msg).to_string()
+    } else if let Some(msg) = panic_payload.downcast_ref::<String>() {
+        msg.clone()
+    } else {
+        "<non-string panic payload>".to_string()
+    };
+
+    assert!(
+        panic_msg.contains("Expected unique relations")
+            && (panic_msg.contains("Duplicate node found for ID AnyNodeId::Const")
+                || panic_msg.contains("Node with ID AnyNodeId::Field")),
+        "unexpected panic message: {panic_msg}"
+    );
 }
 
 #[test]

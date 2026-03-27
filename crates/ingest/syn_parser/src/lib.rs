@@ -74,7 +74,7 @@ use tracing::{info_span, instrument};
 /// `target_selector`, when `Some`, is passed to discovery for **each** workspace member so that
 /// [`run_discovery_phase_with_target`](crate::discovery::run_discovery_phase_with_target) limits
 /// Cargo targets consistently across members.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ParseWorkspaceConfig<'a> {
     /// Which workspace members to parse; `None` means all members (same as [`parse_workspace`]).
     pub selected_crates: Option<&'a [&'a Path]>,

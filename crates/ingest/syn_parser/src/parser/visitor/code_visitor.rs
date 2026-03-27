@@ -50,7 +50,7 @@ use syn::{
     ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, ReturnType, Type,
     visit::{self, Visit},
 };
-use tracing::{error, trace}; // Import error macro
+use tracing::{error, instrument, trace}; // Import error macro
 
 pub struct CodeVisitor<'a> {
     state: &'a mut VisitorState,
@@ -64,6 +64,7 @@ impl<'a> CodeVisitor<'a> {
         Self { state }
     }
 
+    #[instrument(target = "validate_rels", skip(self))]
     pub(crate) fn validate_unique_rels(&self) -> bool {
         self.state.code_graph.validate_unique_rels()
     }
@@ -2418,6 +2419,14 @@ use statement ident: {:?}
             }
         }
         let const_name = item_const.ident.to_string();
+        // Disambiguate anonymous `const _` items (commonly used as compile-time checks).
+        // Without this, multiple `const _` in the same module collide in synthetic ID generation.
+        let id_key = if const_name.as_str() == "_" {
+            self.state.anon_const_ordinal += 1;
+            format!("__anon_const_{}", self.state.anon_const_ordinal)
+        } else {
+            const_name.clone()
+        };
 
         // --- CFG Handling (Raw Strings) ---
         let scope_cfgs = self.state.current_scope_cfgs.clone();
@@ -2432,13 +2441,13 @@ use statement ident: {:?}
 
         // Register the new node ID and get parent module ID
         let registration_result =
-            self.register_new_node_id(&const_name, ItemKind::Const, cfg_bytes.as_deref());
+            self.register_new_node_id(&id_key, ItemKind::Const, cfg_bytes.as_deref());
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
         let (const_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&const_name, const_any_id); // Now uses trace!
+        self.debug_new_id(&id_key, const_any_id); // Now uses trace!
 
         let span = item_const.extract_span_bytes();
 
