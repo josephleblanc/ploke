@@ -149,48 +149,69 @@ pub fn build_structural_compilation_unit_slice(
     parsed_graphs: Vec<ParsedCodeGraph>,
     key: &CompilationUnitKey,
 ) -> Result<StructuralCompilationUnitSlice, SynParserError> {
+    let mut slices =
+        build_structural_compilation_unit_slices(parsed_graphs, std::slice::from_ref(key))?;
+    slices.pop().ok_or_else(|| {
+        SynParserError::InternalState(
+            "Expected one structural compilation-unit slice for single-key build".to_string(),
+        )
+    })
+}
+
+/// Build structural slices for many compilation units using one partitioned graph set.
+pub fn build_structural_compilation_unit_slices(
+    parsed_graphs: Vec<ParsedCodeGraph>,
+    keys: &[CompilationUnitKey],
+) -> Result<Vec<StructuralCompilationUnitSlice>, SynParserError> {
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
     if parsed_graphs.is_empty() {
         return Err(SynParserError::MergeRequiresInput);
     }
 
     let partition = ParsedCodeGraph::partition_by_selected_roots(parsed_graphs)?;
-    if !partition
-        .selected_root_paths
-        .iter()
-        .any(|p| p == &key.target_root)
-    {
-        return Err(SynParserError::ParsedGraphError(
-            ParsedGraphError::RootFileNotFound(key.target_root.clone()),
-        ));
-    }
+    keys.iter()
+        .map(|key| {
+            if !partition
+                .selected_root_paths
+                .iter()
+                .any(|p| p == &key.target_root)
+            {
+                return Err(SynParserError::ParsedGraphError(
+                    ParsedGraphError::RootFileNotFound(key.target_root.clone()),
+                ));
+            }
 
-    let mut merged = partition.merge_for_root(&key.target_root)?;
-    if merged.crate_namespace != key.namespace {
-        return Err(SynParserError::InternalState(format!(
-            "CompilationUnitKey namespace {} does not match merged graph namespace {}",
-            key.namespace, merged.crate_namespace
-        )));
-    }
+            let mut merged = partition.merge_for_root(&key.target_root)?;
+            if merged.crate_namespace != key.namespace {
+                return Err(SynParserError::InternalState(format!(
+                    "CompilationUnitKey namespace {} does not match merged graph namespace {}",
+                    key.namespace, merged.crate_namespace
+                )));
+            }
 
-    let _tree = merged
-        .build_tree_and_prune_for_root_path(&key.target_root)
-        .map_err(|e| {
-            SynParserError::InternalState(format!(
-                "Failed to build module tree for compilation unit: {e}"
-            ))
-        })?;
+            let _tree = merged
+                .build_tree_and_prune_for_root_path(&key.target_root)
+                .map_err(|e| {
+                    SynParserError::InternalState(format!(
+                        "Failed to build module tree for compilation unit: {e}"
+                    ))
+                })?;
 
-    let enabled_node_ids = collect_all_node_uuids_in_graph(&merged);
-    let enabled_edges = collect_enabled_edges(&merged, &enabled_node_ids);
-    let enabled_file_paths = collect_enabled_file_paths(&merged);
+            let enabled_node_ids = collect_all_node_uuids_in_graph(&merged);
+            let enabled_edges = collect_enabled_edges(&merged, &enabled_node_ids);
+            let enabled_file_paths = collect_enabled_file_paths(&merged);
 
-    Ok(StructuralCompilationUnitSlice {
-        cu_id: key.compilation_unit_id(),
-        key: key.clone(),
-        enabled_node_ids,
-        enabled_edges,
-        enabled_file_paths,
-    })
+            Ok(StructuralCompilationUnitSlice {
+                cu_id: key.compilation_unit_id(),
+                key: key.clone(),
+                enabled_node_ids,
+                enabled_edges,
+                enabled_file_paths,
+            })
+        })
+        .collect()
 }
 
 fn collect_enabled_edges(

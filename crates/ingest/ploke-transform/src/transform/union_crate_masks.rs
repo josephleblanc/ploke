@@ -4,7 +4,7 @@ use cozo::{Db, MemStorage};
 use ploke_core::CompilationUnitKey;
 use syn_parser::ParsedCodeGraph;
 use syn_parser::compilation_unit::{
-    CompilationUnitDimensionRequest, build_structural_compilation_unit_slice,
+    CompilationUnitDimensionRequest, build_structural_compilation_unit_slices,
     compilation_unit_keys_for_targets, default_target_triple,
 };
 
@@ -67,9 +67,9 @@ pub fn transform_union_crate_and_structural_masks(
             )
         }
     });
-    for key in &keys {
-        let slice = build_structural_compilation_unit_slice(parsed_for_masks.clone(), key)
-            .map_err(|e| TransformError::Transformation(e.to_string()))?;
+    let slices = build_structural_compilation_unit_slices(parsed_for_masks, &keys)
+        .map_err(|e| TransformError::Transformation(e.to_string()))?;
+    for slice in &slices {
         insert_structural_compilation_unit_slice(db, &slice)?;
     }
     Ok(())
