@@ -65,6 +65,7 @@ pub use parser::nodes::test_ids::TestIds;
 pub use parser::graph::{GraphAccess, ParsedCodeGraph};
 pub use resolve::module_tree::ModuleTree;
 
+use crate::compilation_unit::{CompilationUnitDimensionRequest, enumerate_compilation_unit_keys};
 use crate::discovery::workspace::WorkspaceMetadataSection;
 use tracing::{info_span, instrument};
 
@@ -391,19 +392,37 @@ pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_er
         merged_graph: Some(merged),
         module_tree: Some(tree),
         parsed_graphs_for_masks: None,
+        compilation_units: None,
     })
 }
 
 /// Like [`try_run_phases_and_merge`], but merges **all** Cargo target roots into one graph and
 /// retains [`ParserOutput::parsed_graphs_for_masks`] for structural compilation-unit slices.
 pub fn try_run_phases_union_for_crate(target_crate: &Path) -> Result<ParserOutput, SynParserError> {
+    try_run_phases_union_for_crate_with_dimensions(
+        target_crate,
+        &CompilationUnitDimensionRequest::from_env_or_default(),
+    )
+}
+
+/// Like [`try_run_phases_union_for_crate`], but allows explicit CU dimensions for enumeration.
+pub fn try_run_phases_union_for_crate_with_dimensions(
+    target_crate: &Path,
+    dimensions: &CompilationUnitDimensionRequest,
+) -> Result<ParserOutput, SynParserError> {
     let parsed_graphs = try_run_phases_and_resolve_with_target(target_crate, None)?;
     let parsed_for_masks = parsed_graphs.clone();
+    let compilation_units = parsed_for_masks
+        .iter()
+        .find_map(|g| g.crate_context.as_ref())
+        .map(|ctx| enumerate_compilation_unit_keys(ctx.namespace, &ctx.targets, dimensions))
+        .unwrap_or_default();
     let (merged, tree) = ParsedCodeGraph::merge_union_graph_and_prune_tree(parsed_graphs)?;
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),
         parsed_graphs_for_masks: Some(parsed_for_masks),
+        compilation_units: Some(compilation_units),
     })
 }
 
@@ -439,6 +458,7 @@ pub fn try_run_phases_and_merge_with_target(
         merged_graph: Some(merged),
         module_tree: Some(tree),
         parsed_graphs_for_masks: None,
+        compilation_units: None,
     })
 }
 
@@ -460,6 +480,8 @@ pub struct ParserOutput {
     pub module_tree: Option<ModuleTree>,
     /// When set (e.g. [`try_run_phases_union_for_crate`]), original per-file graphs for CU masks.
     pub parsed_graphs_for_masks: Option<Vec<ParsedCodeGraph>>,
+    /// When set (e.g. union parse), pre-enumerated compilation-unit keys for mask construction.
+    pub compilation_units: Option<Vec<ploke_core::CompilationUnitKey>>,
 }
 
 impl ParserOutput {
@@ -476,6 +498,11 @@ impl ParserOutput {
     /// Extracts per-file graphs retained for structural CU masks.
     pub fn extract_parsed_graphs_for_masks(&mut self) -> Option<Vec<ParsedCodeGraph>> {
         self.parsed_graphs_for_masks.take()
+    }
+
+    /// Extracts pre-enumerated compilation-unit keys, leaving `None` in place.
+    pub fn extract_compilation_units(&mut self) -> Option<Vec<ploke_core::CompilationUnitKey>> {
+        self.compilation_units.take()
     }
 }
 

@@ -7,12 +7,13 @@ use ploke_transform::transform::{
 };
 use syn_parser::{
     ModuleTree, ParsedCodeGraph, ParserOutput,
+    compilation_unit::CompilationUnitDimensionRequest,
     discovery::run_discovery_phase,
     discovery::workspace::{locate_workspace_manifest, try_parse_manifest},
     error::SynParserError,
     parse_workspace,
     parser::analyze_files_parallel,
-    try_run_phases_and_merge, try_run_phases_and_resolve,
+    try_run_phases_and_merge, try_run_phases_union_for_crate_with_dimensions,
 };
 use tracing::instrument;
 
@@ -189,12 +190,24 @@ pub fn run_parse_resolved(
     match resolved.kind {
         IndexTargetKind::Crate => {
             if compilation_union_ingest_enabled() {
-                let graphs = try_run_phases_and_resolve(&resolved.focused_root)?;
-                transform_union_crate_and_structural_masks(&db, graphs).map_err(|err| {
-                    SynParserError::InternalState(format!(
-                        "Failed union crate transform and CU masks: {err}"
-                    ))
-                })?;
+                let mut parser_output = try_run_phases_union_for_crate_with_dimensions(
+                    &resolved.focused_root,
+                    &CompilationUnitDimensionRequest::from_env_or_default(),
+                )?;
+                let graphs = parser_output
+                    .extract_parsed_graphs_for_masks()
+                    .ok_or_else(|| {
+                        SynParserError::InternalState(
+                            "Missing parsed graphs for CU masks".to_string(),
+                        )
+                    })?;
+                let compilation_units = parser_output.extract_compilation_units();
+                transform_union_crate_and_structural_masks(&db, graphs, compilation_units)
+                    .map_err(|err| {
+                        SynParserError::InternalState(format!(
+                            "Failed union crate transform and CU masks: {err}"
+                        ))
+                    })?;
             } else {
                 let mut parser_output = try_run_phases_and_merge(&resolved.focused_root)?;
                 let merged = parser_output.extract_merged_graph().ok_or_else(|| {
@@ -263,6 +276,7 @@ pub fn run_parse_no_transform(
         merged_graph: Some(merged),
         module_tree: Some(tree),
         parsed_graphs_for_masks: None,
+        compilation_units: None,
     })
 }
 

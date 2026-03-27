@@ -29,8 +29,9 @@ use ploke_transform::transform::{
 use serde::Serialize;
 use syn_parser::{
     ParsedWorkspace, ParserOutput,
+    compilation_unit::CompilationUnitDimensionRequest,
     discovery::workspace::{locate_workspace_manifest, try_parse_manifest},
-    parse_workspace, try_run_phases_and_merge, try_run_phases_and_resolve,
+    parse_workspace, try_run_phases_and_merge, try_run_phases_union_for_crate_with_dimensions,
 };
 use tokio::sync::{broadcast, mpsc};
 use tracing::field::{Field, Visit};
@@ -863,14 +864,16 @@ fn run_single_iteration<'a>(
                 }
                 ResolvedProfileTarget::Crate { crate_root } => {
                     if cfg.compilation_unions {
-                        let graphs = try_run_phases_and_resolve(crate_root).map_err(|e| {
-                            XtaskError::new(format!("try_run_phases_and_resolve: {e}"))
+                        let po = try_run_phases_union_for_crate_with_dimensions(
+                            crate_root,
+                            &CompilationUnitDimensionRequest::from_env_or_default(),
+                        )
+                        .map_err(|e| {
+                            XtaskError::new(format!(
+                                "try_run_phases_union_for_crate_with_dimensions: {e}"
+                            ))
                         })?;
-                        parsed_crate = Some(ParserOutput {
-                            merged_graph: None,
-                            module_tree: None,
-                            parsed_graphs_for_masks: Some(graphs),
-                        });
+                        parsed_crate = Some(po);
                     } else {
                         let po = try_run_phases_and_merge(crate_root).map_err(|e| {
                             XtaskError::new(format!("try_run_phases_and_merge: {e}"))
@@ -912,7 +915,9 @@ fn run_single_iteration<'a>(
                         let graphs = po.extract_parsed_graphs_for_masks().ok_or_else(|| {
                             XtaskError::new("missing parsed graphs for union transform".to_string())
                         })?;
-                        transform_union_crate_and_structural_masks(&d, graphs).map_err(|e| {
+                        let compilation_units = po.extract_compilation_units();
+                        transform_union_crate_and_structural_masks(&d, graphs, compilation_units)
+                            .map_err(|e| {
                             XtaskError::new(format!(
                                 "transform_union_crate_and_structural_masks: {e}"
                             ))

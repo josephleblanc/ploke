@@ -26,6 +26,106 @@ pub use ploke_core::{
     features_hash_uuid, normalize_features,
 };
 
+/// User-requested compilation-unit dimensions to cross with discovered targets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompilationUnitDimensionRequest {
+    /// Target triples to materialize.
+    pub target_triples: Vec<String>,
+    /// Cargo profiles to materialize.
+    pub profiles: Vec<String>,
+    /// Requested feature sets; each entry is one independent feature set.
+    pub feature_sets: Vec<Vec<String>>,
+}
+
+impl CompilationUnitDimensionRequest {
+    /// Baseline request matching current default behavior.
+    pub fn baseline_default() -> Self {
+        Self {
+            target_triples: vec![default_target_triple()],
+            profiles: vec!["dev".to_string()],
+            feature_sets: vec![Vec::new()],
+        }
+    }
+
+    /// Build dimensions from process env vars.
+    ///
+    /// Supported vars:
+    /// - `PLOKE_CU_TARGET_TRIPLES`: comma/space-separated triples
+    /// - `PLOKE_CU_PROFILES`: comma/space-separated profiles
+    /// - `PLOKE_CU_FEATURE_SETS`: `;`-separated sets, each set comma/space-separated
+    pub fn from_env_or_default() -> Self {
+        let triples = std::env::var("PLOKE_CU_TARGET_TRIPLES")
+            .ok()
+            .map(|s| split_tokens(&s))
+            .unwrap_or_default();
+        let profiles = std::env::var("PLOKE_CU_PROFILES")
+            .ok()
+            .map(|s| split_tokens(&s))
+            .unwrap_or_default();
+        let feature_sets = std::env::var("PLOKE_CU_FEATURE_SETS")
+            .ok()
+            .map(|s| parse_feature_sets(&s))
+            .unwrap_or_else(|| {
+                vec![
+                    std::env::var("PLOKE_CU_FEATURES")
+                        .ok()
+                        .map(|s| split_tokens(&s))
+                        .unwrap_or_default(),
+                ]
+            });
+        Self {
+            target_triples: if triples.is_empty() {
+                vec![default_target_triple()]
+            } else {
+                triples
+            },
+            profiles: if profiles.is_empty() {
+                vec!["dev".to_string()]
+            } else {
+                profiles
+            },
+            feature_sets: if feature_sets.is_empty() {
+                vec![Vec::new()]
+            } else {
+                feature_sets
+            },
+        }
+        .normalized()
+    }
+
+    /// Normalize and dedupe all request dimensions.
+    pub fn normalized(mut self) -> Self {
+        self.target_triples.sort();
+        self.target_triples.dedup();
+        self.profiles.sort();
+        self.profiles.dedup();
+        self.feature_sets = self
+            .feature_sets
+            .into_iter()
+            .map(normalize_features)
+            .collect::<Vec<_>>();
+        self.feature_sets.sort();
+        self.feature_sets.dedup();
+        self
+    }
+}
+
+fn split_tokens(raw: &str) -> Vec<String> {
+    raw.split(|c| c == ',' || c == ' ')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn parse_feature_sets(raw: &str) -> Vec<Vec<String>> {
+    raw.split(';')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .map(split_tokens)
+        .collect()
+}
+
 /// One enabled syntactic edge, matching the `syntax_edge` key shape for joins.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EnabledSyntacticEdge {
@@ -134,20 +234,43 @@ pub fn compilation_unit_keys_for_targets(
     profile: String,
     features: Vec<String>,
 ) -> Vec<CompilationUnitKey> {
-    targets
-        .iter()
-        .map(|t| {
-            compilation_unit_key_from_target(
-                namespace,
-                t.kind.clone(),
-                t.name.clone(),
-                t.root.clone(),
-                target_triple.clone(),
-                profile.clone(),
-                features.clone(),
-            )
-        })
-        .collect()
+    enumerate_compilation_unit_keys(
+        namespace,
+        targets,
+        &CompilationUnitDimensionRequest {
+            target_triples: vec![target_triple],
+            profiles: vec![profile],
+            feature_sets: vec![features],
+        },
+    )
+}
+
+/// Enumerate all compilation-unit keys from discovered targets and requested dimensions.
+pub fn enumerate_compilation_unit_keys(
+    namespace: Uuid,
+    targets: &[TargetSpec],
+    dimensions: &CompilationUnitDimensionRequest,
+) -> Vec<CompilationUnitKey> {
+    let dims = dimensions.clone().normalized();
+    let mut keys = Vec::new();
+    for target in targets {
+        for triple in &dims.target_triples {
+            for profile in &dims.profiles {
+                for features in &dims.feature_sets {
+                    keys.push(compilation_unit_key_from_target(
+                        namespace,
+                        target.kind.clone(),
+                        target.name.clone(),
+                        target.root.clone(),
+                        triple.clone(),
+                        profile.clone(),
+                        features.clone(),
+                    ));
+                }
+            }
+        }
+    }
+    keys
 }
 
 /// Convenience: build a [`CompilationUnitKey`] from discovery + environment defaults.
@@ -214,5 +337,36 @@ mod tests {
             vec!["a".into(), "b".into()],
         );
         assert_eq!(k1.compilation_unit_id(), k2.compilation_unit_id());
+    }
+
+    #[test]
+    fn enumerate_compilation_unit_keys_cross_products_dimensions() {
+        let targets = vec![TargetSpec {
+            kind: TargetKind::Lib,
+            name: "demo".to_string(),
+            root: PathBuf::from("src/lib.rs"),
+        }];
+        let dims = CompilationUnitDimensionRequest {
+            target_triples: vec![
+                "x86_64-unknown-linux-gnu".into(),
+                "aarch64-apple-darwin".into(),
+            ],
+            profiles: vec!["dev".into(), "release".into()],
+            feature_sets: vec![vec![], vec!["serde".into()]],
+        };
+        let keys = enumerate_compilation_unit_keys(Uuid::nil(), &targets, &dims);
+        assert_eq!(keys.len(), 8);
+    }
+
+    #[test]
+    fn feature_set_env_supports_multiple_sets() {
+        let sets = parse_feature_sets("serde,simd; tokio ;");
+        assert_eq!(
+            sets,
+            vec![
+                vec!["serde".to_string(), "simd".to_string()],
+                vec!["tokio".to_string()]
+            ]
+        );
     }
 }
