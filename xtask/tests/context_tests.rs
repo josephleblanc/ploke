@@ -180,8 +180,14 @@ fn contexts_have_independent_temp_dirs() {
     let ctx1 = CommandContext::new().unwrap();
     let ctx2 = CommandContext::new().unwrap();
     // No shared TempDir in CommandContext anymore.
-    assert_ne!(ctx1.workspace_root().unwrap(), Path::new("/__definitely_not_the_workspace__"));
-    assert_ne!(ctx2.workspace_root().unwrap(), Path::new("/__definitely_not_the_workspace__"));
+    assert_ne!(
+        ctx1.workspace_root().unwrap(),
+        Path::new("/__definitely_not_the_workspace__")
+    );
+    assert_ne!(
+        ctx2.workspace_root().unwrap(),
+        Path::new("/__definitely_not_the_workspace__")
+    );
 }
 
 /// To Prove: Multiple contexts share the same workspace root
@@ -235,8 +241,8 @@ fn context_is_thread_safe() {
 /// Then: Returns descriptive XtaskError on failure
 #[test]
 fn context_creation_error_handling() {
-    let ctx = CommandContext::new()
-        .expect("CommandContext::new must succeed in the test workspace");
+    let ctx =
+        CommandContext::new().expect("CommandContext::new must succeed in the test workspace");
     assert!(ctx.workspace_root().is_ok());
 }
 

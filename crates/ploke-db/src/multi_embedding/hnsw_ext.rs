@@ -2,19 +2,19 @@ use std::{collections::BTreeMap, ops::Deref as _};
 
 use cozo::{DataValue, Num, ScriptMutability, UuidWrapper};
 use itertools::Itertools;
-use ploke_core::embeddings::EmbeddingSet;
 use ploke_core::RetrievalScope;
+use ploke_core::embeddings::EmbeddingSet;
 use syn_parser::utils::LogStyle;
 use tracing::{debug, info, instrument};
 use uuid::Uuid;
 
 use crate::{
+    Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
     database::HNSW_SUFFIX,
     multi_embedding::{
         db_ext::EmbeddingExt,
         schema::{EmbeddingSetExt, EmbeddingVector},
     },
-    Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
 };
 
 pub(crate) const HNSW_TARGET: &str = "hnsw-index";
@@ -991,8 +991,8 @@ mod tests {
                 );
                 let manual = db.run_script(&script, params, ScriptMutability::Immutable);
                 panic!(
-                        "hnsw_neighbors_for_type failed: {err:?}\nscript:\n{script}\nmanual run result: {manual:?}"
-                    );
+                    "hnsw_neighbors_for_type failed: {err:?}\nscript:\n{script}\nmanual run result: {manual:?}"
+                );
             }
         };
 
@@ -1201,7 +1201,7 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         use crate::create_index_primary;
         use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
         use ploke_test_utils::workspace_root;
-        use tracing::{error, Level};
+        use tracing::{Level, error};
 
         // init_tracing_once(HNSW_TARGET, Level::TRACE);
         info!(target: HNSW_TARGET, "starting test: test_load_db");

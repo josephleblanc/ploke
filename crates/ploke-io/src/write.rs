@@ -16,12 +16,12 @@ Notes:
 use super::*;
 use crate::actor::read_and_compute_hash;
 use crate::path_policy::{
-    normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy,
+    SymlinkPolicy, normalize_against_roots, normalize_against_roots_with_policy,
 };
 use dashmap::DashMap;
 use lazy_static::lazy_static;
 use mpatch::ApplyOptions;
-use ploke_core::file_hash::{hash_file_blake3_bounded, LargeFilePolicy};
+use ploke_core::file_hash::{LargeFilePolicy, hash_file_blake3_bounded};
 use ploke_core::{WriteResult, WriteSnippetData};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;

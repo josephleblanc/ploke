@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use ploke_db::Database;
 use ploke_transform::transform::{transform_parsed_graph, transform_parsed_workspace};
 use syn_parser::{parse_workspace, try_run_phases_and_merge};

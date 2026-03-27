@@ -25,9 +25,9 @@
 use env_logger;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
+use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::AnyNodeId;
-use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::resolve::module_tree::ModuleTree;
 
 use crate::common::build_tree_for_tests;

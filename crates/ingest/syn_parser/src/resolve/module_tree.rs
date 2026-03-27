@@ -550,8 +550,8 @@ impl ModuleTree {
                 self.log_resolve_pending_status(None);
                 self.log_resolve_entry_exit(false); // Log exit
                 return Ok(()); // TODO: This should return error. It means the invariant of the
-                               // pending path attrs always being `Some` outside of this function is not being
-                               // respected.
+                // pending path attrs always being `Some` outside of this function is not being
+                // respected.
             }
         };
 
@@ -1147,12 +1147,12 @@ impl ModuleTree {
                 self.add_rel(relation.into());
 
                 tracing::debug!(
-                        "link_definition_imports: created UnresolvedNode {} for import {:?} in module {:?}: {}",
-                        unresolved_id,
-                        path_segments,
-                        source_mod_id,
-                        e
-                    );
+                    "link_definition_imports: created UnresolvedNode {} for import {:?} in module {:?}: {}",
+                    unresolved_id,
+                    path_segments,
+                    source_mod_id,
+                    e
+                );
                 return Ok(());
             }
         };
@@ -1575,7 +1575,7 @@ impl ModuleTree {
             current_id = self.get_parent_module_id(current_id).ok_or_else(|| {
                 self.log_find_decl_dir_missing_parent(current_id);
                 ModuleTreeError::ContainingModuleNotFound(current_id.as_any()) // Use AnyNodeId in error
-                                                                               // Re-use existing error
+                // Re-use existing error
             })?;
         }
         Err(ModuleTreeError::ContainingModuleNotFound(
@@ -1662,13 +1662,13 @@ impl ModuleTree {
                     if let Some(dup) = targets_iter.next() {
                         // Use ModuleNodeId directly for display, as it implements Display
                         return Err(ModuleTreeError::DuplicateDefinition(format!(
-                        "Duplicate module definition for path attribute target '{}' {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
+                            "Duplicate module definition for path attribute target '{}' {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
                             decl_module_node.id,
-                        resolved_path.display(),
+                            resolved_path.display(),
                             &decl_module_node,
                             &target_defn_node, // Use the found node
                             &dup
-                    )));
+                        )));
                     }
                     internal_relations.push(relation); // Push SyntacticRelation
                 }
@@ -1823,7 +1823,10 @@ impl ModuleTree {
                         &original_path,
                         def_mod_id,
                     );
-                    return Err(ModuleTreeError::InternalState(format!("Path index inconsistency during removal for path {}: expected {}, found {}. This suggests the path_index was corrupted earlier.", original_path, def_mod_any_id, removed_id)));
+                    return Err(ModuleTreeError::InternalState(format!(
+                        "Path index inconsistency during removal for path {}: expected {}, found {}. This suggests the path_index was corrupted earlier.",
+                        original_path, def_mod_any_id, removed_id
+                    )));
                 }
                 self.log_update_path_index_remove(&original_path, def_mod_id);
             } else {

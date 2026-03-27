@@ -2,8 +2,8 @@ use ploke_core::embeddings::EmbeddingSet;
 use tracing::Level;
 
 use crate::{
-    multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt, schema::EmbeddingSetExt},
     Database, DbError,
+    multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt, schema::EmbeddingSetExt},
 };
 
 use super::*;

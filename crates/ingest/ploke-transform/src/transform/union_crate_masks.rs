@@ -1,11 +1,11 @@
 //! Union crate ingest: one merged graph + transform, then structural CU masks per target.
 
 use cozo::{Db, MemStorage};
+use syn_parser::ParsedCodeGraph;
 use syn_parser::compilation_unit::{
     build_structural_compilation_unit_slice, compilation_unit_keys_for_targets,
     default_target_triple,
 };
-use syn_parser::ParsedCodeGraph;
 
 use crate::error::TransformError;
 use crate::transform::transform_parsed_graph;

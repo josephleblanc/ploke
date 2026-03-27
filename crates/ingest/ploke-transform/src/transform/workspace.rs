@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
 use ploke_core::WorkspaceId;
-use syn_parser::{discovery::workspace::WorkspaceMetadataSection, ParsedWorkspace};
+use syn_parser::{ParsedWorkspace, discovery::workspace::WorkspaceMetadataSection};
 
 use crate::error::TransformError;
 use crate::schema::crate_node::WorkspaceMetadataSchema;
@@ -159,8 +159,8 @@ mod tests {
     }
 
     #[test]
-    fn transform_parsed_workspace_persists_workspace_metadata_fields_from_committed_fixture(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn transform_parsed_workspace_persists_workspace_metadata_fields_from_committed_fixture()
+    -> Result<(), Box<dyn std::error::Error>> {
         let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_01");
         let parsed_workspace = parse_workspace(&fixture_workspace_root, None)?;
 

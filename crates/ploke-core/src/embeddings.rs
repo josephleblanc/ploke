@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{arcstr_wrapper, ArcStr};
+use crate::{ArcStr, arcstr_wrapper};
 
 /// Strongly-typed identifier for an embedding set.
 ///

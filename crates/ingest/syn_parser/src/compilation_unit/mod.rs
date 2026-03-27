@@ -3,13 +3,13 @@
 //! Cfg evaluation and dependency-aware slices are planned follow-ups; see
 //! `docs/.../compilation-unit-slices-and-db-masks_874f1391.plan.md`.
 
-mod collect;
 #[cfg(feature = "cfg_eval")]
 mod cfg_filter;
+mod collect;
 
-pub use collect::collect_all_node_uuids_in_graph;
 #[cfg(feature = "cfg_eval")]
 pub use cfg_filter::filter_structural_slice_by_cfg;
+pub use collect::collect_all_node_uuids_in_graph;
 
 use std::{collections::HashSet, path::PathBuf};
 
@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::{
     discovery::{TargetKind, TargetSpec},
     error::SynParserError,
-    parser::{graph::GraphAccess, graph::ParsedGraphError, ParsedCodeGraph},
+    parser::{ParsedCodeGraph, graph::GraphAccess, graph::ParsedGraphError},
 };
 
 /// Namespace UUID used for deterministic [`CompilationUnitKey::compilation_unit_id`] (UUID v5).

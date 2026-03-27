@@ -40,8 +40,8 @@
 //! 5. **Workspace Metadata**: Correct workspace members and paths
 
 use ploke_common::workspace_root;
-use syn_parser::discovery::{run_discovery_phase, DiscoveryError, DiscoveryOutput};
 use std::path::PathBuf;
+use syn_parser::discovery::{DiscoveryError, DiscoveryOutput, run_discovery_phase};
 
 /// Returns the absolute path to the fixture_mock_serde workspace root.
 fn fixture_mock_serde_path() -> PathBuf {
@@ -97,10 +97,10 @@ fn test_mock_serde_discovery_finds_all_crates() {
     ];
 
     for crate_path in mock_serde_crate_paths() {
-        let context = output
-            .crate_contexts
-            .get(&crate_path)
-            .expect(&format!("Context for crate at {:?} should exist", crate_path));
+        let context = output.crate_contexts.get(&crate_path).expect(&format!(
+            "Context for crate at {:?} should exist",
+            crate_path
+        ));
 
         let expected_name = crate_path
             .file_name()
@@ -166,7 +166,9 @@ fn test_mock_serde_discovery_finds_expected_files() {
 
     // Verify standard files are discovered
     assert!(
-        mock_serde_ctx.files.contains(&mock_serde_src.join("lib.rs")),
+        mock_serde_ctx
+            .files
+            .contains(&mock_serde_src.join("lib.rs")),
         "mock_serde/src/lib.rs should be discovered"
     );
 
@@ -275,7 +277,7 @@ fn test_mock_serde_workspace_metadata() {
 }
 
 /// Test specifically for non-standard crate layout.
-/// 
+///
 /// This test verifies that the discovery mechanism correctly handles crates
 /// where the library root is not in the standard src/lib.rs location.
 /// This mimics the real serde_derive_internals crate structure.
@@ -304,7 +306,10 @@ fn test_mock_serde_non_standard_layout() {
     let lib_at_src = derive_internals_root.join("src/lib.rs");
 
     // Verify the crate was discovered (has files)
-    assert!(!ctx.files.is_empty(), "Non-standard crate should have files");
+    assert!(
+        !ctx.files.is_empty(),
+        "Non-standard crate should have files"
+    );
 
     // Verify lib.rs at root is discovered (the non-standard aspect)
     if lib_at_root.exists() {
@@ -388,8 +393,8 @@ fn test_mock_serde_partial_discovery() {
         workspace_path.join("mock_serde_core"),
     ];
 
-    let output =
-        run_discovery_phase(Some(&workspace_path), &partial_crates).expect("Discovery should succeed");
+    let output = run_discovery_phase(Some(&workspace_path), &partial_crates)
+        .expect("Discovery should succeed");
 
     // Should only have 2 crate contexts
     assert_eq!(
@@ -406,15 +411,21 @@ fn test_mock_serde_partial_discovery() {
 
     // Verify the specific crates
     assert!(
-        output.crate_contexts.contains_key(&workspace_path.join("mock_serde")),
+        output
+            .crate_contexts
+            .contains_key(&workspace_path.join("mock_serde")),
         "mock_serde should be present"
     );
     assert!(
-        output.crate_contexts.contains_key(&workspace_path.join("mock_serde_core")),
+        output
+            .crate_contexts
+            .contains_key(&workspace_path.join("mock_serde_core")),
         "mock_serde_core should be present"
     );
     assert!(
-        !output.crate_contexts.contains_key(&workspace_path.join("mock_serde_derive")),
+        !output
+            .crate_contexts
+            .contains_key(&workspace_path.join("mock_serde_derive")),
         "mock_serde_derive should NOT be present in partial discovery"
     );
 }

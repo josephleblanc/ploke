@@ -91,7 +91,7 @@ const COLOR_SPRING_GREEN: Color = Color::TrueColor {
 
 use crate::{
     parser::nodes::{AnyNodeId, ImportNode, ImportNodeId, NodePath},
-    resolve::{module_tree::ModuleTree, ModuleTreeError},
+    resolve::{ModuleTreeError, module_tree::ModuleTree},
 };
 pub use colored::Colorize;
 

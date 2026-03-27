@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use lazy_static::lazy_static;
 use ploke_error::Error;
 
-use crate::{create_index_primary, Database, DbError};
+use crate::{Database, DbError, create_index_primary};
 use ploke_test_utils::workspace_root;
 
 lazy_static! {

@@ -7,8 +7,8 @@ use tracing::instrument;
 
 use crate::database::HNSW_SUFFIX;
 use crate::multi_embedding::hnsw_ext::HnswExt;
-use ploke_core::embeddings::EmbeddingSet;
 use ploke_core::RetrievalScope;
+use ploke_core::embeddings::EmbeddingSet;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
     DataValue::List(
@@ -265,10 +265,10 @@ pub fn replace_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error
 mod tests {
     use std::sync::Arc;
 
+    use crate::DbError;
     use crate::create_index_primary;
     use crate::hnsw_all_types;
     use crate::utils::test_utils::TEST_DB_NODES;
-    use crate::DbError;
     use ploke_test_utils::workspace_root;
     use tokio::sync::Mutex;
 

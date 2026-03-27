@@ -127,7 +127,7 @@ pub(crate) mod tests {
     use uuid::Uuid;
 
     use tracing_subscriber::{
-        filter, fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry,
+        EnvFilter, Registry, filter, fmt, layer::SubscriberExt, util::SubscriberInitExt,
     };
 
     pub(crate) fn tracking_hash(content: &str) -> TrackingHash {

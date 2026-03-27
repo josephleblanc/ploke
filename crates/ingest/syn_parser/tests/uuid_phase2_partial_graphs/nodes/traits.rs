@@ -1289,7 +1289,7 @@ fn test_other_trait_nodes() {
     );
     // TODO: Check if TraitNode has an `is_unsafe` flag - currently it doesn't seem to.
     assert_eq!(node.methods.len(), 1); // unsafe_method
-                                       // TODO: Check if method_node has an `is_unsafe` flag.
+    // TODO: Check if method_node has an `is_unsafe` flag.
     assert_relation_exists(
         graph,
         GraphId::Node(module_id_crate),

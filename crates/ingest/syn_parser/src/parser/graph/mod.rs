@@ -42,7 +42,7 @@ pub trait GraphAccess {
     fn modules(&self) -> &[ModuleNode];
     fn consts(&self) -> &[ConstNode]; // Added
     fn statics(&self) -> &[StaticNode]; // Added
-                                        // Removed values()
+    // Removed values()
     fn macros(&self) -> &[MacroNode];
     fn use_statements(&self) -> &[ImportNode];
 
@@ -55,7 +55,7 @@ pub trait GraphAccess {
     fn modules_mut(&mut self) -> &mut Vec<ModuleNode>;
     fn consts_mut(&mut self) -> &mut Vec<ConstNode>; // Added
     fn statics_mut(&mut self) -> &mut Vec<StaticNode>; // Added
-                                                       // Removed values_mut()
+    // Removed values_mut()
     fn macros_mut(&mut self) -> &mut Vec<MacroNode>;
     fn use_statements_mut(&mut self) -> &mut Vec<ImportNode>;
     fn unresolved_nodes(&self) -> &[UnresolvedNode];
@@ -644,7 +644,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         all_ids.extend(self.modules().iter().map(|n| (n.name(), n.id.as_any())));
         all_ids.extend(self.consts().iter().map(|n| (n.name(), n.id.as_any()))); // Use consts()
         all_ids.extend(self.statics().iter().map(|n| (n.name(), n.id.as_any()))); // Use statics()
-                                                                                  // Removed values()
+        // Removed values()
         all_ids.extend(self.macros().iter().map(|n| (n.name(), n.id.as_any())));
         all_ids.extend(self.defined_types().iter().map(|def| match def {
             TypeDefNode::Struct(s) => (s.name(), s.id.as_any()),

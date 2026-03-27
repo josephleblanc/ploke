@@ -4,7 +4,7 @@ mod phase2_tests {
     // Assuming this helper exists
     use ploke_core::TrackingHash;
     // Import TrackingHash if needed for assertions
-    use syn_parser::{parser::nodes::GraphId, NodeId};
+    use syn_parser::{NodeId, parser::nodes::GraphId};
 
     use crate::common::run_phase1_phase2;
 

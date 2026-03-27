@@ -1,21 +1,21 @@
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
 use cozo::{CallbackOp, NamedRows};
 use tokio::{
-    sync::{broadcast, mpsc, Mutex},
+    sync::{Mutex, broadcast, mpsc},
     time::{self, Instant},
 };
 use tracing::instrument;
 
 use crate::{
-    error::{truncate_string, EmbedError},
-    indexer::{log_stuff, IndexStatus, IndexerCommand, IndexerTask, IndexingStatus},
+    error::{EmbedError, truncate_string},
+    indexer::{IndexStatus, IndexerCommand, IndexerTask, IndexingStatus, log_stuff},
 };
 
 // TODO: Consider returning a reset version of Self instead of consuming self here.
@@ -193,7 +193,9 @@ pub async fn index_files(
     }
     tracing::info!("Ending index_workspace: {workspace_dir}");
     let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
-    tracing::info!("Ending index_workspace: {workspace_dir}: total count {inner}, counter {total_count_not_indexed} | {inner}/{total_count_not_indexed}");
+    tracing::info!(
+        "Ending index_workspace: {workspace_dir}: total count {inner}, counter {total_count_not_indexed} | {inner}/{total_count_not_indexed}"
+    );
 
     // tracing::info!(
     //     "Indexer completed? {}",
@@ -268,8 +270,8 @@ pub async fn run(
                 if state.recent_processed >= num_not_proc {
                     if state.recent_processed > num_not_proc {
                         tracing::warn!(
-                                "state.recent_processed > num_not_proc | there is a miscount of nodes somewhere"
-                            );
+                            "state.recent_processed > num_not_proc | there is a miscount of nodes somewhere"
+                        );
                     }
                     tracing::info!(
                         "Break: {} >= {}",

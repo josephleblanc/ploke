@@ -1,11 +1,11 @@
 //! Narrow a structural CU slice using `#[cfg]` strings on graph nodes (see `cfg_eval`).
 
 #[cfg(feature = "cfg_eval")]
-use crate::parser::visitor::{parse_cfg_expr_from_inner_tokens, ActiveCfg};
-#[cfg(feature = "cfg_eval")]
 use crate::parser::graph::{GraphAccess, GraphNode};
 #[cfg(feature = "cfg_eval")]
-use crate::parser::{types::TypeNode, ParsedCodeGraph};
+use crate::parser::visitor::{ActiveCfg, parse_cfg_expr_from_inner_tokens};
+#[cfg(feature = "cfg_eval")]
+use crate::parser::{ParsedCodeGraph, types::TypeNode};
 use ploke_core::IdTrait;
 #[cfg(feature = "cfg_eval")]
 use std::collections::HashSet;
@@ -131,7 +131,11 @@ fn cfgs_for_uuid(graph: &ParsedCodeGraph, id: Uuid) -> Option<&[String]> {
             return Some(n.cfgs());
         }
     }
-    if graph.type_graph().iter().any(|t: &TypeNode| t.id.uuid() == id) {
+    if graph
+        .type_graph()
+        .iter()
+        .any(|t: &TypeNode| t.id.uuid() == id)
+    {
         return None;
     }
     None
@@ -144,7 +148,6 @@ fn file_still_reachable(
     enabled: &HashSet<Uuid>,
 ) -> bool {
     graph.modules().iter().any(|m| {
-        m.file_path().map(|p| p == path).unwrap_or(false)
-            && enabled.contains(&m.any_id().uuid())
+        m.file_path().map(|p| p == path).unwrap_or(false) && enabled.contains(&m.any_id().uuid())
     })
 }

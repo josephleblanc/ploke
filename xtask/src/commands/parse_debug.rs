@@ -22,8 +22,8 @@ use syn_parser::discovery::CargoManifest;
 use syn_parser::discovery::{run_discovery_phase, try_parse_manifest};
 use syn_parser::parser::nodes::ModuleNode;
 use syn_parser::{
-    logical_module_path_for_file, try_run_phases_and_merge, try_run_phases_and_resolve,
-    ParsedCodeGraph,
+    ParsedCodeGraph, logical_module_path_for_file, try_run_phases_and_merge,
+    try_run_phases_and_resolve,
 };
 
 use super::parse::{count_code_graph_nodes, resolve_parse_path};
@@ -133,23 +133,26 @@ impl Command for DebugManifest {
         let canon = resolve_parse_path(ctx, &self.path)?;
         let meta = try_parse_manifest(&canon).map_err(|e| XtaskError::Parse(e.to_string()))?;
         let manifest_path = canon.join("Cargo.toml");
-        let (has_workspace_section, members, exclude, resolver, workspace_root, workspace_package_version) =
-            match &meta.workspace {
-                Some(ws) => (
-                    true,
-                    ws.members
-                        .iter()
-                        .map(|p| p.display().to_string())
-                        .collect(),
-                    ws.exclude
-                        .as_ref()
-                        .map(|v| v.iter().map(|p| p.display().to_string()).collect()),
-                    ws.resolver.clone(),
-                    Some(ws.path.display().to_string()),
-                    ws.package_version().map(str::to_string),
-                ),
-                None => (false, Vec::new(), None, None, None, None),
-            };
+        let (
+            has_workspace_section,
+            members,
+            exclude,
+            resolver,
+            workspace_root,
+            workspace_package_version,
+        ) = match &meta.workspace {
+            Some(ws) => (
+                true,
+                ws.members.iter().map(|p| p.display().to_string()).collect(),
+                ws.exclude
+                    .as_ref()
+                    .map(|v| v.iter().map(|p| p.display().to_string()).collect()),
+                ws.resolver.clone(),
+                Some(ws.path.display().to_string()),
+                ws.package_version().map(str::to_string),
+            ),
+            None => (false, Vec::new(), None, None, None, None),
+        };
         Ok(DebugOutput::Manifest(DebugManifestOut {
             manifest_path: manifest_path.display().to_string(),
             has_workspace_section,
@@ -216,7 +219,11 @@ impl Command for DebugDiscovery {
                         out.warnings.iter().map(|w| w.to_string()).collect(),
                     )
                 } else {
-                    (None, Vec::new(), out.warnings.iter().map(|w| w.to_string()).collect())
+                    (
+                        None,
+                        Vec::new(),
+                        out.warnings.iter().map(|w| w.to_string()).collect(),
+                    )
                 };
 
                 let mut canon_seen: HashMap<String, Vec<String>> = HashMap::new();
@@ -392,7 +399,10 @@ impl Command for DebugWorkspace {
                 let r_ms = r_start.elapsed().as_millis() as u64;
                 resolve = Some(match res {
                     Ok(graphs) => {
-                        let nodes: usize = graphs.iter().map(|pg| count_code_graph_nodes(&pg.graph)).sum();
+                        let nodes: usize = graphs
+                            .iter()
+                            .map(|pg| count_code_graph_nodes(&pg.graph))
+                            .sum();
                         let rels: usize = graphs.iter().map(|pg| pg.graph.relations.len()).sum();
                         StageResult {
                             ok: true,
@@ -493,7 +503,10 @@ impl Command for DebugPipeline {
         let r_ms = r_start.elapsed().as_millis() as u64;
         let resolve = match resolve_out {
             Ok(graphs) => {
-                let nodes: usize = graphs.iter().map(|pg| count_code_graph_nodes(&pg.graph)).sum();
+                let nodes: usize = graphs
+                    .iter()
+                    .map(|pg| count_code_graph_nodes(&pg.graph))
+                    .sum();
                 let rels: usize = graphs.iter().map(|pg| pg.graph.relations.len()).sum();
                 StageResult {
                     ok: true,
@@ -591,9 +604,9 @@ impl Command for DebugLogicalPaths {
         let discovery = run_discovery_phase(None, &[canon.clone()]).map_err(|e| {
             XtaskError::Parse(format!("Discovery failed (needed for file list): {e}"))
         })?;
-        let ctx_c = discovery
-            .get_crate_context(&canon)
-            .ok_or_else(|| XtaskError::Parse("Discovery returned no context for crate root".into()))?;
+        let ctx_c = discovery.get_crate_context(&canon).ok_or_else(|| {
+            XtaskError::Parse("Discovery returned no context for crate root".into())
+        })?;
         let src_dir = canon.join("src");
         let src_dir_s = src_dir.display().to_string();
 
@@ -822,7 +835,9 @@ fn path_relative_to(root: &Path, path: &Path) -> String {
 fn symlink_info(path: &Path) -> (bool, Option<String>) {
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_symlink() => {
-            let target = std::fs::read_link(path).ok().map(|p| p.display().to_string());
+            let target = std::fs::read_link(path)
+                .ok()
+                .map(|p| p.display().to_string());
             (true, target)
         }
         _ => (false, None),
@@ -890,15 +905,12 @@ impl Command for DebugCargoTargets {
                 })
                 .collect();
 
-            let has_lib = pkg
-                .targets
-                .iter()
-                .any(|t| {
-                    t.kind.iter().any(|k| {
-                        let ks = k.to_string();
-                        ks == "lib" || ks == "proc-macro"
-                    })
-                });
+            let has_lib = pkg.targets.iter().any(|t| {
+                t.kind.iter().any(|k| {
+                    let ks = k.to_string();
+                    ks == "lib" || ks == "proc-macro"
+                })
+            });
             let has_bin = pkg
                 .targets
                 .iter()
@@ -987,16 +999,15 @@ impl Command for DebugWorkspaceMembers {
                 .as_std_path()
                 .parent()
                 .map(Path::to_path_buf)
-                .ok_or_else(|| XtaskError::Internal("Package manifest missing parent directory".into()))?;
-            let has_lib_target = pkg
-                .targets
-                .iter()
-                .any(|t| {
-                    t.kind.iter().any(|k| {
-                        let ks = k.to_string();
-                        ks == "lib" || ks == "proc-macro"
-                    })
-                });
+                .ok_or_else(|| {
+                    XtaskError::Internal("Package manifest missing parent directory".into())
+                })?;
+            let has_lib_target = pkg.targets.iter().any(|t| {
+                t.kind.iter().any(|k| {
+                    let ks = k.to_string();
+                    ks == "lib" || ks == "proc-macro"
+                })
+            });
             let has_bin_targets = pkg
                 .targets
                 .iter()
@@ -1112,10 +1123,12 @@ impl Command for DebugDiscoveryRules {
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_debug_target_path(ctx, &self.path)?;
         let manifest_path = canon.join("Cargo.toml");
-        let manifest_str = std::fs::read_to_string(&manifest_path)
-            .map_err(|e| XtaskError::Resource(format!("Failed to read {}: {e}", manifest_path.display())))?;
-        let manifest: CargoManifest = toml::from_str(&manifest_str)
-            .map_err(|e| XtaskError::Parse(format!("Failed to parse {}: {e}", manifest_path.display())))?;
+        let manifest_str = std::fs::read_to_string(&manifest_path).map_err(|e| {
+            XtaskError::Resource(format!("Failed to read {}: {e}", manifest_path.display()))
+        })?;
+        let manifest: CargoManifest = toml::from_str(&manifest_str).map_err(|e| {
+            XtaskError::Parse(format!("Failed to parse {}: {e}", manifest_path.display()))
+        })?;
 
         let src_scan_root = canon.join("src");
         let custom_lib_path = manifest
@@ -1172,14 +1185,12 @@ fn resolve_debug_target_path(ctx: &CommandContext, path: &Path) -> Result<PathBu
         ctx.workspace_root()?.join(path)
     };
     if !p.exists() {
-        return Err(
-            XtaskError::validation(format!(
-                "Path `{}` does not exist (resolved to `{}`)",
-                path.display(),
-                p.display()
-            ))
-            .with_recovery("Provide a valid crate/workspace directory path."),
-        );
+        return Err(XtaskError::validation(format!(
+            "Path `{}` does not exist (resolved to `{}`)",
+            path.display(),
+            p.display()
+        ))
+        .with_recovery("Provide a valid crate/workspace directory path."));
     }
     if !p.is_dir() {
         return Err(
@@ -1187,18 +1198,16 @@ fn resolve_debug_target_path(ctx: &CommandContext, path: &Path) -> Result<PathBu
                 .with_recovery("Pass the crate or workspace root directory."),
         );
     }
-    let canon = p
-        .canonicalize()
-        .map_err(|e| XtaskError::Resource(format!("Could not canonicalize {}: {e}", p.display())))?;
+    let canon = p.canonicalize().map_err(|e| {
+        XtaskError::Resource(format!("Could not canonicalize {}: {e}", p.display()))
+    })?;
     let manifest = canon.join("Cargo.toml");
     if !manifest.is_file() {
-        return Err(
-            XtaskError::validation(format!(
-                "No Cargo.toml found at `{}` for this debug command",
-                canon.display()
-            ))
-            .with_recovery("Pass the crate/workspace root that contains Cargo.toml."),
-        );
+        return Err(XtaskError::validation(format!(
+            "No Cargo.toml found at `{}` for this debug command",
+            canon.display()
+        ))
+        .with_recovery("Pass the crate/workspace root that contains Cargo.toml."));
     }
     Ok(canon)
 }
@@ -1210,7 +1219,12 @@ fn load_cargo_metadata(target_dir: &Path) -> Result<Metadata, XtaskError> {
         .current_dir(target_dir)
         .no_deps()
         .exec()
-        .map_err(|e| XtaskError::Parse(format!("cargo metadata failed for {}: {e}", manifest_path.display())))
+        .map_err(|e| {
+            XtaskError::Parse(format!(
+                "cargo metadata failed for {}: {e}",
+                manifest_path.display()
+            ))
+        })
 }
 
 fn classify_member(

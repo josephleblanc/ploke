@@ -1,6 +1,6 @@
 use crate::{
     config::OpenAIConfig,
-    error::{truncate_string, EmbedError},
+    error::{EmbedError, truncate_string},
 };
 
 // OpenAI backend implementation

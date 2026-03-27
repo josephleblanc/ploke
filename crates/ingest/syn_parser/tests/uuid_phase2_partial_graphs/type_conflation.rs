@@ -5,17 +5,17 @@
 use crate::common::{
     paranoid::find_struct_node_paranoid, // Import from the paranoid module
     uuid_ids_utils::{
+        MethodParentContext, // Import the new helper and context enum
         find_field_type_id,
         find_function_node_paranoid,
         find_method_node_paranoid,
         find_param_type_id,
         run_phases_and_collect,
-        MethodParentContext, // Import the new helper and context enum
     },
 };
 use ploke_common::fixtures_crates_dir; // For constructing paths
-                                       // use std::path::PathBuf; // Removed unused import
-use syn_parser::parser::{nodes::GraphNode, ParsedCodeGraph}; // Import directly
+// use std::path::PathBuf; // Removed unused import
+use syn_parser::parser::{ParsedCodeGraph, nodes::GraphNode}; // Import directly
 
 const FIXTURE_NAME: &str = "fixture_conflation";
 
@@ -81,8 +81,7 @@ fn test_generic_param_conflation_in_functions() {
     assert_ne!(
         top_level_param_t_type_id, inner_param_t_type_id,
         "FAILED: TypeId for generic 'T' parameter is conflated between different function scopes.\n - Top Level Func 'T': {}\n - Inner Func 'T':    {}\nThis indicates TypeId generation needs parent scope context.",
-        top_level_param_t_type_id,
-        inner_param_t_type_id
+        top_level_param_t_type_id, inner_param_t_type_id
     );
 }
 
@@ -230,8 +229,7 @@ fn test_generic_field_conflation_in_structs() {
     assert_ne!(
         top_level_field_t_type_id, inner_field_t_type_id,
         "FAILED: TypeId for generic 'T' field type is conflated between different struct scopes.\n - TopLevelNewtype 'T' field: {}\n - InnerNewtype 'T' field:    {}\nThis indicates TypeId generation needs parent scope context.",
-        top_level_field_t_type_id,
-        inner_field_t_type_id
+        top_level_field_t_type_id, inner_field_t_type_id
     );
 }
 
@@ -279,14 +277,19 @@ fn test_cfg_struct_node_id_conflation() {
         .collect();
 
     // Assert: Exactly TWO nodes exist because the visitor processes both cfg branches
-    assert_eq!(found_structs.len(), 2,
+    assert_eq!(
+        found_structs.len(),
+        2,
         "FAILED: Expected exactly two CfgGatedStruct nodes (one for each cfg branch), found {}. Visitor might not be processing both branches.",
-        found_structs.len());
+        found_structs.len()
+    );
 
     // Assert: The two nodes have DIFFERENT NodeIds because their CFGs differ
-    assert_ne!(found_structs[0].id, found_structs[1].id,
+    assert_ne!(
+        found_structs[0].id, found_structs[1].id,
         "FAILED: Expected the two CfgGatedStruct nodes to have DIFFERENT NodeIds due to differing CFGs, but they are the same: {}. CFG hashing might not be working.",
-        found_structs[0].id);
+        found_structs[0].id
+    );
 
     // Optional: Verify each node individually using the paranoid helper if needed,
     // although the assertion above confirms the core requirement.
@@ -324,14 +327,19 @@ fn test_cfg_function_node_id_conflation() {
         .collect();
 
     // Assert: Exactly TWO nodes exist because the visitor processes both cfg branches
-    assert_eq!(found_funcs.len(), 2,
+    assert_eq!(
+        found_funcs.len(),
+        2,
         "FAILED: Expected exactly two cfg_gated_func nodes (one for each cfg branch), found {}. Visitor might not be processing both branches.",
-        found_funcs.len());
+        found_funcs.len()
+    );
 
     // Assert: The two nodes have DIFFERENT NodeIds because their CFGs differ
-    assert_ne!(found_funcs[0].id, found_funcs[1].id,
+    assert_ne!(
+        found_funcs[0].id, found_funcs[1].id,
         "FAILED: Expected the two cfg_gated_func nodes to have DIFFERENT NodeIds due to differing CFGs, but they are the same: {}. CFG hashing might not be working.",
-        found_funcs[0].id);
+        found_funcs[0].id
+    );
 }
 
 // --- File-Level #[cfg] Disambiguation Tests ---
@@ -406,15 +414,19 @@ fn test_file_level_cfg_struct_node_id_disambiguation() {
         .expect("ModuleNode for cfg_file_not_a.rs not found");
     // Assert that the correct file-level cfg attribute is present on module_a's cfgs field
     assert!(
-        module_a.cfgs().contains(&"feature = \"feature_a\"".to_string()),
+        module_a
+            .cfgs()
+            .contains(&"feature = \"feature_a\"".to_string()),
         "FAILED: Expected ModuleNode for cfg_file_a.rs to have `cfgs` containing 'feature = \"feature_a\"'. Found: {:?}",
         module_a.cfgs()
     );
 
     let expected_cfg_not_a = "not (feature = \"feature_a\")"; // Expect space after 'not'
-                                                              // Assert that the correct file-level cfg attribute is present on module_not_a's cfgs field
+    // Assert that the correct file-level cfg attribute is present on module_not_a's cfgs field
     assert!(
-        module_not_a.cfgs().contains(&expected_cfg_not_a.to_string()), // Note: syn might normalize spacing
+        module_not_a
+            .cfgs()
+            .contains(&expected_cfg_not_a.to_string()), // Note: syn might normalize spacing
         "FAILED: Expected ModuleNode for cfg_file_not_a.rs to have `cfgs` containing 'not(feature = \"feature_a\")'. Found: {:?}",
         module_not_a.cfgs()
     );

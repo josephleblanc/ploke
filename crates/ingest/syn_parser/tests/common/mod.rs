@@ -4,14 +4,14 @@ use ploke_core::{ItemKind, NodeId, TypeId, TypeKind};
 use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::{self, Path};
+use syn_parser::TestIds;
 use syn_parser::error::SynParserError; // Import directly from ploke_core
 use syn_parser::parser::graph::{CodeGraph, GraphAccess}; // Added GraphNode
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode, TypeNode}; // Remove TypeKind from here
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
-use syn_parser::parser::{nodes::*, ExtractSpan, ParsedCodeGraph};
-use syn_parser::utils::logging::LOG_TEST_ID_REGEN;
+use syn_parser::parser::{ExtractSpan, ParsedCodeGraph, nodes::*};
 use syn_parser::utils::LogStyle; // Added LogStyle imports
-use syn_parser::TestIds;
+use syn_parser::utils::logging::LOG_TEST_ID_REGEN;
 use thiserror::Error; // Ensure thiserror is imported
 
 pub mod debug_printers;
@@ -307,10 +307,7 @@ fn strs_to_strings(strs: &[&str]) -> Vec<String> {
     strs.iter().copied().map(String::from).collect()
 }
 
-use {
-    syn_parser::discovery::run_discovery_phase,
-    syn_parser::parser::analyze_files_parallel,
-};
+use {syn_parser::discovery::run_discovery_phase, syn_parser::parser::analyze_files_parallel};
 
 use ploke_common::fixtures_crates_dir;
 pub use resolution::build_tree_for_tests;

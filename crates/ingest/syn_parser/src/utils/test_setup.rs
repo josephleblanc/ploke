@@ -4,7 +4,7 @@ use ploke_common::fixtures_crates_dir;
 use crate::{
     discovery::run_discovery_phase,
     error::SynParserError,
-    parser::{analyze_files_parallel, ParsedCodeGraph},
+    parser::{ParsedCodeGraph, analyze_files_parallel},
     resolve::module_tree::ModuleTree,
 };
 

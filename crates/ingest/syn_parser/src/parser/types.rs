@@ -34,11 +34,7 @@ impl GenericParamNode {
         match &self.kind {
             GenericParamKind::Type { name, default, .. } => {
                 if let Some(type_id) = r#default {
-                    if type_id == &ty_id {
-                        Some(name)
-                    } else {
-                        None
-                    }
+                    if type_id == &ty_id { Some(name) } else { None }
                 } else {
                     None
                 }

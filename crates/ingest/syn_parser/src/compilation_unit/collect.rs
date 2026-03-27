@@ -6,10 +6,10 @@ use ploke_core::IdTrait;
 use uuid::Uuid;
 
 use crate::parser::{
+    ParsedCodeGraph,
     graph::GraphAccess,
     nodes::{AnyNodeId, GraphNode, TypeDefNode},
     types::TypeNode,
-    ParsedCodeGraph,
 };
 
 /// Node ids referenced from the pruned graph (primary, secondary where present, and type ids).

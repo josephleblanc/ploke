@@ -211,8 +211,8 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
     let stored_file_hash = stored.file_tracking_hash;
     let actual_file_hash =
         ploke_io::read::generate_hash_for_file(stored.file_path.as_path(), stored.namespace)
-        .await
-        .expect("compute file hash");
+            .await
+            .expect("compute file hash");
     assert_eq!(
         stored_file_hash,
         actual_file_hash,

@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
-use crate::common::find_type_node;
 use crate::common::ParanoidArgs;
+use crate::common::find_type_node;
 use crate::paranoid_test_fields_and_values;
 use crate::paranoid_test_setup;
 use crate::run_paranoid_test;
@@ -11,12 +11,12 @@ use ploke_core::TypeId;
 use ploke_core::TypeKind;
 use std::collections::HashMap;
 use syn_parser::error::SynParserError;
+use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::ExpectedTypeAliasNode;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::parser::nodes::TypeAliasNode;
 use syn_parser::parser::types::GenericParamKind;
-use syn_parser::parser::ParsedCodeGraph;
 
 // Keep old imports for existing tests
 // Import TypeKind from ploke_core
@@ -572,7 +572,7 @@ fn test_other_type_alias_nodes() {
     assert!(
         matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "(i32 , i32)")
     ); // Tuple not implemented
-       // #[ignore = "TypeKind::Tuple not yet handled"]
+    // #[ignore = "TypeKind::Tuple not yet handled"]
     {}
     assert_relation_exists(
         graph,
@@ -640,7 +640,7 @@ fn test_other_type_alias_nodes() {
     assert!(
         matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "fn (i32 , i32) -> i32")
     ); // Fn Ptr not implemented
-       // #[ignore = "TypeKind::Function not yet handled"]
+    // #[ignore = "TypeKind::Function not yet handled"]
     {}
     assert_relation_exists(
         graph,
@@ -700,7 +700,7 @@ fn test_other_type_alias_nodes() {
         alias_name,
     );
     assert_eq!(node.generic_params.len(), 1); // T
-                                              // TODO: Add check for where clause bounds once generics parsing is more detailed
+    // TODO: Add check for where clause bounds once generics parsing is more detailed
     let aliased_type = find_type_node(graph, node.type_id);
     assert!(matches!(&aliased_type.kind, TypeKind::Named { path, .. } if path == &["Option"])); // Option<T>
     assert_eq!(aliased_type.related_types.len(), 1); // T
@@ -901,7 +901,7 @@ fn test_other_type_alias_nodes() {
     assert!(
         matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "* const u8")
     ); // Ptr not implemented
-       // #[ignore = "TypeKind::Ptr not yet handled"]
+    // #[ignore = "TypeKind::Ptr not yet handled"]
     {}
     assert_relation_exists(
         graph,
@@ -929,7 +929,7 @@ fn test_other_type_alias_nodes() {
         expected_type_str,
         &aliased_type.kind
     ); // Ptr not implemented
-       // #[ignore = "TypeKind::Ptr not yet handled"]
+    // #[ignore = "TypeKind::Ptr not yet handled"]
     {}
     assert_relation_exists(
         graph,
@@ -954,7 +954,7 @@ fn test_other_type_alias_nodes() {
     assert!(
         matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "[u8 ; 256]")
     ); // Array not implemented
-       // #[ignore = "TypeKind::Array not yet handled"]
+    // #[ignore = "TypeKind::Array not yet handled"]
     {}
     assert_relation_exists(
         graph,
@@ -981,7 +981,7 @@ fn test_other_type_alias_nodes() {
         expected_type_str,
         &aliased_type.kind
     ); // TraitObject not implemented
-       // #[ignore = "TypeKind::TraitObject not yet handled"]
+    // #[ignore = "TypeKind::TraitObject not yet handled"]
     {}
     assert_relation_exists(
         graph,

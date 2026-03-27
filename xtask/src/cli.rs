@@ -17,11 +17,7 @@
 //! cargo xtask --format json parse stats ./my-crate
 //! ```
 
-use crate::commands::{
-    db::Db,
-    parse::Parse,
-    CommandContext, OutputFormat, XtaskError,
-};
+use crate::commands::{CommandContext, OutputFormat, XtaskError, db::Db, parse::Parse};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -96,7 +92,6 @@ impl Cli {
 
         Ok(())
     }
-
 }
 
 /// Available commands
@@ -109,6 +104,7 @@ pub enum Commands {
     /// - phases-resolve: Parse and resolve without merging
     /// - phases-merge: Full parse with graph merging
     /// - workspace: Parse entire workspace
+    /// - workspace-config: Parse workspace with optional Cargo target selector
     #[command(subcommand)]
     Parse(Parse),
 
@@ -191,6 +187,7 @@ SUBCOMMANDS:
     phases-resolve   Parse and resolve without merging
     phases-merge     Parse, resolve, and merge graphs
     workspace        Parse entire workspace
+    workspace-config Parse workspace (optional --target-kind / --target-name per member)
     stats            Show parsing statistics
     list-modules     List all modules in parsed code
     debug            Debug manifest, discovery, workspace probe, pipeline, and path diagnostics
@@ -207,6 +204,9 @@ EXAMPLES:
 
     # Parse entire workspace
     cargo xtask parse workspace ./workspace --crate-name my-crate
+
+    # Parse workspace limiting discovery to one Cargo target per member (e.g. library only)
+    cargo xtask parse workspace-config ./workspace --target-kind lib --target-name serde
 
     # Debug workspace layout and per-member pipeline (JSON)
     cargo xtask --format json parse debug manifest ./workspace
@@ -272,7 +272,8 @@ fn print_examples() {
     #[cfg(not(feature = "xtask_unstable"))]
     const INDEX_EXAMPLES: &str = "";
     #[cfg(feature = "xtask_unstable")]
-    const INDEX_EXAMPLES: &str = "\n4. Build indexes:\n    cargo xtask db hnsw-build\n    cargo xtask db bm25-rebuild\n";
+    const INDEX_EXAMPLES: &str =
+        "\n4. Build indexes:\n    cargo xtask db hnsw-build\n    cargo xtask db bm25-rebuild\n";
 
     println!(
         r#"ploke xtask - Common usage examples

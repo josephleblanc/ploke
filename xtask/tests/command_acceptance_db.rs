@@ -71,10 +71,7 @@ fn acceptance_db_list_relations_with_counts() {
     };
     assert!(!relations.is_empty());
     // `count_relation_rows` uses `.ok()` per relation; some system relations may not support the generic count query.
-    let populated: Vec<_> = relations
-        .iter()
-        .filter(|r| r.row_count.is_some())
-        .collect();
+    let populated: Vec<_> = relations.iter().filter(|r| r.row_count.is_some()).collect();
     assert!(
         !populated.is_empty(),
         "expected at least one relation with row_count when --counts; got {:?}",
@@ -113,7 +110,10 @@ fn acceptance_db_embedding_status_success() {
         panic!("expected EmbeddingStatus variant, got {output:?}");
     };
 
-    assert!(total_nodes > 0, "fixture should have function rows: {total_nodes}");
+    assert!(
+        total_nodes > 0,
+        "fixture should have function rows: {total_nodes}"
+    );
     assert!(
         embedded <= total_nodes,
         "embedded={embedded} should not exceed total_nodes={total_nodes}"
@@ -149,7 +149,10 @@ fn acceptance_db_hnsw_build_panics_until_implemented() {
 fn acceptance_db_hnsw_rebuild_panics_until_implemented() {
     use xtask::commands::db::HnswRebuild;
     let harness = CommandTestHarness::new().expect("CommandTestHarness");
-    let cmd = HnswRebuild { db: None, force: false };
+    let cmd = HnswRebuild {
+        db: None,
+        force: false,
+    };
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = harness.executor().execute(cmd);
     }))

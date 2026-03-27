@@ -12,16 +12,16 @@ use tracing::instrument;
 use crate::{
     cancel_token::CancellationListener,
     config::{OpenRouterConfig, TruncatePolicy},
-    error::{truncate_string, EmbedError},
+    error::{EmbedError, truncate_string},
 };
 use ploke_llm::request::models as openrouter_models;
 
+use ploke_llm::ModelId;
 use ploke_llm::embeddings::{EmbeddingEncodingFormat, EmbeddingInput, EmbeddingRequest};
 use ploke_llm::router_only::openrouter::embed::{
     OpenRouterEmbedEnv, OpenRouterEmbeddingError, OpenRouterEmbeddingFields,
 };
-use ploke_llm::router_only::openrouter::{embed::OpenRouterEmbeddingVector, OpenRouter};
-use ploke_llm::ModelId;
+use ploke_llm::router_only::openrouter::{OpenRouter, embed::OpenRouterEmbeddingVector};
 
 #[derive(Debug, Clone)]
 struct RetryConfig {
@@ -255,7 +255,7 @@ impl OpenRouterBackend {
                 OpenRouterEmbeddingVector::Base64(_) => {
                     return Err(EmbedError::Embedding(
                         "OpenRouter returned base64 embeddings but float was requested".into(),
-                    ))
+                    ));
                 }
             };
 

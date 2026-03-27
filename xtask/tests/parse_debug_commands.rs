@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use xtask::commands::parse::ParseOutput;
 use xtask::commands::parse_debug::{
-    DebugCargoTargets, DebugDiscoveryRules, DebugLogicalPaths, DebugModulesPremerge,
-    DebugOutput, DebugPathCollisions, DebugWorkspaceMembers, ParseDebugCli, ParseDebugCmd,
+    DebugCargoTargets, DebugDiscoveryRules, DebugLogicalPaths, DebugModulesPremerge, DebugOutput,
+    DebugPathCollisions, DebugWorkspaceMembers, ParseDebugCli, ParseDebugCmd,
 };
 use xtask::context::CommandContext;
 use xtask::executor::Command as _;
@@ -65,7 +65,10 @@ fn parse_debug_path_collisions_succeeds_on_fixture() {
         ParseOutput::Debug(DebugOutput::PathCollisions(o)) => {
             assert!(o.merged_module_count > 0);
             for g in &o.collisions {
-                assert!(g.modules.len() > 1, "collision group must have 2+ modules: {g:#?}");
+                assert!(
+                    g.modules.len() > 1,
+                    "collision group must have 2+ modules: {g:#?}"
+                );
             }
         }
         other => panic!("unexpected output: {other:?}"),

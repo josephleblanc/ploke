@@ -151,7 +151,9 @@ pub enum SynParserError {
     NodeValidation(String),
 
     /// A duplicate definition path was encountered when building the `ModuleTree`.
-    #[error("Duplicate definition path '{path}' found in module tree. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
+    #[error(
+        "Duplicate definition path '{path}' found in module tree. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}"
+    )]
     ModuleTreeDuplicateDefnPath {
         // New variant
         path: String, // Store path as String for simplicity in SynParserError
@@ -164,7 +166,9 @@ pub enum SynParserError {
     ModuleTreeDuplicateModuleId(String), // Store Debug representation
 
     /// A relation was not found in the `ModuleTree` during resolution.
-    #[error("Relation not found in ModuleTree during resolution: {0}\nNode with no relations found: {1}")]
+    #[error(
+        "Relation not found in ModuleTree during resolution: {0}\nNode with no relations found: {1}"
+    )]
     ModuletreeRelationNotFound(AnyNodeId, String),
     // Removed ModuleKindinitionNotFound - covered by ModuleTreeError::FoundUnlinkedModules
     // #[error("Module definition not found for path: {0}")]

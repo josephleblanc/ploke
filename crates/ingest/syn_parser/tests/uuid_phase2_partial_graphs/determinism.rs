@@ -81,15 +81,15 @@ mod determinism_tests {
                     }
                     (Ok(_), Err(e2)) => {
                         panic!(
-                        "Mismatch in Result variant for file index {}. Run 1: Ok, Run 2: Err({})",
-                        i, e2
-                    );
+                            "Mismatch in Result variant for file index {}. Run 1: Ok, Run 2: Err({})",
+                            i, e2
+                        );
                     }
                     (Err(e1), Ok(_)) => {
                         panic!(
-                        "Mismatch in Result variant for file index {}. Run 1: Err({}), Run 2: Ok",
-                        i, e1
-                    );
+                            "Mismatch in Result variant for file index {}. Run 1: Err({}), Run 2: Ok",
+                            i, e1
+                        );
                     }
                 }
             }

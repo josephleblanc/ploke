@@ -31,24 +31,24 @@ use crate::parser::nodes::{ImportKind, MacroKind, ModuleKind, ProcMacroKind};
 // Imported Kinds from ploke-core
 use ploke_core::ItemKind;
 
+use crate::parser::ExtractSpan;
 use crate::parser::relations::*;
 use crate::parser::types::*;
 use crate::parser::visitor::calculate_cfg_hash_bytes;
-use crate::parser::ExtractSpan;
 
 use crate::error::CodeVisitorError; // Import the new error type
-use crate::utils::logging::LogErrorConversion as _;
 use crate::utils::LogStyleDebug;
+use crate::utils::logging::LogErrorConversion as _;
 use itertools::Itertools;
 use ploke_core::TypeId;
 
 use colored::*;
 use quote::ToTokens;
-use syn::spanned::Spanned;
 use syn::TypePath;
+use syn::spanned::Spanned;
 use syn::{
-    visit::{self, Visit},
     ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, ReturnType, Type,
+    visit::{self, Visit},
 };
 use tracing::{error, trace}; // Import error macro
 
@@ -183,11 +183,7 @@ impl<'a> CodeVisitor<'a> {
 
                 // Full source path disambiguates `use a::X as Y` vs `use b::X as Y`; append the
                 // visible binding so two renames of the same path (`as A` vs `as B`) stay distinct.
-                let id_key = format!(
-                    "{}::{}",
-                    source_path.join("::"),
-                    visible_name
-                );
+                let id_key = format!("{}::{}", source_path.join("::"), visible_name);
 
                 // Register using a path-qualified key (not the visible binding alone).
                 let registration_result = self.register_new_node_id(
@@ -266,7 +262,7 @@ impl<'a> CodeVisitor<'a> {
                     // Use the logging trait method
                     self.state
                         .log_import_id_conversion_error("<glob>", &base_path, e); // Use placeholder and base_path
-                                                                                  // Return the specific CodeVisitorError variant
+                    // Return the specific CodeVisitorError variant
                     CodeVisitorError::IdConversionFailed {
                         item_name: "<glob>".to_string(),
                         item_kind: ItemKind::Import,
@@ -431,7 +427,7 @@ impl<'a> CodeVisitor<'a> {
         let node_id = self
             .state
             .generate_synthetic_node_id(item_name, item_kind, cfg_bytes); // Pass cfg_bytes
-                                                                          // 2. Find the parent module based on the *current path* and add the item ID.
+        // 2. Find the parent module based on the *current path* and add the item ID.
         let parent_module_opt = self
             .state
             .code_graph
@@ -489,7 +485,7 @@ impl<'a> CodeVisitor<'a> {
         self.state
             .cfg_stack
             .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
-                                                          // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         self.state.current_scope_cfgs = cfgs.to_vec();
         trace!(target: VISITOR_TARGET_TRACE, ">>> Entering Primary Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
     }
@@ -505,7 +501,7 @@ impl<'a> CodeVisitor<'a> {
         self.state
             .cfg_stack
             .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
-                                                          // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         self.state.current_scope_cfgs = cfgs.to_vec();
         trace!(target: VISITOR_TARGET_TRACE, ">>> Entering Secondary Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
     }
@@ -521,7 +517,7 @@ impl<'a> CodeVisitor<'a> {
         self.state
             .cfg_stack
             .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
-                                                          // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         self.state.current_scope_cfgs = cfgs.to_vec();
         trace!(target: VISITOR_TARGET_TRACE, ">>> Entering Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
     }
@@ -531,7 +527,7 @@ impl<'a> CodeVisitor<'a> {
         let popped_id = self.state.current_primary_defn_scope.pop();
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
-                                                                                        // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         trace!(target: VISITOR_TARGET_TRACE, "<<< Exiting Primary Scope: {} ({}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
@@ -543,7 +539,7 @@ impl<'a> CodeVisitor<'a> {
         let popped_id = self.state.current_secondary_defn_scope.pop();
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
-                                                                                        // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         trace!(target: VISITOR_TARGET_TRACE, "<<< Exiting Secondary Scope: {} ({}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
@@ -559,7 +555,7 @@ impl<'a> CodeVisitor<'a> {
         let popped_id = self.state.current_assoc_defn_scope.pop();
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
-                                                                                        // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         trace!(target: VISITOR_TARGET_TRACE, "<<< Exiting Assoc Scope: {} ({:?}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),

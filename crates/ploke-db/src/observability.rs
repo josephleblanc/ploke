@@ -9,8 +9,8 @@ use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    database::{to_string, to_uuid},
     Database, DbError,
+    database::{to_string, to_uuid},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Deserialize)]

@@ -36,7 +36,10 @@ fn acceptance_parse_phases_resolve_success_fixture_nodes() {
             duration_ms,
         } => {
             assert!(success, "phases-resolve should report success");
-            assert!(nodes_parsed > 0, "expected parsed nodes > 0, got {nodes_parsed}");
+            assert!(
+                nodes_parsed > 0,
+                "expected parsed nodes > 0, got {nodes_parsed}"
+            );
             assert!(
                 relations_found > 0,
                 "expected relations > 0, got {relations_found}"

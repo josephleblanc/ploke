@@ -76,7 +76,7 @@
 //!     RUST_LOG=log_test_node,log_test_import,test_id_regen=debug cargo test -p syn_parser imports::node_TupleStruct -- --test-threads=1
 use std::collections::HashMap;
 
-use crate::common::{paranoid::*, ParanoidArgs}; // Use re-exports from paranoid mod
+use crate::common::{ParanoidArgs, paranoid::*}; // Use re-exports from paranoid mod
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId};
 use syn_parser::parser::nodes::ImportKind;

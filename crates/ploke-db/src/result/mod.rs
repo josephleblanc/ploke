@@ -6,7 +6,7 @@ mod snippet;
 use std::path::PathBuf;
 
 pub use formatter::ResultFormatter;
-use ploke_core::{rag_types::CanonPath, EmbeddingData, FileData, TrackingHash};
+use ploke_core::{EmbeddingData, FileData, TrackingHash, rag_types::CanonPath};
 pub use snippet::CodeSnippet;
 use uuid::Uuid;
 pub mod typed_rows;
@@ -280,7 +280,7 @@ impl TryFrom<QueryResult> for Vec<ResolvedEdgeData> {
                     other => {
                         return Err(DbError::Cozo(format!(
                             "Expected canon_path as string or list, found {other:?}"
-                        )))
+                        )));
                     }
                 };
 
@@ -333,7 +333,7 @@ impl TryFrom<QueryResult> for ResolvedEdgeData {
             other => {
                 return Err(DbError::Cozo(format!(
                     "Expected canon_path as string or list, found {other:?}"
-                )))
+                )));
             }
         };
 

@@ -7,8 +7,8 @@ use tokio::sync::Mutex;
 use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
-use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_db::Database;
+use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_embed::{
     config::{OpenRouterConfig, TruncatePolicy},
     indexer::{EmbeddingProcessor, EmbeddingSource},

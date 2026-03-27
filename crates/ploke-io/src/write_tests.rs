@@ -1,6 +1,6 @@
 use crate::handle::IoManagerHandle;
 use ploke_core::{CreateFileData, CreateFileResult, OnExists};
-use ploke_core::{TrackingHash, WriteSnippetData, PROJECT_NAMESPACE_UUID};
+use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
 use quote::ToTokens;
 use std::fs;
 use std::path::Path;

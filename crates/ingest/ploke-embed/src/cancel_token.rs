@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::{sync::watch, time::sleep, time::Duration};
+use tokio::{sync::watch, time::Duration, time::sleep};
 
 /// A token that can be used to signal cancellation across async tasks
 #[derive(Debug)]
@@ -97,7 +97,7 @@ impl Default for CancellationToken {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::{sleep, timeout, Duration};
+    use tokio::time::{Duration, sleep, timeout};
 
     #[tokio::test]
     async fn test_cancellation_token_basic() {

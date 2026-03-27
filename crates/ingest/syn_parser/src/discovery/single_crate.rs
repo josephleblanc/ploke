@@ -21,9 +21,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::discovery::workspace::resolve_workspace_version;
-use crate::discovery::workspace::WorkspaceVersionLink;
 use crate::discovery::DiscoveryError;
+use crate::discovery::workspace::WorkspaceVersionLink;
+use crate::discovery::workspace::resolve_workspace_version;
 
 // PROJECT_NAMESPACE_UUID is now defined in ploke_core
 // The old comment block explaining it remains relevant but the constant itself is moved.
@@ -732,6 +732,17 @@ pub struct CrateContext {
     pub files: Vec<PathBuf>,
     /// Enumerated Cargo target roots discovered for this crate.
     pub targets: Vec<TargetSpec>,
+    /// Per-target file reachability map used by Phase 2 input construction.
+    ///
+    /// Keys are absolute target root file paths (for example `src/lib.rs`,
+    /// `src/main.rs`, or `tests/integration.rs`). Values contain the absolute
+    /// `.rs` files that are reachable from that target by following `mod foo;`
+    /// declarations from the root.
+    ///
+    /// This intentionally excludes unrelated files from the crate-wide
+    /// discovery superset (`files`) so parsing can avoid accidental alternate
+    /// roots (for example `lib.rs` plus `src/mod.rs` collisions).
+    pub target_root_reachable_files: HashMap<PathBuf, Vec<PathBuf>>,
     /// Parsed features from Cargo.toml.
     #[allow(unused_variables, reason = "Useful later for resolving features")]
     pub features: Features,

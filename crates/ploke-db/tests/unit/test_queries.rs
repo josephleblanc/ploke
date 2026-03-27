@@ -5,13 +5,11 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability, UuidWrapper};
-use ploke_db::{to_uuid, CodeSnippet, Database, QueryBuilder};
+use ploke_db::{CodeSnippet, Database, QueryBuilder, to_uuid};
 use ploke_error::Error;
 use ploke_transform::schema::primary_nodes::StructNodeSchema;
 use ploke_transform::transform::insert_structural_compilation_unit_slice;
-use syn_parser::compilation_unit::{
-    CompilationUnitKey, StructuralCompilationUnitSlice,
-};
+use syn_parser::compilation_unit::{CompilationUnitKey, StructuralCompilationUnitSlice};
 use syn_parser::discovery::TargetKind;
 use uuid::Uuid;
 
@@ -21,10 +19,7 @@ fn insert_test_struct(db: &Db<MemStorage>, id: Uuid, name: &str) {
     let schema = &StructNodeSchema::SCHEMA;
     let th = Uuid::new_v4();
     let params = BTreeMap::from([
-        (
-            schema.id().to_string(),
-            DataValue::Uuid(UuidWrapper(id)),
-        ),
+        (schema.id().to_string(), DataValue::Uuid(UuidWrapper(id))),
         (schema.name().to_string(), DataValue::from(name)),
         (
             schema.span().to_string(),
@@ -33,10 +28,7 @@ fn insert_test_struct(db: &Db<MemStorage>, id: Uuid, name: &str) {
                 DataValue::Num(Num::Int(1)),
             ]),
         ),
-        (
-            schema.vis_kind().to_string(),
-            DataValue::from("public"),
-        ),
+        (schema.vis_kind().to_string(), DataValue::from("public")),
         (schema.vis_path().to_string(), DataValue::Null),
         (schema.docstring().to_string(), DataValue::Null),
         (
@@ -105,9 +97,8 @@ fn test_compilation_unit_membership_rows_and_filter_contract() -> Result<(), Err
 
     let ploke_db = Database::new(db);
 
-    let probe = ploke_db.raw_query(
-        "?[cu_id, node_id] := *compilation_unit_enabled_node { cu_id, node_id }",
-    )?;
+    let probe = ploke_db
+        .raw_query("?[cu_id, node_id] := *compilation_unit_enabled_node { cu_id, node_id }")?;
     assert_eq!(probe.rows.len(), 1);
     assert_eq!(to_uuid(&probe.rows[0][0])?, cu_id);
     assert_eq!(to_uuid(&probe.rows[0][1])?, id_in);

@@ -785,7 +785,7 @@ is_root_module[id] := *module{{id @ 'NOW'}}, *file_mod{{owner_id: id @ 'NOW'}}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{create_index_primary, DbError};
+    use crate::{DbError, create_index_primary};
     use lazy_static::lazy_static;
     use ploke_error::Error as PlokeError;
     use ploke_test_utils::FIXTURE_NODES_CANONICAL;

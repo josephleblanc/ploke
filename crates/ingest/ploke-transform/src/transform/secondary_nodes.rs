@@ -271,7 +271,7 @@ mod test {
     use cozo::{Db, MemStorage, ScriptMutability};
     use ploke_test_utils::test_run_phases_and_collect;
     use syn_parser::{
-        parser::{nodes::AsAnyNodeId, ParsedCodeGraph},
+        parser::{ParsedCodeGraph, nodes::AsAnyNodeId},
         utils::LogStyle,
     };
 

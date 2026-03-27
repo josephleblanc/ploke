@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
-use ploke_db::{create_index_primary, Database};
+use ploke_db::{Database, create_index_primary};
 use ploke_test_utils::fixture_dbs::{FixtureDb, FixtureImportMode};
 
 use crate::error::XtaskError;
@@ -194,7 +194,10 @@ impl DatabasePool {
     }
 
     /// Load a registered fixture with the correct import mode and primary index policy.
-    pub fn get_from_fixture(&self, fixture: &'static FixtureDb) -> Result<Arc<Database>, XtaskError> {
+    pub fn get_from_fixture(
+        &self,
+        fixture: &'static FixtureDb,
+    ) -> Result<Arc<Database>, XtaskError> {
         let key = fixture.path().canonicalize().map_err(|e| {
             XtaskError::validation(format!(
                 "Could not resolve fixture database path {}: {}",
@@ -321,7 +324,6 @@ mod tests {
         assert!(Arc::ptr_eq(&db, &db2));
     }
 
-
     #[test]
     fn test_context_loads_canonical_fixture() {
         use ploke_test_utils::FIXTURE_NODES_CANONICAL;
@@ -335,5 +337,4 @@ mod tests {
             .expect("fixture should contain function rows");
         assert!(!qr.rows.is_empty());
     }
-
 }

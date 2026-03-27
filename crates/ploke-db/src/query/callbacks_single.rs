@@ -1,6 +1,6 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
-    sync::{atomic::AtomicUsize, Arc},
+    collections::{HashMap, hash_map::Entry},
+    sync::{Arc, atomic::AtomicUsize},
 };
 
 use cozo::{CallbackOp, NamedRows};

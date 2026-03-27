@@ -30,8 +30,8 @@ pub mod tool_types;
 
 pub use arc_str::ArcStr;
 pub use workspace::{
-    canonicalize_best_effort, CrateId, CrateInfo, RetrievalScope, WorkspaceId, WorkspaceInfo,
-    WorkspaceRoots,
+    CrateId, CrateInfo, RetrievalScope, WorkspaceId, WorkspaceInfo, WorkspaceRoots,
+    canonicalize_best_effort,
 };
 pub mod embeddings;
 
@@ -110,7 +110,7 @@ mod ids {
     use uuid::Uuid;
 
     use crate::{ItemKind, PROJECT_NAMESPACE_UUID}; // Import ItemKind
-                                                   // Removed unused std::io import
+    // Removed unused std::io import
 
     #[allow(dead_code, reason = "useful later")]
     pub struct ResolvedIds {

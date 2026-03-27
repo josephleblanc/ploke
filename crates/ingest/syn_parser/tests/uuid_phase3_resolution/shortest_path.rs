@@ -211,7 +211,8 @@ fn test_spp_private_item_in_public_mod() {
     // Expected: Err(ItemNotPubliclyAccessible)
     assert!(
         matches!(spp_result, Err(ModuleTreeError::ItemNotPubliclyAccessible(id)) if id == top_pub_priv_func_id),
-        "Shortest public path for private function should be Err(ItemNotPubliclyAccessible), but was {:?}", spp_result
+        "Shortest public path for private function should be Err(ItemNotPubliclyAccessible), but was {:?}",
+        spp_result
     );
 }
 
@@ -242,7 +243,8 @@ fn test_spp_item_in_private_mod() {
     // Expected: Err(ItemNotPubliclyAccessible)
     assert!(
         matches!(spp_result, Err(ModuleTreeError::ItemNotPubliclyAccessible(id)) if id == nested_pub_in_priv_func_id),
-        "Shortest public path for item in private module should be Err(ItemNotPubliclyAccessible), but was {:?}", spp_result
+        "Shortest public path for item in private module should be Err(ItemNotPubliclyAccessible), but was {:?}",
+        spp_result
     );
 }
 
@@ -310,7 +312,7 @@ fn test_spp_reexported_item_finds_original_path() {
         reexport_node.source_path,
         ["crate", "top_pub_mod", "top_pub_func"]
     ); // Path points to original item
-       // Check that the re-export is contained in the crate root module
+    // Check that the re-export is contained in the crate root module
     let crate_root_id = tree.root().into_inner();
     assert!(graph.module_contains_node(crate_root_id, reexport_node.id));
 

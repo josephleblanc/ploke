@@ -117,6 +117,11 @@ mod tests {
         let data = serde_json::json!({"key": "value"});
         let result = OutputFormat::Table.format(&data);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 }

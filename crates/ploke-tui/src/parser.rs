@@ -200,11 +200,13 @@ pub fn run_parse_resolved(
                 let merged = parser_output.extract_merged_graph().ok_or_else(|| {
                     SynParserError::InternalState("Missing parsed code graph".to_string())
                 })?;
-                let tree = parser_output
-                    .extract_module_tree()
-                    .ok_or_else(|| SynParserError::InternalState("Missing module tree".to_string()))?;
+                let tree = parser_output.extract_module_tree().ok_or_else(|| {
+                    SynParserError::InternalState("Missing module tree".to_string())
+                })?;
                 transform_parsed_graph(&db, merged, &tree).map_err(|err| {
-                    SynParserError::InternalState(format!("Failed to transform parsed graph: {err}"))
+                    SynParserError::InternalState(format!(
+                        "Failed to transform parsed graph: {err}"
+                    ))
                 })?;
             }
         }

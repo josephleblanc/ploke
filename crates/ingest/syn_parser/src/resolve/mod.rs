@@ -36,12 +36,12 @@ use std::collections::VecDeque;
 use crate::{
     error::SynParserError,
     parser::{
-        nodes::{extract_path_attr_from_node, ModuleNode},
         ParsedCodeGraph,
+        nodes::{ModuleNode, extract_path_attr_from_node},
     }, // Removed GraphNode import
     utils::{
+        LOG_TARGET_MOD_TREE_BUILD, LOG_TARGET_VIS, LogStyle,
         logging::{LogDataStructure, PathProcessingContext},
-        LogStyle, LOG_TARGET_MOD_TREE_BUILD, LOG_TARGET_VIS,
     },
 };
 

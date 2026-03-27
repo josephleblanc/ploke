@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability, UuidWrapper};
 use syn_parser::compilation_unit::{
-    CompilationUnitKey, StructuralCompilationUnitSlice, COMPILATION_UNIT_ID_NAMESPACE,
+    COMPILATION_UNIT_ID_NAMESPACE, CompilationUnitKey, StructuralCompilationUnitSlice,
 };
 use tracing::instrument;
 use uuid::Uuid;
@@ -322,9 +322,10 @@ mod tests {
         let filtered_with = filter_structural_slice_by_cfg(&merged, &slice, &active_with);
         let filtered_without = filter_structural_slice_by_cfg(&merged, &slice, &active_without);
 
-        let only_foo_id = merged.functions().iter().find_map(|f| {
-            (f.name == "only_when_foo").then_some(f.any_id().uuid())
-        });
+        let only_foo_id = merged
+            .functions()
+            .iter()
+            .find_map(|f| (f.name == "only_when_foo").then_some(f.any_id().uuid()));
         if let Some(id) = only_foo_id {
             assert!(filtered_with.enabled_node_ids.contains(&id));
             assert!(!filtered_without.enabled_node_ids.contains(&id));

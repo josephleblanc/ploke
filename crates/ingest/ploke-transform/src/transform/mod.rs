@@ -6,13 +6,13 @@ use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
 use crate_context::transform_crate_context;
 pub use workspace::transform_parsed_workspace;
 // -- from workspace
+use syn_parser::ParsedCodeGraph;
 use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
-use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::resolve::RelationIndexer;
+use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::utils::LogStyle;
-use syn_parser::ParsedCodeGraph;
 
 // ---- local imports ----
 // -- error handling --

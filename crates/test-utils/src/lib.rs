@@ -9,12 +9,11 @@ pub mod fixture_dbs;
 pub mod nodes;
 
 pub use fixture_dbs::{
-    backup_db_fixture, fresh_backup_fixture_db, shared_backup_fixture_db,
-    validate_backup_fixture_contract, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
-    FixtureEmbeddingExpectation, FixtureImportMode, FixtureManualRecreation, FixtureStatus,
     BACKUP_DB_FIXTURES, FIXTURE_NODES_CANONICAL, FIXTURE_NODES_LOCAL_EMBEDDINGS,
-    FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1, PLOKE_DB_ORPHANED, PLOKE_DB_PRIMARY,
-    WS_FIXTURE_01_CANONICAL,
+    FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
+    FixtureEmbeddingExpectation, FixtureImportMode, FixtureManualRecreation, FixtureStatus,
+    PLOKE_DB_ORPHANED, PLOKE_DB_PRIMARY, WS_FIXTURE_01_CANONICAL, backup_db_fixture,
+    fresh_backup_fixture_db, shared_backup_fixture_db, validate_backup_fixture_contract,
 };
 
 use std::path::{Path, PathBuf};
@@ -22,12 +21,12 @@ use std::path::{Path, PathBuf};
 use chrono::Local;
 use cozo::MemStorage;
 pub use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
-use ploke_core::embeddings::EmbeddingSet;
 pub use ploke_core::NodeId;
+use ploke_core::embeddings::EmbeddingSet;
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::nodes::TypeDefNode;
-use syn_parser::parser::{analyze_files_parallel, ParsedCodeGraph};
+use syn_parser::parser::{ParsedCodeGraph, analyze_files_parallel};
 // TODO: Change import path of `CodeGraph` and `NodeId`, probably better organized to use `ploke-core`
 use syn_parser::CodeGraph;
 
@@ -376,7 +375,7 @@ use fmt::format::FmtSpan;
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::util::TryInitError;
-use tracing_subscriber::{filter, fmt, layer::SubscriberExt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, filter, fmt, layer::SubscriberExt, prelude::*};
 
 fn should_write_test_log_file() -> bool {
     match std::env::var("PLOKE_TEST_LOG") {

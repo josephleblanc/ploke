@@ -6,7 +6,7 @@
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId};
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
-use syn_parser::parser::{nodes::*, ParsedCodeGraph};
+use syn_parser::parser::{ParsedCodeGraph, nodes::*};
 
 /// Finds the specific ParsedCodeGraph for the target file, then finds the ModuleNode
 /// representing a *declaration* (`mod name;`) within that graph, performs paranoid checks,
@@ -58,11 +58,11 @@ pub fn find_declaration_node_paranoid<'a>(
     let module_id = module_node.id();
     let module_name = module_node.name();
     let item_cfgs = module_node.cfgs(); // Get the declaration's own CFGs
-                                        //     panic!(
-                                        //         "ModuleNode {:?} ({}) is Declaration but has no declaration_span",
-                                        //         module_node.path, module_node.name
-                                        //     )
-                                        // });
+    //     panic!(
+    //         "ModuleNode {:?} ({}) is Declaration but has no declaration_span",
+    //         module_node.path, module_node.name
+    //     )
+    // });
 
     // 5. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     // The parent path for a declaration is the path of the module it's declared *in*.
@@ -106,9 +106,18 @@ pub fn find_declaration_node_paranoid<'a>(
     );
 
     assert_eq!(
-        module_id, regenerated_id,
+        module_id,
+        regenerated_id,
         "Mismatch between declaration node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}'.\nParentScope: {:?}\nScope CFGs: {:?}\nItem CFGs: {:?}\nCombined CFGs: {:?}",
-        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), Some(parent_mod_id), scope_cfgs, item_cfgs, provisional_effective_cfgs
+        module_id,
+        regenerated_id,
+        expected_module_path,
+        module_name,
+        file_path.display(),
+        Some(parent_mod_id),
+        scope_cfgs,
+        item_cfgs,
+        provisional_effective_cfgs
     );
 
     // 6. Return the validated node
@@ -196,9 +205,18 @@ pub fn find_file_module_node_paranoid<'a>(
     );
 
     assert_eq!(
-        module_id, regenerated_id,
+        module_id,
+        regenerated_id,
         "Mismatch between file module node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}'.\nParentScope: {:?}\nScope CFGs: {:?}\nItem CFGs: {:?}\nCombined CFGs: {:?}",
-        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), parent_mod_id, scope_cfgs, item_cfgs, provisional_effective_cfgs
+        module_id,
+        regenerated_id,
+        expected_module_path,
+        module_name,
+        file_path.display(),
+        parent_mod_id,
+        scope_cfgs,
+        item_cfgs,
+        provisional_effective_cfgs
     );
 
     // 6. Return the validated node
@@ -255,11 +273,11 @@ pub fn find_inline_module_node_paranoid<'a>(
     let module_id = module_node.id();
     let module_name = module_node.name();
     let item_cfgs = module_node.cfgs(); // Get the inline module's own CFGs
-                                        //     panic!(
-                                        //         "ModuleNode {:?} ({}) is Inline but has no inline_span",
-                                        //         module_node.path, module_node.name
-                                        //     )
-                                        // });
+    //     panic!(
+    //         "ModuleNode {:?} ({}) is Inline but has no inline_span",
+    //         module_node.path, module_node.name
+    //     )
+    // });
 
     // 5. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     // The parent path for an inline module definition is its logical parent path.
@@ -303,9 +321,18 @@ pub fn find_inline_module_node_paranoid<'a>(
     );
 
     assert_eq!(
-        module_id, regenerated_id,
+        module_id,
+        regenerated_id,
         "Mismatch between inline module node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}'.\nParentScope: {:?}\nScope CFGs: {:?}\nItem CFGs: {:?}\nCombined CFGs: {:?}",
-        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), Some(parent_mod_id), scope_cfgs, item_cfgs, provisional_effective_cfgs
+        module_id,
+        regenerated_id,
+        expected_module_path,
+        module_name,
+        file_path.display(),
+        Some(parent_mod_id),
+        scope_cfgs,
+        item_cfgs,
+        provisional_effective_cfgs
     );
 
     // 6. Return the validated node

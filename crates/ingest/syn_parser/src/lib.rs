@@ -43,16 +43,18 @@ pub mod utils; // Don't re-export `LogStyle` to keep it clear its a utility trai
 use std::path::{Path, PathBuf};
 
 use discovery::run_discovery_phase;
+use discovery::run_discovery_phase_with_target;
 use error::SynParserError;
 // Re-export PartialSuccess for internal use or if needed
 pub use error::PartialSuccess;
 use itertools::Itertools;
 use parser::analyze_files_parallel;
 // Re-export key items for easier access
-pub use discovery::try_parse_manifest;
 pub use discovery::CrateContext;
+pub use discovery::TargetSelector;
+pub use discovery::try_parse_manifest;
 pub use parser::visitor::{analyze_file_phase2, logical_module_path_for_file};
-pub use parser::{create_parser_channel, CodeGraph, ParserMessage};
+pub use parser::{CodeGraph, ParserMessage, create_parser_channel};
 use ploke_common::fixtures_crates_dir;
 pub use ploke_core::TypeId; // Re-export the enum/struct from ploke-core
 
@@ -66,14 +68,27 @@ pub use resolve::module_tree::ModuleTree;
 use crate::discovery::workspace::WorkspaceMetadataSection;
 use tracing::{info_span, instrument};
 
+/// Configuration for [`parse_workspace_with_config`].
+///
+/// `target_selector`, when `Some`, is passed to discovery for **each** workspace member so that
+/// [`run_discovery_phase_with_target`](crate::discovery::run_discovery_phase_with_target) limits
+/// Cargo targets consistently across members.
+#[derive(Debug, Clone, Copy)]
+pub struct ParseWorkspaceConfig<'a> {
+    /// Which workspace members to parse; `None` means all members (same as [`parse_workspace`]).
+    pub selected_crates: Option<&'a [&'a Path]>,
+    /// When set, discovery uses this Cargo target selector for every member crate.
+    pub target_selector: Option<&'a TargetSelector>,
+}
+
 #[instrument(skip_all, fields(workspace = %target_workspace_dir.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("No filename")
         .to_string()
 ))]
-pub fn parse_workspace(
+pub fn parse_workspace_with_config(
     target_workspace_dir: &Path,
-    selected_crates: Option<&[&Path]>,
+    config: &ParseWorkspaceConfig<'_>,
 ) -> Result<ParsedWorkspace, SynParserError> {
     let path_buf = PathBuf::from(target_workspace_dir);
     let name = path_buf
@@ -98,8 +113,9 @@ pub fn parse_workspace(
             })?;
     tracing::info!(target: "dbg_serde", "{workspace_data:#?}");
 
-    let normalized_selected_crates =
-        selected_crates.map(|crates| normalize_selected_crates(&workspace_data.path, crates));
+    let normalized_selected_crates = config
+        .selected_crates
+        .map(|crates| normalize_selected_crates(&workspace_data.path, crates));
 
     if let Some(selected_crates) = &normalized_selected_crates {
         let missing_selected = selected_crates
@@ -148,7 +164,7 @@ pub fn parse_workspace(
                 rel_path = %rel_path
             )
             .entered();
-            try_run_phases_and_merge(member)
+            try_run_phases_and_merge_with_target(member, config.target_selector)
         })
         .partition_result();
 
@@ -163,6 +179,20 @@ pub fn parse_workspace(
             .collect::<Result<Vec<_>, _>>()?,
         workspace: workspace_data,
     })
+}
+
+/// Parse a Cargo workspace (same as [`parse_workspace_with_config`] with no target selector).
+pub fn parse_workspace(
+    target_workspace_dir: &Path,
+    selected_crates: Option<&[&Path]>,
+) -> Result<ParsedWorkspace, SynParserError> {
+    parse_workspace_with_config(
+        target_workspace_dir,
+        &ParseWorkspaceConfig {
+            selected_crates,
+            target_selector: None,
+        },
+    )
 }
 
 fn normalize_selected_crates(workspace_root: &Path, selected_crates: &[&Path]) -> Vec<PathBuf> {
@@ -189,6 +219,16 @@ fn normalize_selected_crates(workspace_root: &Path, selected_crates: &[&Path]) -
 pub fn try_run_phases_and_resolve(
     target_crate_dir: &Path,
 ) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
+    try_run_phases_and_resolve_with_target(target_crate_dir, None)
+}
+
+/// Like [`try_run_phases_and_resolve`], but passes `selected_target` through to
+/// [`run_discovery_phase_with_target`](crate::discovery::run_discovery_phase_with_target).
+#[instrument(skip(selected_target))]
+pub fn try_run_phases_and_resolve_with_target(
+    target_crate_dir: &Path,
+    selected_target: Option<&TargetSelector>,
+) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
     // NOTE: Although the `run_discovery_phase` fuction takes two arguments, one for root path to a
     // workspace dir and another for the paths of multiple crates, it currently does not use the
     // argument for the root path, and so is left empty below for convenience.
@@ -200,8 +240,8 @@ pub fn try_run_phases_and_resolve(
         .unwrap_or("No filename")
         .to_string();
     let path = path_buf.display().to_string();
-    let discovery_output =
-        run_discovery_phase(None, &[path_buf]).map_err(|e| SynParserError::ComplexDiscovery {
+    let discovery_output = run_discovery_phase_with_target(None, &[path_buf], selected_target)
+        .map_err(|e| SynParserError::ComplexDiscovery {
             name,
             path,
             source_string: e.to_string(),
@@ -357,7 +397,7 @@ pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_er
 /// Like [`try_run_phases_and_merge`], but merges **all** Cargo target roots into one graph and
 /// retains [`ParserOutput::parsed_graphs_for_masks`] for structural compilation-unit slices.
 pub fn try_run_phases_union_for_crate(target_crate: &Path) -> Result<ParserOutput, SynParserError> {
-    let parsed_graphs = try_run_phases_and_resolve(target_crate)?;
+    let parsed_graphs = try_run_phases_and_resolve_with_target(target_crate, None)?;
     let parsed_for_masks = parsed_graphs.clone();
     let (merged, tree) = ParsedCodeGraph::merge_union_graph_and_prune_tree(parsed_graphs)?;
     Ok(ParserOutput {
@@ -368,7 +408,17 @@ pub fn try_run_phases_union_for_crate(target_crate: &Path) -> Result<ParserOutpu
 }
 
 pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, SynParserError> {
-    let parsed_graphs = try_run_phases_and_resolve(target_crate)?;
+    try_run_phases_and_merge_with_target(target_crate, None)
+}
+
+/// Like [`try_run_phases_and_merge`], but passes `selected_target` through to discovery (see
+/// [`try_run_phases_and_resolve_with_target`]).
+#[instrument(skip(selected_target))]
+pub fn try_run_phases_and_merge_with_target(
+    target_crate: &Path,
+    selected_target: Option<&TargetSelector>,
+) -> Result<ParserOutput, SynParserError> {
+    let parsed_graphs = try_run_phases_and_resolve_with_target(target_crate, selected_target)?;
     let _parsed_file_count = parsed_graphs.len();
     let partition = ParsedCodeGraph::partition_by_selected_roots(parsed_graphs)?;
     let selected_root = partition.select_default_root_path()?.to_path_buf();
@@ -508,7 +558,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::discovery::{run_discovery_phase_with_target, TargetKind, TargetSelector};
+    use crate::discovery::{TargetKind, TargetSelector, run_discovery_phase_with_target};
 
     fn create_workspace_fixture_with_members(members: &[(&str, &str)]) -> tempfile::TempDir {
         let tmp = tempdir().unwrap();
@@ -833,6 +883,95 @@ edition = "2021"
         expected_roots.sort();
 
         assert_eq!(crate_roots, expected_roots);
+    }
+
+    #[test]
+    fn parse_workspace_config_handles_non_standard_root_without_duplicate_crate_roots() {
+        let workspace_root = workspace_root().join("tests/fixture_github_clones/serde");
+        let selected_member = Path::new("serde_derive_internals");
+
+        let parsed = parse_workspace_with_config(
+            &workspace_root,
+            &ParseWorkspaceConfig {
+                selected_crates: Some(&[selected_member]),
+                target_selector: None,
+            },
+        )
+        .expect("workspace-config parse should succeed for serde_derive_internals");
+
+        assert_eq!(parsed.crates.len(), 1, "expected selected member only");
+
+        let merged_graph = parsed.crates[0]
+            .parser_output
+            .merged_graph
+            .as_ref()
+            .expect("merged graph should be available");
+        let crate_root_modules: Vec<_> = merged_graph
+            .modules()
+            .iter()
+            .filter(|module| module.path() == &vec!["crate".to_string()])
+            .collect();
+        assert_eq!(
+            crate_root_modules.len(),
+            1,
+            "non-standard lib root must produce exactly one crate root module"
+        );
+        assert!(
+            crate_root_modules[0]
+                .file_path()
+                .is_some_and(|path| path.ends_with("serde_derive_internals/lib.rs")),
+            "crate root should resolve to serde_derive_internals/lib.rs"
+        );
+    }
+
+    #[test]
+    fn parse_workspace_with_config_threads_target_selector() {
+        let tmp = tempdir().unwrap();
+        let ws = tmp.path();
+        fs::write(ws.join("Cargo.toml"), "[workspace]\nmembers = [\"solo\"]\n").unwrap();
+        let solo = ws.join("solo");
+        fs::create_dir_all(solo.join("src")).unwrap();
+        fs::create_dir_all(solo.join("tests")).unwrap();
+        fs::write(
+            solo.join("Cargo.toml"),
+            r#"[package]
+name = "solo"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        fs::write(solo.join("src/lib.rs"), "pub fn keep() {}\n").unwrap();
+        fs::write(solo.join("tests/integration.rs"), "fn it_works() {}\n").unwrap();
+
+        let lib_sel = TargetSelector {
+            kind: TargetKind::Lib,
+            name: "solo".to_string(),
+        };
+        let parsed = parse_workspace_with_config(
+            ws,
+            &ParseWorkspaceConfig {
+                selected_crates: None,
+                target_selector: Some(&lib_sel),
+            },
+        )
+        .expect("parse workspace with lib target selector");
+
+        assert_eq!(parsed.crates.len(), 1);
+        let mg = parsed.crates[0]
+            .parser_output
+            .merged_graph
+            .as_ref()
+            .expect("merged graph");
+        let fn_names: Vec<&str> = mg.functions().iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            fn_names.iter().any(|n| *n == "keep"),
+            "expected lib function in merged graph, got {fn_names:?}"
+        );
+        assert!(
+            !fn_names.iter().any(|n| *n == "it_works"),
+            "integration test fn should not appear when lib target is selected, got {fn_names:?}"
+        );
     }
 
     #[test]

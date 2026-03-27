@@ -1,7 +1,7 @@
 use crate::{
     discovery::DependencyMap as _,
     resolve::{
-        module_tree::ModuleTree, ModuleTreeError, PruningResult, TreeRelation, UnlinkedModuleInfo,
+        ModuleTreeError, PruningResult, TreeRelation, UnlinkedModuleInfo, module_tree::ModuleTree,
     },
 };
 use anyhow::Result;
@@ -295,7 +295,7 @@ impl ParsedCodeGraph {
         self.graph.modules.append(&mut other.graph.modules);
         self.graph.consts.append(&mut other.graph.consts); // Use consts
         self.graph.statics.append(&mut other.graph.statics); // Use statics
-                                                             // Removed values append
+        // Removed values append
         self.graph.macros.append(&mut other.graph.macros);
         self.graph
             .use_statements
@@ -1063,8 +1063,10 @@ mod tests {
                     .map(|pi| pi.export_node().import_id())
                     .find(|pending_export_id| *pending_export_id == import.id);
                 // Note the use of the exclusive or `^` symbol
-                assert!(import_is_in_tree.is_some() ^ export_is_in_tree.is_some(),
-                "Expect imports to be sorted into either imports or exports in the tree, not both, not neither.");
+                assert!(
+                    import_is_in_tree.is_some() ^ export_is_in_tree.is_some(),
+                    "Expect imports to be sorted into either imports or exports in the tree, not both, not neither."
+                );
             }
         }
 
@@ -1151,14 +1153,18 @@ edition = "2021"
 
         assert_eq!(partition.root_graphs.len(), 2);
         assert_eq!(partition.selected_root_paths.len(), 2);
-        assert!(partition
-            .selected_root_paths
-            .iter()
-            .any(|p| p.ends_with("src/main.rs")));
-        assert!(partition
-            .selected_root_paths
-            .iter()
-            .any(|p| p.ends_with("src/lib.rs")));
+        assert!(
+            partition
+                .selected_root_paths
+                .iter()
+                .any(|p| p.ends_with("src/main.rs"))
+        );
+        assert!(
+            partition
+                .selected_root_paths
+                .iter()
+                .any(|p| p.ends_with("src/lib.rs"))
+        );
         assert!(partition.merged_non_root_graph.is_some());
     }
 

@@ -4,11 +4,11 @@ use std::{collections::BTreeMap, ops::Deref};
 
 use cozo::{DataValue, MemStorage, NamedRows, Num, ScriptMutability, UuidWrapper};
 use itertools::Itertools;
+use ploke_core::EmbeddingData;
 use ploke_core::embeddings::{
     EmbRelName, EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingSetId,
     EmbeddingShape, HnswRelName,
 };
-use ploke_core::EmbeddingData;
 use ploke_error::Error as PlokeError;
 use syn_parser::utils::LogStyle as _;
 use tokio::fs;
@@ -16,11 +16,11 @@ use tracing::{debug, error, info, instrument};
 use uuid::Uuid;
 
 use crate::{
+    Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
     create_index_for_set,
     database::HNSW_SUFFIX,
     multi_embedding::schema::{CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector},
     query::builder::EMBEDDABLE_NODES_NOW,
-    Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
 };
 
 const ANCESTOR_RULES_NOW: &str = r#"
@@ -156,7 +156,7 @@ pub trait EmbeddingExt {
     fn ensure_default_relation_set(&self) -> Result<(), PlokeError>;
 
     fn replace_embedding_set_relation(&self, embedding_set: EmbeddingSet)
-        -> Result<(), PlokeError>;
+    -> Result<(), PlokeError>;
 
     fn create_embedding_set_relation(&self) -> Result<(), PlokeError>;
 
@@ -165,13 +165,13 @@ pub trait EmbeddingExt {
     fn is_hnsw_relation_registered(&self, relation_name: &HnswRelName) -> Result<bool, DbError>;
 
     fn create_vector_embedding_relation(&self, embedding_set: &EmbeddingSet)
-        -> Result<(), DbError>;
+    -> Result<(), DbError>;
 
     fn ensure_vector_embedding_relation(&self, embedding_set: &EmbeddingSet)
-        -> Result<(), DbError>;
+    -> Result<(), DbError>;
 
     fn is_vector_embedding_registered(&self, embedding_set: &EmbeddingSet)
-        -> Result<bool, DbError>;
+    -> Result<bool, DbError>;
 
     fn setup_multi_embedding(&self) -> Result<(), ploke_error::Error>;
 
@@ -1275,9 +1275,9 @@ name_str.len() == prefix.len() + 1 + 36 | {}
 }
 
 #[cfg(test)]
-pub(crate) use tests::load_registered_fixture_nodes_local_embeddings;
-#[cfg(test)]
 pub(crate) use tests::TEST_DB_IMMUTABLE;
+#[cfg(test)]
+pub(crate) use tests::load_registered_fixture_nodes_local_embeddings;
 
 #[cfg(test)]
 mod tests {
@@ -1295,12 +1295,12 @@ mod tests {
     use tracing::Level;
 
     use crate::{
+        Database,
         multi_embedding::{
             db_ext::EmbeddingExt,
             hnsw_ext::HnswExt,
             schema::{EmbeddingSetExt, EmbeddingVector},
         },
-        Database,
     };
 
     lazy_static! {

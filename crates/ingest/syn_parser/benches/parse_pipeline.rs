@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use syn_parser::{
-    discovery::run_discovery_phase, parser::analyze_files_parallel, try_run_phases_and_merge,
-    try_run_phases_and_resolve, ParsedCodeGraph,
+    ParsedCodeGraph, discovery::run_discovery_phase, parser::analyze_files_parallel,
+    try_run_phases_and_merge, try_run_phases_and_resolve,
 };
 
 fn fixture_crate_root() -> PathBuf {

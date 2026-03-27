@@ -171,7 +171,7 @@ impl CodeGraph {
         self.modules.append(&mut other.modules);
         self.consts.append(&mut other.consts); // Added
         self.statics.append(&mut other.statics); // Added
-                                                 // Removed values append
+        // Removed values append
         self.macros.append(&mut other.macros);
         self.use_statements.append(&mut other.use_statements);
         self.unresolved_nodes.append(&mut other.unresolved_nodes);

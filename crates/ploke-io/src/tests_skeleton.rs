@@ -55,7 +55,7 @@ use tracing_error::ErrorLayer;
 use uuid::Uuid;
 
 use tracing_subscriber::{
-    filter, fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry,
+    EnvFilter, Registry, filter, fmt, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
 fn init_test_tracing(level: tracing::Level) {
@@ -297,14 +297,14 @@ async fn test_handle_read_snippet_batch() -> Result<(), ploke_error::Error> {
 
     for (i, (s, embed_data)) in snippets.iter().zip(flat_nodes.iter()).enumerate() {
         assert!(
-                s.is_ok(),
-                "snippet is error: {:?} \n\t| processing {}/{}\n\t| {:.2}% correct\nEmbedding data errored on: {:#?}",
-                s,
-                i,
-                total_snips,
-                (i as f32 / total_snips as f32),
-                embed_data
-            );
+            s.is_ok(),
+            "snippet is error: {:?} \n\t| processing {}/{}\n\t| {:.2}% correct\nEmbedding data errored on: {:#?}",
+            s,
+            i,
+            total_snips,
+            (i as f32 / total_snips as f32),
+            embed_data
+        );
     }
     tracing::info!(
         "✅ Test complete. Errors: {}/{}",

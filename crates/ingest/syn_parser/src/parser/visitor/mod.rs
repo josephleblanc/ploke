@@ -1,6 +1,6 @@
 use colored::Colorize;
-use ploke_core::byte_hasher::ByteHasher;
 use ploke_core::ItemKind;
+use ploke_core::byte_hasher::ByteHasher;
 use quote::ToTokens;
 use std::{collections::HashMap, hash::Hasher};
 use syn::visit::Visit;
@@ -24,7 +24,7 @@ use crate::{
         nodes::{ModuleNodeInfo, PrimaryNodeId},
         relations::SyntacticRelation,
     },
-    utils::{LogStyle, LogStyleDebug, LOG_TARGET_RELS},
+    utils::{LOG_TARGET_RELS, LogStyle, LogStyleDebug},
 };
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
@@ -595,16 +595,19 @@ fn build_parse_inputs(crate_context: &crate::discovery::CrateContext) -> Vec<Par
                         logical_path: logical_path_for_target_root(&src_dir, target),
                     });
                 }
-                for file_path in &crate_context.files {
-                    if !file_path.starts_with(&src_dir) {
-                        continue;
-                    }
+                let reachable_files = crate_context
+                    .target_root_reachable_files
+                    .get(&target.root)
+                    .filter(|files| !files.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| vec![target.root.clone()]);
+                for file_path in reachable_files {
                     if !seen_files.insert(file_path.clone()) {
                         continue;
                     }
                     parse_inputs.push(ParseInput {
-                        file_path: file_path.clone(),
-                        logical_path: logical_module_path_for_file(&src_dir, file_path),
+                        logical_path: logical_path_for_reachable_file(&src_dir, target, &file_path),
+                        file_path,
                     });
                 }
             }
@@ -624,6 +627,24 @@ fn build_parse_inputs(crate_context: &crate::discovery::CrateContext) -> Vec<Par
     }
 
     parse_inputs
+}
+
+fn logical_path_for_reachable_file(
+    src_dir: &Path,
+    target: &TargetSpec,
+    file_path: &Path,
+) -> Vec<String> {
+    if file_path == target.root {
+        return logical_path_for_target_root(src_dir, target);
+    }
+    if file_path.starts_with(src_dir) {
+        return logical_module_path_for_file(src_dir, file_path);
+    }
+    vec![
+        "crate".to_string(),
+        target_kind_segment(&target.kind).to_string(),
+        target.name.clone(),
+    ]
 }
 
 fn logical_path_for_target_root(src_dir: &Path, target: &TargetSpec) -> Vec<String> {

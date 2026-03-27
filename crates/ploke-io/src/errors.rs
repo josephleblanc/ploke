@@ -167,9 +167,11 @@ impl From<IoError> for ploke_error::Error {
             } => {
                 // Create a FromUtf8Error to capture the decoding failure
                 let err_msg = format!(
-                                            "InvalidCharacterBoundary: Byte range {}-{} splits multi-byte Unicode character in file {}",
-                                            start_byte, end_byte, path.to_string_lossy()
-                                        );
+                    "InvalidCharacterBoundary: Byte range {}-{} splits multi-byte Unicode character in file {}",
+                    start_byte,
+                    end_byte,
+                    path.to_string_lossy()
+                );
 
                 ploke_error::Error::Fatal(FatalError::SyntaxError(err_msg))
             }

@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use ploke_common::workspace_root;
 use syn_parser::{
-    discovery::run_discovery_phase, error::SynParserError, parser::analyze_files_parallel,
-    ParsedCodeGraph,
+    ParsedCodeGraph, discovery::run_discovery_phase, error::SynParserError,
+    parser::analyze_files_parallel,
 };
 
 macro_rules! crate_test {

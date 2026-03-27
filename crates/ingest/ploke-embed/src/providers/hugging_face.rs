@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::{
     config::HuggingFaceConfig,
-    error::{truncate_string, EmbedError},
+    error::{EmbedError, truncate_string},
 };
 
 #[derive(Serialize)]

@@ -3,9 +3,9 @@ use std::path;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId};
 use syn_parser::{
-    parser::{graph::GraphAccess, nodes::*, visitor::calculate_cfg_hash_bytes, ParsedCodeGraph},
-    utils::logging::LOG_TEST_ID_REGEN,
     TestIds,
+    parser::{ParsedCodeGraph, graph::GraphAccess, nodes::*, visitor::calculate_cfg_hash_bytes},
+    utils::logging::LOG_TEST_ID_REGEN,
 };
 
 #[derive(Debug, Clone)]

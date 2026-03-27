@@ -1,13 +1,13 @@
 #[cfg(test)]
 use crate::scan::test_instrumentation;
 use crate::{
-    path_policy::{normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy},
+    path_policy::{SymlinkPolicy, normalize_against_roots, normalize_against_roots_with_policy},
     read::{extract_snippet_str, parse_tokens_from_str, read_file_to_string_abs},
-    write::{write_snippets_batch, write_snippets_batch_ns, NsWriteResult},
+    write::{NsWriteResult, write_snippets_batch, write_snippets_batch_ns},
 };
 use ploke_core::{
-    file_hash::{hash_file_blake3_bounded, HashOutcome, LargeFilePolicy},
     CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData,
+    file_hash::{HashOutcome, LargeFilePolicy, hash_file_blake3_bounded},
 };
 use tracing::error;
 

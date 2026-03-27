@@ -110,7 +110,9 @@ impl NodePath {
     /// Panics if the input `segments` vector is empty.
     pub fn new_unchecked(segments: Vec<String>) -> Self {
         if segments.is_empty() {
-            panic!("NodePath::new_unchecked called with empty segments. This indicates an internal error.");
+            panic!(
+                "NodePath::new_unchecked called with empty segments. This indicates an internal error."
+            );
         }
         Self(segments)
     }
