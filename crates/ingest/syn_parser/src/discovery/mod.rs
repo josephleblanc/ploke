@@ -12,7 +12,8 @@ use std::{
 pub use error::*;
 pub use single_crate::*;
 pub use workspace::{
-    locate_workspace_manifest, resolve_workspace_version, try_parse_manifest, WorkspaceManifestMetadata,
+    locate_workspace_manifest, resolve_workspace_version, try_parse_manifest,
+    WorkspaceManifestMetadata,
 };
 
 use itertools::Itertools as _;
@@ -213,7 +214,9 @@ pub fn run_discovery_phase_with_target(
                 };
                 if test_path.exists() && test_path.is_file() {
                     files_set.insert(test_path.clone());
-                    let name = test_target.name.unwrap_or_else(|| file_stem_name(&test_path, "test"));
+                    let name = test_target
+                        .name
+                        .unwrap_or_else(|| file_stem_name(&test_path, "test"));
                     target_specs.push(TargetSpec {
                         kind: TargetKind::Test,
                         name,
@@ -235,8 +238,9 @@ pub fn run_discovery_phase_with_target(
                 };
                 if example_path.exists() && example_path.is_file() {
                     files_set.insert(example_path.clone());
-                    let name =
-                        example_target.name.unwrap_or_else(|| file_stem_name(&example_path, "example"));
+                    let name = example_target
+                        .name
+                        .unwrap_or_else(|| file_stem_name(&example_path, "example"));
                     target_specs.push(TargetSpec {
                         kind: TargetKind::Example,
                         name,
@@ -258,7 +262,9 @@ pub fn run_discovery_phase_with_target(
                 };
                 if bench_path.exists() && bench_path.is_file() {
                     files_set.insert(bench_path.clone());
-                    let name = bench_target.name.unwrap_or_else(|| file_stem_name(&bench_path, "bench"));
+                    let name = bench_target
+                        .name
+                        .unwrap_or_else(|| file_stem_name(&bench_path, "bench"));
                     target_specs.push(TargetSpec {
                         kind: TargetKind::Bench,
                         name,
@@ -332,7 +338,8 @@ pub fn run_discovery_phase_with_target(
         target_specs = dedup_targets_by_root(target_specs);
 
         if let Some(selector) = selected_target {
-            target_specs.retain(|target| target.kind == selector.kind && target.name == selector.name);
+            target_specs
+                .retain(|target| target.kind == selector.kind && target.name == selector.name);
         }
 
         // Ensure we found enough context to proceed. Tests/examples/benches-only crates are valid.
@@ -409,7 +416,7 @@ pub fn run_discovery_phase_with_target(
             namespace,
             root_path: crate_root_path.clone(),
             workspace_path: located_workspace_path,
-            files,            // Clone needed for module mapping below
+            files, // Clone needed for module mapping below
             targets: target_specs,
             features,         // Add the parsed features
             dependencies,     // Add the parsed dependencies
@@ -552,7 +559,11 @@ fn resolve_explicit_target_path(
     if let Some(path) = explicit_path {
         return Some(crate_root_path.join(path));
     }
-    name.map(|target_name| crate_root_path.join(default_dir).join(format!("{target_name}.rs")))
+    name.map(|target_name| {
+        crate_root_path
+            .join(default_dir)
+            .join(format!("{target_name}.rs"))
+    })
 }
 
 fn dedup_targets_by_root(targets: Vec<TargetSpec>) -> Vec<TargetSpec> {
@@ -880,7 +891,11 @@ edition = "2021"
 "#,
         )
         .unwrap();
-        fs::write(crate_root.join("tests").join("integration.rs"), "fn smoke() {}\n").unwrap();
+        fs::write(
+            crate_root.join("tests").join("integration.rs"),
+            "fn smoke() {}\n",
+        )
+        .unwrap();
 
         let out = discovery_phase(None, std::slice::from_ref(&crate_root))?;
         let ctx = out
@@ -895,7 +910,9 @@ edition = "2021"
             "expected implicit integration test target"
         );
         assert!(
-            ctx.files.iter().any(|f| f.ends_with("tests/integration.rs")),
+            ctx.files
+                .iter()
+                .any(|f| f.ends_with("tests/integration.rs")),
             "expected test source file in discovered file set"
         );
         Ok(())
@@ -916,8 +933,16 @@ edition = "2021"
 "#,
         )
         .unwrap();
-        fs::write(crate_root.join("src").join("lib.rs"), "pub fn lib_fn() {}\n").unwrap();
-        fs::write(crate_root.join("tests").join("integration.rs"), "fn integration() {}\n").unwrap();
+        fs::write(
+            crate_root.join("src").join("lib.rs"),
+            "pub fn lib_fn() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            crate_root.join("tests").join("integration.rs"),
+            "fn integration() {}\n",
+        )
+        .unwrap();
 
         let selector = TargetSelector {
             kind: TargetKind::Test,
@@ -945,7 +970,8 @@ edition = "2021"
     }
 
     #[test]
-    fn discovery_uses_explicit_test_targets_when_autotests_disabled() -> Result<(), DiscoveryError> {
+    fn discovery_uses_explicit_test_targets_when_autotests_disabled() -> Result<(), DiscoveryError>
+    {
         let tmp = tempdir().unwrap();
         let crate_root = tmp.path().join("explicit_test_pkg");
         fs::create_dir_all(crate_root.join("custom-tests")).unwrap();
@@ -969,7 +995,11 @@ path = "custom-tests/explicit_case.rs"
             "fn explicit_case() {}\n",
         )
         .unwrap();
-        fs::write(crate_root.join("tests").join("implicit.rs"), "fn implicit() {}\n").unwrap();
+        fs::write(
+            crate_root.join("tests").join("implicit.rs"),
+            "fn implicit() {}\n",
+        )
+        .unwrap();
 
         let out = discovery_phase(None, std::slice::from_ref(&crate_root))?;
         let ctx = out
@@ -993,7 +1023,8 @@ path = "custom-tests/explicit_case.rs"
     }
 
     #[test]
-    fn discovery_dedups_targets_by_root_path_with_stable_precedence() -> Result<(), DiscoveryError> {
+    fn discovery_dedups_targets_by_root_path_with_stable_precedence() -> Result<(), DiscoveryError>
+    {
         let tmp = tempdir().unwrap();
         let crate_root = tmp.path().join("dedup_targets_pkg");
         fs::create_dir_all(crate_root.join("src")).unwrap();
@@ -1023,7 +1054,11 @@ path = "src/main.rs"
             .iter()
             .filter(|t| t.root.ends_with("src/main.rs"))
             .collect();
-        assert_eq!(main_targets.len(), 1, "src/main.rs should dedup to one target");
+        assert_eq!(
+            main_targets.len(),
+            1,
+            "src/main.rs should dedup to one target"
+        );
         assert_eq!(
             main_targets[0].name, "dedup_targets_pkg",
             "implicit bin name should win by deterministic precedence"

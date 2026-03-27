@@ -7,6 +7,10 @@ use syn::visit::Visit;
 use tracing::instrument;
 mod attribute_processing;
 mod cfg_evaluator;
+#[cfg(feature = "cfg_eval")]
+pub use attribute_processing::parse_cfg_expr_from_inner_tokens;
+#[cfg(feature = "cfg_eval")]
+pub use cfg_evaluator::ActiveCfg;
 mod code_visitor;
 mod state;
 mod type_processing;
@@ -570,7 +574,10 @@ fn build_parse_inputs(crate_context: &crate::discovery::CrateContext) -> Vec<Par
     };
 
     if has_primary_target {
-        let skipped_targets = crate_context.targets.len().saturating_sub(parse_targets.len());
+        let skipped_targets = crate_context
+            .targets
+            .len()
+            .saturating_sub(parse_targets.len());
         if skipped_targets > 0 {
             log::warn!(
                 "Skipping {skipped_targets} non-primary targets for crate '{}' in legacy parse mode",
@@ -637,7 +644,9 @@ fn logical_path_for_target_root(src_dir: &Path, target: &TargetSpec) -> Vec<Stri
     ]
 }
 
-fn selected_target_roots(crate_context: &crate::discovery::CrateContext) -> std::collections::HashSet<PathBuf> {
+fn selected_target_roots(
+    crate_context: &crate::discovery::CrateContext,
+) -> std::collections::HashSet<PathBuf> {
     let has_primary_target = crate_context
         .targets
         .iter()
@@ -678,11 +687,17 @@ fn set_root_context(
     pg
 }
 
-fn info_crate_context(crate_context: &crate::discovery::CrateContext, pg: &ParsedCodeGraph) -> String {
+fn info_crate_context(
+    crate_context: &crate::discovery::CrateContext,
+    pg: &ParsedCodeGraph,
+) -> String {
     let crate_root = &crate_context.root_path;
     format!(
         "parsed_graph file_path: {}, crate_context: {:#?}",
-        pg.file_path.strip_prefix(crate_root).as_ref().log_path_debug(),
+        pg.file_path
+            .strip_prefix(crate_root)
+            .as_ref()
+            .log_path_debug(),
         pg.crate_context
     )
 }

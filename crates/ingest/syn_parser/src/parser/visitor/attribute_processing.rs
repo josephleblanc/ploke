@@ -138,6 +138,14 @@ pub(crate) fn should_include_item(attrs: &[syn::Attribute], active_cfg: &ActiveC
         })
 }
 
+/// Parse the inner tokens of a `#[cfg(...)]` attribute (as stored on graph nodes) into a
+/// [`CfgExpr`], using the same rules as [`parse_cfg_attribute`].
+#[cfg(feature = "cfg_eval")]
+pub fn parse_cfg_expr_from_inner_tokens(inner: &str) -> Option<CfgExpr> {
+    let meta: syn::Meta = syn::parse_str(inner).ok()?;
+    parse_single_meta(meta)
+}
+
 /// Parse a `#[cfg(...)]` attribute into a CfgExpr
 #[cfg(feature = "cfg_eval")]
 fn parse_cfg_attribute(attr: &syn::Attribute) -> Option<CfgExpr> {

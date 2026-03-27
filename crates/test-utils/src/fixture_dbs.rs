@@ -313,7 +313,7 @@ pub fn fresh_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, 
     let db = Database::init_with_schema()?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let prior_rels = db.relations_vec()?;
+            let prior_rels = db.prior_rels_for_plain_backup_import()?;
             db.import_from_backup(&fixture_path, &prior_rels)
                 .map_err(DbError::from)?;
         }
@@ -322,6 +322,8 @@ pub fn fresh_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, 
                 .map_err(Error::from)?;
         }
     }
+
+    db.ensure_compilation_unit_relations()?;
 
     validate_backup_fixture_contract(fixture, &db)?;
     Ok(db)

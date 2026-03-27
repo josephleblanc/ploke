@@ -33,6 +33,7 @@
 //!     Ok(())
 //! }
 //! ```
+pub mod compilation_unit;
 pub mod discovery;
 pub mod error;
 pub mod parser;
@@ -48,8 +49,8 @@ pub use error::PartialSuccess;
 use itertools::Itertools;
 use parser::analyze_files_parallel;
 // Re-export key items for easier access
-pub use discovery::CrateContext;
 pub use discovery::try_parse_manifest;
+pub use discovery::CrateContext;
 pub use parser::visitor::{analyze_file_phase2, logical_module_path_for_file};
 pub use parser::{create_parser_channel, CodeGraph, ParserMessage};
 use ploke_common::fixtures_crates_dir;
@@ -137,8 +138,11 @@ pub fn parse_workspace(
                 .is_none_or(|selected| selected.contains(&member.to_path_buf()))
         })
         .map(|member| {
-            let rel_path = member.strip_prefix(target_workspace_dir)
-                .unwrap_or(member).to_str().unwrap_or("name unknown");
+            let rel_path = member
+                .strip_prefix(target_workspace_dir)
+                .unwrap_or(member)
+                .to_str()
+                .unwrap_or("name unknown");
             let _span = info_span!(
                 "try_run_phases_and_merge",
                 rel_path = %rel_path
@@ -340,12 +344,29 @@ pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_er
     let mut merged = partition.merge_for_root(&selected_root)?;
     let tree = merged
         .build_tree_and_prune_for_root_path(&selected_root)
-        .map_err(|err| SynParserError::InternalState(format!("Failed to build module tree: {err}")))?;
+        .map_err(|err| {
+            SynParserError::InternalState(format!("Failed to build module tree: {err}"))
+        })?;
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),
+        parsed_graphs_for_masks: None,
     })
 }
+
+/// Like [`try_run_phases_and_merge`], but merges **all** Cargo target roots into one graph and
+/// retains [`ParserOutput::parsed_graphs_for_masks`] for structural compilation-unit slices.
+pub fn try_run_phases_union_for_crate(target_crate: &Path) -> Result<ParserOutput, SynParserError> {
+    let parsed_graphs = try_run_phases_and_resolve(target_crate)?;
+    let parsed_for_masks = parsed_graphs.clone();
+    let (merged, tree) = ParsedCodeGraph::merge_union_graph_and_prune_tree(parsed_graphs)?;
+    Ok(ParserOutput {
+        merged_graph: Some(merged),
+        module_tree: Some(tree),
+        parsed_graphs_for_masks: Some(parsed_for_masks),
+    })
+}
+
 pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, SynParserError> {
     let parsed_graphs = try_run_phases_and_resolve(target_crate)?;
     let _parsed_file_count = parsed_graphs.len();
@@ -367,6 +388,7 @@ pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, Syn
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),
+        parsed_graphs_for_masks: None,
     })
 }
 
@@ -386,6 +408,8 @@ pub struct ParsedCrate {
 pub struct ParserOutput {
     pub merged_graph: Option<ParsedCodeGraph>,
     pub module_tree: Option<ModuleTree>,
+    /// When set (e.g. [`try_run_phases_union_for_crate`]), original per-file graphs for CU masks.
+    pub parsed_graphs_for_masks: Option<Vec<ParsedCodeGraph>>,
 }
 
 impl ParserOutput {
@@ -397,6 +421,11 @@ impl ParserOutput {
     /// Extracts the `ModuleTree` from the `ParserOutput`, leaving `None` in its place.
     pub fn extract_module_tree(&mut self) -> Option<ModuleTree> {
         self.module_tree.take()
+    }
+
+    /// Extracts per-file graphs retained for structural CU masks.
+    pub fn extract_parsed_graphs_for_masks(&mut self) -> Option<Vec<ParsedCodeGraph>> {
+        self.parsed_graphs_for_masks.take()
     }
 }
 
@@ -884,7 +913,9 @@ edition = "2021"
             "expected lib source to be parsed"
         );
         assert!(
-            !parsed_files.iter().any(|p| p.ends_with("benches/bench_a.rs")),
+            !parsed_files
+                .iter()
+                .any(|p| p.ends_with("benches/bench_a.rs")),
             "legacy-safe parse mode should skip benches when lib/bin exists"
         );
     }

@@ -1015,9 +1015,14 @@ edition = "2021"
 proc-macro = true
 "#;
 
-        let manifest: CargoManifest = toml::from_str(cargo_toml).expect("Should parse manifest with [lib] but no path");
+        let manifest: CargoManifest =
+            toml::from_str(cargo_toml).expect("Should parse manifest with [lib] but no path");
         let lib = manifest.lib.expect("Should have lib section");
-        assert_eq!(lib.path, PathBuf::from("src/lib.rs"), "Default path should be src/lib.rs");
+        assert_eq!(
+            lib.path,
+            PathBuf::from("src/lib.rs"),
+            "Default path should be src/lib.rs"
+        );
     }
 
     #[test]
@@ -1033,8 +1038,13 @@ edition = "2021"
 path = "src/my_lib.rs"
 "#;
 
-        let manifest: CargoManifest = toml::from_str(cargo_toml).expect("Should parse manifest with explicit lib path");
+        let manifest: CargoManifest =
+            toml::from_str(cargo_toml).expect("Should parse manifest with explicit lib path");
         let lib = manifest.lib.expect("Should have lib section");
-        assert_eq!(lib.path, PathBuf::from("src/my_lib.rs"), "Explicit path should be preserved");
+        assert_eq!(
+            lib.path,
+            PathBuf::from("src/my_lib.rs"),
+            "Explicit path should be preserved"
+        );
     }
 }

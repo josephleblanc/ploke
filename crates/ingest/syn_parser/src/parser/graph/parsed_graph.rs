@@ -1,6 +1,8 @@
 use crate::{
     discovery::DependencyMap as _,
-    resolve::{ModuleTreeError, PruningResult, TreeRelation, UnlinkedModuleInfo},
+    resolve::{
+        module_tree::ModuleTree, ModuleTreeError, PruningResult, TreeRelation, UnlinkedModuleInfo,
+    },
 };
 use anyhow::Result;
 use std::{
@@ -181,6 +183,52 @@ impl ParsedCodeGraph {
         })
     }
 
+    /// Merges every parsed graph in `graphs` by concatenation, without dropping alternate crate
+    /// roots. Use this when building a **per-crate union** graph for storage (one namespace, all
+    /// target roots), then use per-compilation-unit masks to narrow views.
+    ///
+    /// Unlike [`Self::merge_new`], this does **not** discard other root graphs when multiple
+    /// `CrateContext` roots exist.
+    #[instrument(skip_all, fields(graph_count = graphs.len()))]
+    pub fn merge_union_all_roots(graphs: Vec<Self>) -> Result<Self, SynParserError> {
+        if graphs.is_empty() {
+            return Err(SynParserError::MergeRequiresInput);
+        }
+
+        let mut graph_iter = graphs.into_iter();
+        let mut merged = graph_iter.next().expect("non-empty");
+        for g in graph_iter {
+            merged.append_all(g)?;
+        }
+
+        Ok(merged)
+    }
+
+    /// Merge all root graphs plus the merged non-root graph from a [`RootGraphPartition`].
+    pub fn merge_union_from_partition(
+        partition: &RootGraphPartition,
+    ) -> Result<Self, SynParserError> {
+        let mut graphs: Vec<Self> = partition.root_graphs.iter().cloned().collect();
+        if let Some(nr) = &partition.merged_non_root_graph {
+            graphs.push(nr.clone());
+        }
+        Self::merge_union_all_roots(graphs)
+    }
+
+    /// Partition `parsed_graphs`, merge **all** Cargo target roots into one graph, then
+    /// [`Self::build_tree_and_prune`]. Used for union ingest (one transformed graph per crate
+    /// namespace, with per-compilation-unit structural masks stored separately).
+    pub fn merge_union_graph_and_prune_tree(
+        parsed_graphs: Vec<Self>,
+    ) -> Result<(Self, ModuleTree), SynParserError> {
+        let partition = Self::partition_by_selected_roots(parsed_graphs)?;
+        let mut merged = Self::merge_union_from_partition(&partition)?;
+        let tree = merged.build_tree_and_prune().map_err(|e| {
+            SynParserError::InternalState(format!("merge_union_graph_and_prune_tree: {e}"))
+        })?;
+        Ok((merged, tree))
+    }
+
     #[instrument(skip_all, fields(graph_count = graphs.len()))]
     pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, SynParserError> {
         let selected_root_paths: HashSet<PathBuf> = graphs
@@ -194,28 +242,30 @@ impl ParsedCodeGraph {
                 .min_by(|a, b| root_selection_key(a).cmp(&root_selection_key(b)))
                 .expect("selected_root_paths is non-empty when len() > 1")
                 .clone();
-            graphs.retain(|graph| {
-                graph.crate_context.is_none() || graph.file_path == selected_root
-            });
+            graphs
+                .retain(|graph| graph.crate_context.is_none() || graph.file_path == selected_root);
         }
 
-        let mut new_graph = {
-            graphs.pop().ok_or(SynParserError::MergeRequiresInput)?
-        };
+        let mut new_graph = { graphs.pop().ok_or(SynParserError::MergeRequiresInput)? };
 
         // Preserve crate context from any graph
         let mut found_context = new_graph.crate_context.take();
-            for mut graph in graphs {
-                if found_context.is_none() {
-                    found_context = graph.crate_context.take();
-        if let Some(ref ctx) = found_context {
-            tracing::info!("name: {}, root_file: {:?}, files: {:#?}", ctx.name, ctx.root_file(), ctx.files);
-        } else {
-            tracing::info!("no crate_context found");
-        }
+        for mut graph in graphs {
+            if found_context.is_none() {
+                found_context = graph.crate_context.take();
+                if let Some(ref ctx) = found_context {
+                    tracing::info!(
+                        "name: {}, root_file: {:?}, files: {:#?}",
+                        ctx.name,
+                        ctx.root_file(),
+                        ctx.files
+                    );
+                } else {
+                    tracing::info!("no crate_context found");
                 }
-                new_graph.append_all(graph)?;
             }
+            new_graph.append_all(graph)?;
+        }
 
         new_graph.crate_context = found_context;
 
@@ -471,7 +521,8 @@ impl ParsedCodeGraph {
                     && !matches!(id, AnyNodeId::Method(_))
             })
             .collect_vec();
-        prune_counts.removed_secondary_ids = prune_counts.pruned_items_initial- pruned_item_ids.len();
+        prune_counts.removed_secondary_ids =
+            prune_counts.pruned_items_initial - pruned_item_ids.len();
 
         // Methods live under `ImplNode` / `TraitNode`; module-tree BFS does not put their IDs in
         // `pruned_item_ids`, but removing an impl/trait removes all nested methods. Those removals
@@ -584,11 +635,18 @@ impl ParsedCodeGraph {
                 .iter()
                 .filter(|i| !removed_items.contains(i))
             {
-                tracing::error!("\nNode contained by a removed node not found or removed: {}", item);
+                tracing::error!(
+                    "\nNode contained by a removed node not found or removed: {}",
+                    item
+                );
             }
             tracing::trace!(target: "debug_dup", "Number of removed items: {}", removed_items.len());
         }
-        let all_graph_ids = self.graph.functions.iter().map(|n| n.any_id())
+        let all_graph_ids = self
+            .graph
+            .functions
+            .iter()
+            .map(|n| n.any_id())
             .chain(self.graph.defined_types.iter().map(|tydef| tydef.any_id()))
             .chain(self.graph.impls.iter().map(|n| n.any_id()))
             .chain(self.graph.traits.iter().map(|n| n.any_id()))
@@ -610,7 +668,11 @@ impl ParsedCodeGraph {
         }
         let unique_pruned_item_ids = pruned_item_ids.iter().unique().collect_vec();
         if unique_pruned_item_ids.len() != pruned_item_ids.len() {
-            tracing::info!("pruned_item_ids: unique: {}, total: {}", unique_pruned_item_ids.len(), pruned_item_ids.len());
+            tracing::info!(
+                "pruned_item_ids: unique: {}, total: {}",
+                unique_pruned_item_ids.len(),
+                pruned_item_ids.len()
+            );
         }
         let _unresolved_pruned_result_count = pruned_items.unresolved_nodes.len();
         if prune_counts.count_resolved() != expected_resolved_removals {
@@ -795,12 +857,13 @@ impl ParsedCodeGraph {
 
         // Find the module by its file path.
         // find_module_by_file_path_checked already returns Result<&ModuleNode, SynParserError>
-        self.find_module_by_file_path_checked(root_path).map_err(|err| match err {
-            SynParserError::InternalState(_) => SynParserError::ParsedGraphError(
-                ParsedGraphError::RootFileNotFound(root_path.to_path_buf()),
-            ),
-            _ => err,
-        })
+        self.find_module_by_file_path_checked(root_path)
+            .map_err(|err| match err {
+                SynParserError::InternalState(_) => SynParserError::ParsedGraphError(
+                    ParsedGraphError::RootFileNotFound(root_path.to_path_buf()),
+                ),
+                _ => err,
+            })
     }
 
     // TODO: This is kind of a hack job, be more thorough.
@@ -925,7 +988,6 @@ impl GraphAccess for ParsedCodeGraph {
         &mut self.graph.unresolved_nodes
     }
 
-
     // Removed prune_items method to keep ParsedCodeGraph immutable for now.
 }
 
@@ -944,8 +1006,8 @@ mod tests {
     use anyhow::{Ok, Result};
     use tempfile::tempdir;
 
-    use crate::{discovery::run_discovery_phase, parser::analyze_files_parallel};
     use crate::utils::test_setup::run_phases_and_collect;
+    use crate::{discovery::run_discovery_phase, parser::analyze_files_parallel};
 
     use super::*;
 
@@ -1072,7 +1134,11 @@ edition = "2021"
         )
         .unwrap();
         std::fs::write(crate_root.join("src/lib.rs"), "pub mod shared;\n").unwrap();
-        std::fs::write(crate_root.join("src/main.rs"), "mod shared;\nfn main() {}\n").unwrap();
+        std::fs::write(
+            crate_root.join("src/main.rs"),
+            "mod shared;\nfn main() {}\n",
+        )
+        .unwrap();
         std::fs::write(crate_root.join("src/shared.rs"), "pub fn ping() {}\n").unwrap();
 
         let discovery = run_discovery_phase(None, std::slice::from_ref(&crate_root)).unwrap();
@@ -1156,7 +1222,11 @@ edition = "2021"
         )
         .unwrap();
         std::fs::write(crate_root.join("src/lib.rs"), "pub mod shared;\n").unwrap();
-        std::fs::write(crate_root.join("src/main.rs"), "mod shared;\nfn main() {}\n").unwrap();
+        std::fs::write(
+            crate_root.join("src/main.rs"),
+            "mod shared;\nfn main() {}\n",
+        )
+        .unwrap();
         std::fs::write(crate_root.join("src/shared.rs"), "pub fn ping() {}\n").unwrap();
 
         let discovery = run_discovery_phase(None, std::slice::from_ref(&crate_root)).unwrap();
@@ -1210,20 +1280,20 @@ struct PruneCounts {
 
 impl PruneCounts {
     fn count_resolved(&self) -> usize {
-        self.functions 
-        + self.defined_types 
-        + self.consts 
-        + self.statics 
-        + self.macros 
-        + self.use_statements 
-        + self.impls 
-        + self.traits 
-        + self.methods 
-        + self.non_file_modules
+        self.functions
+            + self.defined_types
+            + self.consts
+            + self.statics
+            + self.macros
+            + self.use_statements
+            + self.impls
+            + self.traits
+            + self.methods
+            + self.non_file_modules
         // self.removed_secondary_ids
-        // + self.file_modules 
+        // + self.file_modules
     }
-    
+
     fn count_unresolved(&self) -> usize {
         self.unresolved_nodes
     }

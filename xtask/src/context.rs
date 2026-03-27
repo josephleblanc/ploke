@@ -176,8 +176,10 @@ impl DatabasePool {
 
     fn load_plain_backup(path: &Path) -> Result<Arc<Database>, XtaskError> {
         let db = Database::init_with_schema()?;
-        let prior = db.relations_vec()?;
+        let prior = db.prior_rels_for_plain_backup_import()?;
         db.import_from_backup(path, &prior)
+            .map_err(|e| XtaskError::Database(e.to_string()))?;
+        db.ensure_compilation_unit_relations()
             .map_err(|e| XtaskError::Database(e.to_string()))?;
         create_index_primary(&db)?;
         Ok(Arc::new(db))

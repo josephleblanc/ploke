@@ -122,7 +122,27 @@ impl ActiveCfg {
             target_family,
         }
     }
-}
 
-// impl ActiveCfg {
-// }
+    /// Build active cfg from a stored compilation-unit key (features + triple-derived arch/os/family).
+    ///
+    /// Uses the same triple splitting as [`Self::from_crate_context`] (see limitations there).
+    pub fn from_compilation_unit_key(key: &crate::compilation_unit::CompilationUnitKey) -> Self {
+        let features = key.normalized_features().into_iter().collect();
+        let parts: Vec<&str> = key.target_triple.split('-').collect();
+        let target_arch = parts.first().unwrap_or(&"x86_64").to_string();
+        let target_os = parts.get(2).unwrap_or(&"linux").to_string();
+        let target_family = if target_os == "linux" || target_os == "macos" {
+            "unix".to_string()
+        } else if target_os == "windows" {
+            "windows".to_string()
+        } else {
+            "unknown".to_string()
+        };
+        Self {
+            features,
+            target_os,
+            target_arch,
+            target_family,
+        }
+    }
+}

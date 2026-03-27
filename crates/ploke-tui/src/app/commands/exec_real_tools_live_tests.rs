@@ -347,9 +347,11 @@ lazy_static! {
         backup.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
         // Import if the backup exists; otherwise return the empty DB.
         if backup.exists() {
-            let prior_rels_vec = db.relations_vec()?;
+            let prior_rels_vec = db.prior_rels_for_plain_backup_import()?;
             db.import_from_backup(&backup, &prior_rels_vec)
                 .map_err(ploke_db::DbError::from)
+                .map_err(ploke_error::Error::from)?;
+            db.ensure_compilation_unit_relations()
                 .map_err(ploke_error::Error::from)?;
         }
         Ok(Arc::new(tokio::sync::Mutex::new(db)))

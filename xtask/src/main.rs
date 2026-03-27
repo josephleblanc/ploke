@@ -496,10 +496,15 @@ fn verify_registered_backup_fixture(
     let reloaded = Database::init_with_schema().map_err(|err| err.to_string())?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let relations = reloaded.relations_vec().map_err(|err| err.to_string())?;
+            let relations = reloaded
+                .prior_rels_for_plain_backup_import()
+                .map_err(|err| err.to_string())?;
             reloaded
                 .import_from_backup(&backup_path, &relations)
                 .map_err(|err| format!("roundtrip import: {err}"))?;
+            reloaded
+                .ensure_compilation_unit_relations()
+                .map_err(|err| err.to_string())?;
         }
         FixtureImportMode::BackupWithEmbeddings => {
             reloaded
@@ -563,10 +568,15 @@ fn verify_output_backup(fixture: &'static FixtureDb, output_path: &Path) -> Resu
     let reloaded = Database::init_with_schema().map_err(|err| err.to_string())?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let relations = reloaded.relations_vec().map_err(|err| err.to_string())?;
+            let relations = reloaded
+                .prior_rels_for_plain_backup_import()
+                .map_err(|err| err.to_string())?;
             reloaded
                 .import_from_backup(output_path, &relations)
                 .map_err(|err| format!("validate generated backup import: {err}"))?;
+            reloaded
+                .ensure_compilation_unit_relations()
+                .map_err(|err| err.to_string())?;
         }
         FixtureImportMode::BackupWithEmbeddings => {
             reloaded

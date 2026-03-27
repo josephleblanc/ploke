@@ -41,6 +41,10 @@ use unions::transform_unions;
 mod fields;
 mod secondary_nodes;
 // -- special case nodes --
+pub mod compilation_unit;
+pub mod union_crate_masks;
+pub use compilation_unit::insert_structural_compilation_unit_slice;
+pub use union_crate_masks::transform_union_crate_and_structural_masks;
 mod crate_context;
 mod workspace;
 // -- primary nodes --

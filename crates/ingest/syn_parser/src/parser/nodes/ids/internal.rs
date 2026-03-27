@@ -747,7 +747,7 @@ impl UnresolvedNodeId {
         Self(id)
     }
 }
-   // --- Category ID Enums ---
+// --- Category ID Enums ---
 
 use ploke_core::ItemKind; // Need ItemKind for kind() methods
 
@@ -977,6 +977,12 @@ pub enum AnyNodeId {
 impl AnyTypedId for AnyNodeId {}
 
 impl AnyNodeId {
+    /// Returns the stable UUID backing this node id.
+    #[inline]
+    pub fn uuid(self) -> Uuid {
+        self.base_id().uuid()
+    }
+
     /// Returns the underlying base NodeId using the internal `base_id` method
     /// of the wrapped specific ID type.
     #[inline]

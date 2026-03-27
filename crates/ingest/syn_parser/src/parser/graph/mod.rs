@@ -16,7 +16,6 @@ pub use parsed_graph::ParsedGraphError;
 use crate::discovery::CrateContext;
 use crate::error::SynParserError;
 use crate::parser::nodes::*;
-use crate::resolve::module_tree::ModuleTree;
 use crate::utils::{LogStyle, LogStyleDebug};
 use ploke_core::{ItemKind, TypeId, TypeKind};
 use serde::Deserialize;
@@ -704,7 +703,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                         Some(t as &dyn GraphNode)
                     }
                     TypeDefNode::Union(u) if u.id.as_any() == item_id => Some(u as &dyn GraphNode),
-                    _ => { None }
+                    _ => None,
                 })
             })
             .or_else(|| {

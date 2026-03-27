@@ -23,12 +23,14 @@ use ploke_embed::{
     runtime::EmbeddingRuntime,
 };
 use ploke_io::IoManagerHandle;
-use ploke_transform::transform::{transform_parsed_graph, transform_parsed_workspace};
+use ploke_transform::transform::{
+    transform_parsed_graph, transform_parsed_workspace, transform_union_crate_and_structural_masks,
+};
 use serde::Serialize;
 use syn_parser::{
     ParsedWorkspace, ParserOutput,
     discovery::workspace::{locate_workspace_manifest, try_parse_manifest},
-    parse_workspace, try_run_phases_and_merge,
+    parse_workspace, try_run_phases_and_merge, try_run_phases_and_resolve,
 };
 use tokio::sync::{broadcast, mpsc};
 use tracing::field::{Field, Visit};
@@ -57,6 +59,8 @@ pub struct ProfileConfig {
     pub verbosity: u8,
     pub json_stdout: bool,
     pub loops: usize,
+    /// Union-merge all crate roots, transform once, persist structural CU masks per target.
+    pub compilation_unions: bool,
 }
 
 fn parse_stages(s: &str) -> Result<Vec<Stage>, XtaskError> {
@@ -86,6 +90,7 @@ pub fn parse_profile_ingest_args(args: Vec<String>) -> Result<ProfileConfig, Xta
     let mut verbosity: u8 = 2;
     let mut json_stdout = false;
     let mut loops: usize = 1;
+    let mut compilation_unions = false;
 
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -125,9 +130,10 @@ pub fn parse_profile_ingest_args(args: Vec<String>) -> Result<ProfileConfig, Xta
                 }
             }
             "--json" => json_stdout = true,
+            "--compilation-unions" => compilation_unions = true,
             other => {
                 return Err(XtaskError::new(format!(
-                    "Unknown flag '{other}'. Usage: cargo xtask profile-ingest --target <path> [--stages parse,transform,embed] [--verbosity 1|2|3] [--loops N] [--json]"
+                    "Unknown flag '{other}'. Usage: cargo xtask profile-ingest --target <path> [--stages parse,transform,embed] [--verbosity 1|2|3] [--loops N] [--json] [--compilation-unions]"
                 )));
             }
         }
@@ -175,6 +181,7 @@ pub fn parse_profile_ingest_args(args: Vec<String>) -> Result<ProfileConfig, Xta
         verbosity,
         json_stdout,
         loops,
+        compilation_unions,
     })
 }
 
@@ -846,9 +853,19 @@ fn run_single_iteration<'a>(
                     parsed_workspace = Some(pw);
                 }
                 ResolvedProfileTarget::Crate { crate_root } => {
-                    let po = try_run_phases_and_merge(crate_root)
-                        .map_err(|e| XtaskError::new(format!("try_run_phases_and_merge: {e}")))?;
-                    parsed_crate = Some(po);
+                    if cfg.compilation_unions {
+                        let graphs = try_run_phases_and_resolve(crate_root)
+                            .map_err(|e| XtaskError::new(format!("try_run_phases_and_resolve: {e}")))?;
+                        parsed_crate = Some(ParserOutput {
+                            merged_graph: None,
+                            module_tree: None,
+                            parsed_graphs_for_masks: Some(graphs),
+                        });
+                    } else {
+                        let po = try_run_phases_and_merge(crate_root)
+                            .map_err(|e| XtaskError::new(format!("try_run_phases_and_merge: {e}")))?;
+                        parsed_crate = Some(po);
+                    }
                 }
             }
         }
@@ -882,14 +899,23 @@ fn run_single_iteration<'a>(
                             "internal: missing parsed crate for transform".to_string(),
                         )
                     })?;
-                    let merged = po.extract_merged_graph().ok_or_else(|| {
-                        XtaskError::new("missing merged graph after parse".to_string())
-                    })?;
-                    let tree = po.extract_module_tree().ok_or_else(|| {
-                        XtaskError::new("missing module tree after parse".to_string())
-                    })?;
-                    transform_parsed_graph(&d, merged, &tree)
-                        .map_err(|e| XtaskError::new(format!("transform_parsed_graph: {e}")))?;
+                    if cfg.compilation_unions {
+                        let graphs = po.extract_parsed_graphs_for_masks().ok_or_else(|| {
+                            XtaskError::new("missing parsed graphs for union transform".to_string())
+                        })?;
+                        transform_union_crate_and_structural_masks(&d, graphs).map_err(|e| {
+                            XtaskError::new(format!("transform_union_crate_and_structural_masks: {e}"))
+                        })?;
+                    } else {
+                        let merged = po.extract_merged_graph().ok_or_else(|| {
+                            XtaskError::new("missing merged graph after parse".to_string())
+                        })?;
+                        let tree = po.extract_module_tree().ok_or_else(|| {
+                            XtaskError::new("missing module tree after parse".to_string())
+                        })?;
+                        transform_parsed_graph(&d, merged, &tree)
+                            .map_err(|e| XtaskError::new(format!("transform_parsed_graph: {e}")))?;
+                    }
                 }
             }
             db = Some(d);

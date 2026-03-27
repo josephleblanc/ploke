@@ -1355,6 +1355,23 @@ target[id] := input[id_str], id = to_uuid(id_str)
         ))
     }
 
+    /// Restore `compilation_unit*` relations after a backup import when the snapshot predates them.
+    pub fn ensure_compilation_unit_relations(&self) -> Result<(), PlokeError> {
+        ploke_transform::schema::ensure_compilation_unit_relations(&self.db)?;
+        Ok(())
+    }
+
+    /// Relation names for [`cozo::Db::import_from_backup`] when the `.sqlite` snapshot may omit
+    /// `compilation_unit*` tables (older fixtures). Call [`Self::ensure_compilation_unit_relations`]
+    /// after import.
+    pub fn prior_rels_for_plain_backup_import(&self) -> Result<Vec<String>, PlokeError> {
+        Ok(self
+            .relations_vec()?
+            .into_iter()
+            .filter(|r| !r.starts_with("compilation_unit"))
+            .collect())
+    }
+
     // Gets all the file data in the same namespace as the crate name given as argument.
     // This is useful when you want to compare which files have changed since the database was
     // last updated.
@@ -2115,9 +2132,16 @@ target[id] := input[id_str], id = to_uuid(id_str)
         let mut uniq = HashSet::new();
         relations.retain(|r| uniq.insert(r.clone()));
 
+        // Snapshots may omit compilation-unit relations; importing them by name fails on legacy
+        // backups. Recreate after import via `ensure_compilation_unit_relations`.
+        relations.retain(|r| !r.starts_with("compilation_unit"));
+
         self.db
             .import_from_backup(backup, &relations)
             .map_err(DbError::from)?;
+
+        self.ensure_compilation_unit_relations()
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         Ok(())
     }
@@ -3216,7 +3240,7 @@ mod tests {
         let fixture_path = fixture.path();
         match fixture.import_mode {
             ploke_test_utils::fixture_dbs::FixtureImportMode::PlainBackup => {
-                let prior_rels = db.relations_vec()?;
+                let prior_rels = db.prior_rels_for_plain_backup_import()?;
                 db.import_from_backup(&fixture_path, &prior_rels)
                     .map_err(DbError::from)?;
             }
@@ -3224,6 +3248,7 @@ mod tests {
                 db.import_backup_with_embeddings(&fixture_path)?;
             }
         }
+        db.ensure_compilation_unit_relations()?;
         Ok(db)
     }
     use tracing::trace;

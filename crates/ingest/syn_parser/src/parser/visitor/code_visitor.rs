@@ -43,7 +43,6 @@ use itertools::Itertools;
 use ploke_core::TypeId;
 
 use colored::*;
-use tracing::{error, trace}; // Import error macro
 use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::TypePath;
@@ -51,6 +50,7 @@ use syn::{
     visit::{self, Visit},
     ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, ReturnType, Type,
 };
+use tracing::{error, trace}; // Import error macro
 
 pub struct CodeVisitor<'a> {
     state: &'a mut VisitorState,
