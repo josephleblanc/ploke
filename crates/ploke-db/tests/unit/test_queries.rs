@@ -9,8 +9,9 @@ use ploke_db::{CodeSnippet, Database, QueryBuilder, to_uuid};
 use ploke_error::Error;
 use ploke_transform::schema::primary_nodes::StructNodeSchema;
 use ploke_transform::transform::insert_structural_compilation_unit_slice;
-use syn_parser::compilation_unit::{CompilationUnitKey, StructuralCompilationUnitSlice};
-use syn_parser::discovery::TargetKind;
+use syn_parser::compilation_unit::{
+    CompilationUnitKey, CompilationUnitTargetKind, StructuralCompilationUnitSlice,
+};
 use uuid::Uuid;
 
 use crate::common::test_helpers;
@@ -43,15 +44,15 @@ fn insert_test_struct(db: &Db<MemStorage>, id: Uuid, name: &str) {
 }
 
 fn sample_cu_key(namespace: Uuid, root_label: &str) -> CompilationUnitKey {
-    CompilationUnitKey {
+    CompilationUnitKey::new(
         namespace,
-        target_kind: TargetKind::Lib,
-        target_name: "test".into(),
-        target_root: PathBuf::from(format!("/tmp/{root_label}/src/lib.rs")),
-        target_triple: "x86_64-unknown-linux-gnu".into(),
-        profile: "dev".into(),
-        features: vec![],
-    }
+        CompilationUnitTargetKind::Lib,
+        "test".into(),
+        PathBuf::from(format!("/tmp/{root_label}/src/lib.rs")),
+        "x86_64-unknown-linux-gnu".into(),
+        "dev".into(),
+        vec![],
+    )
 }
 
 #[test]

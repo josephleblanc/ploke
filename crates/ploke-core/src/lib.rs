@@ -20,6 +20,11 @@ pub use io_types::{
     ChangedFileData, CreateFileData, CreateFileResult, EmbeddingData, FileData, OnExists,
     WriteResult, WriteSnippetData,
 };
+pub mod compilation_unit;
+pub use compilation_unit::{
+    COMPILATION_UNIT_ID_NAMESPACE, CompilationUnitKey, CompilationUnitTargetKind,
+    features_hash_uuid, normalize_features,
+};
 mod arc_str;
 
 pub mod rag_types;

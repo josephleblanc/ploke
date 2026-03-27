@@ -13,7 +13,6 @@ pub use collect::collect_all_node_uuids_in_graph;
 
 use std::{collections::HashSet, path::PathBuf};
 
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -22,81 +21,10 @@ use crate::{
     parser::{ParsedCodeGraph, graph::GraphAccess, graph::ParsedGraphError},
 };
 
-/// Namespace UUID used for deterministic [`CompilationUnitKey::compilation_unit_id`] (UUID v5).
-pub const COMPILATION_UNIT_ID_NAMESPACE: Uuid = uuid::uuid!("a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d");
-
-/// Stable identity for a compilation unit: crate namespace, Cargo target, triple, profile, features.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct CompilationUnitKey {
-    pub namespace: Uuid,
-    pub target_kind: TargetKind,
-    pub target_name: String,
-    pub target_root: PathBuf,
-    pub target_triple: String,
-    pub profile: String,
-    pub features: Vec<String>,
-}
-
-/// Sort, dedupe, and normalize a feature set for stable keys and hashing.
-pub fn normalize_features(features: impl IntoIterator<Item = String>) -> Vec<String> {
-    let mut v: Vec<String> = features.into_iter().collect();
-    v.sort();
-    v.dedup();
-    v
-}
-
-/// Deterministic UUID derived from the normalized feature list (UUID v5).
-pub fn features_hash_uuid(features: &[String]) -> Uuid {
-    let joined = features.join("\0");
-    Uuid::new_v5(&COMPILATION_UNIT_ID_NAMESPACE, joined.as_bytes())
-}
-
-impl CompilationUnitKey {
-    /// Returns normalized features (sorted, deduped).
-    pub fn normalized_features(&self) -> Vec<String> {
-        normalize_features(self.features.iter().cloned())
-    }
-
-    /// Hash of the feature list only (for storage and debugging).
-    pub fn features_hash(&self) -> Uuid {
-        features_hash_uuid(&self.normalized_features())
-    }
-
-    /// Deterministic compilation-unit identifier (UUID v5 over the full canonical key).
-    pub fn compilation_unit_id(&self) -> Uuid {
-        Uuid::new_v5(&COMPILATION_UNIT_ID_NAMESPACE, &self.canonical_bytes())
-    }
-
-    fn canonical_bytes(&self) -> Vec<u8> {
-        #[derive(serde::Serialize)]
-        struct Canon<'a> {
-            namespace: Uuid,
-            target_kind: &'a str,
-            target_name: &'a str,
-            target_root: String,
-            target_triple: &'a str,
-            profile: &'a str,
-            features: Vec<String>,
-        }
-        let kind = match self.target_kind {
-            TargetKind::Lib => "lib",
-            TargetKind::Bin => "bin",
-            TargetKind::Test => "test",
-            TargetKind::Example => "example",
-            TargetKind::Bench => "bench",
-        };
-        let canon = Canon {
-            namespace: self.namespace,
-            target_kind: kind,
-            target_name: &self.target_name,
-            target_root: self.target_root.to_string_lossy().into_owned(),
-            target_triple: &self.target_triple,
-            profile: &self.profile,
-            features: self.normalized_features(),
-        };
-        serde_json::to_vec(&canon).expect("canonical CompilationUnitKey serialization")
-    }
-}
+pub use ploke_core::{
+    COMPILATION_UNIT_ID_NAMESPACE, CompilationUnitKey, CompilationUnitTargetKind,
+    features_hash_uuid, normalize_features,
+};
 
 /// One enabled syntactic edge, matching the `syntax_edge` key shape for joins.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -232,15 +160,22 @@ pub fn compilation_unit_key_from_target(
     profile: String,
     features: Vec<String>,
 ) -> CompilationUnitKey {
-    CompilationUnitKey {
+    let target_kind = match target_kind {
+        TargetKind::Lib => CompilationUnitTargetKind::Lib,
+        TargetKind::Bin => CompilationUnitTargetKind::Bin,
+        TargetKind::Test => CompilationUnitTargetKind::Test,
+        TargetKind::Example => CompilationUnitTargetKind::Example,
+        TargetKind::Bench => CompilationUnitTargetKind::Bench,
+    };
+    CompilationUnitKey::new(
         namespace,
         target_kind,
         target_name,
         target_root,
         target_triple,
         profile,
-        features: normalize_features(features),
-    }
+        normalize_features(features),
+    )
 }
 
 /// Default target triple for the host (matches `cargo` / `rustc` `TARGET` when set).
@@ -260,24 +195,24 @@ mod tests {
 
     #[test]
     fn compilation_unit_id_is_deterministic() {
-        let k1 = CompilationUnitKey {
-            namespace: Uuid::nil(),
-            target_kind: TargetKind::Lib,
-            target_name: "foo".into(),
-            target_root: PathBuf::from("/tmp/lib.rs"),
-            target_triple: "x86_64-unknown-linux-gnu".into(),
-            profile: "dev".into(),
-            features: vec!["b".into(), "a".into()],
-        };
-        let k2 = CompilationUnitKey {
-            namespace: Uuid::nil(),
-            target_kind: TargetKind::Lib,
-            target_name: "foo".into(),
-            target_root: PathBuf::from("/tmp/lib.rs"),
-            target_triple: "x86_64-unknown-linux-gnu".into(),
-            profile: "dev".into(),
-            features: vec!["a".into(), "b".into()],
-        };
+        let k1 = CompilationUnitKey::new(
+            Uuid::nil(),
+            CompilationUnitTargetKind::Lib,
+            "foo".into(),
+            PathBuf::from("/tmp/lib.rs"),
+            "x86_64-unknown-linux-gnu".into(),
+            "dev".into(),
+            vec!["b".into(), "a".into()],
+        );
+        let k2 = CompilationUnitKey::new(
+            Uuid::nil(),
+            CompilationUnitTargetKind::Lib,
+            "foo".into(),
+            PathBuf::from("/tmp/lib.rs"),
+            "x86_64-unknown-linux-gnu".into(),
+            "dev".into(),
+            vec!["a".into(), "b".into()],
+        );
         assert_eq!(k1.compilation_unit_id(), k2.compilation_unit_id());
     }
 }

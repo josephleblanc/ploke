@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability, UuidWrapper};
+use ploke_core::CompilationUnitTargetKind;
 use syn_parser::compilation_unit::{
     COMPILATION_UNIT_ID_NAMESPACE, CompilationUnitKey, StructuralCompilationUnitSlice,
 };
@@ -55,11 +56,11 @@ fn insert_compilation_unit_row(
         (
             schema.target_kind().to_string(),
             DataValue::from(match key.target_kind {
-                syn_parser::discovery::TargetKind::Lib => "lib",
-                syn_parser::discovery::TargetKind::Bin => "bin",
-                syn_parser::discovery::TargetKind::Test => "test",
-                syn_parser::discovery::TargetKind::Example => "example",
-                syn_parser::discovery::TargetKind::Bench => "bench",
+                CompilationUnitTargetKind::Lib => "lib",
+                CompilationUnitTargetKind::Bin => "bin",
+                CompilationUnitTargetKind::Test => "test",
+                CompilationUnitTargetKind::Example => "example",
+                CompilationUnitTargetKind::Bench => "bench",
             }),
         ),
         (
