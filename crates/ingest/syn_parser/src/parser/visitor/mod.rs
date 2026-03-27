@@ -556,8 +556,14 @@ struct ParseInput {
 
 fn build_parse_inputs(crate_context: &crate::discovery::CrateContext) -> Vec<ParseInput> {
     let src_dir = crate_context.root_path.join("src");
+    let src_mod_rs = src_dir.join("mod.rs");
     let mut parse_inputs: Vec<ParseInput> = Vec::new();
     let mut seen_files = std::collections::HashSet::<PathBuf>::new();
+    let exclude_crate_root_relative_src_mod = crate_context.targets.iter().any(|target| {
+        matches!(target.kind, TargetKind::Lib)
+            && !target.root.starts_with(&src_dir)
+            && target.root.file_name() == Some("lib.rs".as_ref())
+    });
 
     let has_primary_target = crate_context
         .targets
@@ -595,17 +601,15 @@ fn build_parse_inputs(crate_context: &crate::discovery::CrateContext) -> Vec<Par
                         logical_path: logical_path_for_target_root(&src_dir, target),
                     });
                 }
-                let skip_src_mod_rs =
-                    !target.root.starts_with(&src_dir) && target.root.file_name() == Some("lib.rs".as_ref());
-                let src_mod_rs = src_dir.join("mod.rs");
                 for file_path in &crate_context.files {
                     if !file_path.starts_with(&src_dir) {
                         continue;
                     }
-                    if skip_src_mod_rs && file_path == &src_mod_rs {
+                    if exclude_crate_root_relative_src_mod && file_path == &src_mod_rs {
                         // Non-standard root lib crates can legitimately keep src/mod.rs as an
                         // implementation file via #[path], but parsing it as a separate root
-                        // would collide with lib.rs at logical path ["crate"].
+                        // would collide with the actual lib root at logical path ["crate"].
+                        // Restrict this exclusion to the crate-root-relative src/mod.rs only.
                         continue;
                     }
                     if !seen_files.insert(file_path.clone()) {

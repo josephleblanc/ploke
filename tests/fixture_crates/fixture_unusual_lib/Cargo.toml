@@ -1,0 +1,13 @@
+[package]
+name = "fixture_unusual_lib"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[features]
+default = ["weird_lib"]
+weird_lib = []
+
+[dependencies]

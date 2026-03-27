@@ -602,9 +602,8 @@ impl ModuleTree {
                 }
             };
 
-            // Consider adding error handling for normalization if needed
             let resolved = base_dir.join(path_val).normalize();
-            // *** NEW LOGGING CALL ***
+
             self.log_resolve_step(
                 module_id,
                 "Normalize Path",
