@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::*;
+use crate::DiagnosticSpan;
 
 /// A lightweight, stable span to reference a location in a source file.
 ///
@@ -39,6 +40,24 @@ impl SourceSpan {
         self.line = Some(line);
         self.col = Some(col);
         self
+    }
+}
+
+impl DiagnosticSpan for SourceSpan {
+    fn line(&self) -> Option<usize> {
+        self.line.map(|line| line as usize)
+    }
+
+    fn column(&self) -> Option<usize> {
+        self.col.map(|col| col as usize)
+    }
+
+    fn start(&self) -> Option<usize> {
+        self.start
+    }
+
+    fn end(&self) -> Option<usize> {
+        self.end
     }
 }
 

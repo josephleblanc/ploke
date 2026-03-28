@@ -6,7 +6,6 @@ use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 pub use error::*;
@@ -70,20 +69,18 @@ pub fn run_discovery_phase_with_target(
             Ok(content) => content,
             Err(e) => {
                 // Critical error: Cannot proceed without Cargo.toml content.
-                return Err(DiscoveryError::Io {
-                    path: cargo_toml_path.clone(),
-                    source: Arc::new(e),
-                });
+                return Err(DiscoveryError::io(cargo_toml_path.clone(), e));
             }
         };
         let manifest: CargoManifest = match toml::from_str(&cargo_content) {
             Ok(m) => m,
             Err(e) => {
                 // Critical error: Invalid TOML structure prevents further processing.
-                return Err(DiscoveryError::TomlParse {
-                    path: cargo_toml_path.clone(),
-                    source: Arc::new(e),
-                });
+                return Err(DiscoveryError::toml_parse(
+                    cargo_toml_path.clone(),
+                    toml_error_span(cargo_toml_path.clone(), &cargo_content, &e),
+                    e,
+                ));
             }
         };
 
@@ -193,10 +190,7 @@ pub fn run_discovery_phase_with_target(
                         Ok(_non_rust_file) => {}
                         Err(e) => {
                             let path = e.path().unwrap_or(&src_bin_path).to_path_buf();
-                            non_fatal_errors.push(DiscoveryError::Walkdir {
-                                path,
-                                source: Arc::new(e),
-                            });
+                            non_fatal_errors.push(DiscoveryError::walkdir(path, e));
                         }
                     }
                 }
@@ -293,10 +287,7 @@ pub fn run_discovery_phase_with_target(
                     Err(e) => {
                         // Non-fatal: Log, collect error, and continue walking.
                         let path = e.path().unwrap_or(&src_path).to_path_buf();
-                        non_fatal_errors.push(DiscoveryError::Walkdir {
-                            path,
-                            source: Arc::new(e),
-                        });
+                        non_fatal_errors.push(DiscoveryError::walkdir(path, e));
                     }
                 }
             }
@@ -503,10 +494,7 @@ fn collect_rs_files_under(
             Ok(_non_rust_file) => {}
             Err(e) => {
                 let path = e.path().unwrap_or(root).to_path_buf();
-                non_fatal_errors.push(DiscoveryError::Walkdir {
-                    path,
-                    source: Arc::new(e),
-                });
+                non_fatal_errors.push(DiscoveryError::walkdir(path, e));
             }
         }
     }
@@ -535,10 +523,7 @@ fn collect_root_targets_from_dir(
             Ok(_non_rust_file) => {}
             Err(e) => {
                 let path = e.path().unwrap_or(root).to_path_buf();
-                non_fatal_errors.push(DiscoveryError::Walkdir {
-                    path,
-                    source: Arc::new(e),
-                });
+                non_fatal_errors.push(DiscoveryError::walkdir(path, e));
             }
         }
     }

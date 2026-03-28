@@ -960,8 +960,6 @@ pub fn derive_crate_namespace(name: &str, _version: &str) -> Uuid {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
 
     #[test]
@@ -993,10 +991,7 @@ mod tests {
     fn test_discovery_error_conversion() {
         use std::io;
         let io_error = io::Error::new(io::ErrorKind::NotFound, "file not found");
-        let discovery_err = DiscoveryError::Io {
-            path: PathBuf::from("/test/path"),
-            source: Arc::new(io_error),
-        };
+        let discovery_err = DiscoveryError::io(PathBuf::from("/test/path"), io_error);
 
         let ploke_err: ploke_error::Error = discovery_err.into();
         assert!(matches!(ploke_err, ploke_error::Error::Fatal(_)));

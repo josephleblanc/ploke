@@ -56,10 +56,11 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use cargo_metadata::Metadata;
 use clap::{Args, Subcommand};
+use ploke_error::DiagnosticInfo;
 use serde::Serialize;
 
 use syn_parser::discovery::CargoManifest;
-use syn_parser::discovery::{run_discovery_phase, try_parse_manifest};
+use syn_parser::discovery::{DiscoveryError, run_discovery_phase, try_parse_manifest};
 use syn_parser::parser::diagnostics::with_debug_artifact_dir;
 use syn_parser::parser::nodes::ModuleNode;
 use syn_parser::{
@@ -1340,6 +1341,7 @@ pub struct CorpusTargetResult {
     pub recommended_parser: String,
     pub workspace_member_count: Option<usize>,
     pub classification_error: Option<String>,
+    pub classification_diagnostic: Option<CorpusDiagnostic>,
     pub clone: CorpusCloneStatus,
     pub commit_sha: Option<String>,
     pub discovery: Option<CorpusStageResult>,
@@ -1369,6 +1371,38 @@ pub struct CorpusStageResult {
     pub failure_artifact_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct CorpusDiagnostic {
+    pub kind: String,
+    pub summary: String,
+    pub detail: Option<String>,
+    pub source_path: Option<String>,
+    pub source_span: Option<CorpusSourceSpan>,
+    pub emission_site: Option<CorpusEmissionSite>,
+    pub context: Vec<CorpusDiagnosticField>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CorpusSourceSpan {
+    pub start: Option<usize>,
+    pub end: Option<usize>,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CorpusDiagnosticField {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CorpusEmissionSite {
+    pub file: String,
+    pub line: u32,
+    pub column: u32,
+}
+
 #[derive(Debug, Clone)]
 struct CorpusTargetSpec {
     original: String,
@@ -1384,6 +1418,7 @@ struct CorpusCheckoutClassification {
     recommended_parser: String,
     workspace_member_count: Option<usize>,
     classification_error: Option<String>,
+    classification_diagnostic: Option<CorpusDiagnostic>,
     should_run_single_crate_pipeline: bool,
 }
 
@@ -1527,6 +1562,7 @@ impl Command for DebugCorpus {
                     classification_error: Some(
                         "clone failed before manifest classification".into(),
                     ),
+                    classification_diagnostic: None,
                     clone,
                     commit_sha: None,
                     discovery: Some(CorpusStageResult {
@@ -1571,6 +1607,7 @@ impl Command for DebugCorpus {
                     recommended_parser: classification.recommended_parser,
                     workspace_member_count: classification.workspace_member_count,
                     classification_error: classification.classification_error,
+                    classification_diagnostic: classification.classification_diagnostic,
                     clone,
                     commit_sha,
                     discovery: None,
@@ -1602,6 +1639,7 @@ impl Command for DebugCorpus {
                     recommended_parser: classification.recommended_parser.clone(),
                     workspace_member_count: classification.workspace_member_count,
                     classification_error: classification.classification_error.clone(),
+                    classification_diagnostic: classification.classification_diagnostic.clone(),
                     clone,
                     commit_sha,
                     discovery: Some(discovery),
@@ -1697,6 +1735,7 @@ impl Command for DebugCorpus {
                 recommended_parser: classification.recommended_parser,
                 workspace_member_count: classification.workspace_member_count,
                 classification_error: classification.classification_error,
+                classification_diagnostic: classification.classification_diagnostic,
                 clone,
                 commit_sha,
                 discovery: Some(discovery),
@@ -1926,6 +1965,7 @@ fn classify_corpus_checkout(checkout_path: &Path) -> CorpusCheckoutClassificatio
                     recommended_parser: "parse_workspace_with_config".into(),
                     workspace_member_count: Some(workspace.members.len()),
                     classification_error: None,
+                    classification_diagnostic: None,
                     should_run_single_crate_pipeline: false,
                 }
             } else {
@@ -1934,6 +1974,7 @@ fn classify_corpus_checkout(checkout_path: &Path) -> CorpusCheckoutClassificatio
                     recommended_parser: "try_run_phases_and_merge".into(),
                     workspace_member_count: None,
                     classification_error: None,
+                    classification_diagnostic: None,
                     should_run_single_crate_pipeline: true,
                 }
             }
@@ -1942,9 +1983,40 @@ fn classify_corpus_checkout(checkout_path: &Path) -> CorpusCheckoutClassificatio
             repository_kind: "unknown".into(),
             recommended_parser: "try_run_phases_and_merge".into(),
             workspace_member_count: None,
-            classification_error: Some(err.to_string()),
+            classification_error: Some(err.diagnostic_summary()),
+            classification_diagnostic: Some(corpus_diagnostic_from_discovery_error(&err)),
             should_run_single_crate_pipeline: true,
         },
+    }
+}
+
+fn corpus_diagnostic_from_discovery_error(err: &DiscoveryError) -> CorpusDiagnostic {
+    CorpusDiagnostic {
+        kind: err.diagnostic_kind().to_string(),
+        summary: err.diagnostic_summary(),
+        detail: err.diagnostic_detail(),
+        source_path: err
+            .diagnostic_source_path()
+            .map(|path| path.display().to_string()),
+        source_span: err.diagnostic_span().map(|span| CorpusSourceSpan {
+            start: span.start(),
+            end: span.end(),
+            line: span.line().map(|line| line as u32),
+            col: span.column().map(|col| col as u32),
+        }),
+        emission_site: err.diagnostic_emission_site().map(|site| CorpusEmissionSite {
+            file: site.file.to_string(),
+            line: site.line,
+            column: site.column,
+        }),
+        context: err
+            .diagnostic_context()
+            .into_iter()
+            .map(|field| CorpusDiagnosticField {
+                key: field.key.to_string(),
+                value: field.value,
+            })
+            .collect(),
     }
 }
 

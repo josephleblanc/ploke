@@ -1,10 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::panic::Location;
 use std::sync::Arc;
 
+use ploke_error::{DiagnosticField, DiagnosticInfo, DiagnosticSite, DiagnosticSpan, SourceSpan};
 use serde::Serialize;
 use toml;
 
-use crate::error::SynParserError;
 use thiserror::Error;
 
 /// Errors that can occur during the discovery phase.
@@ -14,6 +15,7 @@ pub enum DiscoveryError {
     #[error("I/O error accessing path {path}: {source}")]
     Io {
         path: PathBuf,
+        emission_site: DiagnosticSite,
         #[source]
         source: Arc<std::io::Error>, // Wrap in Arc
     },
@@ -21,6 +23,8 @@ pub enum DiscoveryError {
     #[error("Failed to parse Cargo.toml at {path}: {source}")]
     TomlParse {
         path: PathBuf,
+        span: Option<SourceSpan>,
+        emission_site: DiagnosticSite,
         #[source]
         source: Arc<toml::de::Error>, // Wrap in Arc
     },
@@ -37,6 +41,7 @@ pub enum DiscoveryError {
     #[error("Walkdir error in {path}: {source}")]
     Walkdir {
         path: PathBuf,
+        emission_site: DiagnosticSite,
         #[source]
         source: Arc<walkdir::Error>, // Wrap in Arc
     },
@@ -53,6 +58,7 @@ pub enum DiscoveryError {
     WorkspaceManifestRead {
         crate_path: Option<PathBuf>,
         manifest_path: PathBuf,
+        emission_site: DiagnosticSite,
         #[source]
         source: Arc<std::io::Error>,
     },
@@ -63,6 +69,8 @@ pub enum DiscoveryError {
     WorkspaceManifestParse {
         crate_path: Option<PathBuf>,
         manifest_path: PathBuf,
+        span: Option<SourceSpan>,
+        emission_site: DiagnosticSite,
         #[source]
         source: Arc<toml::de::Error>,
     },
@@ -141,132 +149,246 @@ pub enum DiscoveryError {
     ParentNotFound { workspace_path: PathBuf },
 }
 
-impl TryFrom<DiscoveryError> for SynParserError {
-    type Error = SynParserError;
-
-    fn try_from(value: DiscoveryError) -> Result<Self, Self::Error> {
-        use DiscoveryError::*;
-        let source_string = value.to_string();
-        Ok(match value {
-            MissingPackageName { path } => SynParserError::SimpleDiscovery {
-                path: path.display().to_string(),
-            },
-            MissingPackageVersion { path } => SynParserError::SimpleDiscovery {
-                path: path.display().to_string(),
-            },
-            CratePathNotFound { path } => SynParserError::SimpleDiscovery {
-                path: path.display().to_string(),
-            },
-            SrcNotFound { path } => SynParserError::SimpleDiscovery {
-                path: path.display().to_string(),
-            },
-            Io { path, .. } => SynParserError::ComplexDiscovery {
-                name: "".to_string(),
-                path: path.display().to_string(),
-                source_string: "Io".to_string(),
-            },
-            TomlParse { path, .. } => SynParserError::ComplexDiscovery {
-                name: "".to_string(),
-                path: path.display().to_string(),
-                source_string: "Toml".to_string(),
-            },
-            Walkdir { path, .. } => SynParserError::ComplexDiscovery {
-                name: "".to_string(),
-                path: path.display().to_string(),
-                source_string: "walkdir".to_string(),
-            },
-            WorkspaceManifestRead {
-                crate_path,
-                manifest_path,
-                ..
-            } => SynParserError::ComplexDiscovery {
-                name: crate_path
-                    .map(|path_buf| path_buf.display().to_string())
-                    .unwrap_or_else(|| String::from("None")),
-                path: manifest_path.display().to_string(),
-                source_string: "WorkspaceManifestRead".to_string(),
-            },
-            WorkspaceManifestParse { manifest_path, .. } => SynParserError::ComplexDiscovery {
-                name: "WorkspaceManifestParse".to_string(),
-                path: manifest_path.display().to_string(),
-                source_string,
-            },
-            WorkspaceManifestNotFound { crate_path } => SynParserError::SimpleDiscovery {
-                path: crate_path.display().to_string(),
-            },
-            WorkspacePackageVersionMissing {
-                crate_path,
-                manifest_path,
-            } => SynParserError::ComplexDiscovery {
-                name: crate_path.display().to_string(),
-                path: manifest_path.display().to_string(),
-                source_string: "WorkspacePackageVersionMissing".to_string(),
-            },
-            WorkspaceVersionFlagDisabled {
-                crate_path,
-                manifest_path,
-            } => SynParserError::ComplexDiscovery {
-                name: crate_path.display().to_string(),
-                path: manifest_path.display().to_string(),
-                source_string: "WorkspaceVersionFlagDisabled".to_string(),
-            },
-            NonFatalErrors(errors) => {
-                let nested = errors
-                    .into_iter()
-                    .map(SynParserError::try_from)
-                    .collect::<Result<Vec<_>, _>>()?;
-                SynParserError::MultipleErrors(nested)
+impl DiagnosticInfo for DiscoveryError {
+    fn diagnostic_kind(&self) -> &'static str {
+        match self {
+            DiscoveryError::Io { .. } => "discovery_io",
+            DiscoveryError::TomlParse { .. } => "manifest_toml_parse",
+            DiscoveryError::MissingPackageName { .. } => "manifest_missing_package_name",
+            DiscoveryError::MissingPackageVersion { .. } => "manifest_missing_package_version",
+            DiscoveryError::CratePathNotFound { .. } => "crate_path_not_found",
+            DiscoveryError::Walkdir { .. } => "discovery_walkdir",
+            DiscoveryError::SrcNotFound { .. } => "src_not_found",
+            DiscoveryError::NonFatalErrors(_) => "discovery_non_fatal_errors",
+            DiscoveryError::WorkspaceManifestRead { .. } => "workspace_manifest_read",
+            DiscoveryError::WorkspaceManifestParse { .. } => "workspace_manifest_parse",
+            DiscoveryError::WorkspaceManifestNotFound { .. } => "workspace_manifest_not_found",
+            DiscoveryError::WorkspacePackageVersionMissing { .. } => {
+                "workspace_package_version_missing"
             }
-            WorkspaceBuildNotReady {
-                workspace_path,
-                build_status,
-            } => SynParserError::ComplexDiscovery {
-                name: "workspace".to_string(),
-                path: workspace_path.display().to_string(),
-                source_string: format!("WorkspaceBuildNotReady (build_status: {build_status})"),
-            },
-            WorkspaceNoMembers {
-                workspace_path,
-                build_status,
-            } => SynParserError::ComplexDiscovery {
-                name: "workspace".to_string(),
-                path: workspace_path.display().to_string(),
-                source_string: format!("WorkspaceNoMembers (build_status: {build_status})"),
-            },
-            WorkspaceMembersNone {
-                workspace_path,
-                build_status,
-            } => SynParserError::ComplexDiscovery {
-                name: "workspace".to_string(),
-                path: workspace_path.display().to_string(),
-                source_string: format!("WorkspaceMembersNone (build_status: {build_status})"),
-            },
-            ParentNotFound { workspace_path } => SynParserError::SimpleDiscovery {
-                path: workspace_path.display().to_string(),
-            },
-            WorkspaceMissingSection { workspace_path, .. } => SynParserError::ComplexDiscovery {
-                name: "workspace".to_string(),
-                path: workspace_path.display().to_string(),
-                source_string,
-            },
-            WorkspacePathMismatch {
-                expected_workspace_path,
-                ..
-            } => SynParserError::ComplexDiscovery {
-                name: "workspace".to_string(),
-                path: expected_workspace_path.display().to_string(),
-                source_string,
-            },
-            MultipleWorkspacesDetected {
-                expected_workspace_path,
-                ..
-            } => SynParserError::ComplexDiscovery {
-                name: "workspace".to_string(),
-                path: expected_workspace_path.display().to_string(),
-                source_string,
-            },
-        })
+            DiscoveryError::WorkspaceVersionFlagDisabled { .. } => {
+                "workspace_version_flag_disabled"
+            }
+            DiscoveryError::WorkspaceBuildNotReady { .. } => "workspace_build_not_ready",
+            DiscoveryError::WorkspaceNoMembers { .. } => "workspace_no_members",
+            DiscoveryError::WorkspaceMembersNone { .. } => "workspace_members_none",
+            DiscoveryError::WorkspaceMissingSection { .. } => "workspace_missing_section",
+            DiscoveryError::WorkspacePathMismatch { .. } => "workspace_path_mismatch",
+            DiscoveryError::MultipleWorkspacesDetected { .. } => "multiple_workspaces_detected",
+            DiscoveryError::ParentNotFound { .. } => "parent_not_found",
+        }
     }
+
+    fn diagnostic_summary(&self) -> String {
+        self.to_string()
+    }
+
+    fn diagnostic_detail(&self) -> Option<String> {
+        match self {
+            DiscoveryError::TomlParse { source, .. }
+            | DiscoveryError::WorkspaceManifestParse { source, .. } => Some(source.message().into()),
+            DiscoveryError::NonFatalErrors(errors) => {
+                Some(format!("{} non-fatal discovery errors were collected", errors.len()))
+            }
+            _ => None,
+        }
+    }
+
+    fn diagnostic_source_path(&self) -> Option<&Path> {
+        match self {
+            DiscoveryError::Io { path, .. }
+            | DiscoveryError::TomlParse { path, .. }
+            | DiscoveryError::MissingPackageName { path }
+            | DiscoveryError::MissingPackageVersion { path }
+            | DiscoveryError::CratePathNotFound { path }
+            | DiscoveryError::Walkdir { path, .. }
+            | DiscoveryError::SrcNotFound { path } => Some(path.as_path()),
+            DiscoveryError::WorkspaceManifestRead { manifest_path, .. }
+            | DiscoveryError::WorkspaceManifestParse { manifest_path, .. } => {
+                Some(manifest_path.as_path())
+            }
+            DiscoveryError::WorkspaceManifestNotFound { crate_path }
+            | DiscoveryError::WorkspacePackageVersionMissing {
+                crate_path,
+                manifest_path: _,
+            }
+            | DiscoveryError::WorkspaceVersionFlagDisabled {
+                crate_path,
+                manifest_path: _,
+            } => Some(crate_path.as_path()),
+            DiscoveryError::WorkspaceBuildNotReady { workspace_path, .. }
+            | DiscoveryError::WorkspaceNoMembers { workspace_path, .. }
+            | DiscoveryError::WorkspaceMembersNone { workspace_path, .. }
+            | DiscoveryError::ParentNotFound { workspace_path } => Some(workspace_path.as_path()),
+            DiscoveryError::WorkspaceMissingSection { workspace_path, .. } => {
+                Some(workspace_path.as_path())
+            }
+            DiscoveryError::WorkspacePathMismatch {
+                discovered_workspace_path,
+                ..
+            } => Some(discovered_workspace_path.as_path()),
+            DiscoveryError::MultipleWorkspacesDetected {
+                expected_workspace_path,
+                ..
+            } => Some(expected_workspace_path.as_path()),
+            DiscoveryError::NonFatalErrors(_) => None,
+        }
+    }
+
+    fn diagnostic_span(&self) -> Option<&dyn DiagnosticSpan> {
+        match self {
+            DiscoveryError::TomlParse { span, .. }
+            | DiscoveryError::WorkspaceManifestParse { span, .. } => {
+                span.as_ref().map(|span| span as &dyn DiagnosticSpan)
+            }
+            _ => None,
+        }
+    }
+
+    fn diagnostic_context(&self) -> Vec<DiagnosticField> {
+        match self {
+            DiscoveryError::WorkspaceManifestRead {
+                crate_path,
+                manifest_path,
+                ..
+            }
+            | DiscoveryError::WorkspaceManifestParse {
+                crate_path,
+                manifest_path,
+                ..
+            } => {
+                let mut fields = vec![DiagnosticField {
+                    key: "manifest_path",
+                    value: manifest_path.display().to_string(),
+                }];
+                if let Some(crate_path) = crate_path {
+                    fields.push(DiagnosticField {
+                        key: "crate_path",
+                        value: crate_path.display().to_string(),
+                    });
+                }
+                fields
+            }
+            DiscoveryError::WorkspacePackageVersionMissing {
+                crate_path,
+                manifest_path,
+            }
+            | DiscoveryError::WorkspaceVersionFlagDisabled {
+                crate_path,
+                manifest_path,
+            } => vec![
+                DiagnosticField {
+                    key: "crate_path",
+                    value: crate_path.display().to_string(),
+                },
+                DiagnosticField {
+                    key: "manifest_path",
+                    value: manifest_path.display().to_string(),
+                },
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    fn diagnostic_emission_site(&self) -> Option<&DiagnosticSite> {
+        match self {
+            DiscoveryError::Io { emission_site, .. }
+            | DiscoveryError::TomlParse { emission_site, .. }
+            | DiscoveryError::Walkdir { emission_site, .. }
+            | DiscoveryError::WorkspaceManifestRead { emission_site, .. }
+            | DiscoveryError::WorkspaceManifestParse { emission_site, .. } => Some(emission_site),
+            _ => None,
+        }
+    }
+}
+
+impl DiscoveryError {
+    #[track_caller]
+    pub fn io(path: PathBuf, source: std::io::Error) -> Self {
+        Self::Io {
+            path,
+            emission_site: DiagnosticSite::from_location(Location::caller()),
+            source: Arc::new(source),
+        }
+    }
+
+    #[track_caller]
+    pub fn toml_parse(path: PathBuf, span: Option<SourceSpan>, source: toml::de::Error) -> Self {
+        Self::TomlParse {
+            path,
+            span,
+            emission_site: DiagnosticSite::from_location(Location::caller()),
+            source: Arc::new(source),
+        }
+    }
+
+    #[track_caller]
+    pub fn walkdir(path: PathBuf, source: walkdir::Error) -> Self {
+        Self::Walkdir {
+            path,
+            emission_site: DiagnosticSite::from_location(Location::caller()),
+            source: Arc::new(source),
+        }
+    }
+
+    #[track_caller]
+    pub fn workspace_manifest_read(
+        crate_path: Option<PathBuf>,
+        manifest_path: PathBuf,
+        source: std::io::Error,
+    ) -> Self {
+        Self::WorkspaceManifestRead {
+            crate_path,
+            manifest_path,
+            emission_site: DiagnosticSite::from_location(Location::caller()),
+            source: Arc::new(source),
+        }
+    }
+
+    #[track_caller]
+    pub fn workspace_manifest_parse(
+        crate_path: Option<PathBuf>,
+        manifest_path: PathBuf,
+        span: Option<SourceSpan>,
+        source: toml::de::Error,
+    ) -> Self {
+        Self::WorkspaceManifestParse {
+            crate_path,
+            manifest_path,
+            span,
+            emission_site: DiagnosticSite::from_location(Location::caller()),
+            source: Arc::new(source),
+        }
+    }
+
+    pub fn diagnostic_source_span(&self) -> Option<&SourceSpan> {
+        match self {
+            DiscoveryError::TomlParse { span, .. }
+            | DiscoveryError::WorkspaceManifestParse { span, .. } => span.as_ref(),
+            _ => None,
+        }
+    }
+}
+
+pub fn toml_error_span(path: PathBuf, content: &str, error: &toml::de::Error) -> Option<SourceSpan> {
+    let range = error.span()?;
+    let (line, col) = byte_offset_to_line_col(content, range.start);
+    Some(
+        SourceSpan::new(path)
+            .with_range(range.start, range.end)
+            .with_line_col(line, col),
+    )
+}
+
+fn byte_offset_to_line_col(content: &str, offset: usize) -> (u32, u32) {
+    let clamped = offset.min(content.len());
+    let slice = &content[..clamped];
+    let line = slice.bytes().filter(|b| *b == b'\n').count() as u32 + 1;
+    let col = slice
+        .rsplit_once('\n')
+        .map(|(_, tail)| tail.chars().count() as u32 + 1)
+        .unwrap_or_else(|| slice.chars().count() as u32 + 1);
+    (line, col)
 }
 
 impl Serialize for DiscoveryError {
@@ -296,13 +418,13 @@ impl From<DiscoveryError> for ploke_error::Error {
     fn from(err: DiscoveryError) -> Self {
         let err_string = err.to_string();
         match err {
-            DiscoveryError::Io { path, source } => ploke_error::FatalError::FileOperation {
+            DiscoveryError::Io { path, source, .. } => ploke_error::FatalError::FileOperation {
                 operation: "read",
                 path,
                 source,
             }
             .into(),
-            DiscoveryError::TomlParse { path, source } => ploke_error::FatalError::PathResolution {
+            DiscoveryError::TomlParse { path, source, .. } => ploke_error::FatalError::PathResolution {
                 path: format!("Failed to parse Cargo.toml at {}", path.display()),
                 source: Some(source),
             }
@@ -329,7 +451,7 @@ impl From<DiscoveryError> for ploke_error::Error {
                 source: None,
             }
             .into(),
-            DiscoveryError::Walkdir { path, source } => {
+            DiscoveryError::Walkdir { path, source, .. } => {
                 // Convert walkdir::Error to std::io::Error using string representation
                 let io_error = std::io::Error::other(source.to_string());
                 ploke_error::FatalError::FileOperation {
@@ -365,7 +487,9 @@ impl From<DiscoveryError> for ploke_error::Error {
             DiscoveryError::WorkspaceManifestParse {
                 crate_path,
                 manifest_path,
+                span: _,
                 source,
+                ..
             } => ploke_error::FatalError::PathResolution {
                 path: format!(
                     "Failed to parse workspace manifest {} for crate {:?}",

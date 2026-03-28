@@ -12,7 +12,7 @@ use crate::{
 use super::{TreeRelation, UnlinkedModuleInfo};
 
 // Define the new ModuleTreeError enum
-#[derive(thiserror::Error, Debug, Clone, PartialEq)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum ModuleTreeError {
     #[error(
         "Duplicate definition path '{path}' found in module tree. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}"

@@ -92,19 +92,7 @@ pub fn parse_workspace_with_config(
     config: &ParseWorkspaceConfig<'_>,
 ) -> Result<ParsedWorkspace, SynParserError> {
     let path_buf = PathBuf::from(target_workspace_dir);
-    let name = path_buf
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("No filename")
-        .to_string();
-
-    let path = path_buf.display().to_string();
-    let workspace_metadata =
-        try_parse_manifest(&path_buf).map_err(|e| SynParserError::ComplexDiscovery {
-            name,
-            path,
-            source_string: e.to_string(),
-        })?;
+    let workspace_metadata = try_parse_manifest(&path_buf).map_err(SynParserError::from)?;
 
     let workspace_data =
         workspace_metadata
@@ -235,18 +223,8 @@ pub fn try_run_phases_and_resolve_with_target(
     // argument for the root path, and so is left empty below for convenience.
     let path_buf = PathBuf::from(target_crate_dir);
 
-    let name = path_buf
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("No filename")
-        .to_string();
-    let path = path_buf.display().to_string();
     let discovery_output = run_discovery_phase_with_target(None, &[path_buf], selected_target)
-        .map_err(|e| SynParserError::ComplexDiscovery {
-            name,
-            path,
-            source_string: e.to_string(),
-        })?;
+        .map_err(SynParserError::from)?;
     // NOTE:2025-12-26
     // commenting out the below so we don't panic on error in the target crate.
     // TODO: Determine whether or not the following error would be a result of an intenral error
@@ -311,13 +289,7 @@ pub fn try_run_phases_and_resolve_with_target(
 pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let discovery_output =
-        run_discovery_phase(None, std::slice::from_ref(&crate_path)).map_err(|e| {
-            SynParserError::ComplexDiscovery {
-                name: fixture_name.to_string(),
-                path: crate_path.display().to_string(),
-                source_string: e.to_string(),
-            }
-        })?;
+        run_discovery_phase(None, std::slice::from_ref(&crate_path)).map_err(SynParserError::from)?;
     // NOTE:2025-12-26
     // commenting out the below so we don't panic on error in the target crate.
     // TODO: Determine whether or not the following error would be a result of an intenral error
@@ -582,6 +554,7 @@ mod tests {
     use std::path::Path;
 
     use ploke_common::workspace_root;
+    use ploke_error::DiagnosticInfo;
     use tempfile::tempdir;
 
     use super::*;
@@ -715,7 +688,7 @@ edition = "2021"
     }
 
     #[test]
-    fn parse_workspace_reports_missing_manifest_as_complex_discovery() {
+    fn parse_workspace_reports_missing_manifest_as_structured_discovery() {
         let tmp = tempdir().unwrap();
 
         let err = match parse_workspace(tmp.path(), None) {
@@ -724,16 +697,23 @@ edition = "2021"
         };
 
         match err {
-            SynParserError::ComplexDiscovery { name, path, .. } => {
-                assert_eq!(name, tmp.path().file_name().unwrap().to_string_lossy());
-                assert_eq!(path, tmp.path().display().to_string());
-            }
+            SynParserError::Discovery(err) => match err.as_ref() {
+                crate::discovery::error::DiscoveryError::WorkspaceManifestRead {
+                    crate_path,
+                    manifest_path,
+                    ..
+                } => {
+                    assert!(crate_path.is_none());
+                    assert_eq!(manifest_path, &tmp.path().join("Cargo.toml"));
+                }
+                other => panic!("unexpected discovery error: {other:?}"),
+            },
             other => panic!("unexpected error: {other:?}"),
         }
     }
 
     #[test]
-    fn parse_workspace_reports_invalid_manifest_as_complex_discovery() {
+    fn parse_workspace_reports_invalid_manifest_as_structured_discovery() {
         let tmp = tempdir().unwrap();
 
         fs::write(
@@ -748,10 +728,39 @@ edition = "2021"
         };
 
         match err {
-            SynParserError::ComplexDiscovery { name, path, .. } => {
-                assert_eq!(name, tmp.path().file_name().unwrap().to_string_lossy());
-                assert_eq!(path, tmp.path().display().to_string());
-            }
+            SynParserError::Discovery(err) => match err.as_ref() {
+                crate::discovery::error::DiscoveryError::WorkspaceManifestParse {
+                    crate_path,
+                    manifest_path,
+                    ..
+                } => {
+                    assert!(crate_path.is_none());
+                    assert_eq!(manifest_path, &tmp.path().join("Cargo.toml"));
+                    assert_eq!(err.diagnostic_kind(), "workspace_manifest_parse");
+                    assert_eq!(
+                        err.diagnostic_source_path(),
+                        Some(tmp.path().join("Cargo.toml").as_path())
+                    );
+                    let emission_site = err
+                        .diagnostic_emission_site()
+                        .expect("workspace manifest parse should capture emission site");
+                    assert!(
+                        emission_site
+                            .file
+                            .ends_with("crates/ingest/syn_parser/src/discovery/workspace.rs")
+                    );
+                    assert!(emission_site.line > 0);
+                    assert!(emission_site.column > 0);
+                    let span = err
+                        .diagnostic_span()
+                        .expect("workspace manifest parse should preserve a source span");
+                    assert!(span.start().is_some());
+                    assert!(span.end().is_some());
+                    assert_eq!(span.line(), Some(1));
+                    assert_eq!(span.column(), Some(11));
+                }
+                other => panic!("unexpected discovery error: {other:?}"),
+            },
             other => panic!("unexpected error: {other:?}"),
         }
     }

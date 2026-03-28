@@ -1,6 +1,7 @@
 //! Error types for the `syn_parser` crate.
 
 use crate::{
+    discovery::error::DiscoveryError,
     parser::nodes::{AnyNodeId, ImportNodeId, TryFromPrimaryError},
     resolve::ModuleTreeError,
 };
@@ -47,8 +48,14 @@ impl<T> PartialEq for PartialSuccess<T> {
     }
 }
 
+impl From<DiscoveryError> for SynParserError {
+    fn from(err: DiscoveryError) -> Self {
+        Self::Discovery(Box::new(err))
+    }
+}
+
 /// The primary error type for the `syn_parser` crate.
-#[derive(Error, Debug, Clone, PartialEq)]
+#[derive(Error, Debug, Clone)]
 pub enum SynParserError {
     /// Multiple errors occurred during parsing.
     #[error("Multiple errors occurred:\n{}", .0.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n"))]
@@ -64,6 +71,10 @@ pub enum SynParserError {
     /// An error occurred in a test helper.
     #[error("Test helper error: {0}")]
     TestHelperError(String), // Wrap the error message
+
+    /// A structured error occurred during discovery or manifest classification.
+    #[error(transparent)]
+    Discovery(Box<DiscoveryError>),
 
     /// An error occurred during ID conversion.
     #[error(transparent)]

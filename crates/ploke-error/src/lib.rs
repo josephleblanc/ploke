@@ -82,6 +82,7 @@ Guidance
 "#]
 
 pub mod context;
+pub mod diagnostic;
 pub mod domain;
 pub mod fatal;
 pub mod internal;
@@ -94,6 +95,7 @@ pub mod warning;
 
 // public exports
 pub use context::{ContextExt, ContextualError, ErrorContext, SourceSpan};
+pub use diagnostic::{DiagnosticField, DiagnosticInfo, DiagnosticSite, DiagnosticSpan};
 pub use domain::DomainError;
 pub use fatal::FatalError;
 pub use internal::InternalError;

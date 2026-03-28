@@ -124,7 +124,7 @@ fn format_human_corpus(value: &Value) -> Option<String> {
                 classification_failures += 1;
             }
 
-            match format_human_corpus_target(target, &artifact_root) {
+            match format_human_corpus_target(target, &artifact_root, &checkout_root) {
                 Some(CorpusHumanTarget::Failure(line)) => failure_lines.push(line),
                 Some(CorpusHumanTarget::SingleCrate(row)) => single_crate_rows.push(row),
                 Some(CorpusHumanTarget::Workspace(line)) => workspace_lines.push(line),
@@ -272,7 +272,11 @@ struct StageLayout {
     metric_b_width: usize,
 }
 
-fn format_human_corpus_target(target: &Value, artifact_root: &str) -> Option<CorpusHumanTarget> {
+fn format_human_corpus_target(
+    target: &Value,
+    artifact_root: &str,
+    checkout_root: &str,
+) -> Option<CorpusHumanTarget> {
     let obj = target.as_object()?;
     let repo = value_str(obj, "normalized_repo");
     let repository_kind = value_str(obj, "repository_kind");
@@ -290,6 +294,12 @@ fn format_human_corpus_target(target: &Value, artifact_root: &str) -> Option<Cor
 
     if let Some(failure) = summarize_target_failure(obj) {
         let mut line = format!("- {repo}: {failure} [{action}, {commit_sha}]\n");
+        if let Some(source) = summarize_target_failure_source(obj, checkout_root) {
+            line.push_str(&source);
+        }
+        if let Some(emission_site) = summarize_target_failure_emission_site(obj) {
+            line.push_str(&emission_site);
+        }
         if let Some((label, path)) = summarize_target_failure_path(obj) {
             line.push_str(&format!(
                 "  {label}: {}\n",
@@ -430,6 +440,64 @@ fn summarize_target_failure_path(
     }
 
     None
+}
+
+fn summarize_target_failure_source(
+    obj: &serde_json::Map<String, Value>,
+    checkout_root: &str,
+) -> Option<String> {
+    let diagnostic = obj
+        .get("classification_diagnostic")
+        .and_then(Value::as_object)?;
+    let source_path = diagnostic.get("source_path").and_then(Value::as_str)?;
+    let mut line = format!(
+        "  source: {}",
+        shorten_path_for_display(checkout_root, source_path)
+    );
+    if let Some(span) = diagnostic.get("source_span").and_then(Value::as_object) {
+        let rendered = render_source_span(span);
+        if !rendered.is_empty() {
+            line.push_str(&rendered);
+        }
+    }
+    line.push('\n');
+    Some(line)
+}
+
+fn summarize_target_failure_emission_site(
+    obj: &serde_json::Map<String, Value>,
+) -> Option<String> {
+    let diagnostic = obj
+        .get("classification_diagnostic")
+        .and_then(Value::as_object)?;
+    let emission_site = diagnostic.get("emission_site").and_then(Value::as_object)?;
+    let file = emission_site.get("file").and_then(Value::as_str)?;
+    let line = emission_site.get("line").and_then(Value::as_u64)?;
+    let column = emission_site.get("column").and_then(Value::as_u64)?;
+    Some(format!("  emitted: {file}:{line}:{column}\n"))
+}
+
+fn render_source_span(span: &serde_json::Map<String, Value>) -> String {
+    let line = span.get("line").and_then(Value::as_u64);
+    let col = span.get("col").and_then(Value::as_u64);
+    let start = span.get("start").and_then(Value::as_u64);
+    let end = span.get("end").and_then(Value::as_u64);
+
+    let mut rendered = String::new();
+    if let (Some(line), Some(col)) = (line, col) {
+        rendered.push(':');
+        rendered.push_str(&line.to_string());
+        rendered.push(':');
+        rendered.push_str(&col.to_string());
+    }
+
+    match (start, end) {
+        (Some(start), Some(end)) => rendered.push_str(&format!(" [{start}..{end}]")),
+        (Some(start), None) => rendered.push_str(&format!(" [{start}]")),
+        _ => {}
+    }
+
+    rendered
 }
 
 fn shorten_path_for_display(root: &str, path: &str) -> String {
@@ -867,6 +935,17 @@ mod tests {
                     "repository_kind": "unknown",
                     "workspace_member_count": null,
                     "classification_error": "Failed to parse workspace Cargo.toml at /tmp/checkouts/fail__repo/Cargo.toml",
+                    "classification_diagnostic": {
+                        "kind": "workspace_manifest_parse",
+                        "summary": "Failed to parse workspace Cargo.toml at /tmp/checkouts/fail__repo/Cargo.toml",
+                        "detail": "missing field `members`",
+                        "source_path": "/tmp/checkouts/fail__repo/Cargo.toml",
+                        "source_span": { "start": 10, "end": 19, "line": 1, "col": 11 },
+                        "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/workspace.rs", "line": 191, "column": 13 },
+                        "context": [
+                            { "key": "manifest_path", "value": "/tmp/checkouts/fail__repo/Cargo.toml" }
+                        ]
+                    },
                     "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "summary_path": "/tmp/artifacts/fail__repo/summary.json",
                     "clone": { "ok": true, "action": "reused", "error": null },
@@ -926,6 +1005,8 @@ mod tests {
         assert!(formatted.contains("Kinds: 2 single-crate, 2 workspace, 1 failed classification"));
         assert!(formatted.contains("Failure breakdown: clone=0, classification=1, discovery=0, resolve=0, merge=0, panic=0"));
         assert!(formatted.contains("\nFailures:\n- fail/repo: classification failed: Failed to parse workspace Cargo.toml at /tmp/checkouts/fail__repo/Cargo.toml [reused, aaaaaaaaaaaa]\n"));
+        assert!(formatted.contains("  source: fail__repo/Cargo.toml:1:11 [10..19]\n"));
+        assert!(formatted.contains("  emitted: crates/ingest/syn_parser/src/discovery/workspace.rs:191:13\n"));
         assert!(formatted.contains("  summary: fail__repo/summary.json\n"));
     }
 

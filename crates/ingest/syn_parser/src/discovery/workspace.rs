@@ -1,12 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use itertools::Itertools;
 use ploke_core::workspace_glob::expand_simple_workspace_member;
 use serde::{Deserialize, Serialize};
 
 use crate::discovery::DiscoveryError;
+use crate::discovery::toml_error_span;
 
 /// Indicates that a version should be inherited from the workspace metadata. Cargo effectively
 /// treats `workspace = true` as the only supported value, so we surface explicit errors for other
@@ -186,20 +186,17 @@ pub fn locate_workspace_manifest(
 // + unit test (at end of file)
 pub fn try_parse_manifest(target_dir: &Path) -> Result<WorkspaceManifestMetadata, DiscoveryError> {
     let candidate_manifest = target_dir.join("Cargo.toml");
-    let content = fs::read_to_string(&candidate_manifest).map_err(|err| {
-        DiscoveryError::WorkspaceManifestRead {
-            crate_path: None,
-            manifest_path: candidate_manifest.clone(),
-            source: Arc::new(err),
-        }
-    })?;
+    let content = fs::read_to_string(&candidate_manifest)
+        .map_err(|err| DiscoveryError::workspace_manifest_read(None, candidate_manifest.clone(), err))?;
 
-    let mut metadata: WorkspaceManifestMetadata =
-        toml::from_str(&content).map_err(|err| DiscoveryError::WorkspaceManifestParse {
-            crate_path: None,
-            manifest_path: candidate_manifest.clone(),
-            source: Arc::new(err),
-        })?;
+    let mut metadata: WorkspaceManifestMetadata = toml::from_str(&content).map_err(|err| {
+        DiscoveryError::workspace_manifest_parse(
+            None,
+            candidate_manifest.clone(),
+            toml_error_span(candidate_manifest.clone(), &content, &err),
+            err,
+        )
+    })?;
 
     let workspace_root =
         candidate_manifest
@@ -253,20 +250,19 @@ impl WorkspaceMetaBuilder {
             Ok(content) => content,
             Err(e) => {
                 // Critical error: Cannot proceed without Cargo.toml content.
-                return Err(DiscoveryError::Io {
-                    path: fp.to_path_buf(),
-                    source: Arc::new(e), // Wrap error in Arc
-                });
+                return Err(DiscoveryError::io(fp.to_path_buf(), e));
             }
         };
 
-        let workspace_wrapper: WorkspaceBuildWrapper =
-            toml::from_str(&cargo_content).map_err(|e| {
-                DiscoveryError::TomlParse {
-                    path: fp.to_path_buf(),
-                    source: Arc::new(e), // Wrap error in Arc
-                }
-            })?;
+        let workspace_wrapper: WorkspaceBuildWrapper = toml::from_str(&cargo_content).map_err(
+            |e| {
+                DiscoveryError::toml_parse(
+                    fp.to_path_buf(),
+                    toml_error_span(fp.to_path_buf(), &cargo_content, &e),
+                    e,
+                )
+            },
+        )?;
         let mut workspace_toml = workspace_wrapper.workspace;
         if workspace_toml
             .members
