@@ -1,12 +1,11 @@
 use crate::{
     discovery::DependencyMap as _,
+    parser::diagnostics::{TRACE_TARGET_MERGE, TRACE_TARGET_PRUNE, emit_json_diagnostic},
     resolve::{
         ModuleTreeError, PruningResult, TreeRelation, UnlinkedModuleInfo, module_tree::ModuleTree,
     },
 };
 use anyhow::Result;
-use serde_json::json;
-use std::io::Write as _;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -30,7 +29,7 @@ pub enum ParsedGraphError {
     DuplicateRootFile(PathBuf),
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, serde::Serialize, Clone)]
 pub struct ParsedCodeGraph {
     /// The absolute path of the file that was parsed.
     pub file_path: PathBuf,
@@ -88,32 +87,6 @@ fn root_selection_key(path: &Path) -> (u8, PathBuf) {
 }
 
 impl ParsedCodeGraph {
-    // #region agent log (debug session 08aa18)
-    fn agent_log(hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
-        let line = json!({
-            "sessionId": "08aa18",
-            "runId": "bevy-trace",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0),
-        })
-        .to_string();
-
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/home/brasides/code/ploke/.cursor/debug-08aa18.log")
-        {
-            let _ = writeln!(f, "{line}");
-        }
-    }
-    // #endregion agent log (debug session 08aa18)
-
     pub fn new(file_path: PathBuf, crate_namespace: Uuid, graph: CodeGraph) -> Self {
         Self {
             file_path,
@@ -165,7 +138,7 @@ impl ParsedCodeGraph {
             .flatten() // Flatten the outer iterator
     }
 
-    #[instrument(skip_all, fields(graph_count = graphs.len()))]
+    #[instrument(target = TRACE_TARGET_MERGE, skip_all, fields(graph_count = graphs.len()))]
     pub fn partition_by_selected_roots(
         graphs: Vec<Self>,
     ) -> Result<RootGraphPartition, SynParserError> {
@@ -257,20 +230,8 @@ impl ParsedCodeGraph {
         Ok((merged, tree))
     }
 
-    #[instrument(skip_all, fields(graph_count = graphs.len()))]
+    #[instrument(target = TRACE_TARGET_MERGE, skip_all, fields(graph_count = graphs.len()))]
     pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, SynParserError> {
-        // #region agent log (debug session 08aa18)
-        Self::agent_log(
-            "H1",
-            "parsed_graph.rs:merge_new:entry",
-            "merge_new called",
-            json!({
-                "graphs_len": graphs.len(),
-                "graphs_with_context": graphs.iter().filter(|g| g.crate_context.is_some()).count(),
-            }),
-        );
-        // #endregion agent log (debug session 08aa18)
-
         let selected_root_paths: HashSet<PathBuf> = graphs
             .iter()
             .filter(|graph| graph.crate_context.is_some())
@@ -309,18 +270,6 @@ impl ParsedCodeGraph {
 
         new_graph.crate_context = found_context;
 
-        // #region agent log (debug session 08aa18)
-        Self::agent_log(
-            "H1",
-            "parsed_graph.rs:merge_new:post_append",
-            "merge_new finished append_all loop",
-            json!({
-                "has_crate_context": new_graph.crate_context.is_some(),
-                "root_file_result": format!("{:?}", new_graph.root_file().map(|p| p.display().to_string())),
-            }),
-        );
-        // #endregion agent log (debug session 08aa18)
-
         #[cfg(feature = "validate")]
         {
             ParsedCodeGraph::debug_relationships(&new_graph);
@@ -333,12 +282,24 @@ impl ParsedCodeGraph {
             } else {
                 tracing::debug!(target: "validate", "{} <- <no root file>", "Validating".log_step());
             }
+            if !new_graph.validate_unique_rels() {
+                let _ = emit_json_diagnostic(
+                    "merge_new_validate_unique_rels_failed",
+                    &json!({
+                        "function": "ParsedCodeGraph::merge_new",
+                        "file_path": new_graph.file_path.display().to_string(),
+                        "graph_node_count": new_graph.node_count(),
+                        "relation_count": new_graph.relations().len(),
+                    }),
+                );
+            }
             assert!(new_graph.validate_unique_rels());
         }
 
         Ok(new_graph)
     }
 
+    #[instrument(target = TRACE_TARGET_MERGE, skip_all, fields(left_file = ?self.file_path.as_path(), right_file = ?other.file_path.as_path()))]
     pub fn append_all(&mut self, mut other: Self) -> Result<(), SynParserError> {
         self.graph.functions.append(&mut other.graph.functions);
         self.graph
@@ -365,6 +326,17 @@ impl ParsedCodeGraph {
                 "Validating".log_step(),
                 self.file_path.as_os_str().to_string_lossy()
             );
+            if !self.validate_unique_rels() {
+                let _ = emit_json_diagnostic(
+                    "append_all_validate_unique_rels_failed",
+                    &json!({
+                        "function": "ParsedCodeGraph::append_all",
+                        "file_path": self.file_path.display().to_string(),
+                        "graph_node_count": self.node_count(),
+                        "relation_count": self.relations().len(),
+                    }),
+                );
+            }
             assert!(self.validate_unique_rels());
         }
 
@@ -392,10 +364,23 @@ impl ParsedCodeGraph {
     // We need a new Relation to represent that connection, but it will be in a different set of
     // logical relations, whereas all of these relations are meant to be syntactically accurate.
     // Changed back to &self as graph is immutable again.
-    #[instrument(skip_all, fields(self.file_path = ?self.file_path.as_path()))]
+    #[instrument(target = TRACE_TARGET_PRUNE, skip_all, fields(self.file_path = ?self.file_path.as_path()))]
     pub fn build_module_tree(&self) -> Result<(ModuleTree, PruningResult), SynParserError> {
         #[cfg(feature = "validate")]
-        assert!(self.validate_unique_rels());
+        {
+            if !self.validate_unique_rels() {
+                let _ = emit_json_diagnostic(
+                    "build_module_tree_validate_unique_rels_failed",
+                    &json!({
+                        "function": "ParsedCodeGraph::build_module_tree",
+                        "file_path": self.file_path.display().to_string(),
+                        "graph_node_count": self.node_count(),
+                        "relation_count": self.relations().len(),
+                    }),
+                );
+            }
+            assert!(self.validate_unique_rels());
+        }
         let root_module = match self.get_root_module_checked() {
             Ok(root) => root,
             Err(SynParserError::ParsedGraphError(ParsedGraphError::RootFileNotFound(_))) => {
@@ -406,13 +391,27 @@ impl ParsedCodeGraph {
         self.build_module_tree_from_root_module(root_module)
     }
 
-    #[instrument(skip_all, fields(self.file_path = ?self.file_path.as_path(), root_file = ?root_file))]
+    #[instrument(target = TRACE_TARGET_PRUNE, skip_all, fields(self.file_path = ?self.file_path.as_path(), root_file = ?root_file))]
     pub fn build_module_tree_for_root_path(
         &self,
         root_file: &Path,
     ) -> Result<(ModuleTree, PruningResult), SynParserError> {
         #[cfg(feature = "validate")]
-        assert!(self.validate_unique_rels());
+        {
+            if !self.validate_unique_rels() {
+                let _ = emit_json_diagnostic(
+                    "build_module_tree_for_root_path_validate_unique_rels_failed",
+                    &json!({
+                        "function": "ParsedCodeGraph::build_module_tree_for_root_path",
+                        "file_path": self.file_path.display().to_string(),
+                        "root_file": root_file.display().to_string(),
+                        "graph_node_count": self.node_count(),
+                        "relation_count": self.relations().len(),
+                    }),
+                );
+            }
+            assert!(self.validate_unique_rels());
+        }
         let root_module = self.find_module_by_file_path_checked(root_file)?;
         self.build_module_tree_from_root_module(root_module)
     }
@@ -541,7 +540,7 @@ impl ParsedCodeGraph {
     ///
     /// - reviewed by JL Jul 27, 2025
     /// - edited by JL Jul 28, 2025 (added limitation re: secondary nodes)
-    #[instrument(skip_all, fields(self.file_path = ?self.file_path.as_path()))]
+    #[instrument(target = TRACE_TARGET_PRUNE, skip_all, fields(self.file_path = ?self.file_path.as_path()))]
     fn prune(&mut self, pruned_items: PruningResult) {
         // WARN: We are pruning all the unused items from the unlinked files, but that does not
         // include the unused types currently, meaning we could be ending up with unlinked types?
@@ -665,6 +664,18 @@ impl ParsedCodeGraph {
         self.modules_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
         prune_counts.non_file_modules = nonfile_modules_count_pre - self.modules().len();
+        if prune_counts.file_modules != pruned_items.pruned_module_ids.len() {
+            let _ = emit_json_diagnostic(
+                "prune_file_module_count_mismatch",
+                &json!({
+                    "function": "ParsedCodeGraph::prune",
+                    "file_path": self.file_path.display().to_string(),
+                    "expected_pruned_modules": pruned_items.pruned_module_ids.len(),
+                    "actual_pruned_file_modules": prune_counts.file_modules,
+                    "pruned_item_count": pruned_items.pruned_item_ids.len(),
+                }),
+            );
+        }
         assert_eq!(
             prune_counts.file_modules,
             pruned_items.pruned_module_ids.len(),
@@ -749,6 +760,20 @@ impl ParsedCodeGraph {
                 orphan_method_count = %orphan_method_count,
                 removed_count = %removed_items.len());
         }
+        if prune_counts.count_resolved() != expected_resolved_removals {
+            let _ = emit_json_diagnostic(
+                "prune_resolved_count_mismatch",
+                &json!({
+                    "function": "ParsedCodeGraph::prune",
+                    "file_path": self.file_path.display().to_string(),
+                    "prune_counts": prune_counts,
+                    "expected_resolved_removals": expected_resolved_removals,
+                    "removed_count": removed_items.len(),
+                    "pruned_item_count": pruned_item_ids.len(),
+                    "orphan_method_count": orphan_method_count,
+                }),
+            );
+        }
         assert_eq!(
             prune_counts.count_resolved(),
             expected_resolved_removals,
@@ -771,14 +796,27 @@ impl ParsedCodeGraph {
         // SyntacticRelations the HashSet will be smaller than the Vec, which would cause
         // graph_pruned_count to undercount and the final assert_eq to pass spuriously.
         #[cfg(feature = "validate")]
-        assert_eq!(
-            graph_rel_set.len(),
-            relations_count_pre,
-            "Duplicate SyntacticRelations detected in graph.relations before pruning: \
-             HashSet size ({}) != Vec size ({}). graph_pruned_count would undercount.",
-            graph_rel_set.len(),
-            relations_count_pre,
-        );
+        {
+            if graph_rel_set.len() != relations_count_pre {
+                let _ = emit_json_diagnostic(
+                    "prune_duplicate_graph_relations_detected",
+                    &json!({
+                        "function": "ParsedCodeGraph::prune",
+                        "file_path": self.file_path.display().to_string(),
+                        "graph_rel_set_len": graph_rel_set.len(),
+                        "relations_count_pre": relations_count_pre,
+                    }),
+                );
+            }
+            assert_eq!(
+                graph_rel_set.len(),
+                relations_count_pre,
+                "Duplicate SyntacticRelations detected in graph.relations before pruning: \
+                 HashSet size ({}) != Vec size ({}). graph_pruned_count would undercount.",
+                graph_rel_set.len(),
+                relations_count_pre,
+            );
+        }
         let graph_pruned_count = pruned_items
             .pruned_relations
             .iter()
@@ -791,6 +829,19 @@ impl ParsedCodeGraph {
                 .contains(&TreeRelation::new(*r))
         });
 
+        if relations_count_pre - self.relations().len() != graph_pruned_count {
+            let _ = emit_json_diagnostic(
+                "prune_relation_count_mismatch",
+                &json!({
+                    "function": "ParsedCodeGraph::prune",
+                    "file_path": self.file_path.display().to_string(),
+                    "relations_count_pre": relations_count_pre,
+                    "relations_count_post": self.relations().len(),
+                    "expected_pruned_graph_relations": graph_pruned_count,
+                    "pruned_tree_relations": pruned_items.pruned_relations.len(),
+                }),
+            );
+        }
         assert_eq!(
             relations_count_pre - self.relations().len(),
             graph_pruned_count,
@@ -821,7 +872,7 @@ impl ParsedCodeGraph {
     /// Returns any error encountered during tree construction, path resolution,
     /// or pruning (in creating the items to prune within build_module_tree).
     /// - JL Reviewed, Jul 28, 2025
-    #[instrument(skip(self), fields(pruned_relations, pruned_modules, pruned_items))]
+    #[instrument(target = TRACE_TARGET_PRUNE, skip(self), fields(pruned_relations, pruned_modules, pruned_items))]
     pub fn build_tree_and_prune(&mut self) -> Result<ModuleTree, ploke_error::Error> {
         let (tree, pruned_items) = {
             let _span = info_span!("build_module_tree").entered();
@@ -840,7 +891,7 @@ impl ParsedCodeGraph {
         Ok(tree)
     }
 
-    #[instrument(skip(self), fields(pruned_relations, pruned_modules, pruned_items, root_file = ?root_file))]
+    #[instrument(target = TRACE_TARGET_PRUNE, skip(self), fields(pruned_relations, pruned_modules, pruned_items, root_file = ?root_file))]
     pub fn build_tree_and_prune_for_root_path(
         &mut self,
         root_file: &Path,
@@ -884,6 +935,20 @@ impl ParsedCodeGraph {
 
     pub fn crate_context(&self) -> Option<&CrateContext> {
         self.crate_context.as_ref()
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.graph.functions.len()
+            + self.graph.defined_types.len()
+            + self.graph.type_graph.len()
+            + self.graph.impls.len()
+            + self.graph.traits.len()
+            + self.graph.modules.len()
+            + self.graph.consts.len()
+            + self.graph.statics.len()
+            + self.graph.macros.len()
+            + self.graph.use_statements.len()
+            + self.graph.unresolved_nodes.len()
     }
 
     pub fn root_file(&self) -> Result<&Path> {
@@ -1319,7 +1384,7 @@ edition = "2021"
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize)]
 struct PruneCounts {
     pruned_items_initial: usize,
     removed_secondary_ids: usize,

@@ -1,3 +1,4 @@
+use crate::parser::diagnostics::{TRACE_TARGET_PRUNE, emit_json_diagnostic};
 use crate::parser::graph::{GraphAccess, GraphNode};
 use crate::parser::nodes::{
     ImplNodeId, ModuleNodeId, PrimaryNodeId, PrimaryNodeIdTrait, UnresolvedNode, UnresolvedNodeId,
@@ -1918,6 +1919,7 @@ impl ModuleTree {
     /// A `Result` containing `PruningResult` which lists the IDs of the pruned modules,
     /// all contained items, and the relations that were removed, or a `ModuleTreeError`
     /// if an issue occurs during processing.
+    #[tracing::instrument(target = TRACE_TARGET_PRUNE, skip_all, fields(root = %self.root))]
     pub(crate) fn prune_unlinked_file_modules(&mut self) -> Result<PruningResult, ModuleTreeError> {
         #[cfg(feature = "validate")]
         let _rels_before = self.validate_unique_rels(); // Store result to avoid unused warning
@@ -2048,6 +2050,17 @@ impl ModuleTree {
         });
         let removed_relation_count = original_relation_count - self.tree_relations.len();
         // Sanity check
+        if removed_relation_count != pruned_relations.len() {
+            let _ = emit_json_diagnostic(
+                "module_tree_pruned_relation_count_mismatch",
+                &serde_json::json!({
+                    "function": "ModuleTree::prune_unlinked_file_modules",
+                    "removed_relation_count": removed_relation_count,
+                    "collected_pruned_relations": pruned_relations.len(),
+                    "root_module_id": self.root.to_string(),
+                }),
+            );
+        }
         assert_eq!(
             removed_relation_count,
             pruned_relations.len(),

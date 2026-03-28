@@ -21,6 +21,7 @@ pub use state::VisitorState;
 use crate::{
     error::SynParserError,
     parser::{
+        diagnostics::{TRACE_TARGET_INVARIANTS, emit_json_diagnostic},
         graph::GraphAccess,
         nodes::{ModuleNodeInfo, PrimaryNodeId},
         relations::SyntacticRelation,
@@ -97,7 +98,7 @@ use {
 /// Analyze a single file for Phase 2 (UUID Path) - The Worker Function
 /// Receives context from analyze_files_parallel.
 #[cfg(feature = "cfg_eval")]
-#[instrument(skip(crate_context), fields(root_module_name))]
+#[instrument(target = TRACE_TARGET_INVARIANTS, skip(crate_context), fields(root_module_name))]
 pub fn analyze_file_phase2(
     file_path: PathBuf,
     crate_namespace: Uuid,            // Context passed from caller
@@ -228,42 +229,17 @@ validate_unique_rels = <deferred>", file_path.display());
     drop(visitor);
     #[cfg(feature = "validate")]
     {
-        // #region agent log (debug session 8fc4f2)
-        {
-            use serde_json::json;
-            use std::io::Write as _;
-            let before = state.code_graph.relations.len();
-            let mut seen = std::collections::HashSet::with_capacity(before);
-            state.code_graph.relations.retain(|rel| seen.insert(*rel));
-            let after = state.code_graph.relations.len();
-            let line = json!({
-                "sessionId": "8fc4f2",
-                "runId": "pre-fix",
-                "hypothesisId": "H3",
-                "location": "parser/visitor/mod.rs:analyze_file_phase2:dedup_rels_before_validate",
-                "message": "deduped relations before validate_unique_rels assert",
-                "data": {
+        if !state.code_graph.validate_unique_rels() {
+            let _ = emit_json_diagnostic(
+                "analyze_file_phase2_validate_unique_rels_failed",
+                &serde_json::json!({
+                    "function": "analyze_file_phase2",
                     "file_path": file_path.display().to_string(),
-                    "rels_before": before,
-                    "rels_after": after,
-                    "rels_removed": before.saturating_sub(after),
-                },
-                "timestamp": std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0),
-            })
-            .to_string();
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/home/brasides/code/ploke/.cursor/debug-8fc4f2.log")
-            {
-                let _ = writeln!(f, "{line}");
-            }
+                    "relation_count": state.code_graph.relations.len(),
+                    "module_count": state.code_graph.modules.len(),
+                }),
+            );
         }
-        // #endregion agent log (debug session 8fc4f2)
-
         assert!(state.code_graph.validate_unique_rels());
     }
 
@@ -401,7 +377,20 @@ pub fn analyze_file_phase2(
     debug_relationships(&visitor);
 
     #[cfg(feature = "validate")]
-    assert!(&visitor.validate_unique_rels());
+    {
+        if !visitor.validate_unique_rels() {
+            let _ = emit_json_diagnostic(
+                "analyze_file_phase2_validate_unique_rels_failed",
+                &serde_json::json!({
+                    "function": "analyze_file_phase2",
+                    "file_path": file_path.display().to_string(),
+                    "relation_count": state.code_graph.relations.len(),
+                    "module_count": state.code_graph.modules.len(),
+                }),
+            );
+        }
+        assert!(&visitor.validate_unique_rels());
+    }
 
     // let module_ids: Vec<NodeId> = state.code_graph.modules.iter().map(|m| m.id).collect();
     // for module_id in module_ids {

@@ -1,4 +1,5 @@
 pub mod channel;
+pub mod diagnostics;
 pub mod graph; // Make these public
 pub mod nodes;
 pub mod relations;

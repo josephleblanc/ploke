@@ -159,10 +159,12 @@ fn parse_debug_corpus_clones_and_parses_local_git_repo() {
     std::fs::write(&list_file, format!("{}\n", source_repo.display())).expect("write list file");
 
     let checkout_dir = temp.path().join("checkouts");
+    let artifact_dir = temp.path().join("artifacts");
     let cmd = ParseDebugCli {
         cmd: ParseDebugCmd::Corpus(DebugCorpus {
             list_files: vec![list_file],
             checkout_dir,
+            artifact_dir,
             limit: 0,
             skip_clone: false,
             skip_merge: false,
@@ -184,6 +186,8 @@ fn parse_debug_corpus_clones_and_parses_local_git_repo() {
             assert_eq!(o.merge_failures, 0, "unexpected merge failure: {o:#?}");
             let target = o.targets.first().expect("one target result");
             assert!(target.clone.ok, "clone status should be ok: {target:#?}");
+            assert!(!o.artifact_root.is_empty());
+            assert!(!target.artifact_dir.is_empty());
             assert_eq!(target.repository_kind, "single_crate");
             assert_eq!(target.recommended_parser, "try_run_phases_and_merge");
             assert!(
@@ -199,6 +203,34 @@ fn parse_debug_corpus_clones_and_parses_local_git_repo() {
                 "merge should succeed: {target:#?}"
             );
             assert!(target.commit_sha.is_some(), "expected HEAD commit SHA");
+            assert!(Path::new(&o.artifact_root).join("summary.json").is_file());
+            assert!(
+                target
+                    .summary_path
+                    .as_deref()
+                    .is_some_and(|p| Path::new(p).is_file())
+            );
+            assert!(
+                target
+                    .discovery
+                    .as_ref()
+                    .and_then(|stage| stage.artifact_path.as_deref())
+                    .is_some_and(|p| Path::new(p).is_file())
+            );
+            assert!(
+                target
+                    .resolve
+                    .as_ref()
+                    .and_then(|stage| stage.artifact_path.as_deref())
+                    .is_some_and(|p| Path::new(p).is_file())
+            );
+            assert!(
+                target
+                    .merge
+                    .as_ref()
+                    .and_then(|stage| stage.artifact_path.as_deref())
+                    .is_some_and(|p| Path::new(p).is_file())
+            );
         }
         other => panic!("unexpected output: {other:?}"),
     }
@@ -214,10 +246,12 @@ fn parse_debug_corpus_classifies_workspace_repo_without_running_single_crate_pip
     std::fs::write(&list_file, format!("{}\n", source_repo.display())).expect("write list file");
 
     let checkout_dir = temp.path().join("checkouts");
+    let artifact_dir = temp.path().join("artifacts");
     let cmd = ParseDebugCli {
         cmd: ParseDebugCmd::Corpus(DebugCorpus {
             list_files: vec![list_file],
             checkout_dir,
+            artifact_dir,
             limit: 0,
             skip_clone: false,
             skip_merge: false,
@@ -245,6 +279,12 @@ fn parse_debug_corpus_classifies_workspace_repo_without_running_single_crate_pip
             assert!(target.discovery.is_none(), "{target:#?}");
             assert!(target.resolve.is_none(), "{target:#?}");
             assert!(target.merge.is_none(), "{target:#?}");
+            assert!(
+                target
+                    .summary_path
+                    .as_deref()
+                    .is_some_and(|p| Path::new(p).is_file())
+            );
         }
         other => panic!("unexpected output: {other:?}"),
     }

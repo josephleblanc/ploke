@@ -15,12 +15,14 @@ pub use parsed_graph::ParsedGraphError;
 
 use crate::discovery::CrateContext;
 use crate::error::SynParserError;
+use crate::parser::diagnostics::{
+    TRACE_TARGET_INVARIANTS, TRACE_TARGET_PANIC_CONTEXT, emit_json_diagnostic,
+};
 use crate::parser::nodes::*;
 use crate::utils::{LogStyle, LogStyleDebug};
 use ploke_core::{ItemKind, TypeId, TypeKind};
 use serde::Deserialize;
 use serde_json::json;
-use std::io::Write as _;
 use uuid::Uuid;
 
 use crate::parser::{
@@ -92,37 +94,9 @@ pub trait GraphAccess {
             if !acc.contains(rel) {
                 acc.push(*rel);
             } else {
-                tracing::debug!(target: "debug_dup", "DUPLICATE: {}", rel);
+                tracing::debug!(target: TRACE_TARGET_INVARIANTS, "duplicate relation: {}", rel);
                 dups.push(*rel);
-                // #region agent log (debug session 8fc4f2)
-                {
-                    let line = json!({
-                        "sessionId": "8fc4f2",
-                        "runId": "pre-fix",
-                        "hypothesisId": "H1",
-                        "location": "parser/graph/mod.rs:validate_unique_rels:dups_push",
-                        "message": "duplicate relation observed",
-                        "data": {
-                            "rel_debug": format!("{rel:?}"),
-                            "rel_display": format!("{rel}"),
-                            "source": format!("{:?}", rel.source()),
-                            "target": format!("{:?}", rel.target()),
-                        },
-                        "timestamp": std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0),
-                    })
-                    .to_string();
-                    if let Ok(mut f) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open("/home/brasides/code/ploke/.cursor/debug-8fc4f2.log")
-                    {
-                        let _ = writeln!(f, "{line}");
-                    }
-                }
-                // #endregion agent log (debug session 8fc4f2)
+                self.emit_duplicate_relation_diagnostic(*rel);
             }
             acc
         });
@@ -134,36 +108,17 @@ pub trait GraphAccess {
         for dup in &dups {
             debug!(target: "dup", "{:#?}", dup);
             if let Err(e) = self.find_node_unique(dup.target()) {
-                // #region agent log (debug session 8fc4f2)
-                {
-                    let line = json!({
-                        "sessionId": "8fc4f2",
-                        "runId": "pre-fix",
-                        "hypothesisId": "H2",
-                        "location": "parser/graph/mod.rs:validate_unique_rels:find_node_unique_target_err",
-                        "message": "duplicate relation target not found by find_node_unique",
-                        "data": {
-                            "dup_rel_debug": format!("{dup:?}"),
-                            "dup_rel_display": format!("{dup}"),
-                            "target_any_id": format!("{:?}", dup.target()),
-                            "source_any_id": format!("{:?}", dup.source()),
-                            "find_node_unique_err": format!("{e}"),
-                        },
-                        "timestamp": std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0),
-                    })
-                    .to_string();
-                    if let Ok(mut f) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open("/home/brasides/code/ploke/.cursor/debug-8fc4f2.log")
-                    {
-                        let _ = writeln!(f, "{line}");
-                    }
-                }
-                // #endregion agent log (debug session 8fc4f2)
+                let _ = emit_json_diagnostic(
+                    "duplicate_relation_target_lookup_error",
+                    &json!({
+                        "function": "GraphAccess::validate_unique_rels",
+                        "relation_debug": format!("{dup:?}"),
+                        "relation_display": format!("{dup}"),
+                        "target_lookup": self.node_lookup_diagnostic(dup.target()),
+                        "source_lookup": self.node_lookup_diagnostic(dup.source()),
+                        "lookup_error": e.to_string(),
+                    }),
+                );
                 match ImplNodeId::try_from(dup.target()) {
                     Ok(id) => {
                         let dup_impls = self.impls().iter().filter(|imp| imp.id() == id).inspect(|imp| debug!(target: "debug_dup", "dup impls | span: {:?}, name: {}, id: {}", imp.span(), imp.name(), imp.id())).map(|imp| (imp.id(), imp.span()));
@@ -184,6 +139,18 @@ dup_accounted: {}",
                             unique_spans.len(),
                             dup_accounted);
                         if !dup_accounted {
+                            let _ = emit_json_diagnostic(
+                                "duplicate_impl_accounting_failed",
+                                &json!({
+                                    "function": "GraphAccess::validate_unique_rels",
+                                    "impl_id": id.to_string(),
+                                    "duplicate_relation": format!("{dup:?}"),
+                                    "dup_count": dup_count,
+                                    "unique_span_count": unique_spans.len(),
+                                    "source_lookup": self.node_lookup_diagnostic(dup.source()),
+                                    "target_lookup": self.node_lookup_diagnostic(dup.target()),
+                                }),
+                            );
                             panic!(
                                 "impl with same span and id: {id}, dup_accounted: {dup_accounted}"
                             )
@@ -194,15 +161,37 @@ dup_accounted: {}",
                         valid_impl_dup += count_non_unique;
                         continue;
                     }
-                    _ => panic!(
-                        "Expected unique relations, found invalid duplicate with error: {}",
-                        e
-                    ),
+                    _ => {
+                        let _ = emit_json_diagnostic(
+                            "unexpected_duplicate_relation",
+                            &json!({
+                                "function": "GraphAccess::validate_unique_rels",
+                                "relation_debug": format!("{dup:?}"),
+                                "relation_display": format!("{dup}"),
+                                "error": e.to_string(),
+                                "source_lookup": self.node_lookup_diagnostic(dup.source()),
+                                "target_lookup": self.node_lookup_diagnostic(dup.target()),
+                            }),
+                        );
+                        panic!(
+                            "Expected unique relations, found invalid duplicate with error: {}",
+                            e
+                        )
+                    }
                 }
             }
             let target = self.find_node_unique(dup.target()).unwrap_or_else(|e| {
                 let _non_unique_target = self.find_any_node(dup.target().as_any());
                 self.debug_relationships();
+                let _ = emit_json_diagnostic(
+                    "duplicate_relation_target_unwrap_failed",
+                    &json!({
+                        "function": "GraphAccess::validate_unique_rels",
+                        "relation_debug": format!("{dup:?}"),
+                        "error": e.to_string(),
+                        "target_lookup": self.node_lookup_diagnostic(dup.target()),
+                    }),
+                );
                 panic!(
                     "Expected unique relations, found duplicate with error: {}",
                     e
@@ -216,6 +205,15 @@ dup_accounted: {}",
             // }
             let source = self.find_node_unique(dup.source()).unwrap_or_else(|e| {
                 self.debug_relationships();
+                let _ = emit_json_diagnostic(
+                    "duplicate_relation_source_unwrap_failed",
+                    &json!({
+                        "function": "GraphAccess::validate_unique_rels",
+                        "relation_debug": format!("{dup:?}"),
+                        "error": e.to_string(),
+                        "source_lookup": self.node_lookup_diagnostic(dup.source()),
+                    }),
+                );
                 panic!(
                     "Expected unique relations, found duplicate with error: {}",
                     e
@@ -514,10 +512,14 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                 // lead to errors, revisit later.
                 .expect("Invalid state: Primary Node not contained by Module") // Should not happen if relation exists
         } else {
-            // Item not in any module (crate root) or source wasn't a Node
-            vec!["crate".to_string()];
-            // WARNING: Intentional panic! temporary for testing. DO NOT REMOVE UNTIL THIS CAUSES
-            // RUNTIME ERROR.
+            let _ = emit_json_diagnostic(
+                "get_item_module_path_missing_container",
+                &json!({
+                    "function": "GraphAccess::get_item_module_path",
+                    "item_id": item_id.to_string(),
+                    "lookup": self.node_lookup_diagnostic(item_id.as_any()),
+                }),
+            );
             panic!(
                 "Adding a panic here since this should never happen. We'll likely change this to an
             `Err` and have this function return a Result, but I want to see if we encounter any
@@ -736,8 +738,27 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
             self.modules()
                 .iter()
                 .find(|m| m.id == module_id)
-                .unwrap_or_else(|| panic!("No containing module found"))
+                .unwrap_or_else(|| {
+                    let _ = emit_json_diagnostic(
+                        "find_containing_mod_missing_module",
+                        &json!({
+                            "function": "GraphAccess::find_containing_mod",
+                            "item_id": item_id.to_string(),
+                            "module_id": module_id.to_string(),
+                            "lookup": self.node_lookup_diagnostic(item_id.as_any()),
+                        }),
+                    );
+                    panic!("No containing module found")
+                })
         } else {
+            let _ = emit_json_diagnostic(
+                "find_containing_mod_missing_relation",
+                &json!({
+                    "function": "GraphAccess::find_containing_mod",
+                    "item_id": item_id.to_string(),
+                    "lookup": self.node_lookup_diagnostic(item_id.as_any()),
+                }),
+            );
             panic!("No containing module found");
         }
     }
@@ -834,35 +855,11 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
             })
     }
 
-    /// Finds a node by its ID, returning a `Result` with a reference to the node
-    /// as a `dyn GraphNode`, or a `SynParserError::NotFound` if the node is not found.
-    fn find_any_node_checked(&self, item_id: AnyNodeId) -> Result<&dyn GraphNode, SynParserError> {
-        self.find_any_node(item_id)
-            .ok_or(SynParserError::NotFound(item_id))
-    }
-
-    /// Finds a node by its ID across all collections, returning an error if not found or if duplicates exist.
-    ///
-    /// Iterates through all node collections (`functions`, `defined_types`, `traits`, `modules`, etc.),
-    /// collects all matching nodes, and returns:
-    /// - `Ok(&dyn GraphNode)` if exactly one match is found.
-    /// - `Err(SynParserError::NotFound)` if no matches are found.
-    /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
-    fn find_node_unique(&self, item_id: AnyNodeId) -> Result<&dyn GraphNode, SynParserError> {
-        // Chain iterators over all node collections, filter by ID, and map to &dyn GraphNode
-        let mut matches_iter = self
-            .functions()
+    fn find_nodes_by_id(&self, item_id: AnyNodeId) -> Vec<&dyn GraphNode> {
+        self.functions()
             .iter()
             .filter(move |n| n.id.as_any() == item_id)
             .map(|n| n as &dyn GraphNode)
-            .inspect(|n| {
-                trace!(target: LOG_TARGET_GRAPH_FIND, "    Search graph for: {} ({}): {} | {}",
-                    item_id.as_any().to_string().log_id(),
-                    n.name().log_name(),
-                    n.kind().log_spring_green_debug(),
-                    n.visibility().log_vis_debug(),
-                );
-            })
             .chain(self.defined_types().iter().filter_map(move |n| match n {
                 TypeDefNode::Struct(s) if s.id.as_any() == item_id => Some(s as &dyn GraphNode),
                 TypeDefNode::Enum(e) if e.id.as_any() == item_id => Some(e as &dyn GraphNode),
@@ -883,14 +880,12 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                     .map(|n| n as &dyn GraphNode),
             )
             .chain(
-                // Search Consts
                 self.consts()
                     .iter()
                     .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
             .chain(
-                // Search Statics
                 self.statics()
                     .iter()
                     .filter(move |n| n.id.as_any() == item_id)
@@ -903,50 +898,161 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                     .map(|n| n as &dyn GraphNode),
             )
             .chain(
-                // <--- ADD THIS CHAIN
                 self.impls()
                     .iter()
                     .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
             .chain(self.impls().iter().flat_map(move |i| {
-                // Search Methods in Impls
                 i.methods
                     .iter()
                     .filter(move |m| m.id.as_any() == item_id)
                     .map(|m| m as &dyn GraphNode)
             }))
             .chain(self.traits().iter().flat_map(move |t| {
-                // Search Methods in Traits
-                t.methods // Assuming TraitNode has 'methods' Vec<MethodNode>
+                t.methods
                     .iter()
                     .filter(move |m| m.id.as_any() == item_id)
                     .map(|m| m as &dyn GraphNode)
             }))
-            // --- Add ImportNode search ---
             .chain(
                 self.use_statements()
                     .iter()
                     .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
-            // --- Add UnresolvedNode search ---
             .chain(
                 self.unresolved_nodes()
                     .iter()
                     .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
+            )
+            .collect()
+    }
+
+    /// Finds a node by its ID, returning a `Result` with a reference to the node
+    /// as a `dyn GraphNode`, or a `SynParserError::NotFound` if the node is not found.
+    fn find_any_node_checked(&self, item_id: AnyNodeId) -> Result<&dyn GraphNode, SynParserError> {
+        self.find_any_node(item_id)
+            .ok_or(SynParserError::NotFound(item_id))
+    }
+
+    /// Finds a node by its ID across all collections, returning an error if not found or if duplicates exist.
+    ///
+    /// Iterates through all node collections (`functions`, `defined_types`, `traits`, `modules`, etc.),
+    /// collects all matching nodes, and returns:
+    /// - `Ok(&dyn GraphNode)` if exactly one match is found.
+    /// - `Err(SynParserError::NotFound)` if no matches are found.
+    /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
+    fn find_node_unique(&self, item_id: AnyNodeId) -> Result<&dyn GraphNode, SynParserError> {
+        let matches = self.find_nodes_by_id(item_id);
+        for node in &matches {
+            trace!(target: LOG_TARGET_GRAPH_FIND, "    Search graph for: {} ({}): {} | {}",
+                item_id.as_any().to_string().log_id(),
+                node.name().log_name(),
+                node.kind().log_spring_green_debug(),
+                node.visibility().log_vis_debug(),
             );
-
-        // Check for uniqueness using the iterator
-        let first = matches_iter.next();
-        let second = matches_iter.next();
-
-        match (first, second) {
-            (Some(node), None) => Ok(node), // Exactly one match found
-            (None, _) => Err(SynParserError::NotFound(item_id.as_any())), // No matches found
-            (Some(_), Some(_)) => Err(SynParserError::DuplicateNode(item_id.as_any())), // More than one match found
         }
+
+        match matches.as_slice() {
+            [node] => Ok(*node),
+            [] => Err(SynParserError::NotFound(item_id.as_any())),
+            _ => {
+                let _ = emit_json_diagnostic(
+                    "find_node_unique_duplicate_node",
+                    &json!({
+                        "function": "GraphAccess::find_node_unique",
+                        "lookup": self.node_lookup_diagnostic(item_id),
+                    }),
+                );
+                Err(SynParserError::DuplicateNode(item_id.as_any()))
+            }
+        }
+    }
+
+    fn module_for_any_id(&self, item_id: AnyNodeId) -> Option<&ModuleNode> {
+        if let Ok(module_id) = ModuleNodeId::try_from(item_id) {
+            return self.modules().iter().find(|module| module.id == module_id);
+        }
+
+        if let Ok(primary_id) = PrimaryNodeId::try_from(item_id)
+            && let Some(module_id) = self.find_containing_mod_id(primary_id)
+        {
+            return self.modules().iter().find(|module| module.id == module_id);
+        }
+
+        if let AnyNodeId::Method(method_id) = item_id {
+            let containing_primary = self
+                .impls()
+                .iter()
+                .find(|node| node.methods.iter().any(|method| method.id == method_id))
+                .map(|node| node.id.to_pid())
+                .or_else(|| {
+                    self.traits()
+                        .iter()
+                        .find(|node| node.methods.iter().any(|method| method.id == method_id))
+                        .map(|node| node.id.to_pid())
+                });
+            if let Some(primary_id) = containing_primary
+                && let Some(module_id) = self.find_containing_mod_id(primary_id)
+            {
+                return self.modules().iter().find(|module| module.id == module_id);
+            }
+        }
+
+        None
+    }
+
+    fn node_lookup_diagnostic(&self, item_id: AnyNodeId) -> serde_json::Value {
+        let matches = self.find_nodes_by_id(item_id);
+        let candidates = matches
+            .iter()
+            .map(|node| self.node_diagnostic_value(*node))
+            .collect_vec();
+        json!({
+            "item_id": item_id.to_string(),
+            "match_count": candidates.len(),
+            "module_path_hint": self.module_for_any_id(item_id).map(|module| module.path.clone()),
+            "file_path_hint": self.module_for_any_id(item_id)
+                .and_then(|module| module.file_path().map(|path| path.display().to_string())),
+            "candidates": candidates,
+        })
+    }
+
+    fn node_diagnostic_value(&self, node: &dyn GraphNode) -> serde_json::Value {
+        let module = self.module_for_any_id(node.any_id());
+        json!({
+            "item_id": node.any_id().to_string(),
+            "name": node.name(),
+            "kind": format!("{:?}", node.kind()),
+            "visibility": format!("{:?}", node.visibility()),
+            "cfgs": node.cfgs(),
+            "module_path": module.map(|module| module.path.clone()),
+            "file_path": module.and_then(|module| module.file_path().map(|path| path.display().to_string())),
+            "node": serialize_graph_node(node),
+        })
+    }
+
+    fn emit_duplicate_relation_diagnostic(&self, relation: SyntacticRelation) {
+        let artifact_path = emit_json_diagnostic(
+            "duplicate_relation",
+            &json!({
+                "function": "GraphAccess::validate_unique_rels",
+                "relation_debug": format!("{relation:?}"),
+                "relation_display": format!("{relation}"),
+                "source": self.node_lookup_diagnostic(relation.source()),
+                "target": self.node_lookup_diagnostic(relation.target()),
+            }),
+        );
+        tracing::error!(
+            target: TRACE_TARGET_PANIC_CONTEXT,
+            relation = %relation,
+            source = %relation.source(),
+            target = %relation.target(),
+            artifact_path = ?artifact_path.as_ref().map(|path| path.display().to_string()),
+            "duplicate relation invariant diagnostic persisted"
+        );
     }
 
     fn get_children_ids_iter<T: PrimaryNodeIdTrait>(
@@ -1237,6 +1343,14 @@ pub trait GraphNode {
         } else {
             // This panic indicates a GraphNode implementation is missing a corresponding
             // 'as_xxx' method or the kind() logic here is incomplete.
+            let _ = emit_json_diagnostic(
+                "graph_node_unknown_kind",
+                &json!({
+                    "function": "GraphNode::kind",
+                    "name": self.name(),
+                    "item_id": self.any_id().to_string(),
+                }),
+            );
             panic!(
                 "Unknown GraphNode kind encountered. Name: {}, ID: {}",
                 self.name(),
@@ -1290,4 +1404,52 @@ pub trait GraphNode {
     }
 
     // Add others like VariantNode, FieldNode if they implement GraphNode directly
+}
+
+fn serialize_graph_node(node: &dyn GraphNode) -> serde_json::Value {
+    if let Some(value) = node.as_function() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_method() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_struct() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_enum() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_union() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_type_alias() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_trait() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_impl() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_module() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_const() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_static() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_macro() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_import() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else if let Some(value) = node.as_unresolved() {
+        serde_json::to_value(value)
+            .unwrap_or_else(|err| json!({ "serialize_error": err.to_string() }))
+    } else {
+        json!({ "serialize_error": "unsupported GraphNode implementation" })
+    }
 }

@@ -1,19 +1,58 @@
-//! `parse debug` — structured diagnostics for discovery and pipeline failures.
+//! `parse debug` — structured diagnostics for `syn_parser` discovery, resolve, merge, and corpus runs.
 //!
-//! Uses [`syn_parser::discovery::try_parse_manifest`], [`syn_parser::discovery::run_discovery_phase`],
-//! [`syn_parser::logical_module_path_for_file`], [`syn_parser::try_run_phases_and_resolve`],
-//! [`syn_parser::try_run_phases_and_merge`], and [`syn_parser::ParsedCodeGraph::merge_new`].
+//! This module is the operator-facing debugging surface for parser work. Use it when:
+//! - a crate fails somewhere between discovery and merge,
+//! - you need to understand how Phase 2 derived logical module paths,
+//! - you want to compare pre-merge module nodes with post-merge collisions,
+//! - you want to sweep many real-world crates and keep reproducible artifacts.
 //!
-//! **Agent-oriented workflow:** When `parse workspace` / `parse phases-*` fails, run
-//! `parse debug workspace` on the same path, then `parse debug logical-paths`,
-//! `parse debug modules-premerge`, and `parse debug path-collisions` on the failing crate root
-//! to see derived paths, per-file module nodes, and post-merge path duplicates.
+//! At a glance:
+//! - `parse debug discovery` explains what discovery included and why.
+//! - `parse debug workspace` finds which workspace member fails and at which stage.
+//! - `parse debug logical-paths` shows the file -> logical module path mapping used before merge.
+//! - `parse debug modules-premerge` shows per-file `ModuleNode`s before graphs are merged.
+//! - `parse debug path-collisions` highlights duplicate logical paths after merge.
+//! - `parse debug corpus` clones or reuses many targets and persists stage artifacts and failures.
+//!
+//! The commands here use [`syn_parser::discovery::try_parse_manifest`],
+//! [`syn_parser::discovery::run_discovery_phase`], [`syn_parser::logical_module_path_for_file`],
+//! [`syn_parser::try_run_phases_and_resolve`], [`syn_parser::try_run_phases_and_merge`], and
+//! [`syn_parser::ParsedCodeGraph::merge_new`].
+//!
+//! `parse debug corpus` is especially useful when hunting invariant failures in real code. Each run
+//! writes a dedicated artifact tree under `target/debug_corpus_runs/<run-id>/` by default. Per
+//! target, you get:
+//! - `summary.json`
+//! - `discovery/discovery.json`
+//! - `resolve/resolve.json`
+//! - `merge/merged_graph.json`
+//! - `failure.json` and `stage_summary.json` for any stage that errors or panics
+//!
+//! Example commands:
+//! ```text
+//! cargo xtask parse debug discovery tests/fixture_crates/fixture_nodes
+//! cargo xtask parse debug logical-paths tests/fixture_crates/fixture_nodes
+//! cargo xtask parse debug modules-premerge tests/fixture_crates/fixture_nodes
+//! cargo xtask parse debug path-collisions tests/fixture_crates/fixture_nodes
+//! cargo xtask parse debug workspace tests/fixture_workspace/fixture_mock_serde
+//! cargo xtask --format json parse debug corpus --limit 5
+//! cargo xtask --format json parse debug corpus --list-file /tmp/ploke-targets.txt --checkout-dir /tmp/ploke-corpus
+//! cargo xtask --format json parse debug corpus --list-file /tmp/ploke-targets.txt --skip-merge
+//! ```
+//!
+//! Suggested workflow:
+//! 1. Reproduce a failure on one crate with `parse debug workspace` or `parse debug corpus`.
+//! 2. Use `logical-paths`, `modules-premerge`, and `path-collisions` to localize where the graph
+//!    first diverges from expectations.
+//! 3. Inspect the per-stage artifact directory from the corpus run when you need the raw persisted
+//!    payloads rather than terminal output.
 #![allow(missing_docs)]
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use cargo_metadata::Metadata;
 use clap::{Args, Subcommand};
@@ -21,6 +60,7 @@ use serde::Serialize;
 
 use syn_parser::discovery::CargoManifest;
 use syn_parser::discovery::{run_discovery_phase, try_parse_manifest};
+use syn_parser::parser::diagnostics::with_debug_artifact_dir;
 use syn_parser::parser::nodes::ModuleNode;
 use syn_parser::{
     ParsedCodeGraph, logical_module_path_for_file, try_run_phases_and_merge,
@@ -1188,6 +1228,44 @@ impl Command for DebugDiscoveryRules {
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct DebugCorpus {
+    /// Run the single-crate corpus harness against many Git repositories.
+    ///
+    /// This command is intended for broad parser validation against real-world code. It classifies
+    /// each checkout first:
+    /// - single-crate repositories run through discovery, resolve, and optional merge
+    /// - workspace repositories are recorded in the corpus summary but skipped here, since they
+    ///   are meant to be handled via `parse workspace-config` / `parse_workspace_with_config`
+    ///
+    /// The command persists artifacts for later inspection, making it useful when a parser panic
+    /// or invariant failure is intermittent or expensive to reproduce by hand.
+    ///
+    /// Example commands:
+    /// ```text
+    /// cargo xtask --format json parse debug corpus --limit 1
+    /// cargo xtask --format json parse debug corpus --list-file /tmp/ploke-targets.txt
+    /// cargo xtask --format json parse debug corpus --list-file /tmp/ploke-targets.txt --checkout-dir /tmp/ploke-corpus
+    /// cargo xtask --format json parse debug corpus --skip-merge
+    /// ```
+    ///
+    /// Artifact layout:
+    /// ```text
+    /// target/debug_corpus_runs/<run-id>/
+    ///   summary.json
+    ///   <target-slug>/
+    ///     summary.json
+    ///     discovery/
+    ///       discovery.json
+    ///       stage_summary.json
+    ///     resolve/
+    ///       resolve.json
+    ///       stage_summary.json
+    ///     merge/
+    ///       merged_graph.json
+    ///       stage_summary.json
+    /// ```
+    ///
+    /// On stage failure or panic, the corresponding stage directory also includes `failure.json`.
+    ///
     /// Additional list file(s) of targets (`owner/repo(.git)`, URL, or local git path).
     ///
     /// When omitted, defaults to `top_100_stars.txt` and `top_100_downloads.txt`
@@ -1196,12 +1274,22 @@ pub struct DebugCorpus {
     pub list_files: Vec<PathBuf>,
 
     /// Directory used to store cloned repositories.
+    ///
+    /// Keeping this outside the main `ploke` git worktree is usually the cleanest option for
+    /// ad-hoc corpus runs.
     #[arg(
         long,
         value_name = "DIR",
         default_value = "tests/fixture_github_clones/corpus"
     )]
     pub checkout_dir: PathBuf,
+
+    /// Directory used to store persisted corpus artifacts and diagnostics.
+    ///
+    /// The command creates a timestamp-like run directory under this root and writes both
+    /// run-level and per-target summaries there.
+    #[arg(long, value_name = "DIR", default_value = "target/debug_corpus_runs")]
+    pub artifact_dir: PathBuf,
 
     /// Max number of unique targets to process after deduplication (0 = unlimited).
     #[arg(long, default_value_t = 0)]
@@ -1212,13 +1300,17 @@ pub struct DebugCorpus {
     pub skip_clone: bool,
 
     /// Stop after discovery + resolve (skip merge / module-tree build).
+    ///
+    /// Useful when you are narrowing a failure to pre-merge behavior or want a faster first pass.
     #[arg(long)]
     pub skip_merge: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DebugCorpusOut {
+    pub run_id: String,
     pub checkout_root: String,
+    pub artifact_root: String,
     pub list_files: Vec<String>,
     pub requested_entries: usize,
     pub unique_targets: usize,
@@ -1243,6 +1335,7 @@ pub struct CorpusTargetResult {
     pub clone_url: String,
     pub datasets: Vec<String>,
     pub checkout_path: String,
+    pub artifact_dir: String,
     pub repository_kind: String,
     pub recommended_parser: String,
     pub workspace_member_count: Option<usize>,
@@ -1252,6 +1345,7 @@ pub struct CorpusTargetResult {
     pub discovery: Option<CorpusStageResult>,
     pub resolve: Option<CorpusStageResult>,
     pub merge: Option<CorpusStageResult>,
+    pub summary_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1271,6 +1365,8 @@ pub struct CorpusStageResult {
     pub nodes_parsed: Option<usize>,
     pub relations_found: Option<usize>,
     pub file_count: Option<usize>,
+    pub artifact_path: Option<String>,
+    pub failure_artifact_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1302,17 +1398,30 @@ impl Command for DebugCorpus {
         } else {
             workspace_root.join(&self.checkout_dir)
         };
+        let artifact_base = if self.artifact_dir.is_absolute() {
+            self.artifact_dir.clone()
+        } else {
+            workspace_root.join(&self.artifact_dir)
+        };
+        let run_id = corpus_run_id();
+        let artifact_root = artifact_base.join(&run_id);
         std::fs::create_dir_all(&checkout_root).map_err(|e| {
             XtaskError::Resource(format!(
                 "Failed to create corpus checkout dir {}: {e}",
                 checkout_root.display()
             ))
         })?;
+        std::fs::create_dir_all(&artifact_root).map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to create corpus artifact dir {}: {e}",
+                artifact_root.display()
+            ))
+        })?;
 
         let list_files = if self.list_files.is_empty() {
             vec![
-                workspace_root.join("top_100_stars.txt"),
-                workspace_root.join("top_100_downloads.txt"),
+                workspace_root.join("tests/fixture_github_clones/corpus/top_100_stars.txt"),
+                workspace_root.join("tests/fixture_github_clones/corpus/top_100_downloads.txt"),
             ]
         } else {
             self.list_files
@@ -1389,6 +1498,13 @@ impl Command for DebugCorpus {
 
         for spec in specs {
             let checkout_path = checkout_root.join(&spec.checkout_slug);
+            let target_artifact_dir = artifact_root.join(&spec.checkout_slug);
+            std::fs::create_dir_all(&target_artifact_dir).map_err(|e| {
+                XtaskError::Resource(format!(
+                    "Failed to create target artifact dir {}: {e}",
+                    target_artifact_dir.display()
+                ))
+            })?;
             let clone = ensure_corpus_checkout(&spec, &checkout_path, self.skip_clone)?;
             match clone.action.as_str() {
                 "cloned" => cloned_targets += 1,
@@ -1398,12 +1514,13 @@ impl Command for DebugCorpus {
             }
             if !clone.ok {
                 clone_failures += 1;
-                targets.push(CorpusTargetResult {
+                let target_result = CorpusTargetResult {
                     target: spec.original,
                     normalized_repo: spec.normalized_repo,
                     clone_url: spec.clone_url,
                     datasets: spec.datasets.into_iter().collect(),
                     checkout_path: checkout_path.display().to_string(),
+                    artifact_dir: target_artifact_dir.display().to_string(),
                     repository_kind: "unknown".into(),
                     recommended_parser: "unknown".into(),
                     workspace_member_count: None,
@@ -1421,10 +1538,17 @@ impl Command for DebugCorpus {
                         nodes_parsed: None,
                         relations_found: None,
                         file_count: None,
+                        artifact_path: None,
+                        failure_artifact_path: None,
                     }),
                     resolve: None,
                     merge: None,
-                });
+                    summary_path: None,
+                };
+                let summary_path = persist_target_summary(&target_artifact_dir, &target_result)?;
+                let mut target_result = target_result;
+                target_result.summary_path = Some(summary_path.display().to_string());
+                targets.push(target_result);
                 continue;
             }
 
@@ -1436,12 +1560,13 @@ impl Command for DebugCorpus {
                 _ => {}
             }
             if !classification.should_run_single_crate_pipeline {
-                targets.push(CorpusTargetResult {
+                let target_result = CorpusTargetResult {
                     target: spec.original,
                     normalized_repo: spec.normalized_repo,
                     clone_url: spec.clone_url,
                     datasets: spec.datasets.into_iter().collect(),
                     checkout_path: checkout_path.display().to_string(),
+                    artifact_dir: target_artifact_dir.display().to_string(),
                     repository_kind: classification.repository_kind,
                     recommended_parser: classification.recommended_parser,
                     workspace_member_count: classification.workspace_member_count,
@@ -1451,22 +1576,28 @@ impl Command for DebugCorpus {
                     discovery: None,
                     resolve: None,
                     merge: None,
-                });
+                    summary_path: None,
+                };
+                let summary_path = persist_target_summary(&target_artifact_dir, &target_result)?;
+                let mut target_result = target_result;
+                target_result.summary_path = Some(summary_path.display().to_string());
+                targets.push(target_result);
                 continue;
             }
 
-            let discovery = run_corpus_discovery_stage(&checkout_path);
+            let discovery = run_corpus_discovery_stage(&checkout_path, &target_artifact_dir)?;
             if !discovery.ok {
                 discovery_failures += 1;
                 if discovery.panic {
                     panic_failures += 1;
                 }
-                targets.push(CorpusTargetResult {
+                let target_result = CorpusTargetResult {
                     target: spec.original,
                     normalized_repo: spec.normalized_repo,
                     clone_url: spec.clone_url,
                     datasets: spec.datasets.into_iter().collect(),
                     checkout_path: checkout_path.display().to_string(),
+                    artifact_dir: target_artifact_dir.display().to_string(),
                     repository_kind: classification.repository_kind.clone(),
                     recommended_parser: classification.recommended_parser.clone(),
                     workspace_member_count: classification.workspace_member_count,
@@ -1476,11 +1607,16 @@ impl Command for DebugCorpus {
                     discovery: Some(discovery),
                     resolve: None,
                     merge: None,
-                });
+                    summary_path: None,
+                };
+                let summary_path = persist_target_summary(&target_artifact_dir, &target_result)?;
+                let mut target_result = target_result;
+                target_result.summary_path = Some(summary_path.display().to_string());
+                targets.push(target_result);
                 continue;
             }
 
-            let resolve = run_corpus_stage(|| {
+            let resolve = run_corpus_stage("resolve", &target_artifact_dir, || {
                 let graphs =
                     try_run_phases_and_resolve(&checkout_path).map_err(|e| e.to_string())?;
                 let nodes: usize = graphs
@@ -1488,12 +1624,16 @@ impl Command for DebugCorpus {
                     .map(|pg| count_code_graph_nodes(&pg.graph))
                     .sum();
                 let rels: usize = graphs.iter().map(|pg| pg.graph.relations.len()).sum();
+                let artifact_path =
+                    persist_stage_payload(&target_artifact_dir, "resolve", "resolve.json", &graphs)
+                        .map_err(|e| e.to_string())?;
                 Ok(CorpusStageMetrics {
                     nodes_parsed: Some(nodes),
                     relations_found: Some(rels),
                     file_count: None,
+                    artifact_path: Some(artifact_path.display().to_string()),
                 })
-            });
+            })?;
             if !resolve.ok {
                 resolve_failures += 1;
                 if resolve.panic {
@@ -1502,7 +1642,7 @@ impl Command for DebugCorpus {
             }
 
             let merge = if !self.skip_merge && resolve.ok {
-                let stage = run_corpus_stage(|| {
+                let stage = run_corpus_stage("merge", &target_artifact_dir, || {
                     let out =
                         try_run_phases_and_merge(&checkout_path).map_err(|e| e.to_string())?;
                     let (nodes, rels) = if let Some(ref mg) = out.merged_graph {
@@ -1513,12 +1653,28 @@ impl Command for DebugCorpus {
                     } else {
                         (None, None)
                     };
+                    let artifact_path = if let Some(ref merged_graph) = out.merged_graph {
+                        Some(
+                            persist_stage_payload(
+                                &target_artifact_dir,
+                                "merge",
+                                "merged_graph.json",
+                                merged_graph,
+                            )
+                            .map_err(|e| e.to_string())?
+                            .display()
+                            .to_string(),
+                        )
+                    } else {
+                        None
+                    };
                     Ok(CorpusStageMetrics {
                         nodes_parsed: nodes,
                         relations_found: rels,
                         file_count: None,
+                        artifact_path,
                     })
-                });
+                })?;
                 if !stage.ok {
                     merge_failures += 1;
                     if stage.panic {
@@ -1530,12 +1686,13 @@ impl Command for DebugCorpus {
                 None
             };
 
-            targets.push(CorpusTargetResult {
+            let target_result = CorpusTargetResult {
                 target: spec.original,
                 normalized_repo: spec.normalized_repo,
                 clone_url: spec.clone_url,
                 datasets: spec.datasets.into_iter().collect(),
                 checkout_path: checkout_path.display().to_string(),
+                artifact_dir: target_artifact_dir.display().to_string(),
                 repository_kind: classification.repository_kind,
                 recommended_parser: classification.recommended_parser,
                 workspace_member_count: classification.workspace_member_count,
@@ -1545,11 +1702,18 @@ impl Command for DebugCorpus {
                 discovery: Some(discovery),
                 resolve: Some(resolve),
                 merge,
-            });
+                summary_path: None,
+            };
+            let summary_path = persist_target_summary(&target_artifact_dir, &target_result)?;
+            let mut target_result = target_result;
+            target_result.summary_path = Some(summary_path.display().to_string());
+            targets.push(target_result);
         }
 
-        Ok(DebugOutput::Corpus(DebugCorpusOut {
+        let out = DebugCorpusOut {
+            run_id,
             checkout_root: checkout_root.display().to_string(),
+            artifact_root: artifact_root.display().to_string(),
             list_files: list_files.iter().map(|p| p.display().to_string()).collect(),
             requested_entries,
             unique_targets,
@@ -1565,7 +1729,9 @@ impl Command for DebugCorpus {
             merge_failures,
             panic_failures,
             targets,
-        }))
+        };
+        persist_run_summary(&artifact_root, &out)?;
+        Ok(DebugOutput::Corpus(out))
     }
 }
 
@@ -1577,11 +1743,12 @@ struct ParsedCorpusTarget {
     checkout_slug: String,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct CorpusStageMetrics {
     nodes_parsed: Option<usize>,
     relations_found: Option<usize>,
     file_count: Option<usize>,
+    artifact_path: Option<String>,
 }
 
 fn parse_corpus_target(input: &str) -> Result<ParsedCorpusTarget, XtaskError> {
@@ -1781,10 +1948,16 @@ fn classify_corpus_checkout(checkout_path: &Path) -> CorpusCheckoutClassificatio
     }
 }
 
-fn run_corpus_discovery_stage(crate_root: &Path) -> CorpusStageResult {
-    run_corpus_stage(|| {
+fn run_corpus_discovery_stage(
+    crate_root: &Path,
+    target_artifact_dir: &Path,
+) -> Result<CorpusStageResult, XtaskError> {
+    run_corpus_stage("discovery", target_artifact_dir, || {
         let out =
             run_discovery_phase(None, &[crate_root.to_path_buf()]).map_err(|e| e.to_string())?;
+        let artifact_path =
+            persist_stage_payload(target_artifact_dir, "discovery", "discovery.json", &out)
+                .map_err(|e| e.to_string())?;
         let file_count = out
             .crate_contexts
             .get(crate_root)
@@ -1792,19 +1965,33 @@ fn run_corpus_discovery_stage(crate_root: &Path) -> CorpusStageResult {
             .or_else(|| out.crate_contexts.values().next().map(|c| c.files.len()));
         Ok(CorpusStageMetrics {
             file_count,
+            artifact_path: Some(artifact_path.display().to_string()),
             ..CorpusStageMetrics::default()
         })
     })
 }
 
-fn run_corpus_stage<F>(op: F) -> CorpusStageResult
+fn run_corpus_stage<F>(
+    stage_name: &str,
+    target_artifact_dir: &Path,
+    op: F,
+) -> Result<CorpusStageResult, XtaskError>
 where
     F: FnOnce() -> Result<CorpusStageMetrics, String>,
 {
+    let stage_dir = target_artifact_dir.join(stage_name);
+    std::fs::create_dir_all(&stage_dir).map_err(|e| {
+        XtaskError::Resource(format!(
+            "Failed to create stage artifact dir {}: {e}",
+            stage_dir.display()
+        ))
+    })?;
     let start = Instant::now();
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(op));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        with_debug_artifact_dir(&stage_dir, op)
+    }));
     let duration_ms = start.elapsed().as_millis() as u64;
-    match outcome {
+    let result = match outcome {
         Ok(Ok(metrics)) => CorpusStageResult {
             ok: true,
             panic: false,
@@ -1814,16 +2001,24 @@ where
             nodes_parsed: metrics.nodes_parsed,
             relations_found: metrics.relations_found,
             file_count: metrics.file_count,
+            artifact_path: metrics.artifact_path,
+            failure_artifact_path: None,
         },
         Ok(Err(err)) => CorpusStageResult {
             ok: false,
             panic: false,
             failure_kind: Some("error".into()),
-            error: Some(err),
+            error: Some(err.clone()),
             duration_ms,
             nodes_parsed: None,
             relations_found: None,
             file_count: None,
+            artifact_path: None,
+            failure_artifact_path: Some(
+                persist_stage_failure(&stage_dir, stage_name, false, &err)?
+                    .display()
+                    .to_string(),
+            ),
         },
         Err(panic) => CorpusStageResult {
             ok: false,
@@ -1834,8 +2029,101 @@ where
             nodes_parsed: None,
             relations_found: None,
             file_count: None,
+            artifact_path: None,
+            failure_artifact_path: None,
         },
+    };
+    let result = if result.panic {
+        let panic_msg = result.error.clone().unwrap_or_else(|| "panic".into());
+        CorpusStageResult {
+            failure_artifact_path: Some(
+                persist_stage_failure(&stage_dir, stage_name, true, &panic_msg)?
+                    .display()
+                    .to_string(),
+            ),
+            ..result
+        }
+    } else {
+        result
+    };
+    persist_stage_payload(&stage_dir, "", "stage_summary.json", &result)?;
+    Ok(result)
+}
+
+fn corpus_run_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("run-{millis}")
+}
+
+fn persist_run_summary(artifact_root: &Path, out: &DebugCorpusOut) -> Result<PathBuf, XtaskError> {
+    write_json_file(&artifact_root.join("summary.json"), out)
+}
+
+fn persist_target_summary(
+    target_artifact_dir: &Path,
+    out: &CorpusTargetResult,
+) -> Result<PathBuf, XtaskError> {
+    write_json_file(&target_artifact_dir.join("summary.json"), out)
+}
+
+fn persist_stage_payload<T: Serialize>(
+    target_artifact_dir: &Path,
+    stage_name: &str,
+    filename: &str,
+    payload: &T,
+) -> Result<PathBuf, XtaskError> {
+    let dir = if stage_name.is_empty() {
+        target_artifact_dir.to_path_buf()
+    } else {
+        target_artifact_dir.join(stage_name)
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        XtaskError::Resource(format!(
+            "Failed to create stage artifact dir {}: {e}",
+            dir.display()
+        ))
+    })?;
+    write_json_file(&dir.join(filename), payload)
+}
+
+fn persist_stage_failure(
+    stage_dir: &Path,
+    stage_name: &str,
+    panic: bool,
+    message: &str,
+) -> Result<PathBuf, XtaskError> {
+    write_json_file(
+        &stage_dir.join("failure.json"),
+        &serde_json::json!({
+            "stage": stage_name,
+            "panic": panic,
+            "message": message,
+        }),
+    )
+}
+
+fn write_json_file<T: Serialize>(path: &Path, payload: &T) -> Result<PathBuf, XtaskError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to create artifact parent {}: {e}",
+                parent.display()
+            ))
+        })?;
     }
+    let file = File::create(path).map_err(|e| {
+        XtaskError::Resource(format!("Failed to create artifact {}: {e}", path.display()))
+    })?;
+    serde_json::to_writer_pretty(file, payload).map_err(|e| {
+        XtaskError::Resource(format!(
+            "Failed to serialize artifact {}: {e}",
+            path.display()
+        ))
+    })?;
+    Ok(path.to_path_buf())
 }
 
 fn panic_payload_string(payload: Box<dyn std::any::Any + Send>) -> String {
