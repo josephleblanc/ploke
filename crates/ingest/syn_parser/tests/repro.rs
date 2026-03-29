@@ -22,6 +22,9 @@ mod duplicate_local_functions;
 #[path = "repro/duplicate_method_local_consts.rs"]
 mod duplicate_method_local_consts;
 
+#[path = "repro/duplicate_method_collection_flags.rs"]
+mod duplicate_method_collection_flags;
+
 #[path = "repro/duplicate_local_consts.rs"]
 mod duplicate_local_consts;
 

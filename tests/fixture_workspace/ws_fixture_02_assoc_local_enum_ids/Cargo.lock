@@ -31,5 +31,9 @@ name = "ws_fixture_duplicate_local_statics"
 version = "0.1.0"
 
 [[package]]
+name = "ws_fixture_duplicate_method_collection_flags"
+version = "0.1.0"
+
+[[package]]
 name = "ws_fixture_duplicate_method_local_consts"
 version = "0.1.0"

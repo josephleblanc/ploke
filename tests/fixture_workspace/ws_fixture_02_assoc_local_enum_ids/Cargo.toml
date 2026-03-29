@@ -5,6 +5,7 @@ members = [
     "member_const_repro",
     "member_if_branch_local_consts_repro",
     "member_local_function_repro",
+    "member_method_collection_flags_repro",
     "member_method_local_consts_repro",
     "member_repro",
     "member_static_repro",
