@@ -1,0 +1,8 @@
+[package]
+name = "ws_fixture_duplicate_if_branch_hard_line_break_consts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"

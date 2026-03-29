@@ -16,6 +16,9 @@ mod duplicate_cfg_test_mods;
 #[path = "repro/duplicate_if_branch_local_consts.rs"]
 mod duplicate_if_branch_local_consts;
 
+#[path = "repro/duplicate_if_branch_hard_line_break_consts.rs"]
+mod duplicate_if_branch_hard_line_break_consts;
+
 #[path = "repro/duplicate_local_functions.rs"]
 mod duplicate_local_functions;
 
