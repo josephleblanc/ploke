@@ -37,3 +37,7 @@ version = "0.1.0"
 [[package]]
 name = "ws_fixture_duplicate_method_local_consts"
 version = "0.1.0"
+
+[[package]]
+name = "ws_fixture_duplicate_tls_branch_h2_consts"
+version = "0.1.0"
