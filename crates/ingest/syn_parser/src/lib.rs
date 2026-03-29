@@ -607,6 +607,28 @@ edition = "2021"
         ])
     }
 
+    fn create_partial_parse_fixture() -> tempfile::TempDir {
+        let tmp = tempdir().unwrap();
+        let crate_root = tmp.path();
+        fs::create_dir_all(crate_root.join("src")).unwrap();
+        fs::write(
+            crate_root.join("Cargo.toml"),
+            r#"[package]
+name = "partial_parse_fixture"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            crate_root.join("src/lib.rs"),
+            "mod broken;\npub fn ok() {}\n",
+        )
+        .unwrap();
+        fs::write(crate_root.join("src/broken.rs"), "pub fn broken( {\n").unwrap();
+        tmp
+    }
+
     fn committed_workspace_fixture_root(name: &str) -> PathBuf {
         workspace_root().join("tests/fixture_workspace").join(name)
     }
@@ -843,6 +865,46 @@ edition = "2021"
         match err {
             SynParserError::MultipleErrors(errors) => {
                 assert!(!errors.is_empty());
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn try_run_phases_and_resolve_preserves_partial_parse_file_diagnostic() {
+        let tmp = create_partial_parse_fixture();
+
+        let err = try_run_phases_and_resolve(tmp.path()).expect_err("expected partial parse");
+        match err {
+            SynParserError::PartialParsing { successes, errors } => {
+                assert_eq!(
+                    successes.0.len(),
+                    1,
+                    "expected one successfully parsed file"
+                );
+                assert_eq!(errors.len(), 1, "expected one failed file");
+                match &errors[0] {
+                    SynParserError::Syn { source_path, .. } => {
+                        assert_eq!(source_path, &tmp.path().join("src/broken.rs"));
+                        assert_eq!(
+                            errors[0].diagnostic_source_path(),
+                            Some(tmp.path().join("src/broken.rs").as_path())
+                        );
+                        let emission_site = errors[0]
+                            .diagnostic_emission_site()
+                            .expect("structured parse error should capture emission site");
+                        assert!(
+                            emission_site
+                                .file
+                                .ends_with("crates/ingest/syn_parser/src/parser/visitor/mod.rs")
+                        );
+                        let backtrace = errors[0]
+                            .diagnostic_backtrace()
+                            .expect("structured parse error should capture backtrace");
+                        assert!(!backtrace.to_string().is_empty());
+                    }
+                    other => panic!("unexpected child error: {other:?}"),
+                }
             }
             other => panic!("unexpected error: {other:?}"),
         }

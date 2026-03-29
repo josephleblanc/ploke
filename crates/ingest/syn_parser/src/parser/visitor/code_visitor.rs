@@ -2467,7 +2467,7 @@ use statement ident: {:?}
         // Construct ConstNode directly
         let const_node = ConstNode {
             id: typed_const_id, // Use typed ID
-            name: const_name,
+            name: const_name.clone(),
             span,
             visibility: self.state.convert_visibility(&item_const.vis),
             type_id,
@@ -2491,13 +2491,15 @@ use statement ident: {:?}
         };
         self.state.code_graph.relations.push(contains_relation);
 
-        // add this state management if recursing into the children of the const node, which
-        // should... only happen if we are parding `syn::Expr`?
-        // self.state.current_primary_defn_scope.push(const_id);
-        // Continue visiting
+        // Nested items inside const blocks must hash against the const scope rather than the
+        // surrounding module, otherwise identical local items in sibling consts collide.
+        self.push_primary_scope(
+            &const_name,
+            typed_const_id.into(),
+            &provisional_effective_cfgs,
+        );
         visit::visit_item_const(self, item_const);
-        // pop parent id onto stack, appropriate state management
-        // self.state.current_primary_defn_scope.pop();
+        self.pop_primary_scope(&const_name);
     }
 
     // Visit static items
@@ -2552,7 +2554,7 @@ use statement ident: {:?}
         // Construct StaticNode directly
         let static_node = StaticNode {
             id: typed_static_id, // Use typed ID
-            name: static_name,
+            name: static_name.clone(),
             span,
             visibility: self.state.convert_visibility(&item_static.vis),
             type_id,
@@ -2577,14 +2579,15 @@ use statement ident: {:?}
         };
         self.state.code_graph.relations.push(contains_relation);
 
-        // Continue visiting
-        // add this state management if recursing into the children of the const node, which
-        // should... only happen if we are parding `syn::Expr`?
-        // push parent id onto stack for type processing
-        // self.state.current_primary_defn_scope.push(static_id);
+        // Nested items inside static initializers must hash against the static scope for the same
+        // reason as consts.
+        self.push_primary_scope(
+            &static_name,
+            typed_static_id.into(),
+            &provisional_effective_cfgs,
+        );
         visit::visit_item_static(self, item_static);
-        // pop parent id onto stack, appropriate state management
-        // self.state.current_primary_defn_scope.pop();
+        self.pop_primary_scope(&static_name);
     }
 
     // Visit macro definitions (macro_rules!)

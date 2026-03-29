@@ -26,6 +26,7 @@ exclude = [
     "tests/fixture_crates/fixture_imports_duplicate_leaf",
     "tests/fixture_workspace/ws_fixture_00/fixture_toml",
     "tests/fixture_workspace/ws_fixture_01/fixture_toml",
+    "tests/fixture_workspace/ws_fixture_02_assoc_local_enum_ids",
     "tests/fixture_crates/fixture_unusual_lib",
     "fixture_test_crate",
 ]

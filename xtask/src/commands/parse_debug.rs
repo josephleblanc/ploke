@@ -59,6 +59,7 @@ use std::process::Command as ProcessCommand;
 use std::sync::{
     Arc, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
+    mpsc,
 };
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -1205,7 +1206,9 @@ fn build_corpus_triage_clusters(
                 relevant_code_paths: Vec::new(),
                 notes: Vec::new(),
             };
-            write_json_file(&path, &stub)?;
+            if !path.exists() {
+                write_json_file(&path, &stub)?;
+            }
             Some(path.display().to_string())
         } else {
             None
@@ -1225,6 +1228,301 @@ fn build_corpus_triage_clusters(
     }
 
     Ok(clusters)
+}
+
+fn build_corpus_triage_out(
+    ctx: &CommandContext,
+    cmd: &DebugCorpusTriage,
+) -> Result<DebugCorpusTriageOut, XtaskError> {
+    let (run, summary_path, run_dir) = load_corpus_run_snapshot(ctx, &cmd.run, &cmd.artifact_dir)?;
+
+    let triage_dir = if let Some(out_dir) = &cmd.out_dir {
+        let workspace_root = ctx.workspace_root()?;
+        if out_dir.is_absolute() {
+            out_dir.clone()
+        } else {
+            workspace_root.join(out_dir)
+        }
+    } else {
+        run_dir.join("triage")
+    };
+    std::fs::create_dir_all(&triage_dir).map_err(|e| {
+        XtaskError::Resource(format!(
+            "Failed to create corpus triage dir {}: {e}",
+            triage_dir.display()
+        ))
+    })?;
+
+    let failures = collect_corpus_triage_failures(&run);
+    let pending_report_dir = triage_dir.join("reports").join("pending");
+    let report_template_path = triage_dir.join("reports").join("_report_template.json");
+    let clusters = build_corpus_triage_clusters(
+        &failures,
+        &run.run_id,
+        if cmd.no_report_stubs {
+            None
+        } else {
+            Some(&pending_report_dir)
+        },
+    )?;
+
+    let template = CorpusTriageReportTemplate {
+        version: 1,
+        run_id: None,
+        cluster_key: None,
+        cluster_slug: None,
+        status: "pending".into(),
+        signature: None,
+        stage: None,
+        failure_kind: None,
+        occurrence_count: None,
+        example_failures: Vec::new(),
+        suspected_root_cause: None,
+        confidence: None,
+        scope_assessment: None,
+        touches_sensitive_pipeline: None,
+        recommended_next_step: None,
+        minimal_repro_status: "not_started".into(),
+        relevant_artifacts: Vec::new(),
+        relevant_code_paths: Vec::new(),
+        notes: Vec::new(),
+    };
+    write_json_file(&report_template_path, &template)?;
+
+    let failures_path = triage_dir.join("failures.jsonl");
+    write_jsonl_file(&failures_path, &failures)?;
+    let clusters_path = triage_dir.join("clusters.json");
+    write_json_file(&clusters_path, &clusters)?;
+
+    let out = DebugCorpusTriageOut {
+        run_id: run.run_id.clone(),
+        snapshot_mode: if summary_path.is_some() {
+            "complete".into()
+        } else {
+            "partial".into()
+        },
+        summary_path: summary_path.map(|path| path.display().to_string()),
+        triage_dir: triage_dir.display().to_string(),
+        failures_path: failures_path.display().to_string(),
+        clusters_path: clusters_path.display().to_string(),
+        report_template_path: report_template_path.display().to_string(),
+        pending_report_dir: pending_report_dir.display().to_string(),
+        failure_count: failures.len(),
+        cluster_count: clusters.len(),
+        pending_report_count: clusters
+            .iter()
+            .filter(|cluster| cluster.pending_report_path.is_some())
+            .count(),
+        failures,
+        clusters,
+    };
+    write_json_file(&triage_dir.join("index.json"), &out)?;
+    Ok(out)
+}
+
+fn load_corpus_run_snapshot(
+    ctx: &CommandContext,
+    run: &Path,
+    artifact_dir: &Path,
+) -> Result<(DebugCorpusOut, Option<PathBuf>, PathBuf), XtaskError> {
+    let run_dir = resolve_corpus_run_dir(ctx, run, artifact_dir)?;
+    let summary_path = run_dir.join("summary.json");
+    if summary_path.is_file() {
+        let content = std::fs::read_to_string(&summary_path).map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to read corpus summary {}: {e}",
+                summary_path.display()
+            ))
+        })?;
+        let run: DebugCorpusOut = serde_json::from_str(&content).map_err(|e| {
+            XtaskError::Parse(format!(
+                "Failed to parse corpus summary {}: {e}",
+                summary_path.display()
+            ))
+        })?;
+        return Ok((run, Some(summary_path), run_dir));
+    }
+
+    let mut targets = Vec::new();
+    let entries = std::fs::read_dir(&run_dir).map_err(|e| {
+        XtaskError::Resource(format!(
+            "Failed to read corpus run dir {}: {e}",
+            run_dir.display()
+        ))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to inspect corpus run dir {}: {e}",
+                run_dir.display()
+            ))
+        })?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) == Some("triage") {
+            continue;
+        }
+        let target_summary_path = path.join("summary.json");
+        if target_summary_path.is_file() {
+            let content = std::fs::read_to_string(&target_summary_path).map_err(|e| {
+                XtaskError::Resource(format!(
+                    "Failed to read target summary {}: {e}",
+                    target_summary_path.display()
+                ))
+            })?;
+            let target: CorpusTargetResult = serde_json::from_str(&content).map_err(|e| {
+                XtaskError::Parse(format!(
+                    "Failed to parse target summary {}: {e}",
+                    target_summary_path.display()
+                ))
+            })?;
+            targets.push(target);
+            continue;
+        }
+
+        if let Some(target) = load_partial_workspace_probe_target(&path)? {
+            targets.push(target);
+        }
+    }
+    targets.sort_by(|a, b| a.normalized_repo.cmp(&b.normalized_repo));
+
+    let run_id = run_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("run-in-progress")
+        .to_string();
+    let mut out = DebugCorpusOut {
+        run_id,
+        checkout_root: String::new(),
+        artifact_root: run_dir.display().to_string(),
+        list_files: Vec::new(),
+        requested_entries: 0,
+        unique_targets: targets.len(),
+        processed_targets: targets.len(),
+        single_crate_targets: 0,
+        workspace_targets: 0,
+        skipped_targets: 0,
+        cloned_targets: 0,
+        reused_targets: 0,
+        clone_failures: 0,
+        discovery_failures: 0,
+        resolve_failures: 0,
+        merge_failures: 0,
+        panic_failures: 0,
+        workspace_mode: "unknown".into(),
+        targets,
+    };
+    recompute_corpus_counts(&mut out);
+    Ok((out, None, run_dir))
+}
+
+fn load_partial_workspace_probe_target(
+    target_dir: &Path,
+) -> Result<Option<CorpusTargetResult>, XtaskError> {
+    let workspace_summary_path = target_dir
+        .join("workspace_probe")
+        .join("workspace_summary.json");
+    if !workspace_summary_path.is_file() {
+        return Ok(None);
+    }
+
+    let content = std::fs::read_to_string(&workspace_summary_path).map_err(|e| {
+        XtaskError::Resource(format!(
+            "Failed to read workspace summary {}: {e}",
+            workspace_summary_path.display()
+        ))
+    })?;
+    let mut workspace_probe: CorpusWorkspaceProbeResult =
+        serde_json::from_str(&content).map_err(|e| {
+            XtaskError::Parse(format!(
+                "Failed to parse workspace summary {}: {e}",
+                workspace_summary_path.display()
+            ))
+        })?;
+    workspace_probe.summary_path = Some(workspace_summary_path.display().to_string());
+
+    let checkout_slug = target_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown");
+    let normalized_repo = checkout_slug.replace("__", "/");
+    let clone_url = if normalized_repo.contains('/') {
+        format!("https://github.com/{normalized_repo}.git")
+    } else {
+        normalized_repo.clone()
+    };
+
+    Ok(Some(CorpusTargetResult {
+        target: normalized_repo.clone(),
+        normalized_repo,
+        clone_url,
+        datasets: Vec::new(),
+        checkout_path: workspace_probe.workspace_root.clone(),
+        artifact_dir: target_dir.display().to_string(),
+        repository_kind: "workspace".into(),
+        recommended_parser: "parse_workspace_with_config".into(),
+        workspace_member_count: Some(workspace_probe.member_count),
+        classification_error: None,
+        classification_diagnostic: None,
+        clone: CorpusCloneStatus {
+            ok: true,
+            action: "in_progress".into(),
+            error: None,
+        },
+        commit_sha: None,
+        discovery: None,
+        resolve: None,
+        merge: None,
+        workspace_probe: Some(workspace_probe),
+        summary_path: None,
+    }))
+}
+
+fn resolve_corpus_run_dir(
+    ctx: &CommandContext,
+    run: &Path,
+    artifact_dir: &Path,
+) -> Result<PathBuf, XtaskError> {
+    let workspace_root = ctx.workspace_root()?;
+    let artifact_root = if artifact_dir.is_absolute() {
+        artifact_dir.to_path_buf()
+    } else {
+        workspace_root.join(artifact_dir)
+    };
+
+    let direct_path = if run.is_absolute() {
+        run.to_path_buf()
+    } else {
+        workspace_root.join(run)
+    };
+    if direct_path.is_file() {
+        return Ok(direct_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf());
+    }
+    if direct_path.is_dir() {
+        return Ok(direct_path);
+    }
+
+    let candidate = artifact_root.join(run);
+    if candidate.is_file() {
+        return Ok(candidate
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf());
+    }
+    if candidate.is_dir() {
+        return Ok(candidate);
+    }
+
+    Err(XtaskError::validation(format!(
+        "Could not find corpus run dir or summary for `{}`",
+        run.display()
+    ))
+    .into())
 }
 
 fn recompute_corpus_counts(run: &mut DebugCorpusOut) {
@@ -1791,6 +2089,7 @@ pub struct CorpusStageResult {
     pub panic: bool,
     pub failure_kind: Option<String>,
     pub error: Option<String>,
+    pub diagnostic: Option<CorpusDiagnostic>,
     pub duration_ms: u64,
     pub nodes_parsed: Option<usize>,
     pub relations_found: Option<usize>,
@@ -1843,6 +2142,8 @@ pub struct CorpusDiagnostic {
     pub emission_site: Option<CorpusEmissionSite>,
     pub backtrace: Option<String>,
     pub context: Vec<CorpusDiagnosticField>,
+    #[serde(default)]
+    pub children: Vec<CorpusDiagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2066,6 +2367,7 @@ impl Command for DebugCorpus {
                         panic: false,
                         failure_kind: Some("clone".into()),
                         error: Some("clone step did not produce a usable checkout".into()),
+                        diagnostic: None,
                         duration_ms: 0,
                         nodes_parsed: None,
                         relations_found: None,
@@ -2218,16 +2520,23 @@ impl Command for DebugCorpus {
             }
 
             let resolve = run_corpus_stage("resolve", &target_artifact_dir, &target_label, || {
-                let graphs =
-                    try_run_phases_and_resolve(&checkout_path).map_err(|e| e.to_string())?;
+                let graphs = try_run_phases_and_resolve(&checkout_path).map_err(|e| {
+                    CorpusStageFailure::new(
+                        e.diagnostic_summary(),
+                        Some(corpus_diagnostic_from_syn_parser_error(&e)),
+                    )
+                })?;
                 let nodes: usize = graphs
                     .iter()
                     .map(|pg| count_code_graph_nodes(&pg.graph))
                     .sum();
                 let rels: usize = graphs.iter().map(|pg| pg.graph.relations.len()).sum();
-                let artifact_path =
-                    persist_stage_payload(&target_artifact_dir, "resolve", "resolve.json", &graphs)
-                        .map_err(|e| e.to_string())?;
+                let artifact_path = persist_stage_payload(
+                    &target_artifact_dir,
+                    "resolve",
+                    "resolve.json",
+                    &graphs,
+                )?;
                 Ok(CorpusStageMetrics {
                     nodes_parsed: Some(nodes),
                     relations_found: Some(rels),
@@ -2244,8 +2553,12 @@ impl Command for DebugCorpus {
 
             let merge = if !self.skip_merge && resolve.ok {
                 let stage = run_corpus_stage("merge", &target_artifact_dir, &target_label, || {
-                    let out =
-                        try_run_phases_and_merge(&checkout_path).map_err(|e| e.to_string())?;
+                    let out = try_run_phases_and_merge(&checkout_path).map_err(|e| {
+                        CorpusStageFailure::new(
+                            e.diagnostic_summary(),
+                            Some(corpus_diagnostic_from_syn_parser_error(&e)),
+                        )
+                    })?;
                     let (nodes, rels) = if let Some(ref mg) = out.merged_graph {
                         (
                             Some(count_code_graph_nodes(&mg.graph)),
@@ -2261,8 +2574,7 @@ impl Command for DebugCorpus {
                                 "merge",
                                 "merged_graph.json",
                                 merged_graph,
-                            )
-                            .map_err(|e| e.to_string())?
+                            )?
                             .display()
                             .to_string(),
                         )
@@ -2401,12 +2713,25 @@ pub struct DebugCorpusTriage {
     /// Skip creating one pending JSON report stub per failure cluster.
     #[arg(long)]
     pub no_report_stubs: bool,
+
+    /// Continuously refresh triage artifacts while the corpus run is in progress.
+    #[arg(long)]
+    pub watch: bool,
+
+    /// Poll interval used with `--watch`.
+    #[arg(long, default_value_t = 10)]
+    pub interval_secs: u64,
+
+    /// Exit the watch loop once the top-level corpus `summary.json` exists.
+    #[arg(long, requires = "watch")]
+    pub exit_when_complete: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugCorpusTriageOut {
     pub run_id: String,
-    pub summary_path: String,
+    pub snapshot_mode: String,
+    pub summary_path: Option<String>,
     pub triage_dir: String,
     pub failures_path: String,
     pub clusters_path: String,
@@ -2567,101 +2892,30 @@ impl Command for DebugCorpusTriage {
     type Error = XtaskError;
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
-        let summary_path = resolve_corpus_summary_path(ctx, &self.run, &self.artifact_dir)?;
-        let content = std::fs::read_to_string(&summary_path).map_err(|e| {
-            XtaskError::Resource(format!(
-                "Failed to read corpus summary {}: {e}",
-                summary_path.display()
-            ))
-        })?;
-        let run: DebugCorpusOut = serde_json::from_str(&content).map_err(|e| {
-            XtaskError::Parse(format!(
-                "Failed to parse corpus summary {}: {e}",
-                summary_path.display()
-            ))
-        })?;
-
-        let triage_dir = if let Some(out_dir) = &self.out_dir {
-            let workspace_root = ctx.workspace_root()?;
-            if out_dir.is_absolute() {
-                out_dir.clone()
-            } else {
-                workspace_root.join(out_dir)
+        let mut last_status = None::<String>;
+        loop {
+            let out = build_corpus_triage_out(ctx, self)?;
+            let status = format!(
+                "{}:{}:{}:{}",
+                out.snapshot_mode, out.failure_count, out.cluster_count, out.pending_report_count
+            );
+            if self.watch && last_status.as_deref() != Some(status.as_str()) {
+                emit_corpus_progress_line(format_args!(
+                    "[triage] {} snapshot {} failures {} clusters {}",
+                    out.run_id, out.snapshot_mode, out.failure_count, out.cluster_count
+                ));
             }
-        } else {
-            summary_path
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join("triage")
-        };
-        std::fs::create_dir_all(&triage_dir).map_err(|e| {
-            XtaskError::Resource(format!(
-                "Failed to create corpus triage dir {}: {e}",
-                triage_dir.display()
-            ))
-        })?;
+            last_status = Some(status);
 
-        let failures = collect_corpus_triage_failures(&run);
-        let pending_report_dir = triage_dir.join("reports").join("pending");
-        let report_template_path = triage_dir.join("reports").join("_report_template.json");
-        let clusters = build_corpus_triage_clusters(
-            &failures,
-            &run.run_id,
-            if self.no_report_stubs {
-                None
-            } else {
-                Some(&pending_report_dir)
-            },
-        )?;
+            if !self.watch {
+                return Ok(DebugOutput::CorpusTriage(out));
+            }
+            if self.exit_when_complete && out.snapshot_mode == "complete" {
+                return Ok(DebugOutput::CorpusTriage(out));
+            }
 
-        let template = CorpusTriageReportTemplate {
-            version: 1,
-            run_id: None,
-            cluster_key: None,
-            cluster_slug: None,
-            status: "pending".into(),
-            signature: None,
-            stage: None,
-            failure_kind: None,
-            occurrence_count: None,
-            example_failures: Vec::new(),
-            suspected_root_cause: None,
-            confidence: None,
-            scope_assessment: None,
-            touches_sensitive_pipeline: None,
-            recommended_next_step: None,
-            minimal_repro_status: "not_started".into(),
-            relevant_artifacts: Vec::new(),
-            relevant_code_paths: Vec::new(),
-            notes: Vec::new(),
-        };
-        write_json_file(&report_template_path, &template)?;
-
-        let failures_path = triage_dir.join("failures.jsonl");
-        write_jsonl_file(&failures_path, &failures)?;
-        let clusters_path = triage_dir.join("clusters.json");
-        write_json_file(&clusters_path, &clusters)?;
-
-        let out = DebugCorpusTriageOut {
-            run_id: run.run_id.clone(),
-            summary_path: summary_path.display().to_string(),
-            triage_dir: triage_dir.display().to_string(),
-            failures_path: failures_path.display().to_string(),
-            clusters_path: clusters_path.display().to_string(),
-            report_template_path: report_template_path.display().to_string(),
-            pending_report_dir: pending_report_dir.display().to_string(),
-            failure_count: failures.len(),
-            cluster_count: clusters.len(),
-            pending_report_count: clusters
-                .iter()
-                .filter(|cluster| cluster.pending_report_path.is_some())
-                .count(),
-            failures,
-            clusters,
-        };
-        write_json_file(&triage_dir.join("index.json"), &out)?;
-
-        Ok(DebugOutput::CorpusTriage(out))
+            thread::sleep(std::time::Duration::from_secs(self.interval_secs.max(1)));
+        }
     }
 }
 
@@ -2679,6 +2933,33 @@ struct CorpusStageMetrics {
     relations_found: Option<usize>,
     file_count: Option<usize>,
     artifact_path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CorpusStageFailure {
+    message: String,
+    diagnostic: Option<CorpusDiagnostic>,
+}
+
+impl CorpusStageFailure {
+    fn new(message: impl Into<String>, diagnostic: Option<CorpusDiagnostic>) -> Self {
+        Self {
+            message: message.into(),
+            diagnostic,
+        }
+    }
+}
+
+impl From<String> for CorpusStageFailure {
+    fn from(message: String) -> Self {
+        Self::new(message, None)
+    }
+}
+
+impl From<XtaskError> for CorpusStageFailure {
+    fn from(err: XtaskError) -> Self {
+        Self::new(err.to_string(), None)
+    }
 }
 
 fn parse_corpus_target(input: &str) -> Result<ParsedCorpusTarget, XtaskError> {
@@ -2916,29 +3197,29 @@ fn classify_corpus_checkout_via_metadata(
     None
 }
 
-fn corpus_diagnostic_from_discovery_error(err: &DiscoveryError) -> CorpusDiagnostic {
+fn corpus_diagnostic_from_info(info: &dyn DiagnosticInfo) -> CorpusDiagnostic {
     CorpusDiagnostic {
-        kind: err.diagnostic_kind().to_string(),
-        summary: err.diagnostic_summary(),
-        detail: err.diagnostic_detail(),
-        source_path: err
+        kind: info.diagnostic_kind().to_string(),
+        summary: info.diagnostic_summary(),
+        detail: info.diagnostic_detail(),
+        source_path: info
             .diagnostic_source_path()
             .map(|path| path.display().to_string()),
-        source_span: err.diagnostic_span().map(|span| CorpusSourceSpan {
+        source_span: info.diagnostic_span().map(|span| CorpusSourceSpan {
             start: span.start(),
             end: span.end(),
             line: span.line().map(|line| line as u32),
             col: span.column().map(|col| col as u32),
         }),
-        emission_site: err
+        emission_site: info
             .diagnostic_emission_site()
             .map(|site| CorpusEmissionSite {
                 file: site.file.to_string(),
                 line: site.line,
                 column: site.column,
             }),
-        backtrace: err.diagnostic_backtrace().map(ToString::to_string),
-        context: err
+        backtrace: info.diagnostic_backtrace().map(ToString::to_string),
+        context: info
             .diagnostic_context()
             .into_iter()
             .map(|field| CorpusDiagnosticField {
@@ -2946,7 +3227,27 @@ fn corpus_diagnostic_from_discovery_error(err: &DiscoveryError) -> CorpusDiagnos
                 value: field.value,
             })
             .collect(),
+        children: Vec::new(),
     }
+}
+
+fn corpus_diagnostic_from_discovery_error(err: &DiscoveryError) -> CorpusDiagnostic {
+    corpus_diagnostic_from_info(err)
+}
+
+fn corpus_diagnostic_from_syn_parser_error(
+    err: &syn_parser::error::SynParserError,
+) -> CorpusDiagnostic {
+    let mut diagnostic = corpus_diagnostic_from_info(err);
+    diagnostic.children = match err {
+        syn_parser::error::SynParserError::MultipleErrors(errors)
+        | syn_parser::error::SynParserError::PartialParsing { errors, .. } => errors
+            .iter()
+            .map(corpus_diagnostic_from_syn_parser_error)
+            .collect(),
+        _ => Vec::new(),
+    };
+    diagnostic
 }
 
 fn run_corpus_discovery_stage(
@@ -2955,11 +3256,14 @@ fn run_corpus_discovery_stage(
     progress_label: &str,
 ) -> Result<CorpusStageResult, XtaskError> {
     run_corpus_stage("discovery", target_artifact_dir, progress_label, || {
-        let out =
-            run_discovery_phase(None, &[crate_root.to_path_buf()]).map_err(|e| e.to_string())?;
+        let out = run_discovery_phase(None, &[crate_root.to_path_buf()]).map_err(|e| {
+            CorpusStageFailure::new(
+                e.diagnostic_summary(),
+                Some(corpus_diagnostic_from_discovery_error(&e)),
+            )
+        })?;
         let artifact_path =
-            persist_stage_payload(target_artifact_dir, "discovery", "discovery.json", &out)
-                .map_err(|e| e.to_string())?;
+            persist_stage_payload(target_artifact_dir, "discovery", "discovery.json", &out)?;
         let file_count = out
             .crate_contexts
             .get(crate_root)
@@ -2992,6 +3296,13 @@ fn run_corpus_workspace_probe(
     let mut results = Vec::with_capacity(members.len());
     let mut failed_members = 0usize;
 
+    let mut persisted = persist_workspace_probe_summary(
+        &workspace_artifact_dir,
+        workspace_root,
+        &results,
+        failed_members,
+    )?;
+
     for (index, member) in members.iter().enumerate() {
         let label = member
             .file_name()
@@ -3023,7 +3334,12 @@ fn run_corpus_workspace_probe(
                 &member_artifact_dir,
                 &member_progress_label,
                 || {
-                    let graphs = try_run_phases_and_resolve(member).map_err(|e| e.to_string())?;
+                    let graphs = try_run_phases_and_resolve(member).map_err(|e| {
+                        CorpusStageFailure::new(
+                            e.diagnostic_summary(),
+                            Some(corpus_diagnostic_from_syn_parser_error(&e)),
+                        )
+                    })?;
                     let nodes: usize = graphs
                         .iter()
                         .map(|pg| count_code_graph_nodes(&pg.graph))
@@ -3034,8 +3350,7 @@ fn run_corpus_workspace_probe(
                         "resolve",
                         "resolve.json",
                         &graphs,
-                    )
-                    .map_err(|e| e.to_string())?;
+                    )?;
                     Ok(CorpusStageMetrics {
                         nodes_parsed: Some(nodes),
                         relations_found: Some(rels),
@@ -3053,7 +3368,12 @@ fn run_corpus_workspace_probe(
                     &member_artifact_dir,
                     &member_progress_label,
                     || {
-                        let out = try_run_phases_and_merge(member).map_err(|e| e.to_string())?;
+                        let out = try_run_phases_and_merge(member).map_err(|e| {
+                            CorpusStageFailure::new(
+                                e.diagnostic_summary(),
+                                Some(corpus_diagnostic_from_syn_parser_error(&e)),
+                            )
+                        })?;
                         let (nodes, rels) = if let Some(ref mg) = out.merged_graph {
                             (
                                 Some(count_code_graph_nodes(&mg.graph)),
@@ -3069,8 +3389,7 @@ fn run_corpus_workspace_probe(
                                     "merge",
                                     "merged_graph.json",
                                     merged_graph,
-                                )
-                                .map_err(|e| e.to_string())?
+                                )?
                                 .display()
                                 .to_string(),
                             )
@@ -3102,17 +3421,33 @@ fn run_corpus_workspace_probe(
             resolve,
             merge,
         });
+
+        persisted = persist_workspace_probe_summary(
+            &workspace_artifact_dir,
+            workspace_root,
+            &results,
+            failed_members,
+        )?;
     }
 
+    Ok(persisted)
+}
+
+fn persist_workspace_probe_summary(
+    workspace_artifact_dir: &Path,
+    workspace_root: &Path,
+    results: &[CorpusWorkspaceMemberResult],
+    failed_members: usize,
+) -> Result<CorpusWorkspaceProbeResult, XtaskError> {
     let out = CorpusWorkspaceProbeResult {
         workspace_root: workspace_root.display().to_string(),
         member_count: results.len(),
         failed_members,
-        members: results,
+        members: results.to_vec(),
         summary_path: None,
     };
     let summary_path =
-        persist_stage_payload(&workspace_artifact_dir, "", "workspace_summary.json", &out)?;
+        persist_stage_payload(workspace_artifact_dir, "", "workspace_summary.json", &out)?;
     Ok(CorpusWorkspaceProbeResult {
         summary_path: Some(summary_path.display().to_string()),
         ..out
@@ -3169,7 +3504,7 @@ fn run_corpus_stage<F>(
     op: F,
 ) -> Result<CorpusStageResult, XtaskError>
 where
-    F: FnOnce() -> Result<CorpusStageMetrics, String>,
+    F: FnOnce() -> Result<CorpusStageMetrics, CorpusStageFailure>,
 {
     let stage_dir = target_artifact_dir.join(stage_name);
     std::fs::create_dir_all(&stage_dir).map_err(|e| {
@@ -3190,6 +3525,7 @@ where
             panic: false,
             failure_kind: None,
             error: None,
+            diagnostic: None,
             duration_ms,
             nodes_parsed: metrics.nodes_parsed,
             relations_found: metrics.relations_found,
@@ -3201,16 +3537,23 @@ where
             ok: false,
             panic: false,
             failure_kind: Some("error".into()),
-            error: Some(err.clone()),
+            error: Some(err.message.clone()),
+            diagnostic: err.diagnostic.clone(),
             duration_ms,
             nodes_parsed: None,
             relations_found: None,
             file_count: None,
             artifact_path: None,
             failure_artifact_path: Some(
-                persist_stage_failure(&stage_dir, stage_name, false, &err)?
-                    .display()
-                    .to_string(),
+                persist_stage_failure(
+                    &stage_dir,
+                    stage_name,
+                    false,
+                    &err.message,
+                    err.diagnostic.as_ref(),
+                )?
+                .display()
+                .to_string(),
             ),
         },
         Err(panic) => CorpusStageResult {
@@ -3218,6 +3561,7 @@ where
             panic: true,
             failure_kind: Some("panic".into()),
             error: Some(panic.message),
+            diagnostic: None,
             duration_ms,
             nodes_parsed: None,
             relations_found: None,
@@ -3230,7 +3574,7 @@ where
         let panic_msg = result.error.clone().unwrap_or_else(|| "panic".into());
         CorpusStageResult {
             failure_artifact_path: Some(
-                persist_stage_failure(&stage_dir, stage_name, true, &panic_msg)?
+                persist_stage_failure(&stage_dir, stage_name, true, &panic_msg, None)?
                     .display()
                     .to_string(),
             ),
@@ -3258,6 +3602,7 @@ const CORPUS_STAGE_HEARTBEAT_SECS: u64 = 15;
 
 struct CorpusStageHeartbeat {
     done: Arc<AtomicBool>,
+    shutdown_tx: Option<mpsc::Sender<()>>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
@@ -3265,28 +3610,39 @@ impl CorpusStageHeartbeat {
     fn start(progress_label: String, stage_name: String) -> Self {
         let done = Arc::new(AtomicBool::new(false));
         let done_for_thread = Arc::clone(&done);
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
         let handle = thread::spawn(move || {
             let mut elapsed_secs = 0u64;
-            while !done_for_thread.load(Ordering::Relaxed) {
-                thread::sleep(std::time::Duration::from_secs(CORPUS_STAGE_HEARTBEAT_SECS));
-                elapsed_secs += CORPUS_STAGE_HEARTBEAT_SECS;
-                if done_for_thread.load(Ordering::Relaxed) {
-                    break;
+            loop {
+                match shutdown_rx
+                    .recv_timeout(std::time::Duration::from_secs(CORPUS_STAGE_HEARTBEAT_SECS))
+                {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        elapsed_secs += CORPUS_STAGE_HEARTBEAT_SECS;
+                        if done_for_thread.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        emit_corpus_progress_line(format_args!(
+                            "{progress_label} {stage_name} running {}s",
+                            elapsed_secs
+                        ));
+                    }
                 }
-                emit_corpus_progress_line(format_args!(
-                    "{progress_label} {stage_name} running {}s",
-                    elapsed_secs
-                ));
             }
         });
         Self {
             done,
+            shutdown_tx: Some(shutdown_tx),
             handle: Some(handle),
         }
     }
 
     fn finish(mut self) {
         self.done.store(true, Ordering::Relaxed);
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -3352,6 +3708,7 @@ fn persist_stage_failure(
     stage_name: &str,
     panic: bool,
     message: &str,
+    diagnostic: Option<&CorpusDiagnostic>,
 ) -> Result<PathBuf, XtaskError> {
     write_json_file(
         &stage_dir.join("failure.json"),
@@ -3359,6 +3716,7 @@ fn persist_stage_failure(
             "stage": stage_name,
             "panic": panic,
             "message": message,
+            "diagnostic": diagnostic,
         }),
     )
 }
@@ -3626,6 +3984,19 @@ mod tests {
             panic_count.load(Ordering::SeqCst),
             1,
             "previous panic hook should be restored after captured panic"
+        );
+    }
+
+    #[test]
+    fn corpus_stage_heartbeat_finish_does_not_wait_for_full_interval() {
+        let heartbeat = CorpusStageHeartbeat::start("repo".into(), "resolve".into());
+        let start = Instant::now();
+        heartbeat.finish();
+
+        assert!(
+            start.elapsed().as_secs_f64() < 1.0,
+            "heartbeat finish should return promptly instead of waiting for the {}s interval",
+            CORPUS_STAGE_HEARTBEAT_SECS
         );
     }
 }

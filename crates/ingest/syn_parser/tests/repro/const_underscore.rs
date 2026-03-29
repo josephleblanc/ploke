@@ -129,3 +129,57 @@ const DYNHASH_DYN_COMPAT_CHECK: Option<Box<dyn DynHash>> = None;
         panic!("unexpected panic while parsing named-const crate: {panic_msg}");
     }
 }
+
+#[test]
+fn nested_functions_inside_sibling_consts_do_not_collide() {
+    let lib_rs = r#"
+const A: i32 = {
+    fn helper() -> i32 { 1 }
+    helper()
+};
+
+const B: i32 = {
+    fn helper() -> i32 { 2 }
+    helper()
+};
+"#;
+
+    let result = std::panic::catch_unwind(|| {
+        parse_temp_workspace_with_single_member(lib_rs)
+            .expect("parse should succeed for sibling const-local functions");
+    });
+
+    if let Err(payload) = result {
+        panic!(
+            "unexpected panic while parsing const-local functions: {}",
+            panic_payload_to_string(&payload)
+        );
+    }
+}
+
+#[test]
+fn nested_functions_inside_sibling_statics_do_not_collide() {
+    let lib_rs = r#"
+static A: i32 = {
+    fn helper() -> i32 { 1 }
+    helper()
+};
+
+static B: i32 = {
+    fn helper() -> i32 { 2 }
+    helper()
+};
+"#;
+
+    let result = std::panic::catch_unwind(|| {
+        parse_temp_workspace_with_single_member(lib_rs)
+            .expect("parse should succeed for sibling static-local functions");
+    });
+
+    if let Err(payload) = result {
+        panic!(
+            "unexpected panic while parsing static-local functions: {}",
+            panic_payload_to_string(&payload)
+        );
+    }
+}

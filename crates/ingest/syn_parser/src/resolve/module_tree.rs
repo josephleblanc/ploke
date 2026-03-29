@@ -1308,6 +1308,58 @@ impl ModuleTree {
             return Ok(());
         }
 
+        let mut primary_names: HashMap<PrimaryNodeId, &str> = HashMap::new();
+        primary_names.extend(
+            graph
+                .functions()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        primary_names.extend(graph.defined_types().iter().map(|node| {
+            (
+                node.any_id().try_into().expect("typedef ids are primary"),
+                node.name(),
+            )
+        }));
+        primary_names.extend(
+            graph
+                .impls()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        primary_names.extend(
+            graph
+                .traits()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        primary_names.extend(
+            graph
+                .consts()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        primary_names.extend(
+            graph
+                .statics()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        primary_names.extend(
+            graph
+                .macros()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        // `process_use_tree` registers imports via `register_new_node_id`, so Import IDs appear in
+        // `module.items()` alongside other primaries; `GraphNode::name` for imports is `visible_name`.
+        primary_names.extend(
+            graph
+                .use_statements()
+                .iter()
+                .map(|node| (node.id.into(), node.visible_name.as_str())),
+        );
+
         let mut index = HashMap::new();
         for module in self.modules.values() {
             if module.is_decl() {
@@ -1320,11 +1372,12 @@ impl ModuleTree {
                 if ModuleNodeId::try_from(*item_id).is_ok() {
                     continue;
                 }
-                let node = graph
-                    .find_node_unique(item_id.as_any())
-                    .map_err(ModuleTreeError::from)?;
                 let mut node_path_vec = module.path().clone();
-                node_path_vec.push(node.name().to_string());
+                let node_name = primary_names
+                    .get(item_id)
+                    .copied()
+                    .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(item_id.as_any()))?;
+                node_path_vec.push(node_name.to_string());
                 let node_path = NodePath::try_from(node_path_vec)
                     .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
                 index.entry(node_path).or_insert(*item_id);

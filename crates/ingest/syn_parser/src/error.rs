@@ -1,11 +1,17 @@
 //! Error types for the `syn_parser` crate.
 
+use std::backtrace::Backtrace;
+use std::panic::Location;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
 use crate::{
     discovery::error::DiscoveryError,
     parser::nodes::{AnyNodeId, ImportNodeId, TryFromPrimaryError},
     resolve::ModuleTreeError,
 };
 use ploke_core::{IdConversionError, TypeId};
+use ploke_error::{DiagnosticField, DiagnosticInfo, DiagnosticSite, DiagnosticSpan, SourceSpan};
 use thiserror::Error;
 
 use crate::parser::graph::ParsedCodeGraph;
@@ -123,8 +129,14 @@ pub enum SynParserError {
     }, // Wrap std::io::Error details in a String for simplicity
 
     /// A parsing error from the `syn` crate occurred.
-    #[error("Syn parsing error: {0}")]
-    Syn(String), // Wrap syn::Error details in a String
+    #[error("Syn parsing error: {message} (file: {source_path})")]
+    Syn {
+        message: String,
+        source_path: PathBuf,
+        source_span: Option<SourceSpan>,
+        emission_site: DiagnosticSite,
+        backtrace: Arc<Backtrace>,
+    },
 
     /// An invalid state or inconsistency within the visitor or graph was detected.
     #[error("Internal state error: {0}")]
@@ -482,12 +494,167 @@ impl From<NodeError> for SynParserError {
     }
 }
 
+impl SynParserError {
+    #[track_caller]
+    pub fn syn_parse_in_file(source_path: PathBuf, err: syn::Error) -> Self {
+        let emission_site = DiagnosticSite::from_location(Location::caller());
+        let source_span = source_span_from_syn_error(&source_path, &err);
+        Self::Syn {
+            message: err.to_string(),
+            source_path,
+            source_span,
+            emission_site,
+            backtrace: Arc::new(Backtrace::capture()),
+        }
+    }
+}
+
+impl DiagnosticInfo for SynParserError {
+    fn diagnostic_kind(&self) -> &'static str {
+        match self {
+            SynParserError::MultipleErrors(_) => "multiple_errors",
+            SynParserError::PartialParsing { .. } => "partial_parsing",
+            SynParserError::Discovery(err) => err.diagnostic_kind(),
+            SynParserError::Syn { .. } => "syn_parse",
+            SynParserError::InternalState(_) => "internal_state",
+            SynParserError::DuplicateNode(_) => "duplicate_node",
+            SynParserError::NotFound(_) => "not_found",
+            SynParserError::NodeValidation(_) => "node_validation",
+            SynParserError::ModuleTreeDuplicateDefnPath { .. } => "module_tree_duplicate_defn_path",
+            SynParserError::ModuleTreeDuplicateModuleId(_) => "module_tree_duplicate_module_id",
+            SynParserError::DuplicateInModuleTree(_) => "duplicate_in_module_tree",
+            SynParserError::ResolutionError(_) => "resolution_error",
+            SynParserError::ModuleTreeError(_) => "module_tree_error",
+            SynParserError::WorkspaceSectionMissing { .. } => "workspace_section_missing",
+            SynParserError::WorkspaceSelectionMismatch { .. } => "workspace_selection_mismatch",
+            SynParserError::VisitorError(_) => "visitor_error",
+            SynParserError::ParsedGraphError(_) => "parsed_graph_error",
+            SynParserError::IdConversionError(_) => "id_conversion_error",
+            SynParserError::TryFromPrimaryError(_) => "try_from_primary_error",
+            SynParserError::AnyNodeIdConversion(_) => "any_node_id_conversion",
+            SynParserError::RelationConversion(_) => "relation_conversion",
+            SynParserError::TypeIdConversionError(_) => "type_id_conversion_error",
+            SynParserError::Io(_) => "io",
+            SynParserError::SimpleDiscovery { .. } => "simple_discovery",
+            SynParserError::ComplexDiscovery { .. } => "complex_discovery",
+            SynParserError::TestHelperError(_) => "test_helper_error",
+            SynParserError::ReexportNotFound(..) => "reexport_not_found",
+            SynParserError::NotFoundInModuleByName(..) => "not_found_in_module_by_name",
+            SynParserError::NotFoundInModuleByNameKind(..) => "not_found_in_module_by_name_kind",
+            SynParserError::MergeError => "merge_error",
+            SynParserError::MergeRequiresInput => "merge_requires_input",
+            SynParserError::RootModuleNotFound => "root_module_not_found",
+            SynParserError::ModulePathNotFound(_) => "module_path_not_found",
+            SynParserError::ItemPathNotFound(_) => "item_path_not_found",
+            SynParserError::DuplicateModulePath(_) => "duplicate_module_path",
+            SynParserError::ExternalItemNotResolved(_) => "external_item_not_resolved",
+            SynParserError::ModuletreeRelationNotFound(_, _) => "moduletree_relation_not_found",
+        }
+    }
+
+    fn diagnostic_summary(&self) -> String {
+        self.to_string()
+    }
+
+    fn diagnostic_detail(&self) -> Option<String> {
+        match self {
+            SynParserError::MultipleErrors(errors) => {
+                Some(format!("{} child errors were collected", errors.len()))
+            }
+            SynParserError::PartialParsing { successes, errors } => Some(format!(
+                "{} files parsed successfully; {} files failed",
+                successes.0.len(),
+                errors.len()
+            )),
+            SynParserError::Discovery(err) => err.diagnostic_detail(),
+            SynParserError::Syn { message, .. } => Some(message.clone()),
+            _ => None,
+        }
+    }
+
+    fn diagnostic_source_path(&self) -> Option<&Path> {
+        match self {
+            SynParserError::Discovery(err) => err.diagnostic_source_path(),
+            SynParserError::Syn { source_path, .. } => Some(source_path.as_path()),
+            _ => None,
+        }
+    }
+
+    fn diagnostic_span(&self) -> Option<&dyn DiagnosticSpan> {
+        match self {
+            SynParserError::Discovery(err) => err.diagnostic_span(),
+            SynParserError::Syn {
+                source_span: Some(source_span),
+                ..
+            } => Some(source_span),
+            _ => None,
+        }
+    }
+
+    fn diagnostic_context(&self) -> Vec<DiagnosticField> {
+        match self {
+            SynParserError::Discovery(err) => err.diagnostic_context(),
+            SynParserError::MultipleErrors(errors) => vec![DiagnosticField {
+                key: "error_count",
+                value: errors.len().to_string(),
+            }],
+            SynParserError::PartialParsing { successes, errors } => vec![
+                DiagnosticField {
+                    key: "success_count",
+                    value: successes.0.len().to_string(),
+                },
+                DiagnosticField {
+                    key: "error_count",
+                    value: errors.len().to_string(),
+                },
+            ],
+            SynParserError::Syn { source_path, .. } => vec![DiagnosticField {
+                key: "source_path",
+                value: source_path.display().to_string(),
+            }],
+            _ => Vec::new(),
+        }
+    }
+
+    fn diagnostic_emission_site(&self) -> Option<&DiagnosticSite> {
+        match self {
+            SynParserError::Discovery(err) => err.diagnostic_emission_site(),
+            SynParserError::Syn { emission_site, .. } => Some(emission_site),
+            _ => None,
+        }
+    }
+
+    fn diagnostic_backtrace(&self) -> Option<&Backtrace> {
+        match self {
+            SynParserError::Discovery(err) => err.diagnostic_backtrace(),
+            SynParserError::Syn { backtrace, .. } => Some(backtrace.as_ref()),
+            _ => None,
+        }
+    }
+}
+
 // Optional: Implement From<syn::Error> for SynParserError
 impl From<syn::Error> for SynParserError {
     fn from(err: syn::Error) -> Self {
         // Print immediately so you see it even if the caller swallows it
         tracing::trace!("   syn::Error: {}", err);
         tracing::trace!("   span: {}", err.to_compile_error());
-        SynParserError::Syn(err.to_string())
+        SynParserError::syn_parse_in_file(PathBuf::from("<unknown>"), err)
+    }
+}
+
+fn source_span_from_syn_error(source_path: &Path, err: &syn::Error) -> Option<SourceSpan> {
+    let span = err.span();
+    let start = span.start();
+    let end = span.end();
+    let mut source_span = SourceSpan::new(source_path.to_path_buf());
+    source_span.line = Some(start.line as u32);
+    source_span.col = Some(start.column.saturating_add(1) as u32);
+    source_span.start = None;
+    source_span.end = None;
+    if start.line == 0 && start.column == 0 && end.line == 0 && end.column == 0 {
+        None
+    } else {
+        Some(source_span)
     }
 }

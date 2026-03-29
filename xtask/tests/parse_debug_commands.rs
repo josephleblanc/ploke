@@ -441,12 +441,16 @@ fn parse_debug_corpus_triage_indexes_failures_and_writes_cluster_stubs() {
     );
     std::fs::write(&summary_path, summary_json).expect("write summary");
 
+    let expected_summary_path = summary_path.display().to_string();
     let cmd = ParseDebugCli {
         cmd: ParseDebugCmd::CorpusTriage(DebugCorpusTriage {
             run: summary_path,
             artifact_dir: temp.path().join("artifacts"),
             out_dir: None,
             no_report_stubs: false,
+            watch: false,
+            interval_secs: 10,
+            exit_when_complete: false,
         }),
     };
     let ctx = CommandContext::new().expect("CommandContext");
@@ -454,6 +458,11 @@ fn parse_debug_corpus_triage_indexes_failures_and_writes_cluster_stubs() {
     match out {
         ParseOutput::Debug(DebugOutput::CorpusTriage(o)) => {
             assert_eq!(o.run_id, "run-555");
+            assert_eq!(o.snapshot_mode, "complete");
+            assert_eq!(
+                o.summary_path.as_deref(),
+                Some(expected_summary_path.as_str())
+            );
             assert_eq!(o.failure_count, 3);
             assert_eq!(o.cluster_count, 2);
             assert_eq!(o.pending_report_count, 2);
@@ -481,6 +490,256 @@ fn parse_debug_corpus_triage_indexes_failures_and_writes_cluster_stubs() {
         }
         other => panic!("unexpected output: {other:?}"),
     }
+}
+
+#[test]
+fn parse_debug_corpus_triage_reads_in_progress_run_without_top_level_summary() {
+    let temp = TempDir::new().expect("tempdir");
+    let run_dir = temp.path().join("run-777");
+    let target_dir = run_dir.join("workspace__fail");
+    std::fs::create_dir_all(&target_dir).expect("create target dir");
+    let target_summary_path = target_dir.join("summary.json");
+    std::fs::write(
+        &target_summary_path,
+        r#"{
+  "target": "workspace/fail",
+  "normalized_repo": "workspace/fail",
+  "clone_url": "https://github.com/workspace/fail.git",
+  "datasets": ["list-a"],
+  "checkout_path": "/tmp/checkouts/workspace__fail",
+  "artifact_dir": "/tmp/artifacts/workspace__fail",
+  "repository_kind": "workspace",
+  "recommended_parser": "parse_workspace_with_config",
+  "workspace_member_count": 1,
+  "classification_error": null,
+  "classification_diagnostic": null,
+  "clone": { "ok": true, "action": "reused", "error": null },
+  "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "discovery": null,
+  "resolve": null,
+  "merge": null,
+  "summary_path": "/tmp/artifacts/workspace__fail/summary.json",
+  "workspace_probe": {
+    "workspace_root": "/tmp/checkouts/workspace__fail",
+    "member_count": 1,
+    "failed_members": 1,
+    "summary_path": "/tmp/artifacts/workspace__fail/workspace_probe/workspace_summary.json",
+    "members": [
+      {
+        "path": "/tmp/checkouts/workspace__fail/gamma",
+        "label": "gamma",
+        "artifact_dir": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma",
+        "discovery": { "ok": true, "panic": false, "duration_ms": 2, "file_count": 3, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": null, "error": null, "failure_artifact_path": null },
+        "resolve": { "ok": false, "panic": false, "duration_ms": 8, "file_count": null, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": "error", "error": "resolve failed", "failure_artifact_path": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma/resolve/failure.json" },
+        "merge": null
+      }
+    ]
+  }
+}"#,
+    )
+    .expect("write target summary");
+
+    let cmd = ParseDebugCli {
+        cmd: ParseDebugCmd::CorpusTriage(DebugCorpusTriage {
+            run: run_dir,
+            artifact_dir: temp.path().join("artifacts"),
+            out_dir: None,
+            no_report_stubs: false,
+            watch: false,
+            interval_secs: 10,
+            exit_when_complete: false,
+        }),
+    };
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd
+        .execute(&ctx)
+        .expect("parse debug corpus-triage partial");
+    match out {
+        ParseOutput::Debug(DebugOutput::CorpusTriage(o)) => {
+            assert_eq!(o.run_id, "run-777");
+            assert_eq!(o.snapshot_mode, "partial");
+            assert!(o.summary_path.is_none());
+            assert_eq!(o.failure_count, 1);
+            assert_eq!(o.cluster_count, 1);
+            assert!(Path::new(&o.triage_dir).join("index.json").is_file());
+        }
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_debug_corpus_triage_reads_workspace_summary_without_target_summary() {
+    let temp = TempDir::new().expect("tempdir");
+    let run_dir = temp.path().join("run-778");
+    let target_dir = run_dir.join("workspace__fail");
+    let workspace_probe_dir = target_dir.join("workspace_probe");
+    std::fs::create_dir_all(&workspace_probe_dir).expect("create workspace probe dir");
+    let workspace_summary_path = workspace_probe_dir.join("workspace_summary.json");
+    std::fs::write(
+        &workspace_summary_path,
+        r#"{
+  "workspace_root": "/tmp/checkouts/workspace__fail",
+  "member_count": 1,
+  "failed_members": 1,
+  "summary_path": null,
+  "members": [
+    {
+      "path": "/tmp/checkouts/workspace__fail/gamma",
+      "label": "gamma",
+      "artifact_dir": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma",
+      "discovery": { "ok": true, "panic": false, "duration_ms": 2, "file_count": 3, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": null, "error": null, "failure_artifact_path": null },
+      "resolve": { "ok": false, "panic": true, "duration_ms": 8, "file_count": null, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": "panic", "error": "thread 'worker' panicked at Duplicate Macro node ID at crates/elsewhere.rs:3:7", "failure_artifact_path": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma/resolve/failure.json" },
+      "merge": null
+    }
+  ]
+}"#,
+    )
+    .expect("write workspace summary");
+
+    let cmd = ParseDebugCli {
+        cmd: ParseDebugCmd::CorpusTriage(DebugCorpusTriage {
+            run: run_dir,
+            artifact_dir: temp.path().join("artifacts"),
+            out_dir: None,
+            no_report_stubs: false,
+            watch: false,
+            interval_secs: 10,
+            exit_when_complete: false,
+        }),
+    };
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd
+        .execute(&ctx)
+        .expect("parse debug corpus-triage workspace-only partial");
+    match out {
+        ParseOutput::Debug(DebugOutput::CorpusTriage(o)) => {
+            assert_eq!(o.run_id, "run-778");
+            assert_eq!(o.snapshot_mode, "partial");
+            assert!(o.summary_path.is_none());
+            assert_eq!(o.failure_count, 1);
+            assert_eq!(o.cluster_count, 1);
+            assert_eq!(o.failures[0].normalized_repo, "workspace/fail");
+            assert_eq!(o.failures[0].member_label.as_deref(), Some("gamma"));
+            assert!(
+                o.failures[0]
+                    .workspace_summary_path
+                    .as_deref()
+                    .is_some_and(|p| p.ends_with("workspace_summary.json"))
+            );
+        }
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_debug_corpus_triage_preserves_existing_pending_report() {
+    let temp = TempDir::new().expect("tempdir");
+    let run_dir = temp.path().join("run-779");
+    std::fs::create_dir_all(&run_dir).expect("create run dir");
+    let summary_path = run_dir.join("summary.json");
+    std::fs::write(
+        &summary_path,
+        r#"{
+  "run_id": "run-779",
+  "checkout_root": "/tmp/checkouts",
+  "artifact_root": "/tmp/artifacts",
+  "list_files": [],
+  "requested_entries": 1,
+  "unique_targets": 1,
+  "processed_targets": 1,
+  "single_crate_targets": 1,
+  "workspace_targets": 0,
+  "skipped_targets": 0,
+  "cloned_targets": 0,
+  "reused_targets": 1,
+  "clone_failures": 0,
+  "discovery_failures": 0,
+  "resolve_failures": 1,
+  "merge_failures": 0,
+  "panic_failures": 1,
+  "workspace_mode": "skip",
+  "targets": [
+    {
+      "target": "single/fail",
+      "normalized_repo": "single/fail",
+      "clone_url": "https://github.com/single/fail.git",
+      "datasets": ["list-a"],
+      "checkout_path": "/tmp/checkouts/single__fail",
+      "artifact_dir": "/tmp/artifacts/single__fail",
+      "repository_kind": "single_crate",
+      "recommended_parser": "try_run_phases_and_merge",
+      "workspace_member_count": null,
+      "classification_error": null,
+      "classification_diagnostic": null,
+      "clone": { "ok": true, "action": "reused", "error": null },
+      "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "discovery": { "ok": true, "panic": false, "duration_ms": 2, "file_count": 3, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": null, "error": null, "failure_artifact_path": null },
+      "resolve": { "ok": false, "panic": true, "duration_ms": 8, "file_count": null, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": "panic", "error": "thread 'worker' panicked at Duplicate Macro node ID at crates/somewhere.rs:9:1", "failure_artifact_path": "/tmp/artifacts/single__fail/resolve/failure.json" },
+      "merge": null,
+      "summary_path": "/tmp/artifacts/single__fail/summary.json",
+      "workspace_probe": null
+    }
+  ]
+}"#,
+    )
+    .expect("write summary");
+
+    let ctx = CommandContext::new().expect("CommandContext");
+    let first = ParseDebugCli {
+        cmd: ParseDebugCmd::CorpusTriage(DebugCorpusTriage {
+            run: summary_path.clone(),
+            artifact_dir: temp.path().join("artifacts"),
+            out_dir: None,
+            no_report_stubs: false,
+            watch: false,
+            interval_secs: 10,
+            exit_when_complete: false,
+        }),
+    }
+    .execute(&ctx)
+    .expect("first triage run");
+
+    let pending_report_path = match first {
+        ParseOutput::Debug(DebugOutput::CorpusTriage(o)) => o.clusters[0]
+            .pending_report_path
+            .clone()
+            .expect("pending report path"),
+        other => panic!("unexpected output: {other:?}"),
+    };
+
+    let preserved = serde_json::json!({
+        "version": 1,
+        "run_id": "run-779",
+        "cluster_key": "resolve|panic|Duplicate Macro node ID",
+        "cluster_slug": "resolve_panic_duplicate_macro_node_id",
+        "status": "in_progress",
+        "notes": ["keep me"]
+    });
+    std::fs::write(
+        &pending_report_path,
+        serde_json::to_string_pretty(&preserved).expect("serialize preserved report"),
+    )
+    .expect("overwrite pending report");
+
+    let second = ParseDebugCli {
+        cmd: ParseDebugCmd::CorpusTriage(DebugCorpusTriage {
+            run: summary_path,
+            artifact_dir: temp.path().join("artifacts"),
+            out_dir: None,
+            no_report_stubs: false,
+            watch: false,
+            interval_secs: 10,
+            exit_when_complete: false,
+        }),
+    };
+    second.execute(&ctx).expect("second triage run");
+
+    let preserved_after: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&pending_report_path).expect("read pending report"),
+    )
+    .expect("parse pending report");
+    assert_eq!(preserved_after["status"], "in_progress");
+    assert_eq!(preserved_after["notes"][0], "keep me");
 }
 
 #[test]

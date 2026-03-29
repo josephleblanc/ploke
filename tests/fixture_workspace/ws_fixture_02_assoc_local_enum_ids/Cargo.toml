@@ -1,0 +1,8 @@
+[workspace]
+members = ["member_const_repro", "member_repro"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"

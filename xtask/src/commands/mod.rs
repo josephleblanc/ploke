@@ -102,6 +102,10 @@ fn format_human_corpus_triage(value: &Value) -> Option<String> {
         .get("run_id")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
+    let snapshot_mode = obj
+        .get("snapshot_mode")
+        .and_then(Value::as_str)
+        .unwrap_or("complete");
     let failure_count = obj
         .get("failure_count")
         .and_then(Value::as_u64)
@@ -133,10 +137,16 @@ fn format_human_corpus_triage(value: &Value) -> Option<String> {
 
     let mut out = String::new();
     out.push_str(&format!("Corpus triage ready: {run_id}\n"));
+    out.push_str(&format!("Snapshot: {snapshot_mode}\n"));
     out.push_str(&format!("Failures: {failure_count}\n"));
     out.push_str(&format!("Clusters: {cluster_count}\n"));
     out.push_str(&format!("Pending reports: {pending_report_count}\n"));
     out.push_str(&format!("Triage dir: {triage_dir}\n"));
+    if let Some(summary_path) = obj.get("summary_path").and_then(Value::as_str) {
+        out.push_str(&format!("Summary: {summary_path}\n"));
+    } else {
+        out.push_str("Summary: in-progress (target and workspace summaries)\n");
+    }
     out.push_str(&format!("Failures index: {failures_path}\n"));
     out.push_str(&format!("Cluster index: {clusters_path}\n"));
     out.push_str(&format!("Report template: {template_path}\n"));
@@ -180,7 +190,9 @@ fn format_human_corpus_triage(value: &Value) -> Option<String> {
         "- Query clusters: jq -c '.clusters[]' {}\n",
         clusters_path
     ));
-    out.push_str("- Assign one sub-agent per cluster stub under reports/pending/\n");
+    out.push_str(
+        "- Dispatch sub-agents on new failures as they appear; use clusters to dedupe follow-up work\n",
+    );
 
     Some(out.trim_end().to_string())
 }
@@ -864,14 +876,33 @@ fn summarize_target_failure_source(
     obj: &serde_json::Map<String, Value>,
     checkout_root: &str,
 ) -> Option<String> {
-    let diagnostic = obj
-        .get("classification_diagnostic")
-        .and_then(Value::as_object)?;
-    let source_path = diagnostic.get("source_path").and_then(Value::as_str)?;
-    let mut line = format!(
-        "  source: {}",
-        shorten_path_for_display(checkout_root, source_path)
-    );
+    let diagnostic = target_failure_diagnostic(obj)?;
+    let mut line = if let Some(source_path) = diagnostic.get("source_path").and_then(Value::as_str)
+    {
+        format!(
+            "  source: {}",
+            shorten_path_for_display(checkout_root, source_path)
+        )
+    } else {
+        let child_sources = diagnostic
+            .get("children")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|child| {
+                child
+                    .as_object()
+                    .and_then(|child| child.get("source_path"))
+                    .and_then(Value::as_str)
+                    .map(|path| shorten_path_for_display(checkout_root, path))
+            })
+            .take(3)
+            .collect::<Vec<_>>();
+        if child_sources.is_empty() {
+            return None;
+        }
+        format!("  child sources: {}", child_sources.join(", "))
+    };
     if let Some(span) = diagnostic.get("source_span").and_then(Value::as_object) {
         let rendered = render_source_span(span);
         if !rendered.is_empty() {
@@ -883,14 +914,78 @@ fn summarize_target_failure_source(
 }
 
 fn summarize_target_failure_emission_site(obj: &serde_json::Map<String, Value>) -> Option<String> {
-    let diagnostic = obj
-        .get("classification_diagnostic")
-        .and_then(Value::as_object)?;
-    let emission_site = diagnostic.get("emission_site").and_then(Value::as_object)?;
+    let diagnostic = target_failure_diagnostic(obj)?;
+    let emission_site = diagnostic
+        .get("emission_site")
+        .and_then(Value::as_object)
+        .or_else(|| {
+            diagnostic
+                .get("children")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find_map(|child| child.as_object()?.get("emission_site")?.as_object())
+        })?;
     let file = emission_site.get("file").and_then(Value::as_str)?;
     let line = emission_site.get("line").and_then(Value::as_u64)?;
     let column = emission_site.get("column").and_then(Value::as_u64)?;
     Some(format!("  emitted: {file}:{line}:{column}\n"))
+}
+
+fn target_failure_diagnostic(
+    obj: &serde_json::Map<String, Value>,
+) -> Option<&serde_json::Map<String, Value>> {
+    if let Some(diagnostic) = obj
+        .get("classification_diagnostic")
+        .and_then(Value::as_object)
+    {
+        return Some(diagnostic);
+    }
+
+    for stage_name in ["discovery", "resolve", "merge"] {
+        let Some(stage_obj) = obj.get(stage_name).and_then(Value::as_object) else {
+            continue;
+        };
+        if stage_obj
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if let Some(diagnostic) = stage_obj.get("diagnostic").and_then(Value::as_object) {
+            return Some(diagnostic);
+        }
+    }
+
+    let probe = obj.get("workspace_probe").and_then(Value::as_object)?;
+    for member in probe
+        .get("members")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(member_obj) = member.as_object() else {
+            continue;
+        };
+        for stage_name in ["discovery", "resolve", "merge"] {
+            let Some(stage_obj) = member_obj.get(stage_name).and_then(Value::as_object) else {
+                continue;
+            };
+            if stage_obj
+                .get("ok")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            if let Some(diagnostic) = stage_obj.get("diagnostic").and_then(Value::as_object) {
+                return Some(diagnostic);
+            }
+        }
+    }
+
+    None
 }
 
 fn first_failed_workspace_member(obj: &serde_json::Map<String, Value>) -> Option<String> {
@@ -939,10 +1034,7 @@ fn render_corpus_backtrace_summaries(obj: &serde_json::Map<String, Value>) -> St
         let Some(target_obj) = target.as_object() else {
             continue;
         };
-        let Some(diagnostic) = target_obj
-            .get("classification_diagnostic")
-            .and_then(Value::as_object)
-        else {
+        let Some(diagnostic) = target_failure_diagnostic(target_obj) else {
             continue;
         };
         let Some(backtrace) = diagnostic.get("backtrace").and_then(Value::as_str) else {
@@ -989,10 +1081,7 @@ fn render_corpus_backtraces_full(obj: &serde_json::Map<String, Value>) -> String
         let Some(target_obj) = target.as_object() else {
             continue;
         };
-        let Some(diagnostic) = target_obj
-            .get("classification_diagnostic")
-            .and_then(Value::as_object)
-        else {
+        let Some(diagnostic) = target_failure_diagnostic(target_obj) else {
             continue;
         };
         let Some(backtrace) = diagnostic.get("backtrace").and_then(Value::as_str) else {
@@ -1607,59 +1696,100 @@ mod tests {
 
     #[test]
     fn test_output_format_human_corpus_failures_first() {
-        let data = serde_json::json!({
-            "kind": "corpus",
-            "run_id": "run-456",
-            "checkout_root": "/tmp/checkouts",
-            "artifact_root": "/tmp/artifacts",
-            "workspace_mode": "skip",
-            "list_files": ["/tmp/list-a.txt", "/tmp/list-b.txt"],
-            "requested_entries": 2,
-            "unique_targets": 2,
-            "processed_targets": 2,
-            "single_crate_targets": 2,
-            "workspace_targets": 0,
-            "reused_targets": 2,
-            "cloned_targets": 0,
-            "skipped_targets": 0,
-            "clone_failures": 0,
-            "discovery_failures": 1,
-            "resolve_failures": 0,
-            "merge_failures": 0,
-            "panic_failures": 1,
-            "targets": [
-                {
-                    "normalized_repo": "bad/repo",
-                    "repository_kind": "single_crate",
-                    "workspace_member_count": null,
-                    "classification_error": null,
-                    "commit_sha": "1234567890abcdef1234567890abcdef12345678",
-                    "summary_path": "/tmp/artifacts/bad__repo/summary.json",
-                    "clone": { "ok": true, "action": "reused", "error": null },
-                    "discovery": { "ok": false, "panic": true, "duration_ms": 17, "file_count": null, "nodes_parsed": null, "relations_found": null, "failure_kind": "panic", "error": "thread 'worker' panicked at parser invariant violated\nextra details", "failure_artifact_path": "/tmp/artifacts/bad__repo/discovery/failure.json" },
-                    "resolve": null,
-                    "merge": null
-                },
-                {
-                    "normalized_repo": "good/repo",
-                    "repository_kind": "single_crate",
-                    "workspace_member_count": null,
-                    "classification_error": null,
-                    "commit_sha": "88a7a18a2ec3e673ff3217da83d56cdadd9a99a4",
-                    "summary_path": "/tmp/artifacts/good__repo/summary.json",
-                    "clone": { "ok": true, "action": "reused", "error": null },
-                    "discovery": { "ok": true, "panic": false, "duration_ms": 1, "file_count": 98, "nodes_parsed": null, "relations_found": null, "failure_kind": null, "error": null },
-                    "resolve": { "ok": true, "panic": false, "duration_ms": 80, "file_count": null, "nodes_parsed": 757, "relations_found": 484, "failure_kind": null, "error": null },
-                    "merge": { "ok": true, "panic": false, "duration_ms": 125, "file_count": null, "nodes_parsed": 725, "relations_found": 437, "failure_kind": null, "error": null }
-                }
-            ]
-        });
+        let data: serde_json::Value = serde_json::from_str(
+            r#"{
+  "kind": "corpus",
+  "run_id": "run-456",
+  "checkout_root": "/tmp/checkouts",
+  "artifact_root": "/tmp/artifacts",
+  "workspace_mode": "skip",
+  "list_files": ["/tmp/list-a.txt", "/tmp/list-b.txt"],
+  "requested_entries": 2,
+  "unique_targets": 2,
+  "processed_targets": 2,
+  "single_crate_targets": 2,
+  "workspace_targets": 0,
+  "reused_targets": 2,
+  "cloned_targets": 0,
+  "skipped_targets": 0,
+  "clone_failures": 0,
+  "discovery_failures": 1,
+  "resolve_failures": 0,
+  "merge_failures": 0,
+  "panic_failures": 1,
+  "targets": [
+    {
+      "normalized_repo": "bad/repo",
+      "repository_kind": "single_crate",
+      "workspace_member_count": null,
+      "classification_error": null,
+      "commit_sha": "1234567890abcdef1234567890abcdef12345678",
+      "summary_path": "/tmp/artifacts/bad__repo/summary.json",
+      "clone": { "ok": true, "action": "reused", "error": null },
+      "discovery": {
+        "ok": false,
+        "panic": true,
+        "duration_ms": 17,
+        "file_count": null,
+        "nodes_parsed": null,
+        "relations_found": null,
+        "failure_kind": "panic",
+        "error": "thread 'worker' panicked at parser invariant violated\nextra details",
+        "diagnostic": {
+          "kind": "internal_state",
+          "summary": "thread 'worker' panicked at parser invariant violated",
+          "detail": "extra details",
+          "source_path": null,
+          "source_span": null,
+          "emission_site": null,
+          "backtrace": "stack backtrace:\n  0: syn_parser::parser::graph",
+          "context": [],
+          "children": [
+            {
+              "kind": "syn_parse",
+              "summary": "Syn parsing error: expected one of: `fn`, `struct`",
+              "detail": "expected one of: `fn`, `struct`",
+              "source_path": "/tmp/checkouts/bad__repo/src/broken.rs",
+              "source_span": { "start": null, "end": null, "line": 9, "col": 3 },
+              "emission_site": { "file": "crates/ingest/syn_parser/src/parser/visitor/mod.rs", "line": 542, "column": 21 },
+              "backtrace": null,
+              "context": [],
+              "children": []
+            }
+          ]
+        },
+        "failure_artifact_path": "/tmp/artifacts/bad__repo/discovery/failure.json"
+      },
+      "resolve": null,
+      "merge": null
+    },
+    {
+      "normalized_repo": "good/repo",
+      "repository_kind": "single_crate",
+      "workspace_member_count": null,
+      "classification_error": null,
+      "commit_sha": "88a7a18a2ec3e673ff3217da83d56cdadd9a99a4",
+      "summary_path": "/tmp/artifacts/good__repo/summary.json",
+      "clone": { "ok": true, "action": "reused", "error": null },
+      "discovery": { "ok": true, "panic": false, "duration_ms": 1, "file_count": 98, "nodes_parsed": null, "relations_found": null, "failure_kind": null, "error": null },
+      "resolve": { "ok": true, "panic": false, "duration_ms": 80, "file_count": null, "nodes_parsed": 757, "relations_found": 484, "failure_kind": null, "error": null },
+      "merge": { "ok": true, "panic": false, "duration_ms": 125, "file_count": null, "nodes_parsed": 725, "relations_found": 437, "failure_kind": null, "error": null }
+    }
+  ]
+}"#,
+        )
+        .expect("valid json");
 
         let formatted = OutputFormat::Human.format(&data).unwrap();
         assert!(formatted.contains(
             "Failure breakdown: clone=0, classification=0, discovery=1, resolve=0, merge=0, panic=1"
         ));
         assert!(formatted.contains("\nFailures:\n- bad/repo: discovery panic after 17ms: thread 'worker' panicked at parser invariant violated extra details [reused, 1234567890ab]\n"));
+        assert!(formatted.contains("  child sources: bad__repo/src/broken.rs\n"));
+        assert!(
+            formatted
+                .contains("  emitted: crates/ingest/syn_parser/src/parser/visitor/mod.rs:542:21\n")
+        );
         assert!(formatted.contains("  failure: bad__repo/discovery/failure.json\n"));
         assert!(formatted.contains(
             "\nNext steps:\n- View this run again: cargo xtask parse debug corpus-show run-456\n"
@@ -2098,6 +2228,7 @@ mod tests {
         let data = serde_json::json!({
             "kind": "corpus_triage",
             "run_id": "run-555",
+            "snapshot_mode": "complete",
             "summary_path": "/tmp/artifacts/run-555/summary.json",
             "triage_dir": "/tmp/artifacts/run-555/triage",
             "failures_path": "/tmp/artifacts/run-555/triage/failures.jsonl",
@@ -2136,14 +2267,19 @@ mod tests {
 
         let formatted = OutputFormat::Human.format(&data).unwrap();
         assert!(formatted.contains("Corpus triage ready: run-555\n"));
+        assert!(formatted.contains("Snapshot: complete\n"));
         assert!(formatted.contains("Failures: 3\n"));
         assert!(formatted.contains("Clusters: 2\n"));
         assert!(formatted.contains("Pending reports: 2\n"));
+        assert!(formatted.contains("Summary: /tmp/artifacts/run-555/summary.json\n"));
         assert!(
             formatted.contains("Top clusters:\n- [2] resolve/panic: Duplicate Macro node ID\n")
         );
         assert!(formatted.contains(
             "Next steps:\n- Query failures: jq -c '.failures[]' /tmp/artifacts/run-555/triage/index.json\n"
+        ));
+        assert!(formatted.contains(
+            "Dispatch sub-agents on new failures as they appear; use clusters to dedupe"
         ));
     }
 

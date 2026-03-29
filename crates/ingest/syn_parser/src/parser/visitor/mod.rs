@@ -538,9 +538,7 @@ pub fn analyze_files_parallel(
 
                 )
                 .map(|pg| set_root_context(crate_context, &selected_roots, pg))
-                .map_err(|e| {
-                    SynParserError::Syn(format!("{} (file: {})", e, input.file_path.display()))
-                })
+                .map_err(|e| SynParserError::syn_parse_in_file(input.file_path.clone(), e))
                 .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(crate_context, pg)) });
 
                 log::debug!(target: "debug_dup", "file path in par_iter: {}", input.file_path.display());
@@ -554,7 +552,7 @@ pub fn analyze_files_parallel(
                 .map(|pg| set_root_context(crate_context, &selected_roots, pg))
                 .map_err(|e| {
                     tracing::trace!("Error found: {} (file: {})", e, input.file_path.display());
-                    SynParserError::Syn(format!("{} (file: {})", e, input.file_path.display()))
+                    SynParserError::syn_parse_in_file(input.file_path.clone(), e)
                 })
                 .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(crate_context, pg)) });
                 parsed

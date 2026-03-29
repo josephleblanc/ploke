@@ -5,7 +5,7 @@
 Corpus Triage Workflow Setup
 
 # Task Description
-Define a repeatable workflow for surveying `parse debug corpus` failures with sub-agents, using persisted run artifacts, clustered failure signatures, and machine-queryable JSON reports.
+Define a repeatable workflow for surveying `parse debug corpus` failures with sub-agents, using persisted run artifacts, machine-queryable JSON reports, and clustered failure signatures for dedupe.
 
 # Related Planning Files
 - [2026-03-28_error-diagnostic-rollout-plan.md](/home/brasides/code/ploke/docs/active/agents/2026-03-28_error-diagnostic-rollout-plan.md)
@@ -31,9 +31,10 @@ cargo xtask parse debug corpus-triage <run-id>
 - `reports/_report_template.json`: schema template for investigation output
 - `reports/pending/*.json`: one stub per failure cluster
 
-4. Assign one sub-agent per cluster stub, not one sub-agent per raw failure.
+4. Dispatch a sub-agent as soon as a new failure appears in `index.json`.
+5. Use `clusters.json` and the pending report stubs to dedupe follow-up work across matching failures.
 
-5. Have each sub-agent update its assigned pending report with:
+6. Have each sub-agent update the relevant pending report with:
 - suspected root cause
 - confidence
 - fix-vs-document assessment
