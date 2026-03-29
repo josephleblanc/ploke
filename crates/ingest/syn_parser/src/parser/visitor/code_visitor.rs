@@ -1681,7 +1681,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
-                self.pop_secondary_scope(&method_name);
+                self.pop_assoc_scope(&method_name);
 
                 // Extract doc comments and other attributes for methods
                 let docstring = extract_docstring(&method.attrs);
@@ -1818,6 +1818,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         self.debug_new_id(&trait_name, trait_any_id); // Now uses trace!
 
+        let trait_typed_id: TraitNodeId = trait_any_id.try_into().unwrap();
+        self.push_primary_scope(
+            &trait_name,
+            PrimaryNodeId::from(trait_typed_id),
+            &provisional_effective_cfgs,
+        );
+
         // Process methods
         let mut methods = Vec::new();
         for item in &item_trait.items {
@@ -1881,7 +1888,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
-                self.pop_secondary_scope(&method_name);
+                self.pop_assoc_scope(&method_name);
 
                 // Extract doc comments and other attributes for methods
                 let docstring = extract_docstring(&method.attrs);
@@ -1924,14 +1931,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Placeholder for other associated items (consts, types)
         let associated_consts: Vec<ConstNode> = Vec::new(); // TODO: Populate this
         let associated_types: Vec<TypeAliasNode> = Vec::new(); // TODO: Populate this
-
-        // Convert trait ID and push scope
-        let trait_typed_id: TraitNodeId = trait_any_id.try_into().unwrap();
-        self.push_primary_scope(
-            &trait_name,
-            PrimaryNodeId::from(trait_typed_id), // Use PrimaryNodeId for scope
-            &provisional_effective_cfgs,
-        ); // Clone cfgs for push
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_trait.generics);

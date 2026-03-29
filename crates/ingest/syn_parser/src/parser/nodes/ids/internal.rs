@@ -158,7 +158,8 @@ impl<T> AsAnyNodeId for T where T: AnyTypedId + Into<AnyNodeId> {}
 // have it be a sibling or perhaps child of `visitor.rs`. Worth considering. Not today.
 pub(in crate::parser) trait GeneratesAnyNodeId {
     /// Helper to generate a synthetic NodeId using the current visitor state.
-    /// Uses the last ID pushed onto `current_primary_defn_scope` as the parent scope ID.
+    /// Uses the last active scope ID from the primary/associated/secondary scope stacks as the
+    /// parent scope ID.
     /// Accepts the calculated hash bytes of the effective CFG strings.
     fn generate_synthetic_node_id(
         &self,
@@ -172,7 +173,7 @@ pub(in crate::parser) trait GeneratesAnyNodeId {
         name: &str,
         item_kind: ItemKind,
         cfg_bytes: Option<&[u8]>,
-        primary_parent_scope_id: Option<NodeId>,
+        parent_scope_id: Option<NodeId>,
     ) {
         if let Ok(debug_target_item) = std::env::var("ID_REGEN_TARGET") {
             if log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug)
@@ -190,7 +191,7 @@ pub(in crate::parser) trait GeneratesAnyNodeId {
                     &self.current_module_path().log_path_debug(), // This is the 'relative_path' for the item's ID context
                     name.log_name(),
                     item_kind.log_comment_debug(),
-                    primary_parent_scope_id.log_id_debug(), // The actual parent_scope_id used by visitor
+                    parent_scope_id.log_id_debug(), // The actual parent_scope_id used by visitor
                     cfg_bytes.log_comment_debug() // The actual cfg_bytes used by visitor
                 );
             }
@@ -209,15 +210,22 @@ impl GeneratesAnyNodeId for VisitorState {
         item_kind: ItemKind,
         cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
     ) -> AnyNodeId {
-        // Get the last pushed scope ID as the parent, if available
-        let primary_parent_scope_id = self
+        let parent_scope_id = self
             .current_primary_defn_scope
-            .last()
+            .iter()
             .copied()
-            .map(|p_id| p_id.base_id());
+            .map(|pid| pid.as_any())
+            .chain(self.current_assoc_defn_scope.iter().map(|aid| aid.as_any()))
+            .chain(
+                self.current_secondary_defn_scope
+                    .iter()
+                    .map(|sid| sid.as_any()),
+            )
+            .last()
+            .map(|id| id.base_id());
 
         // MODIFIED CONDITION FOR LOGGING:
-        self.log_id_gen(name, item_kind, cfg_bytes, primary_parent_scope_id);
+        self.log_id_gen(name, item_kind, cfg_bytes, parent_scope_id);
 
         let node_id = NodeId::generate_synthetic(
             self.crate_namespace,
@@ -225,8 +233,8 @@ impl GeneratesAnyNodeId for VisitorState {
             &self.current_module_path, // Current module path acts as relative path context
             name,
             item_kind,
-            primary_parent_scope_id, // Pass the parent scope ID from the stack
-            cfg_bytes,               // Pass the provided CFG bytes
+            parent_scope_id, // Pass the parent scope ID from the active scope chain
+            cfg_bytes,       // Pass the provided CFG bytes
         );
 
         match item_kind {
