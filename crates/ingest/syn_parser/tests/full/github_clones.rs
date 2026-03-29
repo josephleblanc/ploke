@@ -5,7 +5,7 @@
 /// construction bugs that smaller fixtures do not expose.
 use ploke_common::fixture_github_clones_dir;
 use syn_parser::{
-    ParseWorkspaceConfig, error::SynParserError, parser::graph::ParsedCodeGraph,
+    ManifestKind, ParseWorkspaceConfig, error::SynParserError, parser::graph::ParsedCodeGraph,
     try_parse_manifest, try_run_phases_and_merge,
 };
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -1518,7 +1518,7 @@ fn diagnose_workspace_bevy_member_min_repro() {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     let ws = fixture_github_clones_dir().join("bevy");
-    let workspace = try_parse_manifest(&ws)
+    let workspace = try_parse_manifest(&ws, ManifestKind::WorkspaceRoot)
         .expect("bevy workspace manifest should parse")
         .workspace
         .expect("bevy fixture should contain [workspace]");

@@ -174,9 +174,7 @@ fn format_human_corpus(value: &Value) -> Option<String> {
     }
 
     if !single_crate_rows.is_empty() {
-        out.push_str(
-            "\nSingle-crate targets (ms=milliseconds, f=files, n=nodes, r=relations):\n",
-        );
+        out.push_str("\nSingle-crate targets (ms=milliseconds, f=files, n=nodes, r=relations):\n");
         out.push_str(&render_single_crate_table(&single_crate_rows));
     }
 
@@ -312,7 +310,8 @@ fn format_human_corpus_target(
     let mut line = format!("- {repo}");
 
     if repository_kind == "workspace" {
-        if let Some(workspace_member_count) = obj.get("workspace_member_count").and_then(Value::as_u64)
+        if let Some(workspace_member_count) =
+            obj.get("workspace_member_count").and_then(Value::as_u64)
         {
             line.push_str(&format!(" ({workspace_member_count} members)"));
         }
@@ -367,7 +366,11 @@ fn summarize_target_failure(obj: &serde_json::Map<String, Value>) -> Option<Stri
         let Some(stage_obj) = stage.as_object() else {
             continue;
         };
-        if stage_obj.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+        if stage_obj
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             continue;
         }
 
@@ -418,7 +421,11 @@ fn summarize_target_failure_path(
         return fallback();
     }
 
-    if obj.get("classification_error").and_then(Value::as_str).is_some() {
+    if obj
+        .get("classification_error")
+        .and_then(Value::as_str)
+        .is_some()
+    {
         return fallback();
     }
 
@@ -426,11 +433,18 @@ fn summarize_target_failure_path(
         let Some(stage_obj) = obj.get(stage_name).and_then(Value::as_object) else {
             continue;
         };
-        if stage_obj.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+        if stage_obj
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             continue;
         }
 
-        if let Some(path) = stage_obj.get("failure_artifact_path").and_then(Value::as_str) {
+        if let Some(path) = stage_obj
+            .get("failure_artifact_path")
+            .and_then(Value::as_str)
+        {
             return Some(("failure", path.to_string()));
         }
         if let Some(path) = stage_obj.get("artifact_path").and_then(Value::as_str) {
@@ -464,9 +478,7 @@ fn summarize_target_failure_source(
     Some(line)
 }
 
-fn summarize_target_failure_emission_site(
-    obj: &serde_json::Map<String, Value>,
-) -> Option<String> {
+fn summarize_target_failure_emission_site(obj: &serde_json::Map<String, Value>) -> Option<String> {
     let diagnostic = obj
         .get("classification_diagnostic")
         .and_then(Value::as_object)?;
@@ -518,7 +530,8 @@ fn shorten_paths_for_display(paths: &[&str]) -> Vec<String> {
         return paths.iter().map(|path| (*path).to_string()).collect();
     };
 
-    paths.iter()
+    paths
+        .iter()
         .map(|path| shorten_path_for_display(&common_root, path))
         .collect()
 }
@@ -542,10 +555,12 @@ fn common_parent_dir(paths: &[&str]) -> Option<String> {
         }
     }
 
-    let common = components.iter().fold(std::path::PathBuf::new(), |mut acc, component| {
-        acc.push(component.as_os_str());
-        acc
-    });
+    let common = components
+        .iter()
+        .fold(std::path::PathBuf::new(), |mut acc, component| {
+            acc.push(component.as_os_str());
+            acc
+        });
 
     if common == Path::new("/") {
         return None;
@@ -624,7 +639,14 @@ fn render_single_crate_table(rows: &[CorpusSingleCrateRow]) -> String {
         .collect();
 
     render_text_table(
-        &["REPO", "CHECKOUT", "COMMIT", "DISCOVERY", "RESOLVE", "MERGE"],
+        &[
+            "REPO",
+            "CHECKOUT",
+            "COMMIT",
+            "DISCOVERY",
+            "RESOLVE",
+            "MERGE",
+        ],
         &rendered_rows,
     )
 }
@@ -666,8 +688,16 @@ fn render_stage_cell(cell: &StageCell, layout: &StageLayout) -> String {
         StageCell::Invalid => "invalid".to_string(),
         StageCell::Present(data) => {
             let mut parts = Vec::new();
-            parts.push(format!("{:<width$}", data.status, width = layout.status_width));
-            parts.push(format!("{:>width$}", data.duration, width = layout.duration_width));
+            parts.push(format!(
+                "{:<width$}",
+                data.status,
+                width = layout.status_width
+            ));
+            parts.push(format!(
+                "{:>width$}",
+                data.duration,
+                width = layout.duration_width
+            ));
             if let Some(metric) = &data.metric_a {
                 parts.push(render_stage_metric(metric, layout.metric_a_width));
             }
@@ -688,7 +718,10 @@ fn render_text_table(headers: &[&str], rows: &[Vec<String>]) -> String {
         return String::new();
     }
 
-    let mut widths: Vec<usize> = headers.iter().map(|header| header.chars().count()).collect();
+    let mut widths: Vec<usize> = headers
+        .iter()
+        .map(|header| header.chars().count())
+        .collect();
     for row in rows {
         for (idx, cell) in row.iter().enumerate() {
             if idx >= widths.len() {
@@ -830,9 +863,10 @@ mod tests {
 
         let formatted = OutputFormat::Human.format(&data).unwrap();
         assert!(formatted.contains("Corpus Run: 2 targets processed"));
-        assert!(formatted.contains(
-            "Single-crate targets (ms=milliseconds, f=files, n=nodes, r=relations):"
-        ));
+        assert!(
+            formatted
+                .contains("Single-crate targets (ms=milliseconds, f=files, n=nodes, r=relations):")
+        );
         assert!(formatted.contains("REPO"));
         assert!(formatted.contains("CHECKOUT"));
         assert!(formatted.contains("DISCOVERY"));
@@ -895,7 +929,9 @@ mod tests {
         });
 
         let formatted = OutputFormat::Human.format(&data).unwrap();
-        assert!(formatted.contains("Failure breakdown: clone=0, classification=0, discovery=1, resolve=0, merge=0, panic=1"));
+        assert!(formatted.contains(
+            "Failure breakdown: clone=0, classification=0, discovery=1, resolve=0, merge=0, panic=1"
+        ));
         assert!(formatted.contains("\nFailures:\n- bad/repo: discovery panic after 17ms: thread 'worker' panicked at parser invariant violated extra details [reused, 1234567890ab]\n"));
         assert!(formatted.contains("  failure: bad__repo/discovery/failure.json\n"));
         assert!(formatted.contains(
@@ -934,16 +970,17 @@ mod tests {
                     "normalized_repo": "fail/repo",
                     "repository_kind": "unknown",
                     "workspace_member_count": null,
-                    "classification_error": "Failed to parse workspace Cargo.toml at /tmp/checkouts/fail__repo/Cargo.toml",
+                    "classification_error": "Failed to parse manifest at /tmp/checkouts/fail__repo/Cargo.toml (workspace_root): missing field `members`",
                     "classification_diagnostic": {
-                        "kind": "workspace_manifest_parse",
-                        "summary": "Failed to parse workspace Cargo.toml at /tmp/checkouts/fail__repo/Cargo.toml",
+                        "kind": "manifest_parse",
+                        "summary": "Failed to parse manifest at /tmp/checkouts/fail__repo/Cargo.toml (workspace_root): missing field `members`",
                         "detail": "missing field `members`",
                         "source_path": "/tmp/checkouts/fail__repo/Cargo.toml",
                         "source_span": { "start": 10, "end": 19, "line": 1, "col": 11 },
-                        "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/workspace.rs", "line": 191, "column": 13 },
+                        "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/error.rs", "line": 105, "column": 26 },
                         "backtrace": "stack backtrace:\n  0: syn_parser::discovery::workspace",
                         "context": [
+                            { "key": "manifest_kind", "value": "workspace_root" },
                             { "key": "manifest_path", "value": "/tmp/checkouts/fail__repo/Cargo.toml" }
                         ]
                     },
@@ -1002,12 +1039,19 @@ mod tests {
         });
 
         let formatted = OutputFormat::Human.format(&data).unwrap();
-        assert!(formatted.contains("Corpus Run: 5 targets processed, 5 reused, 0 cloned, 0 skipped, 1 failures"));
+        assert!(formatted.contains(
+            "Corpus Run: 5 targets processed, 5 reused, 0 cloned, 0 skipped, 1 failures"
+        ));
         assert!(formatted.contains("Kinds: 2 single-crate, 2 workspace, 1 failed classification"));
-        assert!(formatted.contains("Failure breakdown: clone=0, classification=1, discovery=0, resolve=0, merge=0, panic=0"));
-        assert!(formatted.contains("\nFailures:\n- fail/repo: classification failed: Failed to parse workspace Cargo.toml at /tmp/checkouts/fail__repo/Cargo.toml [reused, aaaaaaaaaaaa]\n"));
+        assert!(formatted.contains(
+            "Failure breakdown: clone=0, classification=1, discovery=0, resolve=0, merge=0, panic=0"
+        ));
+        assert!(formatted.contains("\nFailures:\n- fail/repo: classification failed: Failed to parse manifest at /tmp/checkouts/fail__repo/Cargo.toml (workspace_root): missing field `members` [reused, aaaaaaaaaaaa]\n"));
         assert!(formatted.contains("  source: fail__repo/Cargo.toml:1:11 [10..19]\n"));
-        assert!(formatted.contains("  emitted: crates/ingest/syn_parser/src/discovery/workspace.rs:191:13\n"));
+        assert!(
+            formatted
+                .contains("  emitted: crates/ingest/syn_parser/src/discovery/error.rs:105:26\n")
+        );
         assert!(formatted.contains("  summary: fail__repo/summary.json\n"));
     }
 

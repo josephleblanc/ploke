@@ -34,7 +34,7 @@ use walkdir::WalkDir;
 /// # Returns
 /// A `Result` containing the `DiscoveryOutput` on success, or the first critical
 /// `DiscoveryError` encountered during processing (e.g., `CratePathNotFound`,
-/// `Io` error reading `Cargo.toml`, `TomlParse` error, `SrcNotFound`).
+/// [`DiscoveryError::ManifestRead`] / [`DiscoveryError::ManifestParse`], `SrcNotFound`).
 /// If successful, it means all target crates were processed without critical errors,
 /// though non-fatal warnings might still be present in `DiscoveryOutput.warnings`.
 // NOTE: Known limitations:
@@ -65,22 +65,30 @@ pub fn run_discovery_phase_with_target(
 
         // --- 3.2.2 Implement Cargo.toml Parsing (Critical Errors) ---
         let cargo_toml_path = crate_root_path.join("Cargo.toml");
-        let cargo_content = match fs::read_to_string(&cargo_toml_path) {
+        let manifest_ctx = ManifestCtx {
+            kind: ManifestKind::Crate,
+            manifest_path: cargo_toml_path.clone(),
+            crate_path: Some(crate_root_path.clone()),
+            content: None,
+        };
+        let cargo_content = match fs::read_to_string(&cargo_toml_path)
+            .with_discovery_err(manifest_ctx.clone())
+            .for_read()
+        {
             Ok(content) => content,
             Err(e) => {
                 // Critical error: Cannot proceed without Cargo.toml content.
-                return Err(DiscoveryError::io(cargo_toml_path.clone(), e));
+                return Err(e);
             }
         };
-        let manifest: CargoManifest = match toml::from_str(&cargo_content) {
+        let manifest: CargoManifest = match toml::from_str(&cargo_content)
+            .with_discovery_err(manifest_ctx.with_content(&cargo_content))
+            .for_toml()
+        {
             Ok(m) => m,
             Err(e) => {
                 // Critical error: Invalid TOML structure prevents further processing.
-                return Err(DiscoveryError::toml_parse(
-                    cargo_toml_path.clone(),
-                    toml_error_span(cargo_toml_path.clone(), &cargo_content, &e),
-                    e,
-                ));
+                return Err(e);
             }
         };
 
@@ -360,8 +368,8 @@ pub fn run_discovery_phase_with_target(
                     match locate_workspace_manifest(crate_root_path) {
                         Ok((workspace_path, metadata)) => (workspace_path, metadata),
                         Err(e)
-                            if matches!(e, DiscoveryError::WorkspaceManifestRead { .. })
-                                || matches!(e, DiscoveryError::WorkspaceManifestParse { .. })
+                            if matches!(e, DiscoveryError::ManifestRead { .. })
+                                || matches!(e, DiscoveryError::ManifestParse { .. })
                                 || matches!(
                                     e,
                                     DiscoveryError::WorkspaceManifestNotFound { .. }
@@ -1075,7 +1083,7 @@ edition = "2021"
         .unwrap();
         fs::write(crate_root.join("src/lib.rs"), "pub fn demo() {}\n").unwrap();
 
-        let workspace_metadata = try_parse_manifest(&workspace_root)
+        let workspace_metadata = try_parse_manifest(&workspace_root, ManifestKind::WorkspaceRoot)
             .expect("workspace fixture should parse")
             .workspace
             .expect("workspace section should be present");
@@ -1132,7 +1140,7 @@ edition = "2021"
         )
         .unwrap();
 
-        let workspace_metadata = try_parse_manifest(&workspace_root)
+        let workspace_metadata = try_parse_manifest(&workspace_root, ManifestKind::WorkspaceRoot)
             .expect("workspace fixture should parse")
             .workspace
             .expect("workspace section should be present");

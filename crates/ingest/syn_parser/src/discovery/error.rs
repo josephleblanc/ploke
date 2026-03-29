@@ -1,6 +1,7 @@
 use std::backtrace::Backtrace;
-use std::path::{Path, PathBuf};
+use std::fmt;
 use std::panic::Location;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ploke_error::{DiagnosticField, DiagnosticInfo, DiagnosticSite, DiagnosticSpan, SourceSpan};
@@ -9,22 +10,124 @@ use toml;
 
 use thiserror::Error;
 
+/// Classifies which manifest is being read or parsed for diagnostics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ManifestKind {
+    /// The target crate's `Cargo.toml` (e.g. discovery for a member crate).
+    Crate,
+    /// The workspace root `Cargo.toml` when that path is known to be a workspace boundary.
+    WorkspaceRoot,
+    /// A manifest inspected while walking ancestors from a crate (workspace discovery).
+    AncestorWorkspace,
+}
+
+impl fmt::Display for ManifestKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            ManifestKind::Crate => "crate",
+            ManifestKind::WorkspaceRoot => "workspace_root",
+            ManifestKind::AncestorWorkspace => "ancestor_workspace",
+        })
+    }
+}
+
+/// Structured context for manifest read/parse operations and [`WithDiscoveryManifestRead`] /
+/// [`WithDiscoveryManifestToml`].
+#[derive(Clone)]
+pub struct ManifestCtx<'a> {
+    pub kind: ManifestKind,
+    pub manifest_path: PathBuf,
+    pub crate_path: Option<PathBuf>,
+    pub content: Option<&'a str>,
+}
+
+impl<'a> ManifestCtx<'a> {
+    pub fn with_content<'b>(&self, content: &'b str) -> ManifestCtx<'b> {
+        ManifestCtx {
+            kind: self.kind,
+            manifest_path: self.manifest_path.clone(),
+            crate_path: self.crate_path.clone(),
+            content: Some(content),
+        }
+    }
+}
+
+/// Adapter for [`Result<String, std::io::Error>`] → [`DiscoveryError::ManifestRead`].
+pub struct ManifestReadOutcome<'a> {
+    result: Result<String, std::io::Error>,
+    ctx: ManifestCtx<'a>,
+}
+
+/// Maps an I/O result from reading a manifest into [`DiscoveryError::ManifestRead`] via [`ManifestReadOutcome::for_read`].
+pub trait WithDiscoveryManifestRead: Sized {
+    #[track_caller]
+    fn with_discovery_err(self, ctx: ManifestCtx<'_>) -> ManifestReadOutcome<'_>;
+}
+
+impl WithDiscoveryManifestRead for Result<String, std::io::Error> {
+    #[track_caller]
+    fn with_discovery_err(self, ctx: ManifestCtx<'_>) -> ManifestReadOutcome<'_> {
+        ManifestReadOutcome { result: self, ctx }
+    }
+}
+
+impl<'a> ManifestReadOutcome<'a> {
+    #[track_caller]
+    pub fn for_read(self) -> Result<String, DiscoveryError> {
+        let emission_site = DiagnosticSite::from_location(Location::caller());
+        self.result
+            .map_err(|e| DiscoveryError::manifest_read_at_site(self.ctx, e, emission_site.clone()))
+    }
+}
+
+/// Adapter for [`Result<T, toml::de::Error>`] → [`DiscoveryError::ManifestParse`].
+pub struct ManifestTomlOutcome<'a, T> {
+    result: Result<T, toml::de::Error>,
+    ctx: ManifestCtx<'a>,
+}
+
+/// Maps a TOML deserialize error into [`DiscoveryError::ManifestParse`] via [`ManifestTomlOutcome::for_toml`].
+pub trait WithDiscoveryManifestToml<T>: Sized {
+    #[track_caller]
+    fn with_discovery_err(self, ctx: ManifestCtx<'_>) -> ManifestTomlOutcome<'_, T>;
+}
+
+impl<T> WithDiscoveryManifestToml<T> for Result<T, toml::de::Error> {
+    #[track_caller]
+    fn with_discovery_err(self, ctx: ManifestCtx<'_>) -> ManifestTomlOutcome<'_, T> {
+        ManifestTomlOutcome { result: self, ctx }
+    }
+}
+
+impl<'a, T> ManifestTomlOutcome<'a, T> {
+    #[track_caller]
+    pub fn for_toml(self) -> Result<T, DiscoveryError> {
+        let emission_site = DiagnosticSite::from_location(Location::caller());
+        self.result
+            .map_err(|e| DiscoveryError::manifest_parse_at_site(self.ctx, e, emission_site.clone()))
+    }
+}
+
 /// Errors that can occur during the discovery phase.
 #[derive(Error, Debug, Clone)] // Add Clone derive
 pub enum DiscoveryError {
-    /// An I/O error occurred while accessing a path.
-    #[error("I/O error accessing path {path}: {source}")]
-    Io {
-        path: PathBuf,
+    /// Failed to read a `Cargo.toml` (or other manifest path) during discovery.
+    #[error("Failed to read manifest at {manifest_path} ({manifest_kind}): {source}")]
+    ManifestRead {
+        manifest_kind: ManifestKind,
+        manifest_path: PathBuf,
+        crate_path: Option<PathBuf>,
         emission_site: DiagnosticSite,
         backtrace: Arc<Backtrace>,
         #[source]
         source: Arc<std::io::Error>, // Wrap in Arc
     },
-    /// Failed to parse a `Cargo.toml` file.
-    #[error("Failed to parse Cargo.toml at {path}: {source}")]
-    TomlParse {
-        path: PathBuf,
+    /// Failed to deserialize TOML for a manifest.
+    #[error("Failed to parse manifest at {manifest_path} ({manifest_kind}): {source}")]
+    ManifestParse {
+        manifest_kind: ManifestKind,
+        manifest_path: PathBuf,
+        crate_path: Option<PathBuf>,
         span: Option<SourceSpan>,
         emission_site: DiagnosticSite,
         backtrace: Arc<Backtrace>,
@@ -55,31 +158,6 @@ pub enum DiscoveryError {
     /// Multiple non-fatal errors occurred during discovery.
     #[error("Multiple non-fatal errors occurred during discovery")]
     NonFatalErrors(Box<Vec<DiscoveryError>>), // Box to avoid large enum variant
-    /// Failed to read a workspace manifest needed to resolve package version inheritance.
-    #[error(
-        "Failed to read workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path:?}: {source}"
-    )]
-    WorkspaceManifestRead {
-        crate_path: Option<PathBuf>,
-        manifest_path: PathBuf,
-        emission_site: DiagnosticSite,
-        backtrace: Arc<Backtrace>,
-        #[source]
-        source: Arc<std::io::Error>,
-    },
-    /// Failed to parse a workspace manifest needed to resolve package version inheritance.
-    #[error(
-        "Failed to parse workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path:?}: {source}"
-    )]
-    WorkspaceManifestParse {
-        crate_path: Option<PathBuf>,
-        manifest_path: PathBuf,
-        span: Option<SourceSpan>,
-        emission_site: DiagnosticSite,
-        backtrace: Arc<Backtrace>,
-        #[source]
-        source: Arc<toml::de::Error>,
-    },
     /// Could not find a workspace manifest when attempting to resolve `package.version.workspace = true`.
     #[error("Unable to locate workspace Cargo.toml when resolving crate at {crate_path}")]
     WorkspaceManifestNotFound { crate_path: PathBuf },
@@ -158,16 +236,14 @@ pub enum DiscoveryError {
 impl DiagnosticInfo for DiscoveryError {
     fn diagnostic_kind(&self) -> &'static str {
         match self {
-            DiscoveryError::Io { .. } => "discovery_io",
-            DiscoveryError::TomlParse { .. } => "manifest_toml_parse",
+            DiscoveryError::ManifestRead { .. } => "manifest_read",
+            DiscoveryError::ManifestParse { .. } => "manifest_parse",
             DiscoveryError::MissingPackageName { .. } => "manifest_missing_package_name",
             DiscoveryError::MissingPackageVersion { .. } => "manifest_missing_package_version",
             DiscoveryError::CratePathNotFound { .. } => "crate_path_not_found",
             DiscoveryError::Walkdir { .. } => "discovery_walkdir",
             DiscoveryError::SrcNotFound { .. } => "src_not_found",
             DiscoveryError::NonFatalErrors(_) => "discovery_non_fatal_errors",
-            DiscoveryError::WorkspaceManifestRead { .. } => "workspace_manifest_read",
-            DiscoveryError::WorkspaceManifestParse { .. } => "workspace_manifest_parse",
             DiscoveryError::WorkspaceManifestNotFound { .. } => "workspace_manifest_not_found",
             DiscoveryError::WorkspacePackageVersionMissing { .. } => {
                 "workspace_package_version_missing"
@@ -191,28 +267,24 @@ impl DiagnosticInfo for DiscoveryError {
 
     fn diagnostic_detail(&self) -> Option<String> {
         match self {
-            DiscoveryError::TomlParse { source, .. }
-            | DiscoveryError::WorkspaceManifestParse { source, .. } => Some(source.message().into()),
-            DiscoveryError::NonFatalErrors(errors) => {
-                Some(format!("{} non-fatal discovery errors were collected", errors.len()))
-            }
+            DiscoveryError::ManifestParse { source, .. } => Some(source.message().into()),
+            DiscoveryError::NonFatalErrors(errors) => Some(format!(
+                "{} non-fatal discovery errors were collected",
+                errors.len()
+            )),
             _ => None,
         }
     }
 
     fn diagnostic_source_path(&self) -> Option<&Path> {
         match self {
-            DiscoveryError::Io { path, .. }
-            | DiscoveryError::TomlParse { path, .. }
-            | DiscoveryError::MissingPackageName { path }
+            DiscoveryError::ManifestRead { manifest_path, .. }
+            | DiscoveryError::ManifestParse { manifest_path, .. } => Some(manifest_path.as_path()),
+            DiscoveryError::MissingPackageName { path }
             | DiscoveryError::MissingPackageVersion { path }
             | DiscoveryError::CratePathNotFound { path }
             | DiscoveryError::Walkdir { path, .. }
             | DiscoveryError::SrcNotFound { path } => Some(path.as_path()),
-            DiscoveryError::WorkspaceManifestRead { manifest_path, .. }
-            | DiscoveryError::WorkspaceManifestParse { manifest_path, .. } => {
-                Some(manifest_path.as_path())
-            }
             DiscoveryError::WorkspaceManifestNotFound { crate_path }
             | DiscoveryError::WorkspacePackageVersionMissing {
                 crate_path,
@@ -243,8 +315,7 @@ impl DiagnosticInfo for DiscoveryError {
 
     fn diagnostic_span(&self) -> Option<&dyn DiagnosticSpan> {
         match self {
-            DiscoveryError::TomlParse { span, .. }
-            | DiscoveryError::WorkspaceManifestParse { span, .. } => {
+            DiscoveryError::ManifestParse { span, .. } => {
                 span.as_ref().map(|span| span as &dyn DiagnosticSpan)
             }
             _ => None,
@@ -253,20 +324,28 @@ impl DiagnosticInfo for DiscoveryError {
 
     fn diagnostic_context(&self) -> Vec<DiagnosticField> {
         match self {
-            DiscoveryError::WorkspaceManifestRead {
+            DiscoveryError::ManifestRead {
+                manifest_kind,
                 crate_path,
                 manifest_path,
                 ..
             }
-            | DiscoveryError::WorkspaceManifestParse {
+            | DiscoveryError::ManifestParse {
+                manifest_kind,
                 crate_path,
                 manifest_path,
                 ..
             } => {
-                let mut fields = vec![DiagnosticField {
-                    key: "manifest_path",
-                    value: manifest_path.display().to_string(),
-                }];
+                let mut fields = vec![
+                    DiagnosticField {
+                        key: "manifest_kind",
+                        value: manifest_kind.to_string(),
+                    },
+                    DiagnosticField {
+                        key: "manifest_path",
+                        value: manifest_path.display().to_string(),
+                    },
+                ];
                 if let Some(crate_path) = crate_path {
                     fields.push(DiagnosticField {
                         key: "crate_path",
@@ -298,47 +377,70 @@ impl DiagnosticInfo for DiscoveryError {
 
     fn diagnostic_emission_site(&self) -> Option<&DiagnosticSite> {
         match self {
-            DiscoveryError::Io { emission_site, .. }
-            | DiscoveryError::TomlParse { emission_site, .. }
-            | DiscoveryError::Walkdir { emission_site, .. }
-            | DiscoveryError::WorkspaceManifestRead { emission_site, .. }
-            | DiscoveryError::WorkspaceManifestParse { emission_site, .. } => Some(emission_site),
+            DiscoveryError::ManifestRead { emission_site, .. }
+            | DiscoveryError::ManifestParse { emission_site, .. }
+            | DiscoveryError::Walkdir { emission_site, .. } => Some(emission_site),
             _ => None,
         }
     }
 
     fn diagnostic_backtrace(&self) -> Option<&Backtrace> {
         match self {
-            DiscoveryError::Io { backtrace, .. }
-            | DiscoveryError::TomlParse { backtrace, .. }
-            | DiscoveryError::Walkdir { backtrace, .. }
-            | DiscoveryError::WorkspaceManifestRead { backtrace, .. }
-            | DiscoveryError::WorkspaceManifestParse { backtrace, .. } => Some(backtrace.as_ref()),
+            DiscoveryError::ManifestRead { backtrace, .. }
+            | DiscoveryError::ManifestParse { backtrace, .. }
+            | DiscoveryError::Walkdir { backtrace, .. } => Some(backtrace.as_ref()),
             _ => None,
         }
     }
 }
 
 impl DiscoveryError {
-    #[track_caller]
-    pub fn io(path: PathBuf, source: std::io::Error) -> Self {
-        Self::Io {
-            path,
-            emission_site: DiagnosticSite::from_location(Location::caller()),
+    fn manifest_read_at_site(
+        ctx: ManifestCtx<'_>,
+        source: std::io::Error,
+        emission_site: DiagnosticSite,
+    ) -> Self {
+        Self::ManifestRead {
+            manifest_kind: ctx.kind,
+            manifest_path: ctx.manifest_path,
+            crate_path: ctx.crate_path,
+            emission_site,
             backtrace: Arc::new(Backtrace::force_capture()),
             source: Arc::new(source),
         }
     }
 
     #[track_caller]
-    pub fn toml_parse(path: PathBuf, span: Option<SourceSpan>, source: toml::de::Error) -> Self {
-        Self::TomlParse {
-            path,
+    pub fn manifest_read(ctx: ManifestCtx<'_>, source: std::io::Error) -> Self {
+        Self::manifest_read_at_site(ctx, source, DiagnosticSite::from_location(Location::caller()))
+    }
+
+    fn manifest_parse_at_site(
+        ctx: ManifestCtx<'_>,
+        source: toml::de::Error,
+        emission_site: DiagnosticSite,
+    ) -> Self {
+        let span = ctx
+            .content
+            .and_then(|content| toml_error_span(ctx.manifest_path.clone(), content, &source));
+        Self::ManifestParse {
+            manifest_kind: ctx.kind,
+            manifest_path: ctx.manifest_path,
+            crate_path: ctx.crate_path,
             span,
-            emission_site: DiagnosticSite::from_location(Location::caller()),
+            emission_site,
             backtrace: Arc::new(Backtrace::force_capture()),
             source: Arc::new(source),
         }
+    }
+
+    #[track_caller]
+    pub fn manifest_parse(ctx: ManifestCtx<'_>, source: toml::de::Error) -> Self {
+        Self::manifest_parse_at_site(
+            ctx,
+            source,
+            DiagnosticSite::from_location(Location::caller()),
+        )
     }
 
     #[track_caller]
@@ -351,48 +453,19 @@ impl DiscoveryError {
         }
     }
 
-    #[track_caller]
-    pub fn workspace_manifest_read(
-        crate_path: Option<PathBuf>,
-        manifest_path: PathBuf,
-        source: std::io::Error,
-    ) -> Self {
-        Self::WorkspaceManifestRead {
-            crate_path,
-            manifest_path,
-            emission_site: DiagnosticSite::from_location(Location::caller()),
-            backtrace: Arc::new(Backtrace::force_capture()),
-            source: Arc::new(source),
-        }
-    }
-
-    #[track_caller]
-    pub fn workspace_manifest_parse(
-        crate_path: Option<PathBuf>,
-        manifest_path: PathBuf,
-        span: Option<SourceSpan>,
-        source: toml::de::Error,
-    ) -> Self {
-        Self::WorkspaceManifestParse {
-            crate_path,
-            manifest_path,
-            span,
-            emission_site: DiagnosticSite::from_location(Location::caller()),
-            backtrace: Arc::new(Backtrace::force_capture()),
-            source: Arc::new(source),
-        }
-    }
-
     pub fn diagnostic_source_span(&self) -> Option<&SourceSpan> {
         match self {
-            DiscoveryError::TomlParse { span, .. }
-            | DiscoveryError::WorkspaceManifestParse { span, .. } => span.as_ref(),
+            DiscoveryError::ManifestParse { span, .. } => span.as_ref(),
             _ => None,
         }
     }
 }
 
-pub fn toml_error_span(path: PathBuf, content: &str, error: &toml::de::Error) -> Option<SourceSpan> {
+pub fn toml_error_span(
+    path: PathBuf,
+    content: &str,
+    error: &toml::de::Error,
+) -> Option<SourceSpan> {
     let range = error.span()?;
     let (line, col) = byte_offset_to_line_col(content, range.start);
     Some(
@@ -427,7 +500,7 @@ impl Serialize for DiscoveryError {
 /// This conversion maps discovery-phase errors to appropriate ploke_error variants
 /// based on their severity and impact on the overall parsing process:
 ///
-/// - **FatalError::FileOperation**: Used for I/O errors and walkdir errors during
+/// - **FatalError::FileOperation**: Used for manifest read and walkdir errors during
 ///   file discovery, as these indicate filesystem access issues.
 /// - **FatalError::PathResolution**: Used for TOML parse errors and missing
 ///   critical files (Cargo.toml, src directory). These prevent any meaningful parsing.
@@ -438,16 +511,23 @@ impl Serialize for DiscoveryError {
 /// while providing clear error categorization for upstream error handling.
 impl From<DiscoveryError> for ploke_error::Error {
     fn from(err: DiscoveryError) -> Self {
-        let err_string = err.to_string();
         match err {
-            DiscoveryError::Io { path, source, .. } => ploke_error::FatalError::FileOperation {
+            DiscoveryError::ManifestRead {
+                manifest_path,
+                source,
+                ..
+            } => ploke_error::FatalError::FileOperation {
                 operation: "read",
-                path,
+                path: manifest_path,
                 source,
             }
             .into(),
-            DiscoveryError::TomlParse { path, source, .. } => ploke_error::FatalError::PathResolution {
-                path: format!("Failed to parse Cargo.toml at {}", path.display()),
+            DiscoveryError::ManifestParse {
+                manifest_path,
+                source,
+                ..
+            } => ploke_error::FatalError::PathResolution {
+                path: format!("Failed to parse manifest at {}", manifest_path.display()),
                 source: Some(source),
             }
             .into(),
@@ -499,28 +579,6 @@ impl From<DiscoveryError> for ploke_error::Error {
                 }
                 .into()
             }
-            DiscoveryError::WorkspaceManifestRead { source, .. } => {
-                ploke_error::FatalError::PathResolution {
-                    path: err_string,
-                    source: Some(source),
-                }
-                .into()
-            }
-            DiscoveryError::WorkspaceManifestParse {
-                crate_path,
-                manifest_path,
-                span: _,
-                source,
-                ..
-            } => ploke_error::FatalError::PathResolution {
-                path: format!(
-                    "Failed to parse workspace manifest {} for crate {:?}",
-                    manifest_path.display(),
-                    crate_path
-                ),
-                source: Some(source),
-            }
-            .into(),
             DiscoveryError::WorkspaceManifestNotFound { crate_path } => {
                 ploke_error::FatalError::PathResolution {
                     path: format!(

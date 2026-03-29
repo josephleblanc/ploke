@@ -6,7 +6,10 @@ use ploke_core::workspace_glob::expand_simple_workspace_member;
 use serde::{Deserialize, Serialize};
 
 use crate::discovery::DiscoveryError;
-use crate::discovery::toml_error_span;
+use crate::discovery::ManifestCtx;
+use crate::discovery::ManifestKind;
+use crate::discovery::WithDiscoveryManifestRead;
+use crate::discovery::WithDiscoveryManifestToml;
 
 /// Indicates that a version should be inherited from the workspace metadata. Cargo effectively
 /// treats `workspace = true` as the only supported value, so we surface explicit errors for other
@@ -116,8 +119,8 @@ pub fn resolve_workspace_version(crate_root: &Path) -> Result<String, DiscoveryE
 /// `[workspace]` table, including the crate's own manifest.
 ///
 /// # Errors
-/// * [`DiscoveryError::WorkspaceManifestRead`] on IO failures.
-/// * [`DiscoveryError::WorkspaceManifestParse`] on TOML parse failures.
+/// * [`DiscoveryError::ManifestRead`] on IO failures.
+/// * [`DiscoveryError::ManifestParse`] on TOML parse failures.
 /// * [`DiscoveryError::WorkspaceManifestNotFound`] if no workspace manifests exist up to filesystem root.
 ///
 /// # Examples
@@ -155,20 +158,21 @@ pub fn locate_workspace_manifest(
             continue;
         }
 
-        let metadata = try_parse_manifest(dir).map_err(|mut e| {
-            if let DiscoveryError::WorkspaceManifestRead {
-                ref mut crate_path, ..
-            } = e
-            {
-                *crate_path = Some(target_crate_path.clone());
-            } else if let DiscoveryError::WorkspaceManifestParse {
-                ref mut crate_path, ..
-            } = e
-            {
-                *crate_path = Some(target_crate_path.clone());
-            }
-            e
-        })?;
+        let metadata =
+            try_parse_manifest(dir, ManifestKind::AncestorWorkspace).map_err(|mut e| {
+                if let DiscoveryError::ManifestRead {
+                    ref mut crate_path, ..
+                } = e
+                {
+                    *crate_path = Some(target_crate_path.clone());
+                } else if let DiscoveryError::ManifestParse {
+                    ref mut crate_path, ..
+                } = e
+                {
+                    *crate_path = Some(target_crate_path.clone());
+                }
+                e
+            })?;
 
         if metadata.workspace.is_some() {
             return Ok((candidate_manifest, metadata));
@@ -182,21 +186,30 @@ pub fn locate_workspace_manifest(
     })
 }
 
-// TODO: Add documentation + doc test
-// + unit test (at end of file)
-pub fn try_parse_manifest(target_dir: &Path) -> Result<WorkspaceManifestMetadata, DiscoveryError> {
+/// Parse `target_dir/Cargo.toml` into [`WorkspaceManifestMetadata`].
+///
+/// `kind` classifies the manifest for diagnostics ([`DiscoveryError::ManifestRead`] /
+/// [`DiscoveryError::ManifestParse`]). Callers walking from a crate toward the filesystem root
+/// should use [`ManifestKind::AncestorWorkspace`]; workspace roots (e.g. [`crate::parse_workspace`])
+/// use [`ManifestKind::WorkspaceRoot`]; a crate directory’s own manifest uses [`ManifestKind::Crate`].
+pub fn try_parse_manifest(
+    target_dir: &Path,
+    kind: ManifestKind,
+) -> Result<WorkspaceManifestMetadata, DiscoveryError> {
     let candidate_manifest = target_dir.join("Cargo.toml");
+    let ctx = ManifestCtx {
+        kind,
+        manifest_path: candidate_manifest.clone(),
+        crate_path: None,
+        content: None,
+    };
     let content = fs::read_to_string(&candidate_manifest)
-        .map_err(|err| DiscoveryError::workspace_manifest_read(None, candidate_manifest.clone(), err))?;
+        .with_discovery_err(ctx.clone())
+        .for_read()?;
 
-    let mut metadata: WorkspaceManifestMetadata = toml::from_str(&content).map_err(|err| {
-        DiscoveryError::workspace_manifest_parse(
-            None,
-            candidate_manifest.clone(),
-            toml_error_span(candidate_manifest.clone(), &content, &err),
-            err,
-        )
-    })?;
+    let mut metadata: WorkspaceManifestMetadata = toml::from_str(&content)
+        .with_discovery_err(ctx.with_content(&content))
+        .for_toml()?;
 
     let workspace_root =
         candidate_manifest
@@ -246,23 +259,19 @@ impl WorkspaceMetaBuilder {
         Self::from_toml_path(&cargo_toml_path)
     }
     pub fn from_toml_path(fp: &Path) -> Result<Self, DiscoveryError> {
-        let cargo_content = match fs::read_to_string(fp) {
-            Ok(content) => content,
-            Err(e) => {
-                // Critical error: Cannot proceed without Cargo.toml content.
-                return Err(DiscoveryError::io(fp.to_path_buf(), e));
-            }
+        let ctx = ManifestCtx {
+            kind: ManifestKind::WorkspaceRoot,
+            manifest_path: fp.to_path_buf(),
+            crate_path: None,
+            content: None,
         };
+        let cargo_content = fs::read_to_string(fp)
+            .with_discovery_err(ctx.clone())
+            .for_read()?;
 
-        let workspace_wrapper: WorkspaceBuildWrapper = toml::from_str(&cargo_content).map_err(
-            |e| {
-                DiscoveryError::toml_parse(
-                    fp.to_path_buf(),
-                    toml_error_span(fp.to_path_buf(), &cargo_content, &e),
-                    e,
-                )
-            },
-        )?;
+        let workspace_wrapper: WorkspaceBuildWrapper = toml::from_str(&cargo_content)
+            .with_discovery_err(ctx.with_content(&cargo_content))
+            .for_toml()?;
         let mut workspace_toml = workspace_wrapper.workspace;
         if workspace_toml
             .members

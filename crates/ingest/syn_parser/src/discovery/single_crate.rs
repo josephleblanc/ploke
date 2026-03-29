@@ -991,7 +991,15 @@ mod tests {
     fn test_discovery_error_conversion() {
         use std::io;
         let io_error = io::Error::new(io::ErrorKind::NotFound, "file not found");
-        let discovery_err = DiscoveryError::io(PathBuf::from("/test/path"), io_error);
+        let discovery_err = DiscoveryError::manifest_read(
+            crate::discovery::ManifestCtx {
+                kind: crate::discovery::ManifestKind::Crate,
+                manifest_path: PathBuf::from("/test/path"),
+                crate_path: None,
+                content: None,
+            },
+            io_error,
+        );
 
         let ploke_err: ploke_error::Error = discovery_err.into();
         assert!(matches!(ploke_err, ploke_error::Error::Fatal(_)));

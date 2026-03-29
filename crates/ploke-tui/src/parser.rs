@@ -6,7 +6,7 @@ use ploke_transform::transform::{
     transform_parsed_graph, transform_parsed_workspace, transform_union_crate_and_structural_masks,
 };
 use syn_parser::{
-    ModuleTree, ParsedCodeGraph, ParserOutput,
+    ManifestKind, ModuleTree, ParsedCodeGraph, ParserOutput,
     compilation_unit::CompilationUnitDimensionRequest,
     discovery::run_discovery_phase,
     discovery::workspace::{locate_workspace_manifest, try_parse_manifest},
@@ -61,7 +61,7 @@ pub fn resolve_index_target(
     let local_manifest = requested_path.join("Cargo.toml");
 
     if local_manifest.is_file() {
-        let manifest = try_parse_manifest(&requested_path).map_err(|err| {
+        let manifest = try_parse_manifest(&requested_path, ManifestKind::Crate).map_err(|err| {
             IndexTargetResolveError::WorkspaceDiscovery(format!(
                 "Failed to read Cargo manifest at '{}': {}",
                 local_manifest.display(),
@@ -260,8 +260,8 @@ pub fn run_parse_no_transform(
         target.display()
     );
 
-    let discovery_output = run_discovery_phase(None, &[target.clone()])
-        .map_err(|err| SynParserError::try_from(err).unwrap_or_else(|err| err))?;
+    let discovery_output =
+        run_discovery_phase(None, &[target.clone()]).map_err(SynParserError::from)?;
 
     let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0);

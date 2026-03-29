@@ -631,12 +631,13 @@ enum ResolvedProfileTarget {
 fn resolve_profile_target(requested: &Path) -> Result<ResolvedProfileTarget, XtaskError> {
     let local_manifest = requested.join("Cargo.toml");
     if local_manifest.is_file() {
-        let manifest = try_parse_manifest(requested).map_err(|e| {
-            XtaskError::new(format!(
-                "Failed to read manifest at {}: {e}",
-                local_manifest.display()
-            ))
-        })?;
+        let manifest =
+            try_parse_manifest(requested, syn_parser::ManifestKind::Crate).map_err(|e| {
+                XtaskError::new(format!(
+                    "Failed to read manifest at {}: {e}",
+                    local_manifest.display()
+                ))
+            })?;
         if let Some(ws) = manifest.workspace {
             return Ok(ResolvedProfileTarget::Workspace {
                 member_count: ws.members.len(),

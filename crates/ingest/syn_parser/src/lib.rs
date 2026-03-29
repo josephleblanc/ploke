@@ -51,7 +51,11 @@ use itertools::Itertools;
 use parser::analyze_files_parallel;
 // Re-export key items for easier access
 pub use discovery::CrateContext;
+pub use discovery::ManifestCtx;
+pub use discovery::ManifestKind;
 pub use discovery::TargetSelector;
+pub use discovery::WithDiscoveryManifestRead;
+pub use discovery::WithDiscoveryManifestToml;
 pub use discovery::try_parse_manifest;
 pub use parser::visitor::{analyze_file_phase2, logical_module_path_for_file};
 pub use parser::{CodeGraph, ParserMessage, create_parser_channel};
@@ -92,7 +96,8 @@ pub fn parse_workspace_with_config(
     config: &ParseWorkspaceConfig<'_>,
 ) -> Result<ParsedWorkspace, SynParserError> {
     let path_buf = PathBuf::from(target_workspace_dir);
-    let workspace_metadata = try_parse_manifest(&path_buf).map_err(SynParserError::from)?;
+    let workspace_metadata = try_parse_manifest(&path_buf, discovery::ManifestKind::WorkspaceRoot)
+        .map_err(SynParserError::from)?;
 
     let workspace_data =
         workspace_metadata
@@ -288,8 +293,8 @@ pub fn try_run_phases_and_resolve_with_target(
 /// for test environments where fixtures are expected to be present.
 pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
-    let discovery_output =
-        run_discovery_phase(None, std::slice::from_ref(&crate_path)).map_err(SynParserError::from)?;
+    let discovery_output = run_discovery_phase(None, std::slice::from_ref(&crate_path))
+        .map_err(SynParserError::from)?;
     // NOTE:2025-12-26
     // commenting out the below so we don't panic on error in the target crate.
     // TODO: Determine whether or not the following error would be a result of an intenral error
@@ -698,7 +703,7 @@ edition = "2021"
 
         match err {
             SynParserError::Discovery(err) => match err.as_ref() {
-                crate::discovery::error::DiscoveryError::WorkspaceManifestRead {
+                crate::discovery::error::DiscoveryError::ManifestRead {
                     crate_path,
                     manifest_path,
                     ..
@@ -729,14 +734,14 @@ edition = "2021"
 
         match err {
             SynParserError::Discovery(err) => match err.as_ref() {
-                crate::discovery::error::DiscoveryError::WorkspaceManifestParse {
+                crate::discovery::error::DiscoveryError::ManifestParse {
                     crate_path,
                     manifest_path,
                     ..
                 } => {
                     assert!(crate_path.is_none());
                     assert_eq!(manifest_path, &tmp.path().join("Cargo.toml"));
-                    assert_eq!(err.diagnostic_kind(), "workspace_manifest_parse");
+                    assert_eq!(err.diagnostic_kind(), "manifest_parse");
                     assert_eq!(
                         err.diagnostic_source_path(),
                         Some(tmp.path().join("Cargo.toml").as_path())

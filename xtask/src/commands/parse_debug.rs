@@ -60,7 +60,9 @@ use ploke_error::DiagnosticInfo;
 use serde::Serialize;
 
 use syn_parser::discovery::CargoManifest;
-use syn_parser::discovery::{DiscoveryError, run_discovery_phase, try_parse_manifest};
+use syn_parser::discovery::{
+    DiscoveryError, ManifestKind, run_discovery_phase, try_parse_manifest,
+};
 use syn_parser::parser::diagnostics::with_debug_artifact_dir;
 use syn_parser::parser::nodes::ModuleNode;
 use syn_parser::{
@@ -177,7 +179,8 @@ impl Command for DebugManifest {
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_parse_path(ctx, &self.path)?;
-        let meta = try_parse_manifest(&canon).map_err(|e| XtaskError::Parse(e.to_string()))?;
+        let meta = try_parse_manifest(&canon, ManifestKind::WorkspaceRoot)
+            .map_err(|e| XtaskError::Parse(e.to_string()))?;
         let manifest_path = canon.join("Cargo.toml");
         let (
             has_workspace_section,
@@ -387,7 +390,8 @@ impl Command for DebugWorkspace {
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let ws = resolve_parse_path(ctx, &self.path)?;
-        let meta = try_parse_manifest(&ws).map_err(|e| XtaskError::Parse(e.to_string()))?;
+        let meta = try_parse_manifest(&ws, ManifestKind::WorkspaceRoot)
+            .map_err(|e| XtaskError::Parse(e.to_string()))?;
         let section = meta
             .workspace
             .ok_or_else(|| XtaskError::validation("No `[workspace]` section in Cargo.toml; use `parse debug manifest` on this path, or pass a workspace root.").with_recovery("For single-crate diagnostics use `parse debug discovery` or `parse debug pipeline`."))?;
@@ -1958,7 +1962,7 @@ fn stderr_or_status(output: &std::process::Output) -> String {
 }
 
 fn classify_corpus_checkout(checkout_path: &Path) -> CorpusCheckoutClassification {
-    match try_parse_manifest(checkout_path) {
+    match try_parse_manifest(checkout_path, ManifestKind::WorkspaceRoot) {
         Ok(metadata) => {
             if let Some(workspace) = metadata.workspace {
                 CorpusCheckoutClassification {
@@ -2005,11 +2009,13 @@ fn corpus_diagnostic_from_discovery_error(err: &DiscoveryError) -> CorpusDiagnos
             line: span.line().map(|line| line as u32),
             col: span.column().map(|col| col as u32),
         }),
-        emission_site: err.diagnostic_emission_site().map(|site| CorpusEmissionSite {
-            file: site.file.to_string(),
-            line: site.line,
-            column: site.column,
-        }),
+        emission_site: err
+            .diagnostic_emission_site()
+            .map(|site| CorpusEmissionSite {
+                file: site.file.to_string(),
+                line: site.line,
+                column: site.column,
+            }),
         backtrace: err.diagnostic_backtrace().map(ToString::to_string),
         context: err
             .diagnostic_context()

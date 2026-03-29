@@ -396,14 +396,15 @@ fn workspace_drift_status(
     workspace_root: &std::path::Path,
     loaded_members: &[PathBuf],
 ) -> Result<Option<WorkspaceDriftStatus>, ploke_error::Error> {
-    let manifest = try_parse_manifest(workspace_root).map_err(|err| {
-        ploke_error::Error::Domain(DomainError::Ui {
-            message: format!(
-                "Failed to inspect workspace manifest at '{}': {err}",
-                workspace_root.join("Cargo.toml").display()
-            ),
-        })
-    })?;
+    let manifest = try_parse_manifest(workspace_root, syn_parser::ManifestKind::WorkspaceRoot)
+        .map_err(|err| {
+            ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "Failed to inspect workspace manifest at '{}': {err}",
+                    workspace_root.join("Cargo.toml").display()
+                ),
+            })
+        })?;
     let Some(workspace) = manifest.workspace else {
         return Ok(None);
     };
