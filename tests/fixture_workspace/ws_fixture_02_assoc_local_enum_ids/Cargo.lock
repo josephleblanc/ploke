@@ -11,6 +11,10 @@ name = "ws_fixture_duplicate_closure_local_consts"
 version = "0.1.0"
 
 [[package]]
+name = "ws_fixture_duplicate_if_branch_local_consts"
+version = "0.1.0"
+
+[[package]]
 name = "ws_fixture_duplicate_local_consts"
 version = "0.1.0"
 

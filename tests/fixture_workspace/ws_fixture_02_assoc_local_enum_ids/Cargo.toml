@@ -2,6 +2,7 @@
 members = [
     "member_closure_const_repro",
     "member_const_repro",
+    "member_if_branch_local_consts_repro",
     "member_local_function_repro",
     "member_method_local_consts_repro",
     "member_repro",

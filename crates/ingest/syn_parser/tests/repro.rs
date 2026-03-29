@@ -10,6 +10,9 @@ mod duplicate_item;
 #[path = "repro/duplicate_closure_local_consts.rs"]
 mod duplicate_closure_local_consts;
 
+#[path = "repro/duplicate_if_branch_local_consts.rs"]
+mod duplicate_if_branch_local_consts;
+
 #[path = "repro/duplicate_local_functions.rs"]
 mod duplicate_local_functions;
 
