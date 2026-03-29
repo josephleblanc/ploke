@@ -1,5 +1,10 @@
 [workspace]
-members = ["member_const_repro", "member_repro", "member_static_repro"]
+members = [
+    "member_closure_const_repro",
+    "member_const_repro",
+    "member_repro",
+    "member_static_repro",
+]
 resolver = "2"
 
 [workspace.package]
