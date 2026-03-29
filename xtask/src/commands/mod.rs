@@ -78,6 +78,9 @@ impl OutputFormat {
 /// Format a value for human-readable output.
 fn format_human<T: Serialize>(value: &T) -> std::result::Result<String, XtaskError> {
     let json = serde_json::to_value(value).map_err(|e| XtaskError::new(e.to_string()))?;
+    if let Some(rendered) = format_human_corpus_show(&json) {
+        return Ok(rendered);
+    }
     if let Some(rendered) = format_human_corpus(&json) {
         return Ok(rendered);
     }
@@ -86,12 +89,66 @@ fn format_human<T: Serialize>(value: &T) -> std::result::Result<String, XtaskErr
     serde_json::to_string_pretty(&json).map_err(|e| XtaskError::new(e.to_string()))
 }
 
+fn format_human_corpus_show(value: &Value) -> Option<String> {
+    let obj = value.as_object()?;
+    if obj.get("kind")?.as_str()? != "corpus_show" {
+        return None;
+    }
+
+    let run = obj.get("run")?.as_object()?;
+    let selected_target = obj.get("selected_target").and_then(Value::as_str);
+    let show_backtrace = obj
+        .get("show_backtrace")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let show_backtrace_full = obj
+        .get("show_backtrace_full")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let summary_path = obj.get("summary_path").and_then(Value::as_str)?;
+
+    let mut out = render_human_corpus(run, true)?;
+    out.push_str(&format!(
+        "\n\nLoaded from: {}",
+        shorten_path_for_display(&value_str(run, "artifact_root"), summary_path)
+    ));
+
+    if let Some(target) = selected_target {
+        out.push_str(&format!("\nSelected target: {target}"));
+    }
+
+    if show_backtrace || show_backtrace_full {
+        let sections = if show_backtrace_full {
+            render_corpus_backtraces_full(run)
+        } else {
+            render_corpus_backtrace_summaries(run)
+        };
+        if !sections.is_empty() {
+            out.push_str(if show_backtrace_full {
+                "\n\nBacktraces (full):\n"
+            } else {
+                "\n\nBacktrace summaries:\n"
+            });
+            out.push_str(&sections);
+        }
+    }
+
+    Some(out)
+}
+
 fn format_human_corpus(value: &Value) -> Option<String> {
     let obj = value.as_object()?;
     if obj.get("kind")?.as_str()? != "corpus" {
         return None;
     }
 
+    render_human_corpus(obj, false)
+}
+
+fn render_human_corpus(
+    obj: &serde_json::Map<String, Value>,
+    is_loaded_run: bool,
+) -> Option<String> {
     let run_id = value_str(obj, "run_id");
     let checkout_root = value_str(obj, "checkout_root");
     let artifact_root = value_str(obj, "artifact_root");
@@ -199,6 +256,21 @@ fn format_human_corpus(value: &Value) -> Option<String> {
             for path in shorten_paths_for_display(&list_files) {
                 out.push_str(&format!("- {path}\n"));
             }
+        }
+    }
+
+    if total_failures > 0 && !is_loaded_run {
+        out.push_str("\n\nNext steps:\n");
+        out.push_str(&format!(
+            "- View this run again: cargo xtask parse debug corpus-show {run_id}\n"
+        ));
+        if let Some(target) = first_failed_target_name(obj) {
+            out.push_str(&format!(
+                "- Inspect first failed target: cargo xtask parse debug corpus-show {run_id} --target {target}\n"
+            ));
+            out.push_str(&format!(
+                "- Print persisted backtrace: cargo xtask parse debug corpus-show {run_id} --target {target} --backtrace\n"
+            ));
         }
     }
 
@@ -487,6 +559,154 @@ fn summarize_target_failure_emission_site(obj: &serde_json::Map<String, Value>) 
     let line = emission_site.get("line").and_then(Value::as_u64)?;
     let column = emission_site.get("column").and_then(Value::as_u64)?;
     Some(format!("  emitted: {file}:{line}:{column}\n"))
+}
+
+fn first_failed_target_name(obj: &serde_json::Map<String, Value>) -> Option<&str> {
+    obj.get("targets")
+        .and_then(Value::as_array)?
+        .iter()
+        .find_map(|target| {
+            let target_obj = target.as_object()?;
+            summarize_target_failure(target_obj)?;
+            target_obj.get("normalized_repo").and_then(Value::as_str)
+        })
+}
+
+fn render_corpus_backtrace_summaries(obj: &serde_json::Map<String, Value>) -> String {
+    let Some(targets) = obj.get("targets").and_then(Value::as_array) else {
+        return String::new();
+    };
+
+    let mut out = String::new();
+    for target in targets {
+        let Some(target_obj) = target.as_object() else {
+            continue;
+        };
+        let Some(diagnostic) = target_obj
+            .get("classification_diagnostic")
+            .and_then(Value::as_object)
+        else {
+            continue;
+        };
+        let Some(backtrace) = diagnostic.get("backtrace").and_then(Value::as_str) else {
+            continue;
+        };
+        let repo = target_obj
+            .get("normalized_repo")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let kind = diagnostic
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("diagnostic");
+        out.push_str(&format!("- {repo} [{kind}]\n"));
+
+        let (parser_frames, xtask_frames) = summarize_backtrace_frames(backtrace);
+        if !parser_frames.is_empty() {
+            out.push_str("  parser:\n");
+            for frame in parser_frames {
+                out.push_str("  - ");
+                out.push_str(&frame);
+                out.push('\n');
+            }
+        }
+        if !xtask_frames.is_empty() {
+            out.push_str("  xtask:\n");
+            for frame in xtask_frames {
+                out.push_str("  - ");
+                out.push_str(&frame);
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+fn render_corpus_backtraces_full(obj: &serde_json::Map<String, Value>) -> String {
+    let Some(targets) = obj.get("targets").and_then(Value::as_array) else {
+        return String::new();
+    };
+
+    let mut out = String::new();
+    for target in targets {
+        let Some(target_obj) = target.as_object() else {
+            continue;
+        };
+        let Some(diagnostic) = target_obj
+            .get("classification_diagnostic")
+            .and_then(Value::as_object)
+        else {
+            continue;
+        };
+        let Some(backtrace) = diagnostic.get("backtrace").and_then(Value::as_str) else {
+            continue;
+        };
+        let repo = target_obj
+            .get("normalized_repo")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let kind = diagnostic
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("diagnostic");
+        out.push_str(&format!("- {repo} [{kind}]\n"));
+        for line in backtrace.lines() {
+            out.push_str("  ");
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn summarize_backtrace_frames(backtrace: &str) -> (Vec<String>, Vec<String>) {
+    let mut parser_frames = Vec::new();
+    let mut xtask_frames = Vec::new();
+
+    for frame in backtrace
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("stack backtrace:"))
+    {
+        let normalized = normalize_backtrace_frame(frame);
+        if normalized.is_empty() {
+            continue;
+        }
+        if normalized.starts_with("syn_parser::") {
+            if !parser_frames.iter().any(|existing| existing == &normalized) {
+                parser_frames.push(normalized);
+            }
+        } else if normalized.starts_with("xtask::") {
+            if !xtask_frames.iter().any(|existing| existing == &normalized) {
+                xtask_frames.push(normalized);
+            }
+        }
+        if parser_frames.len() >= 4 && xtask_frames.len() >= 3 {
+            break;
+        }
+    }
+
+    (parser_frames, xtask_frames)
+}
+
+fn normalize_backtrace_frame(frame: &str) -> String {
+    let frame = frame.trim();
+    if frame.starts_with("at ") {
+        return String::new();
+    }
+
+    let mut parts = frame.splitn(2, ':');
+    let Some(first) = parts.next() else {
+        return String::new();
+    };
+    let Some(rest) = parts.next() else {
+        return String::new();
+    };
+    if first.chars().all(|ch| ch.is_ascii_digit()) {
+        rest.trim_start_matches(':').trim().to_string()
+    } else {
+        frame.to_string()
+    }
 }
 
 fn render_source_span(span: &serde_json::Map<String, Value>) -> String {
@@ -935,6 +1155,9 @@ mod tests {
         assert!(formatted.contains("\nFailures:\n- bad/repo: discovery panic after 17ms: thread 'worker' panicked at parser invariant violated extra details [reused, 1234567890ab]\n"));
         assert!(formatted.contains("  failure: bad__repo/discovery/failure.json\n"));
         assert!(formatted.contains(
+            "\nNext steps:\n- View this run again: cargo xtask parse debug corpus-show run-456\n"
+        ));
+        assert!(formatted.contains(
             "\nSingle-crate targets (ms=milliseconds, f=files, n=nodes, r=relations):\nREPO"
         ));
         assert!(formatted.contains("good/repo"));
@@ -1053,6 +1276,126 @@ mod tests {
                 .contains("  emitted: crates/ingest/syn_parser/src/discovery/error.rs:105:26\n")
         );
         assert!(formatted.contains("  summary: fail__repo/summary.json\n"));
+        assert!(formatted.contains(
+            "- Print persisted backtrace: cargo xtask parse debug corpus-show run-789 --target fail/repo --backtrace\n"
+        ));
+    }
+
+    #[test]
+    fn test_output_format_human_corpus_show_backtrace() {
+        let data = serde_json::json!({
+            "kind": "corpus_show",
+            "selected_target": "fail/repo",
+            "show_backtrace": true,
+            "show_backtrace_full": false,
+            "summary_path": "/tmp/artifacts/run-789/summary.json",
+            "run": {
+                "run_id": "run-789",
+                "checkout_root": "/tmp/checkouts",
+                "artifact_root": "/tmp/artifacts/run-789",
+                "list_files": ["/tmp/list-a.txt"],
+                "requested_entries": 5,
+                "unique_targets": 5,
+                "processed_targets": 1,
+                "single_crate_targets": 0,
+                "workspace_targets": 0,
+                "reused_targets": 1,
+                "cloned_targets": 0,
+                "skipped_targets": 0,
+                "clone_failures": 0,
+                "discovery_failures": 0,
+                "resolve_failures": 0,
+                "merge_failures": 0,
+                "panic_failures": 0,
+                "targets": [
+                    {
+                        "normalized_repo": "fail/repo",
+                        "repository_kind": "unknown",
+                        "classification_error": "Failed to parse manifest",
+                        "classification_diagnostic": {
+                            "kind": "manifest_parse",
+                            "summary": "Failed to parse manifest",
+                            "detail": "missing field `members`",
+                            "source_path": "/tmp/checkouts/fail__repo/Cargo.toml",
+                            "source_span": { "start": 10, "end": 19, "line": 1, "col": 11 },
+                            "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/workspace.rs", "line": 212, "column": 10 },
+                            "backtrace": "stack backtrace:\n  0: syn_parser::discovery::workspace",
+                            "context": []
+                        },
+                        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "summary_path": "/tmp/artifacts/run-789/fail__repo/summary.json",
+                        "clone": { "ok": true, "action": "reused", "error": null },
+                        "discovery": null,
+                        "resolve": null,
+                        "merge": null
+                    }
+                ]
+            }
+        });
+
+        let formatted = OutputFormat::Human.format(&data).unwrap();
+        assert!(formatted.contains("Loaded from: summary.json"));
+        assert!(formatted.contains("Selected target: fail/repo"));
+        assert!(formatted.contains("\nBacktrace summaries:\n- fail/repo [manifest_parse]\n"));
+        assert!(formatted.contains("  parser:\n"));
+        assert!(formatted.contains("  - syn_parser::discovery::workspace\n"));
+    }
+
+    #[test]
+    fn test_output_format_human_corpus_show_backtrace_full() {
+        let data = serde_json::json!({
+            "kind": "corpus_show",
+            "selected_target": "fail/repo",
+            "show_backtrace": false,
+            "show_backtrace_full": true,
+            "summary_path": "/tmp/artifacts/run-789/summary.json",
+            "run": {
+                "run_id": "run-789",
+                "checkout_root": "/tmp/checkouts",
+                "artifact_root": "/tmp/artifacts/run-789",
+                "list_files": ["/tmp/list-a.txt"],
+                "requested_entries": 5,
+                "unique_targets": 5,
+                "processed_targets": 1,
+                "single_crate_targets": 0,
+                "workspace_targets": 0,
+                "reused_targets": 1,
+                "cloned_targets": 0,
+                "skipped_targets": 0,
+                "clone_failures": 0,
+                "discovery_failures": 0,
+                "resolve_failures": 0,
+                "merge_failures": 0,
+                "panic_failures": 0,
+                "targets": [
+                    {
+                        "normalized_repo": "fail/repo",
+                        "repository_kind": "unknown",
+                        "classification_error": "Failed to parse manifest",
+                        "classification_diagnostic": {
+                            "kind": "manifest_parse",
+                            "summary": "Failed to parse manifest",
+                            "detail": "missing field `members`",
+                            "source_path": "/tmp/checkouts/fail__repo/Cargo.toml",
+                            "source_span": { "start": 10, "end": 19, "line": 1, "col": 11 },
+                            "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/workspace.rs", "line": 212, "column": 10 },
+                            "backtrace": "stack backtrace:\n  0: syn_parser::discovery::workspace\n  1: xtask::commands::parse_debug::classify_corpus_checkout",
+                            "context": []
+                        },
+                        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "summary_path": "/tmp/artifacts/run-789/fail__repo/summary.json",
+                        "clone": { "ok": true, "action": "reused", "error": null },
+                        "discovery": null,
+                        "resolve": null,
+                        "merge": null
+                    }
+                ]
+            }
+        });
+
+        let formatted = OutputFormat::Human.format(&data).unwrap();
+        assert!(formatted.contains("\nBacktraces (full):\n- fail/repo [manifest_parse]\n"));
+        assert!(formatted.contains("  stack backtrace:\n"));
     }
 
     #[test]

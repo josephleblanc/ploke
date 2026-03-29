@@ -558,7 +558,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use ploke_common::workspace_root;
+    use ploke_common::{fixture_github_clones_dir, workspace_root};
     use ploke_error::DiagnosticInfo;
     use tempfile::tempdir;
 
@@ -932,7 +932,7 @@ edition = "2021"
 
     #[test]
     fn parse_workspace_config_handles_non_standard_root_without_duplicate_crate_roots() {
-        let workspace_root = workspace_root().join("tests/fixture_github_clones/serde");
+        let workspace_root = fixture_github_clones_dir().join("serde");
         let selected_member = Path::new("serde_derive_internals");
 
         let parsed = parse_workspace_with_config(

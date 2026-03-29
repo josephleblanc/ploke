@@ -38,6 +38,7 @@
 //! cargo xtask --format json parse debug corpus --limit 5
 //! cargo xtask --format json parse debug corpus --list-file /tmp/ploke-targets.txt --checkout-dir /tmp/ploke-corpus
 //! cargo xtask --format json parse debug corpus --list-file /tmp/ploke-targets.txt --skip-merge
+//! cargo xtask parse debug corpus-show run-1774750473411 --target Amanieu/parking_lot --backtrace
 //! ```
 //!
 //! Suggested workflow:
@@ -57,7 +58,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use cargo_metadata::Metadata;
 use clap::{Args, Subcommand};
 use ploke_error::DiagnosticInfo;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use syn_parser::discovery::CargoManifest;
 use syn_parser::discovery::{
@@ -132,6 +133,9 @@ pub enum ParseDebugCmd {
 
     /// Clone and parse a corpus of GitHub targets listed in one or more text files.
     Corpus(DebugCorpus),
+
+    /// Re-open a persisted corpus run and inspect saved summaries/backtraces.
+    CorpusShow(DebugCorpusShow),
 }
 
 impl ParseDebugCmd {
@@ -148,6 +152,7 @@ impl ParseDebugCmd {
             ParseDebugCmd::WorkspaceMembers(c) => c.execute(ctx)?,
             ParseDebugCmd::DiscoveryRules(c) => c.execute(ctx)?,
             ParseDebugCmd::Corpus(c) => c.execute(ctx)?,
+            ParseDebugCmd::CorpusShow(c) => c.execute(ctx)?,
         };
         Ok(super::parse::ParseOutput::Debug(out))
     }
@@ -874,6 +879,7 @@ pub enum DebugOutput {
     WorkspaceMembers(DebugWorkspaceMembersOut),
     DiscoveryRules(DebugDiscoveryRulesOut),
     Corpus(DebugCorpusOut),
+    CorpusShow(DebugCorpusShowOut),
 }
 
 fn path_relative_to(root: &Path, path: &Path) -> String {
@@ -893,6 +899,111 @@ fn symlink_info(path: &Path) -> (bool, Option<String>) {
         }
         _ => (false, None),
     }
+}
+
+fn resolve_corpus_summary_path(
+    ctx: &CommandContext,
+    run: &Path,
+    artifact_dir: &Path,
+) -> Result<PathBuf, XtaskError> {
+    let workspace_root = ctx.workspace_root()?;
+    let artifact_root = if artifact_dir.is_absolute() {
+        artifact_dir.to_path_buf()
+    } else {
+        workspace_root.join(artifact_dir)
+    };
+
+    let direct_path = if run.is_absolute() {
+        run.to_path_buf()
+    } else {
+        workspace_root.join(run)
+    };
+    if direct_path.exists() {
+        return normalize_corpus_summary_path(&direct_path);
+    }
+
+    normalize_corpus_summary_path(&artifact_root.join(run))
+}
+
+fn normalize_corpus_summary_path(path: &Path) -> Result<PathBuf, XtaskError> {
+    if path.is_file() {
+        return Ok(path.to_path_buf());
+    }
+    let summary_path = path.join("summary.json");
+    if summary_path.is_file() {
+        return Ok(summary_path);
+    }
+    Err(XtaskError::validation(format!(
+        "Could not find corpus summary at `{}` or `{}`",
+        path.display(),
+        summary_path.display()
+    ))
+    .into())
+}
+
+fn corpus_target_matches(target: &CorpusTargetResult, needle: &str) -> bool {
+    let slug = target.normalized_repo.replace('/', "__");
+    target.normalized_repo == needle
+        || slug == needle
+        || target.target == needle
+        || Path::new(&target.artifact_dir)
+            .file_name()
+            .and_then(|s| s.to_str())
+            == Some(needle)
+}
+
+fn recompute_corpus_counts(run: &mut DebugCorpusOut) {
+    run.processed_targets = run.targets.len();
+    run.single_crate_targets = run
+        .targets
+        .iter()
+        .filter(|t| t.repository_kind == "single_crate")
+        .count();
+    run.workspace_targets = run
+        .targets
+        .iter()
+        .filter(|t| t.repository_kind == "workspace")
+        .count();
+    run.skipped_targets = run
+        .targets
+        .iter()
+        .filter(|t| t.clone.action == "skipped_missing")
+        .count();
+    run.cloned_targets = run
+        .targets
+        .iter()
+        .filter(|t| t.clone.action == "cloned")
+        .count();
+    run.reused_targets = run
+        .targets
+        .iter()
+        .filter(|t| t.clone.action == "reused")
+        .count();
+    run.clone_failures = run.targets.iter().filter(|t| !t.clone.ok).count();
+    run.discovery_failures = run
+        .targets
+        .iter()
+        .filter(|t| t.discovery.as_ref().is_some_and(|s| !s.ok))
+        .count();
+    run.resolve_failures = run
+        .targets
+        .iter()
+        .filter(|t| t.resolve.as_ref().is_some_and(|s| !s.ok))
+        .count();
+    run.merge_failures = run
+        .targets
+        .iter()
+        .filter(|t| t.merge.as_ref().is_some_and(|s| !s.ok))
+        .count();
+    run.panic_failures = run
+        .targets
+        .iter()
+        .filter(|t| {
+            t.discovery.as_ref().is_some_and(|s| s.panic)
+                || t.resolve.as_ref().is_some_and(|s| s.panic)
+                || t.merge.as_ref().is_some_and(|s| s.panic)
+        })
+        .count();
 }
 
 // --- cargo targets ---
@@ -1311,7 +1422,7 @@ pub struct DebugCorpus {
     pub skip_merge: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugCorpusOut {
     pub run_id: String,
     pub checkout_root: String,
@@ -1333,7 +1444,7 @@ pub struct DebugCorpusOut {
     pub targets: Vec<CorpusTargetResult>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorpusTargetResult {
     pub target: String,
     pub normalized_repo: String,
@@ -1354,14 +1465,14 @@ pub struct CorpusTargetResult {
     pub summary_path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorpusCloneStatus {
     pub ok: bool,
     pub action: String,
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorpusStageResult {
     pub ok: bool,
     pub panic: bool,
@@ -1375,7 +1486,7 @@ pub struct CorpusStageResult {
     pub failure_artifact_path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorpusDiagnostic {
     pub kind: String,
     pub summary: String,
@@ -1387,7 +1498,7 @@ pub struct CorpusDiagnostic {
     pub context: Vec<CorpusDiagnosticField>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorpusSourceSpan {
     pub start: Option<usize>,
     pub end: Option<usize>,
@@ -1395,13 +1506,13 @@ pub struct CorpusSourceSpan {
     pub col: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorpusDiagnosticField {
     pub key: String,
     pub value: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorpusEmissionSite {
     pub file: String,
     pub line: u32,
@@ -1779,6 +1890,85 @@ impl Command for DebugCorpus {
     }
 }
 
+#[derive(Debug, Clone, clap::Args)]
+pub struct DebugCorpusShow {
+    /// Corpus run ID like `run-1774750473411`, or a path to a run directory / `summary.json`.
+    #[arg(value_name = "RUN_OR_PATH")]
+    pub run: PathBuf,
+
+    /// Corpus artifact base dir used when resolving a run ID.
+    #[arg(long, value_name = "DIR", default_value = "target/debug_corpus_runs")]
+    pub artifact_dir: PathBuf,
+
+    /// Narrow output to one target (`owner/repo` or `owner__repo`).
+    #[arg(long, value_name = "TARGET")]
+    pub target: Option<String>,
+
+    /// Print a concise parser/xtask backtrace summary for the displayed failed target(s).
+    #[arg(long, conflicts_with = "backtrace_full")]
+    pub backtrace: bool,
+
+    /// Print the full persisted backtrace for the displayed failed target(s).
+    #[arg(long)]
+    pub backtrace_full: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugCorpusShowOut {
+    pub run: DebugCorpusOut,
+    pub selected_target: Option<String>,
+    pub show_backtrace: bool,
+    pub show_backtrace_full: bool,
+    pub summary_path: String,
+}
+
+impl Command for DebugCorpusShow {
+    type Output = DebugOutput;
+    type Error = XtaskError;
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let summary_path = resolve_corpus_summary_path(ctx, &self.run, &self.artifact_dir)?;
+        let content = std::fs::read_to_string(&summary_path).map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to read corpus summary {}: {e}",
+                summary_path.display()
+            ))
+        })?;
+        let mut run: DebugCorpusOut = serde_json::from_str(&content).map_err(|e| {
+            XtaskError::Parse(format!(
+                "Failed to parse corpus summary {}: {e}",
+                summary_path.display()
+            ))
+        })?;
+
+        if let Some(target) = &self.target {
+            let matches: Vec<_> = run
+                .targets
+                .iter()
+                .filter(|entry| corpus_target_matches(entry, target))
+                .cloned()
+                .collect();
+            if matches.is_empty() {
+                return Err(XtaskError::validation(format!(
+                    "Target `{target}` not found in corpus run `{}`",
+                    run.run_id
+                ))
+                .into());
+            }
+            run.targets = matches;
+            recompute_corpus_counts(&mut run);
+        }
+
+        Ok(DebugOutput::CorpusShow(DebugCorpusShowOut {
+            run,
+            selected_target: self.target.clone(),
+            show_backtrace: self.backtrace,
+            show_backtrace_full: self.backtrace_full,
+            summary_path: summary_path.display().to_string(),
+        }))
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ParsedCorpusTarget {
     original: String,
@@ -1984,15 +2174,50 @@ fn classify_corpus_checkout(checkout_path: &Path) -> CorpusCheckoutClassificatio
                 }
             }
         }
-        Err(err) => CorpusCheckoutClassification {
-            repository_kind: "unknown".into(),
+        Err(err) => classify_corpus_checkout_via_metadata(checkout_path).unwrap_or_else(|| {
+            CorpusCheckoutClassification {
+                repository_kind: "unknown".into(),
+                recommended_parser: "try_run_phases_and_merge".into(),
+                workspace_member_count: None,
+                classification_error: Some(err.diagnostic_summary()),
+                classification_diagnostic: Some(corpus_diagnostic_from_discovery_error(&err)),
+                should_run_single_crate_pipeline: true,
+            }
+        }),
+    }
+}
+
+fn classify_corpus_checkout_via_metadata(
+    checkout_path: &Path,
+) -> Option<CorpusCheckoutClassification> {
+    let metadata = load_cargo_metadata(checkout_path).ok()?;
+    let workspace_root = metadata.workspace_root.as_std_path();
+    let member_count = metadata.workspace_members.len();
+    let package_count = metadata.packages.len();
+
+    if workspace_root == checkout_path && (member_count > 1 || package_count > 1) {
+        return Some(CorpusCheckoutClassification {
+            repository_kind: "workspace".into(),
+            recommended_parser: "parse_workspace_with_config".into(),
+            workspace_member_count: Some(member_count),
+            classification_error: None,
+            classification_diagnostic: None,
+            should_run_single_crate_pipeline: false,
+        });
+    }
+
+    if package_count > 0 {
+        return Some(CorpusCheckoutClassification {
+            repository_kind: "single_crate".into(),
             recommended_parser: "try_run_phases_and_merge".into(),
             workspace_member_count: None,
-            classification_error: Some(err.diagnostic_summary()),
-            classification_diagnostic: Some(corpus_diagnostic_from_discovery_error(&err)),
+            classification_error: None,
+            classification_diagnostic: None,
             should_run_single_crate_pipeline: true,
-        },
+        });
     }
+
+    None
 }
 
 fn corpus_diagnostic_from_discovery_error(err: &DiscoveryError) -> CorpusDiagnostic {

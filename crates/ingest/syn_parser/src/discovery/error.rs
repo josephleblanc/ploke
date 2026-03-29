@@ -412,7 +412,11 @@ impl DiscoveryError {
 
     #[track_caller]
     pub fn manifest_read(ctx: ManifestCtx<'_>, source: std::io::Error) -> Self {
-        Self::manifest_read_at_site(ctx, source, DiagnosticSite::from_location(Location::caller()))
+        Self::manifest_read_at_site(
+            ctx,
+            source,
+            DiagnosticSite::from_location(Location::caller()),
+        )
     }
 
     fn manifest_parse_at_site(

@@ -290,6 +290,56 @@ fn parse_debug_corpus_classifies_workspace_repo_without_running_single_crate_pip
     }
 }
 
+#[test]
+fn parse_debug_corpus_classifies_implicit_workspace_members_via_metadata_fallback() {
+    let temp = TempDir::new().expect("tempdir");
+    let source_repo = temp.path().join("implicit_workspace");
+    init_local_git_implicit_workspace(&source_repo);
+
+    let list_file = temp.path().join("targets_implicit_workspace.txt");
+    std::fs::write(&list_file, format!("{}\n", source_repo.display())).expect("write list file");
+
+    let checkout_dir = temp.path().join("checkouts");
+    let artifact_dir = temp.path().join("artifacts");
+    let cmd = ParseDebugCli {
+        cmd: ParseDebugCmd::Corpus(DebugCorpus {
+            list_files: vec![list_file],
+            checkout_dir,
+            artifact_dir,
+            limit: 0,
+            skip_clone: false,
+            skip_merge: false,
+        }),
+    };
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd
+        .execute(&ctx)
+        .expect("parse debug corpus implicit workspace");
+    match out {
+        ParseOutput::Debug(DebugOutput::Corpus(o)) => {
+            assert_eq!(o.processed_targets, 1, "expected one processed target");
+            assert_eq!(o.single_crate_targets, 0, "did not expect crate targets");
+            assert_eq!(o.workspace_targets, 1, "expected one workspace target");
+            assert_eq!(o.clone_failures, 0, "unexpected clone failure: {o:#?}");
+            assert_eq!(
+                o.discovery_failures, 0,
+                "workspace should not hit discovery"
+            );
+            assert_eq!(o.resolve_failures, 0, "workspace should not hit resolve");
+            assert_eq!(o.merge_failures, 0, "workspace should not hit merge");
+            let target = o.targets.first().expect("one target result");
+            assert_eq!(target.repository_kind, "workspace");
+            assert_eq!(target.recommended_parser, "parse_workspace_with_config");
+            assert_eq!(target.workspace_member_count, Some(2));
+            assert!(target.classification_error.is_none(), "{target:#?}");
+            assert!(target.discovery.is_none(), "{target:#?}");
+            assert!(target.resolve.is_none(), "{target:#?}");
+            assert!(target.merge.is_none(), "{target:#?}");
+        }
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
 fn init_local_git_crate(repo_dir: &Path) {
     std::fs::create_dir_all(repo_dir.join("src")).expect("create src dir");
     std::fs::write(
@@ -350,6 +400,75 @@ edition = "2024"
         "pub fn workspace_member() -> usize { 7 }\n",
     )
     .expect("write member lib.rs");
+
+    run_git(repo_dir, &["init"]);
+    run_git(repo_dir, &["add", "."]);
+    run_git(
+        repo_dir,
+        &[
+            "-c",
+            "user.name=ploke-test",
+            "-c",
+            "user.email=ploke@example.com",
+            "commit",
+            "-m",
+            "initial",
+        ],
+    );
+}
+
+fn init_local_git_implicit_workspace(repo_dir: &Path) {
+    std::fs::create_dir_all(repo_dir.join("helper/src")).expect("create helper src");
+    std::fs::create_dir_all(repo_dir.join("excluded/src")).expect("create excluded src");
+    std::fs::create_dir_all(repo_dir.join("src")).expect("create root src");
+    std::fs::write(
+        repo_dir.join("Cargo.toml"),
+        r#"[package]
+name = "implicit_workspace_root"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+helper = { path = "helper" }
+
+[workspace]
+exclude = ["excluded"]
+"#,
+    )
+    .expect("write implicit workspace Cargo.toml");
+    std::fs::write(
+        repo_dir.join("src/lib.rs"),
+        "pub fn root_answer() -> usize { helper::helper_answer() }\n",
+    )
+    .expect("write root lib.rs");
+    std::fs::write(
+        repo_dir.join("helper/Cargo.toml"),
+        r#"[package]
+name = "helper"
+version = "0.1.0"
+edition = "2024"
+"#,
+    )
+    .expect("write helper Cargo.toml");
+    std::fs::write(
+        repo_dir.join("helper/src/lib.rs"),
+        "pub fn helper_answer() -> usize { 5 }\n",
+    )
+    .expect("write helper lib.rs");
+    std::fs::write(
+        repo_dir.join("excluded/Cargo.toml"),
+        r#"[package]
+name = "excluded"
+version = "0.1.0"
+edition = "2024"
+"#,
+    )
+    .expect("write excluded Cargo.toml");
+    std::fs::write(
+        repo_dir.join("excluded/src/lib.rs"),
+        "pub fn excluded_answer() -> usize { 9 }\n",
+    )
+    .expect("write excluded lib.rs");
 
     run_git(repo_dir, &["init"]);
     run_git(repo_dir, &["add", "."]);

@@ -220,6 +220,8 @@ EXAMPLES:
     # Clone and sweep a corpus of GitHub targets through discovery/resolve/merge
     cargo xtask --format json parse debug corpus --limit 10
     cargo xtask parse debug corpus --list-file ./my_targets.txt --skip-merge
+    cargo xtask parse debug corpus-show run-1774750473411 --target Amanieu/parking_lot --backtrace
+    cargo xtask parse debug corpus-show run-1774750473411 --target Amanieu/parking_lot --backtrace-full
 
 PARSE DEBUG SUBCOMMANDS (see also `cargo xtask parse debug --help`):
     manifest           Cargo.toml workspace / members summary
@@ -233,6 +235,7 @@ PARSE DEBUG SUBCOMMANDS (see also `cargo xtask parse debug --help`):
     modules-premerge   Resolve only: all ModuleNodes grouped by source file
     path-collisions    After merge: logical paths claimed by more than one module node
     corpus             Clone a corpus from list files and report per-target parser failures
+    corpus-show        Re-open a saved corpus run and inspect one target / backtrace
 "#
     );
 }
