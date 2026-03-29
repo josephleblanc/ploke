@@ -15,7 +15,8 @@
 //! source file (two methods on the same `impl`) producing the same synthetic
 //! `Static` ID. This fixture keeps the example valid Rust and small enough to verify:
 //! - the crate compiles under `cargo check`
-//! - `syn_parser` still panics on duplicate local static IDs
+//! - `syn_parser` can resolve duplicate method-local `static` names in sibling
+//!   methods without colliding IDs
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -29,16 +30,6 @@ fn fixture_workspace_root() -> PathBuf {
 
 fn fixture_member_root() -> PathBuf {
     fixture_workspace_root().join("member_static_repro")
-}
-
-fn panic_payload_to_string(payload: &Box<dyn std::any::Any + Send>) -> String {
-    if let Some(s) = payload.downcast_ref::<&str>() {
-        s.to_string()
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        "<non-string panic payload>".to_string()
-    }
 }
 
 #[test]
@@ -66,7 +57,7 @@ fn fixture_duplicate_local_statics_is_valid_rust() {
 }
 
 #[test]
-fn repro_duplicate_local_statics_duplicate_relation_panic() {
+fn repro_duplicate_local_statics_resolves_successfully() {
     let fixture_root = fixture_member_root();
 
     assert!(
@@ -75,21 +66,6 @@ fn repro_duplicate_local_statics_duplicate_relation_panic() {
         fixture_root.display()
     );
 
-    let result = std::panic::catch_unwind(|| {
-        let _ = try_run_phases_and_resolve(&fixture_root);
-    });
-
-    let payload = result.expect_err(
-        "parser unexpectedly succeeded on committed repro fixture; re-evaluate whether the fixture still captures the bug",
-    );
-    let panic_msg = panic_payload_to_string(&payload);
-
-    assert!(
-        panic_msg.contains("Expected unique relations"),
-        "panic should preserve duplicate-relation context, got: {panic_msg}"
-    );
-    assert!(
-        panic_msg.contains("Duplicate node found for ID AnyNodeId::Static("),
-        "panic should mention the duplicate static node lookup, got: {panic_msg}"
-    );
+    try_run_phases_and_resolve(&fixture_root)
+        .expect("parser should resolve duplicate method-local static names under method scope");
 }
