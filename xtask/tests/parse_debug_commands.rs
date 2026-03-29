@@ -6,8 +6,8 @@ use std::process::Command as ProcessCommand;
 use tempfile::TempDir;
 use xtask::commands::parse::ParseOutput;
 use xtask::commands::parse_debug::{
-    CorpusWorkspaceMode, DebugCargoTargets, DebugCorpus, DebugCorpusShow, DebugDiscoveryRules,
-    DebugLogicalPaths, DebugModulesPremerge, DebugOutput, DebugPathCollisions,
+    CorpusWorkspaceMode, DebugCargoTargets, DebugCorpus, DebugCorpusShow, DebugCorpusTriage,
+    DebugDiscoveryRules, DebugLogicalPaths, DebugModulesPremerge, DebugOutput, DebugPathCollisions,
     DebugWorkspaceMembers, ParseDebugCli, ParseDebugCmd,
 };
 use xtask::context::CommandContext;
@@ -339,6 +339,145 @@ fn parse_debug_corpus_show_filters_workspace_members() {
             assert_eq!(probe.failed_members, 1);
             assert_eq!(probe.members.len(), 1);
             assert_eq!(probe.members[0].label, "gamma");
+        }
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_debug_corpus_triage_indexes_failures_and_writes_cluster_stubs() {
+    let temp = TempDir::new().expect("tempdir");
+    let run_dir = temp.path().join("run-555");
+    std::fs::create_dir_all(&run_dir).expect("create run dir");
+    let summary_path = run_dir.join("summary.json");
+    let summary_json = format!(
+        r#"{{
+  "kind": "corpus",
+  "run_id": "run-555",
+  "checkout_root": "/tmp/checkouts",
+  "artifact_root": "{}",
+  "workspace_mode": "probe",
+  "list_files": ["/tmp/list-a.txt"],
+  "requested_entries": 4,
+  "unique_targets": 4,
+  "processed_targets": 2,
+  "single_crate_targets": 1,
+  "workspace_targets": 1,
+  "reused_targets": 2,
+  "cloned_targets": 0,
+  "skipped_targets": 0,
+  "clone_failures": 0,
+  "discovery_failures": 0,
+  "resolve_failures": 3,
+  "merge_failures": 0,
+  "panic_failures": 2,
+  "targets": [
+    {{
+      "target": "single/fail",
+      "normalized_repo": "single/fail",
+      "clone_url": "https://github.com/single/fail.git",
+      "datasets": ["list-a"],
+      "checkout_path": "/tmp/checkouts/single__fail",
+      "artifact_dir": "/tmp/artifacts/single__fail",
+      "repository_kind": "single_crate",
+      "recommended_parser": "try_run_phases_and_merge",
+      "workspace_member_count": null,
+      "classification_error": null,
+      "classification_diagnostic": null,
+      "clone": {{ "ok": true, "action": "reused", "error": null }},
+      "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "discovery": {{ "ok": true, "panic": false, "duration_ms": 2, "file_count": 3, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": null, "error": null, "failure_artifact_path": null }},
+      "resolve": {{ "ok": false, "panic": true, "duration_ms": 8, "file_count": null, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": "panic", "error": "thread 'worker' panicked at Duplicate Macro node ID at crates/somewhere.rs:9:1", "failure_artifact_path": "/tmp/artifacts/single__fail/resolve/failure.json" }},
+      "merge": null,
+      "summary_path": "/tmp/artifacts/single__fail/summary.json",
+      "workspace_probe": null
+    }},
+    {{
+      "target": "workspace/fail",
+      "normalized_repo": "workspace/fail",
+      "clone_url": "https://github.com/workspace/fail.git",
+      "datasets": ["list-a"],
+      "checkout_path": "/tmp/checkouts/workspace__fail",
+      "artifact_dir": "/tmp/artifacts/workspace__fail",
+      "repository_kind": "workspace",
+      "recommended_parser": "parse_workspace_with_config",
+      "workspace_member_count": 2,
+      "classification_error": null,
+      "classification_diagnostic": null,
+      "clone": {{ "ok": true, "action": "reused", "error": null }},
+      "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "discovery": null,
+      "resolve": null,
+      "merge": null,
+      "summary_path": "/tmp/artifacts/workspace__fail/summary.json",
+      "workspace_probe": {{
+        "workspace_root": "/tmp/checkouts/workspace__fail",
+        "member_count": 2,
+        "failed_members": 2,
+        "summary_path": "/tmp/artifacts/workspace__fail/workspace_probe/workspace_summary.json",
+        "members": [
+          {{
+            "path": "/tmp/checkouts/workspace__fail/gamma",
+            "label": "gamma",
+            "artifact_dir": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma",
+            "discovery": {{ "ok": true, "panic": false, "duration_ms": 2, "file_count": 3, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": null, "error": null, "failure_artifact_path": null }},
+            "resolve": {{ "ok": false, "panic": true, "duration_ms": 8, "file_count": null, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": "panic", "error": "thread 'worker' panicked at Duplicate Macro node ID at crates/elsewhere.rs:3:7", "failure_artifact_path": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma/resolve/failure.json" }},
+            "merge": null
+          }},
+          {{
+            "path": "/tmp/checkouts/workspace__fail/delta",
+            "label": "delta",
+            "artifact_dir": "/tmp/artifacts/workspace__fail/workspace_probe/members/001_delta",
+            "discovery": {{ "ok": true, "panic": false, "duration_ms": 3, "file_count": 4, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": null, "error": null, "failure_artifact_path": null }},
+            "resolve": {{ "ok": false, "panic": false, "duration_ms": 9, "file_count": null, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": "error", "error": "partial parsing: 28 succeeded, 3 failed", "failure_artifact_path": "/tmp/artifacts/workspace__fail/workspace_probe/members/001_delta/resolve/failure.json" }},
+            "merge": null
+          }}
+        ]
+      }}
+    }}
+  ]
+}}"#,
+        run_dir.display()
+    );
+    std::fs::write(&summary_path, summary_json).expect("write summary");
+
+    let cmd = ParseDebugCli {
+        cmd: ParseDebugCmd::CorpusTriage(DebugCorpusTriage {
+            run: summary_path,
+            artifact_dir: temp.path().join("artifacts"),
+            out_dir: None,
+            no_report_stubs: false,
+        }),
+    };
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd.execute(&ctx).expect("parse debug corpus-triage");
+    match out {
+        ParseOutput::Debug(DebugOutput::CorpusTriage(o)) => {
+            assert_eq!(o.run_id, "run-555");
+            assert_eq!(o.failure_count, 3);
+            assert_eq!(o.cluster_count, 2);
+            assert_eq!(o.pending_report_count, 2);
+            assert!(Path::new(&o.triage_dir).join("index.json").is_file());
+            assert!(Path::new(&o.failures_path).is_file());
+            assert!(Path::new(&o.clusters_path).is_file());
+            assert!(Path::new(&o.report_template_path).is_file());
+            assert!(Path::new(&o.pending_report_dir).is_dir());
+
+            let macro_cluster = o
+                .clusters
+                .iter()
+                .find(|cluster| cluster.error_signature == "Duplicate Macro node ID")
+                .expect("macro cluster");
+            assert_eq!(macro_cluster.count, 2);
+            assert!(
+                macro_cluster
+                    .pending_report_path
+                    .as_deref()
+                    .is_some_and(|p| Path::new(p).is_file())
+            );
+
+            let jsonl = std::fs::read_to_string(&o.failures_path).expect("read failures jsonl");
+            assert_eq!(jsonl.lines().count(), 3);
         }
         other => panic!("unexpected output: {other:?}"),
     }

@@ -78,6 +78,9 @@ impl OutputFormat {
 /// Format a value for human-readable output.
 fn format_human<T: Serialize>(value: &T) -> std::result::Result<String, XtaskError> {
     let json = serde_json::to_value(value).map_err(|e| XtaskError::new(e.to_string()))?;
+    if let Some(rendered) = format_human_corpus_triage(&json) {
+        return Ok(rendered);
+    }
     if let Some(rendered) = format_human_corpus_show(&json) {
         return Ok(rendered);
     }
@@ -87,6 +90,99 @@ fn format_human<T: Serialize>(value: &T) -> std::result::Result<String, XtaskErr
 
     // Fallback for commands without a custom human renderer yet.
     serde_json::to_string_pretty(&json).map_err(|e| XtaskError::new(e.to_string()))
+}
+
+fn format_human_corpus_triage(value: &Value) -> Option<String> {
+    let obj = value.as_object()?;
+    if obj.get("kind")?.as_str()? != "corpus_triage" {
+        return None;
+    }
+
+    let run_id = obj
+        .get("run_id")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let failure_count = obj
+        .get("failure_count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let cluster_count = obj
+        .get("cluster_count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let pending_report_count = obj
+        .get("pending_report_count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let triage_dir = obj
+        .get("triage_dir")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let failures_path = obj
+        .get("failures_path")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let clusters_path = obj
+        .get("clusters_path")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let template_path = obj
+        .get("report_template_path")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    let mut out = String::new();
+    out.push_str(&format!("Corpus triage ready: {run_id}\n"));
+    out.push_str(&format!("Failures: {failure_count}\n"));
+    out.push_str(&format!("Clusters: {cluster_count}\n"));
+    out.push_str(&format!("Pending reports: {pending_report_count}\n"));
+    out.push_str(&format!("Triage dir: {triage_dir}\n"));
+    out.push_str(&format!("Failures index: {failures_path}\n"));
+    out.push_str(&format!("Cluster index: {clusters_path}\n"));
+    out.push_str(&format!("Report template: {template_path}\n"));
+
+    if let Some(clusters) = obj.get("clusters").and_then(Value::as_array) {
+        if !clusters.is_empty() {
+            out.push_str("\nTop clusters:\n");
+            for cluster in clusters.iter().take(5) {
+                let Some(cluster_obj) = cluster.as_object() else {
+                    continue;
+                };
+                let signature = cluster_obj
+                    .get("error_signature")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let stage = cluster_obj
+                    .get("stage")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let failure_kind = cluster_obj
+                    .get("failure_kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let count = cluster_obj
+                    .get("count")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default();
+                out.push_str(&format!(
+                    "- [{count}] {stage}/{failure_kind}: {signature}\n"
+                ));
+            }
+        }
+    }
+
+    out.push_str("\nNext steps:\n");
+    out.push_str(&format!(
+        "- Query failures: jq -c '.failures[]' {}/index.json\n",
+        triage_dir
+    ));
+    out.push_str(&format!(
+        "- Query clusters: jq -c '.clusters[]' {}\n",
+        clusters_path
+    ));
+    out.push_str("- Assign one sub-agent per cluster stub under reports/pending/\n");
+
+    Some(out.trim_end().to_string())
 }
 
 fn format_human_corpus_show(value: &Value) -> Option<String> {
@@ -1995,6 +2091,60 @@ mod tests {
         assert!(formatted.contains("  discovery: ok 2ms 3f\n"));
         assert!(formatted.contains("  resolve: err 8ms\n"));
         assert!(formatted.contains("  merge: -\n"));
+    }
+
+    #[test]
+    fn test_output_format_human_corpus_triage() {
+        let data = serde_json::json!({
+            "kind": "corpus_triage",
+            "run_id": "run-555",
+            "summary_path": "/tmp/artifacts/run-555/summary.json",
+            "triage_dir": "/tmp/artifacts/run-555/triage",
+            "failures_path": "/tmp/artifacts/run-555/triage/failures.jsonl",
+            "clusters_path": "/tmp/artifacts/run-555/triage/clusters.json",
+            "report_template_path": "/tmp/artifacts/run-555/triage/reports/_report_template.json",
+            "pending_report_dir": "/tmp/artifacts/run-555/triage/reports/pending",
+            "failure_count": 3,
+            "cluster_count": 2,
+            "pending_report_count": 2,
+            "failures": [],
+            "clusters": [
+                {
+                    "key": "resolve|panic|Duplicate Macro node ID",
+                    "slug": "resolve_panic_duplicate_macro_node_id",
+                    "stage": "resolve",
+                    "failure_kind": "panic",
+                    "error_signature": "Duplicate Macro node ID",
+                    "count": 2,
+                    "repos": ["single/fail", "workspace/fail"],
+                    "examples": ["failure-0001", "failure-0002"],
+                    "pending_report_path": "/tmp/artifacts/run-555/triage/reports/pending/resolve_panic_duplicate_macro_node_id.json"
+                },
+                {
+                    "key": "resolve|error|partial parsing: 28 succeeded, 3 failed",
+                    "slug": "resolve_error_partial_parsing_28_succeeded_3_failed",
+                    "stage": "resolve",
+                    "failure_kind": "error",
+                    "error_signature": "partial parsing: 28 succeeded, 3 failed",
+                    "count": 1,
+                    "repos": ["workspace/fail"],
+                    "examples": ["failure-0003"],
+                    "pending_report_path": "/tmp/artifacts/run-555/triage/reports/pending/resolve_error_partial_parsing_28_succeeded_3_failed.json"
+                }
+            ]
+        });
+
+        let formatted = OutputFormat::Human.format(&data).unwrap();
+        assert!(formatted.contains("Corpus triage ready: run-555\n"));
+        assert!(formatted.contains("Failures: 3\n"));
+        assert!(formatted.contains("Clusters: 2\n"));
+        assert!(formatted.contains("Pending reports: 2\n"));
+        assert!(
+            formatted.contains("Top clusters:\n- [2] resolve/panic: Duplicate Macro node ID\n")
+        );
+        assert!(formatted.contains(
+            "Next steps:\n- Query failures: jq -c '.failures[]' /tmp/artifacts/run-555/triage/index.json\n"
+        ));
     }
 
     #[test]

@@ -39,6 +39,7 @@
 //! cargo xtask --format json parse debug corpus --list-file /tmp/ploke-targets.txt --checkout-dir /tmp/ploke-corpus
 //! cargo xtask --format json parse debug corpus --list-file /tmp/ploke-targets.txt --skip-merge
 //! cargo xtask parse debug corpus-show run-1774750473411 --target Amanieu/parking_lot --backtrace
+//! cargo xtask parse debug corpus-triage run-1774750473411
 //! ```
 //!
 //! Suggested workflow:
@@ -49,8 +50,9 @@
 //!    payloads rather than terminal output.
 #![allow(missing_docs)]
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;
+use std::io::Write;
 use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -142,6 +144,9 @@ pub enum ParseDebugCmd {
 
     /// Re-open a persisted corpus run and inspect saved summaries/backtraces.
     CorpusShow(DebugCorpusShow),
+
+    /// Build a triage index and pending report stubs from a persisted corpus run.
+    CorpusTriage(DebugCorpusTriage),
 }
 
 impl ParseDebugCmd {
@@ -159,6 +164,7 @@ impl ParseDebugCmd {
             ParseDebugCmd::DiscoveryRules(c) => c.execute(ctx)?,
             ParseDebugCmd::Corpus(c) => c.execute(ctx)?,
             ParseDebugCmd::CorpusShow(c) => c.execute(ctx)?,
+            ParseDebugCmd::CorpusTriage(c) => c.execute(ctx)?,
         };
         Ok(super::parse::ParseOutput::Debug(out))
     }
@@ -886,6 +892,7 @@ pub enum DebugOutput {
     DiscoveryRules(DebugDiscoveryRulesOut),
     Corpus(DebugCorpusOut),
     CorpusShow(DebugCorpusShowOut),
+    CorpusTriage(DebugCorpusTriageOut),
 }
 
 fn path_relative_to(root: &Path, path: &Path) -> String {
@@ -966,6 +973,258 @@ fn corpus_workspace_member_matches(member: &CorpusWorkspaceMemberResult, needle:
             .file_name()
             .and_then(|s| s.to_str())
             == Some(needle)
+}
+
+fn collect_corpus_triage_failures(run: &DebugCorpusOut) -> Vec<CorpusTriageFailure> {
+    let mut failures = Vec::new();
+    let mut next_id = 1usize;
+
+    for target in &run.targets {
+        collect_target_stage_failure(
+            run,
+            target,
+            None,
+            "target",
+            "discovery",
+            target.discovery.as_ref(),
+            target.summary_path.as_deref(),
+            None,
+            &mut next_id,
+            &mut failures,
+        );
+        collect_target_stage_failure(
+            run,
+            target,
+            None,
+            "target",
+            "resolve",
+            target.resolve.as_ref(),
+            target.summary_path.as_deref(),
+            None,
+            &mut next_id,
+            &mut failures,
+        );
+        collect_target_stage_failure(
+            run,
+            target,
+            None,
+            "target",
+            "merge",
+            target.merge.as_ref(),
+            target.summary_path.as_deref(),
+            None,
+            &mut next_id,
+            &mut failures,
+        );
+
+        if let Some(probe) = &target.workspace_probe {
+            for member in &probe.members {
+                collect_target_stage_failure(
+                    run,
+                    target,
+                    Some(member),
+                    "workspace_member",
+                    "discovery",
+                    Some(&member.discovery),
+                    target.summary_path.as_deref(),
+                    probe.summary_path.as_deref(),
+                    &mut next_id,
+                    &mut failures,
+                );
+                collect_target_stage_failure(
+                    run,
+                    target,
+                    Some(member),
+                    "workspace_member",
+                    "resolve",
+                    member.resolve.as_ref(),
+                    target.summary_path.as_deref(),
+                    probe.summary_path.as_deref(),
+                    &mut next_id,
+                    &mut failures,
+                );
+                collect_target_stage_failure(
+                    run,
+                    target,
+                    Some(member),
+                    "workspace_member",
+                    "merge",
+                    member.merge.as_ref(),
+                    target.summary_path.as_deref(),
+                    probe.summary_path.as_deref(),
+                    &mut next_id,
+                    &mut failures,
+                );
+            }
+        }
+    }
+
+    failures
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_target_stage_failure(
+    run: &DebugCorpusOut,
+    target: &CorpusTargetResult,
+    member: Option<&CorpusWorkspaceMemberResult>,
+    source: &str,
+    stage: &str,
+    result: Option<&CorpusStageResult>,
+    target_summary_path: Option<&str>,
+    workspace_summary_path: Option<&str>,
+    next_id: &mut usize,
+    failures: &mut Vec<CorpusTriageFailure>,
+) {
+    let Some(result) = result else {
+        return;
+    };
+    if result.ok {
+        return;
+    }
+
+    let failure_kind = result
+        .failure_kind
+        .clone()
+        .unwrap_or_else(|| if result.panic { "panic" } else { "error" }.into());
+    let error_excerpt = triage_error_excerpt(result.error.as_deref());
+    let error_signature = triage_error_signature(result.error.as_deref(), stage, &failure_kind);
+    let cluster_key = format!("{stage}|{failure_kind}|{error_signature}");
+    let cluster_slug = sanitize_artifact_component(&cluster_key);
+    let id = format!("failure-{next_id:04}");
+    *next_id += 1;
+
+    failures.push(CorpusTriageFailure {
+        id,
+        run_id: run.run_id.clone(),
+        target: target.target.clone(),
+        normalized_repo: target.normalized_repo.clone(),
+        repository_kind: target.repository_kind.clone(),
+        commit_sha: target.commit_sha.clone(),
+        source: source.into(),
+        member_label: member.map(|entry| entry.label.clone()),
+        member_path: member.map(|entry| entry.path.clone()),
+        member_artifact_dir: member.map(|entry| entry.artifact_dir.clone()),
+        stage: stage.into(),
+        failure_kind,
+        panic: result.panic,
+        error_signature,
+        error_excerpt,
+        failure_artifact_path: result.failure_artifact_path.clone(),
+        artifact_path: result.artifact_path.clone(),
+        target_summary_path: target_summary_path.map(str::to_string),
+        workspace_summary_path: workspace_summary_path.map(str::to_string),
+        cluster_key,
+        cluster_slug,
+    });
+}
+
+fn triage_error_excerpt(error: Option<&str>) -> String {
+    let Some(error) = error else {
+        return "unknown failure".into();
+    };
+    let single_line = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate_progress_error(&single_line)
+}
+
+fn triage_error_signature(error: Option<&str>, stage: &str, failure_kind: &str) -> String {
+    let Some(error) = error else {
+        return format!("{stage} {failure_kind}");
+    };
+    let mut first_line = error
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or(error)
+        .to_string();
+    if let Some((_, rest)) = first_line.split_once("panicked at ") {
+        first_line = rest.to_string();
+    }
+    if let Some((head, _)) = first_line.split_once(" at ") {
+        if !head.trim().is_empty() {
+            first_line = head.trim().to_string();
+        }
+    }
+    truncate_progress_error(&first_line)
+}
+
+fn build_corpus_triage_clusters(
+    failures: &[CorpusTriageFailure],
+    run_id: &str,
+    pending_report_dir: Option<&Path>,
+) -> Result<Vec<CorpusTriageCluster>, XtaskError> {
+    let mut grouped: BTreeMap<&str, Vec<&CorpusTriageFailure>> = BTreeMap::new();
+    for failure in failures {
+        grouped
+            .entry(&failure.cluster_key)
+            .or_default()
+            .push(failure);
+    }
+
+    let mut clusters = Vec::with_capacity(grouped.len());
+    for (key, entries) in grouped {
+        let first = entries[0];
+        let mut repos: BTreeSet<String> = BTreeSet::new();
+        let mut examples = Vec::new();
+        for entry in &entries {
+            repos.insert(entry.normalized_repo.clone());
+            if examples.len() < 5 {
+                examples.push(entry.id.clone());
+            }
+        }
+
+        let pending_report_path = if let Some(dir) = pending_report_dir {
+            std::fs::create_dir_all(dir).map_err(|e| {
+                XtaskError::Resource(format!(
+                    "Failed to create pending report dir {}: {e}",
+                    dir.display()
+                ))
+            })?;
+            let path = dir.join(format!("{}.json", first.cluster_slug));
+            let stub = CorpusTriageReportTemplate {
+                version: 1,
+                run_id: Some(run_id.to_string()),
+                cluster_key: Some(key.to_string()),
+                cluster_slug: Some(first.cluster_slug.clone()),
+                status: "pending".into(),
+                signature: Some(first.error_signature.clone()),
+                stage: Some(first.stage.clone()),
+                failure_kind: Some(first.failure_kind.clone()),
+                occurrence_count: Some(entries.len()),
+                example_failures: examples.clone(),
+                suspected_root_cause: None,
+                confidence: None,
+                scope_assessment: None,
+                touches_sensitive_pipeline: None,
+                recommended_next_step: None,
+                minimal_repro_status: "not_started".into(),
+                relevant_artifacts: entries
+                    .iter()
+                    .filter_map(|entry| entry.failure_artifact_path.clone())
+                    .take(5)
+                    .collect(),
+                relevant_code_paths: Vec::new(),
+                notes: Vec::new(),
+            };
+            write_json_file(&path, &stub)?;
+            Some(path.display().to_string())
+        } else {
+            None
+        };
+
+        clusters.push(CorpusTriageCluster {
+            key: key.to_string(),
+            slug: first.cluster_slug.clone(),
+            stage: first.stage.clone(),
+            failure_kind: first.failure_kind.clone(),
+            error_signature: first.error_signature.clone(),
+            count: entries.len(),
+            repos: repos.into_iter().collect(),
+            examples,
+            pending_report_path,
+        });
+    }
+
+    Ok(clusters)
 }
 
 fn recompute_corpus_counts(run: &mut DebugCorpusOut) {
@@ -2123,6 +2382,104 @@ pub struct DebugCorpusShowOut {
     pub summary_path: String,
 }
 
+#[derive(Debug, Clone, clap::Args)]
+pub struct DebugCorpusTriage {
+    /// Corpus run ID like `run-1774750473411`, or a path to a run directory / `summary.json`.
+    #[arg(value_name = "RUN_OR_PATH")]
+    pub run: PathBuf,
+
+    /// Corpus artifact base dir used when resolving a run ID.
+    #[arg(long, value_name = "DIR", default_value = "target/debug_corpus_runs")]
+    pub artifact_dir: PathBuf,
+
+    /// Directory used to store triage indexes and pending report stubs.
+    ///
+    /// Defaults to `<run-dir>/triage`.
+    #[arg(long, value_name = "DIR")]
+    pub out_dir: Option<PathBuf>,
+
+    /// Skip creating one pending JSON report stub per failure cluster.
+    #[arg(long)]
+    pub no_report_stubs: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugCorpusTriageOut {
+    pub run_id: String,
+    pub summary_path: String,
+    pub triage_dir: String,
+    pub failures_path: String,
+    pub clusters_path: String,
+    pub report_template_path: String,
+    pub pending_report_dir: String,
+    pub failure_count: usize,
+    pub cluster_count: usize,
+    pub pending_report_count: usize,
+    pub failures: Vec<CorpusTriageFailure>,
+    pub clusters: Vec<CorpusTriageCluster>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorpusTriageFailure {
+    pub id: String,
+    pub run_id: String,
+    pub target: String,
+    pub normalized_repo: String,
+    pub repository_kind: String,
+    pub commit_sha: Option<String>,
+    pub source: String,
+    pub member_label: Option<String>,
+    pub member_path: Option<String>,
+    pub member_artifact_dir: Option<String>,
+    pub stage: String,
+    pub failure_kind: String,
+    pub panic: bool,
+    pub error_signature: String,
+    pub error_excerpt: String,
+    pub failure_artifact_path: Option<String>,
+    pub artifact_path: Option<String>,
+    pub target_summary_path: Option<String>,
+    pub workspace_summary_path: Option<String>,
+    pub cluster_key: String,
+    pub cluster_slug: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorpusTriageCluster {
+    pub key: String,
+    pub slug: String,
+    pub stage: String,
+    pub failure_kind: String,
+    pub error_signature: String,
+    pub count: usize,
+    pub repos: Vec<String>,
+    pub examples: Vec<String>,
+    pub pending_report_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CorpusTriageReportTemplate {
+    version: u32,
+    run_id: Option<String>,
+    cluster_key: Option<String>,
+    cluster_slug: Option<String>,
+    status: String,
+    signature: Option<String>,
+    stage: Option<String>,
+    failure_kind: Option<String>,
+    occurrence_count: Option<usize>,
+    example_failures: Vec<String>,
+    suspected_root_cause: Option<String>,
+    confidence: Option<String>,
+    scope_assessment: Option<String>,
+    touches_sensitive_pipeline: Option<bool>,
+    recommended_next_step: Option<String>,
+    minimal_repro_status: String,
+    relevant_artifacts: Vec<String>,
+    relevant_code_paths: Vec<String>,
+    notes: Vec<String>,
+}
+
 impl Command for DebugCorpusShow {
     type Output = DebugOutput;
     type Error = XtaskError;
@@ -2202,6 +2559,109 @@ impl Command for DebugCorpusShow {
             show_backtrace_full: self.backtrace_full,
             summary_path: summary_path.display().to_string(),
         }))
+    }
+}
+
+impl Command for DebugCorpusTriage {
+    type Output = DebugOutput;
+    type Error = XtaskError;
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let summary_path = resolve_corpus_summary_path(ctx, &self.run, &self.artifact_dir)?;
+        let content = std::fs::read_to_string(&summary_path).map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to read corpus summary {}: {e}",
+                summary_path.display()
+            ))
+        })?;
+        let run: DebugCorpusOut = serde_json::from_str(&content).map_err(|e| {
+            XtaskError::Parse(format!(
+                "Failed to parse corpus summary {}: {e}",
+                summary_path.display()
+            ))
+        })?;
+
+        let triage_dir = if let Some(out_dir) = &self.out_dir {
+            let workspace_root = ctx.workspace_root()?;
+            if out_dir.is_absolute() {
+                out_dir.clone()
+            } else {
+                workspace_root.join(out_dir)
+            }
+        } else {
+            summary_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("triage")
+        };
+        std::fs::create_dir_all(&triage_dir).map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to create corpus triage dir {}: {e}",
+                triage_dir.display()
+            ))
+        })?;
+
+        let failures = collect_corpus_triage_failures(&run);
+        let pending_report_dir = triage_dir.join("reports").join("pending");
+        let report_template_path = triage_dir.join("reports").join("_report_template.json");
+        let clusters = build_corpus_triage_clusters(
+            &failures,
+            &run.run_id,
+            if self.no_report_stubs {
+                None
+            } else {
+                Some(&pending_report_dir)
+            },
+        )?;
+
+        let template = CorpusTriageReportTemplate {
+            version: 1,
+            run_id: None,
+            cluster_key: None,
+            cluster_slug: None,
+            status: "pending".into(),
+            signature: None,
+            stage: None,
+            failure_kind: None,
+            occurrence_count: None,
+            example_failures: Vec::new(),
+            suspected_root_cause: None,
+            confidence: None,
+            scope_assessment: None,
+            touches_sensitive_pipeline: None,
+            recommended_next_step: None,
+            minimal_repro_status: "not_started".into(),
+            relevant_artifacts: Vec::new(),
+            relevant_code_paths: Vec::new(),
+            notes: Vec::new(),
+        };
+        write_json_file(&report_template_path, &template)?;
+
+        let failures_path = triage_dir.join("failures.jsonl");
+        write_jsonl_file(&failures_path, &failures)?;
+        let clusters_path = triage_dir.join("clusters.json");
+        write_json_file(&clusters_path, &clusters)?;
+
+        let out = DebugCorpusTriageOut {
+            run_id: run.run_id.clone(),
+            summary_path: summary_path.display().to_string(),
+            triage_dir: triage_dir.display().to_string(),
+            failures_path: failures_path.display().to_string(),
+            clusters_path: clusters_path.display().to_string(),
+            report_template_path: report_template_path.display().to_string(),
+            pending_report_dir: pending_report_dir.display().to_string(),
+            failure_count: failures.len(),
+            cluster_count: clusters.len(),
+            pending_report_count: clusters
+                .iter()
+                .filter(|cluster| cluster.pending_report_path.is_some())
+                .count(),
+            failures,
+            clusters,
+        };
+        write_json_file(&triage_dir.join("index.json"), &out)?;
+
+        Ok(DebugOutput::CorpusTriage(out))
     }
 }
 
@@ -2921,6 +3381,34 @@ fn write_json_file<T: Serialize>(path: &Path, payload: &T) -> Result<PathBuf, Xt
             path.display()
         ))
     })?;
+    Ok(path.to_path_buf())
+}
+
+fn write_jsonl_file<T: Serialize>(path: &Path, payloads: &[T]) -> Result<PathBuf, XtaskError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to create artifact parent {}: {e}",
+                parent.display()
+            ))
+        })?;
+    }
+
+    let mut file = File::create(path).map_err(|e| {
+        XtaskError::Resource(format!("Failed to create artifact {}: {e}", path.display()))
+    })?;
+    for payload in payloads {
+        serde_json::to_writer(&mut file, payload).map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to serialize artifact {}: {e}",
+                path.display()
+            ))
+        })?;
+        file.write_all(b"\n").map_err(|e| {
+            XtaskError::Resource(format!("Failed to write artifact {}: {e}", path.display()))
+        })?;
+    }
+
     Ok(path.to_path_buf())
 }
 
