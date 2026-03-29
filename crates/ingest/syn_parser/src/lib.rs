@@ -751,6 +751,10 @@ edition = "2021"
                     );
                     assert!(emission_site.line > 0);
                     assert!(emission_site.column > 0);
+                    let backtrace = err
+                        .diagnostic_backtrace()
+                        .expect("workspace manifest parse should capture a backtrace");
+                    assert!(!backtrace.to_string().is_empty());
                     let span = err
                         .diagnostic_span()
                         .expect("workspace manifest parse should preserve a source span");

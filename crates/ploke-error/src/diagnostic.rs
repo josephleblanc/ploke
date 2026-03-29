@@ -1,3 +1,4 @@
+use std::backtrace::Backtrace;
 use std::panic::Location;
 use std::path::Path;
 
@@ -17,6 +18,9 @@ pub trait DiagnosticInfo {
         Vec::new()
     }
     fn diagnostic_emission_site(&self) -> Option<&DiagnosticSite> {
+        None
+    }
+    fn diagnostic_backtrace(&self) -> Option<&Backtrace> {
         None
     }
 }

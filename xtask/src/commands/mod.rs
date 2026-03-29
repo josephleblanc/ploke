@@ -942,6 +942,7 @@ mod tests {
                         "source_path": "/tmp/checkouts/fail__repo/Cargo.toml",
                         "source_span": { "start": 10, "end": 19, "line": 1, "col": 11 },
                         "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/workspace.rs", "line": 191, "column": 13 },
+                        "backtrace": "stack backtrace:\n  0: syn_parser::discovery::workspace",
                         "context": [
                             { "key": "manifest_path", "value": "/tmp/checkouts/fail__repo/Cargo.toml" }
                         ]

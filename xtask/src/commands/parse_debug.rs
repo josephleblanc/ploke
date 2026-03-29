@@ -1379,6 +1379,7 @@ pub struct CorpusDiagnostic {
     pub source_path: Option<String>,
     pub source_span: Option<CorpusSourceSpan>,
     pub emission_site: Option<CorpusEmissionSite>,
+    pub backtrace: Option<String>,
     pub context: Vec<CorpusDiagnosticField>,
 }
 
@@ -2009,6 +2010,7 @@ fn corpus_diagnostic_from_discovery_error(err: &DiscoveryError) -> CorpusDiagnos
             line: site.line,
             column: site.column,
         }),
+        backtrace: err.diagnostic_backtrace().map(ToString::to_string),
         context: err
             .diagnostic_context()
             .into_iter()

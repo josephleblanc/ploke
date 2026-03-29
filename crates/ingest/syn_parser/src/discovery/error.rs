@@ -1,3 +1,4 @@
+use std::backtrace::Backtrace;
 use std::path::{Path, PathBuf};
 use std::panic::Location;
 use std::sync::Arc;
@@ -16,6 +17,7 @@ pub enum DiscoveryError {
     Io {
         path: PathBuf,
         emission_site: DiagnosticSite,
+        backtrace: Arc<Backtrace>,
         #[source]
         source: Arc<std::io::Error>, // Wrap in Arc
     },
@@ -25,6 +27,7 @@ pub enum DiscoveryError {
         path: PathBuf,
         span: Option<SourceSpan>,
         emission_site: DiagnosticSite,
+        backtrace: Arc<Backtrace>,
         #[source]
         source: Arc<toml::de::Error>, // Wrap in Arc
     },
@@ -42,6 +45,7 @@ pub enum DiscoveryError {
     Walkdir {
         path: PathBuf,
         emission_site: DiagnosticSite,
+        backtrace: Arc<Backtrace>,
         #[source]
         source: Arc<walkdir::Error>, // Wrap in Arc
     },
@@ -59,6 +63,7 @@ pub enum DiscoveryError {
         crate_path: Option<PathBuf>,
         manifest_path: PathBuf,
         emission_site: DiagnosticSite,
+        backtrace: Arc<Backtrace>,
         #[source]
         source: Arc<std::io::Error>,
     },
@@ -71,6 +76,7 @@ pub enum DiscoveryError {
         manifest_path: PathBuf,
         span: Option<SourceSpan>,
         emission_site: DiagnosticSite,
+        backtrace: Arc<Backtrace>,
         #[source]
         source: Arc<toml::de::Error>,
     },
@@ -300,6 +306,17 @@ impl DiagnosticInfo for DiscoveryError {
             _ => None,
         }
     }
+
+    fn diagnostic_backtrace(&self) -> Option<&Backtrace> {
+        match self {
+            DiscoveryError::Io { backtrace, .. }
+            | DiscoveryError::TomlParse { backtrace, .. }
+            | DiscoveryError::Walkdir { backtrace, .. }
+            | DiscoveryError::WorkspaceManifestRead { backtrace, .. }
+            | DiscoveryError::WorkspaceManifestParse { backtrace, .. } => Some(backtrace.as_ref()),
+            _ => None,
+        }
+    }
 }
 
 impl DiscoveryError {
@@ -308,6 +325,7 @@ impl DiscoveryError {
         Self::Io {
             path,
             emission_site: DiagnosticSite::from_location(Location::caller()),
+            backtrace: Arc::new(Backtrace::force_capture()),
             source: Arc::new(source),
         }
     }
@@ -318,6 +336,7 @@ impl DiscoveryError {
             path,
             span,
             emission_site: DiagnosticSite::from_location(Location::caller()),
+            backtrace: Arc::new(Backtrace::force_capture()),
             source: Arc::new(source),
         }
     }
@@ -327,6 +346,7 @@ impl DiscoveryError {
         Self::Walkdir {
             path,
             emission_site: DiagnosticSite::from_location(Location::caller()),
+            backtrace: Arc::new(Backtrace::force_capture()),
             source: Arc::new(source),
         }
     }
@@ -341,6 +361,7 @@ impl DiscoveryError {
             crate_path,
             manifest_path,
             emission_site: DiagnosticSite::from_location(Location::caller()),
+            backtrace: Arc::new(Backtrace::force_capture()),
             source: Arc::new(source),
         }
     }
@@ -357,6 +378,7 @@ impl DiscoveryError {
             manifest_path,
             span,
             emission_site: DiagnosticSite::from_location(Location::caller()),
+            backtrace: Arc::new(Backtrace::force_capture()),
             source: Arc::new(source),
         }
     }
