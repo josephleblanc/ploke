@@ -15,7 +15,8 @@
 //! `if/else` and the same local `const Y` in both branches. This fixture keeps that
 //! shape valid Rust and small enough to verify:
 //! - the crate compiles under `cargo check`
-//! - `syn_parser` still panics on duplicate local const IDs
+//! - `syn_parser` skips executable-body local items instead of panicking on duplicate
+//!   local const IDs
 //!
 //! If this test starts passing, re-check whether the original corpus failure
 //! depended on additional surrounding scope details from `resource.rs`.
@@ -32,16 +33,6 @@ fn fixture_workspace_root() -> PathBuf {
 
 fn fixture_member_root() -> PathBuf {
     fixture_workspace_root().join("member_if_branch_local_consts_repro")
-}
-
-fn panic_payload_to_string(payload: &Box<dyn std::any::Any + Send>) -> String {
-    if let Some(s) = payload.downcast_ref::<&str>() {
-        s.to_string()
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        "<non-string panic payload>".to_string()
-    }
 }
 
 #[test]
@@ -69,7 +60,7 @@ fn fixture_duplicate_if_branch_local_consts_is_valid_rust() {
 }
 
 #[test]
-fn repro_duplicate_if_branch_local_consts_duplicate_relation_panic() {
+fn repro_duplicate_if_branch_local_consts_resolves_without_executable_local_item_nodes() {
     let fixture_root = fixture_member_root();
 
     assert!(
@@ -78,21 +69,6 @@ fn repro_duplicate_if_branch_local_consts_duplicate_relation_panic() {
         fixture_root.display()
     );
 
-    let result = std::panic::catch_unwind(|| {
-        let _ = try_run_phases_and_resolve(&fixture_root);
-    });
-
-    let payload = result.expect_err(
-        "parser unexpectedly succeeded on committed repro fixture; re-evaluate whether the fixture still captures the bug",
-    );
-    let panic_msg = panic_payload_to_string(&payload);
-
-    assert!(
-        panic_msg.contains("Expected unique relations"),
-        "panic should preserve duplicate-relation context, got: {panic_msg}"
-    );
-    assert!(
-        panic_msg.contains("AnyNodeId::Const("),
-        "panic should mention the duplicate const node lookup, got: {panic_msg}"
-    );
+    try_run_phases_and_resolve(&fixture_root)
+        .expect("parser should skip executable-body local const items instead of panicking");
 }

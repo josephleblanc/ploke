@@ -1679,10 +1679,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 // Process generic parameters for methods
                 let generic_params = self.state.process_generics(&method.sig.generics);
 
-                // Visit nested local items while the method scope is still active. This keeps
-                // local item IDs tied to the method rather than the surrounding impl.
-                visit::visit_block(self, &method.block);
-
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
                 self.pop_assoc_scope(&method_name);
@@ -1885,12 +1881,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Process generic parameters for methods
                 let generic_params = self.state.process_generics(&method.sig.generics);
-
-                if let Some(default_block) = &method.default {
-                    // Visit nested local items in default bodies while the trait method scope is
-                    // still active.
-                    visit::visit_block(self, default_block);
-                }
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
