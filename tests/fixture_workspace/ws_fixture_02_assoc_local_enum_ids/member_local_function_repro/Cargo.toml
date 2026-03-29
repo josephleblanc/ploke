@@ -1,5 +1,5 @@
 [package]
-name = "ws_fixture_duplicate_default_functions"
+name = "ws_fixture_duplicate_local_functions"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -10,8 +10,8 @@ mod duplicate_item;
 #[path = "repro/duplicate_closure_local_consts.rs"]
 mod duplicate_closure_local_consts;
 
-#[path = "repro/duplicate_default_functions.rs"]
-mod duplicate_default_functions;
+#[path = "repro/duplicate_local_functions.rs"]
+mod duplicate_local_functions;
 
 #[path = "repro/duplicate_local_consts.rs"]
 mod duplicate_local_consts;

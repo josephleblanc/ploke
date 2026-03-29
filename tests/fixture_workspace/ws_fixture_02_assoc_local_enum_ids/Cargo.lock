@@ -11,11 +11,11 @@ name = "ws_fixture_duplicate_closure_local_consts"
 version = "0.1.0"
 
 [[package]]
-name = "ws_fixture_duplicate_default_functions"
+name = "ws_fixture_duplicate_local_consts"
 version = "0.1.0"
 
 [[package]]
-name = "ws_fixture_duplicate_local_consts"
+name = "ws_fixture_duplicate_local_functions"
 version = "0.1.0"
 
 [[package]]

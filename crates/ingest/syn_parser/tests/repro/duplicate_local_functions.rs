@@ -11,9 +11,9 @@
 //! `Expected unique relations, found invalid duplicate with error: Duplicate node
 //! found for ID AnyNodeId::Function(...) when only one was expected.`
 //!
-//! The persisted triage and live replay pointed to two separate `impl Default`
-//! blocks with `fn default` methods on different types. This fixture keeps that
-//! shape valid Rust and small enough to verify:
+//! The persisted triage and live replay pointed to one inherent `impl` method
+//! containing two sibling inner blocks, each defining a local `fn go_term`. This
+//! fixture keeps that shape valid Rust and small enough to verify:
 //! - the crate compiles under `cargo check`
 //! - `syn_parser` still panics on duplicate function IDs
 
@@ -28,7 +28,7 @@ fn fixture_workspace_root() -> PathBuf {
 }
 
 fn fixture_member_root() -> PathBuf {
-    fixture_workspace_root().join("member_default_function_repro")
+    fixture_workspace_root().join("member_local_function_repro")
 }
 
 fn panic_payload_to_string(payload: &Box<dyn std::any::Any + Send>) -> String {
@@ -42,7 +42,7 @@ fn panic_payload_to_string(payload: &Box<dyn std::any::Any + Send>) -> String {
 }
 
 #[test]
-fn fixture_duplicate_default_functions_is_valid_rust() {
+fn fixture_duplicate_local_functions_is_valid_rust() {
     let fixture_root = fixture_workspace_root();
 
     assert!(
@@ -66,7 +66,7 @@ fn fixture_duplicate_default_functions_is_valid_rust() {
 }
 
 #[test]
-fn repro_duplicate_default_functions_duplicate_relation_panic() {
+fn repro_duplicate_local_functions_duplicate_relation_panic() {
     let fixture_root = fixture_member_root();
 
     assert!(
