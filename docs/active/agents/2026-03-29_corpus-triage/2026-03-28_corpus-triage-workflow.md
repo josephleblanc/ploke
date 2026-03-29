@@ -42,6 +42,13 @@ cargo xtask parse debug corpus-triage <run-id>
 - recommended next step
 - relevant artifact and code paths
 
+7. At the end of each corpus-triage session, append a brief introspection note to the active session document in `docs/active/agents/` with:
+- failures handled
+- commits produced
+- approximate context spent, if visible
+- notable workflow issues or corrections
+- one short recommendation for the next similar run
+
 ## Suggested Query Patterns
 
 ```text
