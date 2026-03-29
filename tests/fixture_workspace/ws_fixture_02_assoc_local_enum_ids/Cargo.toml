@@ -2,6 +2,7 @@
 members = [
     "member_closure_const_repro",
     "member_const_repro",
+    "member_default_function_repro",
     "member_repro",
     "member_static_repro",
 ]
