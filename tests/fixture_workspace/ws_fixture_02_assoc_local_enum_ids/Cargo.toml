@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "member_cfg_test_mods_repro",
     "member_closure_const_repro",
     "member_const_repro",
     "member_if_branch_local_consts_repro",
