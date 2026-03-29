@@ -51,11 +51,12 @@
 #![allow(missing_docs)]
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::{
     Arc, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
@@ -143,6 +144,10 @@ pub enum ParseDebugCmd {
     /// Clone and parse a corpus of GitHub targets listed in one or more text files.
     Corpus(DebugCorpus),
 
+    /// Internal child-process stage runner used by corpus timeout guardrails.
+    #[command(hide = true, name = "corpus-stage")]
+    CorpusStage(DebugCorpusStage),
+
     /// Re-open a persisted corpus run and inspect saved summaries/backtraces.
     CorpusShow(DebugCorpusShow),
 
@@ -164,6 +169,7 @@ impl ParseDebugCmd {
             ParseDebugCmd::WorkspaceMembers(c) => c.execute(ctx)?,
             ParseDebugCmd::DiscoveryRules(c) => c.execute(ctx)?,
             ParseDebugCmd::Corpus(c) => c.execute(ctx)?,
+            ParseDebugCmd::CorpusStage(c) => c.execute(ctx)?,
             ParseDebugCmd::CorpusShow(c) => c.execute(ctx)?,
             ParseDebugCmd::CorpusTriage(c) => c.execute(ctx)?,
         };
@@ -892,6 +898,7 @@ pub enum DebugOutput {
     WorkspaceMembers(DebugWorkspaceMembersOut),
     DiscoveryRules(DebugDiscoveryRulesOut),
     Corpus(DebugCorpusOut),
+    CorpusStage(CorpusStageResult),
     CorpusShow(DebugCorpusShowOut),
     CorpusTriage(DebugCorpusTriageOut),
 }
@@ -2029,6 +2036,10 @@ pub struct DebugCorpus {
     /// `probe` runs discovery/resolve/(optional) merge per workspace member and persists artifacts.
     #[arg(long, value_enum, default_value_t = CorpusWorkspaceMode::Skip)]
     pub workspace_mode: CorpusWorkspaceMode,
+
+    /// Skip a target if its resolve stage runs longer than this many minutes (0 = disabled).
+    #[arg(long, default_value_t = 0)]
+    pub resolve_timeout_minutes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2111,6 +2122,38 @@ impl CorpusWorkspaceMode {
             Self::Probe => "probe",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CorpusStageName {
+    Discovery,
+    Resolve,
+    Merge,
+}
+
+impl CorpusStageName {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Discovery => "discovery",
+            Self::Resolve => "resolve",
+            Self::Merge => "merge",
+        }
+    }
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct DebugCorpusStage {
+    #[arg(long, value_enum)]
+    stage: CorpusStageName,
+
+    #[arg(long, value_name = "PATH")]
+    path: PathBuf,
+
+    #[arg(long, value_name = "DIR")]
+    target_artifact_dir: PathBuf,
+
+    #[arg(long, value_name = "LABEL")]
+    progress_label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2416,6 +2459,7 @@ impl Command for DebugCorpus {
                         &checkout_path,
                         &target_artifact_dir,
                         self.skip_merge,
+                        resolve_timeout_duration(self.resolve_timeout_minutes),
                     )?)
                 } else {
                     None
@@ -2519,31 +2563,12 @@ impl Command for DebugCorpus {
                 continue;
             }
 
-            let resolve = run_corpus_stage("resolve", &target_artifact_dir, &target_label, || {
-                let graphs = try_run_phases_and_resolve(&checkout_path).map_err(|e| {
-                    CorpusStageFailure::new(
-                        e.diagnostic_summary(),
-                        Some(corpus_diagnostic_from_syn_parser_error(&e)),
-                    )
-                })?;
-                let nodes: usize = graphs
-                    .iter()
-                    .map(|pg| count_code_graph_nodes(&pg.graph))
-                    .sum();
-                let rels: usize = graphs.iter().map(|pg| pg.graph.relations.len()).sum();
-                let artifact_path = persist_stage_payload(
-                    &target_artifact_dir,
-                    "resolve",
-                    "resolve.json",
-                    &graphs,
-                )?;
-                Ok(CorpusStageMetrics {
-                    nodes_parsed: Some(nodes),
-                    relations_found: Some(rels),
-                    file_count: None,
-                    artifact_path: Some(artifact_path.display().to_string()),
-                })
-            })?;
+            let resolve = run_corpus_resolve_stage(
+                &checkout_path,
+                &target_artifact_dir,
+                &target_label,
+                resolve_timeout_duration(self.resolve_timeout_minutes),
+            )?;
             if !resolve.ok {
                 resolve_failures += 1;
                 if resolve.panic {
@@ -2654,6 +2679,27 @@ impl Command for DebugCorpus {
         };
         persist_run_summary(&artifact_root, &out)?;
         Ok(DebugOutput::Corpus(out))
+    }
+}
+
+impl Command for DebugCorpusStage {
+    type Output = DebugOutput;
+    type Error = XtaskError;
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let canon = resolve_debug_target_path(ctx, &self.path)?;
+        let target_artifact_dir = if self.target_artifact_dir.is_absolute() {
+            self.target_artifact_dir.clone()
+        } else {
+            ctx.workspace_root()?.join(&self.target_artifact_dir)
+        };
+        let result = run_corpus_stage_for_path(
+            self.stage,
+            &canon,
+            &target_artifact_dir,
+            &self.progress_label,
+        )?;
+        Ok(DebugOutput::CorpusStage(result))
     }
 }
 
@@ -3282,6 +3328,7 @@ fn run_corpus_workspace_probe(
     workspace_root: &Path,
     target_artifact_dir: &Path,
     skip_merge: bool,
+    resolve_timeout: Option<std::time::Duration>,
 ) -> Result<CorpusWorkspaceProbeResult, XtaskError> {
     let members = resolve_workspace_probe_members(workspace_root)?;
 
@@ -3329,35 +3376,11 @@ fn run_corpus_workspace_probe(
         let mut merge = None;
 
         if discovery.ok {
-            let resolve_stage = run_corpus_stage(
-                "resolve",
+            let resolve_stage = run_corpus_resolve_stage(
+                member,
                 &member_artifact_dir,
                 &member_progress_label,
-                || {
-                    let graphs = try_run_phases_and_resolve(member).map_err(|e| {
-                        CorpusStageFailure::new(
-                            e.diagnostic_summary(),
-                            Some(corpus_diagnostic_from_syn_parser_error(&e)),
-                        )
-                    })?;
-                    let nodes: usize = graphs
-                        .iter()
-                        .map(|pg| count_code_graph_nodes(&pg.graph))
-                        .sum();
-                    let rels: usize = graphs.iter().map(|pg| pg.graph.relations.len()).sum();
-                    let artifact_path = persist_stage_payload(
-                        &member_artifact_dir,
-                        "resolve",
-                        "resolve.json",
-                        &graphs,
-                    )?;
-                    Ok(CorpusStageMetrics {
-                        nodes_parsed: Some(nodes),
-                        relations_found: Some(rels),
-                        file_count: None,
-                        artifact_path: Some(artifact_path.display().to_string()),
-                    })
-                },
+                resolve_timeout,
             )?;
             member_failed |= !resolve_stage.ok;
             resolve = Some(resolve_stage);
@@ -3598,6 +3621,253 @@ where
     Ok(result)
 }
 
+fn run_corpus_stage_for_path(
+    stage: CorpusStageName,
+    checkout_path: &Path,
+    target_artifact_dir: &Path,
+    progress_label: &str,
+) -> Result<CorpusStageResult, XtaskError> {
+    match stage {
+        CorpusStageName::Discovery => {
+            run_corpus_discovery_stage(checkout_path, target_artifact_dir, progress_label)
+        }
+        CorpusStageName::Resolve => {
+            run_corpus_stage("resolve", target_artifact_dir, progress_label, || {
+                let graphs = try_run_phases_and_resolve(checkout_path).map_err(|e| {
+                    CorpusStageFailure::new(
+                        e.diagnostic_summary(),
+                        Some(corpus_diagnostic_from_syn_parser_error(&e)),
+                    )
+                })?;
+                let nodes: usize = graphs
+                    .iter()
+                    .map(|pg| count_code_graph_nodes(&pg.graph))
+                    .sum();
+                let rels: usize = graphs.iter().map(|pg| pg.graph.relations.len()).sum();
+                let artifact_path =
+                    persist_stage_payload(target_artifact_dir, "resolve", "resolve.json", &graphs)?;
+                Ok(CorpusStageMetrics {
+                    nodes_parsed: Some(nodes),
+                    relations_found: Some(rels),
+                    file_count: None,
+                    artifact_path: Some(artifact_path.display().to_string()),
+                })
+            })
+        }
+        CorpusStageName::Merge => {
+            run_corpus_stage("merge", target_artifact_dir, progress_label, || {
+                let out = try_run_phases_and_merge(checkout_path).map_err(|e| {
+                    CorpusStageFailure::new(
+                        e.diagnostic_summary(),
+                        Some(corpus_diagnostic_from_syn_parser_error(&e)),
+                    )
+                })?;
+                let (nodes, rels) = if let Some(ref mg) = out.merged_graph {
+                    (
+                        Some(count_code_graph_nodes(&mg.graph)),
+                        Some(mg.graph.relations.len()),
+                    )
+                } else {
+                    (None, None)
+                };
+                let artifact_path = if let Some(ref merged_graph) = out.merged_graph {
+                    Some(
+                        persist_stage_payload(
+                            target_artifact_dir,
+                            "merge",
+                            "merged_graph.json",
+                            merged_graph,
+                        )?
+                        .display()
+                        .to_string(),
+                    )
+                } else {
+                    None
+                };
+                Ok(CorpusStageMetrics {
+                    nodes_parsed: nodes,
+                    relations_found: rels,
+                    file_count: None,
+                    artifact_path,
+                })
+            })
+        }
+    }
+}
+
+fn run_corpus_resolve_stage(
+    checkout_path: &Path,
+    target_artifact_dir: &Path,
+    progress_label: &str,
+    timeout: Option<std::time::Duration>,
+) -> Result<CorpusStageResult, XtaskError> {
+    if let Some(timeout) = timeout {
+        return run_corpus_stage_in_child_process(
+            CorpusStageName::Resolve,
+            checkout_path,
+            target_artifact_dir,
+            progress_label,
+            timeout,
+        );
+    }
+    run_corpus_stage_for_path(
+        CorpusStageName::Resolve,
+        checkout_path,
+        target_artifact_dir,
+        progress_label,
+    )
+}
+
+fn run_corpus_stage_in_child_process(
+    stage: CorpusStageName,
+    checkout_path: &Path,
+    target_artifact_dir: &Path,
+    progress_label: &str,
+    timeout: std::time::Duration,
+) -> Result<CorpusStageResult, XtaskError> {
+    let exe = xtask_stage_runner_executable()?;
+    let mut child = ProcessCommand::new(&exe)
+        .arg("--format")
+        .arg("json")
+        .arg("parse")
+        .arg("debug")
+        .arg("corpus-stage")
+        .arg("--stage")
+        .arg(stage.as_str())
+        .arg("--path")
+        .arg(checkout_path)
+        .arg("--target-artifact-dir")
+        .arg(target_artifact_dir)
+        .arg("--progress-label")
+        .arg(progress_label)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to spawn corpus stage runner `{}`: {e}",
+                exe.display()
+            ))
+        })?;
+
+    let start = Instant::now();
+    loop {
+        match child.try_wait().map_err(|e| {
+            XtaskError::Resource(format!(
+                "Failed to poll corpus {} stage child process: {e}",
+                stage.as_str()
+            ))
+        })? {
+            Some(status) => {
+                let output = child.wait_with_output().map_err(|e| {
+                    XtaskError::Resource(format!(
+                        "Failed to collect corpus {} stage output: {e}",
+                        stage.as_str()
+                    ))
+                })?;
+                if !status.success() {
+                    return Err(XtaskError::Parse(format!(
+                        "Corpus {} stage child process exited with {}",
+                        stage.as_str(),
+                        status
+                    )));
+                }
+                return parse_corpus_stage_child_output(&output.stdout);
+            }
+            None if start.elapsed() >= timeout => {
+                return finalize_corpus_stage_timeout(
+                    child,
+                    stage,
+                    target_artifact_dir,
+                    progress_label,
+                    start.elapsed(),
+                );
+            }
+            None => thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
+}
+
+fn parse_corpus_stage_child_output(stdout: &[u8]) -> Result<CorpusStageResult, XtaskError> {
+    let value: serde_json::Value = serde_json::from_slice(stdout).map_err(|e| {
+        XtaskError::Parse(format!(
+            "Failed to parse corpus stage child JSON output: {e}"
+        ))
+    })?;
+    let debug = value.get("Debug").ok_or_else(|| {
+        XtaskError::Parse("Corpus stage child JSON did not contain `Debug` output".into())
+    })?;
+    serde_json::from_value(debug.clone()).map_err(|e| {
+        XtaskError::Parse(format!(
+            "Failed to deserialize corpus stage child result payload: {e}"
+        ))
+    })
+}
+
+fn finalize_corpus_stage_timeout(
+    mut child: std::process::Child,
+    stage: CorpusStageName,
+    target_artifact_dir: &Path,
+    progress_label: &str,
+    elapsed: std::time::Duration,
+) -> Result<CorpusStageResult, XtaskError> {
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let stage_name = stage.as_str();
+    let stage_dir = target_artifact_dir.join(stage_name);
+    std::fs::create_dir_all(&stage_dir).map_err(|e| {
+        XtaskError::Resource(format!(
+            "Failed to create stage artifact dir {}: {e}",
+            stage_dir.display()
+        ))
+    })?;
+    let message = format!(
+        "{stage_name} stage exceeded timeout after {}ms",
+        elapsed.as_millis()
+    );
+    let failure_artifact_path =
+        persist_stage_failure(&stage_dir, stage_name, false, &message, None)?
+            .display()
+            .to_string();
+    let result = CorpusStageResult {
+        ok: false,
+        panic: false,
+        failure_kind: Some("timeout".into()),
+        error: Some(message),
+        diagnostic: None,
+        duration_ms: elapsed.as_millis() as u64,
+        nodes_parsed: None,
+        relations_found: None,
+        file_count: None,
+        artifact_path: None,
+        failure_artifact_path: Some(failure_artifact_path),
+    };
+    persist_stage_payload(&stage_dir, "", "stage_summary.json", &result)?;
+    emit_corpus_progress_line(format_args!(
+        "{progress_label} {stage_name} timeout {}ms",
+        result.duration_ms
+    ));
+    Ok(result)
+}
+
+fn xtask_stage_runner_executable() -> Result<PathBuf, XtaskError> {
+    if let Some(path) = env::var_os("CARGO_BIN_EXE_xtask") {
+        return Ok(PathBuf::from(path));
+    }
+    std::env::current_exe().map_err(|e| {
+        XtaskError::Resource(format!("Failed to locate current xtask executable: {e}"))
+    })
+}
+
+fn resolve_timeout_duration(minutes: u64) -> Option<std::time::Duration> {
+    if minutes == 0 {
+        None
+    } else {
+        Some(std::time::Duration::from_secs(minutes.saturating_mul(60)))
+    }
+}
+
 const CORPUS_STAGE_HEARTBEAT_SECS: u64 = 15;
 
 struct CorpusStageHeartbeat {
@@ -3786,6 +4056,10 @@ fn catch_unwind_silencing_hook<T>(f: impl FnOnce() -> T) -> Result<T, CapturedPa
     let _guard = panic_hook_guard()
         .lock()
         .expect("panic hook mutex poisoned");
+    catch_unwind_silencing_hook_locked(f)
+}
+
+fn catch_unwind_silencing_hook_locked<T>(f: impl FnOnce() -> T) -> Result<T, CapturedPanic> {
     let captured = Arc::new(Mutex::new(None));
     let previous_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new({
@@ -3935,9 +4209,13 @@ fn candidate_for(source: &str, path: &Path) -> DiscoveryRuleCandidate {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tempfile::TempDir;
 
     #[test]
     fn catch_unwind_silencing_hook_returns_panic_message_without_invoking_outer_hook() {
+        let _guard = panic_hook_guard()
+            .lock()
+            .expect("panic hook mutex poisoned");
         let panic_count = Arc::new(AtomicUsize::new(0));
         let previous_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new({
@@ -3947,7 +4225,7 @@ mod tests {
             }
         }));
 
-        let result = catch_unwind_silencing_hook(|| panic!("hook should be silenced"));
+        let result = catch_unwind_silencing_hook_locked(|| panic!("hook should be silenced"));
         std::panic::set_hook(previous_hook);
 
         let panic = result.expect_err("expected panic capture");
@@ -3965,6 +4243,9 @@ mod tests {
 
     #[test]
     fn catch_unwind_silencing_hook_restores_previous_hook_after_panic() {
+        let _guard = panic_hook_guard()
+            .lock()
+            .expect("panic hook mutex poisoned");
         let panic_count = Arc::new(AtomicUsize::new(0));
         let previous_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new({
@@ -3974,7 +4255,7 @@ mod tests {
             }
         }));
 
-        let _ = catch_unwind_silencing_hook(|| panic!("captured panic"));
+        let _ = catch_unwind_silencing_hook_locked(|| panic!("captured panic"));
 
         let uncaught = std::panic::catch_unwind(|| panic!("outer hook should run"));
         assert!(uncaught.is_err(), "expected outer panic");
@@ -3997,6 +4278,63 @@ mod tests {
             start.elapsed().as_secs_f64() < 1.0,
             "heartbeat finish should return promptly instead of waiting for the {}s interval",
             CORPUS_STAGE_HEARTBEAT_SECS
+        );
+    }
+
+    #[test]
+    fn parse_corpus_stage_child_output_reads_debug_wrapper() {
+        let stdout = br#"{
+          "Debug": {
+            "kind": "corpus_stage",
+            "ok": false,
+            "panic": false,
+            "failure_kind": "timeout",
+            "error": "resolve stage exceeded timeout after 42ms",
+            "diagnostic": null,
+            "duration_ms": 42,
+            "nodes_parsed": null,
+            "relations_found": null,
+            "file_count": null,
+            "artifact_path": null,
+            "failure_artifact_path": "/tmp/failure.json"
+          }
+        }"#;
+
+        let result = parse_corpus_stage_child_output(stdout).expect("parse child output");
+        assert!(!result.ok, "expected timeout failure");
+        assert_eq!(result.failure_kind.as_deref(), Some("timeout"));
+        assert_eq!(result.duration_ms, 42);
+    }
+
+    #[test]
+    fn finalize_corpus_stage_timeout_persists_failure_summary() {
+        let temp = TempDir::new().expect("tempdir");
+        let child = ProcessCommand::new("bash")
+            .arg("-lc")
+            .arg("sleep 10")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn sleeper");
+
+        let result = finalize_corpus_stage_timeout(
+            child,
+            CorpusStageName::Resolve,
+            temp.path(),
+            "repo",
+            std::time::Duration::from_millis(25),
+        )
+        .expect("timeout result");
+
+        assert!(!result.ok, "expected timeout failure");
+        assert_eq!(result.failure_kind.as_deref(), Some("timeout"));
+        assert!(
+            temp.path().join("resolve/failure.json").is_file(),
+            "expected timeout failure artifact"
+        );
+        assert!(
+            temp.path().join("resolve/stage_summary.json").is_file(),
+            "expected timeout stage summary"
         );
     }
 }

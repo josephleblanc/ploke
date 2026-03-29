@@ -1495,7 +1495,6 @@ fn parse_workspace_axum_github_clone() {
     assert_parsed_workspace_invariants(&pair);
 }
 
-
 #[test]
 #[ignore = "Known failure: duplicate macro node/relations during workspace parse (see panic in ParsedCodeGraph validation)"]
 fn parse_workspace_tokio_github_clone() {

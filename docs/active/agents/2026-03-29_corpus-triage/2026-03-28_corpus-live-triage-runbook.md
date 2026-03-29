@@ -48,6 +48,13 @@ cargo xtask parse debug corpus-triage <run-id-or-run-dir> --watch --interval-sec
 - Triage outputs are refreshed under `<run-dir>/triage/`.
 - Pending report stubs are still generated per clustered failure signature, but cluster formation is for dedupe and later consolidation, not a prerequisite for dispatch.
 
+## Current Limitations
+
+- Treat `index.json` as the live failure feed and `clusters.json` as a dedupe aid only. Do not wait for clusters before dispatching work.
+- Pending cluster reports are preserved once created, which avoids watcher overwrite, but also means stub metadata such as occurrence counts can become stale during a long watch session.
+- Use one writer per pending report file. If two sub-agents write structured output back to the same cluster report, the later write can overwrite the earlier one.
+- Pending report filenames are derived from a sanitized cluster key. Distinct cluster keys can theoretically collapse to the same filename, so if a report path looks unexpectedly reused, stop and inspect before continuing.
+
 ## Artifacts
 
 Under `<run-dir>/triage/`:
@@ -81,6 +88,10 @@ Each sub-agent should update the relevant pending report with:
 - recommended next step
 - relevant artifact paths
 - relevant code paths
+
+When structured report writes are used:
+- Assign only one sub-agent to a given pending report path at a time.
+- If two failures look similar but map to different report paths, keep them separate until a human confirms they are duplicates.
 
 ## Query Snippets
 

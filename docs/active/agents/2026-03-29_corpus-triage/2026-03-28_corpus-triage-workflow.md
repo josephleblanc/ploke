@@ -34,6 +34,12 @@ cargo xtask parse debug corpus-triage <run-id>
 4. Dispatch a sub-agent as soon as a new failure appears in `index.json`.
 5. Use `clusters.json` and the pending report stubs to dedupe follow-up work across matching failures.
 
+Notes:
+- `index.json` is the failure-first feed. `clusters.json` is a convenience layer for dedupe and should not delay dispatch.
+- Existing pending reports are preserved on refresh, so report content is not clobbered by the watcher, but fields derived from the original stub may become stale as more failures arrive.
+- Keep one writer per pending report path. The workflow does not merge concurrent structured writes to the same report.
+- Pending report filenames come from a sanitized cluster key, so rare filename collisions between distinct clusters are possible. If a path looks suspiciously reused, inspect the cluster key before continuing.
+
 6. Have each sub-agent update the relevant pending report with:
 - suspected root cause
 - confidence
