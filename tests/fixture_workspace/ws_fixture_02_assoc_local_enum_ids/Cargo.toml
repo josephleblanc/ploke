@@ -7,6 +7,7 @@ members = [
     "member_local_function_repro",
     "member_method_collection_flags_repro",
     "member_method_local_consts_repro",
+    "member_scheduler_queue_repro",
     "member_tls_branch_h2_consts_repro",
     "member_repro",
     "member_static_repro",

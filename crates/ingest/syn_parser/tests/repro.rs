@@ -28,6 +28,9 @@ mod duplicate_method_collection_flags;
 #[path = "repro/duplicate_tls_branch_h2_consts.rs"]
 mod duplicate_tls_branch_h2_consts;
 
+#[path = "repro/duplicate_scheduler_queue_mod.rs"]
+mod duplicate_scheduler_queue_mod;
+
 #[path = "repro/duplicate_local_consts.rs"]
 mod duplicate_local_consts;
 
