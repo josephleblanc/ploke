@@ -6,8 +6,9 @@ use std::process::Command as ProcessCommand;
 use tempfile::TempDir;
 use xtask::commands::parse::ParseOutput;
 use xtask::commands::parse_debug::{
-    DebugCargoTargets, DebugCorpus, DebugDiscoveryRules, DebugLogicalPaths, DebugModulesPremerge,
-    DebugOutput, DebugPathCollisions, DebugWorkspaceMembers, ParseDebugCli, ParseDebugCmd,
+    CorpusWorkspaceMode, DebugCargoTargets, DebugCorpus, DebugCorpusShow, DebugDiscoveryRules,
+    DebugLogicalPaths, DebugModulesPremerge, DebugOutput, DebugPathCollisions,
+    DebugWorkspaceMembers, ParseDebugCli, ParseDebugCmd,
 };
 use xtask::context::CommandContext;
 use xtask::executor::Command as _;
@@ -168,6 +169,7 @@ fn parse_debug_corpus_clones_and_parses_local_git_repo() {
             limit: 0,
             skip_clone: false,
             skip_merge: false,
+            workspace_mode: CorpusWorkspaceMode::Skip,
         }),
     };
     let ctx = CommandContext::new().expect("CommandContext");
@@ -237,6 +239,112 @@ fn parse_debug_corpus_clones_and_parses_local_git_repo() {
 }
 
 #[test]
+fn parse_debug_corpus_show_filters_workspace_members() {
+    let temp = TempDir::new().expect("tempdir");
+    let run_dir = temp.path().join("run-123");
+    std::fs::create_dir_all(&run_dir).expect("create run dir");
+    let summary_path = run_dir.join("summary.json");
+    let summary_json = format!(
+        r#"{{
+  "kind": "corpus",
+  "run_id": "run-123",
+  "checkout_root": "/tmp/checkouts",
+  "artifact_root": "{}",
+  "workspace_mode": "probe",
+  "list_files": ["/tmp/list-a.txt"],
+  "requested_entries": 3,
+  "unique_targets": 3,
+  "processed_targets": 1,
+  "single_crate_targets": 0,
+  "workspace_targets": 1,
+  "reused_targets": 1,
+  "cloned_targets": 0,
+  "skipped_targets": 0,
+  "clone_failures": 0,
+  "discovery_failures": 0,
+  "resolve_failures": 2,
+  "merge_failures": 0,
+  "panic_failures": 1,
+  "targets": [{{
+    "target": "workspace/fail",
+    "normalized_repo": "workspace/fail",
+    "clone_url": "https://github.com/workspace/fail.git",
+    "datasets": ["list-a"],
+    "checkout_path": "/tmp/checkouts/workspace__fail",
+    "artifact_dir": "/tmp/artifacts/workspace__fail",
+    "repository_kind": "workspace",
+    "recommended_parser": "parse_workspace_with_config",
+    "workspace_member_count": 2,
+    "classification_error": null,
+    "classification_diagnostic": null,
+    "clone": {{ "ok": true, "action": "reused", "error": null }},
+    "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "discovery": null,
+    "resolve": null,
+    "merge": null,
+    "summary_path": "/tmp/artifacts/workspace__fail/summary.json",
+    "workspace_probe": {{
+      "workspace_root": "/tmp/checkouts/workspace__fail",
+      "member_count": 2,
+      "failed_members": 2,
+      "summary_path": "/tmp/artifacts/workspace__fail/workspace_probe/workspace_summary.json",
+      "members": [
+        {{
+          "path": "/tmp/checkouts/workspace__fail/gamma",
+          "label": "gamma",
+          "artifact_dir": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma",
+          "discovery": {{ "ok": true, "panic": false, "duration_ms": 2, "file_count": 3, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": null, "error": null, "failure_artifact_path": null }},
+          "resolve": {{ "ok": false, "panic": false, "duration_ms": 8, "file_count": null, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": "error", "error": "resolve failed", "failure_artifact_path": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma/resolve/failure.json" }},
+          "merge": null
+        }},
+        {{
+          "path": "/tmp/checkouts/workspace__fail/delta",
+          "label": "delta",
+          "artifact_dir": "/tmp/artifacts/workspace__fail/workspace_probe/members/001_delta",
+          "discovery": {{ "ok": true, "panic": false, "duration_ms": 3, "file_count": 4, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": null, "error": null, "failure_artifact_path": null }},
+          "resolve": {{ "ok": false, "panic": true, "duration_ms": 9, "file_count": null, "nodes_parsed": null, "relations_found": null, "artifact_path": null, "failure_kind": "panic", "error": "panic payload", "failure_artifact_path": "/tmp/artifacts/workspace__fail/workspace_probe/members/001_delta/resolve/failure.json" }},
+          "merge": null
+        }}
+      ]
+    }}
+  }}]
+}}"#,
+        run_dir.display()
+    );
+    std::fs::write(&summary_path, summary_json).expect("write summary");
+
+    let cmd = ParseDebugCli {
+        cmd: ParseDebugCmd::CorpusShow(DebugCorpusShow {
+            run: summary_path,
+            artifact_dir: temp.path().join("artifacts"),
+            target: Some("workspace/fail".into()),
+            member: Some("gamma".into()),
+            backtrace: false,
+            backtrace_full: false,
+        }),
+    };
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd.execute(&ctx).expect("parse debug corpus-show");
+    match out {
+        ParseOutput::Debug(DebugOutput::CorpusShow(o)) => {
+            assert_eq!(o.selected_target.as_deref(), Some("workspace/fail"));
+            assert_eq!(o.selected_member.as_deref(), Some("gamma"));
+            assert_eq!(o.run.processed_targets, 1);
+            assert_eq!(o.run.workspace_targets, 1);
+            assert_eq!(o.run.resolve_failures, 1);
+            assert_eq!(o.run.panic_failures, 0);
+            let target = o.run.targets.first().expect("one target");
+            let probe = target.workspace_probe.as_ref().expect("workspace probe");
+            assert_eq!(probe.member_count, 1);
+            assert_eq!(probe.failed_members, 1);
+            assert_eq!(probe.members.len(), 1);
+            assert_eq!(probe.members[0].label, "gamma");
+        }
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+#[test]
 fn parse_debug_corpus_classifies_workspace_repo_without_running_single_crate_pipeline() {
     let temp = TempDir::new().expect("tempdir");
     let source_repo = temp.path().join("mini_workspace");
@@ -255,6 +363,7 @@ fn parse_debug_corpus_classifies_workspace_repo_without_running_single_crate_pip
             limit: 0,
             skip_clone: false,
             skip_merge: false,
+            workspace_mode: CorpusWorkspaceMode::Skip,
         }),
     };
     let ctx = CommandContext::new().expect("CommandContext");
@@ -279,6 +388,7 @@ fn parse_debug_corpus_classifies_workspace_repo_without_running_single_crate_pip
             assert!(target.discovery.is_none(), "{target:#?}");
             assert!(target.resolve.is_none(), "{target:#?}");
             assert!(target.merge.is_none(), "{target:#?}");
+            assert!(target.workspace_probe.is_none(), "{target:#?}");
             assert!(
                 target
                     .summary_path
@@ -309,6 +419,7 @@ fn parse_debug_corpus_classifies_implicit_workspace_members_via_metadata_fallbac
             limit: 0,
             skip_clone: false,
             skip_merge: false,
+            workspace_mode: CorpusWorkspaceMode::Skip,
         }),
     };
     let ctx = CommandContext::new().expect("CommandContext");
@@ -335,6 +446,167 @@ fn parse_debug_corpus_classifies_implicit_workspace_members_via_metadata_fallbac
             assert!(target.discovery.is_none(), "{target:#?}");
             assert!(target.resolve.is_none(), "{target:#?}");
             assert!(target.merge.is_none(), "{target:#?}");
+            assert!(target.workspace_probe.is_none(), "{target:#?}");
+        }
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_debug_corpus_probes_workspace_repo_members_when_enabled() {
+    let temp = TempDir::new().expect("tempdir");
+    let source_repo = temp.path().join("mini_workspace");
+    init_local_git_workspace(&source_repo);
+
+    let list_file = temp.path().join("targets_workspace_probe.txt");
+    std::fs::write(&list_file, format!("{}\n", source_repo.display())).expect("write list file");
+
+    let checkout_dir = temp.path().join("checkouts");
+    let artifact_dir = temp.path().join("artifacts");
+    let cmd = ParseDebugCli {
+        cmd: ParseDebugCmd::Corpus(DebugCorpus {
+            list_files: vec![list_file],
+            checkout_dir,
+            artifact_dir,
+            limit: 0,
+            skip_clone: false,
+            skip_merge: false,
+            workspace_mode: CorpusWorkspaceMode::Probe,
+        }),
+    };
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd
+        .execute(&ctx)
+        .expect("parse debug corpus workspace probe");
+    match out {
+        ParseOutput::Debug(DebugOutput::Corpus(o)) => {
+            assert_eq!(o.workspace_mode, "probe");
+            assert_eq!(o.processed_targets, 1, "expected one processed target");
+            assert_eq!(o.single_crate_targets, 0, "did not expect crate targets");
+            assert_eq!(o.workspace_targets, 1, "expected one workspace target");
+            assert_eq!(o.clone_failures, 0, "unexpected clone failure: {o:#?}");
+            assert_eq!(
+                o.discovery_failures, 0,
+                "workspace member discovery should succeed"
+            );
+            assert_eq!(
+                o.resolve_failures, 0,
+                "workspace member resolve should succeed"
+            );
+            assert_eq!(o.merge_failures, 0, "workspace member merge should succeed");
+
+            let target = o.targets.first().expect("one target result");
+            let probe = target
+                .workspace_probe
+                .as_ref()
+                .expect("workspace probe should be present");
+            assert_eq!(probe.member_count, 1);
+            assert_eq!(probe.failed_members, 0);
+            assert!(
+                probe
+                    .summary_path
+                    .as_deref()
+                    .is_some_and(|p| Path::new(p).is_file())
+            );
+
+            let member = probe.members.first().expect("one member");
+            assert!(member.discovery.ok, "{member:#?}");
+            assert!(
+                member.resolve.as_ref().is_some_and(|stage| stage.ok),
+                "{member:#?}"
+            );
+            assert!(
+                member.merge.as_ref().is_some_and(|stage| stage.ok),
+                "{member:#?}"
+            );
+            assert!(Path::new(&member.artifact_dir).is_dir());
+            assert!(
+                member
+                    .discovery
+                    .artifact_path
+                    .as_deref()
+                    .is_some_and(|p| Path::new(p).is_file())
+            );
+            assert!(
+                member
+                    .resolve
+                    .as_ref()
+                    .and_then(|stage| stage.artifact_path.as_deref())
+                    .is_some_and(|p| Path::new(p).is_file())
+            );
+            assert!(
+                member
+                    .merge
+                    .as_ref()
+                    .and_then(|stage| stage.artifact_path.as_deref())
+                    .is_some_and(|p| Path::new(p).is_file())
+            );
+        }
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_debug_corpus_probes_implicit_workspace_members_via_metadata_fallback() {
+    let temp = TempDir::new().expect("tempdir");
+    let source_repo = temp.path().join("implicit_workspace");
+    init_local_git_implicit_workspace(&source_repo);
+
+    let list_file = temp.path().join("targets_implicit_workspace_probe.txt");
+    std::fs::write(&list_file, format!("{}\n", source_repo.display())).expect("write list file");
+
+    let checkout_dir = temp.path().join("checkouts");
+    let artifact_dir = temp.path().join("artifacts");
+    let cmd = ParseDebugCli {
+        cmd: ParseDebugCmd::Corpus(DebugCorpus {
+            list_files: vec![list_file],
+            checkout_dir,
+            artifact_dir,
+            limit: 0,
+            skip_clone: false,
+            skip_merge: false,
+            workspace_mode: CorpusWorkspaceMode::Probe,
+        }),
+    };
+    let ctx = CommandContext::new().expect("CommandContext");
+    let out = cmd
+        .execute(&ctx)
+        .expect("parse debug corpus implicit workspace probe");
+    match out {
+        ParseOutput::Debug(DebugOutput::Corpus(o)) => {
+            assert_eq!(o.workspace_mode, "probe");
+            assert_eq!(o.processed_targets, 1, "expected one processed target");
+            assert_eq!(o.single_crate_targets, 0, "did not expect crate targets");
+            assert_eq!(o.workspace_targets, 1, "expected one workspace target");
+            assert_eq!(o.clone_failures, 0, "unexpected clone failure: {o:#?}");
+            assert_eq!(
+                o.discovery_failures, 0,
+                "workspace member discovery should succeed"
+            );
+            assert_eq!(
+                o.resolve_failures, 0,
+                "workspace member resolve should succeed"
+            );
+            assert_eq!(o.merge_failures, 0, "workspace member merge should succeed");
+
+            let target = o.targets.first().expect("one target result");
+            let probe = target
+                .workspace_probe
+                .as_ref()
+                .expect("workspace probe should be present");
+            assert_eq!(probe.member_count, 2);
+            assert_eq!(probe.failed_members, 0);
+            assert!(
+                probe.members.iter().any(|member| member.label == "helper"),
+                "{probe:#?}"
+            );
+            assert!(
+                probe
+                    .members
+                    .iter()
+                    .any(|member| member.label == "implicit_workspace"),
+                "{probe:#?}"
+            );
         }
         other => panic!("unexpected output: {other:?}"),
     }

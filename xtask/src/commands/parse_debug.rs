@@ -51,12 +51,18 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
+use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
+use std::sync::{
+    Arc, Mutex, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use cargo_metadata::Metadata;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use ploke_error::DiagnosticInfo;
 use serde::{Deserialize, Serialize};
 
@@ -952,6 +958,16 @@ fn corpus_target_matches(target: &CorpusTargetResult, needle: &str) -> bool {
             == Some(needle)
 }
 
+fn corpus_workspace_member_matches(member: &CorpusWorkspaceMemberResult, needle: &str) -> bool {
+    member.label == needle
+        || member.path == needle
+        || Path::new(&member.path).file_name().and_then(|s| s.to_str()) == Some(needle)
+        || Path::new(&member.artifact_dir)
+            .file_name()
+            .and_then(|s| s.to_str())
+            == Some(needle)
+}
+
 fn recompute_corpus_counts(run: &mut DebugCorpusOut) {
     run.processed_targets = run.targets.len();
     run.single_crate_targets = run
@@ -980,30 +996,59 @@ fn recompute_corpus_counts(run: &mut DebugCorpusOut) {
         .filter(|t| t.clone.action == "reused")
         .count();
     run.clone_failures = run.targets.iter().filter(|t| !t.clone.ok).count();
-    run.discovery_failures = run
-        .targets
-        .iter()
-        .filter(|t| t.discovery.as_ref().is_some_and(|s| !s.ok))
-        .count();
-    run.resolve_failures = run
-        .targets
-        .iter()
-        .filter(|t| t.resolve.as_ref().is_some_and(|s| !s.ok))
-        .count();
-    run.merge_failures = run
-        .targets
-        .iter()
-        .filter(|t| t.merge.as_ref().is_some_and(|s| !s.ok))
-        .count();
-    run.panic_failures = run
-        .targets
-        .iter()
-        .filter(|t| {
-            t.discovery.as_ref().is_some_and(|s| s.panic)
-                || t.resolve.as_ref().is_some_and(|s| s.panic)
-                || t.merge.as_ref().is_some_and(|s| s.panic)
-        })
-        .count();
+    run.discovery_failures = 0;
+    run.resolve_failures = 0;
+    run.merge_failures = 0;
+    run.panic_failures = 0;
+    for target in &run.targets {
+        if target.discovery.as_ref().is_some_and(|s| !s.ok) {
+            run.discovery_failures += 1;
+        }
+        if target.resolve.as_ref().is_some_and(|s| !s.ok) {
+            run.resolve_failures += 1;
+        }
+        if target.merge.as_ref().is_some_and(|s| !s.ok) {
+            run.merge_failures += 1;
+        }
+        if target.discovery.as_ref().is_some_and(|s| s.panic)
+            || target.resolve.as_ref().is_some_and(|s| s.panic)
+            || target.merge.as_ref().is_some_and(|s| s.panic)
+        {
+            run.panic_failures += 1;
+        }
+        if let Some(probe) = &target.workspace_probe {
+            for member in &probe.members {
+                if !member.discovery.ok {
+                    run.discovery_failures += 1;
+                    if member.discovery.panic {
+                        run.panic_failures += 1;
+                    }
+                }
+                if let Some(resolve) = &member.resolve {
+                    if !resolve.ok {
+                        run.resolve_failures += 1;
+                        if resolve.panic {
+                            run.panic_failures += 1;
+                        }
+                    }
+                }
+                if let Some(merge) = &member.merge {
+                    if !merge.ok {
+                        run.merge_failures += 1;
+                        if merge.panic {
+                            run.panic_failures += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn workspace_member_failed(member: &CorpusWorkspaceMemberResult) -> bool {
+    !member.discovery.ok
+        || member.resolve.as_ref().is_some_and(|stage| !stage.ok)
+        || member.merge.as_ref().is_some_and(|stage| !stage.ok)
 }
 
 // --- cargo targets ---
@@ -1420,6 +1465,13 @@ pub struct DebugCorpus {
     /// Useful when you are narrowing a failure to pre-merge behavior or want a faster first pass.
     #[arg(long)]
     pub skip_merge: bool,
+
+    /// How to handle workspace repositories in the corpus.
+    ///
+    /// `skip` preserves the existing behavior and only records workspace classification.
+    /// `probe` runs discovery/resolve/(optional) merge per workspace member and persists artifacts.
+    #[arg(long, value_enum, default_value_t = CorpusWorkspaceMode::Skip)]
+    pub workspace_mode: CorpusWorkspaceMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1441,6 +1493,7 @@ pub struct DebugCorpusOut {
     pub resolve_failures: usize,
     pub merge_failures: usize,
     pub panic_failures: usize,
+    pub workspace_mode: String,
     pub targets: Vec<CorpusTargetResult>,
 }
 
@@ -1462,6 +1515,7 @@ pub struct CorpusTargetResult {
     pub discovery: Option<CorpusStageResult>,
     pub resolve: Option<CorpusStageResult>,
     pub merge: Option<CorpusStageResult>,
+    pub workspace_probe: Option<CorpusWorkspaceProbeResult>,
     pub summary_path: Option<String>,
 }
 
@@ -1484,6 +1538,40 @@ pub struct CorpusStageResult {
     pub file_count: Option<usize>,
     pub artifact_path: Option<String>,
     pub failure_artifact_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CorpusWorkspaceMode {
+    Skip,
+    Probe,
+}
+
+impl CorpusWorkspaceMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Skip => "skip",
+            Self::Probe => "probe",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorpusWorkspaceProbeResult {
+    pub workspace_root: String,
+    pub member_count: usize,
+    pub failed_members: usize,
+    pub members: Vec<CorpusWorkspaceMemberResult>,
+    pub summary_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorpusWorkspaceMemberResult {
+    pub path: String,
+    pub label: String,
+    pub artifact_dir: String,
+    pub discovery: CorpusStageResult,
+    pub resolve: Option<CorpusStageResult>,
+    pub merge: Option<CorpusStageResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1647,16 +1735,49 @@ impl Command for DebugCorpus {
         let mut merge_failures = 0usize;
         let mut panic_failures = 0usize;
 
-        for spec in specs {
+        let total_targets = specs.len();
+        for (index, spec) in specs.into_iter().enumerate() {
             let checkout_path = checkout_root.join(&spec.checkout_slug);
             let target_artifact_dir = artifact_root.join(&spec.checkout_slug);
+            let target_label = spec.normalized_repo.clone();
+            emit_corpus_progress_line(format_args!(
+                "[{}/{}] target {}",
+                index + 1,
+                total_targets,
+                target_label
+            ));
             std::fs::create_dir_all(&target_artifact_dir).map_err(|e| {
                 XtaskError::Resource(format!(
                     "Failed to create target artifact dir {}: {e}",
                     target_artifact_dir.display()
                 ))
             })?;
+            if !checkout_path.join(".git").is_dir() {
+                emit_corpus_progress_line(format_args!(
+                    "[{}/{}] {} checkout {}",
+                    index + 1,
+                    total_targets,
+                    target_label,
+                    if self.skip_clone {
+                        "missing (skip-clone)"
+                    } else {
+                        "clone start"
+                    }
+                ));
+            }
             let clone = ensure_corpus_checkout(&spec, &checkout_path, self.skip_clone)?;
+            emit_corpus_progress_line(format_args!(
+                "[{}/{}] {} checkout {}{}",
+                index + 1,
+                total_targets,
+                target_label,
+                clone.action,
+                clone
+                    .error
+                    .as_deref()
+                    .map(|err| format!(": {}", truncate_progress_error(err)))
+                    .unwrap_or_default()
+            ));
             match clone.action.as_str() {
                 "cloned" => cloned_targets += 1,
                 "reused" => reused_targets += 1,
@@ -1695,23 +1816,75 @@ impl Command for DebugCorpus {
                     }),
                     resolve: None,
                     merge: None,
+                    workspace_probe: None,
                     summary_path: None,
                 };
                 let summary_path = persist_target_summary(&target_artifact_dir, &target_result)?;
                 let mut target_result = target_result;
                 target_result.summary_path = Some(summary_path.display().to_string());
                 targets.push(target_result);
+                emit_corpus_progress_line(format_args!(
+                    "[{}/{}] {} complete (clone failure)",
+                    index + 1,
+                    total_targets,
+                    target_label
+                ));
                 continue;
             }
 
             let commit_sha = git_stdout(&checkout_path, &["rev-parse", "HEAD"]).ok();
             let classification = classify_corpus_checkout(&checkout_path);
+            emit_corpus_progress_line(format_args!(
+                "[{}/{}] {} classified as {}",
+                index + 1,
+                total_targets,
+                target_label,
+                classification.repository_kind
+            ));
             match classification.repository_kind.as_str() {
                 "workspace" => workspace_targets += 1,
                 "single_crate" => single_crate_targets += 1,
                 _ => {}
             }
             if !classification.should_run_single_crate_pipeline {
+                let workspace_probe = if classification.repository_kind == "workspace"
+                    && matches!(self.workspace_mode, CorpusWorkspaceMode::Probe)
+                {
+                    Some(run_corpus_workspace_probe(
+                        &target_label,
+                        &checkout_path,
+                        &target_artifact_dir,
+                        self.skip_merge,
+                    )?)
+                } else {
+                    None
+                };
+                if let Some(probe) = &workspace_probe {
+                    for member in &probe.members {
+                        if !member.discovery.ok {
+                            discovery_failures += 1;
+                            if member.discovery.panic {
+                                panic_failures += 1;
+                            }
+                        }
+                        if let Some(resolve) = &member.resolve {
+                            if !resolve.ok {
+                                resolve_failures += 1;
+                                if resolve.panic {
+                                    panic_failures += 1;
+                                }
+                            }
+                        }
+                        if let Some(merge) = &member.merge {
+                            if !merge.ok {
+                                merge_failures += 1;
+                                if merge.panic {
+                                    panic_failures += 1;
+                                }
+                            }
+                        }
+                    }
+                }
                 let target_result = CorpusTargetResult {
                     target: spec.original,
                     normalized_repo: spec.normalized_repo,
@@ -1729,16 +1902,24 @@ impl Command for DebugCorpus {
                     discovery: None,
                     resolve: None,
                     merge: None,
+                    workspace_probe,
                     summary_path: None,
                 };
                 let summary_path = persist_target_summary(&target_artifact_dir, &target_result)?;
                 let mut target_result = target_result;
                 target_result.summary_path = Some(summary_path.display().to_string());
                 targets.push(target_result);
+                emit_corpus_progress_line(format_args!(
+                    "[{}/{}] {} complete",
+                    index + 1,
+                    total_targets,
+                    target_label
+                ));
                 continue;
             }
 
-            let discovery = run_corpus_discovery_stage(&checkout_path, &target_artifact_dir)?;
+            let discovery =
+                run_corpus_discovery_stage(&checkout_path, &target_artifact_dir, &target_label)?;
             if !discovery.ok {
                 discovery_failures += 1;
                 if discovery.panic {
@@ -1761,16 +1942,23 @@ impl Command for DebugCorpus {
                     discovery: Some(discovery),
                     resolve: None,
                     merge: None,
+                    workspace_probe: None,
                     summary_path: None,
                 };
                 let summary_path = persist_target_summary(&target_artifact_dir, &target_result)?;
                 let mut target_result = target_result;
                 target_result.summary_path = Some(summary_path.display().to_string());
                 targets.push(target_result);
+                emit_corpus_progress_line(format_args!(
+                    "[{}/{}] {} complete (discovery failure)",
+                    index + 1,
+                    total_targets,
+                    target_label
+                ));
                 continue;
             }
 
-            let resolve = run_corpus_stage("resolve", &target_artifact_dir, || {
+            let resolve = run_corpus_stage("resolve", &target_artifact_dir, &target_label, || {
                 let graphs =
                     try_run_phases_and_resolve(&checkout_path).map_err(|e| e.to_string())?;
                 let nodes: usize = graphs
@@ -1796,7 +1984,7 @@ impl Command for DebugCorpus {
             }
 
             let merge = if !self.skip_merge && resolve.ok {
-                let stage = run_corpus_stage("merge", &target_artifact_dir, || {
+                let stage = run_corpus_stage("merge", &target_artifact_dir, &target_label, || {
                     let out =
                         try_run_phases_and_merge(&checkout_path).map_err(|e| e.to_string())?;
                     let (nodes, rels) = if let Some(ref mg) = out.merged_graph {
@@ -1857,12 +2045,19 @@ impl Command for DebugCorpus {
                 discovery: Some(discovery),
                 resolve: Some(resolve),
                 merge,
+                workspace_probe: None,
                 summary_path: None,
             };
             let summary_path = persist_target_summary(&target_artifact_dir, &target_result)?;
             let mut target_result = target_result;
             target_result.summary_path = Some(summary_path.display().to_string());
             targets.push(target_result);
+            emit_corpus_progress_line(format_args!(
+                "[{}/{}] {} complete",
+                index + 1,
+                total_targets,
+                target_label
+            ));
         }
 
         let out = DebugCorpusOut {
@@ -1883,6 +2078,7 @@ impl Command for DebugCorpus {
             resolve_failures,
             merge_failures,
             panic_failures,
+            workspace_mode: self.workspace_mode.as_str().to_string(),
             targets,
         };
         persist_run_summary(&artifact_root, &out)?;
@@ -1904,6 +2100,10 @@ pub struct DebugCorpusShow {
     #[arg(long, value_name = "TARGET")]
     pub target: Option<String>,
 
+    /// Narrow workspace probe output to one member label or path component.
+    #[arg(long, value_name = "MEMBER")]
+    pub member: Option<String>,
+
     /// Print a concise parser/xtask backtrace summary for the displayed failed target(s).
     #[arg(long, conflicts_with = "backtrace_full")]
     pub backtrace: bool,
@@ -1917,6 +2117,7 @@ pub struct DebugCorpusShow {
 pub struct DebugCorpusShowOut {
     pub run: DebugCorpusOut,
     pub selected_target: Option<String>,
+    pub selected_member: Option<String>,
     pub show_backtrace: bool,
     pub show_backtrace_full: bool,
     pub summary_path: String,
@@ -1959,9 +2160,44 @@ impl Command for DebugCorpusShow {
             recompute_corpus_counts(&mut run);
         }
 
+        if let Some(member) = &self.member {
+            let mut matched_targets = Vec::new();
+            for mut target in run.targets.drain(..) {
+                let Some(probe) = target.workspace_probe.as_mut() else {
+                    continue;
+                };
+                probe
+                    .members
+                    .retain(|entry| corpus_workspace_member_matches(entry, member));
+                if probe.members.is_empty() {
+                    continue;
+                }
+                probe.member_count = probe.members.len();
+                probe.failed_members = probe
+                    .members
+                    .iter()
+                    .filter(|entry| workspace_member_failed(entry))
+                    .count();
+                target.workspace_member_count = Some(probe.member_count);
+                matched_targets.push(target);
+            }
+
+            if matched_targets.is_empty() {
+                return Err(XtaskError::validation(format!(
+                    "Workspace member `{member}` not found in corpus run `{}`",
+                    run.run_id
+                ))
+                .into());
+            }
+
+            run.targets = matched_targets;
+            recompute_corpus_counts(&mut run);
+        }
+
         Ok(DebugOutput::CorpusShow(DebugCorpusShowOut {
             run,
             selected_target: self.target.clone(),
+            selected_member: self.member.clone(),
             show_backtrace: self.backtrace,
             show_backtrace_full: self.backtrace_full,
             summary_path: summary_path.display().to_string(),
@@ -2256,8 +2492,9 @@ fn corpus_diagnostic_from_discovery_error(err: &DiscoveryError) -> CorpusDiagnos
 fn run_corpus_discovery_stage(
     crate_root: &Path,
     target_artifact_dir: &Path,
+    progress_label: &str,
 ) -> Result<CorpusStageResult, XtaskError> {
-    run_corpus_stage("discovery", target_artifact_dir, || {
+    run_corpus_stage("discovery", target_artifact_dir, progress_label, || {
         let out =
             run_discovery_phase(None, &[crate_root.to_path_buf()]).map_err(|e| e.to_string())?;
         let artifact_path =
@@ -2276,9 +2513,199 @@ fn run_corpus_discovery_stage(
     })
 }
 
+fn run_corpus_workspace_probe(
+    workspace_label: &str,
+    workspace_root: &Path,
+    target_artifact_dir: &Path,
+    skip_merge: bool,
+) -> Result<CorpusWorkspaceProbeResult, XtaskError> {
+    let members = resolve_workspace_probe_members(workspace_root)?;
+
+    let workspace_artifact_dir = target_artifact_dir.join("workspace_probe");
+    std::fs::create_dir_all(&workspace_artifact_dir).map_err(|e| {
+        XtaskError::Resource(format!(
+            "Failed to create workspace probe artifact dir {}: {e}",
+            workspace_artifact_dir.display()
+        ))
+    })?;
+
+    let mut results = Vec::with_capacity(members.len());
+    let mut failed_members = 0usize;
+
+    for (index, member) in members.iter().enumerate() {
+        let label = member
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let rel_path = member.strip_prefix(workspace_root).unwrap_or(member);
+        let member_artifact_dir = workspace_artifact_dir.join("members").join(format!(
+            "{index:03}_{}",
+            sanitize_artifact_component(&rel_path.display().to_string())
+        ));
+        let member_progress_label = format!("{workspace_label}::{}", rel_path.display());
+        emit_corpus_progress_line(format_args!(
+            "[workspace] member {}/{} {}",
+            index + 1,
+            members.len(),
+            member_progress_label
+        ));
+
+        let discovery =
+            run_corpus_discovery_stage(member, &member_artifact_dir, &member_progress_label)?;
+        let mut member_failed = !discovery.ok;
+        let mut resolve = None;
+        let mut merge = None;
+
+        if discovery.ok {
+            let resolve_stage = run_corpus_stage(
+                "resolve",
+                &member_artifact_dir,
+                &member_progress_label,
+                || {
+                    let graphs = try_run_phases_and_resolve(member).map_err(|e| e.to_string())?;
+                    let nodes: usize = graphs
+                        .iter()
+                        .map(|pg| count_code_graph_nodes(&pg.graph))
+                        .sum();
+                    let rels: usize = graphs.iter().map(|pg| pg.graph.relations.len()).sum();
+                    let artifact_path = persist_stage_payload(
+                        &member_artifact_dir,
+                        "resolve",
+                        "resolve.json",
+                        &graphs,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Ok(CorpusStageMetrics {
+                        nodes_parsed: Some(nodes),
+                        relations_found: Some(rels),
+                        file_count: None,
+                        artifact_path: Some(artifact_path.display().to_string()),
+                    })
+                },
+            )?;
+            member_failed |= !resolve_stage.ok;
+            resolve = Some(resolve_stage);
+
+            if !skip_merge && resolve.as_ref().is_some_and(|stage| stage.ok) {
+                let merge_stage = run_corpus_stage(
+                    "merge",
+                    &member_artifact_dir,
+                    &member_progress_label,
+                    || {
+                        let out = try_run_phases_and_merge(member).map_err(|e| e.to_string())?;
+                        let (nodes, rels) = if let Some(ref mg) = out.merged_graph {
+                            (
+                                Some(count_code_graph_nodes(&mg.graph)),
+                                Some(mg.graph.relations.len()),
+                            )
+                        } else {
+                            (None, None)
+                        };
+                        let artifact_path = if let Some(ref merged_graph) = out.merged_graph {
+                            Some(
+                                persist_stage_payload(
+                                    &member_artifact_dir,
+                                    "merge",
+                                    "merged_graph.json",
+                                    merged_graph,
+                                )
+                                .map_err(|e| e.to_string())?
+                                .display()
+                                .to_string(),
+                            )
+                        } else {
+                            None
+                        };
+                        Ok(CorpusStageMetrics {
+                            nodes_parsed: nodes,
+                            relations_found: rels,
+                            file_count: None,
+                            artifact_path,
+                        })
+                    },
+                )?;
+                member_failed |= !merge_stage.ok;
+                merge = Some(merge_stage);
+            }
+        }
+
+        if member_failed {
+            failed_members += 1;
+        }
+
+        results.push(CorpusWorkspaceMemberResult {
+            path: member.display().to_string(),
+            label,
+            artifact_dir: member_artifact_dir.display().to_string(),
+            discovery,
+            resolve,
+            merge,
+        });
+    }
+
+    let out = CorpusWorkspaceProbeResult {
+        workspace_root: workspace_root.display().to_string(),
+        member_count: results.len(),
+        failed_members,
+        members: results,
+        summary_path: None,
+    };
+    let summary_path =
+        persist_stage_payload(&workspace_artifact_dir, "", "workspace_summary.json", &out)?;
+    Ok(CorpusWorkspaceProbeResult {
+        summary_path: Some(summary_path.display().to_string()),
+        ..out
+    })
+}
+
+fn resolve_workspace_probe_members(workspace_root: &Path) -> Result<Vec<PathBuf>, XtaskError> {
+    if let Ok(metadata) = try_parse_manifest(workspace_root, ManifestKind::WorkspaceRoot) {
+        if let Some(workspace) = metadata.workspace {
+            return Ok(workspace.members);
+        }
+    }
+
+    let metadata = load_cargo_metadata(workspace_root)?;
+    if metadata.workspace_root.as_std_path() != workspace_root {
+        return Err(XtaskError::validation(format!(
+            "Workspace probe expected workspace root `{}`, but cargo metadata reported `{}`",
+            workspace_root.display(),
+            metadata.workspace_root
+        ))
+        .into());
+    }
+
+    let workspace_members: HashSet<_> = metadata.workspace_members.iter().cloned().collect();
+    let mut members: Vec<PathBuf> = metadata
+        .packages
+        .iter()
+        .filter(|pkg| workspace_members.contains(&pkg.id))
+        .filter_map(|pkg| {
+            pkg.manifest_path
+                .as_std_path()
+                .parent()
+                .map(Path::to_path_buf)
+        })
+        .collect();
+    members.sort();
+    members.dedup();
+
+    if members.is_empty() {
+        return Err(XtaskError::validation(format!(
+            "No workspace members found for `{}` via cargo metadata",
+            workspace_root.display()
+        ))
+        .into());
+    }
+
+    Ok(members)
+}
+
 fn run_corpus_stage<F>(
     stage_name: &str,
     target_artifact_dir: &Path,
+    progress_label: &str,
     op: F,
 ) -> Result<CorpusStageResult, XtaskError>
 where
@@ -2291,11 +2718,12 @@ where
             stage_dir.display()
         ))
     })?;
+    emit_corpus_progress_line(format_args!("{progress_label} {stage_name} start"));
     let start = Instant::now();
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        with_debug_artifact_dir(&stage_dir, op)
-    }));
+    let heartbeat = CorpusStageHeartbeat::start(progress_label.to_string(), stage_name.to_string());
+    let outcome = catch_unwind_silencing_hook(|| with_debug_artifact_dir(&stage_dir, op));
     let duration_ms = start.elapsed().as_millis() as u64;
+    heartbeat.finish();
     let result = match outcome {
         Ok(Ok(metrics)) => CorpusStageResult {
             ok: true,
@@ -2329,7 +2757,7 @@ where
             ok: false,
             panic: true,
             failure_kind: Some("panic".into()),
-            error: Some(panic_payload_string(panic)),
+            error: Some(panic.message),
             duration_ms,
             nodes_parsed: None,
             relations_found: None,
@@ -2352,7 +2780,72 @@ where
         result
     };
     persist_stage_payload(&stage_dir, "", "stage_summary.json", &result)?;
+    emit_corpus_progress_line(format_args!(
+        "{progress_label} {stage_name} {} {}ms",
+        if result.ok {
+            "ok"
+        } else if result.panic {
+            "panic"
+        } else {
+            "err"
+        },
+        result.duration_ms
+    ));
     Ok(result)
+}
+
+const CORPUS_STAGE_HEARTBEAT_SECS: u64 = 15;
+
+struct CorpusStageHeartbeat {
+    done: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl CorpusStageHeartbeat {
+    fn start(progress_label: String, stage_name: String) -> Self {
+        let done = Arc::new(AtomicBool::new(false));
+        let done_for_thread = Arc::clone(&done);
+        let handle = thread::spawn(move || {
+            let mut elapsed_secs = 0u64;
+            while !done_for_thread.load(Ordering::Relaxed) {
+                thread::sleep(std::time::Duration::from_secs(CORPUS_STAGE_HEARTBEAT_SECS));
+                elapsed_secs += CORPUS_STAGE_HEARTBEAT_SECS;
+                if done_for_thread.load(Ordering::Relaxed) {
+                    break;
+                }
+                emit_corpus_progress_line(format_args!(
+                    "{progress_label} {stage_name} running {}s",
+                    elapsed_secs
+                ));
+            }
+        });
+        Self {
+            done,
+            handle: Some(handle),
+        }
+    }
+
+    fn finish(mut self) {
+        self.done.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn emit_corpus_progress_line(args: std::fmt::Arguments<'_>) {
+    eprintln!("[corpus] {args}");
+}
+
+fn truncate_progress_error(err: &str) -> String {
+    let trimmed = err.replace('\n', " ");
+    let mut chars = trimmed.chars();
+    let shortened: String = chars.by_ref().take(120).collect();
+    if chars.next().is_some() {
+        format!("{shortened}...")
+    } else {
+        shortened
+    }
 }
 
 fn corpus_run_id() -> String {
@@ -2431,7 +2924,75 @@ fn write_json_file<T: Serialize>(path: &Path, payload: &T) -> Result<PathBuf, Xt
     Ok(path.to_path_buf())
 }
 
-fn panic_payload_string(payload: Box<dyn std::any::Any + Send>) -> String {
+fn sanitize_artifact_component(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    out.trim_matches('_').to_string()
+}
+
+fn catch_unwind_silencing_hook<T>(f: impl FnOnce() -> T) -> Result<T, CapturedPanic> {
+    let _guard = panic_hook_guard()
+        .lock()
+        .expect("panic hook mutex poisoned");
+    let captured = Arc::new(Mutex::new(None));
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new({
+        let captured = Arc::clone(&captured);
+        move |info| {
+            let mut slot = captured.lock().expect("panic capture mutex poisoned");
+            *slot = Some(CapturedPanic::from_hook(info));
+        }
+    }));
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    std::panic::set_hook(previous_hook);
+
+    match outcome {
+        Ok(value) => Ok(value),
+        Err(payload) => {
+            let captured_panic = captured
+                .lock()
+                .expect("panic capture mutex poisoned")
+                .clone();
+            Err(captured_panic.unwrap_or_else(|| CapturedPanic {
+                message: panic_payload_string(&payload),
+            }))
+        }
+    }
+}
+
+fn panic_hook_guard() -> &'static Mutex<()> {
+    static PANIC_HOOK_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+    PANIC_HOOK_GUARD.get_or_init(|| Mutex::new(()))
+}
+
+#[derive(Debug, Clone)]
+struct CapturedPanic {
+    message: String,
+}
+
+impl CapturedPanic {
+    fn from_hook(info: &PanicHookInfo<'_>) -> Self {
+        let mut message = panic_payload_string(info.payload());
+        if let Some(location) = info.location() {
+            message = format!(
+                "{message} (at {}:{}:{})",
+                location.file(),
+                location.line(),
+                location.column()
+            );
+        }
+        Self { message }
+    }
+}
+
+fn panic_payload_string(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(msg) = payload.downcast_ref::<&str>() {
         (*msg).to_string()
     } else if let Some(msg) = payload.downcast_ref::<String>() {
@@ -2521,5 +3082,62 @@ fn candidate_for(source: &str, path: &Path) -> DiscoveryRuleCandidate {
         exists: md.is_some(),
         is_file: md.as_ref().is_some_and(std::fs::Metadata::is_file),
         is_dir: md.as_ref().is_some_and(std::fs::Metadata::is_dir),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn catch_unwind_silencing_hook_returns_panic_message_without_invoking_outer_hook() {
+        let panic_count = Arc::new(AtomicUsize::new(0));
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new({
+            let panic_count = Arc::clone(&panic_count);
+            move |_| {
+                panic_count.fetch_add(1, Ordering::SeqCst);
+            }
+        }));
+
+        let result = catch_unwind_silencing_hook(|| panic!("hook should be silenced"));
+        std::panic::set_hook(previous_hook);
+
+        let panic = result.expect_err("expected panic capture");
+        assert!(
+            panic.message.contains("hook should be silenced"),
+            "unexpected panic message: {}",
+            panic.message
+        );
+        assert_eq!(
+            panic_count.load(Ordering::SeqCst),
+            0,
+            "outer panic hook should not run while panic is being captured"
+        );
+    }
+
+    #[test]
+    fn catch_unwind_silencing_hook_restores_previous_hook_after_panic() {
+        let panic_count = Arc::new(AtomicUsize::new(0));
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new({
+            let panic_count = Arc::clone(&panic_count);
+            move |_| {
+                panic_count.fetch_add(1, Ordering::SeqCst);
+            }
+        }));
+
+        let _ = catch_unwind_silencing_hook(|| panic!("captured panic"));
+
+        let uncaught = std::panic::catch_unwind(|| panic!("outer hook should run"));
+        assert!(uncaught.is_err(), "expected outer panic");
+        std::panic::set_hook(previous_hook);
+
+        assert_eq!(
+            panic_count.load(Ordering::SeqCst),
+            1,
+            "previous panic hook should be restored after captured panic"
+        );
     }
 }

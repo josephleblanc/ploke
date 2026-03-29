@@ -97,6 +97,7 @@ fn format_human_corpus_show(value: &Value) -> Option<String> {
 
     let run = obj.get("run")?.as_object()?;
     let selected_target = obj.get("selected_target").and_then(Value::as_str);
+    let selected_member = obj.get("selected_member").and_then(Value::as_str);
     let show_backtrace = obj
         .get("show_backtrace")
         .and_then(Value::as_bool)
@@ -116,6 +117,13 @@ fn format_human_corpus_show(value: &Value) -> Option<String> {
     if let Some(target) = selected_target {
         out.push_str(&format!("\nSelected target: {target}"));
     }
+    if let Some(member) = selected_member {
+        out.push_str(&format!("\nSelected member: {member}"));
+        if let Some(details) = render_selected_workspace_members(run) {
+            out.push_str("\n\nWorkspace member details:\n");
+            out.push_str(&details);
+        }
+    }
 
     if show_backtrace || show_backtrace_full {
         let sections = if show_backtrace_full {
@@ -134,6 +142,73 @@ fn format_human_corpus_show(value: &Value) -> Option<String> {
     }
 
     Some(out)
+}
+
+fn render_selected_workspace_members(obj: &serde_json::Map<String, Value>) -> Option<String> {
+    let targets = obj.get("targets").and_then(Value::as_array)?;
+    let mut lines = Vec::new();
+    for target in targets {
+        let target_obj = target.as_object()?;
+        let repo = target_obj
+            .get("normalized_repo")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let Some(probe) = target_obj.get("workspace_probe").and_then(Value::as_object) else {
+            continue;
+        };
+        for member in probe
+            .get("members")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(member_obj) = member.as_object() else {
+                continue;
+            };
+            let label = member_obj
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let path = member_obj
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let artifact_dir = member_obj
+                .get("artifact_dir")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            lines.push(format!("- {repo} :: {label}"));
+            lines.push(format!("  path: {path}"));
+            lines.push(format!("  artifacts: {artifact_dir}"));
+            lines.push(format!(
+                "  discovery: {}",
+                render_stage_cell(
+                    &parse_stage_cell(member_obj.get("discovery")),
+                    &StageLayout::default()
+                )
+            ));
+            lines.push(format!(
+                "  resolve: {}",
+                render_stage_cell(
+                    &parse_stage_cell(member_obj.get("resolve")),
+                    &StageLayout::default()
+                )
+            ));
+            lines.push(format!(
+                "  merge: {}",
+                render_stage_cell(
+                    &parse_stage_cell(member_obj.get("merge")),
+                    &StageLayout::default()
+                )
+            ));
+        }
+    }
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(format!("{}\n", lines.join("\n")))
+    }
 }
 
 fn format_human_corpus(value: &Value) -> Option<String> {
@@ -165,10 +240,11 @@ fn render_human_corpus(
     let resolve_failures = value_usize(obj, "resolve_failures");
     let merge_failures = value_usize(obj, "merge_failures");
     let panic_failures = value_usize(obj, "panic_failures");
+    let workspace_mode = value_str(obj, "workspace_mode");
 
     let mut failure_lines = Vec::new();
     let mut single_crate_rows = Vec::new();
-    let mut workspace_lines = Vec::new();
+    let mut workspace_rows = Vec::new();
     let mut other_lines = Vec::new();
     let mut classification_failures = 0u64;
     if let Some(targets) = obj.get("targets").and_then(Value::as_array) {
@@ -184,7 +260,7 @@ fn render_human_corpus(
             match format_human_corpus_target(target, &artifact_root, &checkout_root) {
                 Some(CorpusHumanTarget::Failure(line)) => failure_lines.push(line),
                 Some(CorpusHumanTarget::SingleCrate(row)) => single_crate_rows.push(row),
-                Some(CorpusHumanTarget::Workspace(line)) => workspace_lines.push(line),
+                Some(CorpusHumanTarget::Workspace(row)) => workspace_rows.push(row),
                 Some(CorpusHumanTarget::Other(line)) => other_lines.push(line),
                 None => {}
             }
@@ -215,6 +291,9 @@ fn render_human_corpus(
             kinds.push(format!("{classification_failures} failed classification"));
         }
         out.push_str(&format!("Kinds: {}\n", kinds.join(", ")));
+        if workspace_targets > 0 {
+            out.push_str(&format!("Workspace mode: {workspace_mode}\n"));
+        }
     }
 
     if total_failures > 0 {
@@ -235,10 +314,22 @@ fn render_human_corpus(
         out.push_str(&render_single_crate_table(&single_crate_rows));
     }
 
-    if !workspace_lines.is_empty() {
-        out.push_str("\nWorkspace targets skipped by this runner:\n");
-        for line in workspace_lines {
-            out.push_str(&line);
+    if !workspace_rows.is_empty() {
+        out.push_str("\nWorkspace targets:\n");
+        if workspace_mode == "probe" {
+            out.push_str(&render_workspace_table(&workspace_rows));
+        } else {
+            for row in workspace_rows {
+                let mut line = format!(
+                    "- {} ({} members) [{}, {}]",
+                    row.repo, row.members, row.checkout, row.commit
+                );
+                if let Some(first_failed_member) = row.first_failed_member {
+                    line.push_str(&format!(" first_failed_member={first_failed_member}"));
+                }
+                line.push('\n');
+                out.push_str(&line);
+            }
         }
     }
 
@@ -284,7 +375,7 @@ fn render_human_corpus(
 enum CorpusHumanTarget {
     Failure(String),
     SingleCrate(CorpusSingleCrateRow),
-    Workspace(String),
+    Workspace(CorpusWorkspaceRow),
     Other(String),
 }
 
@@ -295,6 +386,18 @@ struct CorpusSingleCrateRow {
     discovery: StageCell,
     resolve: StageCell,
     merge: StageCell,
+}
+
+struct CorpusWorkspaceRow {
+    repo: String,
+    checkout: String,
+    commit: String,
+    members: String,
+    failed: String,
+    discovery: StageCell,
+    resolve: StageCell,
+    merge: StageCell,
+    first_failed_member: Option<String>,
 }
 
 #[derive(Clone)]
@@ -327,8 +430,27 @@ struct CorpusTableRow {
     merge: String,
 }
 
+struct CorpusWorkspaceTableRow {
+    repo: String,
+    checkout: String,
+    commit: String,
+    members: String,
+    failed: String,
+    discovery: String,
+    resolve: String,
+    merge: String,
+    first_failed_member: String,
+}
+
 #[derive(Default)]
 struct CorpusTableLayout {
+    discovery: StageLayout,
+    resolve: StageLayout,
+    merge: StageLayout,
+}
+
+#[derive(Default)]
+struct CorpusWorkspaceTableLayout {
     discovery: StageLayout,
     resolve: StageLayout,
     merge: StageLayout,
@@ -379,16 +501,39 @@ fn format_human_corpus_target(
         return Some(CorpusHumanTarget::Failure(line));
     }
 
-    let mut line = format!("- {repo}");
-
     if repository_kind == "workspace" {
-        if let Some(workspace_member_count) =
-            obj.get("workspace_member_count").and_then(Value::as_u64)
-        {
-            line.push_str(&format!(" ({workspace_member_count} members)"));
-        }
-        line.push_str(&format!(" [{action}, {commit_sha}]"));
-    } else {
+        let member_count = obj
+            .get("workspace_member_count")
+            .and_then(Value::as_u64)
+            .or_else(|| {
+                obj.get("workspace_probe")
+                    .and_then(Value::as_object)
+                    .and_then(|probe| probe.get("member_count"))
+                    .and_then(Value::as_u64)
+            })
+            .unwrap_or(0);
+        let failed_members = obj
+            .get("workspace_probe")
+            .and_then(Value::as_object)
+            .and_then(|probe| probe.get("failed_members"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let discovery = parse_workspace_probe_stage_cell(obj.get("workspace_probe"), "discovery");
+        let resolve = parse_workspace_probe_stage_cell(obj.get("workspace_probe"), "resolve");
+        let merge = parse_workspace_probe_stage_cell(obj.get("workspace_probe"), "merge");
+        let first_failed_member = first_failed_workspace_member(obj);
+        return Some(CorpusHumanTarget::Workspace(CorpusWorkspaceRow {
+            repo,
+            checkout: action.to_string(),
+            commit: commit_sha,
+            members: member_count.to_string(),
+            failed: failed_members.to_string(),
+            discovery,
+            resolve,
+            merge,
+            first_failed_member,
+        }));
+    } else if repository_kind == "single_crate" {
         let row = CorpusSingleCrateRow {
             repo,
             checkout: action.to_string(),
@@ -400,16 +545,13 @@ fn format_human_corpus_target(
         return Some(CorpusHumanTarget::SingleCrate(row));
     }
 
+    let mut line = format!("- {repo}");
     if let Some(err) = obj.get("classification_error").and_then(Value::as_str) {
         line.push_str(&format!(" classification_error={err}"));
     }
 
     line.push('\n');
-    Some(match repository_kind.as_str() {
-        "single_crate" => CorpusHumanTarget::Other(line),
-        "workspace" => CorpusHumanTarget::Workspace(line),
-        _ => CorpusHumanTarget::Other(line),
-    })
+    Some(CorpusHumanTarget::Other(line))
 }
 
 fn summarize_target_failure(obj: &serde_json::Map<String, Value>) -> Option<String> {
@@ -465,6 +607,59 @@ fn summarize_target_failure(obj: &serde_json::Map<String, Value>) -> Option<Stri
             summary.push_str(&error);
         }
         return Some(summary);
+    }
+
+    if let Some(probe) = obj.get("workspace_probe").and_then(Value::as_object) {
+        for member in probe
+            .get("members")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(member_obj) = member.as_object() else {
+                continue;
+            };
+            for (stage_name, stage) in [
+                ("discovery", member_obj.get("discovery")),
+                ("resolve", member_obj.get("resolve")),
+                ("merge", member_obj.get("merge")),
+            ] {
+                let Some(stage_obj) = stage.and_then(Value::as_object) else {
+                    continue;
+                };
+                if stage_obj
+                    .get("ok")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let label = member_obj
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let duration_ms = stage_obj
+                    .get("duration_ms")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let failure_kind = stage_obj
+                    .get("failure_kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("error");
+                let error = stage_obj
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(compact_error);
+                let mut summary = format!(
+                    "workspace member {label} {stage_name} {failure_kind} after {duration_ms}ms"
+                );
+                if let Some(error) = error {
+                    summary.push_str(": ");
+                    summary.push_str(&error);
+                }
+                return Some(summary);
+            }
+        }
     }
 
     None
@@ -525,6 +720,47 @@ fn summarize_target_failure_path(
         return fallback();
     }
 
+    if let Some(probe) = obj.get("workspace_probe").and_then(Value::as_object) {
+        for member in probe
+            .get("members")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(member_obj) = member.as_object() else {
+                continue;
+            };
+            for stage_name in ["discovery", "resolve", "merge"] {
+                let Some(stage_obj) = member_obj.get(stage_name).and_then(Value::as_object) else {
+                    continue;
+                };
+                if stage_obj
+                    .get("ok")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                if let Some(path) = stage_obj
+                    .get("failure_artifact_path")
+                    .and_then(Value::as_str)
+                {
+                    return Some(("failure", path.to_string()));
+                }
+                if let Some(path) = stage_obj.get("artifact_path").and_then(Value::as_str) {
+                    return Some(("artifacts", path.to_string()));
+                }
+                if let Some(path) = member_obj.get("artifact_dir").and_then(Value::as_str) {
+                    return Some(("artifacts", path.to_string()));
+                }
+                return fallback();
+            }
+        }
+        if let Some(path) = probe.get("summary_path").and_then(Value::as_str) {
+            return Some(("summary", path.to_string()));
+        }
+    }
+
     None
 }
 
@@ -559,6 +795,31 @@ fn summarize_target_failure_emission_site(obj: &serde_json::Map<String, Value>) 
     let line = emission_site.get("line").and_then(Value::as_u64)?;
     let column = emission_site.get("column").and_then(Value::as_u64)?;
     Some(format!("  emitted: {file}:{line}:{column}\n"))
+}
+
+fn first_failed_workspace_member(obj: &serde_json::Map<String, Value>) -> Option<String> {
+    let probe = obj.get("workspace_probe").and_then(Value::as_object)?;
+    let members = probe.get("members").and_then(Value::as_array)?;
+    for member in members {
+        let member_obj = member.as_object()?;
+        for stage_name in ["discovery", "resolve", "merge"] {
+            let Some(stage_obj) = member_obj.get(stage_name).and_then(Value::as_object) else {
+                continue;
+            };
+            if !stage_obj
+                .get("ok")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                let label = member_obj
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                return Some(format!("{label}:{stage_name}"));
+            }
+        }
+    }
+    None
 }
 
 fn first_failed_target_name(obj: &serde_json::Map<String, Value>) -> Option<&str> {
@@ -834,6 +1095,95 @@ fn parse_stage_cell(stage: Option<&Value>) -> StageCell {
     })
 }
 
+fn parse_workspace_probe_stage_cell(probe: Option<&Value>, stage_name: &str) -> StageCell {
+    let Some(probe) = probe.and_then(Value::as_object) else {
+        return StageCell::Missing;
+    };
+    let Some(members) = probe.get("members").and_then(Value::as_array) else {
+        return StageCell::Missing;
+    };
+    if members.is_empty() {
+        return StageCell::Missing;
+    }
+
+    let mut err_count = 0u64;
+    let mut panic_count = 0u64;
+    let mut duration_ms = 0u64;
+    let mut metric_a_total = 0u64;
+    let mut metric_b_total = 0u64;
+    let mut saw_metric_a = false;
+    let mut saw_metric_b = false;
+    let mut saw_stage = false;
+
+    for member in members {
+        let Some(stage) = member.get(stage_name) else {
+            continue;
+        };
+        if stage.is_null() {
+            continue;
+        }
+        let Some(stage_obj) = stage.as_object() else {
+            return StageCell::Invalid;
+        };
+        saw_stage = true;
+        let ok = stage_obj
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let panic = stage_obj
+            .get("panic")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        duration_ms += stage_obj
+            .get("duration_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if ok {
+        } else if panic {
+            panic_count += 1;
+        } else {
+            err_count += 1;
+        }
+
+        if let Some(files) = stage_obj.get("file_count").and_then(Value::as_u64) {
+            metric_a_total += files;
+            saw_metric_a = true;
+        } else if let Some(nodes) = stage_obj.get("nodes_parsed").and_then(Value::as_u64) {
+            metric_a_total += nodes;
+            saw_metric_a = true;
+        }
+        if let Some(rels) = stage_obj.get("relations_found").and_then(Value::as_u64) {
+            metric_b_total += rels;
+            saw_metric_b = true;
+        }
+    }
+
+    if !saw_stage {
+        return StageCell::Missing;
+    }
+
+    let status = if panic_count > 0 {
+        format!("panic({panic_count})")
+    } else if err_count > 0 {
+        format!("err({err_count})")
+    } else {
+        "ok".to_string()
+    };
+
+    StageCell::Present(StageCellData {
+        status,
+        duration: format!("{duration_ms}ms"),
+        metric_a: saw_metric_a.then_some(StageMetric {
+            value: metric_a_total.to_string(),
+            suffix: if stage_name == "discovery" { 'f' } else { 'n' },
+        }),
+        metric_b: saw_metric_b.then_some(StageMetric {
+            value: metric_b_total.to_string(),
+            suffix: 'r',
+        }),
+    })
+}
+
 fn render_single_crate_table(rows: &[CorpusSingleCrateRow]) -> String {
     let layout = derive_corpus_table_layout(rows);
     let rendered_rows: Vec<Vec<String>> = rows
@@ -871,8 +1221,67 @@ fn render_single_crate_table(rows: &[CorpusSingleCrateRow]) -> String {
     )
 }
 
+fn render_workspace_table(rows: &[CorpusWorkspaceRow]) -> String {
+    let layout = derive_workspace_table_layout(rows);
+    let rendered_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            let rendered = CorpusWorkspaceTableRow {
+                repo: row.repo.clone(),
+                checkout: row.checkout.clone(),
+                commit: row.commit.clone(),
+                members: row.members.clone(),
+                failed: row.failed.clone(),
+                discovery: render_stage_cell(&row.discovery, &layout.discovery),
+                resolve: render_stage_cell(&row.resolve, &layout.resolve),
+                merge: render_stage_cell(&row.merge, &layout.merge),
+                first_failed_member: row
+                    .first_failed_member
+                    .clone()
+                    .unwrap_or_else(|| "-".to_string()),
+            };
+            vec![
+                rendered.repo,
+                rendered.checkout,
+                rendered.commit,
+                rendered.members,
+                rendered.failed,
+                rendered.discovery,
+                rendered.resolve,
+                rendered.merge,
+                rendered.first_failed_member,
+            ]
+        })
+        .collect();
+
+    render_text_table(
+        &[
+            "REPO",
+            "CHECKOUT",
+            "COMMIT",
+            "MEMBERS",
+            "FAILED",
+            "DISCOVERY",
+            "RESOLVE",
+            "MERGE",
+            "FIRST FAILED MEMBER",
+        ],
+        &rendered_rows,
+    )
+}
+
 fn derive_corpus_table_layout(rows: &[CorpusSingleCrateRow]) -> CorpusTableLayout {
     let mut layout = CorpusTableLayout::default();
+    for row in rows {
+        update_stage_layout(&mut layout.discovery, &row.discovery);
+        update_stage_layout(&mut layout.resolve, &row.resolve);
+        update_stage_layout(&mut layout.merge, &row.merge);
+    }
+    layout
+}
+
+fn derive_workspace_table_layout(rows: &[CorpusWorkspaceRow]) -> CorpusWorkspaceTableLayout {
+    let mut layout = CorpusWorkspaceTableLayout::default();
     for row in rows {
         update_stage_layout(&mut layout.discovery, &row.discovery);
         update_stage_layout(&mut layout.resolve, &row.resolve);
@@ -1052,6 +1461,7 @@ mod tests {
             "run_id": "run-123",
             "checkout_root": "/tmp/checkouts",
             "artifact_root": "/tmp/artifacts",
+            "workspace_mode": "skip",
             "list_files": ["/tmp/list-a.txt", "/tmp/list-b.txt"],
             "requested_entries": 10,
             "unique_targets": 10,
@@ -1106,6 +1516,7 @@ mod tests {
             "run_id": "run-456",
             "checkout_root": "/tmp/checkouts",
             "artifact_root": "/tmp/artifacts",
+            "workspace_mode": "skip",
             "list_files": ["/tmp/list-a.txt", "/tmp/list-b.txt"],
             "requested_entries": 2,
             "unique_targets": 2,
@@ -1169,11 +1580,81 @@ mod tests {
 
     #[test]
     fn test_output_format_human_corpus_classification_failure_counts() {
+        let fail_target = serde_json::json!({
+            "normalized_repo": "fail/repo",
+            "repository_kind": "unknown",
+            "workspace_member_count": null,
+            "classification_error": "Failed to parse manifest at /tmp/checkouts/fail__repo/Cargo.toml (workspace_root): missing field `members`",
+            "classification_diagnostic": {
+                "kind": "manifest_parse",
+                "summary": "Failed to parse manifest at /tmp/checkouts/fail__repo/Cargo.toml (workspace_root): missing field `members`",
+                "detail": "missing field `members`",
+                "source_path": "/tmp/checkouts/fail__repo/Cargo.toml",
+                "source_span": { "start": 10, "end": 19, "line": 1, "col": 11 },
+                "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/error.rs", "line": 105, "column": 26 },
+                "backtrace": "stack backtrace:\n  0: syn_parser::discovery::workspace",
+                "context": [
+                    { "key": "manifest_kind", "value": "workspace_root" },
+                    { "key": "manifest_path", "value": "/tmp/checkouts/fail__repo/Cargo.toml" }
+                ]
+            },
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "summary_path": "/tmp/artifacts/fail__repo/summary.json",
+            "clone": { "ok": true, "action": "reused", "error": null },
+            "discovery": null,
+            "resolve": null,
+            "merge": null
+        });
+        let good_one = serde_json::json!({
+            "normalized_repo": "good/one",
+            "repository_kind": "single_crate",
+            "workspace_member_count": null,
+            "classification_error": null,
+            "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "clone": { "ok": true, "action": "reused", "error": null },
+            "discovery": { "ok": true, "panic": false, "duration_ms": 1, "file_count": 10, "nodes_parsed": null, "relations_found": null, "failure_kind": null, "error": null },
+            "resolve": { "ok": true, "panic": false, "duration_ms": 20, "file_count": null, "nodes_parsed": 100, "relations_found": 50, "failure_kind": null, "error": null },
+            "merge": { "ok": true, "panic": false, "duration_ms": 30, "file_count": null, "nodes_parsed": 90, "relations_found": 45, "failure_kind": null, "error": null }
+        });
+        let good_two = serde_json::json!({
+            "normalized_repo": "good/two",
+            "repository_kind": "single_crate",
+            "workspace_member_count": null,
+            "classification_error": null,
+            "commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "clone": { "ok": true, "action": "reused", "error": null },
+            "discovery": { "ok": true, "panic": false, "duration_ms": 2, "file_count": 12, "nodes_parsed": null, "relations_found": null, "failure_kind": null, "error": null },
+            "resolve": { "ok": true, "panic": false, "duration_ms": 22, "file_count": null, "nodes_parsed": 120, "relations_found": 60, "failure_kind": null, "error": null },
+            "merge": { "ok": true, "panic": false, "duration_ms": 32, "file_count": null, "nodes_parsed": 110, "relations_found": 55, "failure_kind": null, "error": null }
+        });
+        let workspace_one = serde_json::json!({
+            "normalized_repo": "workspace/one",
+            "repository_kind": "workspace",
+            "workspace_member_count": 3,
+            "classification_error": null,
+            "commit_sha": "dddddddddddddddddddddddddddddddddddddddd",
+            "clone": { "ok": true, "action": "reused", "error": null },
+            "discovery": null,
+            "resolve": null,
+            "merge": null
+        });
+        let workspace_two = serde_json::json!({
+            "normalized_repo": "workspace/two",
+            "repository_kind": "workspace",
+            "workspace_member_count": 4,
+            "classification_error": null,
+            "commit_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "clone": { "ok": true, "action": "reused", "error": null },
+            "discovery": null,
+            "resolve": null,
+            "merge": null
+        });
         let data = serde_json::json!({
             "kind": "corpus",
             "run_id": "run-789",
             "checkout_root": "/tmp/checkouts",
             "artifact_root": "/tmp/artifacts",
+            "workspace_mode": "skip",
             "list_files": ["/tmp/list-a.txt", "/tmp/list-b.txt"],
             "requested_entries": 5,
             "unique_targets": 5,
@@ -1188,77 +1669,7 @@ mod tests {
             "resolve_failures": 0,
             "merge_failures": 0,
             "panic_failures": 0,
-            "targets": [
-                {
-                    "normalized_repo": "fail/repo",
-                    "repository_kind": "unknown",
-                    "workspace_member_count": null,
-                    "classification_error": "Failed to parse manifest at /tmp/checkouts/fail__repo/Cargo.toml (workspace_root): missing field `members`",
-                    "classification_diagnostic": {
-                        "kind": "manifest_parse",
-                        "summary": "Failed to parse manifest at /tmp/checkouts/fail__repo/Cargo.toml (workspace_root): missing field `members`",
-                        "detail": "missing field `members`",
-                        "source_path": "/tmp/checkouts/fail__repo/Cargo.toml",
-                        "source_span": { "start": 10, "end": 19, "line": 1, "col": 11 },
-                        "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/error.rs", "line": 105, "column": 26 },
-                        "backtrace": "stack backtrace:\n  0: syn_parser::discovery::workspace",
-                        "context": [
-                            { "key": "manifest_kind", "value": "workspace_root" },
-                            { "key": "manifest_path", "value": "/tmp/checkouts/fail__repo/Cargo.toml" }
-                        ]
-                    },
-                    "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "summary_path": "/tmp/artifacts/fail__repo/summary.json",
-                    "clone": { "ok": true, "action": "reused", "error": null },
-                    "discovery": null,
-                    "resolve": null,
-                    "merge": null
-                },
-                {
-                    "normalized_repo": "good/one",
-                    "repository_kind": "single_crate",
-                    "workspace_member_count": null,
-                    "classification_error": null,
-                    "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                    "clone": { "ok": true, "action": "reused", "error": null },
-                    "discovery": { "ok": true, "panic": false, "duration_ms": 1, "file_count": 10, "nodes_parsed": null, "relations_found": null, "failure_kind": null, "error": null },
-                    "resolve": { "ok": true, "panic": false, "duration_ms": 20, "file_count": null, "nodes_parsed": 100, "relations_found": 50, "failure_kind": null, "error": null },
-                    "merge": { "ok": true, "panic": false, "duration_ms": 30, "file_count": null, "nodes_parsed": 90, "relations_found": 45, "failure_kind": null, "error": null }
-                },
-                {
-                    "normalized_repo": "good/two",
-                    "repository_kind": "single_crate",
-                    "workspace_member_count": null,
-                    "classification_error": null,
-                    "commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
-                    "clone": { "ok": true, "action": "reused", "error": null },
-                    "discovery": { "ok": true, "panic": false, "duration_ms": 2, "file_count": 12, "nodes_parsed": null, "relations_found": null, "failure_kind": null, "error": null },
-                    "resolve": { "ok": true, "panic": false, "duration_ms": 22, "file_count": null, "nodes_parsed": 120, "relations_found": 60, "failure_kind": null, "error": null },
-                    "merge": { "ok": true, "panic": false, "duration_ms": 32, "file_count": null, "nodes_parsed": 110, "relations_found": 55, "failure_kind": null, "error": null }
-                },
-                {
-                    "normalized_repo": "workspace/one",
-                    "repository_kind": "workspace",
-                    "workspace_member_count": 3,
-                    "classification_error": null,
-                    "commit_sha": "dddddddddddddddddddddddddddddddddddddddd",
-                    "clone": { "ok": true, "action": "reused", "error": null },
-                    "discovery": null,
-                    "resolve": null,
-                    "merge": null
-                },
-                {
-                    "normalized_repo": "workspace/two",
-                    "repository_kind": "workspace",
-                    "workspace_member_count": 4,
-                    "classification_error": null,
-                    "commit_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-                    "clone": { "ok": true, "action": "reused", "error": null },
-                    "discovery": null,
-                    "resolve": null,
-                    "merge": null
-                }
-            ]
+            "targets": [fail_target, good_one, good_two, workspace_one, workspace_two]
         });
 
         let formatted = OutputFormat::Human.format(&data).unwrap();
@@ -1282,6 +1693,117 @@ mod tests {
     }
 
     #[test]
+    fn test_output_format_human_corpus_workspace_probe_table() {
+        let workspace_ok = serde_json::json!({
+            "normalized_repo": "workspace/ok",
+            "repository_kind": "workspace",
+            "workspace_member_count": 2,
+            "classification_error": null,
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "summary_path": "/tmp/artifacts/workspace__ok/summary.json",
+            "clone": { "ok": true, "action": "reused", "error": null },
+            "discovery": null,
+            "resolve": null,
+            "merge": null,
+            "workspace_probe": {
+                "workspace_root": "/tmp/checkouts/workspace__ok",
+                "member_count": 2,
+                "failed_members": 0,
+                "summary_path": "/tmp/artifacts/workspace__ok/workspace_probe/workspace_summary.json",
+                "members": [
+                    {
+                        "label": "alpha",
+                        "artifact_dir": "/tmp/artifacts/workspace__ok/workspace_probe/members/000_alpha",
+                        "discovery": { "ok": true, "panic": false, "duration_ms": 2, "file_count": 3, "nodes_parsed": null, "relations_found": null, "failure_kind": null, "error": null },
+                        "resolve": { "ok": true, "panic": false, "duration_ms": 10, "file_count": null, "nodes_parsed": 20, "relations_found": 11, "failure_kind": null, "error": null },
+                        "merge": { "ok": true, "panic": false, "duration_ms": 11, "file_count": null, "nodes_parsed": 19, "relations_found": 10, "failure_kind": null, "error": null }
+                    },
+                    {
+                        "label": "beta",
+                        "artifact_dir": "/tmp/artifacts/workspace__ok/workspace_probe/members/001_beta",
+                        "discovery": { "ok": true, "panic": false, "duration_ms": 3, "file_count": 4, "nodes_parsed": null, "relations_found": null, "failure_kind": null, "error": null },
+                        "resolve": { "ok": true, "panic": false, "duration_ms": 12, "file_count": null, "nodes_parsed": 25, "relations_found": 14, "failure_kind": null, "error": null },
+                        "merge": { "ok": true, "panic": false, "duration_ms": 13, "file_count": null, "nodes_parsed": 24, "relations_found": 13, "failure_kind": null, "error": null }
+                    }
+                ]
+            }
+        });
+        let workspace_fail = serde_json::json!({
+            "normalized_repo": "workspace/fail",
+            "repository_kind": "workspace",
+            "workspace_member_count": 2,
+            "classification_error": null,
+            "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "summary_path": "/tmp/artifacts/workspace__fail/summary.json",
+            "clone": { "ok": true, "action": "reused", "error": null },
+            "discovery": null,
+            "resolve": null,
+            "merge": null,
+            "workspace_probe": {
+                "workspace_root": "/tmp/checkouts/workspace__fail",
+                "member_count": 2,
+                "failed_members": 1,
+                "summary_path": "/tmp/artifacts/workspace__fail/workspace_probe/workspace_summary.json",
+                "members": [
+                    {
+                        "label": "gamma",
+                        "artifact_dir": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma",
+                        "discovery": { "ok": true, "panic": false, "duration_ms": 4, "file_count": 5, "nodes_parsed": null, "relations_found": null, "failure_kind": null, "error": null },
+                        "resolve": { "ok": false, "panic": false, "duration_ms": 8, "file_count": null, "nodes_parsed": null, "relations_found": null, "failure_kind": "error", "error": "resolve failed", "failure_artifact_path": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma/resolve/failure.json" },
+                        "merge": null
+                    },
+                    {
+                        "label": "delta",
+                        "artifact_dir": "/tmp/artifacts/workspace__fail/workspace_probe/members/001_delta",
+                        "discovery": { "ok": true, "panic": false, "duration_ms": 3, "file_count": 2, "nodes_parsed": null, "relations_found": null, "failure_kind": null, "error": null },
+                        "resolve": { "ok": true, "panic": false, "duration_ms": 7, "file_count": null, "nodes_parsed": 12, "relations_found": 6, "failure_kind": null, "error": null },
+                        "merge": { "ok": true, "panic": false, "duration_ms": 6, "file_count": null, "nodes_parsed": 11, "relations_found": 5, "failure_kind": null, "error": null }
+                    }
+                ]
+            }
+        });
+        let data = serde_json::json!({
+            "kind": "corpus",
+            "run_id": "run-901",
+            "checkout_root": "/tmp/checkouts",
+            "artifact_root": "/tmp/artifacts",
+            "workspace_mode": "probe",
+            "list_files": ["/tmp/list-a.txt"],
+            "requested_entries": 2,
+            "unique_targets": 2,
+            "processed_targets": 2,
+            "single_crate_targets": 0,
+            "workspace_targets": 2,
+            "reused_targets": 2,
+            "cloned_targets": 0,
+            "skipped_targets": 0,
+            "clone_failures": 0,
+            "discovery_failures": 1,
+            "resolve_failures": 0,
+            "merge_failures": 0,
+            "panic_failures": 0,
+            "targets": [workspace_ok, workspace_fail]
+        });
+
+        let formatted = OutputFormat::Human.format(&data).unwrap();
+        assert!(formatted.contains("Workspace mode: probe"));
+        assert!(formatted.contains("\nWorkspace targets:\nREPO"));
+        assert!(formatted.contains("FIRST FAILED MEMBER"));
+        assert!(formatted.contains("workspace/ok"));
+        assert!(!formatted.contains("workspace/fail  "));
+        assert!(formatted.contains("ok"));
+        assert!(formatted.contains("5ms"));
+        assert!(formatted.contains("7f"));
+        assert!(!formatted.contains("gamma:resolve"));
+        assert!(formatted.contains(
+            "\nFailures:\n- workspace/fail: workspace member gamma resolve error after 8ms: resolve failed [reused, bbbbbbbbbbbb]\n"
+        ));
+        assert!(formatted.contains(
+            "  failure: workspace__fail/workspace_probe/members/000_gamma/resolve/failure.json\n"
+        ));
+    }
+
+    #[test]
     fn test_output_format_human_corpus_show_backtrace() {
         let data = serde_json::json!({
             "kind": "corpus_show",
@@ -1293,6 +1815,7 @@ mod tests {
                 "run_id": "run-789",
                 "checkout_root": "/tmp/checkouts",
                 "artifact_root": "/tmp/artifacts/run-789",
+                "workspace_mode": "skip",
                 "list_files": ["/tmp/list-a.txt"],
                 "requested_entries": 5,
                 "unique_targets": 5,
@@ -1353,6 +1876,7 @@ mod tests {
                 "run_id": "run-789",
                 "checkout_root": "/tmp/checkouts",
                 "artifact_root": "/tmp/artifacts/run-789",
+                "workspace_mode": "skip",
                 "list_files": ["/tmp/list-a.txt"],
                 "requested_entries": 5,
                 "unique_targets": 5,
@@ -1396,6 +1920,81 @@ mod tests {
         let formatted = OutputFormat::Human.format(&data).unwrap();
         assert!(formatted.contains("\nBacktraces (full):\n- fail/repo [manifest_parse]\n"));
         assert!(formatted.contains("  stack backtrace:\n"));
+    }
+
+    #[test]
+    fn test_output_format_human_corpus_show_selected_workspace_member() {
+        let data: serde_json::Value = serde_json::from_str(
+            r#"{
+  "kind": "corpus_show",
+  "selected_target": "workspace/fail",
+  "selected_member": "gamma",
+  "show_backtrace": false,
+  "show_backtrace_full": false,
+  "summary_path": "/tmp/artifacts/run-999/summary.json",
+  "run": {
+    "run_id": "run-999",
+    "checkout_root": "/tmp/checkouts",
+    "artifact_root": "/tmp/artifacts/run-999",
+    "workspace_mode": "probe",
+    "list_files": ["/tmp/list-a.txt"],
+    "requested_entries": 5,
+    "unique_targets": 5,
+    "processed_targets": 1,
+    "single_crate_targets": 0,
+    "workspace_targets": 1,
+    "reused_targets": 1,
+    "cloned_targets": 0,
+    "skipped_targets": 0,
+    "clone_failures": 0,
+    "discovery_failures": 0,
+    "resolve_failures": 1,
+    "merge_failures": 0,
+    "panic_failures": 0,
+    "targets": [{
+      "normalized_repo": "workspace/fail",
+      "target": "workspace/fail",
+      "artifact_dir": "/tmp/artifacts/workspace__fail",
+      "repository_kind": "workspace",
+      "classification_error": null,
+      "classification_diagnostic": null,
+      "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "summary_path": "/tmp/artifacts/workspace__fail/summary.json",
+      "clone": { "ok": true, "action": "reused", "error": null },
+      "discovery": null,
+      "resolve": null,
+      "merge": null,
+      "workspace_probe": {
+        "workspace_root": "/tmp/checkouts/workspace__fail",
+        "member_count": 1,
+        "failed_members": 1,
+        "summary_path": "/tmp/artifacts/workspace__fail/workspace_probe/workspace_summary.json",
+        "members": [{
+          "path": "/tmp/checkouts/workspace__fail/gamma",
+          "label": "gamma",
+          "artifact_dir": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma",
+          "discovery": { "ok": true, "panic": false, "duration_ms": 2, "file_count": 3, "nodes_parsed": null, "relations_found": null, "failure_kind": null, "error": null, "failure_artifact_path": null },
+          "resolve": { "ok": false, "panic": false, "duration_ms": 8, "file_count": null, "nodes_parsed": null, "relations_found": null, "failure_kind": "error", "error": "resolve failed", "failure_artifact_path": "/tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma/resolve/failure.json" },
+          "merge": null
+        }]
+      }
+    }]
+  }
+}"#,
+        )
+        .expect("valid json");
+
+        let formatted = OutputFormat::Human.format(&data).unwrap();
+        assert!(formatted.contains("Selected target: workspace/fail"));
+        assert!(formatted.contains("Selected member: gamma"));
+        assert!(formatted.contains("\nWorkspace member details:\n- workspace/fail :: gamma\n"));
+        assert!(formatted.contains("  path: /tmp/checkouts/workspace__fail/gamma\n"));
+        assert!(formatted.contains(
+            "  artifacts: /tmp/artifacts/workspace__fail/workspace_probe/members/000_gamma\n"
+        ));
+        assert!(formatted.contains("  discovery: ok 2ms 3f\n"));
+        assert!(formatted.contains("  resolve: err 8ms\n"));
+        assert!(formatted.contains("  merge: -\n"));
     }
 
     #[test]
