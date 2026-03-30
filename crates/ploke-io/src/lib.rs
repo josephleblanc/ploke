@@ -158,8 +158,8 @@
 //! - File, parse, range, and path policy violations surface as Fatal variants via mapping.
 //!
 //! See docs/production_plan.md for a full roadmap and design details.
-use ploke_core::file_hash::FileHash;
 use ploke_core::PROJECT_NAMESPACE_UUID;
+use ploke_core::file_hash::FileHash;
 mod actor;
 pub use actor::IoManager;
 use actor::IoManagerMessage;
@@ -172,7 +172,7 @@ pub use errors::RecvError;
 pub mod handle;
 pub use handle::IoManagerHandle;
 pub mod path_policy;
-pub use path_policy::{normalize_target_path, PathPolicy, SymlinkPolicy};
+pub use path_policy::{PathPolicy, SymlinkPolicy, normalize_target_path};
 pub mod read;
 pub mod scan;
 #[cfg(feature = "watcher")]
@@ -191,15 +191,15 @@ use ploke_core::ChangedFileData;
 use ploke_core::EmbeddingData;
 use ploke_core::FileData;
 use ploke_core::TrackingHash;
-use ploke_error::fatal::FatalError;
 use ploke_error::Error as PlokeError;
+use ploke_error::fatal::FatalError;
 use quote::ToTokens;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use thiserror::Error;
-use tokio::sync::{mpsc, oneshot, Semaphore};
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]

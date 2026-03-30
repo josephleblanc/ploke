@@ -5,13 +5,13 @@ use log::debug;
 use crate::{
     error::SynParserError,
     parser::{
+        ParsedCodeGraph,
         graph::{GraphAccess, GraphNode},
         nodes::{AnyNodeId, AsAnyNodeId, ImportNodeId, ModuleNodeId, NodePath},
         relations::SyntacticRelation,
         types::VisibilityKind,
-        ParsedCodeGraph,
     },
-    utils::{AccLogCtx, LogDataStructure, LogStyle, LOG_TARGET_MOD_TREE_BUILD},
+    utils::{AccLogCtx, LOG_TARGET_MOD_TREE_BUILD, LogDataStructure, LogStyle},
 };
 
 use super::*;
@@ -220,7 +220,7 @@ pub(super) fn shortest_public_path(
             &mut visited,
             graph,
         ); // Need to handle errors
-           // When should this return error for invalid graph state?
+        // When should this return error for invalid graph state?
     } // End while loop
 
     // --- 6. Not Found ---

@@ -30,6 +30,8 @@ pub fn malformed_fixtures_dir() -> PathBuf {
 ///
 /// This directory holds real-world crates cloned from GitHub, used for
 /// robustness and integration testing against production-grade Rust code.
+// NOTE:2026-03-28 updated from tests/fixture_github_clones to tests/fixture_github_clones/corpus
+// where corpus is a symlink. See xtask for more details on corpus contents.
 pub fn fixture_github_clones_dir() -> PathBuf {
-    workspace_root().join("tests/fixture_github_clones")
+    workspace_root().join("tests/fixture_github_clones/corpus")
 }

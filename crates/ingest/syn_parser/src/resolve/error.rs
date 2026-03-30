@@ -12,16 +12,20 @@ use crate::{
 use super::{TreeRelation, UnlinkedModuleInfo};
 
 // Define the new ModuleTreeError enum
-#[derive(thiserror::Error, Debug, Clone, PartialEq)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum ModuleTreeError {
-    #[error("Duplicate definition path '{path}' found in module tree. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
+    #[error(
+        "Duplicate definition path '{path}' found in module tree. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}"
+    )]
     DuplicatePath {
         // Change to a struct variant
         path: NodePath,
         existing_id: AnyNodeId,
         conflicting_id: AnyNodeId,
     },
-    #[error("Duplicate definition module_id '{module_id}' found in module tree. Existing path attribute: {existing_path}, Conflicting path attribute: {conflicting_path}")]
+    #[error(
+        "Duplicate definition module_id '{module_id}' found in module tree. Existing path attribute: {existing_path}, Conflicting path attribute: {conflicting_path}"
+    )]
     DuplicatePathAttribute {
         module_id: ModuleNodeId,
         existing_path: PathBuf,
@@ -63,7 +67,9 @@ pub enum ModuleTreeError {
     RootModuleNotFound(ModuleNodeId),
 
     // --- NEW VARIANT ---
-    #[error("Conflicting re-export path '{path}' detected. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
+    #[error(
+        "Conflicting re-export path '{path}' detected. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}"
+    )]
     ConflictingReExportPath {
         path: NodePath,
         existing_id: ReexportNodeId,    // Changed: Use ReexportNodeId
@@ -71,7 +77,9 @@ pub enum ModuleTreeError {
     },
 
     // --- NEW VARIANT ---
-    #[error("Re-export chain starting from {start_node_id} exceeded maximum depth (32). Potential cycle or excessively deep re-export.")]
+    #[error(
+        "Re-export chain starting from {start_node_id} exceeded maximum depth (32). Potential cycle or excessively deep re-export."
+    )]
     ReExportChainTooLong { start_node_id: AnyNodeId },
 
     #[error("Implement me!")]
@@ -109,7 +117,9 @@ pub enum ModuleTreeError {
     Warning(String),
 
     // --- NEW VARIANT ---
-    #[error("Recursion limit ({limit}) exceeded while finding defining file path for node {start_node_id}")]
+    #[error(
+        "Recursion limit ({limit}) exceeded while finding defining file path for node {start_node_id}"
+    )]
     RecursionLimitExceeded { start_node_id: AnyNodeId, limit: u8 },
     #[error("Error Converting from {0}")]
     TypedIdConversionError(#[from] TryFromPrimaryError),

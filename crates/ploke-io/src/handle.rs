@@ -158,7 +158,7 @@ impl IoManagerHandle {
         &self,
         requests: Vec<EmbeddingData>,
     ) -> Result<Vec<Result<String, PlokeError>>, errors::RecvError> {
-        use tracing::{span, Level};
+        use tracing::{Level, span};
         let tracing_span = span!(Level::TRACE, "get_snippets_batch");
         let _enter = tracing_span.enter();
 

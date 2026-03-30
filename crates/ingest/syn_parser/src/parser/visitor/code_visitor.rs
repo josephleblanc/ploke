@@ -31,26 +31,26 @@ use crate::parser::nodes::{ImportKind, MacroKind, ModuleKind, ProcMacroKind};
 // Imported Kinds from ploke-core
 use ploke_core::ItemKind;
 
+use crate::parser::ExtractSpan;
 use crate::parser::relations::*;
 use crate::parser::types::*;
 use crate::parser::visitor::calculate_cfg_hash_bytes;
-use crate::parser::ExtractSpan;
 
 use crate::error::CodeVisitorError; // Import the new error type
-use crate::utils::logging::LogErrorConversion as _;
 use crate::utils::LogStyleDebug;
+use crate::utils::logging::LogErrorConversion as _;
 use itertools::Itertools;
 use ploke_core::TypeId;
 
 use colored::*;
-use tracing::{error, trace}; // Import error macro
 use quote::ToTokens;
-use syn::spanned::Spanned;
 use syn::TypePath;
+use syn::spanned::Spanned;
 use syn::{
-    visit::{self, Visit},
     ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, ReturnType, Type,
+    visit::{self, Visit},
 };
+use tracing::{error, instrument, trace}; // Import error macro
 
 pub struct CodeVisitor<'a> {
     state: &'a mut VisitorState,
@@ -64,6 +64,7 @@ impl<'a> CodeVisitor<'a> {
         Self { state }
     }
 
+    #[instrument(target = "validate_rels", skip(self))]
     pub(crate) fn validate_unique_rels(&self) -> bool {
         self.state.code_graph.validate_unique_rels()
     }
@@ -112,9 +113,17 @@ impl<'a> CodeVisitor<'a> {
                     use_name // This is the visible name in this case
                 };
 
+                // Synthetic import IDs hash a full-path key (not the visible binding name) so
+                // distinct imports that share a leaf (e.g. `io::Result` vs `fmt::Result`) stay unique.
+                let id_key = if is_self_import {
+                    format!("{}::{{self}}", full_path.join("::"))
+                } else {
+                    full_path.join("::")
+                };
+
                 // Register the new node ID (but don't get parent ID, handled later)
                 let registration_result = self.register_new_node_id(
-                    &checked_name,
+                    &id_key,
                     ItemKind::Import,
                     cfg_bytes, // Pass down received cfg_bytes
                 );
@@ -164,23 +173,25 @@ impl<'a> CodeVisitor<'a> {
 
                 let span = rename.extract_span_bytes();
 
-                // Register the new node ID
-                let registration_result = if visible_name.as_str() == "_" {
+                if visible_name.as_str() == "_" {
                     // salt original name with "_" to prevent conflicts when both the anonymous and
                     // a named import are used in the same file, e.g. both `use X` and `use X as _`
                     original_name.push_str("::_");
-                    self.register_new_node_id(
-                        &original_name,
-                        ItemKind::Import,
-                        cfg_bytes, // Pass down received cfg_bytes
-                    )
-                } else {
-                    self.register_new_node_id(
-                        &visible_name,
-                        ItemKind::Import,
-                        cfg_bytes, // Pass down received cfg_bytes
-                    )
-                };
+                }
+
+                let mut source_path = base_path; // Take ownership
+                source_path.push(original_name.clone());
+
+                // Full source path disambiguates `use a::X as Y` vs `use b::X as Y`; append the
+                // visible binding so two renames of the same path (`as A` vs `as B`) stay distinct.
+                let id_key = format!("{}::{}", source_path.join("::"), visible_name);
+
+                // Register using a path-qualified key (not the visible binding alone).
+                let registration_result = self.register_new_node_id(
+                    &id_key,
+                    ItemKind::Import,
+                    cfg_bytes, // Pass down received cfg_bytes
+                );
                 // Check if registration failed
                 if registration_result.is_none() {
                     let err = CodeVisitorError::RegistrationFailed {
@@ -194,8 +205,8 @@ impl<'a> CodeVisitor<'a> {
                 let import_node_id: ImportNodeId = import_any_id.try_into().map_err(|e| {
                     // Use the logging trait method
                     self.state
-                        .log_import_id_conversion_error(&visible_name, &base_path, e); // Use base_path for context here
-                                                                                       // Return the specific CodeVisitorError variant
+                        .log_import_id_conversion_error(&visible_name, &source_path, e);
+                    // Return the specific CodeVisitorError variant
                     CodeVisitorError::IdConversionFailed {
                         item_name: visible_name.clone(),
                         item_kind: ItemKind::Import,
@@ -203,10 +214,6 @@ impl<'a> CodeVisitor<'a> {
                         source_error: e,
                     }
                 })?; // Use ? to propagate the error
-
-                // The source path uses the original name.
-                let mut source_path = base_path; // Take ownership
-                source_path.push(original_name.clone());
 
                 let import_node = ImportNode {
                     id: import_node_id,
@@ -231,7 +238,7 @@ impl<'a> CodeVisitor<'a> {
                 // the `original_name`.
                 // WARN: Using a simple "*" for the name, as we did previously, leads to id
                 // collisions among globs in the same module path. Instead we need to use the
-                // entire path of the glob import.
+                // entire path of the glob import. `full_path_string` is the canonical synthetic-ID input.
                 let mut full_path_string = base_path.join("::");
                 full_path_string.push_str("::*");
                 let registration_result = self.register_new_node_id(
@@ -256,7 +263,7 @@ impl<'a> CodeVisitor<'a> {
                     // Use the logging trait method
                     self.state
                         .log_import_id_conversion_error("<glob>", &base_path, e); // Use placeholder and base_path
-                                                                                  // Return the specific CodeVisitorError variant
+                    // Return the specific CodeVisitorError variant
                     CodeVisitorError::IdConversionFailed {
                         item_name: "<glob>".to_string(),
                         item_kind: ItemKind::Import,
@@ -421,7 +428,7 @@ impl<'a> CodeVisitor<'a> {
         let node_id = self
             .state
             .generate_synthetic_node_id(item_name, item_kind, cfg_bytes); // Pass cfg_bytes
-                                                                          // 2. Find the parent module based on the *current path* and add the item ID.
+        // 2. Find the parent module based on the *current path* and add the item ID.
         let parent_module_opt = self
             .state
             .code_graph
@@ -479,7 +486,7 @@ impl<'a> CodeVisitor<'a> {
         self.state
             .cfg_stack
             .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
-                                                          // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         self.state.current_scope_cfgs = cfgs.to_vec();
         trace!(target: VISITOR_TARGET_TRACE, ">>> Entering Primary Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
     }
@@ -495,7 +502,7 @@ impl<'a> CodeVisitor<'a> {
         self.state
             .cfg_stack
             .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
-                                                          // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         self.state.current_scope_cfgs = cfgs.to_vec();
         trace!(target: VISITOR_TARGET_TRACE, ">>> Entering Secondary Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
     }
@@ -511,7 +518,7 @@ impl<'a> CodeVisitor<'a> {
         self.state
             .cfg_stack
             .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
-                                                          // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         self.state.current_scope_cfgs = cfgs.to_vec();
         trace!(target: VISITOR_TARGET_TRACE, ">>> Entering Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
     }
@@ -521,7 +528,7 @@ impl<'a> CodeVisitor<'a> {
         let popped_id = self.state.current_primary_defn_scope.pop();
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
-                                                                                        // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         trace!(target: VISITOR_TARGET_TRACE, "<<< Exiting Primary Scope: {} ({}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
@@ -533,7 +540,7 @@ impl<'a> CodeVisitor<'a> {
         let popped_id = self.state.current_secondary_defn_scope.pop();
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
-                                                                                        // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         trace!(target: VISITOR_TARGET_TRACE, "<<< Exiting Secondary Scope: {} ({}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
@@ -549,7 +556,7 @@ impl<'a> CodeVisitor<'a> {
         let popped_id = self.state.current_assoc_defn_scope.pop();
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
-                                                                                        // primary, secondary, associated, etc.
+        // primary, secondary, associated, etc.
         trace!(target: VISITOR_TARGET_TRACE, "<<< Exiting Assoc Scope: {} ({:?}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
@@ -1674,7 +1681,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
-                self.pop_secondary_scope(&method_name);
+                self.pop_assoc_scope(&method_name);
 
                 // Extract doc comments and other attributes for methods
                 let docstring = extract_docstring(&method.attrs);
@@ -1769,10 +1776,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         };
         self.state.code_graph.relations.push(contains_relation);
 
-        // Continue visiting children (methods handled above, visit generics/where)
-        // Note: CFG scope is pushed/popped by push_*_scope/pop_*_scope helpers
-        visit::visit_item_impl(self, item_impl);
-
         // Pop the impl's scope using the helper *after* visiting children
         self.pop_primary_scope(&impl_name);
     }
@@ -1810,6 +1813,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let (trait_any_id, parent_mod_id) = registration_result.unwrap();
 
         self.debug_new_id(&trait_name, trait_any_id); // Now uses trace!
+
+        let trait_typed_id: TraitNodeId = trait_any_id.try_into().unwrap();
+        self.push_primary_scope(
+            &trait_name,
+            PrimaryNodeId::from(trait_typed_id),
+            &provisional_effective_cfgs,
+        );
 
         // Process methods
         let mut methods = Vec::new();
@@ -1874,7 +1884,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
-                self.pop_secondary_scope(&method_name);
+                self.pop_assoc_scope(&method_name);
 
                 // Extract doc comments and other attributes for methods
                 let docstring = extract_docstring(&method.attrs);
@@ -1917,14 +1927,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Placeholder for other associated items (consts, types)
         let associated_consts: Vec<ConstNode> = Vec::new(); // TODO: Populate this
         let associated_types: Vec<TypeAliasNode> = Vec::new(); // TODO: Populate this
-
-        // Convert trait ID and push scope
-        let trait_typed_id: TraitNodeId = trait_any_id.try_into().unwrap();
-        self.push_primary_scope(
-            &trait_name,
-            PrimaryNodeId::from(trait_typed_id), // Use PrimaryNodeId for scope
-            &provisional_effective_cfgs,
-        ); // Clone cfgs for push
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_trait.generics);
@@ -2019,10 +2021,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             target: PrimaryNodeId::from(trait_typed_id), // Use typed trait ID
         };
         self.state.code_graph.relations.push(contains_relation);
-
-        // Continue visiting children (methods handled above, visit generics/where/supertraits)
-        // Note: CFG scope is pushed/popped by push_*_scope/pop_*_scope helpers
-        visit::visit_item_trait(self, item_trait);
 
         // Pop the trait's scope using the helper *after* visiting children
         self.pop_primary_scope(&trait_name);
@@ -2412,6 +2410,14 @@ use statement ident: {:?}
             }
         }
         let const_name = item_const.ident.to_string();
+        // Disambiguate anonymous `const _` items (commonly used as compile-time checks).
+        // Without this, multiple `const _` in the same module collide in synthetic ID generation.
+        let id_key = if const_name.as_str() == "_" {
+            self.state.anon_const_ordinal += 1;
+            format!("__anon_const_{}", self.state.anon_const_ordinal)
+        } else {
+            const_name.clone()
+        };
 
         // --- CFG Handling (Raw Strings) ---
         let scope_cfgs = self.state.current_scope_cfgs.clone();
@@ -2426,13 +2432,13 @@ use statement ident: {:?}
 
         // Register the new node ID and get parent module ID
         let registration_result =
-            self.register_new_node_id(&const_name, ItemKind::Const, cfg_bytes.as_deref());
+            self.register_new_node_id(&id_key, ItemKind::Const, cfg_bytes.as_deref());
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
         let (const_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&const_name, const_any_id); // Now uses trace!
+        self.debug_new_id(&id_key, const_any_id); // Now uses trace!
 
         let span = item_const.extract_span_bytes();
 
@@ -2452,7 +2458,7 @@ use statement ident: {:?}
         // Construct ConstNode directly
         let const_node = ConstNode {
             id: typed_const_id, // Use typed ID
-            name: const_name,
+            name: const_name.clone(),
             span,
             visibility: self.state.convert_visibility(&item_const.vis),
             type_id,
@@ -2476,13 +2482,15 @@ use statement ident: {:?}
         };
         self.state.code_graph.relations.push(contains_relation);
 
-        // add this state management if recursing into the children of the const node, which
-        // should... only happen if we are parding `syn::Expr`?
-        // self.state.current_primary_defn_scope.push(const_id);
-        // Continue visiting
+        // Nested items inside const blocks must hash against the const scope rather than the
+        // surrounding module, otherwise identical local items in sibling consts collide.
+        self.push_primary_scope(
+            &const_name,
+            typed_const_id.into(),
+            &provisional_effective_cfgs,
+        );
         visit::visit_item_const(self, item_const);
-        // pop parent id onto stack, appropriate state management
-        // self.state.current_primary_defn_scope.pop();
+        self.pop_primary_scope(&const_name);
     }
 
     // Visit static items
@@ -2537,7 +2545,7 @@ use statement ident: {:?}
         // Construct StaticNode directly
         let static_node = StaticNode {
             id: typed_static_id, // Use typed ID
-            name: static_name,
+            name: static_name.clone(),
             span,
             visibility: self.state.convert_visibility(&item_static.vis),
             type_id,
@@ -2562,14 +2570,15 @@ use statement ident: {:?}
         };
         self.state.code_graph.relations.push(contains_relation);
 
-        // Continue visiting
-        // add this state management if recursing into the children of the const node, which
-        // should... only happen if we are parding `syn::Expr`?
-        // push parent id onto stack for type processing
-        // self.state.current_primary_defn_scope.push(static_id);
+        // Nested items inside static initializers must hash against the static scope for the same
+        // reason as consts.
+        self.push_primary_scope(
+            &static_name,
+            typed_static_id.into(),
+            &provisional_effective_cfgs,
+        );
         visit::visit_item_static(self, item_static);
-        // pop parent id onto stack, appropriate state management
-        // self.state.current_primary_defn_scope.pop();
+        self.pop_primary_scope(&static_name);
     }
 
     // Visit macro definitions (macro_rules!)

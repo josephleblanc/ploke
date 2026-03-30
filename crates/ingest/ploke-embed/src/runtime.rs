@@ -6,8 +6,8 @@ use crate::cancel_token::CancellationListener;
 use crate::error::EmbedError;
 use crate::indexer::EmbeddingProcessor;
 use ploke_core::embeddings::EmbeddingSet;
-use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_db::Database;
+use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 
 /// Shared runtime handle for the active embedding set and embedder.
 ///

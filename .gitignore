@@ -102,3 +102,6 @@ docs/archive
 
 # cursor settings
 .cursor/
+
+# Local upstream symlink
+/rust-analyzer-upstream

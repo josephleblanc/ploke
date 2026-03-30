@@ -33,6 +33,7 @@
 //!     Ok(())
 //! }
 //! ```
+pub mod compilation_unit;
 pub mod discovery;
 pub mod error;
 pub mod parser;
@@ -42,6 +43,7 @@ pub mod utils; // Don't re-export `LogStyle` to keep it clear its a utility trai
 use std::path::{Path, PathBuf};
 
 use discovery::run_discovery_phase;
+use discovery::run_discovery_phase_with_target;
 use error::SynParserError;
 // Re-export PartialSuccess for internal use or if needed
 pub use error::PartialSuccess;
@@ -49,9 +51,14 @@ use itertools::Itertools;
 use parser::analyze_files_parallel;
 // Re-export key items for easier access
 pub use discovery::CrateContext;
+pub use discovery::ManifestCtx;
+pub use discovery::ManifestKind;
+pub use discovery::TargetSelector;
+pub use discovery::WithDiscoveryManifestRead;
+pub use discovery::WithDiscoveryManifestToml;
 pub use discovery::try_parse_manifest;
 pub use parser::visitor::{analyze_file_phase2, logical_module_path_for_file};
-pub use parser::{create_parser_channel, CodeGraph, ParserMessage};
+pub use parser::{CodeGraph, ParserMessage, create_parser_channel};
 use ploke_common::fixtures_crates_dir;
 pub use ploke_core::TypeId; // Re-export the enum/struct from ploke-core
 
@@ -62,32 +69,35 @@ pub use parser::nodes::test_ids::TestIds;
 pub use parser::graph::{GraphAccess, ParsedCodeGraph};
 pub use resolve::module_tree::ModuleTree;
 
+use crate::compilation_unit::{CompilationUnitDimensionRequest, enumerate_compilation_unit_keys};
 use crate::discovery::workspace::WorkspaceMetadataSection;
 use tracing::{info_span, instrument};
+
+/// Configuration for [`parse_workspace_with_config`].
+///
+/// `target_selector`, when `Some`, is passed to discovery for **each** workspace member so that
+/// [`run_discovery_phase_with_target`](crate::discovery::run_discovery_phase_with_target) limits
+/// Cargo targets consistently across members.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ParseWorkspaceConfig<'a> {
+    /// Which workspace members to parse; `None` means all members (same as [`parse_workspace`]).
+    pub selected_crates: Option<&'a [&'a Path]>,
+    /// When set, discovery uses this Cargo target selector for every member crate.
+    pub target_selector: Option<&'a TargetSelector>,
+}
 
 #[instrument(skip_all, fields(workspace = %target_workspace_dir.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("No filename")
         .to_string()
 ))]
-pub fn parse_workspace(
+pub fn parse_workspace_with_config(
     target_workspace_dir: &Path,
-    selected_crates: Option<&[&Path]>,
+    config: &ParseWorkspaceConfig<'_>,
 ) -> Result<ParsedWorkspace, SynParserError> {
     let path_buf = PathBuf::from(target_workspace_dir);
-    let name = path_buf
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("No filename")
-        .to_string();
-
-    let path = path_buf.display().to_string();
-    let workspace_metadata =
-        try_parse_manifest(&path_buf).map_err(|e| SynParserError::ComplexDiscovery {
-            name,
-            path,
-            source_string: e.to_string(),
-        })?;
+    let workspace_metadata = try_parse_manifest(&path_buf, discovery::ManifestKind::WorkspaceRoot)
+        .map_err(SynParserError::from)?;
 
     let workspace_data =
         workspace_metadata
@@ -97,8 +107,9 @@ pub fn parse_workspace(
             })?;
     tracing::info!(target: "dbg_serde", "{workspace_data:#?}");
 
-    let normalized_selected_crates =
-        selected_crates.map(|crates| normalize_selected_crates(&workspace_data.path, crates));
+    let normalized_selected_crates = config
+        .selected_crates
+        .map(|crates| normalize_selected_crates(&workspace_data.path, crates));
 
     if let Some(selected_crates) = &normalized_selected_crates {
         let missing_selected = selected_crates
@@ -137,14 +148,17 @@ pub fn parse_workspace(
                 .is_none_or(|selected| selected.contains(&member.to_path_buf()))
         })
         .map(|member| {
-            let rel_path = member.strip_prefix(target_workspace_dir)
-                .unwrap_or(member).to_str().unwrap_or("name unknown");
+            let rel_path = member
+                .strip_prefix(target_workspace_dir)
+                .unwrap_or(member)
+                .to_str()
+                .unwrap_or("name unknown");
             let _span = info_span!(
                 "try_run_phases_and_merge",
                 rel_path = %rel_path
             )
             .entered();
-            try_run_phases_and_merge(member)
+            try_run_phases_and_merge_with_target(member, config.target_selector)
         })
         .partition_result();
 
@@ -159,6 +173,20 @@ pub fn parse_workspace(
             .collect::<Result<Vec<_>, _>>()?,
         workspace: workspace_data,
     })
+}
+
+/// Parse a Cargo workspace (same as [`parse_workspace_with_config`] with no target selector).
+pub fn parse_workspace(
+    target_workspace_dir: &Path,
+    selected_crates: Option<&[&Path]>,
+) -> Result<ParsedWorkspace, SynParserError> {
+    parse_workspace_with_config(
+        target_workspace_dir,
+        &ParseWorkspaceConfig {
+            selected_crates,
+            target_selector: None,
+        },
+    )
 }
 
 fn normalize_selected_crates(workspace_root: &Path, selected_crates: &[&Path]) -> Vec<PathBuf> {
@@ -185,23 +213,23 @@ fn normalize_selected_crates(workspace_root: &Path, selected_crates: &[&Path]) -
 pub fn try_run_phases_and_resolve(
     target_crate_dir: &Path,
 ) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
+    try_run_phases_and_resolve_with_target(target_crate_dir, None)
+}
+
+/// Like [`try_run_phases_and_resolve`], but passes `selected_target` through to
+/// [`run_discovery_phase_with_target`](crate::discovery::run_discovery_phase_with_target).
+#[instrument(skip(selected_target))]
+pub fn try_run_phases_and_resolve_with_target(
+    target_crate_dir: &Path,
+    selected_target: Option<&TargetSelector>,
+) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
     // NOTE: Although the `run_discovery_phase` fuction takes two arguments, one for root path to a
     // workspace dir and another for the paths of multiple crates, it currently does not use the
     // argument for the root path, and so is left empty below for convenience.
     let path_buf = PathBuf::from(target_crate_dir);
 
-    let name = path_buf
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("No filename")
-        .to_string();
-    let path = path_buf.display().to_string();
-    let discovery_output =
-        run_discovery_phase(None, &[path_buf]).map_err(|e| SynParserError::ComplexDiscovery {
-            name,
-            path,
-            source_string: e.to_string(),
-        })?;
+    let discovery_output = run_discovery_phase_with_target(None, &[path_buf], selected_target)
+        .map_err(SynParserError::from)?;
     // NOTE:2025-12-26
     // commenting out the below so we don't panic on error in the target crate.
     // TODO: Determine whether or not the following error would be a result of an intenral error
@@ -265,14 +293,8 @@ pub fn try_run_phases_and_resolve(
 /// for test environments where fixtures are expected to be present.
 pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
-    let discovery_output =
-        run_discovery_phase(None, std::slice::from_ref(&crate_path)).map_err(|e| {
-            SynParserError::ComplexDiscovery {
-                name: fixture_name.to_string(),
-                path: crate_path.display().to_string(),
-                source_string: e.to_string(),
-            }
-        })?;
+    let discovery_output = run_discovery_phase(None, std::slice::from_ref(&crate_path))
+        .map_err(SynParserError::from)?;
     // NOTE:2025-12-26
     // commenting out the below so we don't panic on error in the target crate.
     // TODO: Determine whether or not the following error would be a result of an intenral error
@@ -335,21 +357,68 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>
 /// [`run_phases_and_collect`].
 pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_error::Error> {
     let parsed_graphs = run_phases_and_collect(fixture_name)?;
-    let mut merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let tree = merged.build_tree_and_prune().map_err(|err| {
-        SynParserError::InternalState(format!("Failed to build module tree: {err}"))
-    })?;
+    let partition = ParsedCodeGraph::partition_by_selected_roots(parsed_graphs)?;
+    let selected_root = partition.select_default_root_path()?.to_path_buf();
+    let mut merged = partition.merge_for_root(&selected_root)?;
+    let tree = merged
+        .build_tree_and_prune_for_root_path(&selected_root)
+        .map_err(|err| {
+            SynParserError::InternalState(format!("Failed to build module tree: {err}"))
+        })?;
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),
+        parsed_graphs_for_masks: None,
+        compilation_units: None,
     })
 }
+
+/// Like [`try_run_phases_and_merge`], but merges **all** Cargo target roots into one graph and
+/// retains [`ParserOutput::parsed_graphs_for_masks`] for structural compilation-unit slices.
+pub fn try_run_phases_union_for_crate(target_crate: &Path) -> Result<ParserOutput, SynParserError> {
+    try_run_phases_union_for_crate_with_dimensions(
+        target_crate,
+        &CompilationUnitDimensionRequest::from_env_or_default(),
+    )
+}
+
+/// Like [`try_run_phases_union_for_crate`], but allows explicit CU dimensions for enumeration.
+pub fn try_run_phases_union_for_crate_with_dimensions(
+    target_crate: &Path,
+    dimensions: &CompilationUnitDimensionRequest,
+) -> Result<ParserOutput, SynParserError> {
+    let parsed_graphs = try_run_phases_and_resolve_with_target(target_crate, None)?;
+    let parsed_for_masks = parsed_graphs.clone();
+    let compilation_units = parsed_for_masks
+        .iter()
+        .find_map(|g| g.crate_context.as_ref())
+        .map(|ctx| enumerate_compilation_unit_keys(ctx.namespace, &ctx.targets, dimensions))
+        .unwrap_or_default();
+    let (merged, tree) = ParsedCodeGraph::merge_union_graph_and_prune_tree(parsed_graphs)?;
+    Ok(ParserOutput {
+        merged_graph: Some(merged),
+        module_tree: Some(tree),
+        parsed_graphs_for_masks: Some(parsed_for_masks),
+        compilation_units: Some(compilation_units),
+    })
+}
+
 pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, SynParserError> {
-    let parsed_graphs = try_run_phases_and_resolve(target_crate)?;
+    try_run_phases_and_merge_with_target(target_crate, None)
+}
+
+/// Like [`try_run_phases_and_merge`], but passes `selected_target` through to discovery (see
+/// [`try_run_phases_and_resolve_with_target`]).
+#[instrument()]
+pub fn try_run_phases_and_merge_with_target(
+    target_crate: &Path,
+    selected_target: Option<&TargetSelector>,
+) -> Result<ParserOutput, SynParserError> {
+    let parsed_graphs = try_run_phases_and_resolve_with_target(target_crate, selected_target)?;
     let _parsed_file_count = parsed_graphs.len();
-    let mut merged = {
-        ParsedCodeGraph::merge_new(parsed_graphs)?
-    };
+    let partition = ParsedCodeGraph::partition_by_selected_roots(parsed_graphs)?;
+    let selected_root = partition.select_default_root_path()?.to_path_buf();
+    let mut merged = partition.merge_for_root(&selected_root)?;
     let tree = {
         let graph_relation_count = merged.relations().len();
         let graph_module_count = merged.modules().len();
@@ -359,12 +428,14 @@ pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, Syn
             graph_module_count
         )
         .entered();
-        merged.build_tree_and_prune()
+        merged.build_tree_and_prune_for_root_path(&selected_root)
     }
     .map_err(|err| SynParserError::InternalState(format!("Failed to build module tree: {err}")))?;
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),
+        parsed_graphs_for_masks: None,
+        compilation_units: None,
     })
 }
 
@@ -384,6 +455,10 @@ pub struct ParsedCrate {
 pub struct ParserOutput {
     pub merged_graph: Option<ParsedCodeGraph>,
     pub module_tree: Option<ModuleTree>,
+    /// When set (e.g. [`try_run_phases_union_for_crate`]), original per-file graphs for CU masks.
+    pub parsed_graphs_for_masks: Option<Vec<ParsedCodeGraph>>,
+    /// When set (e.g. union parse), pre-enumerated compilation-unit keys for mask construction.
+    pub compilation_units: Option<Vec<ploke_core::CompilationUnitKey>>,
 }
 
 impl ParserOutput {
@@ -395,6 +470,16 @@ impl ParserOutput {
     /// Extracts the `ModuleTree` from the `ParserOutput`, leaving `None` in its place.
     pub fn extract_module_tree(&mut self) -> Option<ModuleTree> {
         self.module_tree.take()
+    }
+
+    /// Extracts per-file graphs retained for structural CU masks.
+    pub fn extract_parsed_graphs_for_masks(&mut self) -> Option<Vec<ParsedCodeGraph>> {
+        self.parsed_graphs_for_masks.take()
+    }
+
+    /// Extracts pre-enumerated compilation-unit keys, leaving `None` in place.
+    pub fn extract_compilation_units(&mut self) -> Option<Vec<ploke_core::CompilationUnitKey>> {
+        self.compilation_units.take()
     }
 }
 
@@ -473,10 +558,12 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use ploke_common::workspace_root;
+    use ploke_common::{fixture_github_clones_dir, workspace_root};
+    use ploke_error::DiagnosticInfo;
     use tempfile::tempdir;
 
     use super::*;
+    use crate::discovery::{TargetKind, TargetSelector, run_discovery_phase_with_target};
 
     fn create_workspace_fixture_with_members(members: &[(&str, &str)]) -> tempfile::TempDir {
         let tmp = tempdir().unwrap();
@@ -518,6 +605,28 @@ edition = "2021"
             ("crate_a", "pub fn crate_a_fn() {}\n"),
             ("crate_b", "pub fn crate_b_fn() {}\n"),
         ])
+    }
+
+    fn create_partial_parse_fixture() -> tempfile::TempDir {
+        let tmp = tempdir().unwrap();
+        let crate_root = tmp.path();
+        fs::create_dir_all(crate_root.join("src")).unwrap();
+        fs::write(
+            crate_root.join("Cargo.toml"),
+            r#"[package]
+name = "partial_parse_fixture"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            crate_root.join("src/lib.rs"),
+            "mod broken;\npub fn ok() {}\n",
+        )
+        .unwrap();
+        fs::write(crate_root.join("src/broken.rs"), "pub fn broken( {\n").unwrap();
+        tmp
     }
 
     fn committed_workspace_fixture_root(name: &str) -> PathBuf {
@@ -606,7 +715,7 @@ edition = "2021"
     }
 
     #[test]
-    fn parse_workspace_reports_missing_manifest_as_complex_discovery() {
+    fn parse_workspace_reports_missing_manifest_as_structured_discovery() {
         let tmp = tempdir().unwrap();
 
         let err = match parse_workspace(tmp.path(), None) {
@@ -615,16 +724,23 @@ edition = "2021"
         };
 
         match err {
-            SynParserError::ComplexDiscovery { name, path, .. } => {
-                assert_eq!(name, tmp.path().file_name().unwrap().to_string_lossy());
-                assert_eq!(path, tmp.path().display().to_string());
-            }
+            SynParserError::Discovery(err) => match err.as_ref() {
+                crate::discovery::error::DiscoveryError::ManifestRead {
+                    crate_path,
+                    manifest_path,
+                    ..
+                } => {
+                    assert!(crate_path.is_none());
+                    assert_eq!(manifest_path, &tmp.path().join("Cargo.toml"));
+                }
+                other => panic!("unexpected discovery error: {other:?}"),
+            },
             other => panic!("unexpected error: {other:?}"),
         }
     }
 
     #[test]
-    fn parse_workspace_reports_invalid_manifest_as_complex_discovery() {
+    fn parse_workspace_reports_invalid_manifest_as_structured_discovery() {
         let tmp = tempdir().unwrap();
 
         fs::write(
@@ -639,10 +755,43 @@ edition = "2021"
         };
 
         match err {
-            SynParserError::ComplexDiscovery { name, path, .. } => {
-                assert_eq!(name, tmp.path().file_name().unwrap().to_string_lossy());
-                assert_eq!(path, tmp.path().display().to_string());
-            }
+            SynParserError::Discovery(err) => match err.as_ref() {
+                crate::discovery::error::DiscoveryError::ManifestParse {
+                    crate_path,
+                    manifest_path,
+                    ..
+                } => {
+                    assert!(crate_path.is_none());
+                    assert_eq!(manifest_path, &tmp.path().join("Cargo.toml"));
+                    assert_eq!(err.diagnostic_kind(), "manifest_parse");
+                    assert_eq!(
+                        err.diagnostic_source_path(),
+                        Some(tmp.path().join("Cargo.toml").as_path())
+                    );
+                    let emission_site = err
+                        .diagnostic_emission_site()
+                        .expect("workspace manifest parse should capture emission site");
+                    assert!(
+                        emission_site
+                            .file
+                            .ends_with("crates/ingest/syn_parser/src/discovery/workspace.rs")
+                    );
+                    assert!(emission_site.line > 0);
+                    assert!(emission_site.column > 0);
+                    let backtrace = err
+                        .diagnostic_backtrace()
+                        .expect("workspace manifest parse should capture a backtrace");
+                    assert!(!backtrace.to_string().is_empty());
+                    let span = err
+                        .diagnostic_span()
+                        .expect("workspace manifest parse should preserve a source span");
+                    assert!(span.start().is_some());
+                    assert!(span.end().is_some());
+                    assert_eq!(span.line(), Some(1));
+                    assert_eq!(span.column(), Some(11));
+                }
+                other => panic!("unexpected discovery error: {other:?}"),
+            },
             other => panic!("unexpected error: {other:?}"),
         }
     }
@@ -716,6 +865,46 @@ edition = "2021"
         match err {
             SynParserError::MultipleErrors(errors) => {
                 assert!(!errors.is_empty());
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn try_run_phases_and_resolve_preserves_partial_parse_file_diagnostic() {
+        let tmp = create_partial_parse_fixture();
+
+        let err = try_run_phases_and_resolve(tmp.path()).expect_err("expected partial parse");
+        match err {
+            SynParserError::PartialParsing { successes, errors } => {
+                assert_eq!(
+                    successes.0.len(),
+                    1,
+                    "expected one successfully parsed file"
+                );
+                assert_eq!(errors.len(), 1, "expected one failed file");
+                match &errors[0] {
+                    SynParserError::Syn { source_path, .. } => {
+                        assert_eq!(source_path, &tmp.path().join("src/broken.rs"));
+                        assert_eq!(
+                            errors[0].diagnostic_source_path(),
+                            Some(tmp.path().join("src/broken.rs").as_path())
+                        );
+                        let emission_site = errors[0]
+                            .diagnostic_emission_site()
+                            .expect("structured parse error should capture emission site");
+                        assert!(
+                            emission_site
+                                .file
+                                .ends_with("crates/ingest/syn_parser/src/parser/visitor/mod.rs")
+                        );
+                        let backtrace = errors[0]
+                            .diagnostic_backtrace()
+                            .expect("structured parse error should capture backtrace");
+                        assert!(!backtrace.to_string().is_empty());
+                    }
+                    other => panic!("unexpected child error: {other:?}"),
+                }
             }
             other => panic!("unexpected error: {other:?}"),
         }
@@ -801,5 +990,179 @@ edition = "2021"
         expected_roots.sort();
 
         assert_eq!(crate_roots, expected_roots);
+    }
+
+    #[test]
+    fn parse_workspace_config_handles_non_standard_root_without_duplicate_crate_roots() {
+        let workspace_root = fixture_github_clones_dir().join("serde");
+        let selected_member = Path::new("serde_derive_internals");
+
+        let parsed = parse_workspace_with_config(
+            &workspace_root,
+            &ParseWorkspaceConfig {
+                selected_crates: Some(&[selected_member]),
+                target_selector: None,
+            },
+        )
+        .expect("workspace-config parse should succeed for serde_derive_internals");
+
+        assert_eq!(parsed.crates.len(), 1, "expected selected member only");
+
+        let merged_graph = parsed.crates[0]
+            .parser_output
+            .merged_graph
+            .as_ref()
+            .expect("merged graph should be available");
+        let crate_root_modules: Vec<_> = merged_graph
+            .modules()
+            .iter()
+            .filter(|module| module.path() == &vec!["crate".to_string()])
+            .collect();
+        assert_eq!(
+            crate_root_modules.len(),
+            1,
+            "non-standard lib root must produce exactly one crate root module"
+        );
+        assert!(
+            crate_root_modules[0]
+                .file_path()
+                .is_some_and(|path| path.ends_with("serde_derive_internals/lib.rs")),
+            "crate root should resolve to serde_derive_internals/lib.rs"
+        );
+    }
+
+    #[test]
+    fn parse_workspace_with_config_threads_target_selector() {
+        let tmp = tempdir().unwrap();
+        let ws = tmp.path();
+        fs::write(ws.join("Cargo.toml"), "[workspace]\nmembers = [\"solo\"]\n").unwrap();
+        let solo = ws.join("solo");
+        fs::create_dir_all(solo.join("src")).unwrap();
+        fs::create_dir_all(solo.join("tests")).unwrap();
+        fs::write(
+            solo.join("Cargo.toml"),
+            r#"[package]
+name = "solo"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        fs::write(solo.join("src/lib.rs"), "pub fn keep() {}\n").unwrap();
+        fs::write(solo.join("tests/integration.rs"), "fn it_works() {}\n").unwrap();
+
+        let lib_sel = TargetSelector {
+            kind: TargetKind::Lib,
+            name: "solo".to_string(),
+        };
+        let parsed = parse_workspace_with_config(
+            ws,
+            &ParseWorkspaceConfig {
+                selected_crates: None,
+                target_selector: Some(&lib_sel),
+            },
+        )
+        .expect("parse workspace with lib target selector");
+
+        assert_eq!(parsed.crates.len(), 1);
+        let mg = parsed.crates[0]
+            .parser_output
+            .merged_graph
+            .as_ref()
+            .expect("merged graph");
+        let fn_names: Vec<&str> = mg.functions().iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            fn_names.iter().any(|n| *n == "keep"),
+            "expected lib function in merged graph, got {fn_names:?}"
+        );
+        assert!(
+            !fn_names.iter().any(|n| *n == "it_works"),
+            "integration test fn should not appear when lib target is selected, got {fn_names:?}"
+        );
+    }
+
+    #[test]
+    fn selector_limits_phase2_to_selected_target_roots() {
+        let tmp = tempdir().unwrap();
+        let crate_root = tmp.path().join("targeted_pkg");
+        fs::create_dir_all(crate_root.join("src")).unwrap();
+        fs::create_dir_all(crate_root.join("tests")).unwrap();
+        fs::write(
+            crate_root.join("Cargo.toml"),
+            r#"[package]
+name = "targeted_pkg"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        fs::write(crate_root.join("src/lib.rs"), "pub fn keep() {}\n").unwrap();
+        fs::write(
+            crate_root.join("tests/integration.rs"),
+            "fn selected_only() {}\n",
+        )
+        .unwrap();
+
+        let selector = TargetSelector {
+            kind: TargetKind::Test,
+            name: "integration".to_string(),
+        };
+        let discovery = run_discovery_phase_with_target(
+            None,
+            std::slice::from_ref(&crate_root),
+            Some(&selector),
+        )
+        .unwrap();
+        let parsed = analyze_files_parallel(&discovery, 0);
+
+        let parsed_files = parsed
+            .into_iter()
+            .map(|res| res.expect("selected target should parse"))
+            .map(|graph| graph.file_path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(parsed_files.len(), 1, "expected only selected target root");
+        assert!(
+            parsed_files[0].ends_with("tests/integration.rs"),
+            "phase2 should parse selected test target root"
+        );
+    }
+
+    #[test]
+    fn phase2_skips_non_primary_targets_when_primary_exists() {
+        let tmp = tempdir().unwrap();
+        let crate_root = tmp.path().join("mixed_targets_pkg");
+        fs::create_dir_all(crate_root.join("src")).unwrap();
+        fs::create_dir_all(crate_root.join("benches")).unwrap();
+        fs::write(
+            crate_root.join("Cargo.toml"),
+            r#"[package]
+name = "mixed_targets_pkg"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        fs::write(crate_root.join("src/lib.rs"), "pub fn keep() {}\n").unwrap();
+        fs::write(crate_root.join("benches/bench_a.rs"), "fn bench_a() {}\n").unwrap();
+
+        let discovery = run_discovery_phase(None, std::slice::from_ref(&crate_root)).unwrap();
+        let parsed = analyze_files_parallel(&discovery, 0);
+        let parsed_files = parsed
+            .into_iter()
+            .map(|res| res.expect("primary targets should parse"))
+            .map(|graph| graph.file_path)
+            .collect::<Vec<_>>();
+
+        assert!(
+            parsed_files.iter().any(|p| p.ends_with("src/lib.rs")),
+            "expected lib source to be parsed"
+        );
+        assert!(
+            !parsed_files
+                .iter()
+                .any(|p| p.ends_with("benches/bench_a.rs")),
+            "legacy-safe parse mode should skip benches when lib/bin exists"
+        );
     }
 }

@@ -109,7 +109,11 @@ impl fmt::Display for XtaskError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Generic(msg) => write!(f, "{}", msg),
-            Self::Parse(msg) => write!(f, "Parse error: {}\n\n{}", msg, PARSE_FAILURE_DIAGNOSTIC_HINT),
+            Self::Parse(msg) => write!(
+                f,
+                "Parse error: {}\n\n{}",
+                msg, PARSE_FAILURE_DIAGNOSTIC_HINT
+            ),
             Self::Database(msg) => write!(f, "Database error: {}", msg),
             Self::Resource(msg) => write!(f, "Resource error: {}", msg),
             Self::Validation { context, .. } => write!(f, "Validation error: {}", context),

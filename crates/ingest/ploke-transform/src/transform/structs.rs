@@ -53,8 +53,8 @@ mod test {
     use cozo::{Db, MemStorage};
     use ploke_test_utils::test_run_phases_and_collect;
     use syn_parser::parser::{
-        nodes::{StructNode, TypeDefNode},
         ParsedCodeGraph,
+        nodes::{StructNode, TypeDefNode},
     };
 
     use crate::{

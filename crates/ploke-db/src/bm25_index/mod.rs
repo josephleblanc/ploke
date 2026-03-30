@@ -785,7 +785,7 @@ is_root_module[id] := *module{{id @ 'NOW'}}, *file_mod{{owner_id: id @ 'NOW'}}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{create_index_primary, DbError};
+    use crate::{DbError, create_index_primary};
     use lazy_static::lazy_static;
     use ploke_error::Error as PlokeError;
     use ploke_test_utils::FIXTURE_NODES_CANONICAL;
@@ -822,9 +822,11 @@ mod tests {
         pub static ref TEST_DB_NODES: Result<Arc< Database >, PlokeError> = {
             let db = Database::init_with_schema()?;
             let target_file = FIXTURE_NODES_CANONICAL.path();
-            let prior_rels_vec = db.relations_vec()?;
+            let prior_rels_vec = db.prior_rels_for_plain_backup_import()?;
             db.import_from_backup(&target_file, &prior_rels_vec)
                 .map_err(DbError::from)
+                .map_err(ploke_error::Error::from)?;
+            db.ensure_compilation_unit_relations()
                 .map_err(ploke_error::Error::from)?;
             create_index_primary(&db)?;
             Ok(Arc::new(db))

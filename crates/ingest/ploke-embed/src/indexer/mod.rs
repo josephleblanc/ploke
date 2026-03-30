@@ -8,14 +8,14 @@ use crate::providers::openrouter::OpenRouterBackend;
 use crate::runtime::EmbeddingRuntime;
 use crate::{config::CozoConfig, error::truncate_string};
 use cozo::{CallbackOp, DataValue, NamedRows};
-use ploke_core::embeddings::EmbeddingSet;
 use ploke_core::EmbeddingData;
-use ploke_db::{bm25_index, CallbackManager, Database, NodeType, TypedEmbedData};
+use ploke_core::embeddings::EmbeddingSet;
+use ploke_db::{CallbackManager, Database, NodeType, TypedEmbedData, bm25_index};
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -28,7 +28,7 @@ use crate::{
     cancel_token::{CancellationListener, CancellationToken},
     error::EmbedError,
 };
-use ploke_db::bm25_index::{bm25_service, CodeTokenizer, DocData, DocMeta};
+use ploke_db::bm25_index::{CodeTokenizer, DocData, DocMeta, bm25_service};
 
 #[derive(Debug)]
 pub struct EmbeddingProcessor {
@@ -456,7 +456,9 @@ impl IndexerTask {
 
         tracing::info!("Ending index_workspace: {workspace_dir}");
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
-        tracing::info!("Ending index_workspace: {workspace_dir}: total count {inner}, counter {total_count_not_indexed} | {inner}/{total_count_not_indexed}");
+        tracing::info!(
+            "Ending index_workspace: {workspace_dir}: total count {inner}, counter {total_count_not_indexed} | {inner}/{total_count_not_indexed}"
+        );
 
         Ok(())
     }
@@ -705,8 +707,11 @@ impl IndexerTask {
             );
 
             if !nodes.is_empty() {
-                tracing::info!("<<< Processing relation {rel_count} relations processed: {} | total_processed before: {:?} >>>", 
-                    node_type.relation_str(), self.total_processed);
+                tracing::info!(
+                    "<<< Processing relation {rel_count} relations processed: {} | total_processed before: {:?} >>>",
+                    node_type.relation_str(),
+                    self.total_processed
+                );
                 rel_count += 1;
                 let mut cursors_lock = self.cursors.lock().await;
                 cursors_lock.insert(node_type, nodes.last().unwrap().id);
@@ -1000,20 +1005,20 @@ pub(crate) fn log_stuff(
         })
         .unwrap_or_else(|| (0, vec![]));
     tracing::trace!(
-            "| call_op: {} | new_rows: {}, old_rows: {} | {}{:=^20}\n{:?}\n{:=^20}\n{:=^10}\n{:?}\n{:=^20}\n{:=^10}\n{:?}",
-            call,
-            new.rows.len(),
-            old.rows.len(),
-            "",
-            "Header",
-            header.join("|"),
-            "FirstRow",
-            i,
-            first_row,
-            "LastRow number ",
-            j,
-            last_row,
-        );
+        "| call_op: {} | new_rows: {}, old_rows: {} | {}{:=^20}\n{:?}\n{:=^20}\n{:=^10}\n{:?}\n{:=^20}\n{:=^10}\n{:?}",
+        call,
+        new.rows.len(),
+        old.rows.len(),
+        "",
+        "Header",
+        header.join("|"),
+        "FirstRow",
+        i,
+        first_row,
+        "LastRow number ",
+        j,
+        last_row,
+    );
     tracing::trace!(
         "{:=^80}\n{:=^30}ATOMIC COUNTER: {:?}\n{:=^30}{:=^80}",
         "",

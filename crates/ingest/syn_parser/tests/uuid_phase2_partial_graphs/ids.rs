@@ -8,10 +8,10 @@ mod phase2_id_tests {
     use syn_parser::{
         discovery::run_discovery_phase, // Import CrateContext
         parser::{
+            ParsedCodeGraph, // Import StructNode, TypeDefNode
             analyze_files_parallel,
             graph::CodeGraph,
             nodes::TypeDefNode,
-            ParsedCodeGraph, // Import StructNode, TypeDefNode
         },
     };
     // Import the helper function
@@ -62,7 +62,9 @@ mod phase2_id_tests {
 
         // Ensure all results were consumed
         if all_results_iter.next().is_some() {
-            panic!("analyze_files_parallel returned more results than expected based on DiscoveryOutput");
+            panic!(
+                "analyze_files_parallel returned more results than expected based on DiscoveryOutput"
+            );
         }
 
         grouped_results

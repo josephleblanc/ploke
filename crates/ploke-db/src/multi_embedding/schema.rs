@@ -9,7 +9,7 @@ use ploke_core::embeddings::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{database::HNSW_SUFFIX, DbError};
+use crate::{DbError, database::HNSW_SUFFIX};
 
 /// An embedding vector stored as a single row in the cozo database, containing minimal information
 /// of the:

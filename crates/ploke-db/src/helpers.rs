@@ -1,8 +1,8 @@
 use crate::{
+    Database, DbError, NodeType,
     database::to_string,
     get_by_id::COMMON_FIELDS_EMBEDDED,
     result::{get_pos, typed_rows::ResolvedEdgeData},
-    Database, DbError, NodeType,
 };
 use ploke_core::io_types::EmbeddingData;
 use std::{
@@ -354,11 +354,12 @@ mod tests {
     use ploke_test_utils::{nodes::ParanoidArgs, test_run_phases_and_collect};
     use std::collections::HashMap;
     use syn_parser::{parser::relations::SyntacticRelation, utils::LogStyle};
-    use tracing::{info, level_filters::LevelFilter, Level};
+    use tracing::{Level, info, level_filters::LevelFilter};
     use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt};
 
     use super::PrimaryNodeRow;
     use crate::{
+        Database, DbError,
         helpers::count_edges_by_kind,
         log_script,
         multi_embedding::{
@@ -366,7 +367,7 @@ mod tests {
             hnsw_ext::init_tracing_once,
         },
         result::typed_rows::ResolvedEdgeData,
-        run_script, Database, DbError,
+        run_script,
     };
 
     #[test]
@@ -562,7 +563,10 @@ mod tests {
 
         tracing::info!(
             "[ploke-db] resolve_edges_for_all_primary: total={}, ok={}, ok_with_edges={}, one_edge_nodes={}",
-            total, successes, successes_with_edges, one_edge_count
+            total,
+            successes,
+            successes_with_edges,
+            one_edge_count
         );
 
         let mut ok_results: Vec<(&PrimaryNodeRow, &Vec<ResolvedEdgeData>)> = results

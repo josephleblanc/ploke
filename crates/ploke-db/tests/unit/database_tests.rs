@@ -1,6 +1,6 @@
 use cozo::DataValue;
-use ploke_db::to_usize;
 use ploke_db::Database;
+use ploke_db::to_usize;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 

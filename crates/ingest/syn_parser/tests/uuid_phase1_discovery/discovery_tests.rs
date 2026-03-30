@@ -109,7 +109,9 @@ fn test_run_discovery_phase_missing_cargo_toml() -> Result<(), Box<dyn std::erro
         "Discovery should fail if Cargo.toml is missing"
     );
     let err = result.unwrap_err();
-    assert!(matches!(err, DiscoveryError::Io { ref path, .. } if path.ends_with("Cargo.toml")));
+    assert!(
+        matches!(err, DiscoveryError::ManifestRead { ref manifest_path, .. } if manifest_path.ends_with("Cargo.toml"))
+    );
 
     Ok(())
 }
@@ -134,7 +136,7 @@ fn test_run_discovery_phase_invalid_cargo_toml() -> Result<(), Box<dyn std::erro
         "Discovery should fail for invalid Cargo.toml"
     );
     let err = result.unwrap_err();
-    assert!(matches!(err, DiscoveryError::TomlParse { .. }));
+    assert!(matches!(err, DiscoveryError::ManifestParse { .. }));
 
     Ok(())
 }

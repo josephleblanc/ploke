@@ -131,8 +131,8 @@ mod tests {
     use cozo::{Db, MemStorage};
     use ploke_test_utils::test_run_phases_and_collect;
     use syn_parser::parser::{
-        nodes::{EnumNode, TypeDefNode},
         ParsedCodeGraph,
+        nodes::{EnumNode, TypeDefNode},
     };
 
     #[test]

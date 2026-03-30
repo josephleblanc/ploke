@@ -22,12 +22,18 @@ exclude = [
     "tests/fixture_crates/fixture_update_embed",
     "tests/fixture_crates/fixture_impls",
     "tests/fixture_crates/fixture_path_edge",
+    "tests/fixture_crates/fixture_multi_target_cu",
+    "tests/fixture_crates/fixture_imports_duplicate_leaf",
     "tests/fixture_workspace/ws_fixture_00/fixture_toml",
+    "tests/fixture_workspace/ws_fixture_01/fixture_toml",
+    "tests/fixture_workspace/ws_fixture_02_assoc_local_enum_ids",
+    "tests/fixture_crates/fixture_unusual_lib",
     "fixture_test_crate",
 ]
 resolver = "2"
 members = [
     "crates/ingest/syn_parser",
+    "crates/ingest/ploke-mbe",
     "crates/ingest/ploke-transform",
     "crates/ingest/ploke-embed",
     "crates/ploke-db",

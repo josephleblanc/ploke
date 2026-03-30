@@ -4,14 +4,17 @@ use ploke_core::{ItemKind, NodeId, TypeId, TypeKind};
 use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::{self, Path};
+use syn_parser::TestIds;
 use syn_parser::error::SynParserError; // Import directly from ploke_core
 use syn_parser::parser::graph::{CodeGraph, GraphAccess}; // Added GraphNode
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode, TypeNode}; // Remove TypeKind from here
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
-use syn_parser::parser::{nodes::*, ExtractSpan, ParsedCodeGraph};
-use syn_parser::utils::logging::LOG_TEST_ID_REGEN;
+use syn_parser::parser::{ExtractSpan, ParsedCodeGraph, nodes::*};
 use syn_parser::utils::LogStyle; // Added LogStyle imports
-use syn_parser::TestIds;
+use syn_parser::utils::logging::LOG_TEST_ID_REGEN;
+use syn_parser::{
+    ParseWorkspaceConfig, TargetSelector, parse_workspace, parse_workspace_with_config,
+};
 use thiserror::Error; // Ensure thiserror is imported
 
 pub mod debug_printers;
@@ -307,10 +310,7 @@ fn strs_to_strings(strs: &[&str]) -> Vec<String> {
     strs.iter().copied().map(String::from).collect()
 }
 
-use {
-    syn_parser::discovery::run_discovery_phase,
-    syn_parser::parser::analyze_files_parallel,
-};
+use {syn_parser::discovery::run_discovery_phase, syn_parser::parser::analyze_files_parallel};
 
 use ploke_common::fixtures_crates_dir;
 pub use resolution::build_tree_for_tests;
@@ -336,6 +336,37 @@ pub fn print_typedef_names(code_graph: &CodeGraph) -> Vec<&str> {
 }
 
 pub const FIXTURES_DIR: &str = "tests/fixtures";
+
+/// Output for [`parse_workspace_both`].
+pub struct WorkspaceParsePair {
+    pub default: syn_parser::ParsedWorkspace,
+    pub configured: syn_parser::ParsedWorkspace,
+}
+
+/// Test helper that runs **both** workspace parsing entrypoints:
+/// - [`syn_parser::parse_workspace`]
+/// - [`syn_parser::parse_workspace_with_config`]
+///
+/// This is useful for ensuring changes keep the default path and the configurable path consistent.
+pub fn parse_workspace_both(
+    workspace_root: &Path,
+    selected_crates: Option<&[&Path]>,
+    target_selector: Option<&TargetSelector>,
+) -> Result<WorkspaceParsePair, SynParserError> {
+    let default = parse_workspace(workspace_root, selected_crates)?;
+    let configured = parse_workspace_with_config(
+        workspace_root,
+        &ParseWorkspaceConfig {
+            selected_crates,
+            target_selector,
+        },
+    )?;
+
+    Ok(WorkspaceParsePair {
+        default,
+        configured,
+    })
+}
 
 #[derive(Error, Debug)]
 pub enum TestError {

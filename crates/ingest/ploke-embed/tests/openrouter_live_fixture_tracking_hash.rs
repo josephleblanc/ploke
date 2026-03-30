@@ -21,8 +21,8 @@ use cozo::{DataValue, Vector};
 use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
-use ploke_db::{multi_embedding::db_ext::EmbeddingExt as _, Database};
-use ploke_db::{multi_embedding::hnsw_ext::HnswExt as _, DbError};
+use ploke_db::{Database, multi_embedding::db_ext::EmbeddingExt as _};
+use ploke_db::{DbError, multi_embedding::hnsw_ext::HnswExt as _};
 use ploke_embed::{
     cancel_token::CancellationToken,
     config::{OpenRouterConfig, TruncatePolicy},
@@ -273,7 +273,7 @@ async fn run_fixture_tracking_hash_index(
                         );
                     }
                     IndexStatus::Cancelled => {
-                        return Err::<(), Box<dyn std::error::Error>>("indexing cancelled".into())
+                        return Err::<(), Box<dyn std::error::Error>>("indexing cancelled".into());
                     }
                     _ => {}
                 },
@@ -281,7 +281,7 @@ async fn run_fixture_tracking_hash_index(
                 Err(e) => {
                     return Err::<(), Box<dyn std::error::Error>>(
                         format!("progress channel error: {e}").into(),
-                    )
+                    );
                 }
             }
         }
@@ -349,8 +349,8 @@ async fn run_fixture_tracking_hash_index(
 use std::sync::Arc;
 
 #[tokio::test]
-async fn live_openrouter_index_fixture_tracking_hash_builds_vectors_and_hnsw(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn live_openrouter_index_fixture_tracking_hash_builds_vectors_and_hnsw()
+-> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
 
     let model = "sentence-transformers/all-minilm-l6-v2";
@@ -448,8 +448,8 @@ struct DimOverrideArtifact {
 }
 
 #[tokio::test]
-async fn live_openrouter_dimensions_override_text_embedding_3_small_256(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn live_openrouter_dimensions_override_text_embedding_3_small_256()
+-> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
 
     // This test ensures that OpenRouter honors the request-dimensions override for
@@ -499,8 +499,8 @@ async fn live_openrouter_dimensions_override_text_embedding_3_small_256(
 }
 
 #[tokio::test]
-async fn live_openrouter_dimensions_override_db_vector_len_matches_256(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn live_openrouter_dimensions_override_db_vector_len_matches_256()
+-> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
 
     // This test exercises the indexing pipeline and validates the persisted vector size in DB
@@ -549,7 +549,7 @@ async fn live_openrouter_dimensions_override_db_vector_len_matches_256(
                 IndexStatus::Failed(msg) => {
                     return Err(
                         format!("indexing failed: {msg}; errors={:?}", status.errors).into(),
-                    )
+                    );
                 }
                 IndexStatus::Cancelled => return Err("indexing cancelled".into()),
                 _ => {}
@@ -592,8 +592,8 @@ async fn live_openrouter_dimensions_override_db_vector_len_matches_256(
 /// Enable with: `--features "live_api_tests parity_live_tests"`.
 #[cfg(feature = "parity_live_tests")]
 #[tokio::test]
-async fn live_openrouter_vs_local_all_minilm_l6_v2_cosine_similarity(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn live_openrouter_vs_local_all_minilm_l6_v2_cosine_similarity()
+-> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
 
     let dims = 384usize;

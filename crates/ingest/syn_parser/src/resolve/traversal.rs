@@ -3,10 +3,10 @@ use std::iter::successors;
 use crate::{
     error::SynParserError,
     parser::{
+        ParsedCodeGraph,
         graph::GraphAccess,
         nodes::{AsAnyNodeId, PrimaryNodeId},
         relations::SyntacticRelation,
-        ParsedCodeGraph,
     },
     resolve::module_tree::TreeRelation,
 };
@@ -56,8 +56,8 @@ pub fn traverse_tree(
                     // (since I'm supposed to be working on fixing rustacean in nvim)
                     // this is kind of fun though.
                     let taken_rel = next_rel.take().unwrap(); // safe b/c is_some_and
-                                                              // use the underlying, immutable tree's hashmap of ID->Vec<usize> to get
-                                                              // indicies of stored Vec<TreeRelation>, basically O(1)
+                    // use the underlying, immutable tree's hashmap of ID->Vec<usize> to get
+                    // indicies of stored Vec<TreeRelation>, basically O(1)
                     tree.get_relations_to_primary(&taken_rel.target())
                 }
                 SyntacticRelation::ResolvesToDefinition { source, target } => todo!(),

@@ -2,9 +2,9 @@
 
 use colored::*; // Import colored for terminal colors
 use log::debug;
+use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::nodes::{AsAnyNodeId, ModuleKind};
 use syn_parser::parser::relations::SyntacticRelation;
-use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::resolve::RelationIndexer;
 use syn_parser::run_phases_and_collect;
 
@@ -113,8 +113,7 @@ fn test_path_attribute_handling() -> Result<(), PlokeError> {
     assert!(
         custom_path_relation_exists,
         "ModuleTree should contain a CustomPath relation from logical_path_mod ({}) to actual_file ({})",
-        logical_mod_decl.id,
-        actual_file_defn.id
+        logical_mod_decl.id, actual_file_defn.id
     );
     debug!(target: LOG_TARGET_GRAPH_FIND, "CustomPath relation found: {}", custom_path_relation_exists);
 

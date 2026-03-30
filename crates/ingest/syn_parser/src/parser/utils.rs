@@ -1,7 +1,8 @@
 use syn::{
-    spanned::Spanned, ConstParam, Field, ImplItemFn, ItemConst, ItemEnum, ItemExternCrate, ItemFn,
-    ItemImpl, ItemMacro, ItemMod, ItemStatic, ItemStruct, ItemTrait, ItemType, ItemUnion, ItemUse,
-    Lifetime, LifetimeParam, TraitItemFn, TypeParam, UseGlob, UseName, UseRename, UseTree, Variant,
+    ConstParam, Field, ImplItemFn, ItemConst, ItemEnum, ItemExternCrate, ItemFn, ItemImpl,
+    ItemMacro, ItemMod, ItemStatic, ItemStruct, ItemTrait, ItemType, ItemUnion, ItemUse, Lifetime,
+    LifetimeParam, TraitItemFn, TypeParam, UseGlob, UseName, UseRename, UseTree, Variant,
+    spanned::Spanned,
 };
 
 // Note: From the proc_macro2 crate documentation on Span::byte_range()

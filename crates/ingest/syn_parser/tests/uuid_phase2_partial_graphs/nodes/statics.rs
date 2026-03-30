@@ -90,8 +90,8 @@
 //! static variable declarations.
 
 #![cfg(test)]
-use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
+use crate::common::run_phases_and_collect;
 use crate::paranoid_test_fields_and_values;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;

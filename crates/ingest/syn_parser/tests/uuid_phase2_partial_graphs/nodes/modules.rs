@@ -79,7 +79,7 @@
 //! *   If precise span checking for module declarations or inline blocks becomes critical, consider adding specific assertions for `declaration_span` or `inline_span`, possibly through an extension to `ExpectedModuleNode` or separate, targeted tests.
 //! *   Add tests for modules containing `extern crate` items, ensuring they are correctly included in `items_count` and that the corresponding `ImportNode` is created.
 //! *   Add tests for modules that are part of a `#[cfg_attr(..., path = "...")]` scenario.
-use crate::common::{new_path_attribute, ParanoidArgs};
+use crate::common::{ParanoidArgs, new_path_attribute};
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
 use std::collections::HashMap;

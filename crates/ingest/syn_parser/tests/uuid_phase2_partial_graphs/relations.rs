@@ -6,12 +6,12 @@ mod phase2_relation_tests {
     use ploke_common::{fixtures_crates_dir, workspace_root};
     use ploke_core::NodeId;
     use syn_parser::{
-        discovery::{run_discovery_phase, DiscoveryOutput},
+        discovery::{DiscoveryOutput, run_discovery_phase},
         parser::{
+            ParsedCodeGraph,
             analyze_files_parallel,
             // Removed GraphId import
             relations::{Relation, RelationKind},
-            ParsedCodeGraph,
         },
     };
 

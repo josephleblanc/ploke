@@ -269,7 +269,7 @@ mod tests {
     use std::time::Duration as StdDuration;
     use tempfile::tempdir;
     use tokio::sync::broadcast;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     async fn recv_kind_within(
         rx: &mut broadcast::Receiver<FileChangeEvent>,

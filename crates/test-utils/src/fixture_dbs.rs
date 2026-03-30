@@ -8,7 +8,7 @@ use ploke_common::workspace_root;
 use ploke_core::embeddings::{
     EmbeddingDType, EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
-use ploke_db::{create_index_primary, multi_embedding::db_ext::EmbeddingExt, Database, DbError};
+use ploke_db::{Database, DbError, create_index_primary, multi_embedding::db_ext::EmbeddingExt};
 use ploke_error::Error;
 
 use once_cell::sync::Lazy;
@@ -195,8 +195,7 @@ pub const FIXTURE_NODES_LOCAL_EMBEDDINGS: FixtureDb = FixtureDb {
 
 pub const FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1: FixtureDb = FixtureDb {
     id: "fixture_nodes_multi_embedding_schema_v1_legacy",
-    rel_path:
-        "tests/backup_dbs/fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92",
+    rel_path: "tests/backup_dbs/fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92",
     parsed_targets: &["tests/fixture_crates/fixture_nodes"],
     status: FixtureStatus::Legacy,
     creation: FixtureCreationStrategy::Manual(FixtureManualRecreation {
@@ -313,7 +312,7 @@ pub fn fresh_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, 
     let db = Database::init_with_schema()?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let prior_rels = db.relations_vec()?;
+            let prior_rels = db.prior_rels_for_plain_backup_import()?;
             db.import_from_backup(&fixture_path, &prior_rels)
                 .map_err(DbError::from)?;
         }
@@ -322,6 +321,8 @@ pub fn fresh_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, 
                 .map_err(Error::from)?;
         }
     }
+
+    db.ensure_compilation_unit_relations()?;
 
     validate_backup_fixture_contract(fixture, &db)?;
     Ok(db)

@@ -24,15 +24,15 @@ use colored::Colorize as _;
 use itertools::Itertools;
 use log::debug;
 use syn_parser::error::SynParserError;
+use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::graph::GraphAccess as _;
 use syn_parser::parser::nodes::{
     AsAnyNodeId, ModuleNode, ModuleNodeId, PrimaryNodeId, PrimaryNodeIdTrait,
 };
 use syn_parser::parser::relations::SyntacticRelation;
-use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::resolve::{RelationIndexer, TreeRelation};
-use syn_parser::utils::{LogStyle, LOG_TARGET_MOD_TREE_BUILD};
+use syn_parser::utils::{LOG_TARGET_MOD_TREE_BUILD, LogStyle};
 
 use crate::common::build_tree_for_tests;
 

@@ -1,7 +1,7 @@
-use candle_core::{safetensors, DType, Device, Error as CandleError, IndexOp, Tensor};
+use candle_core::{DType, Device, Error as CandleError, IndexOp, Tensor, safetensors};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config, HiddenAct};
-use hf_hub::{api::sync::Api, api::sync::ApiError as HubError, Repo, RepoType};
+use hf_hub::{Repo, RepoType, api::sync::Api, api::sync::ApiError as HubError};
 use ploke_error::Error as PlokeError;
 use ploke_transform::error::TransformError;
 use serde::{Deserialize, Serialize};

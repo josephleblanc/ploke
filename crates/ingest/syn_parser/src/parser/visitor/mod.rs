@@ -1,12 +1,16 @@
 use colored::Colorize;
-use ploke_core::byte_hasher::ByteHasher;
 use ploke_core::ItemKind;
+use ploke_core::byte_hasher::ByteHasher;
 use quote::ToTokens;
 use std::{collections::HashMap, hash::Hasher};
 use syn::visit::Visit;
 use tracing::instrument;
 mod attribute_processing;
 mod cfg_evaluator;
+#[cfg(feature = "cfg_eval")]
+pub use attribute_processing::parse_cfg_expr_from_inner_tokens;
+#[cfg(feature = "cfg_eval")]
+pub use cfg_evaluator::ActiveCfg;
 mod code_visitor;
 mod state;
 mod type_processing;
@@ -17,10 +21,12 @@ pub use state::VisitorState;
 use crate::{
     error::SynParserError,
     parser::{
+        diagnostics::{TRACE_TARGET_INVARIANTS, emit_json_diagnostic},
+        graph::GraphAccess,
         nodes::{ModuleNodeInfo, PrimaryNodeId},
         relations::SyntacticRelation,
     },
-    utils::{LogStyle, LogStyleDebug, LOG_TARGET_RELS},
+    utils::{LOG_TARGET_RELS, LogStyle, LogStyleDebug},
 };
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
@@ -82,8 +88,8 @@ pub fn logical_module_path_for_file(crate_src_dir: &Path, file_path: &Path) -> V
 use super::ParsedCodeGraph;
 
 use {
-    super::nodes::ModuleNode,          // Moved ModuleNode import here
-    crate::discovery::DiscoveryOutput, // Import DiscoveryOutput
+    super::nodes::ModuleNode, // Moved ModuleNode import here
+    crate::discovery::{DiscoveryOutput, TargetKind, TargetSpec},
     ploke_core::NodeId,
     rayon::prelude::*, // Import rayon traits
     uuid::Uuid,
@@ -92,7 +98,7 @@ use {
 /// Analyze a single file for Phase 2 (UUID Path) - The Worker Function
 /// Receives context from analyze_files_parallel.
 #[cfg(feature = "cfg_eval")]
-#[instrument(skip(crate_context), fields(root_module_name))]
+#[instrument(target = TRACE_TARGET_INVARIANTS, skip(crate_context), fields(root_module_name))]
 pub fn analyze_file_phase2(
     file_path: PathBuf,
     crate_namespace: Uuid,            // Context passed from caller
@@ -212,10 +218,30 @@ pub fn analyze_file_phase2(
     #[cfg(feature = "temp_target")]
     debug_relationships(&visitor);
 
+    #[cfg(not(feature = "validate"))]
     log::trace!(target: "parse_target", "parsing target: {}
 validate_unique_rels = {}", file_path.display(), &visitor.validate_unique_rels());
     #[cfg(feature = "validate")]
-    assert!(&visitor.validate_unique_rels());
+    log::trace!(target: "parse_target", "parsing target: {}
+validate_unique_rels = <deferred>", file_path.display());
+    // Release the mutable borrow on `state` held by `visitor` before any validation-time
+    // graph normalization.
+    drop(visitor);
+    #[cfg(feature = "validate")]
+    {
+        if !state.code_graph.validate_unique_rels() {
+            let _ = emit_json_diagnostic(
+                "analyze_file_phase2_validate_unique_rels_failed",
+                &serde_json::json!({
+                    "function": "analyze_file_phase2",
+                    "file_path": file_path.display().to_string(),
+                    "relation_count": state.code_graph.relations.len(),
+                    "module_count": state.code_graph.modules.len(),
+                }),
+            );
+        }
+        assert!(state.code_graph.validate_unique_rels());
+    }
 
     // let module_ids: Vec<NodeId> = state.code_graph.modules.iter().map(|m| m.id).collect();
     // for module_id in module_ids {
@@ -351,7 +377,20 @@ pub fn analyze_file_phase2(
     debug_relationships(&visitor);
 
     #[cfg(feature = "validate")]
-    assert!(&visitor.validate_unique_rels());
+    {
+        if !visitor.validate_unique_rels() {
+            let _ = emit_json_diagnostic(
+                "analyze_file_phase2_validate_unique_rels_failed",
+                &serde_json::json!({
+                    "function": "analyze_file_phase2",
+                    "file_path": file_path.display().to_string(),
+                    "relation_count": state.code_graph.relations.len(),
+                    "module_count": state.code_graph.modules.len(),
+                }),
+            );
+        }
+        assert!(&visitor.validate_unique_rels());
+    }
 
     // let module_ids: Vec<NodeId> = state.code_graph.modules.iter().map(|m| m.id).collect();
     // for module_id in module_ids {
@@ -486,43 +525,36 @@ pub fn analyze_files_parallel(
         .values()
         .par_bridge()
         .flat_map(|crate_context| {
-            // Process each crate in parallel
-            // For each crate, parallelize over its files
-            let crate_root_dir = crate_context.root_path.clone(); // Assuming CrateContext has root_dir
-            let src_dir = crate_root_dir.join("src");
+            let parse_inputs = build_parse_inputs(crate_context);
+            let selected_roots = selected_target_roots(crate_context);
 
-            crate_context.files.par_iter().map(move |file_path| {
-                // Derive the logical path for this file
-                let logical_path = logical_module_path_for_file(&src_dir, file_path);
-
+            parse_inputs.into_par_iter().map(move |input| {
                 // Call the single-file worker function with its specific context + logical path
                 #[cfg(not(feature = "cfg_eval"))]
                 let parsed = analyze_file_phase2(
-                    file_path.to_owned(),
+                    input.file_path.clone(),
                     crate_context.namespace,
-                    logical_path, // Pass the derived path
+                    input.logical_path, // Pass the derived path
 
                 )
-                .map(|pg| set_root_context(crate_context, pg)) // Give root module's graph the crate context  
-                .map_err(|e| {
-                    SynParserError::Syn(format!("{} (file: {})", e, file_path.display()))
-                })
-                .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) });
+                .map(|pg| set_root_context(crate_context, &selected_roots, pg))
+                .map_err(|e| SynParserError::syn_parse_in_file(input.file_path.clone(), e))
+                .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(crate_context, pg)) });
 
-                log::debug!(target: "debug_dup", "file path in par_iter: {}", file_path.display());
+                log::debug!(target: "debug_dup", "file path in par_iter: {}", input.file_path.display());
                 #[cfg(feature = "cfg_eval")]
                 let parsed = analyze_file_phase2(
-                    file_path.to_owned(),
+                    input.file_path.clone(),
                     crate_context.namespace,
-                    logical_path, // Pass the derived path
+                    input.logical_path, // Pass the derived path
                     crate_context
                 )
-                .map(|pg| set_root_context(crate_context, pg)) // Give root module's graph the crate context  
+                .map(|pg| set_root_context(crate_context, &selected_roots, pg))
                 .map_err(|e| {
-                    tracing::trace!("Error found: {} (file: {})", e, file_path.display());
-                    SynParserError::Syn(format!("{} (file: {})", e, file_path.display()))
+                    tracing::trace!("Error found: {} (file: {})", e, input.file_path.display());
+                    SynParserError::syn_parse_in_file(input.file_path.clone(), e)
                 })
-                .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) });
+                .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(crate_context, pg)) });
                 parsed
             })
         })
@@ -549,24 +581,169 @@ pub fn analyze_files_parallel(
     parsed_results
 }
 
-fn set_root_context(
-    crate_context: &crate::discovery::CrateContext,
-    mut pg: ParsedCodeGraph,
-) -> ParsedCodeGraph {
-    if pg
-        .file_path
+#[derive(Debug, Clone)]
+struct ParseInput {
+    file_path: PathBuf,
+    logical_path: Vec<String>,
+}
+
+fn build_parse_inputs(crate_context: &crate::discovery::CrateContext) -> Vec<ParseInput> {
+    let src_dir = crate_context.root_path.join("src");
+    let src_mod_rs = src_dir.join("mod.rs");
+    let mut parse_inputs: Vec<ParseInput> = Vec::new();
+    let mut seen_files = std::collections::HashSet::<PathBuf>::new();
+    let exclude_crate_root_relative_src_mod = crate_context.targets.iter().any(|target| {
+        matches!(target.kind, TargetKind::Lib)
+            && !target.root.starts_with(&src_dir)
+            && target.root.file_name() == Some("lib.rs".as_ref())
+    });
+
+    let has_primary_target = crate_context
+        .targets
+        .iter()
+        .any(|t| matches!(t.kind, TargetKind::Lib | TargetKind::Bin));
+    let parse_targets: Vec<&TargetSpec> = if has_primary_target {
+        crate_context
+            .targets
+            .iter()
+            .filter(|t| matches!(t.kind, TargetKind::Lib | TargetKind::Bin))
+            .collect()
+    } else {
+        crate_context.targets.iter().collect()
+    };
+
+    if has_primary_target {
+        let skipped_targets = crate_context
+            .targets
+            .len()
+            .saturating_sub(parse_targets.len());
+        if skipped_targets > 0 {
+            log::warn!(
+                "Skipping {skipped_targets} non-primary targets for crate '{}' in legacy parse mode",
+                crate_context.name
+            );
+        }
+    }
+
+    for target in parse_targets {
+        match target.kind {
+            TargetKind::Lib | TargetKind::Bin => {
+                if seen_files.insert(target.root.clone()) {
+                    parse_inputs.push(ParseInput {
+                        file_path: target.root.clone(),
+                        logical_path: logical_path_for_target_root(&src_dir, target),
+                    });
+                }
+                for file_path in &crate_context.files {
+                    if !file_path.starts_with(&src_dir) {
+                        continue;
+                    }
+                    if exclude_crate_root_relative_src_mod && file_path == &src_mod_rs {
+                        // Non-standard root lib crates can legitimately keep src/mod.rs as an
+                        // implementation file via #[path], but parsing it as a separate root
+                        // would collide with the actual lib root at logical path ["crate"].
+                        // Restrict this exclusion to the crate-root-relative src/mod.rs only.
+                        continue;
+                    }
+                    if !seen_files.insert(file_path.clone()) {
+                        continue;
+                    }
+                    parse_inputs.push(ParseInput {
+                        file_path: file_path.clone(),
+                        logical_path: logical_module_path_for_file(&src_dir, file_path),
+                    });
+                }
+            }
+            TargetKind::Test | TargetKind::Example | TargetKind::Bench => {
+                if seen_files.insert(target.root.clone()) {
+                    parse_inputs.push(ParseInput {
+                        file_path: target.root.clone(),
+                        logical_path: vec![
+                            "crate".to_string(),
+                            target_kind_segment(&target.kind).to_string(),
+                            target.name.clone(),
+                        ],
+                    });
+                }
+            }
+        }
+    }
+
+    parse_inputs
+}
+
+fn logical_path_for_target_root(src_dir: &Path, target: &TargetSpec) -> Vec<String> {
+    if target.root.starts_with(src_dir) {
+        return logical_module_path_for_file(src_dir, &target.root);
+    }
+    if target
+        .root
         .file_name()
         .is_some_and(|f| f == "lib.rs" || f == "main.rs")
     {
+        return vec!["crate".to_string()];
+    }
+    vec![
+        "crate".to_string(),
+        target_kind_segment(&target.kind).to_string(),
+        target.name.clone(),
+    ]
+}
+
+fn selected_target_roots(
+    crate_context: &crate::discovery::CrateContext,
+) -> std::collections::HashSet<PathBuf> {
+    let has_primary_target = crate_context
+        .targets
+        .iter()
+        .any(|t| matches!(t.kind, TargetKind::Lib | TargetKind::Bin));
+
+    crate_context
+        .targets
+        .iter()
+        .filter(|t| {
+            if has_primary_target {
+                matches!(t.kind, TargetKind::Lib | TargetKind::Bin)
+            } else {
+                true
+            }
+        })
+        .map(|t| t.root.clone())
+        .collect()
+}
+
+fn target_kind_segment(kind: &TargetKind) -> &'static str {
+    match kind {
+        TargetKind::Lib => "lib",
+        TargetKind::Bin => "bin",
+        TargetKind::Test => "test",
+        TargetKind::Example => "example",
+        TargetKind::Bench => "bench",
+    }
+}
+
+fn set_root_context(
+    crate_context: &crate::discovery::CrateContext,
+    selected_roots: &std::collections::HashSet<PathBuf>,
+    mut pg: ParsedCodeGraph,
+) -> ParsedCodeGraph {
+    if selected_roots.contains(&pg.file_path) {
         pg.crate_context = Some(crate_context.clone());
     }
     pg
 }
 
-fn info_crate_context(src_dir: &PathBuf, pg: &ParsedCodeGraph) -> String {
+fn info_crate_context(
+    crate_context: &crate::discovery::CrateContext,
+    pg: &ParsedCodeGraph,
+) -> String {
+    let crate_root = &crate_context.root_path;
     format!(
         "parsed_graph file_path: {}, crate_context: {:#?}",
-        pg.file_path.strip_prefix(src_dir).as_ref().log_path_debug(),
+        pg.file_path
+            .strip_prefix(crate_root)
+            .as_ref()
+            .log_path_debug(),
         pg.crate_context
     )
 }

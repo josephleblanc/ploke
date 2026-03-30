@@ -12,14 +12,16 @@
 //! - `parse phases-resolve` - Parse and resolve without merging
 //! - `parse phases-merge` - Parse, resolve, and merge graphs
 //! - `parse workspace` - Parse entire workspace
+//! - `parse workspace-config` - Parse workspace via `parse_workspace_with_config` (optional target selector)
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use syn_parser::{
-    discovery::run_discovery_phase, parse_workspace, try_run_phases_and_merge,
-    try_run_phases_and_resolve, CodeGraph,
+    CodeGraph, ParseWorkspaceConfig, TargetSelector, discovery::TargetKind,
+    discovery::run_discovery_phase, parse_workspace, parse_workspace_with_config,
+    try_run_phases_and_merge, try_run_phases_and_resolve,
 };
 
 use super::{CommandContext, XtaskError};
@@ -40,6 +42,9 @@ pub enum Parse {
     /// Parse entire workspace
     Workspace(Workspace),
 
+    /// Parse workspace with optional Cargo target selector (syn_parser `parse_workspace_with_config`)
+    WorkspaceConfig(WorkspaceWithConfig),
+
     /// Show parsing statistics
     Stats(Stats),
 
@@ -58,6 +63,7 @@ impl Parse {
             Parse::PhasesResolve(cmd) => cmd.execute(ctx),
             Parse::PhasesMerge(cmd) => cmd.execute(ctx),
             Parse::Workspace(cmd) => cmd.execute(ctx),
+            Parse::WorkspaceConfig(cmd) => cmd.execute(ctx),
             Parse::Stats(cmd) => cmd.execute(ctx),
             Parse::ListModules(cmd) => cmd.execute(ctx),
             Parse::Debug(cmd) => cmd.execute(ctx),
@@ -75,31 +81,25 @@ pub fn resolve_parse_path(ctx: &CommandContext, path: &Path) -> Result<PathBuf, 
         ctx.workspace_root()?.join(path)
     };
     if !p.exists() {
-        return Err(
-            XtaskError::validation(format!(
-                "Path `{}` does not exist (resolved to `{}`)",
-                path.display(),
-                p.display()
-            ))
-            .with_recovery(
-                "Use a path relative to the ploke workspace root (see `cargo xtask help-topic parse`).",
-            ),
-        );
+        return Err(XtaskError::validation(format!(
+            "Path `{}` does not exist (resolved to `{}`)",
+            path.display(),
+            p.display()
+        ))
+        .with_recovery(
+            "Use a path relative to the ploke workspace root (see `cargo xtask help-topic parse`).",
+        ));
     }
     let canon = p.canonicalize().map_err(|e| {
         XtaskError::Resource(format!("Could not canonicalize {}: {e}", p.display()))
     })?;
     let manifest = canon.join("Cargo.toml");
     if !manifest.is_file() {
-        return Err(
-            XtaskError::validation(format!(
-                "No Cargo.toml found at `{}` for this parse command",
-                canon.display()
-            ))
-            .with_recovery(
-                "Pass the crate root (the directory that contains Cargo.toml).",
-            ),
-        );
+        return Err(XtaskError::validation(format!(
+            "No Cargo.toml found at `{}` for this parse command",
+            canon.display()
+        ))
+        .with_recovery("Pass the crate root (the directory that contains Cargo.toml)."));
     }
     Ok(canon)
 }
@@ -145,7 +145,8 @@ impl Command for Discovery {
         let _ = (self.warnings, self.include_tests);
         let canon = resolve_parse_path(ctx, &self.path)?;
         let target = vec![canon.clone()];
-        let out = run_discovery_phase(None, &target).map_err(|e| XtaskError::Parse(e.to_string()))?;
+        let out =
+            run_discovery_phase(None, &target).map_err(|e| XtaskError::Parse(e.to_string()))?;
         let warnings: Vec<String> = out.warnings.iter().map(|w| w.to_string()).collect();
         Ok(ParseOutput::Discovery {
             crates_found: out.crate_contexts.len(),
@@ -181,9 +182,13 @@ impl Command for PhasesResolve {
         let _ = (&self.detailed, &self.output);
         let canon = resolve_parse_path(ctx, &self.path)?;
         let start = Instant::now();
-        let graphs = try_run_phases_and_resolve(&canon).map_err(|e| XtaskError::Parse(e.to_string()))?;
+        let graphs =
+            try_run_phases_and_resolve(&canon).map_err(|e| XtaskError::Parse(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
-        let nodes_parsed: usize = graphs.iter().map(|pg| count_code_graph_nodes(&pg.graph)).sum();
+        let nodes_parsed: usize = graphs
+            .iter()
+            .map(|pg| count_code_graph_nodes(&pg.graph))
+            .sum();
         let relations_found: usize = graphs.iter().map(|pg| pg.graph.relations.len()).sum();
         Ok(ParseOutput::PhaseResult {
             success: true,
@@ -220,17 +225,14 @@ impl Command for PhasesMerge {
         let _ = (self.tree, self.validate);
         let canon = resolve_parse_path(ctx, &self.path)?;
         let start = Instant::now();
-        let parsed = try_run_phases_and_merge(&canon).map_err(|e| XtaskError::Parse(e.to_string()))?;
+        let parsed =
+            try_run_phases_and_merge(&canon).map_err(|e| XtaskError::Parse(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
-        let (nodes_parsed, relations_found) =
-            if let Some(ref mg) = parsed.merged_graph {
-                (
-                    count_code_graph_nodes(&mg.graph),
-                    mg.graph.relations.len(),
-                )
-            } else {
-                (0, 0)
-            };
+        let (nodes_parsed, relations_found) = if let Some(ref mg) = parsed.merged_graph {
+            (count_code_graph_nodes(&mg.graph), mg.graph.relations.len())
+        } else {
+            (0, 0)
+        };
         Ok(ParseOutput::PhaseResult {
             success: true,
             nodes_parsed,
@@ -273,7 +275,120 @@ impl Command for Workspace {
             Some(selected_refs.as_slice())
         };
         let start = Instant::now();
-        let parsed = parse_workspace(&ws_root, sel).map_err(|e| XtaskError::Parse(e.to_string()))?;
+        let parsed =
+            parse_workspace(&ws_root, sel).map_err(|e| XtaskError::Parse(e.to_string()))?;
+        let duration_ms = start.elapsed().as_millis() as u64;
+        let mut nodes_parsed = 0usize;
+        let mut relations_found = 0usize;
+        for c in &parsed.crates {
+            if let Some(ref mg) = c.parser_output.merged_graph {
+                nodes_parsed += count_code_graph_nodes(&mg.graph);
+                relations_found += mg.graph.relations.len();
+            }
+        }
+        Ok(ParseOutput::PhaseResult {
+            success: true,
+            nodes_parsed,
+            relations_found,
+            duration_ms,
+        })
+    }
+}
+
+/// Cargo target kind for [`WorkspaceWithConfig`] (maps to `syn_parser::discovery::TargetKind`).
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum CargoTargetKind {
+    /// Library target (`[lib]` / `src/lib.rs`).
+    Lib,
+    /// Binary target (`[[bin]]` / `src/main.rs`).
+    Bin,
+    /// Test target (`[[test]]` / `tests/*.rs`).
+    Test,
+    /// Example target (`[[example]]`).
+    Example,
+    /// Benchmark target (`[[bench]]`).
+    Bench,
+}
+
+impl From<CargoTargetKind> for TargetKind {
+    fn from(k: CargoTargetKind) -> Self {
+        match k {
+            CargoTargetKind::Lib => TargetKind::Lib,
+            CargoTargetKind::Bin => TargetKind::Bin,
+            CargoTargetKind::Test => TargetKind::Test,
+            CargoTargetKind::Example => TargetKind::Example,
+            CargoTargetKind::Bench => TargetKind::Bench,
+        }
+    }
+}
+
+/// Workspace parse with optional per-member Cargo target selector (`parse_workspace_with_config`).
+#[derive(Debug, Clone, clap::Args)]
+pub struct WorkspaceWithConfig {
+    /// Path to workspace root
+    #[arg(value_name = "WORKSPACE_PATH", default_value = ".")]
+    pub path: PathBuf,
+
+    /// Specific crate(s) to parse (default: all)
+    #[arg(short, long, value_name = "CRATE")]
+    pub crate_name: Vec<String>,
+
+    /// Cargo target kind when using `--target-name` (must be set together with `--target-name`)
+    #[arg(long, value_enum)]
+    pub target_kind: Option<CargoTargetKind>,
+
+    /// Cargo target name (e.g. package name for `[lib]`, or integration test name) — use with `--target-kind`
+    #[arg(long, value_name = "NAME")]
+    pub target_name: Option<String>,
+
+    /// Skip crates that fail to parse
+    #[arg(long)]
+    pub continue_on_error: bool,
+}
+
+impl Command for WorkspaceWithConfig {
+    type Output = ParseOutput;
+    type Error = XtaskError;
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let _ = self.continue_on_error;
+
+        let target_selector: Option<TargetSelector> = match (&self.target_kind, &self.target_name) {
+            (None, None) => None,
+            (Some(k), Some(name)) => Some(TargetSelector {
+                kind: (*k).into(),
+                name: name.clone(),
+            }),
+            _ => {
+                return Err(
+                    XtaskError::validation(
+                        "`--target-kind` and `--target-name` must be passed together (or omit both for default discovery).",
+                    )
+                    .with_recovery(
+                        "Example: `cargo xtask parse workspace-config ./ws --target-kind lib --target-name my_crate`",
+                    ),
+                );
+            }
+        };
+
+        let ws_root = resolve_parse_path(ctx, &self.path)?;
+        let selected_paths: Vec<PathBuf> = self.crate_name.iter().map(PathBuf::from).collect();
+        let selected_refs: Vec<&Path> = selected_paths.iter().map(|p| p.as_path()).collect();
+        let sel = if selected_refs.is_empty() {
+            None
+        } else {
+            Some(selected_refs.as_slice())
+        };
+
+        let target_selector_ref = target_selector.as_ref();
+        let config = ParseWorkspaceConfig {
+            selected_crates: sel,
+            target_selector: target_selector_ref,
+        };
+
+        let start = Instant::now();
+        let parsed = parse_workspace_with_config(&ws_root, &config)
+            .map_err(|e| XtaskError::Parse(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
         let mut nodes_parsed = 0usize;
         let mut relations_found = 0usize;
@@ -541,5 +656,25 @@ mod tests {
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("test"));
         assert!(json.contains("src/test.rs"));
+    }
+
+    #[test]
+    fn workspace_config_rejects_mismatched_target_flags() {
+        let cmd = WorkspaceWithConfig {
+            path: PathBuf::from("."),
+            crate_name: vec![],
+            target_kind: Some(CargoTargetKind::Lib),
+            target_name: None,
+            continue_on_error: false,
+        };
+        let ctx = CommandContext::new().unwrap();
+        let err = cmd
+            .execute(&ctx)
+            .expect_err("partial --target-* flags should be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("target-kind") && msg.contains("target-name"),
+            "msg={msg}"
+        );
     }
 }

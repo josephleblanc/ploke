@@ -21,9 +21,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::discovery::workspace::resolve_workspace_version;
-use crate::discovery::workspace::WorkspaceVersionLink;
 use crate::discovery::DiscoveryError;
+use crate::discovery::workspace::WorkspaceVersionLink;
+use crate::discovery::workspace::resolve_workspace_version;
 
 // PROJECT_NAMESPACE_UUID is now defined in ploke_core
 // The old comment block explaining it remains relevant but the constant itself is moved.
@@ -51,6 +51,14 @@ use crate::discovery::DiscoveryError;
 pub struct PackageInfo {
     pub name: String,
     pub version: PackageVersion,
+    #[serde(default)]
+    pub autobins: Option<bool>,
+    #[serde(default)]
+    pub autotests: Option<bool>,
+    #[serde(default)]
+    pub autoexamples: Option<bool>,
+    #[serde(default)]
+    pub autobenches: Option<bool>,
     // edition: Option<String>, // Could be useful later
 }
 
@@ -139,7 +147,7 @@ impl Features {
 
 /// Represents a dependency specification, which can be a simple version string
 /// or a more detailed table.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(untagged)] // Allows parsing either a string or a table
 pub enum DependencySpec {
     /// A simple version string, e.g. `"1.0"`.
@@ -283,7 +291,7 @@ impl DependencySpec {
 }
 
 /// Represents the `[dependencies]` section.
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone, Default, Serialize)]
 pub struct Dependencies(pub HashMap<String, DependencySpec>); // Made inner map public for direct access if needed
 
 /// A trait for accessing dependency information.
@@ -598,7 +606,7 @@ impl DependencyMap for DevDependencies {
 }
 
 /// Represents the `[dev-dependencies]` section.
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone, Default, Serialize)]
 #[serde(rename = "dev-dependencies")] // Match the TOML key
 pub struct DevDependencies(HashMap<String, DependencySpec>);
 
@@ -624,6 +632,61 @@ pub struct BinTarget {
     pub path: PathBuf,
 }
 
+/// Represents an explicit `[[test]]` target section in Cargo.toml.
+#[derive(Deserialize, Debug, Clone)]
+pub struct TestTarget {
+    /// Optional target name. If omitted, discovery derives one from the root file stem.
+    pub name: Option<String>,
+    /// The path to the test crate root file.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+}
+
+/// Represents an explicit `[[example]]` target section in Cargo.toml.
+#[derive(Deserialize, Debug, Clone)]
+pub struct ExampleTarget {
+    /// Optional target name. If omitted, discovery derives one from the root file stem.
+    pub name: Option<String>,
+    /// The path to the example crate root file.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+}
+
+/// Represents an explicit `[[bench]]` target section in Cargo.toml.
+#[derive(Deserialize, Debug, Clone)]
+pub struct BenchTarget {
+    /// Optional target name. If omitted, discovery derives one from the root file stem.
+    pub name: Option<String>,
+    /// The path to the benchmark crate root file.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+}
+
+/// Cargo target kind surfaced by discovery.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
+pub enum TargetKind {
+    Lib,
+    Bin,
+    Test,
+    Example,
+    Bench,
+}
+
+/// A discovered target root emitted for a crate.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+pub struct TargetSpec {
+    pub kind: TargetKind,
+    pub name: String,
+    pub root: PathBuf,
+}
+
+/// Optional selector to focus discovery output on one target.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+pub struct TargetSelector {
+    pub kind: TargetKind,
+    pub name: String,
+}
+
 /// Represents the overall structure of a parsed Cargo.toml manifest.
 #[derive(Deserialize, Debug)]
 pub struct CargoManifest {
@@ -639,13 +702,22 @@ pub struct CargoManifest {
     pub lib: Option<LibTarget>,
     /// The `[[bin]]` sections, if present, containing binary target configurations.
     pub bin: Option<Vec<BinTarget>>,
+    /// The `[[test]]` sections, if present, containing integration test target configurations.
+    #[serde(default)]
+    pub test: Option<Vec<TestTarget>>,
+    /// The `[[example]]` sections, if present, containing example target configurations.
+    #[serde(default)]
+    pub example: Option<Vec<ExampleTarget>>,
+    /// The `[[bench]]` sections, if present, containing benchmark target configurations.
+    #[serde(default)]
+    pub bench: Option<Vec<BenchTarget>>,
 }
 
 /// Context information gathered for a single crate during discovery.
 ///
 /// This struct automatically implements `Send + Sync` because all its members
 /// (`String`, `Uuid`, `PathBuf`, `Vec<PathBuf>`) are `Send + Sync`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CrateContext {
     /// The simple name of the crate (e.g., "syn_parser").
     pub name: String,
@@ -658,6 +730,8 @@ pub struct CrateContext {
     pub root_path: PathBuf,
     /// List of all `.rs` files found within the crate's source directories.
     pub files: Vec<PathBuf>,
+    /// Enumerated Cargo target roots discovered for this crate.
+    pub targets: Vec<TargetSpec>,
     /// Parsed features from Cargo.toml.
     #[allow(unused_variables, reason = "Useful later for resolving features")]
     pub features: Features,
@@ -720,7 +794,7 @@ impl CrateContext {
 /// context by the parallel parsing phase (Phase 2). If Phase 2 required
 /// concurrent *writes* to this shared structure, `dashmap::DashMap` would be
 /// necessary.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DiscoveryOutput {
     /// Context information for each successfully discovered crate, keyed by the absolute crate
     /// root path.
@@ -886,8 +960,6 @@ pub fn derive_crate_namespace(name: &str, _version: &str) -> Uuid {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
 
     #[test]
@@ -919,10 +991,15 @@ mod tests {
     fn test_discovery_error_conversion() {
         use std::io;
         let io_error = io::Error::new(io::ErrorKind::NotFound, "file not found");
-        let discovery_err = DiscoveryError::Io {
-            path: PathBuf::from("/test/path"),
-            source: Arc::new(io_error),
-        };
+        let discovery_err = DiscoveryError::manifest_read(
+            crate::discovery::ManifestCtx {
+                kind: crate::discovery::ManifestKind::Crate,
+                manifest_path: PathBuf::from("/test/path"),
+                crate_path: None,
+                content: None,
+            },
+            io_error,
+        );
 
         let ploke_err: ploke_error::Error = discovery_err.into();
         assert!(matches!(ploke_err, ploke_error::Error::Fatal(_)));
@@ -941,9 +1018,14 @@ edition = "2021"
 proc-macro = true
 "#;
 
-        let manifest: CargoManifest = toml::from_str(cargo_toml).expect("Should parse manifest with [lib] but no path");
+        let manifest: CargoManifest =
+            toml::from_str(cargo_toml).expect("Should parse manifest with [lib] but no path");
         let lib = manifest.lib.expect("Should have lib section");
-        assert_eq!(lib.path, PathBuf::from("src/lib.rs"), "Default path should be src/lib.rs");
+        assert_eq!(
+            lib.path,
+            PathBuf::from("src/lib.rs"),
+            "Default path should be src/lib.rs"
+        );
     }
 
     #[test]
@@ -959,8 +1041,13 @@ edition = "2021"
 path = "src/my_lib.rs"
 "#;
 
-        let manifest: CargoManifest = toml::from_str(cargo_toml).expect("Should parse manifest with explicit lib path");
+        let manifest: CargoManifest =
+            toml::from_str(cargo_toml).expect("Should parse manifest with explicit lib path");
         let lib = manifest.lib.expect("Should have lib section");
-        assert_eq!(lib.path, PathBuf::from("src/my_lib.rs"), "Explicit path should be preserved");
+        assert_eq!(
+            lib.path,
+            PathBuf::from("src/my_lib.rs"),
+            "Explicit path should be preserved"
+        );
     }
 }

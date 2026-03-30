@@ -2,19 +2,19 @@ use std::{collections::BTreeMap, ops::Deref as _};
 
 use cozo::{DataValue, Num, ScriptMutability, UuidWrapper};
 use itertools::Itertools;
-use ploke_core::embeddings::EmbeddingSet;
 use ploke_core::RetrievalScope;
+use ploke_core::embeddings::EmbeddingSet;
 use syn_parser::utils::LogStyle;
 use tracing::{debug, info, instrument};
 use uuid::Uuid;
 
 use crate::{
+    Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
     database::HNSW_SUFFIX,
     multi_embedding::{
         db_ext::EmbeddingExt,
         schema::{EmbeddingSetExt, EmbeddingVector},
     },
-    Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
 };
 
 pub(crate) const HNSW_TARGET: &str = "hnsw-index";
@@ -671,9 +671,11 @@ mod tests {
     fn load_workspace_fixture_db() -> Result<Database, Error> {
         let db = Database::init_with_schema()?;
         let target_file = WS_FIXTURE_01_CANONICAL.path();
-        let prior_rels = db.relations_vec()?;
+        let prior_rels = db.prior_rels_for_plain_backup_import()?;
         db.import_from_backup(&target_file, &prior_rels)
             .map_err(DbError::from)?;
+        db.ensure_compilation_unit_relations()
+            .map_err(ploke_error::Error::from)?;
         create_index_primary(&db)?;
         Ok(db)
     }
@@ -989,8 +991,8 @@ mod tests {
                 );
                 let manual = db.run_script(&script, params, ScriptMutability::Immutable);
                 panic!(
-                        "hnsw_neighbors_for_type failed: {err:?}\nscript:\n{script}\nmanual run result: {manual:?}"
-                    );
+                    "hnsw_neighbors_for_type failed: {err:?}\nscript:\n{script}\nmanual run result: {manual:?}"
+                );
             }
         };
 
@@ -1199,7 +1201,7 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         use crate::create_index_primary;
         use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
         use ploke_test_utils::workspace_root;
-        use tracing::{error, Level};
+        use tracing::{Level, error};
 
         // init_tracing_once(HNSW_TARGET, Level::TRACE);
         info!(target: HNSW_TARGET, "starting test: test_load_db");
@@ -1236,12 +1238,14 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         let mut target_file = workspace_root();
         target_file.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
         let prior_rels_vec = db
-            .relations_vec()
+            .prior_rels_for_plain_backup_import()
             .inspect_err(|e| error!(target: HNSW_TARGET, "{e:#?}"))?;
         let prior_rels_string = format!("{prior_rels_vec:#?}");
         info!(target: HNSW_TARGET, %prior_rels_string);
         db.import_from_backup(&target_file, &prior_rels_vec)
             .expect("the database to be imported without errors");
+        db.ensure_compilation_unit_relations()
+            .expect("compilation_unit relations after backup import");
         // .map_err(DbError::from)
         // .map_err(ploke_error::Error::from)?;
 
@@ -1282,9 +1286,11 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         let db = Database::init_with_schema()?;
         let mut target_file = workspace_root();
         target_file.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
-        let prior_rels_vec = db.relations_vec()?;
+        let prior_rels_vec = db.prior_rels_for_plain_backup_import()?;
         db.import_from_backup(&target_file, &prior_rels_vec)
             .map_err(DbError::from)
+            .map_err(ploke_error::Error::from)?;
+        db.ensure_compilation_unit_relations()
             .map_err(ploke_error::Error::from)?;
 
         // TODO: put the embeddings setup into create_index_primary, then make create_index_primary

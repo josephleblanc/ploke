@@ -209,7 +209,7 @@ pub trait RelationIndexer {
 #[cfg(test)]
 mod tests {
     use crate::{
-        parser::nodes::AsAnyNodeId, utils::test_setup::PARSED_FIXTURE_CRATE_NODES, ParsedCodeGraph,
+        ParsedCodeGraph, parser::nodes::AsAnyNodeId, utils::test_setup::PARSED_FIXTURE_CRATE_NODES,
     };
 
     use super::RelationIndexer;

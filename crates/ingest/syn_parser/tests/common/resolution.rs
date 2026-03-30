@@ -3,9 +3,9 @@
 
 use itertools::Itertools;
 use ploke_core::ItemKind;
+use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::{AnyNodeId, AsAnyNodeId, ImportNodeId, PrimaryNodeId};
-use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::{
     error::SynParserError,

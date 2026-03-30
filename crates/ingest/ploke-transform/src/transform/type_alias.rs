@@ -41,8 +41,8 @@ mod tests {
     use cozo::{Db, MemStorage};
     use ploke_test_utils::test_run_phases_and_collect;
     use syn_parser::parser::{
-        nodes::{TypeAliasNode, TypeDefNode},
         ParsedCodeGraph,
+        nodes::{TypeAliasNode, TypeDefNode},
     };
 
     use crate::schema::{primary_nodes::TypeAliasNodeSchema, secondary_nodes::AttributeNodeSchema};

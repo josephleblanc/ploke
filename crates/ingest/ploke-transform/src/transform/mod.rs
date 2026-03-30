@@ -6,13 +6,13 @@ use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
 use crate_context::transform_crate_context;
 pub use workspace::transform_parsed_workspace;
 // -- from workspace
+use syn_parser::ParsedCodeGraph;
 use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
-use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::resolve::RelationIndexer;
+use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::utils::LogStyle;
-use syn_parser::ParsedCodeGraph;
 
 // ---- local imports ----
 // -- error handling --
@@ -41,6 +41,10 @@ use unions::transform_unions;
 mod fields;
 mod secondary_nodes;
 // -- special case nodes --
+pub mod compilation_unit;
+pub mod union_crate_masks;
+pub use compilation_unit::insert_structural_compilation_unit_slice;
+pub use union_crate_masks::transform_union_crate_and_structural_masks;
 mod crate_context;
 mod workspace;
 // -- primary nodes --

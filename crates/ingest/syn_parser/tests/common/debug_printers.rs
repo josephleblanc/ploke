@@ -4,10 +4,10 @@ use std::path::Path;
 use colored::Colorize;
 use ploke_core::NodeId;
 use syn_parser::parser::{
+    ParsedCodeGraph,
     graph::{CodeGraph, GraphAccess as _},
     nodes::{GraphNode, ImportKind, ModuleKind},
     types::VisibilityKind,
-    ParsedCodeGraph,
 };
 
 pub fn find_import_id(

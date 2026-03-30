@@ -37,6 +37,7 @@ pub mod assoc_nodes {
 
 // --- end conditional build items ---
 
+pub mod compilation_unit;
 pub mod crate_node;
 pub mod edges;
 pub mod meta;
@@ -46,7 +47,11 @@ pub mod types;
 
 use crate::error::TransformError;
 use assoc_nodes::MethodNodeSchema;
-use cozo::{Db, MemStorage};
+use compilation_unit::{
+    CompilationUnitEnabledEdgeSchema, CompilationUnitEnabledFileSchema,
+    CompilationUnitEnabledNodeSchema, CompilationUnitMetaSchema, CompilationUnitSchema,
+};
+use cozo::{Db, MemStorage, ScriptMutability};
 use crate_node::{CrateContextSchema, WorkspaceMetadataSchema};
 use edges::SyntacticRelationSchema;
 use itertools::Itertools;
@@ -119,26 +124,69 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
     CrateContextSchema::create_and_insert_schema(db)?;
     WorkspaceMetadataSchema::create_and_insert_schema(db)?;
 
+    // -- compilation_unit (structural masks; cfg follow-up) --
+    CompilationUnitSchema::create_and_insert_schema(db)?;
+    CompilationUnitEnabledNodeSchema::create_and_insert_schema(db)?;
+    CompilationUnitEnabledEdgeSchema::create_and_insert_schema(db)?;
+    CompilationUnitEnabledFileSchema::create_and_insert_schema(db)?;
+    CompilationUnitMetaSchema::create_and_insert_schema(db)?;
+
     // -- bm25_doc_meta --
     Bm25MetaSchema::create_and_insert_schema(db)?;
     Ok(())
 }
 
-pub const ID_KEYWORDS: [&str; 6] = [
+fn list_stored_relations(db: &Db<MemStorage>) -> Result<Vec<String>, TransformError> {
+    let output = db.run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)?;
+    Ok(Vec::from_iter(output.rows.into_iter().filter_map(|r| {
+        r.first()
+            .into_iter()
+            .filter_map(|c| c.get_str().iter().map(|s| s.to_string()).next())
+            .next()
+    })))
+}
+
+/// Create `compilation_unit*` relations if missing (e.g. after loading a backup that predates them).
+pub fn ensure_compilation_unit_relations(db: &Db<MemStorage>) -> Result<(), TransformError> {
+    let rels = list_stored_relations(db)?;
+    let has = |name: &str| rels.iter().any(|r| r == name);
+    if !has(CompilationUnitSchema::SCHEMA.relation) {
+        CompilationUnitSchema::create_and_insert_schema(db)?;
+    }
+    if !has(CompilationUnitEnabledNodeSchema::SCHEMA.relation) {
+        CompilationUnitEnabledNodeSchema::create_and_insert_schema(db)?;
+    }
+    if !has(CompilationUnitEnabledEdgeSchema::SCHEMA.relation) {
+        CompilationUnitEnabledEdgeSchema::create_and_insert_schema(db)?;
+    }
+    if !has(CompilationUnitEnabledFileSchema::SCHEMA.relation) {
+        CompilationUnitEnabledFileSchema::create_and_insert_schema(db)?;
+    }
+    if !has(CompilationUnitMetaSchema::SCHEMA.relation) {
+        CompilationUnitMetaSchema::create_and_insert_schema(db)?;
+    }
+    Ok(())
+}
+
+pub const ID_KEYWORDS: [&str; 8] = [
     "id",
     "function_id",
     "owner_id",
     "source_id",
     "target_id",
     "type_id",
+    "cu_id",
+    "node_id",
 ];
-pub const ID_VAL_KEYWORDS: [&str; 6] = [
+pub const ID_VAL_KEYWORDS: [&str; 8] = [
     "id: Uuid",
     "function_id: Uuid",
     "owner_id: Uuid",
     "source_id: Uuid",
     "target_id: Uuid",
     "type_id: Uuid",
+    "cu_id: Uuid",
+    "node_id: Uuid",
 ];
 
 /// Example

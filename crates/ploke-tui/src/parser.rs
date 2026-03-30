@@ -2,15 +2,18 @@ use std::{env, fmt, path::PathBuf, sync::Arc};
 
 use ploke_db::Database;
 use ploke_io::path_policy::{PathPolicy, normalize_target_path};
-use ploke_transform::transform::{transform_parsed_graph, transform_parsed_workspace};
+use ploke_transform::transform::{
+    transform_parsed_graph, transform_parsed_workspace, transform_union_crate_and_structural_masks,
+};
 use syn_parser::{
-    ModuleTree, ParsedCodeGraph, ParserOutput,
+    ManifestKind, ModuleTree, ParsedCodeGraph, ParserOutput,
+    compilation_unit::CompilationUnitDimensionRequest,
     discovery::run_discovery_phase,
     discovery::workspace::{locate_workspace_manifest, try_parse_manifest},
     error::SynParserError,
     parse_workspace,
     parser::analyze_files_parallel,
-    try_run_phases_and_merge,
+    try_run_phases_and_merge, try_run_phases_union_for_crate_with_dimensions,
 };
 use tracing::instrument;
 
@@ -58,7 +61,7 @@ pub fn resolve_index_target(
     let local_manifest = requested_path.join("Cargo.toml");
 
     if local_manifest.is_file() {
-        let manifest = try_parse_manifest(&requested_path).map_err(|err| {
+        let manifest = try_parse_manifest(&requested_path, ManifestKind::Crate).map_err(|err| {
             IndexTargetResolveError::WorkspaceDiscovery(format!(
                 "Failed to read Cargo manifest at '{}': {}",
                 local_manifest.display(),
@@ -186,16 +189,39 @@ pub fn run_parse_resolved(
 
     match resolved.kind {
         IndexTargetKind::Crate => {
-            let mut parser_output = try_run_phases_and_merge(&resolved.focused_root)?;
-            let merged = parser_output.extract_merged_graph().ok_or_else(|| {
-                SynParserError::InternalState("Missing parsed code graph".to_string())
-            })?;
-            let tree = parser_output
-                .extract_module_tree()
-                .ok_or_else(|| SynParserError::InternalState("Missing module tree".to_string()))?;
-            transform_parsed_graph(&db, merged, &tree).map_err(|err| {
-                SynParserError::InternalState(format!("Failed to transform parsed graph: {err}"))
-            })?;
+            if compilation_union_ingest_enabled() {
+                let mut parser_output = try_run_phases_union_for_crate_with_dimensions(
+                    &resolved.focused_root,
+                    &CompilationUnitDimensionRequest::from_env_or_default(),
+                )?;
+                let graphs = parser_output
+                    .extract_parsed_graphs_for_masks()
+                    .ok_or_else(|| {
+                        SynParserError::InternalState(
+                            "Missing parsed graphs for CU masks".to_string(),
+                        )
+                    })?;
+                let compilation_units = parser_output.extract_compilation_units();
+                transform_union_crate_and_structural_masks(&db, graphs, compilation_units)
+                    .map_err(|err| {
+                        SynParserError::InternalState(format!(
+                            "Failed union crate transform and CU masks: {err}"
+                        ))
+                    })?;
+            } else {
+                let mut parser_output = try_run_phases_and_merge(&resolved.focused_root)?;
+                let merged = parser_output.extract_merged_graph().ok_or_else(|| {
+                    SynParserError::InternalState("Missing parsed code graph".to_string())
+                })?;
+                let tree = parser_output.extract_module_tree().ok_or_else(|| {
+                    SynParserError::InternalState("Missing module tree".to_string())
+                })?;
+                transform_parsed_graph(&db, merged, &tree).map_err(|err| {
+                    SynParserError::InternalState(format!(
+                        "Failed to transform parsed graph: {err}"
+                    ))
+                })?;
+            }
         }
         IndexTargetKind::Workspace => {
             let parsed_workspace = parse_workspace(&resolved.workspace_root, None)?;
@@ -214,6 +240,12 @@ pub fn run_parse_resolved(
     Ok(())
 }
 
+fn compilation_union_ingest_enabled() -> bool {
+    std::env::var("PLOKE_COMPILATION_UNION")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 #[instrument(err, fields(target_dir), skip(db))]
 pub fn run_parse_no_transform(
     db: Arc<Database>,
@@ -228,8 +260,8 @@ pub fn run_parse_no_transform(
         target.display()
     );
 
-    let discovery_output = run_discovery_phase(None, &[target.clone()])
-        .map_err(|err| SynParserError::try_from(err).unwrap_or_else(|err| err))?;
+    let discovery_output =
+        run_discovery_phase(None, &[target.clone()]).map_err(SynParserError::from)?;
 
     let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0);
@@ -243,6 +275,8 @@ pub fn run_parse_no_transform(
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),
+        parsed_graphs_for_masks: None,
+        compilation_units: None,
     })
 }
 

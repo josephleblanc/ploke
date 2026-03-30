@@ -23,6 +23,7 @@ fn cli_parse_help_lists_subcommands() {
     assert_eq!(err.kind(), ErrorKind::DisplayHelp);
     let s = err.to_string();
     assert!(s.contains("discovery"), "{s}");
+    assert!(s.contains("workspace-config"), "{s}");
     assert!(s.contains("debug"), "{s}");
 }
 
@@ -31,8 +32,14 @@ fn cli_parse_debug_help_lists_nested_subcommands() {
     let err = Cli::try_parse_from(["xtask", "parse", "debug", "--help"]).expect_err("DisplayHelp");
     assert_eq!(err.kind(), ErrorKind::DisplayHelp);
     let s = err.to_string();
-    assert!(s.contains("manifest") || s.to_lowercase().contains("manifest"), "{s}");
-    assert!(s.contains("workspace") || s.to_lowercase().contains("workspace"), "{s}");
+    assert!(
+        s.contains("manifest") || s.to_lowercase().contains("manifest"),
+        "{s}"
+    );
+    assert!(
+        s.contains("workspace") || s.to_lowercase().contains("workspace"),
+        "{s}"
+    );
     assert!(
         s.contains("logical-paths") || s.contains("logical"),
         "path diagnostic subcommands: {s}"
@@ -57,7 +64,8 @@ fn cli_db_help_lists_subcommands() {
 
 #[test]
 fn cli_parse_discovery_help_documents_path_target() {
-    let err = Cli::try_parse_from(["xtask", "parse", "discovery", "--help"]).expect_err("DisplayHelp");
+    let err =
+        Cli::try_parse_from(["xtask", "parse", "discovery", "--help"]).expect_err("DisplayHelp");
     assert_eq!(err.kind(), ErrorKind::DisplayHelp);
     let s = err.to_string();
     assert!(

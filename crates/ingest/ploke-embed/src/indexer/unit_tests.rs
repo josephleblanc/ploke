@@ -4,8 +4,8 @@ use std::{
     collections::BTreeMap,
     ops::Deref,
     sync::{
-        atomic::{AtomicBool, AtomicUsize},
         Arc,
+        atomic::{AtomicBool, AtomicUsize},
     },
     time::Duration,
 };
@@ -14,8 +14,9 @@ use cozo::{CallbackOp, DataValue, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
 use ploke_core::RetrievalScope;
 use ploke_db::{
-    bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer},
-    hnsw_all_types, CallbackManager, Database, DbError, NodeType,
+    CallbackManager, Database, DbError, NodeType,
+    bm25_index::{self, Bm25Indexer, bm25_service::Bm25Cmd},
+    hnsw_all_types,
 };
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
@@ -23,13 +24,14 @@ use ploke_test_utils::init_test_tracing_with_target;
 use ploke_test_utils::{setup_db_full, setup_db_full_crate, setup_db_full_multi_embedding};
 use tokio::{
     sync::{
+        Mutex,
         broadcast::{self, error::TryRecvError},
-        mpsc, Mutex,
+        mpsc,
     },
     time::{self, Instant},
 };
-use tracing::{level_filters::LevelFilter, Level};
-use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
+use tracing::{Level, level_filters::LevelFilter};
+use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
 use crate::{
     cancel_token::CancellationToken,
@@ -154,7 +156,9 @@ async fn test_batch_macros() -> Result<(), Error> {
 // NOTE: passing
 async fn test_batch_path_resolution() -> Result<(), Error> {
     if !should_run("test_batch_path_resolution") {
-        eprintln!("skipping test_batch_path_resolution (set PLOKE_EMBED_RUN_TEST_BATCH_PATH_RESOLUTION=1)");
+        eprintln!(
+            "skipping test_batch_path_resolution (set PLOKE_EMBED_RUN_TEST_BATCH_PATH_RESOLUTION=1)"
+        );
         return Ok(());
     }
     let _guard = init_test_tracing(Level::ERROR);
@@ -475,7 +479,9 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         not_found.len(),
         found.len()
     );
-    tracing::info!("Ending test_next_batch: {fixture}: total count {inner}, counter {total_count} | {inner}/{total_count}");
+    tracing::info!(
+        "Ending test_next_batch: {fixture}: total count {inner}, counter {total_count} | {inner}/{total_count}"
+    );
     assert!(
         total_count == counter.load(std::sync::atomic::Ordering::SeqCst),
         // received_completed.load(std::sync::atomic::Ordering::SeqCst),
@@ -753,7 +759,9 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
         not_found.len(),
         found.len()
     );
-    tracing::info!("Ending test_next_batch: {target_crate}: total count {inner}, counter {total_count} | {inner}/{total_count}");
+    tracing::info!(
+        "Ending test_next_batch: {target_crate}: total count {inner}, counter {total_count} | {inner}/{total_count}"
+    );
     assert!(
         total_count == counter.load(std::sync::atomic::Ordering::SeqCst),
         // received_completed.load(std::sync::atomic::Ordering::SeqCst),

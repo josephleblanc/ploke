@@ -2,13 +2,13 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::{ops::Deref, panic::Location, path::Path};
 
+use crate::NodeType;
+use crate::QueryResult;
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
 use crate::multi_embedding::db_ext::EmbeddingExt;
 use crate::multi_embedding::hnsw_ext::HnswExt;
 use crate::multi_embedding::schema::{EmbeddingSetExt as _, EmbeddingVector};
-use crate::NodeType;
-use crate::QueryResult;
 use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper, Vector};
 use itertools::Itertools;
 use lazy_static::lazy_static;
@@ -1355,6 +1355,23 @@ target[id] := input[id_str], id = to_uuid(id_str)
         ))
     }
 
+    /// Restore `compilation_unit*` relations after a backup import when the snapshot predates them.
+    pub fn ensure_compilation_unit_relations(&self) -> Result<(), PlokeError> {
+        ploke_transform::schema::ensure_compilation_unit_relations(&self.db)?;
+        Ok(())
+    }
+
+    /// Relation names for [`cozo::Db::import_from_backup`] when the `.sqlite` snapshot may omit
+    /// `compilation_unit*` tables (older fixtures). Call [`Self::ensure_compilation_unit_relations`]
+    /// after import.
+    pub fn prior_rels_for_plain_backup_import(&self) -> Result<Vec<String>, PlokeError> {
+        Ok(self
+            .relations_vec()?
+            .into_iter()
+            .filter(|r| !r.starts_with("compilation_unit"))
+            .collect())
+    }
+
     // Gets all the file data in the same namespace as the crate name given as argument.
     // This is useful when you want to compare which files have changed since the database was
     // last updated.
@@ -2115,9 +2132,16 @@ target[id] := input[id_str], id = to_uuid(id_str)
         let mut uniq = HashSet::new();
         relations.retain(|r| uniq.insert(r.clone()));
 
+        // Snapshots may omit compilation-unit relations; importing them by name fails on legacy
+        // backups. Recreate after import via `ensure_compilation_unit_relations`.
+        relations.retain(|r| !r.starts_with("compilation_unit"));
+
         self.db
             .import_from_backup(backup, &relations)
             .map_err(DbError::from)?;
+
+        self.ensure_compilation_unit_relations()
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         Ok(())
     }
@@ -3027,7 +3051,10 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         let less_flat_row = query_result.rows.first();
         let count_less_flat = query_result.rows.len();
         if let Some(lfr) = less_flat_row {
-            tracing::info!("\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}", rel_name);
+            tracing::info!(
+                "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}",
+                rel_name
+            );
         }
         let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
         v.truncate(limit.min(count_less_flat));
@@ -3195,17 +3222,17 @@ mod tests {
     use std::collections::{BTreeSet, HashSet};
 
     use super::*;
-    use crate::multi_embedding::db_ext::EmbeddingExt;
-    use crate::multi_embedding::hnsw_ext::HnswExt;
-    use crate::multi_embedding::schema::CozoEmbeddingSetExt;
     use crate::Database;
     use crate::DbError;
     use crate::RestoredEmbeddingSet;
+    use crate::multi_embedding::db_ext::EmbeddingExt;
+    use crate::multi_embedding::hnsw_ext::HnswExt;
+    use crate::multi_embedding::schema::CozoEmbeddingSetExt;
     use cozo::{Db, MemStorage, ScriptMutability};
+    use ploke_core::TrackingHash;
     use ploke_core::embeddings::{
         EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
     };
-    use ploke_core::TrackingHash;
     use ploke_test_utils::fixture_dbs::FixtureDb;
     use ploke_transform::schema::create_schema_all;
     use tracing::error;
@@ -3216,7 +3243,7 @@ mod tests {
         let fixture_path = fixture.path();
         match fixture.import_mode {
             ploke_test_utils::fixture_dbs::FixtureImportMode::PlainBackup => {
-                let prior_rels = db.relations_vec()?;
+                let prior_rels = db.prior_rels_for_plain_backup_import()?;
                 db.import_from_backup(&fixture_path, &prior_rels)
                     .map_err(DbError::from)?;
             }
@@ -3224,15 +3251,16 @@ mod tests {
                 db.import_backup_with_embeddings(&fixture_path)?;
             }
         }
+        db.ensure_compilation_unit_relations()?;
         Ok(db)
     }
-    use tracing::trace;
     use tracing::Level;
+    use tracing::trace;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
     use uuid::Uuid;
 
-    use ploke_test_utils::{fresh_backup_fixture_db, workspace_root, WS_FIXTURE_01_CANONICAL};
+    use ploke_test_utils::{WS_FIXTURE_01_CANONICAL, fresh_backup_fixture_db, workspace_root};
 
     fn setup_db() -> Database {
         let db = Db::new(MemStorage::default()).unwrap();
@@ -3950,8 +3978,8 @@ mod tests {
     }
 
     #[test]
-    fn workspace_fixture_namespace_inventory_matches_crate_context_membership(
-    ) -> Result<(), PlokeError> {
+    fn workspace_fixture_namespace_inventory_matches_crate_context_membership()
+    -> Result<(), PlokeError> {
         let db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let crate_contexts = db
             .list_crate_context_rows()
@@ -4043,8 +4071,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remove_namespace_removes_only_target_namespace_and_invalidates_search_state(
-    ) -> Result<(), PlokeError> {
+    async fn remove_namespace_removes_only_target_namespace_and_invalidates_search_state()
+    -> Result<(), PlokeError> {
         let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let crate_contexts = db
             .list_crate_context_rows()
@@ -4129,13 +4157,11 @@ id = to_uuid("{seeded_node}")"#
         assert_eq!(result.removed_crate_name, removed.name);
         assert_eq!(result.removed_root_path, removed.root_path);
         assert_eq!(
-            result.removed_file_module_owner_ids,
-            removed_inventory.file_module_owner_ids,
+            result.removed_file_module_owner_ids, removed_inventory.file_module_owner_ids,
             "remove_namespace should act on the exact file_mod-root inventory for the requested namespace"
         );
         assert_eq!(
-            result.removed_descendant_ids,
-            removed_inventory.descendant_ids,
+            result.removed_descendant_ids, removed_inventory.descendant_ids,
             "remove_namespace should act on the exact descendant inventory derived from crate_context/file_mod authority"
         );
         assert!(result.removed_workspace_member);
@@ -4269,8 +4295,8 @@ id = to_uuid("{seeded_node}")"#
     }
 
     #[tokio::test]
-    async fn export_namespace_artifact_contains_only_target_namespace_rows(
-    ) -> Result<(), PlokeError> {
+    async fn export_namespace_artifact_contains_only_target_namespace_rows()
+    -> Result<(), PlokeError> {
         let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let crate_contexts = db
             .list_crate_context_rows()
@@ -4433,8 +4459,8 @@ id = to_uuid("{seeded_node}")"#
     }
 
     #[tokio::test]
-    async fn import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state(
-    ) -> Result<(), PlokeError> {
+    async fn import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state()
+    -> Result<(), PlokeError> {
         let source_db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let source_contexts = source_db.list_crate_context_rows()?;
         let [exported, sibling] = source_contexts.as_slice() else {
@@ -4535,12 +4561,16 @@ id = to_uuid("{seeded_node}")"#
 
         let restored_contexts = dest_db.list_crate_context_rows()?;
         assert_eq!(restored_contexts.len(), 2);
-        assert!(restored_contexts
-            .iter()
-            .any(|row| row.namespace == exported.namespace));
-        assert!(restored_contexts
-            .iter()
-            .any(|row| row.namespace == sibling.namespace));
+        assert!(
+            restored_contexts
+                .iter()
+                .any(|row| row.namespace == exported.namespace)
+        );
+        assert!(
+            restored_contexts
+                .iter()
+                .any(|row| row.namespace == sibling.namespace)
+        );
 
         let restored_inventory = dest_db.collect_namespace_inventory(exported.namespace)?;
         assert_eq!(restored_inventory.crate_context, *exported);
@@ -4580,8 +4610,8 @@ id = to_uuid("{exported_seeded_node}")"#
     }
 
     #[tokio::test]
-    async fn import_namespace_reports_duplicate_namespace_name_and_root_conflicts(
-    ) -> Result<(), PlokeError> {
+    async fn import_namespace_reports_duplicate_namespace_name_and_root_conflicts()
+    -> Result<(), PlokeError> {
         let source_db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let source_contexts = source_db.list_crate_context_rows()?;
         let [exported, _] = source_contexts.as_slice() else {

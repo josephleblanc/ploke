@@ -7,8 +7,8 @@ use tracing::instrument;
 
 use crate::database::HNSW_SUFFIX;
 use crate::multi_embedding::hnsw_ext::HnswExt;
-use ploke_core::embeddings::EmbeddingSet;
 use ploke_core::RetrievalScope;
+use ploke_core::embeddings::EmbeddingSet;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
     DataValue::List(
@@ -265,10 +265,10 @@ pub fn replace_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error
 mod tests {
     use std::sync::Arc;
 
+    use crate::DbError;
     use crate::create_index_primary;
     use crate::hnsw_all_types;
     use crate::utils::test_utils::TEST_DB_NODES;
-    use crate::DbError;
     use ploke_test_utils::workspace_root;
     use tokio::sync::Mutex;
 
@@ -285,9 +285,11 @@ mod tests {
         let mut target_file = workspace_root();
         target_file.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
         eprintln!("Loading backup db from file at:\n{}", target_file.display());
-        let prior_rels_vec = db.relations_vec()?;
+        let prior_rels_vec = db.prior_rels_for_plain_backup_import()?;
         db.import_from_backup(&target_file, &prior_rels_vec)
             .map_err(DbError::from)
+            .map_err(ploke_error::Error::from)?;
+        db.ensure_compilation_unit_relations()
             .map_err(ploke_error::Error::from)?;
 
         super::create_index_primary_with_index(&db)?;
@@ -309,9 +311,11 @@ mod tests {
         let mut target_file = workspace_root();
         target_file.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
         eprintln!("Loading backup db from file at:\n{}", target_file.display());
-        let prior_rels_vec = db.relations_vec()?;
+        let prior_rels_vec = db.prior_rels_for_plain_backup_import()?;
         db.import_from_backup(&target_file, &prior_rels_vec)
             .map_err(DbError::from)
+            .map_err(ploke_error::Error::from)?;
+        db.ensure_compilation_unit_relations()
             .map_err(ploke_error::Error::from)?;
 
         // Note: purposefully commented out to cause failure.

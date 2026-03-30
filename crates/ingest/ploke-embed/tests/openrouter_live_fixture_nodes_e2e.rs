@@ -12,8 +12,8 @@ use std::{
 use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
-use ploke_db::{multi_embedding::db_ext::EmbeddingExt as _, Database};
-use ploke_db::{multi_embedding::hnsw_ext::HnswExt as _, DbError};
+use ploke_db::{Database, multi_embedding::db_ext::EmbeddingExt as _};
+use ploke_db::{DbError, multi_embedding::hnsw_ext::HnswExt as _};
 use ploke_embed::{
     cancel_token::CancellationToken,
     config::{OpenRouterConfig, TruncatePolicy},
@@ -250,7 +250,7 @@ async fn live_openrouter_fixture_nodes_index_e2e() -> Result<(), Box<dyn std::er
                 Err(e) => {
                     break Err::<(), Box<dyn std::error::Error>>(
                         format!("progress channel error: {e}").into(),
-                    )
+                    );
                 }
             }
         }

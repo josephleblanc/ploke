@@ -1,6 +1,6 @@
+use crate::common::ParanoidArgs;
 use crate::common::find_type_node;
 use crate::common::run_phase1_phase2;
-use crate::common::ParanoidArgs;
 use anyhow::Ok;
 use anyhow::Result;
 use lazy_static::lazy_static;

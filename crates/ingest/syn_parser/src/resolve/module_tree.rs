@@ -1,3 +1,4 @@
+use crate::parser::diagnostics::{TRACE_TARGET_PRUNE, emit_json_diagnostic};
 use crate::parser::graph::{GraphAccess, GraphNode};
 use crate::parser::nodes::{
     ImplNodeId, ModuleNodeId, PrimaryNodeId, PrimaryNodeIdTrait, UnresolvedNode, UnresolvedNodeId,
@@ -550,8 +551,8 @@ impl ModuleTree {
                 self.log_resolve_pending_status(None);
                 self.log_resolve_entry_exit(false); // Log exit
                 return Ok(()); // TODO: This should return error. It means the invariant of the
-                               // pending path attrs always being `Some` outside of this function is not being
-                               // respected.
+                // pending path attrs always being `Some` outside of this function is not being
+                // respected.
             }
         };
 
@@ -602,9 +603,8 @@ impl ModuleTree {
                 }
             };
 
-            // Consider adding error handling for normalization if needed
             let resolved = base_dir.join(path_val).normalize();
-            // *** NEW LOGGING CALL ***
+
             self.log_resolve_step(
                 module_id,
                 "Normalize Path",
@@ -1122,37 +1122,40 @@ impl ModuleTree {
             }
         }
 
-        let target_any_id =
-            match self.resolve_path_relative_to(base_module_id, segments_to_resolve, graph) {
-                Ok(id) => id,
-                Err(e) => {
-                    // Create an UnresolvedNode for this failed resolution
-                    // This commonly happens with items from include! macros that weren't expanded
-                    let unresolved_id = self.create_unresolved_node(
-                        import_node,
-                        source_mod_id,
-                        path_segments,
-                        UnresolvedReason::PathNotFound,
-                    );
-                    
-                    // Create a relation between the import and the unresolved node
-                    let relation = SyntacticRelation::ImportedBy {
-                        source: PrimaryNodeId::try_from(unresolved_id.as_any())
-                            .expect("UnresolvedNodeId should convert to AnyNodeId"),
-                        target: import_node.id,
-                    };
-                    self.add_rel(relation.into());
-                    
-                    tracing::debug!(
-                        "link_definition_imports: created UnresolvedNode {} for import {:?} in module {:?}: {}",
-                        unresolved_id,
-                        path_segments,
-                        source_mod_id,
-                        e
-                    );
-                    return Ok(());
-                }
-            };
+        let target_any_id = match self.resolve_path_relative_to(
+            base_module_id,
+            segments_to_resolve,
+            graph,
+        ) {
+            Ok(id) => id,
+            Err(e) => {
+                // Create an UnresolvedNode for this failed resolution
+                // This commonly happens with items from include! macros that weren't expanded
+                let unresolved_id = self.create_unresolved_node(
+                    import_node,
+                    source_mod_id,
+                    path_segments,
+                    UnresolvedReason::PathNotFound,
+                );
+
+                // Create a relation between the import and the unresolved node
+                let relation = SyntacticRelation::ImportedBy {
+                    source: PrimaryNodeId::try_from(unresolved_id.as_any())
+                        .expect("UnresolvedNodeId should convert to AnyNodeId"),
+                    target: import_node.id,
+                };
+                self.add_rel(relation.into());
+
+                tracing::debug!(
+                    "link_definition_imports: created UnresolvedNode {} for import {:?} in module {:?}: {}",
+                    unresolved_id,
+                    path_segments,
+                    source_mod_id,
+                    e
+                );
+                return Ok(());
+            }
+        };
 
         log::debug!(
             target: LOG_TARGET_MOD_TREE_BUILD,
@@ -1305,6 +1308,58 @@ impl ModuleTree {
             return Ok(());
         }
 
+        let mut primary_names: HashMap<PrimaryNodeId, &str> = HashMap::new();
+        primary_names.extend(
+            graph
+                .functions()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        primary_names.extend(graph.defined_types().iter().map(|node| {
+            (
+                node.any_id().try_into().expect("typedef ids are primary"),
+                node.name(),
+            )
+        }));
+        primary_names.extend(
+            graph
+                .impls()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        primary_names.extend(
+            graph
+                .traits()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        primary_names.extend(
+            graph
+                .consts()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        primary_names.extend(
+            graph
+                .statics()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        primary_names.extend(
+            graph
+                .macros()
+                .iter()
+                .map(|node| (node.id.into(), node.name())),
+        );
+        // `process_use_tree` registers imports via `register_new_node_id`, so Import IDs appear in
+        // `module.items()` alongside other primaries; `GraphNode::name` for imports is `visible_name`.
+        primary_names.extend(
+            graph
+                .use_statements()
+                .iter()
+                .map(|node| (node.id.into(), node.visible_name.as_str())),
+        );
+
         let mut index = HashMap::new();
         for module in self.modules.values() {
             if module.is_decl() {
@@ -1317,11 +1372,12 @@ impl ModuleTree {
                 if ModuleNodeId::try_from(*item_id).is_ok() {
                     continue;
                 }
-                let node = graph
-                    .find_node_unique(item_id.as_any())
-                    .map_err(ModuleTreeError::from)?;
                 let mut node_path_vec = module.path().clone();
-                node_path_vec.push(node.name().to_string());
+                let node_name = primary_names
+                    .get(item_id)
+                    .copied()
+                    .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(item_id.as_any()))?;
+                node_path_vec.push(node_name.to_string());
                 let node_path = NodePath::try_from(node_path_vec)
                     .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
                 index.entry(node_path).or_insert(*item_id);
@@ -1423,7 +1479,7 @@ impl ModuleTree {
     }
 
     /// Creates an UnresolvedNode for an import that couldn't be resolved.
-    /// 
+    ///
     /// This is used when an import path cannot be resolved to a known definition,
     /// commonly because the item is generated by a macro (like `include!`) that
     /// wasn't expanded during parsing.
@@ -1438,10 +1494,7 @@ impl ModuleTree {
         // based on the path and import node ID
         let id_input = format!("{:?}-{:?}", import_node.id, path_segments);
         // Generate a deterministic UUID for the unresolved node
-        let unresolved_uuid = uuid::Uuid::new_v5(
-            &uuid::Uuid::NAMESPACE_OID,
-            id_input.as_bytes()
-        );
+        let unresolved_uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, id_input.as_bytes());
         // Create the ID using the internal constructor
         let unresolved_id = UnresolvedNodeId::new(ploke_core::NodeId::Synthetic(unresolved_uuid));
 
@@ -1462,7 +1515,7 @@ impl ModuleTree {
         };
 
         self.unresolved_nodes.push(unresolved_node);
-        
+
         log::debug!(
             target: LOG_TARGET_MOD_TREE_BUILD,
             "Created UnresolvedNode {} for import '{}' with path '{}'",
@@ -1575,7 +1628,7 @@ impl ModuleTree {
             current_id = self.get_parent_module_id(current_id).ok_or_else(|| {
                 self.log_find_decl_dir_missing_parent(current_id);
                 ModuleTreeError::ContainingModuleNotFound(current_id.as_any()) // Use AnyNodeId in error
-                                                                               // Re-use existing error
+                // Re-use existing error
             })?;
         }
         Err(ModuleTreeError::ContainingModuleNotFound(
@@ -1662,13 +1715,13 @@ impl ModuleTree {
                     if let Some(dup) = targets_iter.next() {
                         // Use ModuleNodeId directly for display, as it implements Display
                         return Err(ModuleTreeError::DuplicateDefinition(format!(
-                        "Duplicate module definition for path attribute target '{}' {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
+                            "Duplicate module definition for path attribute target '{}' {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
                             decl_module_node.id,
-                        resolved_path.display(),
+                            resolved_path.display(),
                             &decl_module_node,
                             &target_defn_node, // Use the found node
                             &dup
-                    )));
+                        )));
                     }
                     internal_relations.push(relation); // Push SyntacticRelation
                 }
@@ -1823,7 +1876,10 @@ impl ModuleTree {
                         &original_path,
                         def_mod_id,
                     );
-                    return Err(ModuleTreeError::InternalState(format!("Path index inconsistency during removal for path {}: expected {}, found {}. This suggests the path_index was corrupted earlier.", original_path, def_mod_any_id, removed_id)));
+                    return Err(ModuleTreeError::InternalState(format!(
+                        "Path index inconsistency during removal for path {}: expected {}, found {}. This suggests the path_index was corrupted earlier.",
+                        original_path, def_mod_any_id, removed_id
+                    )));
                 }
                 self.log_update_path_index_remove(&original_path, def_mod_id);
             } else {
@@ -1916,6 +1972,7 @@ impl ModuleTree {
     /// A `Result` containing `PruningResult` which lists the IDs of the pruned modules,
     /// all contained items, and the relations that were removed, or a `ModuleTreeError`
     /// if an issue occurs during processing.
+    #[tracing::instrument(target = TRACE_TARGET_PRUNE, skip_all, fields(root = %self.root))]
     pub(crate) fn prune_unlinked_file_modules(&mut self) -> Result<PruningResult, ModuleTreeError> {
         #[cfg(feature = "validate")]
         let _rels_before = self.validate_unique_rels(); // Store result to avoid unused warning
@@ -2046,6 +2103,17 @@ impl ModuleTree {
         });
         let removed_relation_count = original_relation_count - self.tree_relations.len();
         // Sanity check
+        if removed_relation_count != pruned_relations.len() {
+            let _ = emit_json_diagnostic(
+                "module_tree_pruned_relation_count_mismatch",
+                &serde_json::json!({
+                    "function": "ModuleTree::prune_unlinked_file_modules",
+                    "removed_relation_count": removed_relation_count,
+                    "collected_pruned_relations": pruned_relations.len(),
+                    "root_module_id": self.root.to_string(),
+                }),
+            );
+        }
         assert_eq!(
             removed_relation_count,
             pruned_relations.len(),

@@ -23,12 +23,15 @@ use ploke_embed::{
     runtime::EmbeddingRuntime,
 };
 use ploke_io::IoManagerHandle;
-use ploke_transform::transform::{transform_parsed_graph, transform_parsed_workspace};
+use ploke_transform::transform::{
+    transform_parsed_graph, transform_parsed_workspace, transform_union_crate_and_structural_masks,
+};
 use serde::Serialize;
 use syn_parser::{
     ParsedWorkspace, ParserOutput,
+    compilation_unit::CompilationUnitDimensionRequest,
     discovery::workspace::{locate_workspace_manifest, try_parse_manifest},
-    parse_workspace, try_run_phases_and_merge,
+    parse_workspace, try_run_phases_and_merge, try_run_phases_union_for_crate_with_dimensions,
 };
 use tokio::sync::{broadcast, mpsc};
 use tracing::field::{Field, Visit};
@@ -57,6 +60,8 @@ pub struct ProfileConfig {
     pub verbosity: u8,
     pub json_stdout: bool,
     pub loops: usize,
+    /// Union-merge all crate roots, transform once, persist structural CU masks per target.
+    pub compilation_unions: bool,
 }
 
 fn parse_stages(s: &str) -> Result<Vec<Stage>, XtaskError> {
@@ -86,6 +91,7 @@ pub fn parse_profile_ingest_args(args: Vec<String>) -> Result<ProfileConfig, Xta
     let mut verbosity: u8 = 2;
     let mut json_stdout = false;
     let mut loops: usize = 1;
+    let mut compilation_unions = false;
 
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -125,9 +131,10 @@ pub fn parse_profile_ingest_args(args: Vec<String>) -> Result<ProfileConfig, Xta
                 }
             }
             "--json" => json_stdout = true,
+            "--compilation-unions" => compilation_unions = true,
             other => {
                 return Err(XtaskError::new(format!(
-                    "Unknown flag '{other}'. Usage: cargo xtask profile-ingest --target <path> [--stages parse,transform,embed] [--verbosity 1|2|3] [--loops N] [--json]"
+                    "Unknown flag '{other}'. Usage: cargo xtask profile-ingest --target <path> [--stages parse,transform,embed] [--verbosity 1|2|3] [--loops N] [--json] [--compilation-unions]"
                 )));
             }
         }
@@ -175,6 +182,7 @@ pub fn parse_profile_ingest_args(args: Vec<String>) -> Result<ProfileConfig, Xta
         verbosity,
         json_stdout,
         loops,
+        compilation_unions,
     })
 }
 
@@ -463,11 +471,7 @@ fn capitalize_first(s: &str) -> String {
 
 /// Compute the widest label (prefix + connector + name) in the tree,
 /// respecting the same depth limit used for display.
-fn max_tree_label_width(
-    node: &TimedNode,
-    depth: usize,
-    depth_remaining: Option<usize>,
-) -> usize {
+fn max_tree_label_width(node: &TimedNode, depth: usize, depth_remaining: Option<usize>) -> usize {
     let indent = if depth == 0 { 0 } else { 3 * depth };
     let width = indent + node.name.len();
 
@@ -561,7 +565,10 @@ fn print_report(
     if !stopwatch.is_empty() {
         let stage_map = find_stage_nodes(forest);
         let header = "─── Stopwatch check ";
-        println!("{header}{}", "─".repeat(display_width.saturating_sub(header.len())));
+        println!(
+            "{header}{}",
+            "─".repeat(display_width.saturating_sub(header.len()))
+        );
         for &key in &["parse", "transform", "embed"] {
             let Some(&sw) = stopwatch.get(key) else {
                 continue;
@@ -624,12 +631,13 @@ enum ResolvedProfileTarget {
 fn resolve_profile_target(requested: &Path) -> Result<ResolvedProfileTarget, XtaskError> {
     let local_manifest = requested.join("Cargo.toml");
     if local_manifest.is_file() {
-        let manifest = try_parse_manifest(requested).map_err(|e| {
-            XtaskError::new(format!(
-                "Failed to read manifest at {}: {e}",
-                local_manifest.display()
-            ))
-        })?;
+        let manifest =
+            try_parse_manifest(requested, syn_parser::ManifestKind::Crate).map_err(|e| {
+                XtaskError::new(format!(
+                    "Failed to read manifest at {}: {e}",
+                    local_manifest.display()
+                ))
+            })?;
         if let Some(ws) = manifest.workspace {
             return Ok(ResolvedProfileTarget::Workspace {
                 member_count: ws.members.len(),
@@ -701,26 +709,26 @@ fn compute_stats(durations: &[Duration]) -> Option<StageStats> {
     if durations.is_empty() {
         return None;
     }
-    
+
     let mut sorted: Vec<Duration> = durations.to_vec();
     sorted.sort();
-    
+
     let min = *sorted.first().unwrap();
     let max = *sorted.last().unwrap();
-    
+
     let sum: Duration = durations.iter().sum();
     let avg = sum / durations.len() as u32;
-    
+
     let percentile = |p: f64| -> Duration {
         let idx = ((durations.len() as f64 - 1.0) * p / 100.0) as usize;
         sorted[idx.min(sorted.len() - 1)]
     };
-    
+
     let p50 = percentile(50.0);
     let p90 = percentile(90.0);
     let p95 = percentile(95.0);
     let p99 = percentile(99.0);
-    
+
     // Standard deviation
     let avg_secs = avg.as_secs_f64();
     let variance: f64 = durations
@@ -729,10 +737,11 @@ fn compute_stats(durations: &[Duration]) -> Option<StageStats> {
             let diff = d.as_secs_f64() - avg_secs;
             diff * diff
         })
-        .sum::<f64>() / durations.len() as f64;
+        .sum::<f64>()
+        / durations.len() as f64;
     let std_dev_secs = variance.sqrt();
     let std_dev = Duration::from_secs_f64(std_dev_secs);
-    
+
     Some(StageStats {
         min,
         max,
@@ -754,53 +763,62 @@ fn print_stats_report(
     member_count: usize,
 ) {
     let display_width = 90;
-    
+
     println!("{}", "═".repeat(display_width));
     println!("  Statistics Report: {} iterations", iterations);
-    println!("  Target: {} ({} .rs files, {} {})", 
-        target_name, 
-        rs_count, 
+    println!(
+        "  Target: {} ({} .rs files, {} {})",
+        target_name,
+        rs_count,
         member_count,
-        if member_count == 1 { "member" } else { "members" }
+        if member_count == 1 {
+            "member"
+        } else {
+            "members"
+        }
     );
     println!("{}", "═".repeat(display_width));
-    
+
     // Global timing stats
     println!("\n  Global Wall Time (ms):");
-    println!("    min: {:>8}  avg: {:>8}  max: {:>8}  std: {:>8}",
+    println!(
+        "    min: {:>8}  avg: {:>8}  max: {:>8}  std: {:>8}",
         global_stats.min.as_millis(),
         global_stats.avg.as_millis(),
         global_stats.max.as_millis(),
         global_stats.std_dev.as_millis(),
     );
-    println!("    p50: {:>8}  p90: {:>8}  p95: {:>8}  p99: {:>8}",
+    println!(
+        "    p50: {:>8}  p90: {:>8}  p95: {:>8}  p99: {:>8}",
         global_stats.p50.as_millis(),
         global_stats.p90.as_millis(),
         global_stats.p95.as_millis(),
         global_stats.p99.as_millis(),
     );
-    
+
     // Per-stage stats
     for &stage_name in &["parse", "transform", "embed"] {
         let Some(stats) = stage_stats.get(stage_name) else {
             continue;
         };
-        
+
         println!("\n  {} Stage (ms):", capitalize_first(stage_name));
-        println!("    min: {:>8}  avg: {:>8}  max: {:>8}  std: {:>8}",
+        println!(
+            "    min: {:>8}  avg: {:>8}  max: {:>8}  std: {:>8}",
             stats.min.as_millis(),
             stats.avg.as_millis(),
             stats.max.as_millis(),
             stats.std_dev.as_millis(),
         );
-        println!("    p50: {:>8}  p90: {:>8}  p95: {:>8}  p99: {:>8}",
+        println!(
+            "    p50: {:>8}  p90: {:>8}  p95: {:>8}  p99: {:>8}",
             stats.p50.as_millis(),
             stats.p90.as_millis(),
             stats.p95.as_millis(),
             stats.p99.as_millis(),
         );
     }
-    
+
     println!("{}", "═".repeat(display_width));
 }
 
@@ -846,9 +864,23 @@ fn run_single_iteration<'a>(
                     parsed_workspace = Some(pw);
                 }
                 ResolvedProfileTarget::Crate { crate_root } => {
-                    let po = try_run_phases_and_merge(crate_root)
-                        .map_err(|e| XtaskError::new(format!("try_run_phases_and_merge: {e}")))?;
-                    parsed_crate = Some(po);
+                    if cfg.compilation_unions {
+                        let po = try_run_phases_union_for_crate_with_dimensions(
+                            crate_root,
+                            &CompilationUnitDimensionRequest::from_env_or_default(),
+                        )
+                        .map_err(|e| {
+                            XtaskError::new(format!(
+                                "try_run_phases_union_for_crate_with_dimensions: {e}"
+                            ))
+                        })?;
+                        parsed_crate = Some(po);
+                    } else {
+                        let po = try_run_phases_and_merge(crate_root).map_err(|e| {
+                            XtaskError::new(format!("try_run_phases_and_merge: {e}"))
+                        })?;
+                        parsed_crate = Some(po);
+                    }
                 }
             }
         }
@@ -878,18 +910,29 @@ fn run_single_iteration<'a>(
                 }
                 ResolvedProfileTarget::Crate { .. } => {
                     let mut po = parsed_crate.take().ok_or_else(|| {
-                        XtaskError::new(
-                            "internal: missing parsed crate for transform".to_string(),
-                        )
+                        XtaskError::new("internal: missing parsed crate for transform".to_string())
                     })?;
-                    let merged = po.extract_merged_graph().ok_or_else(|| {
-                        XtaskError::new("missing merged graph after parse".to_string())
-                    })?;
-                    let tree = po.extract_module_tree().ok_or_else(|| {
-                        XtaskError::new("missing module tree after parse".to_string())
-                    })?;
-                    transform_parsed_graph(&d, merged, &tree)
-                        .map_err(|e| XtaskError::new(format!("transform_parsed_graph: {e}")))?;
+                    if cfg.compilation_unions {
+                        let graphs = po.extract_parsed_graphs_for_masks().ok_or_else(|| {
+                            XtaskError::new("missing parsed graphs for union transform".to_string())
+                        })?;
+                        let compilation_units = po.extract_compilation_units();
+                        transform_union_crate_and_structural_masks(&d, graphs, compilation_units)
+                            .map_err(|e| {
+                            XtaskError::new(format!(
+                                "transform_union_crate_and_structural_masks: {e}"
+                            ))
+                        })?;
+                    } else {
+                        let merged = po.extract_merged_graph().ok_or_else(|| {
+                            XtaskError::new("missing merged graph after parse".to_string())
+                        })?;
+                        let tree = po.extract_module_tree().ok_or_else(|| {
+                            XtaskError::new("missing module tree after parse".to_string())
+                        })?;
+                        transform_parsed_graph(&d, merged, &tree)
+                            .map_err(|e| XtaskError::new(format!("transform_parsed_graph: {e}")))?;
+                    }
                 }
             }
             db = Some(d);
@@ -912,8 +955,7 @@ fn run_single_iteration<'a>(
             };
             let backend_init = OpenRouterBackend::new(&or_cfg)
                 .map_err(|e| XtaskError::new(format!("OpenRouter backend: {e}")))?;
-            let processor_init =
-                EmbeddingProcessor::new(EmbeddingSource::OpenRouter(backend_init));
+            let processor_init = EmbeddingProcessor::new(EmbeddingSource::OpenRouter(backend_init));
             let backend_active = OpenRouterBackend::new(&or_cfg)
                 .map_err(|e| XtaskError::new(format!("OpenRouter backend (activate): {e}")))?;
             let proc_arc = Arc::new(EmbeddingProcessor::new(EmbeddingSource::OpenRouter(
@@ -1016,21 +1058,21 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
 
     // Run iterations and collect timing data
     let mut iteration_results: Vec<(Duration, HashMap<&str, Duration>)> = Vec::new();
-    
+
     for i in 0..cfg.loops {
         if cfg.loops > 1 {
             eprintln!("Running iteration {}/{}...", i + 1, cfg.loops);
         }
-        
+
         let result = run_single_iteration(&resolved, &cfg, &timing_layer)?;
         iteration_results.push(result);
-        
+
         // Clear timing data between iterations, but keep the last one for detailed reporting
         if i < cfg.loops - 1 {
             let _ = timing_layer.take_finished();
         }
     }
-    
+
     // Get the timing data from the last iteration for detailed breakdown
     let last_iteration_timing_data = timing_layer.take_finished();
 
@@ -1055,7 +1097,7 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
 
     // Compute statistics
     let global_stats = compute_stats(&global_times).unwrap();
-    
+
     let mut stage_stats: HashMap<&str, StageStats> = HashMap::new();
     if !parse_times.is_empty() {
         stage_stats.insert("parse", compute_stats(&parse_times).unwrap());
@@ -1073,18 +1115,22 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
     } else {
         Vec::new()
     };
-    
+
     // Merge same-named siblings for cleaner terminal display
     let display_forest = merge_siblings(timing_forest.clone());
-    
+
     // For single iteration, show the detailed report
     if cfg.loops == 1 {
         let (global_elapsed, ref stopwatch) = iteration_results[0];
-        
+
         // Calculate stages sum for overhead calculation
         let stages_sum: Duration = stopwatch.values().copied().sum();
-        
-        let member_label = if member_count == 1 { "member" } else { "members" };
+
+        let member_label = if member_count == 1 {
+            "member"
+        } else {
+            "members"
+        };
         println!(
             "Target: {} @ {} ({} .rs files, {} {})",
             target_name,
@@ -1094,10 +1140,16 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
             member_label,
         );
         println!("Ploke:  {}", ploke_git.as_deref().unwrap_or("n/a"));
-        
+
         // If we have detailed timing data and verbosity is enabled, show the tree breakdown
         if !display_forest.is_empty() && cfg.verbosity > 0 {
-            print_report(&display_forest, global_elapsed, cfg.verbosity, stages_sum, stopwatch);
+            print_report(
+                &display_forest,
+                global_elapsed,
+                cfg.verbosity,
+                stages_sum,
+                stopwatch,
+            );
         } else {
             // Simple summary output for single iteration
             let display_width = 70;
@@ -1122,13 +1174,19 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
             rs_count,
             member_count,
         );
-        
+
         // Also show detailed breakdown from last iteration if verbosity is high
         if !display_forest.is_empty() && cfg.verbosity > 0 {
             let (last_global, last_stopwatch) = &iteration_results[iteration_results.len() - 1];
             let stages_sum: Duration = last_stopwatch.values().copied().sum();
             println!("\n  Detailed breakdown (last iteration):");
-            print_report(&display_forest, *last_global, cfg.verbosity, stages_sum, last_stopwatch);
+            print_report(
+                &display_forest,
+                *last_global,
+                cfg.verbosity,
+                stages_sum,
+                last_stopwatch,
+            );
         }
     }
 
@@ -1143,9 +1201,12 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
     } else {
         String::new()
     };
-    let fname = format!("{}_{}_{}{}.json", target_name, git_slug, ts_slug, loops_suffix);
+    let fname = format!(
+        "{}_{}_{}{}.json",
+        target_name, git_slug, ts_slug, loops_suffix
+    );
     let out_path = out_dir.join(fname);
-    
+
     // Create a report with statistics
     let mut stages_map = serde_json::Map::new();
     for (name, stats) in &stage_stats {
@@ -1157,37 +1218,43 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
         stage_obj.insert("p90_ms".to_string(), (stats.p90.as_millis() as u64).into());
         stage_obj.insert("p95_ms".to_string(), (stats.p95.as_millis() as u64).into());
         stage_obj.insert("p99_ms".to_string(), (stats.p99.as_millis() as u64).into());
-        stage_obj.insert("std_dev_ms".to_string(), (stats.std_dev.as_millis() as u64).into());
+        stage_obj.insert(
+            "std_dev_ms".to_string(),
+            (stats.std_dev.as_millis() as u64).into(),
+        );
         stages_map.insert(name.to_string(), serde_json::Value::Object(stage_obj));
     }
-    
-    let raw_times: Vec<serde_json::Value> = iteration_results.iter().map(|(global, stopwatch)| {
-        let mut stages = serde_json::Map::new();
-        for (k, v) in stopwatch {
-            stages.insert(k.to_string(), (v.as_millis() as u64).into());
-        }
-        serde_json::json!({
-            "global_ms": global.as_millis(),
-            "stages": stages,
+
+    let raw_times: Vec<serde_json::Value> = iteration_results
+        .iter()
+        .map(|(global, stopwatch)| {
+            let mut stages = serde_json::Map::new();
+            for (k, v) in stopwatch {
+                stages.insert(k.to_string(), (v.as_millis() as u64).into());
+            }
+            serde_json::json!({
+                "global_ms": global.as_millis(),
+                "stages": stages,
+            })
         })
-    }).collect();
-    
+        .collect();
+
     // Get last iteration's global time for the timing tree percentages
     let (last_global, _) = &iteration_results[iteration_results.len() - 1];
-    
+
     // Generate full timing tree for offline analysis (unmerged to preserve full detail)
     let full_forest: Vec<JsonNode> = timing_forest
         .iter()
         .map(|t| to_json_node(t, *last_global))
         .collect();
-    
+
     // Generate stage tree (top-level stages with children)
     let stage_forest: Vec<JsonNode> = timing_forest
         .iter()
         .filter(|t| matches!(t.name.as_str(), "parse" | "transform" | "embed"))
         .map(|t| to_json_node(t, *last_global))
         .collect();
-    
+
     let report = serde_json::json!({
         "target": target_name,
         "target_path": target_path.display().to_string(),
@@ -1216,7 +1283,7 @@ pub fn run_profile_ingest(cfg: ProfileConfig) -> Result<(), XtaskError> {
             "full_forest": full_forest,
         },
     });
-    
+
     let json = serde_json::to_string_pretty(&report)
         .map_err(|e| XtaskError::new(format!("serialize report: {e}")))?;
     fs::write(&out_path, &json)

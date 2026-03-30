@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use ploke_db::{helpers::graph_resolve_exact, Database};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use ploke_db::{Database, helpers::graph_resolve_exact};
 use std::path::{Path, PathBuf};
 
 fn bench_resolve_strict(c: &mut Criterion) {
@@ -10,7 +10,9 @@ fn bench_resolve_strict(c: &mut Criterion) {
     backup.pop(); // crates -> workspace root
     backup.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
     if backup.exists() {
-        let prior = db.relations_vec().expect("relations_vec");
+        let prior = db
+            .prior_rels_for_plain_backup_import()
+            .expect("prior_rels_for_plain_backup_import");
         db.import_from_backup(&backup, &prior)
             .expect("import_from_backup");
     } else {

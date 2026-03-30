@@ -2,7 +2,7 @@ use std::path::Path;
 
 use itertools::Itertools;
 
-use crate::{result::get_pos, Database, DbError};
+use crate::{Database, DbError, result::get_pos};
 
 pub trait Validator {
     fn validate_path_file(&self, file_path: &Path) -> Result<(), DbError>;

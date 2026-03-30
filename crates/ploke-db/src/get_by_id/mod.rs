@@ -1,14 +1,14 @@
 use cozo::NamedRows;
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use ploke_core::{rag_types::ContextPart, TrackingHash};
+use ploke_core::{TrackingHash, rag_types::ContextPart};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    database::{to_string, to_uuid, ImmutQuery},
-    result::{get_byte_offsets, get_pos},
     Database, DbError, NodeType, QueryResult,
+    database::{ImmutQuery, to_string, to_uuid},
+    result::{get_byte_offsets, get_pos},
 };
 
 lazy_static! {
@@ -80,7 +80,7 @@ impl TryFrom<cozo::NamedRows> for NodePaths {
             None => {
                 return Err(DbError::QueryExecution(
                     "No results found for id".to_string(),
-                ))
+                ));
             }
         }
         .iter();
@@ -89,7 +89,7 @@ impl TryFrom<cozo::NamedRows> for NodePaths {
             None => {
                 return Err(DbError::QueryExecution(
                     "No name returned for id".to_string(),
-                ))
+                ));
             }
         };
         let mut canon = match row.next().and_then(|c| c.get_slice()) {
@@ -97,7 +97,7 @@ impl TryFrom<cozo::NamedRows> for NodePaths {
             None => {
                 return Err(DbError::QueryExecution(
                     "No canon_path returned for id".to_string(),
-                ))
+                ));
             }
         };
         let file = match row.next().and_then(|f| f.get_str()) {
@@ -105,7 +105,7 @@ impl TryFrom<cozo::NamedRows> for NodePaths {
             None => {
                 return Err(DbError::QueryExecution(
                     "No file_path returned for id".to_string(),
-                ))
+                ));
             }
         };
         canon.push_str("::");

@@ -10,7 +10,7 @@ Implements an IO-level API to create (or overwrite) a file with full safety:
 */
 
 use super::*;
-use crate::path_policy::{normalize_against_roots_with_policy, path_within_roots, SymlinkPolicy};
+use crate::path_policy::{SymlinkPolicy, normalize_against_roots_with_policy, path_within_roots};
 use ploke_core::{CreateFileData, CreateFileResult, OnExists};
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;

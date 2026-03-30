@@ -1,0 +1,6 @@
+[package]
+name = "fixture_import_duplicate_leaf"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
