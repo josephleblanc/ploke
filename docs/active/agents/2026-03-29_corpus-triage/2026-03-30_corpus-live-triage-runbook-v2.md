@@ -10,6 +10,7 @@ Provide an operator handoff for running a long `parse debug corpus` sweep while 
 # Related Planning Files
 - [2026-03-28_corpus-triage-workflow.md](/home/brasides/code/ploke/docs/active/agents/2026-03-29_corpus-triage/2026-03-28_corpus-triage-workflow.md)
 - [2026-03-28_error-diagnostic-rollout-plan.md](/home/brasides/code/ploke/docs/active/agents/2026-03-28_error-diagnostic-rollout-plan.md)
+- [2026-03-30_corpus-repro-report-template.json](/home/brasides/code/ploke/docs/active/agents/2026-03-29_corpus-triage/2026-03-30_corpus-repro-report-template.json)
 
 ## Intent
 
@@ -20,7 +21,7 @@ Use corpus download and parse time productively by triaging failures as they app
 Main corpus run:
 
 ```text
-cargo xtask parse debug corpus --limit 100 --workspace-mode probe
+cargo xtask parse debug corpus --limit 100 --workspace-mode probe --artifact-dir xtask/debug_corpus_runs
 ```
 
 Live triage watcher against the active run directory:
@@ -33,6 +34,15 @@ One-shot refresh from an in-progress or completed run:
 
 ```text
 cargo xtask parse debug corpus-triage <run-id-or-run-dir>
+```
+
+Export a machine-readable repro handoff for one cluster, target, member, or failure:
+
+```text
+cargo xtask --format json parse debug corpus-repro <run-id-or-run-dir>
+cargo xtask --format json parse debug corpus-repro <run-id-or-run-dir> --cluster <cluster-key-or-slug>
+cargo xtask --format json parse debug corpus-repro <run-id-or-run-dir> --target <owner/repo> --member <member-label>
+cargo xtask --format json parse debug corpus-repro <run-id-or-run-dir> --failure <failure-id>
 ```
 
 Inspect one saved target:
@@ -65,7 +75,8 @@ Record these at the start of the session document or writeup:
 - timeout settings if they differ from defaults
 - whether the run completed, was interrupted, or appears stalled
 
-If a non-default artifact or checkout directory is used, repeat that path in the final writeup so later work does not assume `target/debug_corpus_runs/` or `tests/fixture_github_clones/corpus/`.
+If a non-default artifact or checkout directory is used, repeat that path in the final writeup so later work does not assume `xtask/debug_corpus_runs/` or `tests/fixture_github_clones/corpus/`.
+The default artifact root is `xtask/debug_corpus_runs/`.
 
 ## Expected Behavior
 
@@ -73,6 +84,7 @@ If a non-default artifact or checkout directory is used, repeat that path in the
 - If the top-level summary does not exist yet, triage falls back to scanning per-target `summary.json` files and in-progress workspace `workspace_probe/workspace_summary.json` files already written under the run directory.
 - Triage outputs are refreshed under `<run-dir>/triage/`.
 - Pending report stubs are still generated per clustered failure signature, but cluster formation is for dedupe and later consolidation, not a prerequisite for dispatch.
+- `corpus-repro` can be run against a completed or partial snapshot and returns failure-derived `selected_examples` plus cluster-level `canonical_examples`.
 
 ## Current Limitations
 
@@ -81,6 +93,7 @@ If a non-default artifact or checkout directory is used, repeat that path in the
 - Use one writer per pending report file. If two sub-agents write structured output back to the same cluster report, the later write can overwrite the earlier one.
 - Pending report filenames are derived from a sanitized cluster key. Distinct cluster keys can theoretically collapse to the same filename, so if a report path looks unexpectedly reused, stop and inspect before continuing.
 - A later repro task may be blocked if triage leaves behind only cluster-level judgments and not exact target/member/revision evidence for at least one canonical example per cluster.
+- `--watch` now retries through transient partial-write snapshot parse errors, but persistent malformed JSON or missing template files are still hard failures and should be treated as workflow issues.
 
 ## Artifacts
 
@@ -90,6 +103,23 @@ Under `<run-dir>/triage/`:
 - `clusters.json`
 - `reports/_report_template.json`
 - `reports/pending/*.json`
+
+Required sub-agent handoff template:
+- [2026-03-30_corpus-repro-report-template.json](/home/brasides/code/ploke/docs/active/agents/2026-03-29_corpus-triage/2026-03-30_corpus-repro-report-template.json)
+
+From `cargo xtask --format json parse debug corpus-repro ...`:
+- `schema_version`
+- `snapshot_mode`
+- `summary_path`
+- `run_dir`
+- `triage_dir`
+- `triage_present`
+- `triage_index_path`
+- `triage_clusters_path`
+- `failures`
+- `clusters`
+- `canonical_examples`
+- `selected_examples`
 
 Under each failed target artifact directory:
 - `summary.json`
@@ -108,7 +138,7 @@ Under each failed target artifact directory:
 6. Query `index.json` and `clusters.json`.
 7. Dispatch a sub-agent as soon as a new failure appears.
 8. Use `clusters.json` to avoid duplicate investigations and to fold matching failures into existing work.
-9. For each active cluster, ensure at least one canonical failure example is documented with exact target, member if applicable, stage, and artifact paths.
+9. For each active cluster, ensure at least one canonical failure example is documented with exact target, member if applicable, stage, artifact paths, and a matching `corpus-repro` export.
 10. Keep implementation work out of parser internals unless explicitly discussed with the user, especially for:
 - `code_visitor.rs`
 - merge functions
@@ -128,9 +158,13 @@ Each sub-agent should update the relevant pending report with:
 - relevant artifact paths
 - relevant code paths
 
+Each structured sub-agent report should conform to:
+- [2026-03-30_corpus-repro-report-template.json](/home/brasides/code/ploke/docs/active/agents/2026-03-29_corpus-triage/2026-03-30_corpus-repro-report-template.json)
+
 Each sub-agent should also capture enough concrete evidence for later repro work:
 
 - one canonical failure example for the cluster
+- the exact `corpus-repro` selector used, such as `--failure <id>` or `--cluster <slug>`
 - exact `normalized_repo`
 - exact failing stage
 - exact member label or member path component for workspace failures
@@ -139,7 +173,7 @@ Each sub-agent should also capture enough concrete evidence for later repro work
 - concise backtrace or diagnostic summary if available
 - exact commit SHA if it is present in the persisted target summary
 - whether the checkout still exists and at what path
-- one recommended narrow rerun command for follow-up investigation
+- one inspection command and one narrow repro command for follow-up investigation, if available
 - a short note on what a future repro test should assert
 
 Before treating a failure as novel, check `/home/brasides/code/ploke/docs/design/known_limitations/` for an existing documented limitation that matches the signature or parser behavior. If there is a plausible match, note the matching limitation ID in the report and frame the recommendation as confirm or document unless the live artifact clearly shows a new failure mode.
@@ -154,24 +188,46 @@ When structured report writes are used:
 
 ## Canonical Example Block
 
-Each pending report should contain a compact canonical example block with:
+Each pending report should contain a canonical example block copied or derived from one `selected_examples[]` entry from `cargo xtask --format json parse debug corpus-repro ...`.
+
+The preferred shape is the `canonical_example` object from:
+- [2026-03-30_corpus-repro-report-template.json](/home/brasides/code/ploke/docs/active/agents/2026-03-29_corpus-triage/2026-03-30_corpus-repro-report-template.json)
+
+Required fields:
 
 - `failure_id`
+- `run_id`
+- `cluster_key`
+- `cluster_slug`
 - `normalized_repo`
+- `repository_kind`
 - `commit_sha` if known
-- `member_label` or member path if applicable
+- `source`
+- `member_label` or `member_path` if applicable
 - `stage`
+- `failure_kind`
+- `panic`
 - `error_signature`
-- `artifact_dir`
-- `summary_path`
-- `failure_json_path`
-- `stage_summary_path`
+- `error_excerpt`
 - `checkout_path`
 - `checkout_present`
-- `suggested_rerun_command`
+- `artifact_path`
+- `artifact_present`
+- `failure_artifact_path`
+- `failure_artifact_present`
+- `target_summary_path`
+- `target_summary_present`
+- `workspace_summary_path`
+- `workspace_summary_present`
+- `suggested_inspection_command`
+- `suggested_repro_command`
 - `suggested_test_assertion`
+- `relevant_artifacts`
+- `relevant_code_paths`
 
 If any field is unavailable, say so explicitly rather than leaving it ambiguous.
+
+Use `selected_examples` for failure-specific handoff. Use `canonical_examples` only as the cluster-level summary example.
 
 ## Query Snippets
 
@@ -179,6 +235,7 @@ If any field is unavailable, say so explicitly rather than leaving it ambiguous.
 jq -c '.clusters[] | {count, stage, failure_kind, error_signature, pending_report_path}' <run-dir>/triage/clusters.json
 jq -c '.failures[] | {id, normalized_repo, member_label, stage, error_signature}' <run-dir>/triage/index.json
 rg -n '"status": "pending"' <run-dir>/triage/reports/pending
+cargo xtask --format json parse debug corpus-repro <run-id-or-run-dir> --failure <failure-id>
 ```
 
 Useful follow-up inspection commands:
@@ -186,6 +243,13 @@ Useful follow-up inspection commands:
 ```text
 cargo xtask parse debug corpus-show <run-id-or-run-dir> --target <owner/repo> --backtrace
 cargo xtask parse debug corpus-show <run-id-or-run-dir> --target <owner/repo> --member <member-label> --backtrace
+```
+
+Useful repro-handoff extraction with `jq`:
+
+```text
+cargo xtask --format json parse debug corpus-repro <run-id-or-run-dir> --failure <failure-id> | jq '.selected_examples[0]'
+cargo xtask --format json parse debug corpus-repro <run-id-or-run-dir> --cluster <cluster-slug> | jq '.canonical_examples'
 ```
 
 ## Post-Run Writeup
@@ -201,8 +265,8 @@ After the corpus process exits, is terminated, or is judged stalled, leave a sho
 - which failures matched documented known limitations
 - which failures still look novel or need follow-up
 - which pending reports are canonical starting points for minimal repro creation
+- which `corpus-repro --failure ...` or `--cluster ...` selectors should be used first for follow-up work
 - any operational issues encountered during the run, such as:
-- watcher crashes on partially written artifacts
 - checkout stalls or clone hangs before stage artifacts are written
 - repeated timeout-heavy targets
 - missing or cleaned-up artifact/checkouts that would block later repro work
@@ -217,5 +281,6 @@ The workflow is successful only if a later human or agent can pick one pending r
 - where it failed
 - which saved artifacts prove it
 - which repo revision and member were involved
-- what narrow command should be run next
+- what inspection command should be run next
+- what narrow repro command should be run next
 - what a minimal repro test should eventually assert

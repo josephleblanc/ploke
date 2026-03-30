@@ -44,6 +44,7 @@ tests/fixture_github_clones
 
 # xtask profiling JSON output
 xtask/profiling_output/
+xtask/debug_corpus_runs/
 
 CARGO_TEST_OUTPUT.txt
 
