@@ -47,5 +47,13 @@ name = "ws_fixture_duplicate_tls_branch_h2_consts"
 version = "0.1.0"
 
 [[package]]
+name = "ws_fixture_logging_inline_file_repro"
+version = "0.1.0"
+
+[[package]]
+name = "ws_fixture_quantized_metal_repro"
+version = "0.1.0"
+
+[[package]]
 name = "ws_fixture_scheduler_queue_repro"
 version = "0.1.0"
