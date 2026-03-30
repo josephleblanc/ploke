@@ -16,6 +16,9 @@ mod duplicate_cfg_test_mods;
 #[path = "repro/duplicate_logging_inline_file_mod.rs"]
 mod duplicate_logging_inline_file_mod;
 
+#[path = "repro/duplicate_image_inline_file_mod.rs"]
+mod duplicate_image_inline_file_mod;
+
 #[path = "repro/duplicate_quantized_metal_mod.rs"]
 mod duplicate_quantized_metal_mod;
 
