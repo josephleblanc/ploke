@@ -2775,6 +2775,7 @@ desc[id] := parent_of[id, parent], desc[parent]
         limit: usize,
         cursor: usize,
     ) -> Result<Vec<TypedEmbedData>, PlokeError> {
+        // ANCHOR: get_unembedded_node_data_primary_nodes
         let mut unembedded_data = Vec::new();
         let mut count = 0;
 
@@ -2795,6 +2796,7 @@ desc[id] := parent_of[id, parent], desc[parent]
             unembedded_data.push(nodes_of_type);
         }
         Ok(unembedded_data)
+        // ANCHOR_END: get_unembedded_node_data_primary_nodes
     }
 
     /// Fetches all primary nodes that already have an embedding.

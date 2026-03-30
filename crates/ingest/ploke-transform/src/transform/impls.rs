@@ -11,6 +11,7 @@ pub(super) fn transform_impls(
     db: &Db<MemStorage>,
     impls: Vec<ImplNode>,
 ) -> Result<(), TransformError> {
+    // ANCHOR: transform_impls_methods
     for imple in impls.into_iter() {
         let imple_any_id = imple.any_id();
         // let schema = &FUNCTION_NODE_SCHEMA;
@@ -70,6 +71,7 @@ pub(super) fn transform_impls(
         // }
     }
     Ok(())
+    // ANCHOR_END: transform_impls_methods
 }
 
 fn process_impl(imple: &ImplNode) -> BTreeMap<String, DataValue> {
@@ -139,13 +141,6 @@ mod tests {
         // Setup printable nodes
         let successful_graphs = test_run_phases_and_collect("fixture_nodes");
         let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
-        // let tree = merged.build_module_tree().unwrap_or_else(|e| {
-        //     tracing::error!(target: "transform_function",
-        //         "Error building tree: {}",
-        //         e
-        //     );
-        //     panic!()
-        // });
 
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");

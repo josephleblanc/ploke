@@ -15,12 +15,14 @@ lazy_static! {
     /// Query rule to find primary nodes (multi-embedding schema version).
     /// In multi-embedding schema, embeddings are stored in separate relations,
     /// so we don't filter by embedding field here.
+    // ANCHOR: common_fields_embedded_primary_nodes
     pub static ref COMMON_FIELDS_EMBEDDED: String = NodeType::primary_nodes().iter().map(|ty| {
         let rel = ty.relation_str();
             format!(r#"
             has_embedding[id, name, hash, span] := *{rel}{{id, name, tracking_hash: hash, span @ 'NOW'}}
             "#)
         }).join("\n");
+    // ANCHOR_END: common_fields_embedded_primary_nodes
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

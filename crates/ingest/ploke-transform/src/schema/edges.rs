@@ -35,6 +35,7 @@ impl SyntacticRelationSchema {
         let relation_kind = relation.kind_str();
         let schema = &SyntacticRelationSchema::SCHEMA;
 
+        // ANCHOR: impl_trait_associated_edges
         // Extract the node type names from the relation variant
         let (source_kind, target_kind) = match relation {
             SyntacticRelation::Contains { .. } => ("Module", "Primary"),
@@ -52,6 +53,7 @@ impl SyntacticRelationSchema {
             SyntacticRelation::TraitAssociatedItem { .. } => ("Trait", "AssociatedItem"),
             SyntacticRelation::ImportedBy { .. } => ("Primary", "Import"),
         };
+        // ANCHOR_END: impl_trait_associated_edges
 
         BTreeMap::from([
             (schema.source_id().to_string(), source_id),

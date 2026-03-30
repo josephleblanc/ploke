@@ -13,6 +13,7 @@ pub(super) fn transform_traits(
     db: &Db<MemStorage>,
     traits: Vec<TraitNode>,
 ) -> Result<(), TransformError> {
+    // ANCHOR: transform_traits_methods
     // trait->trayt (rust keywords)
     for trayt in traits.into_iter() {
         // let schema = &FUNCTION_NODE_SCHEMA;
@@ -55,6 +56,7 @@ pub(super) fn transform_traits(
     }
 
     Ok(())
+    // ANCHOR_END: transform_traits_methods
 }
 
 #[cfg(test)]

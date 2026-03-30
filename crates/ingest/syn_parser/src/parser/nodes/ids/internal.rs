@@ -660,11 +660,13 @@ define_internal_node_id!(
         markers: [PrimaryNodeIdTrait],
     }
 ); // For standalone functions
+// ANCHOR: method_node_id_marker
 define_internal_node_id!(
     struct MethodNodeId {
         markers: [AssociatedItemNodeIdTrait],
     }
 ); // For associated functions/methods
+// ANCHOR_END: method_node_id_marker
 define_internal_node_id!(
     struct ImplNodeId {
         markers: [PrimaryNodeIdTrait],
@@ -888,7 +890,6 @@ mod private_traits {
 // impl_typed_node_id_get!(ModuleNodeId, get_module);
 
 // Associated Items (Methods are retrieved via their parent Impl/Trait, not directly)
-// Note: MethodNodeId does *not* get an impl, as there's no `graph.get_method(MethodNodeId)`
 
 // Secondary Nodes (Fields, Variants, Params, Generics are part of their parent node, not directly retrieved)
 // Note: FieldNodeId, VariantNodeId, ParamNodeId, GenericParamNodeId do *not* get impls.

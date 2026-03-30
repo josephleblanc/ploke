@@ -1640,6 +1640,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Generate base ID for the method
                 // Methods are contained within the impl, not directly in the module.
+                // ANCHOR: method_from_impl_node
                 let method_any_id = self.state.generate_synthetic_node_id(
                     &method_name,
                     ItemKind::Method, // Use Method kind
@@ -1709,6 +1710,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     cfgs: method_item_cfgs,
                 };
                 methods.push(method_node);
+                // ANCHOR_END: method_from_impl_node
             }
             // TODO: Handle syn::ImplItem::Const and syn::ImplItem::Type here
             // 1. Generate base ID for ConstNode/TypeAliasNode
@@ -1742,6 +1744,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             current_mod: {:?}\nimpl_node: {:#?}\n{:-^40}", "", impl_node_id, self.state.current_file_path.display(), self.state.current_module, self.state.current_module_path, impl_node, "");
 
         // Now add the ImplAssociatedItem relations using methods from the created impl_node
+        // ANCHOR: impl_method_relations
         for method_node in &impl_node.methods {
             let relation = SyntacticRelation::ImplAssociatedItem {
                 source: typed_impl_id,
@@ -1775,6 +1778,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             target: PrimaryNodeId::from(typed_impl_id), // Use category enum
         };
         self.state.code_graph.relations.push(contains_relation);
+        // ANCHOR_END: impl_method_relations
 
         // Pop the impl's scope using the helper *after* visiting children
         self.pop_primary_scope(&impl_name);
@@ -1840,6 +1844,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 // --- End CFG Handling ---
 
                 // Generate base ID for the method definition within the trait
+                // ANCHOR: method_from_trait_node
                 let method_any_id = self.state.generate_synthetic_node_id(
                     &method_name,
                     ItemKind::Method, // Use Method kind
@@ -1916,6 +1921,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     cfgs: method_item_cfgs,
                 };
                 methods.push(method_node);
+                // ANCHOR_END: method_from_trait_node
             }
             // TODO: Handle syn::TraitItem::Const and syn::TraitItem::Type here
             // 1. Generate base ID for ConstNode/TypeAliasNode
@@ -1988,6 +1994,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         };
 
         // Now add the TraitAssociatedItem relations using methods from the created trait_node
+        // ANCHOR: trait_method_relations
         for method_node in &trait_node.methods {
             let relation = SyntacticRelation::TraitAssociatedItem {
                 source: trait_typed_id, // Use typed trait ID
@@ -2021,6 +2028,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             target: PrimaryNodeId::from(trait_typed_id), // Use typed trait ID
         };
         self.state.code_graph.relations.push(contains_relation);
+        // ANCHOR_END: trait_method_relations
 
         // Pop the trait's scope using the helper *after* visiting children
         self.pop_primary_scope(&trait_name);

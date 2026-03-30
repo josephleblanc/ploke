@@ -999,6 +999,7 @@ impl ModuleTree {
         &mut self,
         graph: &ParsedCodeGraph,
     ) -> Result<(), ModuleTreeError> {
+        // ANCHOR: link_definition_imports
         log::debug!(
             target: LOG_TARGET_MOD_TREE_BUILD,
             "link_definition_imports: pending imports {} (reexports tracked: {})",
@@ -1021,6 +1022,7 @@ impl ModuleTree {
         }
 
         Ok(())
+        // ANCHOR_END: link_definition_imports
     }
 
     fn try_link_single_import(
@@ -1308,6 +1310,7 @@ impl ModuleTree {
             return Ok(());
         }
 
+        // ANCHOR: definition_index_primary_nodes
         let mut primary_names: HashMap<PrimaryNodeId, &str> = HashMap::new();
         primary_names.extend(
             graph
@@ -1387,6 +1390,7 @@ impl ModuleTree {
         self.definition_index = index;
         self.definition_index_ready = true;
         Ok(())
+        // ANCHOR_END: definition_index_primary_nodes
     }
 
     fn lookup_definition_by_segments(

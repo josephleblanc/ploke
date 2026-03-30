@@ -123,12 +123,14 @@ pub trait EmbeddingExt {
     fn get_common_nodes(&self) -> Result<QueryResult, PlokeError>;
 
     /// Retrieves ordered embedding data for the given ids constrained to a specific embedding set.
+    // ANCHOR: get_nodes_ordered_for_set_primary_nodes
     fn get_nodes_ordered_for_set(
         &self,
         nodes: Vec<Uuid>,
         embedding_set: &EmbeddingSet,
     ) -> Result<Vec<EmbeddingData>, PlokeError>;
 
+    // ANCHOR: get_rel_with_cursor_primary_nodes
     fn get_rel_with_cursor(
         &self,
         node_type: NodeType,
@@ -491,6 +493,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
 
         query_result.to_embedding_nodes()
     }
+    // ANCHOR_END: get_nodes_ordered_for_set_primary_nodes
 
     fn get_rel_with_cursor(
         &self,
@@ -580,6 +583,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         );
         Ok(TypedEmbedData { v, ty: node_type })
     }
+    // ANCHOR_END: get_rel_with_cursor_primary_nodes
 
     fn update_embeddings_batch(
         &self,
