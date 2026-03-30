@@ -69,10 +69,11 @@ Under `<run-dir>/triage/`:
 1. Start the corpus run.
 2. Identify the active run ID from the startup output or the newly created directory under `target/debug_corpus_runs/`.
 3. Start the triage watcher for that run.
-4. Query `index.json` and `clusters.json`.
-5. Dispatch a sub-agent as soon as a new failure appears.
-6. Use `clusters.json` to avoid duplicate investigations and to fold matching failures into existing work.
-7. Keep implementation work out of parser internals unless explicitly discussed with the user, especially for:
+4. Keep monitoring until the corpus run terminates or the user explicitly stops the session. Poll the live artifact files at least every 5 minutes even if the terminal sessions are quiet, and poll more frequently while the run is actively changing or while sub-agent work is in flight.
+5. Query `index.json` and `clusters.json`.
+6. Dispatch a sub-agent as soon as a new failure appears.
+7. Use `clusters.json` to avoid duplicate investigations and to fold matching failures into existing work.
+8. Keep implementation work out of parser internals unless explicitly discussed with the user, especially for:
 - `code_visitor.rs`
 - merge functions
 - pruning functions
@@ -83,11 +84,14 @@ Under `<run-dir>/triage/`:
 Each sub-agent should update the relevant pending report with:
 - suspected root cause
 - confidence
+- whether the failure appears to match an existing entry under `/home/brasides/code/ploke/docs/design/known_limitations/`
 - fix-vs-document recommendation
 - whether the issue touches sensitive pipeline areas
 - recommended next step
 - relevant artifact paths
 - relevant code paths
+
+Before treating a failure as novel, check `/home/brasides/code/ploke/docs/design/known_limitations/` for an existing documented limitation that matches the signature or parser behavior. If there is a plausible match, note the matching limitation ID in the report and frame the recommendation as confirm/document unless the live artifact clearly shows a new failure mode.
 
 When structured report writes are used:
 - Assign only one sub-agent to a given pending report path at a time.
@@ -100,3 +104,19 @@ jq -c '.clusters[] | {count, stage, failure_kind, error_signature, pending_repor
 jq -c '.failures[] | {id, normalized_repo, member_label, stage, error_signature}' <run-dir>/triage/index.json
 rg -n '"status": "pending"' <run-dir>/triage/reports/pending
 ```
+
+## Post-Run Writeup
+
+After the corpus process exits, is terminated, or is judged stalled, leave a short operator writeup that captures:
+
+- run id and run directory
+- whether the run completed cleanly, was interrupted by an operator, or appears to have stalled
+- total failure count and the main failure clusters or report paths
+- which failures matched documented known limitations
+- which failures still look novel or need follow-up
+- any operational issues encountered during the run, such as:
+- watcher crashes on partially written artifacts
+- checkout stalls or clone hangs before stage artifacts are written
+- repeated timeout-heavy targets
+
+If the run did not produce a top-level `summary.json`, explicitly say that the writeup is based on partial persisted artifacts under `<run-dir>/` rather than a completed corpus summary.

@@ -33,6 +33,7 @@ cargo xtask parse debug corpus-triage <run-id>
 
 4. Dispatch a sub-agent as soon as a new failure appears in `index.json`.
 5. Use `clusters.json` and the pending report stubs to dedupe follow-up work across matching failures.
+6. Continue monitoring the live run until the process exits or the user explicitly stops the session. Poll the persisted triage/output files at least every 5 minutes even if no new terminal output appears, and poll more frequently while failures are landing or sub-agents are still working.
 
 Notes:
 - `index.json` is the failure-first feed. `clusters.json` is a convenience layer for dedupe and should not delay dispatch.
@@ -40,7 +41,7 @@ Notes:
 - Keep one writer per pending report path. The workflow does not merge concurrent structured writes to the same report.
 - Pending report filenames come from a sanitized cluster key, so rare filename collisions between distinct clusters are possible. If a path looks suspiciously reused, inspect the cluster key before continuing.
 
-6. Have each sub-agent update the relevant pending report with:
+7. Have each sub-agent update the relevant pending report with:
 - suspected root cause
 - confidence
 - fix-vs-document assessment
@@ -48,7 +49,7 @@ Notes:
 - recommended next step
 - relevant artifact and code paths
 
-7. At the end of each corpus-triage session, append a brief introspection note to the active session document in `docs/active/agents/` with:
+8. At the end of each corpus-triage session, append a brief introspection note to the active session document in `docs/active/agents/` with:
 - failures handled
 - commits produced
 - approximate context spent, if visible

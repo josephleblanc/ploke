@@ -171,6 +171,7 @@ fn parse_debug_corpus_clones_and_parses_local_git_repo() {
             skip_merge: false,
             workspace_mode: CorpusWorkspaceMode::Skip,
             resolve_timeout_minutes: 0,
+            merge_timeout_minutes: 0,
         }),
     };
     let ctx = CommandContext::new().expect("CommandContext");
@@ -764,6 +765,7 @@ fn parse_debug_corpus_classifies_workspace_repo_without_running_single_crate_pip
             skip_merge: false,
             workspace_mode: CorpusWorkspaceMode::Skip,
             resolve_timeout_minutes: 0,
+            merge_timeout_minutes: 0,
         }),
     };
     let ctx = CommandContext::new().expect("CommandContext");
@@ -821,6 +823,7 @@ fn parse_debug_corpus_classifies_implicit_workspace_members_via_metadata_fallbac
             skip_merge: false,
             workspace_mode: CorpusWorkspaceMode::Skip,
             resolve_timeout_minutes: 0,
+            merge_timeout_minutes: 0,
         }),
     };
     let ctx = CommandContext::new().expect("CommandContext");
@@ -874,6 +877,7 @@ fn parse_debug_corpus_probes_workspace_repo_members_when_enabled() {
             skip_merge: false,
             workspace_mode: CorpusWorkspaceMode::Probe,
             resolve_timeout_minutes: 0,
+            merge_timeout_minutes: 0,
         }),
     };
     let ctx = CommandContext::new().expect("CommandContext");
@@ -969,6 +973,7 @@ fn parse_debug_corpus_probes_implicit_workspace_members_via_metadata_fallback() 
             skip_merge: false,
             workspace_mode: CorpusWorkspaceMode::Probe,
             resolve_timeout_minutes: 0,
+            merge_timeout_minutes: 0,
         }),
     };
     let ctx = CommandContext::new().expect("CommandContext");

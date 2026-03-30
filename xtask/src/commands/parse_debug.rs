@@ -2038,8 +2038,12 @@ pub struct DebugCorpus {
     pub workspace_mode: CorpusWorkspaceMode,
 
     /// Skip a target if its resolve stage runs longer than this many minutes (0 = disabled).
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 5)]
     pub resolve_timeout_minutes: u64,
+
+    /// Skip a target if its merge stage runs longer than this many minutes (0 = disabled).
+    #[arg(long, default_value_t = 5)]
+    pub merge_timeout_minutes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2460,6 +2464,7 @@ impl Command for DebugCorpus {
                         &target_artifact_dir,
                         self.skip_merge,
                         resolve_timeout_duration(self.resolve_timeout_minutes),
+                        resolve_timeout_duration(self.merge_timeout_minutes),
                     )?)
                 } else {
                     None
@@ -2577,42 +2582,12 @@ impl Command for DebugCorpus {
             }
 
             let merge = if !self.skip_merge && resolve.ok {
-                let stage = run_corpus_stage("merge", &target_artifact_dir, &target_label, || {
-                    let out = try_run_phases_and_merge(&checkout_path).map_err(|e| {
-                        CorpusStageFailure::new(
-                            e.diagnostic_summary(),
-                            Some(corpus_diagnostic_from_syn_parser_error(&e)),
-                        )
-                    })?;
-                    let (nodes, rels) = if let Some(ref mg) = out.merged_graph {
-                        (
-                            Some(count_code_graph_nodes(&mg.graph)),
-                            Some(mg.graph.relations.len()),
-                        )
-                    } else {
-                        (None, None)
-                    };
-                    let artifact_path = if let Some(ref merged_graph) = out.merged_graph {
-                        Some(
-                            persist_stage_payload(
-                                &target_artifact_dir,
-                                "merge",
-                                "merged_graph.json",
-                                merged_graph,
-                            )?
-                            .display()
-                            .to_string(),
-                        )
-                    } else {
-                        None
-                    };
-                    Ok(CorpusStageMetrics {
-                        nodes_parsed: nodes,
-                        relations_found: rels,
-                        file_count: None,
-                        artifact_path,
-                    })
-                })?;
+                let stage = run_corpus_merge_stage(
+                    &checkout_path,
+                    &target_artifact_dir,
+                    &target_label,
+                    resolve_timeout_duration(self.merge_timeout_minutes),
+                )?;
                 if !stage.ok {
                     merge_failures += 1;
                     if stage.panic {
@@ -3329,6 +3304,7 @@ fn run_corpus_workspace_probe(
     target_artifact_dir: &Path,
     skip_merge: bool,
     resolve_timeout: Option<std::time::Duration>,
+    merge_timeout: Option<std::time::Duration>,
 ) -> Result<CorpusWorkspaceProbeResult, XtaskError> {
     let members = resolve_workspace_probe_members(workspace_root)?;
 
@@ -3386,46 +3362,11 @@ fn run_corpus_workspace_probe(
             resolve = Some(resolve_stage);
 
             if !skip_merge && resolve.as_ref().is_some_and(|stage| stage.ok) {
-                let merge_stage = run_corpus_stage(
-                    "merge",
+                let merge_stage = run_corpus_merge_stage(
+                    member,
                     &member_artifact_dir,
                     &member_progress_label,
-                    || {
-                        let out = try_run_phases_and_merge(member).map_err(|e| {
-                            CorpusStageFailure::new(
-                                e.diagnostic_summary(),
-                                Some(corpus_diagnostic_from_syn_parser_error(&e)),
-                            )
-                        })?;
-                        let (nodes, rels) = if let Some(ref mg) = out.merged_graph {
-                            (
-                                Some(count_code_graph_nodes(&mg.graph)),
-                                Some(mg.graph.relations.len()),
-                            )
-                        } else {
-                            (None, None)
-                        };
-                        let artifact_path = if let Some(ref merged_graph) = out.merged_graph {
-                            Some(
-                                persist_stage_payload(
-                                    &member_artifact_dir,
-                                    "merge",
-                                    "merged_graph.json",
-                                    merged_graph,
-                                )?
-                                .display()
-                                .to_string(),
-                            )
-                        } else {
-                            None
-                        };
-                        Ok(CorpusStageMetrics {
-                            nodes_parsed: nodes,
-                            relations_found: rels,
-                            file_count: None,
-                            artifact_path,
-                        })
-                    },
+                    merge_timeout,
                 )?;
                 member_failed |= !merge_stage.ok;
                 merge = Some(merge_stage);
@@ -3718,6 +3659,29 @@ fn run_corpus_resolve_stage(
     )
 }
 
+fn run_corpus_merge_stage(
+    checkout_path: &Path,
+    target_artifact_dir: &Path,
+    progress_label: &str,
+    timeout: Option<std::time::Duration>,
+) -> Result<CorpusStageResult, XtaskError> {
+    if let Some(timeout) = timeout {
+        return run_corpus_stage_in_child_process(
+            CorpusStageName::Merge,
+            checkout_path,
+            target_artifact_dir,
+            progress_label,
+            timeout,
+        );
+    }
+    run_corpus_stage_for_path(
+        CorpusStageName::Merge,
+        checkout_path,
+        target_artifact_dir,
+        progress_label,
+    )
+}
+
 fn run_corpus_stage_in_child_process(
     stage: CorpusStageName,
     checkout_path: &Path,
@@ -3794,10 +3758,8 @@ fn parse_corpus_stage_child_output(stdout: &[u8]) -> Result<CorpusStageResult, X
             "Failed to parse corpus stage child JSON output: {e}"
         ))
     })?;
-    let debug = value.get("Debug").ok_or_else(|| {
-        XtaskError::Parse("Corpus stage child JSON did not contain `Debug` output".into())
-    })?;
-    serde_json::from_value(debug.clone()).map_err(|e| {
+    let payload = value.get("Debug").cloned().unwrap_or(value);
+    serde_json::from_value(payload).map_err(|e| {
         XtaskError::Parse(format!(
             "Failed to deserialize corpus stage child result payload: {e}"
         ))
@@ -4304,6 +4266,30 @@ mod tests {
         assert!(!result.ok, "expected timeout failure");
         assert_eq!(result.failure_kind.as_deref(), Some("timeout"));
         assert_eq!(result.duration_ms, 42);
+    }
+
+    #[test]
+    fn parse_corpus_stage_child_output_reads_direct_stage_payload() {
+        let stdout = br#"{
+          "kind": "corpus_stage",
+          "ok": true,
+          "panic": false,
+          "failure_kind": null,
+          "error": null,
+          "diagnostic": null,
+          "duration_ms": 114,
+          "nodes_parsed": 1352,
+          "relations_found": 1074,
+          "file_count": null,
+          "artifact_path": "/tmp/resolve.json",
+          "failure_artifact_path": null
+        }"#;
+
+        let result = parse_corpus_stage_child_output(stdout).expect("parse child output");
+        assert!(result.ok, "expected successful stage payload");
+        assert_eq!(result.duration_ms, 114);
+        assert_eq!(result.nodes_parsed, Some(1352));
+        assert_eq!(result.relations_found, Some(1074));
     }
 
     #[test]

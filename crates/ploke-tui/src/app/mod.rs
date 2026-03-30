@@ -1089,7 +1089,8 @@ impl App {
     ///
     /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
-        if key.modifiers.is_empty() && matches!(key.code, KeyCode::Esc) {
+        if self.mode == Mode::Normal && key.modifiers.is_empty() && matches!(key.code, KeyCode::Esc)
+        {
             self.send_cancel_token(CancelChatToken::Close);
         }
 
@@ -2170,10 +2171,19 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::compute_input_height;
-    use crate::test_utils::mock::create_mock_app;
+    use crate::app::App;
+    use crate::app::types::Mode;
+    use crate::event_bus::EventBus;
+    use crate::llm::manager::CancelChatToken;
+    use crate::test_utils::mock::{create_mock_app, create_mock_app_state};
+    use crate::tools::ToolVerbosity;
+    use crate::user_config::CommandStyle;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::sync::Mutex;
     use tempfile::tempdir;
+    use tokio::sync::{mpsc, watch};
 
     static CWD_LOCK: Mutex<()> = Mutex::new(());
 
@@ -2254,5 +2264,43 @@ mod tests {
         let (ghost_file, accept_file) = app.file_completion(input_file).expect("file completion");
         assert_eq!(ghost_file, "ain.rs");
         assert_eq!(accept_file, "/open @src/main.rs");
+    }
+
+    fn create_mock_app_with_cancel_rx() -> (App, watch::Receiver<CancelChatToken>) {
+        let state = Arc::new(create_mock_app_state());
+        let (cmd_tx, _cmd_rx) = mpsc::channel(1024);
+        let (cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let event_bus = EventBus::new(crate::EventBusCaps::default());
+        let app = App::new(
+            CommandStyle::Slash,
+            state,
+            cmd_tx,
+            &event_bus,
+            "mock-model".to_string(),
+            ToolVerbosity::Normal,
+            cancel_tx,
+        );
+        (app, cancel_rx)
+    }
+
+    #[tokio::test]
+    async fn esc_in_insert_mode_switches_to_normal_without_cancelling_generation() {
+        let (mut app, cancel_rx) = create_mock_app_with_cancel_rx();
+        app.mode = Mode::Insert;
+
+        app.push_test_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(matches!(*cancel_rx.borrow(), CancelChatToken::KeepOpen));
+    }
+
+    #[tokio::test]
+    async fn esc_in_normal_mode_cancels_generation() {
+        let (mut app, cancel_rx) = create_mock_app_with_cancel_rx();
+        app.mode = Mode::Normal;
+
+        app.push_test_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(matches!(*cancel_rx.borrow(), CancelChatToken::Close));
     }
 }
