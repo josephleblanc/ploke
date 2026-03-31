@@ -1,3 +1,11 @@
+//! Discovery-stage manifest parse errors: `Cargo.toml` shapes **Cargo** accepts
+//! (workspace package inheritance, default `[[bin]]` paths) may still fail
+//! deserialization in `parse_workspace`.
+//!
+//! Known limitation (L3 / KL-005):
+//! [syn_parser_known_limitations.md](../../../../../../docs/design/syn_parser_known_limitations.md),
+//! [KL-005-manifest-stricter-than-cargo-defaults.md](../../../../../../docs/design/known_limitations/KL-005-manifest-stricter-than-cargo-defaults.md).
+
 use std::fs;
 use std::path::Path;
 

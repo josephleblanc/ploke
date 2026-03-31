@@ -37,6 +37,8 @@ We therefore use an explicit place to hold **candidate** file-based definitions 
 
 4. **Explicitly out of scope for this ADR:** a **union-of-all-cfgs** graph where `NodePath` maps to multiple simultaneously-valid definitions. Staging is a **single-winner, single-configuration-era** mechanism to unblock merge and pruning; future union semantics would likely require a richer key (e.g. `NodePath` + cfg predicate or `CompilationUnitKey`) and may **replace** this field rather than extend it ad hoc.
 
+   Documented user-visible cases (duplicate **inline** modules under disjoint cfgs) live in [**syn_parser known limitations**](../../syn_parser_known_limitations.md) (L1) and [**KL-003**](../../known_limitations/KL-003-cfg-disjoint-duplicate-inline-mod.md), with repro tests linked there.
+
 ## Consequences
 
 - **Positive:**
@@ -66,6 +68,7 @@ We therefore use an explicit place to hold **candidate** file-based definitions 
 
 ## Related
 
+- [`syn_parser` known limitations](../../syn_parser_known_limitations.md) — L1 (cfg-disjoint duplicate inline `mod` paths); KL-track entry [KL-003](../../known_limitations/KL-003-cfg-disjoint-duplicate-inline-mod.md).
 - Root-cause analysis: `docs/active/agents/2026-03-30_syn_parser_repro_rca/reports/2026-03-30_cfg_gates_report.md` (historical failure `repro_duplicate_quantized_metal_mod_merge_error`, now covered by a success repro).
 
 ## Implementation notes (2026-03-30)

@@ -2,6 +2,11 @@
 //! [ADR-025](../../../../../../docs/design/adrs/accepted/ADR-025-module-tree-staged-file-duplicate-definitions.md)
 //! (e.g. **two inline** `mod` definitions at the same path under different cfgs). File-vs-inline
 //! staging lives under `repro::success`.
+//!
+//! Known limitation (L1):
+//! [syn_parser_known_limitations.md](../../../../../../docs/design/syn_parser_known_limitations.md),
+//! KL-003:
+//! [KL-003-cfg-disjoint-duplicate-inline-mod.md](../../../../../../docs/design/known_limitations/KL-003-cfg-disjoint-duplicate-inline-mod.md).
 
 use std::path::PathBuf;
 
@@ -15,6 +20,10 @@ fn fixture_workspace_root() -> PathBuf {
 }
 
 // TEST_NOTE:2026-03-29
+//
+// Known limitation: L1 + KL-003 (duplicate inline `mod` under disjoint cfgs):
+// ../../../../../../docs/design/syn_parser_known_limitations.md
+// ../../../../../../docs/design/known_limitations/KL-003-cfg-disjoint-duplicate-inline-mod.md
 //
 // Provenance:
 // - Corpus run: `run-1774765997311`
@@ -60,6 +69,10 @@ fn fixture_duplicate_cfg_test_mods_is_valid_rust() {
 // (candle `quantized::metal` repro now expects success — see `repro::success::cfg_gates_quantized_metal`.)
 
 // TEST_NOTE:2026-03-30
+//
+// Known limitation: L1 + KL-003 (duplicate inline `mod` under disjoint cfgs):
+// ../../../../../../docs/design/syn_parser_known_limitations.md
+// ../../../../../../docs/design/known_limitations/KL-003-cfg-disjoint-duplicate-inline-mod.md
 //
 // Provenance:
 // - Corpus run: `run-1774867607815`

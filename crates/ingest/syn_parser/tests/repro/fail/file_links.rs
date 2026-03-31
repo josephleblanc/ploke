@@ -2,6 +2,10 @@
 //! [ADR-025](../../../../../../docs/design/adrs/accepted/ADR-025-module-tree-staged-file-duplicate-definitions.md)
 //! scope (e.g. lib + bin both contributing a `crate::cli` file-root collision, or `scheduler::queue`
 //! collisions not resolved by file-vs-inline staging). Inline+file duplicates are under `repro::success`.
+//!
+//! Known limitation (L2 / KL-004):
+//! [syn_parser_known_limitations.md](../../../../../../docs/design/syn_parser_known_limitations.md),
+//! [KL-004-nested-main-rs-logical-path.md](../../../../../../docs/design/known_limitations/KL-004-nested-main-rs-logical-path.md).
 
 use std::path::PathBuf;
 

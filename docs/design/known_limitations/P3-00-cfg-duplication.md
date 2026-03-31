@@ -1,7 +1,9 @@
 # Known Limitation: P3-00 - ModuleTree Construction Fails on Duplicate Paths from `cfg`
 
+**KL index:** The same limitation is tracked as [**KL-003**](KL-003-cfg-disjoint-duplicate-inline-mod.md) (syn_parser repros and cross-links). This note remains for historical Phase 3 edge-case fixture references.
+
 **Date:** 2025-04-23
-**Status:** Active
+**Status:** Active (see KL-003 for current KL-track wording)
 **Component:** `syn_parser::parser::module_tree` (`ModuleTree::add_module`, `CodeGraph::build_module_tree`)
 **Related Tests:** `crates/ingest/syn_parser/tests/uuid_phase3_resolution/edge_cases.rs` (specifically tests involving `cfg_mod`, e.g., `test_spp_cfg_exclusive_a`, `test_spp_cfg_nested_exclusive_ab`, etc., which were initially failing due to this issue).
 

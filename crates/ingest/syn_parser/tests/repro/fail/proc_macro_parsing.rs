@@ -1,3 +1,9 @@
+//! Pre-expansion `syn` parse failures on proc-macro-oriented source (compile-valid after expansion).
+//!
+//! Known limitation (L5 / KL-002):
+//! [syn_parser_known_limitations.md](../../../../../../docs/design/syn_parser_known_limitations.md),
+//! [KL-002-proc-macro-pre-expansion-syntax.md](../../../../../../docs/design/known_limitations/KL-002-proc-macro-pre-expansion-syntax.md).
+//!
 //! TEST_NOTE:2026-03-29
 //!
 //! Provenance:

@@ -1,3 +1,9 @@
+//! Resolve-stage partial parsing: one file fails `syn::parse_file` while others succeed.
+//!
+//! Known limitation (L4 / KL-006):
+//! [syn_parser_known_limitations.md](../../../../../../docs/design/syn_parser_known_limitations.md),
+//! [KL-006-partial-parse-non-compilable-files.md](../../../../../../docs/design/known_limitations/KL-006-partial-parse-non-compilable-files.md).
+//!
 //! TEST_NOTE:2026-03-30
 //!
 //! Provenance:
