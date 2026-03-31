@@ -1,3 +1,5 @@
+use std::collections::hash_map::Entry;
+
 use crate::parser::diagnostics::{TRACE_TARGET_PRUNE, emit_json_diagnostic};
 use crate::parser::graph::{GraphAccess, GraphNode};
 use crate::parser::nodes::{
@@ -1956,36 +1958,56 @@ impl ModuleTree {
                 &original_path,
             );
 
-            // 4. Remove the old path index entry for the definition module
-            // Use the original_path (derived from file system) as the key to remove.
+            // 4. Remove the old path index entry for the definition module **only** when that
+            // entry still points at this `#[path]` file definition. If the filesystem stem is held
+            // by another definition (typically an inline module) while the file def is listed in
+            // `staged_file_definition_collisions`, do not remove the stem — `HashMap::remove` would
+            // drop the wrong module from `path_index` (see ADR-025 stem-collision tests).
             let def_mod_any_id = def_mod_id.as_any(); // Get AnyNodeId
-            if let Some(removed_id) = self.path_index.remove(&original_path) {
-                if removed_id == def_mod_any_id {
-                    self.log_update_path_index_remove(&original_path, def_mod_id);
-                } else if self.staged_file_definition_collisions.contains(&def_mod_id) {
-                    // Definition was staged (no `path_index` entry at `original_path`): another
-                    // definition (typically inline) held this stem until `#[path]` reindexing.
-                    debug!(
-                        target: LOG_TARGET_MOD_TREE_BUILD,
-                        "path_index at {} held {:?} while reindexing staged def {} (stem collision)",
-                        original_path.to_string().log_path(),
-                        removed_id,
-                        def_mod_id.to_string().log_id()
-                    );
-                } else {
-                    let rem_id = removed_id.try_into()?;
-                    self.log_update_path_index_remove_inconsistency(
-                        rem_id,
-                        &original_path,
-                        def_mod_id,
-                    );
-                    return Err(ModuleTreeError::InternalState(format!(
-                        "Path index inconsistency during removal for path {}: expected {}, found {}. This suggests the path_index was corrupted earlier.",
-                        original_path, def_mod_any_id, removed_id
-                    )));
+            match self.path_index.entry(original_path.clone()) {
+                Entry::Occupied(occ) => {
+                    if *occ.get() == def_mod_any_id {
+                        occ.remove();
+                        self.log_update_path_index_remove(&original_path, def_mod_id);
+                    } else if self.staged_file_definition_collisions.contains(&def_mod_id) {
+                        let held = *occ.get();
+                        debug!(
+                            target: LOG_TARGET_MOD_TREE_BUILD,
+                            "path_index at {} held {:?} while reindexing staged def {} (stem collision); leaving stem unchanged",
+                            original_path.to_string().log_path(),
+                            held,
+                            def_mod_id.to_string().log_id()
+                        );
+                        // Leave the stem entry as-is: the inline (or other) definition keeps
+                        // `path_index` at the filesystem-derived path.
+                    } else {
+                        let removed_id = *occ.get();
+                        let rem_id = removed_id.try_into()?;
+                        self.log_update_path_index_remove_inconsistency(
+                            rem_id,
+                            &original_path,
+                            def_mod_id,
+                        );
+                        return Err(ModuleTreeError::InternalState(format!(
+                            "Path index inconsistency during removal for path {}: expected {}, found {}. This suggests the path_index was corrupted earlier.",
+                            original_path, def_mod_any_id, removed_id
+                        )));
+                    }
                 }
-            } else {
-                self.log_update_path_index_remove_missing(&original_path, def_mod_id);
+                Entry::Vacant(_) => {
+                    self.log_update_path_index_remove_missing(&original_path, def_mod_id);
+                }
+            }
+
+            #[cfg(feature = "validate")]
+            if self.staged_file_definition_collisions.contains(&def_mod_id) {
+                let stem_holder = self.path_index.get(&original_path).copied();
+                debug_assert!(
+                    stem_holder.is_some_and(|id| id != def_mod_any_id),
+                    "path_index stem `{}` must remain keyed to the non-`#[path]` definition while the `#[path]` file definition {:?} is staged",
+                    original_path,
+                    def_mod_id
+                );
             }
 
             // 5. Insert the new path index entry using the canonical path
