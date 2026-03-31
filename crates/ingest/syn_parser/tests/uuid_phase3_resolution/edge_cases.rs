@@ -797,7 +797,7 @@ fn test_spp_nested_path_level2() {
 }
 
 #[test]
-#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
+#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See git show 8de1588216561ad23290fac0a35993e4b2288e16:docs/design/known_limitations/P3-00-cfg-duplication.md (KL-003)"]
 #[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_cfg_exclusive_a() {
     // 22. Mutually Exclusive `cfg` (Branch A)
@@ -832,7 +832,7 @@ fn test_spp_cfg_exclusive_a() {
 }
 
 #[test]
-#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
+#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See git show 8de1588216561ad23290fac0a35993e4b2288e16:docs/design/known_limitations/P3-00-cfg-duplication.md (KL-003)"]
 #[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_cfg_exclusive_not_a() {
     // 23. Mutually Exclusive `cfg` (Branch Not A)
@@ -867,7 +867,7 @@ fn test_spp_cfg_exclusive_not_a() {
 }
 
 #[test]
-#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
+#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See git show 8de1588216561ad23290fac0a35993e4b2288e16:docs/design/known_limitations/P3-00-cfg-duplication.md (KL-003)"]
 #[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_cfg_nested_exclusive_ab() {
     // 24. Nested Mutually Exclusive `cfg` (Branch AB)
@@ -906,7 +906,7 @@ fn test_spp_cfg_nested_exclusive_ab() {
 }
 
 #[test]
-#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
+#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See git show 8de1588216561ad23290fac0a35993e4b2288e16:docs/design/known_limitations/P3-00-cfg-duplication.md (KL-003)"]
 #[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_cfg_nested_exclusive_nac() {
     // 25. Nested Mutually Exclusive `cfg` (Branch NotA C)
@@ -945,7 +945,7 @@ fn test_spp_cfg_nested_exclusive_nac() {
 }
 
 #[test]
-#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
+#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See git show 8de1588216561ad23290fac0a35993e4b2288e16:docs/design/known_limitations/P3-00-cfg-duplication.md (KL-003)"]
 #[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_cfg_conflicting() {
     // 26. Conflicting Parent/Child `cfg`

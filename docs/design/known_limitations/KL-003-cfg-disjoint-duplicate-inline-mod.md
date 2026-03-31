@@ -13,8 +13,12 @@ definitions and indexes them as separate `ModuleNode`s at the same path.
 staging resolves **file** vs **inline** collisions only; **inline vs inline** at
 the same path remains an error.
 
-Earlier notes on the same mechanism (including Phase 3 edge-case fixtures) live
-in [P3-00-cfg-duplication.md](P3-00-cfg-duplication.md).
+Earlier notes on the same mechanism (including Phase 3 edge-case fixtures) are
+preserved in git only (working copy may exist under gitignored `docs/archive/`):
+
+- **Commit:** `8de1588216561ad23290fac0a35993e4b2288e16`
+- **Path:** `docs/design/known_limitations/P3-00-cfg-duplication.md`
+- **View:** `git show 8de1588216561ad23290fac0a35993e4b2288e16:docs/design/known_limitations/P3-00-cfg-duplication.md`
 
 ## Crate-level summary
 
