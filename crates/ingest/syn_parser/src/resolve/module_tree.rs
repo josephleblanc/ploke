@@ -65,7 +65,17 @@ pub struct ModuleTree {
     /// HashMap appropriate for many -> few possible mapping
     /// Contains all `NodeId` items except module declarations due to
     /// path collision with defining module.
+    ///
+    /// **Staging:** While building the tree, a file-based definition may temporarily have no entry
+    /// here at its filesystem-derived [`NodePath`] when it loses to an inline definition at the
+    /// same path (see [`ModuleTree::add_module`]). Those modules are listed in
+    /// [`staged_file_definition_collisions`] until `#[path]` reindexing and/or pruning.
     pub(super) path_index: HashMap<NodePath, AnyNodeId>,
+    /// File-based definition modules that do not have a `path_index` entry at their
+    /// filesystem-derived path because an inline definition at the same path occupied the key
+    /// (or this module was displaced when an inline was added second). Cleared when indexed under
+    /// a canonical path or when the module is pruned.
+    staged_file_definition_collisions: Vec<ModuleNodeId>,
     /// Maps declaration module IDs with `#[path]` attributes pointing outside the crate's
     /// `src` directory to the resolved absolute external path. These paths do not have
     /// corresponding `ModuleNode` definitions within the analyzed crate context.
@@ -196,19 +206,58 @@ impl ModuleTree {
             }
         } else {
             match self.path_index.entry(node_path.clone()) {
-                // Clone node_path for the error case
                 std::collections::hash_map::Entry::Occupied(entry) => {
-                    // Path already exists
-                    let existing_id = *entry.get(); // This is AnyNodeId
-                    log::error!(target: "debug_dup", "Duplicate path detected for module:\n{:#?}", module);
-                    return Err(ModuleTreeError::DuplicatePath {
-                        path: node_path,                         // Use the cloned path
-                        existing_id,                             // Keep as AnyNodeId
-                        conflicting_id: conflicting_id.as_any(), // Convert ModuleNodeId to AnyNodeId
-                    });
+                    let existing_any = *entry.get();
+                    let existing_mod_id = ModuleNodeId::try_from(existing_any).map_err(|_| {
+                        ModuleTreeError::InternalState(format!(
+                            "path_index entry for {node_path} is not a ModuleNodeId: {existing_any:?}"
+                        ))
+                    })?;
+                    let existing_mod = self.modules.get(&existing_mod_id).ok_or_else(|| {
+                        ModuleTreeError::InternalState(format!(
+                            "path_index references missing module {existing_mod_id} at {node_path}"
+                        ))
+                    })?;
+
+                    let incoming_is_file = module.is_file_based();
+                    let existing_is_file = existing_mod.is_file_based();
+
+                    // Eligible for staging only when exactly one side is file-based and the other is inline.
+                    if incoming_is_file == existing_is_file {
+                        log::error!(target: "debug_dup", "Duplicate path detected for module:\n{module:#?}");
+                        return Err(ModuleTreeError::DuplicatePath {
+                            path: node_path,
+                            existing_id: existing_any,
+                            conflicting_id: conflicting_id.as_any(),
+                        });
+                    }
+
+                    if incoming_is_file {
+                        // Incoming file, existing inline: keep inline in path_index; file has no key yet.
+                        debug!(
+                            target: LOG_TARGET_MOD_TREE_BUILD,
+                            "Staged file module {} at path {} (path_index retained by inline {})",
+                            conflicting_id.to_string().log_id(),
+                            node_path.to_string().log_path(),
+                            existing_mod_id.to_string().log_id()
+                        );
+                        self.staged_file_definition_collisions.push(conflicting_id);
+                    } else {
+                        // Incoming inline, existing file: inline wins path_index; displaced file is staged.
+                        entry.remove();
+                        self.path_index
+                            .insert(node_path.clone(), conflicting_id.as_any());
+                        debug!(
+                            target: LOG_TARGET_MOD_TREE_BUILD,
+                            "Staged file module {} at path {} (displaced from path_index by inline {})",
+                            existing_mod_id.to_string().log_id(),
+                            node_path.to_string().log_path(),
+                            conflicting_id.to_string().log_id()
+                        );
+                        self.staged_file_definition_collisions.push(existing_mod_id);
+                    }
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                    // Path is free, insert it
                     entry.insert(conflicting_id.as_any());
                 }
             }
@@ -263,6 +312,44 @@ impl ModuleTree {
         &self.path_index
     }
 
+    /// Debug invariant: after [`ModuleTree::update_path_index_for_custom_paths`], no file
+    /// definition that is the `CustomPath` target of an in-crate `#[path]` declaration should
+    /// still appear in [`staged_file_definition_collisions`]. (Entries may remain for duplicates
+    /// that are only cleared during [`ModuleTree::prune_unlinked_file_modules`].)
+    ///
+    /// Call from `ParsedCodeGraph::build_module_tree_from_root_module` immediately after
+    /// `update_path_index_for_custom_paths` when `feature = "validate"` is enabled.
+    #[cfg(feature = "validate")]
+    pub(crate) fn debug_validate_staging_after_custom_path_reindex(&self) {
+        for &decl_id in self.found_path_attrs.keys() {
+            if self.external_path_attrs.contains_key(&decl_id) {
+                continue;
+            }
+            let Ok(def_id) = self.find_custom_path_target(decl_id) else {
+                continue;
+            };
+            debug_assert!(
+                !self.staged_file_definition_collisions.contains(&def_id),
+                "definition {def_id:?} for #[path] decl {decl_id:?} must not remain staged after update_path_index_for_custom_paths"
+            );
+        }
+    }
+
+    /// Debug invariant: after [`ModuleTree::prune_unlinked_file_modules`], staging must be
+    /// drained. Prune removes unlinked staged scan roots and `retain` drops ids for removed
+    /// modules; any surviving entry would indicate inconsistent `path_index` / staging state.
+    ///
+    /// Call from `ParsedCodeGraph::build_module_tree_from_root_module` immediately after a
+    /// successful `prune_unlinked_file_modules` when `feature = "validate"` is enabled.
+    #[cfg(feature = "validate")]
+    pub(crate) fn debug_validate_staging_empty_after_prune(&self) {
+        debug_assert!(
+            self.staged_file_definition_collisions.is_empty(),
+            "staged_file_definition_collisions must be empty after prune_unlinked_file_modules, got {:?}",
+            self.staged_file_definition_collisions
+        );
+    }
+
     /// Returns a slice of the relations relevant to the module tree structure.
     pub fn tree_relations(&self) -> &[TreeRelation] {
         &self.tree_relations
@@ -293,6 +380,7 @@ impl ModuleTree {
             pending_imports: vec![],
             pending_exports: Some(vec![]), // Initialize with Some(empty_vec)
             path_index: HashMap::new(),
+            staged_file_definition_collisions: Vec::new(),
             decl_index: HashMap::new(),
             tree_relations: vec![],
             reexport_index: HashMap::new(),
@@ -1872,11 +1960,22 @@ impl ModuleTree {
             // Use the original_path (derived from file system) as the key to remove.
             let def_mod_any_id = def_mod_id.as_any(); // Get AnyNodeId
             if let Some(removed_id) = self.path_index.remove(&original_path) {
-                let rem_id = removed_id.try_into()?; // This is AnyNodeId
-                if removed_id != def_mod_any_id {
-                    // Compare AnyNodeId
+                if removed_id == def_mod_any_id {
+                    self.log_update_path_index_remove(&original_path, def_mod_id);
+                } else if self.staged_file_definition_collisions.contains(&def_mod_id) {
+                    // Definition was staged (no `path_index` entry at `original_path`): another
+                    // definition (typically inline) held this stem until `#[path]` reindexing.
+                    debug!(
+                        target: LOG_TARGET_MOD_TREE_BUILD,
+                        "path_index at {} held {:?} while reindexing staged def {} (stem collision)",
+                        original_path.to_string().log_path(),
+                        removed_id,
+                        def_mod_id.to_string().log_id()
+                    );
+                } else {
+                    let rem_id = removed_id.try_into()?;
                     self.log_update_path_index_remove_inconsistency(
-                        rem_id, // This is AnyNodeId
+                        rem_id,
                         &original_path,
                         def_mod_id,
                     );
@@ -1885,7 +1984,6 @@ impl ModuleTree {
                         original_path, def_mod_any_id, removed_id
                     )));
                 }
-                self.log_update_path_index_remove(&original_path, def_mod_id);
             } else {
                 self.log_update_path_index_remove_missing(&original_path, def_mod_id);
             }
@@ -1913,8 +2011,12 @@ impl ModuleTree {
                     });
                 }
                 self.log_update_path_index_reinsert(&canonical_path, def_mod_id);
+                self.staged_file_definition_collisions
+                    .retain(|&id| id != def_mod_id);
             } else {
                 self.log_update_path_index_insert(&canonical_path, def_mod_id);
+                self.staged_file_definition_collisions
+                    .retain(|&id| id != def_mod_id);
             }
         }
 
@@ -2019,6 +2121,8 @@ impl ModuleTree {
 
         if initial_prunable_module_ids.is_empty() {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} No unlinked modules found to prune.", "Info".log_comment());
+            self.staged_file_definition_collisions
+                .retain(|id| self.modules.contains_key(id));
             return Ok(PruningResult::default()); // Return empty PruningResult
         }
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Identified {} initially unlinked modules.", initial_prunable_module_ids.len().to_string().log_id());
@@ -2175,6 +2279,10 @@ impl ModuleTree {
                 .map(|m| m.as_any())
                 .any(|m| m == *item)
         });
+
+        self.staged_file_definition_collisions
+            .retain(|id| self.modules.contains_key(id));
+
         // --- Step 7: Prepare return data ---
         // Take ownership of unresolved nodes collected during resolution
         let unresolved_nodes = std::mem::take(&mut self.unresolved_nodes);

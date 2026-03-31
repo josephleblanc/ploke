@@ -86,7 +86,9 @@ pub mod __mod_name {
                 "expected at least one child parse error, got {errors:?}"
             );
             assert!(
-                errors.iter().all(|e| matches!(e, SynParserError::Syn { .. })),
+                errors
+                    .iter()
+                    .all(|e| matches!(e, SynParserError::Syn { .. })),
                 "expected only syn parse errors, got {errors:?}"
             );
         }

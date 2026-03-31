@@ -47,7 +47,10 @@ edition = "2024"
 mod template;
 "#,
     );
-    write_file(&src_root.join("ok_one.rs"), "pub fn ok_one() -> u32 { 1 }\n");
+    write_file(
+        &src_root.join("ok_one.rs"),
+        "pub fn ok_one() -> u32 { 1 }\n",
+    );
 
     // Intentionally invalid Rust: placeholder `...` / `..` to trigger syn parse failure.
     write_file(
@@ -62,8 +65,8 @@ impl Template {
 "#,
     );
 
-    let err =
-        try_run_phases_and_resolve(td.path()).expect_err("fixture should fail with partial parsing");
+    let err = try_run_phases_and_resolve(td.path())
+        .expect_err("fixture should fail with partial parsing");
 
     match err {
         SynParserError::PartialParsing { successes, errors } => {
@@ -76,7 +79,11 @@ impl Template {
             assert_eq!(errors.len(), 1, "expected one parse error, got {errors:?}");
 
             match &errors[0] {
-                SynParserError::Syn { message, source_path, .. } => {
+                SynParserError::Syn {
+                    message,
+                    source_path,
+                    ..
+                } => {
                     assert!(
                         message.contains("expected one of"),
                         "error should mention parse expectations, got: {message}"

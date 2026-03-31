@@ -1,3 +1,7 @@
+//! Merge-stage `DuplicatePath` repros that remain **errors** after
+//! [ADR-025](../../../../../../docs/design/adrs/accepted/ADR-025-module-tree-staged-file-duplicate-definitions.md)
+//! (e.g. **two inline** `mod` definitions at the same path under different cfgs). File-vs-inline
+//! staging lives under `repro::success`.
 
 use std::path::PathBuf;
 
@@ -53,47 +57,7 @@ fn fixture_duplicate_cfg_test_mods_is_valid_rust() {
     );
 }
 
-
-// TEST_NOTE:2026-03-30
-//
-// Provenance:
-// - Corpus run: `run-1774867607815`
-// - Target repo: `huggingface/candle`
-// - Target crate: `candle-core`
-// - Saved failing member: `candle-core`
-// - Saved hotspot file: `src/quantized/mod.rs`
-//
-// The original corpus failure was a merge-stage error:
-// `Internal state error: Failed to build module tree: Feature not implemented:
-// Duplicate definition path 'crate::quantized::metal' found in module tree.`
-//
-// The minimized shape is a crate root with `mod quantized;` and a quantized
-// module that declares `metal` both as a file module and as an inline fallback
-// under complementary `#[cfg(...)]` gates. That keeps the project valid Rust
-// while still reproducing the duplicate module-tree path.
-#[test]
-fn repro_duplicate_quantized_metal_mod_merge_error() {
-    let fixture_root = fixture_workspace_root();
-    let member_root = fixture_workspace_root().join("member_quantized_metal_repro");
-
-    validate_fixture(&member_root);
-
-    let selected = [member_root.as_path()];
-    let err = match parse_workspace(&fixture_root, Some(&selected)) {
-        Ok(_) => panic!("workspace unexpectedly parsed successfully"),
-        Err(err) => err,
-    };
-    let err_msg = err.to_string();
-
-    assert!(
-        err_msg.contains("Failed to build module tree"),
-        "error should preserve module-tree context, got: {err_msg}"
-    );
-    assert!(
-        err_msg.contains("Duplicate definition path 'crate::quantized::metal'"),
-        "error should mention the duplicate module path, got: {err_msg}"
-    );
-}
+// (candle `quantized::metal` repro now expects success — see `repro::success::cfg_gates_quantized_metal`.)
 
 // TEST_NOTE:2026-03-30
 //
@@ -135,4 +99,3 @@ fn repro_duplicate_cfg_gated_module_merge_error() {
         "error should mention the duplicate module path, got: {err_msg}"
     );
 }
-

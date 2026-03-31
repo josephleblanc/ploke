@@ -110,10 +110,7 @@ edition = "2024"
 name = "helper"
 "#,
     );
-    write_file(
-        &member_root.join("src/bin/helper.rs"),
-        "fn main() {}\n",
-    );
+    write_file(&member_root.join("src/bin/helper.rs"), "fn main() {}\n");
 
     let selected = [member_root.as_path()];
     let err = match parse_workspace(workspace_root, Some(&selected)) {

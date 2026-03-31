@@ -59,6 +59,10 @@ name = "ws_fixture_logging_inline_file_repro"
 version = "0.1.0"
 
 [[package]]
+name = "ws_fixture_path_stem_collision_repro"
+version = "0.1.0"
+
+[[package]]
 name = "ws_fixture_protos_default_index_repro"
 version = "0.1.0"
 

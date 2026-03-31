@@ -11,6 +11,7 @@ members = [
     "member_local_function_repro",
     "member_method_collection_flags_repro",
     "member_method_local_consts_repro",
+    "member_path_stem_collision_repro",
     "member_logging_inline_file_repro",
     "member_protos_default_index_repro",
     "member_scheduler_queue_repro",

@@ -1,3 +1,7 @@
+//! Merge-stage `DuplicatePath` repros outside
+//! [ADR-025](../../../../../../docs/design/adrs/accepted/ADR-025-module-tree-staged-file-duplicate-definitions.md)
+//! scope (e.g. lib + bin both contributing a `crate::cli` file-root collision, or `scheduler::queue`
+//! collisions not resolved by file-vs-inline staging). Inline+file duplicates are under `repro::success`.
 
 use std::path::PathBuf;
 
@@ -13,91 +17,6 @@ fn fixture_workspace_root() -> PathBuf {
 fn fixture_cli_workspace_root() -> PathBuf {
     workspace_root().join("tests/fixture_workspace/ws_fixture_03_cli_collision")
 }
-
-fn fixture_member_root() -> PathBuf {
-    fixture_workspace_root().join("member_logging_inline_file_repro")
-}
-
-// TEST_NOTE:2026-03-30
-//
-// Provenance:
-// - Corpus run: `run-1774867607815`
-// - Target repo: `leptos-rs/leptos`
-// - Target crate: `leptos`
-// - Saved failing member: `leptos`
-// - Saved hotspot file: `src/lib.rs`
-//
-// The original corpus failure was a merge-stage error:
-// `Internal state error: Failed to build module tree: Feature not implemented:
-// Duplicate definition path 'crate::logging' found in module tree.`
-//
-// The minimized shape is a crate root with an inline `pub mod logging { ... }`
-// body plus a same-named `src/logging.rs` file. That is enough to reproduce the
-// duplicate module-tree path while still remaining valid Rust.
-#[test]
-fn repro_duplicate_logging_inline_file_mod_merge_error() {
-    let fixture_root = fixture_workspace_root();
-    let member_root = fixture_member_root();
-
-    validate_fixture(&member_root);
-
-    let selected = [member_root.as_path()];
-    let err = match parse_workspace(&fixture_root, Some(&selected)) {
-        Ok(_) => panic!("workspace unexpectedly parsed successfully"),
-        Err(err) => err,
-    };
-    let err_msg = err.to_string();
-
-    assert!(
-        err_msg.contains("Failed to build module tree"),
-        "error should preserve module-tree context, got: {err_msg}"
-    );
-    assert!(
-        err_msg.contains("Duplicate definition path 'crate::logging'"),
-        "error should mention the duplicate module path, got: {err_msg}"
-    );
-}
-
-// TEST_NOTE:2026-03-30
-//
-// Provenance:
-// - Corpus run: `run-1774867607815`
-// - Target repo: `iced-rs/iced`
-// - Target crate: `wgpu`
-// - Saved failing member: `wgpu`
-// - Saved hotspot file: `src/image.rs`
-//
-// The original corpus failure was a merge-stage error:
-// `Internal state error: Failed to build module tree: Feature not implemented:
-// Duplicate definition path 'crate::image' found in module tree.`
-//
-// The minimized shape is a crate root with an inline `pub mod image { ... }`
-// body plus a same-named `src/image.rs` file. That is enough to reproduce the
-// duplicate module-tree path while still remaining valid Rust.
-#[test]
-fn repro_duplicate_image_inline_file_mod_merge_error() {
-    let fixture_root = fixture_workspace_root();
-    let member_root = fixture_workspace_root().join("member_image_inline_file_repro");
-
-    validate_fixture(&member_root);
-
-    let selected = [member_root.as_path()];
-    let err = match parse_workspace(&fixture_root, Some(&selected)) {
-        Ok(_) => panic!("workspace unexpectedly parsed successfully"),
-        Err(err) => err,
-    };
-    let err_msg = err.to_string();
-
-    assert!(
-        err_msg.contains("Failed to build module tree"),
-        "error should preserve module-tree context, got: {err_msg}"
-    );
-    assert!(
-        err_msg.contains("Duplicate definition path 'crate::image'"),
-        "error should mention the duplicate module path, got: {err_msg}"
-    );
-}
-
 
 // TEST_NOTE:2026-03-30
 //
@@ -180,47 +99,6 @@ fn repro_duplicate_scheduler_queue_mod_merge_error() {
     );
     assert!(
         err_msg.contains("Duplicate definition path 'crate::scheduler::queue'"),
-        "error should mention the duplicate module path, got: {err_msg}"
-    );
-}
-
-// TEST_NOTE:2026-03-30
-//
-// Provenance:
-// - Corpus run: `run-1774867607815`
-// - Target repo: `jj-vcs/jj`
-// - Target crate: `lib`
-// - Saved failing member: `lib`
-// - Saved hotspot file: `lib/src/protos/mod.rs`
-//
-// The original corpus failure was a merge-stage error:
-// `Internal state error: Failed to build module tree: Feature not implemented:
-// Duplicate definition path 'crate::protos::default_index' found in module tree.`
-//
-// The minimized shape is a `protos/mod.rs` that defines `pub mod default_index`
-// inline via `include!`, plus a sibling `protos/default_index.rs` file on disk.
-// This mirrors the prost-build layout and reproduces the duplicate module-tree
-// path while remaining valid Rust.
-#[test]
-fn repro_duplicate_inline_protos_module_merge_error() {
-    let fixture_root = fixture_workspace_root();
-    let member_root = fixture_root.join("member_protos_default_index_repro");
-
-    validate_fixture(&member_root);
-
-    let selected = [member_root.as_path()];
-    let err = match parse_workspace(&fixture_root, Some(&selected)) {
-        Ok(_) => panic!("workspace unexpectedly parsed successfully"),
-        Err(err) => err,
-    };
-    let err_msg = err.to_string();
-
-    assert!(
-        err_msg.contains("Failed to build module tree"),
-        "error should preserve module-tree context, got: {err_msg}"
-    );
-    assert!(
-        err_msg.contains("Duplicate definition path 'crate::protos::default_index'"),
         "error should mention the duplicate module path, got: {err_msg}"
     );
 }

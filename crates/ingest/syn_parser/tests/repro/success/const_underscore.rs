@@ -1,4 +1,3 @@
-
 //! TEST_NOTE:2026-03-27
 //!
 //! We hit a crash while parsing the Bevy fixture (`bevy_ecs/src/label.rs`) where multiple

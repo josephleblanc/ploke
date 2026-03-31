@@ -479,6 +479,8 @@ impl ParsedCodeGraph {
         //    file-system derived NodePath to canonical NodePath for use in processing incremental
         //    updates later. See method comments for more info.
         tree.update_path_index_for_custom_paths()?;
+        #[cfg(feature = "validate")]
+        tree.debug_validate_staging_after_custom_path_reindex();
 
         // WARNING: This logic has moved. We are now creating ReExports after the ModuleTree is
         // built and we have resolved Ids to Cannonical Ids. Delete this code once we have
@@ -495,6 +497,8 @@ impl ParsedCodeGraph {
 
         // 6. Prune unlinked file modules from the ModuleTree state
         let pruned_items = tree.prune_unlinked_file_modules()?; // Call prune, graph is not modified
+        #[cfg(feature = "validate")]
+        tree.debug_validate_staging_empty_after_prune();
         if !pruned_items.pruned_module_ids.is_empty() {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and {} relations from ModuleTree.",
                 pruned_items.pruned_module_ids.len(),
