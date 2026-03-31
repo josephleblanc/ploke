@@ -1,6 +1,6 @@
-//! Manifest parsing uses `cargo_toml::Manifest::from_path`, matching Cargo completion and
-//! workspace inheritance. Shapes that used to fail strict `toml::deserialize` in discovery are
-//! exercised here as **success** cases after migration.
+//! KL-005 corpus repros: manifest shapes that **Cargo** accepts and that previously failed under
+//! strict `toml::deserialize` in discovery. Loading uses `cargo_toml::Manifest::from_path`
+//! (completion + defaults); these tests assert **success** and Cargo-faithful resolution.
 
 use std::fs;
 use std::path::Path;

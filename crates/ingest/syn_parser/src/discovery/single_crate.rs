@@ -7,7 +7,7 @@
 //!
 //! ## Workflow Overview
 //! 1. [`run_discovery_phase`] orchestrates manifest parsing, namespace derivation, and file crawling.
-//! 2. [`locate_workspace_manifest`] / [`resolve_workspace_version`] resolve workspace-inherited metadata.
+//! 2. [`locate_workspace_manifest`] and [`resolve_workspace_version`] resolve workspace-inherited metadata.
 //! 3. [`CrateContext`] and [`DiscoveryOutput`] keep the resulting data immutable for Phase 2.
 //!
 //! These entry points are intentionally narrow so downstream phases can depend on strongly typed
@@ -17,13 +17,10 @@ use ploke_core::PROJECT_NAMESPACE_UUID;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::fmt;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::discovery::DiscoveryError;
-use crate::discovery::workspace::WorkspaceVersionLink;
-use crate::discovery::workspace::resolve_workspace_version;
 
 // PROJECT_NAMESPACE_UUID is now defined in ploke_core
 // The old comment block explaining it remains relevant but the constant itself is moved.
@@ -44,75 +41,8 @@ use crate::discovery::workspace::resolve_workspace_version;
 // * Currently uses same namespace for all crates with no project.
 //  * Fine for now. Evaluate potential for pros/cons of this approach another time.
 
-// Helper structs for deserializing Cargo.toml
-
-/// Represents the `[package]` section of Cargo.toml.
-#[derive(Deserialize, Debug, Clone)]
-pub struct PackageInfo {
-    pub name: String,
-    pub version: PackageVersion,
-    #[serde(default)]
-    pub autobins: Option<bool>,
-    #[serde(default)]
-    pub autotests: Option<bool>,
-    #[serde(default)]
-    pub autoexamples: Option<bool>,
-    #[serde(default)]
-    pub autobenches: Option<bool>,
-    // edition: Option<String>, // Could be useful later
-}
-
-impl fmt::Display for PackageInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.name, self.version)
-    }
-}
-
-/// Describes where a crate's version string originates.
-#[derive(Deserialize, Debug, Clone)]
-#[serde(untagged)]
-pub enum PackageVersion {
-    /// Version is specified directly in the crate's `Cargo.toml`.
-    Explicit(String),
-    /// Version is inherited from the workspace via `version.workspace = true`.
-    Workspace(WorkspaceVersionLink),
-}
-
-impl fmt::Display for PackageVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Explicit(version) => write!(f, "{version}"),
-            Self::Workspace(_) => write!(f, "<workspace>"),
-        }
-    }
-}
-
-impl PackageVersion {
-    /// Produce the concrete version string, loading workspace metadata when needed.
-    ///
-    /// # Success
-    /// Returns a `String` borrowed from the crate manifest (`Explicit`) or from the workspace
-    /// (`Workspace`) once validation passes.
-    ///
-    /// # Errors
-    /// * [`DiscoveryError::WorkspaceVersionFlagDisabled`] if `workspace = false`.
-    /// * Any error emitted by [`resolve_workspace_version`] when escalation to a workspace lookup fails.
-    pub fn resolve(&self, crate_root: &Path) -> Result<String, DiscoveryError> {
-        match self {
-            PackageVersion::Explicit(version) => Ok(version.clone()),
-            PackageVersion::Workspace(link) => {
-                let workspace_path = resolve_workspace_version(crate_root)?;
-                if !link.workspace {
-                    return Err(DiscoveryError::WorkspaceVersionFlagDisabled {
-                        crate_path: crate_root.to_path_buf(),
-                        manifest_path: PathBuf::from(workspace_path),
-                    });
-                }
-                resolve_workspace_version(crate_root)
-            }
-        }
-    }
-}
+/// Manifest type used by discovery and re-exported for tools (`cargo_toml::Manifest` after completion).
+pub type CargoManifest = cargo_toml::Manifest;
 
 /// Represents the `[features]` section. Keys are feature names, values are lists of enabled features/dependencies.
 #[derive(Deserialize, Debug, Clone, Default, Serialize)]
@@ -610,58 +540,6 @@ impl DependencyMap for DevDependencies {
 #[serde(rename = "dev-dependencies")] // Match the TOML key
 pub struct DevDependencies(HashMap<String, DependencySpec>);
 
-/// Represents a `[lib]` target section in Cargo.toml with a custom path.
-#[derive(Deserialize, Debug, Clone)]
-pub struct LibTarget {
-    /// The path to the library root file (e.g., "lib.rs" or "src/lib.rs").
-    /// Defaults to "src/lib.rs" if not specified, per Cargo convention.
-    #[serde(default = "default_lib_path")]
-    pub path: PathBuf,
-}
-
-fn default_lib_path() -> PathBuf {
-    PathBuf::from("src/lib.rs")
-}
-
-/// Represents a `[[bin]]` target section in Cargo.toml with a custom path.
-#[derive(Deserialize, Debug, Clone)]
-pub struct BinTarget {
-    /// The name of the binary.
-    pub name: String,
-    /// The path to the binary root file (e.g., "main.rs" or "src/main.rs").
-    pub path: PathBuf,
-}
-
-/// Represents an explicit `[[test]]` target section in Cargo.toml.
-#[derive(Deserialize, Debug, Clone)]
-pub struct TestTarget {
-    /// Optional target name. If omitted, discovery derives one from the root file stem.
-    pub name: Option<String>,
-    /// The path to the test crate root file.
-    #[serde(default)]
-    pub path: Option<PathBuf>,
-}
-
-/// Represents an explicit `[[example]]` target section in Cargo.toml.
-#[derive(Deserialize, Debug, Clone)]
-pub struct ExampleTarget {
-    /// Optional target name. If omitted, discovery derives one from the root file stem.
-    pub name: Option<String>,
-    /// The path to the example crate root file.
-    #[serde(default)]
-    pub path: Option<PathBuf>,
-}
-
-/// Represents an explicit `[[bench]]` target section in Cargo.toml.
-#[derive(Deserialize, Debug, Clone)]
-pub struct BenchTarget {
-    /// Optional target name. If omitted, discovery derives one from the root file stem.
-    pub name: Option<String>,
-    /// The path to the benchmark crate root file.
-    #[serde(default)]
-    pub path: Option<PathBuf>,
-}
-
 /// Cargo target kind surfaced by discovery.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub enum TargetKind {
@@ -685,32 +563,6 @@ pub struct TargetSpec {
 pub struct TargetSelector {
     pub kind: TargetKind,
     pub name: String,
-}
-
-/// Represents the overall structure of a parsed Cargo.toml manifest.
-#[derive(Deserialize, Debug)]
-pub struct CargoManifest {
-    pub package: PackageInfo,
-    #[serde(default)] // Use default empty map if section is missing
-    pub features: Features,
-    #[serde(default)]
-    pub dependencies: Dependencies,
-    #[serde(default)]
-    #[serde(rename = "dev-dependencies")]
-    pub dev_dependencies: DevDependencies,
-    /// The `[lib]` section, if present, containing custom library path configuration.
-    pub lib: Option<LibTarget>,
-    /// The `[[bin]]` sections, if present, containing binary target configurations.
-    pub bin: Option<Vec<BinTarget>>,
-    /// The `[[test]]` sections, if present, containing integration test target configurations.
-    #[serde(default)]
-    pub test: Option<Vec<TestTarget>>,
-    /// The `[[example]]` sections, if present, containing example target configurations.
-    #[serde(default)]
-    pub example: Option<Vec<ExampleTarget>>,
-    /// The `[[bench]]` sections, if present, containing benchmark target configurations.
-    #[serde(default)]
-    pub bench: Option<Vec<BenchTarget>>,
 }
 
 /// Context information gathered for a single crate during discovery.
@@ -1063,47 +915,56 @@ mod tests {
 
     #[test]
     fn test_lib_target_default_path() {
-        // Test that [lib] section without explicit path defaults to "src/lib.rs"
-        let cargo_toml = r#"
-[package]
+        // [lib] without explicit path: Cargo completion yields "src/lib.rs" (requires on-disk layout).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(root.join("src/lib.rs"), "").expect("write lib.rs");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
 name = "test-proc-macro"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
 proc-macro = true
-"#;
+"#,
+        )
+        .expect("write Cargo.toml");
 
-        let manifest: CargoManifest =
-            toml::from_str(cargo_toml).expect("Should parse manifest with [lib] but no path");
+        let manifest =
+            CargoManifest::from_path(root.join("Cargo.toml")).expect("Manifest::from_path");
         let lib = manifest.lib.expect("Should have lib section");
         assert_eq!(
-            lib.path,
-            PathBuf::from("src/lib.rs"),
+            lib.path.as_deref(),
+            Some("src/lib.rs"),
             "Default path should be src/lib.rs"
         );
     }
 
     #[test]
     fn test_lib_target_explicit_path() {
-        // Test that explicit path in [lib] is respected
-        let cargo_toml = r#"
-[package]
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(root.join("src/my_lib.rs"), "").expect("write my_lib.rs");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
 name = "test-crate"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
 path = "src/my_lib.rs"
-"#;
+"#,
+        )
+        .expect("write Cargo.toml");
 
-        let manifest: CargoManifest =
-            toml::from_str(cargo_toml).expect("Should parse manifest with explicit lib path");
+        let manifest =
+            CargoManifest::from_path(root.join("Cargo.toml")).expect("Manifest::from_path");
         let lib = manifest.lib.expect("Should have lib section");
-        assert_eq!(
-            lib.path,
-            PathBuf::from("src/my_lib.rs"),
-            "Explicit path should be preserved"
-        );
+        assert_eq!(lib.path.as_deref(), Some("src/my_lib.rs"));
     }
 }

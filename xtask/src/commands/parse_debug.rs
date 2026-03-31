@@ -71,7 +71,7 @@ use clap::{Args, Subcommand, ValueEnum};
 use ploke_error::DiagnosticInfo;
 use serde::{Deserialize, Serialize};
 
-use syn_parser::discovery::CargoManifest;
+use cargo_toml::Manifest;
 use syn_parser::discovery::{
     DiscoveryError, ManifestKind, run_discovery_phase, try_parse_manifest,
 };
@@ -2366,37 +2366,40 @@ impl Command for DebugDiscoveryRules {
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_debug_target_path(ctx, &self.path)?;
         let manifest_path = canon.join("Cargo.toml");
-        let manifest_str = std::fs::read_to_string(&manifest_path).map_err(|e| {
-            XtaskError::Resource(format!("Failed to read {}: {e}", manifest_path.display()))
-        })?;
-        let manifest: CargoManifest = toml::from_str(&manifest_str).map_err(|e| {
-            XtaskError::Parse(format!("Failed to parse {}: {e}", manifest_path.display()))
+        let manifest: Manifest = Manifest::from_path(&manifest_path).map_err(|e| {
+            XtaskError::Parse(format!(
+                "Failed to parse {}: {e}",
+                manifest_path.display()
+            ))
         })?;
 
         let src_scan_root = canon.join("src");
-        let custom_lib_path = manifest
-            .lib
-            .as_ref()
-            .map(|lib| canon.join(&lib.path).display().to_string());
+        let custom_lib_path = manifest.lib.as_ref().and_then(|lib| {
+            lib.path
+                .as_ref()
+                .map(|p| canon.join(p).display().to_string())
+        });
         let mut custom_bin_paths: Vec<String> = manifest
             .bin
-            .as_ref()
-            .map(|bins| {
-                bins.iter()
-                    .map(|b| canon.join(&b.path).display().to_string())
-                    .collect()
+            .iter()
+            .filter_map(|b| {
+                b.path
+                    .as_ref()
+                    .map(|p| canon.join(p).display().to_string())
             })
-            .unwrap_or_default();
+            .collect();
         custom_bin_paths.sort();
 
         let mut candidates = Vec::new();
         candidates.push(candidate_for("src_walk", &src_scan_root));
         if let Some(ref lib) = manifest.lib {
-            candidates.push(candidate_for("lib_target", &canon.join(&lib.path)));
+            if let Some(ref p) = lib.path {
+                candidates.push(candidate_for("lib_target", &canon.join(p)));
+            }
         }
-        if let Some(ref bins) = manifest.bin {
-            for b in bins {
-                candidates.push(candidate_for("bin_target", &canon.join(&b.path)));
+        for b in &manifest.bin {
+            if let Some(ref p) = b.path {
+                candidates.push(candidate_for("bin_target", &canon.join(p)));
             }
         }
 
@@ -3941,10 +3944,20 @@ fn classify_corpus_checkout(checkout_path: &Path) -> CorpusCheckoutClassificatio
     match try_parse_manifest(checkout_path, ManifestKind::WorkspaceRoot) {
         Ok(metadata) => {
             if let Some(workspace) = metadata.workspace {
+                let mut member_count = workspace.members.len();
+                // Implicit workspaces often omit `members` in Cargo.toml; Cargo still resolves
+                // workspace members (see `cargo metadata`). Match that when the manifest lists none.
+                if member_count == 0 {
+                    if let Some(fallback) = classify_corpus_checkout_via_metadata(checkout_path) {
+                        if fallback.repository_kind == "workspace" {
+                            member_count = fallback.workspace_member_count.unwrap_or(0);
+                        }
+                    }
+                }
                 CorpusCheckoutClassification {
                     repository_kind: "workspace".into(),
                     recommended_parser: "parse_workspace_with_config".into(),
-                    workspace_member_count: Some(workspace.members.len()),
+                    workspace_member_count: Some(member_count),
                     classification_error: None,
                     classification_diagnostic: None,
                     should_run_single_crate_pipeline: false,
@@ -4209,7 +4222,9 @@ fn persist_workspace_probe_summary(
 fn resolve_workspace_probe_members(workspace_root: &Path) -> Result<Vec<PathBuf>, XtaskError> {
     if let Ok(metadata) = try_parse_manifest(workspace_root, ManifestKind::WorkspaceRoot) {
         if let Some(workspace) = metadata.workspace {
-            return Ok(workspace.members);
+            if !workspace.members.is_empty() {
+                return Ok(workspace.members);
+            }
         }
     }
 

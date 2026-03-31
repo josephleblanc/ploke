@@ -12,14 +12,6 @@ use crate::discovery::ManifestKind;
 use crate::discovery::WithDiscoveryManifestCargoToml;
 use crate::discovery::WithDiscoveryManifestRead;
 
-/// Indicates that a version should be inherited from the workspace metadata. Cargo effectively
-/// treats `workspace = true` as the only supported value, so we surface explicit errors for other
-/// values to keep the type system honest.
-#[derive(Deserialize, Debug, Clone)]
-pub struct WorkspaceVersionLink {
-    pub(super) workspace: bool,
-}
-
 /// Partial view of a manifest that may or may not declare workspace metadata. `workspace = None`
 /// signals that the inspected manifest isn't a workspace boundary.
 #[derive(Deserialize, Debug, Clone, Serialize)]

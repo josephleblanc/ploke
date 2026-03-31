@@ -26,6 +26,7 @@ ploke-core = { workspace = true }
 ploke-error = { path = "../crates/ploke-error" }
 ploke-transform = { path = "../crates/ingest/ploke-transform" }
 syn_parser = { path = "../crates/ingest/syn_parser" }
+cargo_toml = { workspace = true }
 tempfile = "3.10"
 once_cell = "1.20"
 tokio = { workspace = true }

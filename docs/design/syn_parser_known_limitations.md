@@ -1,6 +1,8 @@
 # `syn_parser` known limitations
 
-This document records behaviors that are **expected today**: valid Rust that `rustc` accepts for a given configuration may still fail module-tree merge with `DuplicatePath`, or may include items from multiple cfg branches at once. **Manifest discovery** may also fail on `Cargo.toml` shapes that **Cargo** accepts when our loader requires fields that Cargo supplies via **defaults** or **workspace inheritance**. **Pre-expansion parsing** uses `syn::parse_file` per file; sources that never compile, or that only compile after proc-macro expansion, may fail parsing or produce partial-parse errors. See [ADR-025](adrs/accepted/ADR-025-module-tree-staged-file-duplicate-definitions.md) for file-vs-inline staging; the items below include issues **outside** that ADR’s scope.
+This document records behaviors that are **expected today**: valid Rust that `rustc` accepts for a given configuration may still fail module-tree merge with `DuplicatePath`, or may include items from multiple cfg branches at once. **Pre-expansion parsing** uses `syn::parse_file` per file; sources that never compile, or that only compile after proc-macro expansion, may fail parsing or produce partial-parse errors. See [ADR-025](adrs/accepted/ADR-025-module-tree-staged-file-duplicate-definitions.md) for file-vs-inline staging; the items below include issues **outside** that ADR’s scope.
+
+**Manifest discovery** uses `cargo_toml` with on-disk completion; the former KL-005 gap (stricter deserialization than Cargo) is **resolved** — see [KL-005](known_limitations/KL-005-manifest-stricter-than-cargo-defaults.md) for history and regression tests.
 
 ---
 
@@ -40,20 +42,13 @@ This document records behaviors that are **expected today**: valid Rust that `ru
 
 ---
 
-## L3 — `Cargo.toml` parsing stricter than Cargo defaults / workspace package
+## L3 — `Cargo.toml` parsing stricter than Cargo defaults / workspace package *(resolved)*
 
 **KL index:** [KL-005](known_limitations/KL-005-manifest-stricter-than-cargo-defaults.md).
 
-**Symptom:** `parse_workspace` fails during discovery with `Failed to parse manifest` and `missing field \`version\`` or `missing field \`path\`` on a member manifest that `cargo` can build (e.g. workspace-inherited version, or `[[bin]]` without an explicit `path`).
+**Status:** Addressed by migrating discovery to `cargo_toml::Manifest::from_path` (completion on disk). Former failure modes (missing `version` / `[[bin]].path` where Cargo supplies defaults) are covered by success repros in [`tests/repro/success/kl005_manifest_cargo_alignment.rs`](../../crates/ingest/syn_parser/tests/repro/success/kl005_manifest_cargo_alignment.rs). Workspace `version.workspace = true` inheritance is additionally exercised by `discovery::tests::test_toml_basic` / `tests/fixture_workspace/ws_fixture_00`.
 
-**Cause:** Member manifests are deserialized with a schema that does not fully apply Cargo’s defaulting rules (`src/bin/<name>.rs` for bins) or workspace `package` inheritance in the same way as `cargo`.
-
-**Workarounds (future):** Apply Cargo-equivalent defaults after parse; model optional fields and merge workspace metadata; or surface a dedicated discovery error with actionable text.
-
-**Repro tests** (`crates/ingest/syn_parser`, temporary in-memory fixtures):
-
-- `repro_workspace_package_missing_version_manifest_parse_error`
-- `repro_bin_target_missing_path_manifest_parse_error`
+**Historical symptom (no longer current):** `parse_workspace` could fail during discovery with `Failed to parse manifest` and serde `missing field \`version\`` / `missing field \`path\`` on manifests `cargo` could build.
 
 ---
 
