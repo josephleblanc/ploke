@@ -27,10 +27,11 @@
 
 use std::fs;
 
+use syn_parser::error::SynParserError;
 use syn_parser::try_run_phases_and_resolve;
 use tempfile::tempdir;
 
-fn parse_temp_crate(lib_rs_contents: &str) {
+fn parse_temp_crate(lib_rs_contents: &str) -> Result<(), SynParserError> {
     let td = tempdir().expect("create tempdir");
     fs::create_dir_all(td.path().join("src")).expect("create src dir");
 
@@ -46,18 +47,7 @@ edition = "2021"
 
     fs::write(td.path().join("src/lib.rs"), lib_rs_contents).expect("write lib.rs");
 
-    try_run_phases_and_resolve(td.path())
-        .expect("parser should accept duplicate_item placeholder syntax");
-}
-
-fn panic_payload_to_string(payload: &Box<dyn std::any::Any + Send>) -> String {
-    if let Some(s) = payload.downcast_ref::<&str>() {
-        s.to_string()
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        "<non-string panic payload>".to_string()
-    }
+    try_run_phases_and_resolve(td.path()).map(|_| ())
 }
 
 #[test]
@@ -87,12 +77,19 @@ pub mod __mod_name {
 }
 "#;
 
-    let result = std::panic::catch_unwind(|| parse_temp_crate(lib_rs));
+    let err = parse_temp_crate(lib_rs).expect_err("duplicate_item fixture should fail to parse");
 
-    if let Err(payload) = result {
-        panic!(
-            "unexpected panic while parsing duplicate_item placeholder fixture: {}",
-            panic_payload_to_string(&payload)
-        );
+    match err {
+        SynParserError::MultipleErrors(errors) => {
+            assert!(
+                errors.len() >= 1,
+                "expected at least one child parse error, got {errors:?}"
+            );
+            assert!(
+                errors.iter().all(|e| matches!(e, SynParserError::Syn { .. })),
+                "expected only syn parse errors, got {errors:?}"
+            );
+        }
+        other => panic!("unexpected error kind for duplicate_item fixture: {other:?}"),
     }
 }

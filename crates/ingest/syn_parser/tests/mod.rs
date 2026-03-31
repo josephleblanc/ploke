@@ -7,3 +7,7 @@ pub mod processing;
 pub mod uuid_phase1_discovery;
 pub mod uuid_phase2_partial_graphs;
 pub mod uuid_phase3_resolution; // Keep this line
+
+// tests for minimal reproductions of errors found using real github projects as targets for
+// parsing
+pub mod repro;
