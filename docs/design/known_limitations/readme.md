@@ -43,21 +43,21 @@ is visible without reading the full note.
 
 - discovered: **2026-03-29** (corpus; see triage under `2026-03-29_corpus-triage`)
 - reproduced: **2026-03-30** ([`proc_macro_parsing_report.md`](../../active/agents/2026-03-30_syn_parser_repro_rca/reports/2026-03-30_proc_macro_parsing_report.md))
-- deferred: **2026-03-31** (`PARSING_SOLUTION_DEFERRED` — see KL file)
+- deferred: **N/A**
 - resolved: **N/A**
 
 **KL-003** — [`KL-003-cfg-disjoint-duplicate-inline-mod.md`](KL-003-cfg-disjoint-duplicate-inline-mod.md)
 
 - discovered: **2026-03-29**
 - reproduced: **2026-03-30** ([`cfg_gates_report.md`](../../active/agents/2026-03-30_syn_parser_repro_rca/reports/2026-03-30_cfg_gates_report.md))
-- deferred: **2026-03-31**
+- deferred: **N/A**
 - resolved: **N/A**
 
 **KL-004** — [`KL-004-nested-main-rs-logical-path.md`](KL-004-nested-main-rs-logical-path.md)
 
 - discovered: **2026-03-29**
 - reproduced: **2026-03-30** ([`file_links_report.md`](../../active/agents/2026-03-30_syn_parser_repro_rca/reports/2026-03-30_file_links_report.md))
-- deferred: **2026-03-31**
+- deferred: **N/A**
 - resolved: **N/A**
 
 **KL-005** — [`KL-005-manifest-stricter-than-cargo-defaults.md`](KL-005-manifest-stricter-than-cargo-defaults.md)
@@ -71,7 +71,7 @@ is visible without reading the full note.
 
 - discovered: **2026-03-29**
 - reproduced: **2026-03-30** ([`partial_parsing_report.md`](../../active/agents/2026-03-30_syn_parser_repro_rca/reports/2026-03-30_partial_parsing_report.md))
-- deferred: **2026-03-31**
+- deferred: **N/A**
 - resolved: **N/A**
 
 **KL-007+** — *placeholder* — assign the next free id when adding a new limitation;

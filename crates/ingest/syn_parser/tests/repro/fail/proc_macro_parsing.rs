@@ -56,6 +56,10 @@ edition = "2021"
     try_run_phases_and_resolve(td.path()).map(|_| ())
 }
 
+// Assertion note: KL-002 / corpus notes describe concrete `syn` diagnostics (e.g. `expected ','`).
+// This test only checks `MultipleErrors` of `SynParserError::Syn` — weaker than that prose — on
+// purpose: avoid a brittle substring like a lone comma; tighten assertions together with doc/corpus
+// alignment when we work through the KL list.
 #[test]
 fn repro_duplicate_item_placeholder_trait_signatures() {
     let lib_rs = r#"
