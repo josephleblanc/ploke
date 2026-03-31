@@ -54,6 +54,7 @@ pub use discovery::CrateContext;
 pub use discovery::ManifestCtx;
 pub use discovery::ManifestKind;
 pub use discovery::TargetSelector;
+pub use discovery::WithDiscoveryManifestCargoToml;
 pub use discovery::WithDiscoveryManifestRead;
 pub use discovery::WithDiscoveryManifestToml;
 pub use discovery::try_parse_manifest;
