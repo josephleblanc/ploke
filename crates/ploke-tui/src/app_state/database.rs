@@ -993,13 +993,11 @@ pub(super) async fn load_db(
     state
         .db
         .clear_hnsw_idx()
-        .await
-        .map_err(ploke_error::Error::from)?;
+        .await?;
     state
         .db
         .clear_relations()
-        .await
-        .map_err(ploke_error::Error::from)?;
+        .await?;
     state
         .db
         .import_backup_with_embeddings(&valid_file)
