@@ -943,6 +943,62 @@ impl DiscoveryOutput {
     }
 }
 
+pub(crate) fn features_from_cargo_toml(features: cargo_toml::FeatureSet) -> Features {
+    Features(features.into_iter().collect())
+}
+
+pub(crate) fn dependencies_from_cargo_toml(deps: cargo_toml::DepsSet) -> Dependencies {
+    Dependencies(
+        deps.iter()
+            .map(|(k, v)| (k.clone(), dependency_spec_from_cargo(v)))
+            .collect(),
+    )
+}
+
+pub(crate) fn dev_dependencies_from_cargo_toml(deps: cargo_toml::DepsSet) -> DevDependencies {
+    DevDependencies(
+        deps.iter()
+            .map(|(k, v)| (k.clone(), dependency_spec_from_cargo(v)))
+            .collect(),
+    )
+}
+
+fn dependency_spec_from_cargo(dep: &cargo_toml::Dependency) -> DependencySpec {
+    match dep {
+        cargo_toml::Dependency::Simple(version) => DependencySpec::Version(version.clone()),
+        cargo_toml::Dependency::Detailed(d) => DependencySpec::Detailed {
+            version: d.version.clone(),
+            path: d.path.clone(),
+            git: d.git.clone(),
+            branch: d.branch.clone(),
+            tag: d.tag.clone(),
+            rev: d.rev.clone(),
+            features: if d.features.is_empty() {
+                None
+            } else {
+                Some(d.features.clone())
+            },
+            optional: Some(d.optional),
+            default_features: Some(d.default_features),
+        },
+        cargo_toml::Dependency::Inherited(i) => DependencySpec::Detailed {
+            version: None,
+            path: None,
+            git: None,
+            branch: None,
+            tag: None,
+            rev: None,
+            features: if i.features.is_empty() {
+                None
+            } else {
+                Some(i.features.clone())
+            },
+            optional: Some(i.optional),
+            default_features: None,
+        },
+    }
+}
+
 /// Derives a deterministic UUID v5 namespace for a specific crate.
 ///
 /// This function is intended to run single-threaded as part of the discovery setup.

@@ -874,6 +874,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cargo_toml"
+version = "0.22.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "374b7c592d9c00c1f4972ea58390ac6b18cbb6ab79011f3bdc90a0b82ca06b77"
+dependencies = [
+ "serde",
+ "toml 0.9.5",
+]
+
+[[package]]
 name = "casey"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6379,6 +6389,7 @@ name = "syn_parser"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cargo_toml",
  "colored 3.0.0",
  "cozo",
  "criterion 0.5.1",
@@ -6405,7 +6416,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
- "toml 0.8.20",
+ "toml 0.9.5",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

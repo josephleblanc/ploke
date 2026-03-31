@@ -1,5 +1,6 @@
 use std::backtrace::Backtrace;
 use std::fmt;
+use std::fs;
 use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -105,6 +106,29 @@ impl<'a, T> ManifestTomlOutcome<'a, T> {
         let emission_site = DiagnosticSite::from_location(Location::caller());
         self.result
             .map_err(|e| DiscoveryError::manifest_parse_at_site(self.ctx, e, emission_site.clone()))
+    }
+}
+
+/// Maps [`cargo_toml::Error`] from [`cargo_toml::Manifest::from_path`] into [`DiscoveryError`].
+#[track_caller]
+pub fn discovery_error_from_cargo_toml(
+    ctx: ManifestCtx<'_>,
+    err: cargo_toml::Error,
+) -> DiscoveryError {
+    match err {
+        cargo_toml::Error::Io(e) => DiscoveryError::manifest_read(ctx, e),
+        cargo_toml::Error::Parse(e) => {
+            let content = fs::read_to_string(&ctx.manifest_path).ok();
+            let ctx = match content.as_ref() {
+                Some(c) => ctx.with_content(c.as_str()),
+                None => ctx,
+            };
+            DiscoveryError::manifest_parse(ctx, *e)
+        }
+        e => DiscoveryError::manifest_read(
+            ctx,
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()),
+        ),
     }
 }
 

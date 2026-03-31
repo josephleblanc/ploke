@@ -1,14 +1,11 @@
-//! Discovery-stage manifest parse errors: `Cargo.toml` shapes **Cargo** accepts
-//! (workspace package inheritance, default `[[bin]]` paths) may still fail
-//! deserialization in `parse_workspace`.
-//!
-//! Known limitation (L3 / KL-005):
-//! [syn_parser_known_limitations.md](../../../../../../docs/design/syn_parser_known_limitations.md),
-//! [KL-005-manifest-stricter-than-cargo-defaults.md](../../../../../../docs/design/known_limitations/KL-005-manifest-stricter-than-cargo-defaults.md).
+//! Manifest parsing uses `cargo_toml::Manifest::from_path`, matching Cargo completion and
+//! workspace inheritance. Shapes that used to fail strict `toml::deserialize` in discovery are
+//! exercised here as **success** cases after migration.
 
 use std::fs;
 use std::path::Path;
 
+use syn_parser::discovery::TargetKind;
 use syn_parser::parse_workspace;
 use tempfile::tempdir;
 
@@ -27,16 +24,19 @@ fn write_file(path: &Path, contents: &str) {
 // - Target crate: `benches`
 // - Saved failing member: `benches`
 // - Saved hotspot file: `benches/Cargo.toml`
+// - Corpus triage: failure-0006 (`docs/active/agents/2026-03-29_corpus-triage/2026-03-30_corpus-triage-run-1774867607815.md`)
 //
-// The original corpus failure was a discovery-stage error:
-// `Failed to parse manifest ... missing field 'version'`.
-//
-// The minimized shape is a workspace with `workspace.package.version` defined,
-// while a member `Cargo.toml` omits the `package.version` field. Cargo accepts
-// the workspace default, but the manifest parser currently requires an explicit
-// `package.version` field, producing the same parse error.
+// The original failure was strict `toml::deserialize` in discovery: missing `package.version`.
+// Upstream `benches/Cargo.toml` has **no** `[package].version` and **no** `version.workspace = true`
+// (see `tests/fixture_github_clones/corpus/bevyengine__bevy/benches/Cargo.toml`). Cargo treats that
+// as version **0.0.0** — not workspace inheritance. This test uses that **same minimal shape**
+// (only `name` + `edition` in `[package]`) and asserts discovery succeeds and the resolved version
+// matches Cargo. Workspace `version.workspace = true` + inherited semver is covered by
+// `discovery::tests::test_toml_basic` (`tests/fixture_workspace/ws_fixture_00`).
+// Former name: `repro_workspace_package_missing_version_manifest_parse_error` →
+// `repro_workspace_package_version_resolves_from_workspace_via_cargo_toml` → this name.
 #[test]
-fn repro_workspace_package_missing_version_manifest_parse_error() {
+fn repro_workspace_package_missing_version_bevy_like_accepts_like_cargo() {
     let td = tempdir().expect("create tempdir");
     let workspace_root = td.path();
 
@@ -44,10 +44,7 @@ fn repro_workspace_package_missing_version_manifest_parse_error() {
         &workspace_root.join("Cargo.toml"),
         r#"[workspace]
 members = ["member_missing_version"]
-
-[workspace.package]
-version = "0.1.0"
-edition = "2024"
+resolver = "2"
 "#,
     );
 
@@ -62,20 +59,20 @@ edition = "2024"
     write_file(&member_root.join("src/lib.rs"), "pub fn ping() {}\n");
 
     let selected = [member_root.as_path()];
-    let err = match parse_workspace(workspace_root, Some(&selected)) {
-        Ok(_) => panic!("workspace unexpectedly parsed successfully"),
-        Err(err) => err,
-    };
-    let err_msg = err.to_string();
+    let parsed = parse_workspace(workspace_root, Some(&selected)).expect("workspace should parse");
 
-    assert!(
-        err_msg.contains("Failed to parse manifest"),
-        "error should preserve manifest context, got: {err_msg}"
+    let ctx = parsed
+        .crates
+        .iter()
+        .find(|c| c.crate_context.root_path == member_root)
+        .expect("member crate")
+        .crate_context
+        .clone();
+    assert_eq!(
+        ctx.version, "0.0.0",
+        "Cargo default for omitted [package].version (Bevy benches–like shape)"
     );
-    assert!(
-        err_msg.contains("missing field `version`"),
-        "error should mention missing version field, got: {err_msg}"
-    );
+    assert_eq!(ctx.name, "member_missing_version");
 }
 
 // TEST_NOTE:2026-03-30
@@ -86,16 +83,16 @@ edition = "2024"
 // - Target crate: `linera-bridge`
 // - Saved failing member: `linera-bridge`
 // - Saved hotspot file: `linera-bridge/Cargo.toml`
+// - Corpus triage: failure-0042 (same triage doc as above)
 //
-// The original corpus failure was a discovery-stage error:
-// `Failed to parse manifest ... missing field 'path'` in a `[[bin]]` entry.
-//
-// The minimized shape is a workspace member that declares a `[[bin]]` with a
-// name but omits the `path`. Cargo defaults to `src/bin/<name>.rs`, but the
-// manifest parser currently requires the `path` field and fails with the same
-// parse error.
+// The original failure was strict deserialization: `missing field 'path'` on a `[[bin]]` with only
+// `name`. Cargo defaults the path (e.g. `src/bin/<name>.rs`); upstream matches that shape (see
+// `tests/fixture_github_clones/corpus/linera-io__linera-protocol/linera-bridge/Cargo.toml`).
+// **This** repro is only about the omitted `path`; it is not the Bevy/missing-`version` case above.
+// Former name: `repro_bin_target_missing_path_manifest_parse_error` →
+// `repro_bin_target_omitted_path_defaults_like_cargo`.
 #[test]
-fn repro_bin_target_missing_path_manifest_parse_error() {
+fn repro_bin_target_omitted_path_defaults_like_cargo() {
     let td = tempdir().expect("create tempdir");
     let workspace_root = td.path();
 
@@ -121,18 +118,23 @@ name = "helper"
     write_file(&member_root.join("src/bin/helper.rs"), "fn main() {}\n");
 
     let selected = [member_root.as_path()];
-    let err = match parse_workspace(workspace_root, Some(&selected)) {
-        Ok(_) => panic!("workspace unexpectedly parsed successfully"),
-        Err(err) => err,
-    };
-    let err_msg = err.to_string();
+    let parsed = parse_workspace(workspace_root, Some(&selected)).expect("workspace should parse");
 
+    let ctx = parsed
+        .crates
+        .iter()
+        .find(|c| c.crate_context.root_path == member_root)
+        .expect("member crate")
+        .crate_context
+        .clone();
+    let bin = ctx
+        .targets
+        .iter()
+        .find(|t| t.kind == TargetKind::Bin && t.name == "helper")
+        .expect("defaulted bin target");
     assert!(
-        err_msg.contains("Failed to parse manifest"),
-        "error should preserve manifest context, got: {err_msg}"
-    );
-    assert!(
-        err_msg.contains("missing field `path`"),
-        "error should mention missing bin path, got: {err_msg}"
+        bin.root.ends_with("src/bin/helper.rs"),
+        "expected Cargo default path, got {}",
+        bin.root.display()
     );
 }

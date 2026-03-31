@@ -36,7 +36,8 @@ syn_parser_macros = { path = "../../../proc_macros/syn_parser/syn_parser_macros"
 anyhow = "1.0"
 
 # Added for Phase 1 Discovery (Optional)
-toml = { version = "0.8" }
+toml = { workspace = true }
+cargo_toml = { workspace = true }
 walkdir = { version = "2.4" }
 
 # cfg handling
