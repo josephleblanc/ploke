@@ -7,6 +7,10 @@ name = "ws_fixture_assoc_local_enum_ids"
 version = "0.1.0"
 
 [[package]]
+name = "ws_fixture_cfg_duplicate_mods_repro"
+version = "0.1.0"
+
+[[package]]
 name = "ws_fixture_duplicate_cfg_test_mods"
 version = "0.1.0"
 
@@ -52,6 +56,10 @@ version = "0.1.0"
 
 [[package]]
 name = "ws_fixture_logging_inline_file_repro"
+version = "0.1.0"
+
+[[package]]
+name = "ws_fixture_protos_default_index_repro"
 version = "0.1.0"
 
 [[package]]

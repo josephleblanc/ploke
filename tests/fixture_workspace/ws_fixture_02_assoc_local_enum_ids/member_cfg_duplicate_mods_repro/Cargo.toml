@@ -1,0 +1,8 @@
+[package]
+name = "ws_fixture_cfg_duplicate_mods_repro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
