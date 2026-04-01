@@ -97,7 +97,9 @@ Then later you can load it faster with:
 Here are some common commands. For the full reference on available commands, use `/help` within ploke.
 
 #### Choose a model via the model-picker 
+
 https://github.com/user-attachments/assets/391b3f5a-dcbb-46a5-afa9-f4bdeb0b5d01
+
 Default: [kimi-k2](https://openrouter.ai/moonshotai/kimi-k2)\
 This opens an overlay that lets you navigate and select a model/provider. Search matches exact string, so to see all gpt-family models, search "gpt" and you'll see "gpt-5.1", "gpt-5.2", etc.
 ```txt
