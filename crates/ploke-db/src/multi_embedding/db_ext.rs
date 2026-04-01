@@ -30,6 +30,22 @@ ancestor[desc, asc] := parent_of[desc, asc]
 ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 "#;
 
+/// METHOD_NODE_ANCESTOR_RULE - extends `parent_of` / `ancestor` for method nodes.
+///
+/// This rule connects method IDs to their parent impl/trait owners via syntax_edge
+/// relations, allowing methods to reach root modules (and thus `file_mod`).
+///
+/// Methods use `ImplAssociatedItem` / `TraitAssociatedItem` edges from the parser.
+/// The rule composes with existing ANCESTOR_RULES_NOW by extending `parent_of`.
+///
+/// Connection path: method → impl/trait → module → file_mod
+pub const METHOD_NODE_ANCESTOR_RULE: &str = r#"
+# Method parent relations: connect methods to their impl/trait owners
+# Note: In syntax_edge, source is parent (impl/trait), target is child (method)
+parent_of[method_id, impl_id] := *syntax_edge{source_id: impl_id, target_id: method_id, relation_kind: "ImplAssociatedItem" @ 'NOW'}
+parent_of[method_id, trait_id] := *syntax_edge{source_id: trait_id, target_id: method_id, relation_kind: "TraitAssociatedItem" @ 'NOW'}
+"#;
+
 const ROOT_MODULE_RULE: &str = r#"
 is_root_module[id] := *module{id}, *file_mod {owner_id: id}
 "#;
@@ -628,22 +644,22 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
     needs_embedding[id, name, hash, span] := *{node_relation_name} {{
-            id, 
-            name, 
-            tracking_hash: hash, 
-            span, 
+            id,
+            name,
+            tracking_hash: hash,
+            span,
          }}, not *{embed_rel} {{node_id: id}}
 
     is_root_module[id] := *module{{ id }}, *file_mod {{owner_id: id}}
 
-    batch[id, name, file_path, file_hash, hash, span, namespace] := 
+    batch[id, name, file_path, file_hash, hash, span, namespace] :=
         needs_embedding[id, name, hash, span],
         ancestor[id, mod_id],
         is_root_module[mod_id],
         *module{{ id: mod_id, tracking_hash: file_hash }},
         *file_mod {{  owner_id: mod_id, file_path, namespace  }},
 
-    ?[id, name, file_path, file_hash, hash, span, namespace] := 
+    ?[id, name, file_path, file_hash, hash, span, namespace] :=
         batch[id, name, file_path, file_hash, hash, span, namespace]
         :sort id
         :limit $limit
@@ -900,8 +916,8 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         let set_embeddings_rule = format!(
             "{embedding_rule_head} :=
                 *{rel_name}{{
-                    node_id, 
-                    embedding_set_id, 
+                    node_id,
+                    embedding_set_id,
                     vector @ 'NOW'
                 }},
                 embedding_set_id == {set_id}"
