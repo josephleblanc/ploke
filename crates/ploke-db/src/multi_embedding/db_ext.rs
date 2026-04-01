@@ -23,7 +23,7 @@ use crate::{
     query::builder::EMBEDDABLE_NODES_NOW,
 };
 
-const ANCESTOR_RULES_NOW: &str = r#"
+pub const ANCESTOR_RULES_NOW: &str = r#"
 parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}
 
 ancestor[desc, asc] := parent_of[desc, asc]

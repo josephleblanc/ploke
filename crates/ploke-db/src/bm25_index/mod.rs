@@ -733,14 +733,23 @@ impl Bm25Indexer {
 pub(crate) fn collect_rebuild_sources(
     db: &Database,
 ) -> Result<Vec<(Uuid, String, TrackingHash, Uuid)>, DbError> {
+    use crate::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
+
     let mut out: Vec<(Uuid, String, TrackingHash, Uuid)> = Vec::new();
-    for node in NodeType::primary_nodes().iter() {
+    for node in NodeType::primary_and_assoc_nodes().iter() {
         let rel = node.relation_str();
+
+        // For Method nodes, include METHOD_NODE_ANCESTOR_RULE to connect methods
+        // to their impl/trait owners and eventually to root modules (Option B)
+        let ancestor_rules = if node == &NodeType::Method {
+            format!("{}\n{}", ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE)
+        } else {
+            ANCESTOR_RULES_NOW.to_string()
+        };
+
         let script = format!(
             r#"
-parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
-ancestor[desc, asc] := parent_of[desc, asc]
-ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+{ancestor_rules}
 is_root_module[id] := *module{{id @ 'NOW'}}, *file_mod{{owner_id: id @ 'NOW'}}
 
 ?[id, name, tracking_hash, namespace] :=
@@ -749,6 +758,7 @@ is_root_module[id] := *module{{id @ 'NOW'}}, *file_mod{{owner_id: id @ 'NOW'}}
     is_root_module[mod_id],
     *file_mod{{ owner_id: mod_id, namespace @ 'NOW' }}
 "#,
+            ancestor_rules = ancestor_rules,
             rel = rel,
         );
         let res = db.raw_query(&script)?;
@@ -1192,4 +1202,70 @@ fn hello() { println!(\"hi\"); }",
         }
         assert!(!got.is_empty(), "expected results after rebuild");
     }
+
+    /// TDD test: Verify that `collect_rebuild_sources` includes Method nodes.
+    ///
+    /// This test will initially FAIL because `collect_rebuild_sources` only iterates
+    /// over `NodeType::primary_nodes()`, which does not include Method.
+    ///
+    /// **Implementation needed:**
+    /// 1. Change `primary_nodes()` to `primary_and_assoc_nodes()` in `collect_rebuild_sources`
+    /// 2. Add METHOD_NODE_ANCESTOR_RULE to the CozoScript for Method nodes (Option B)
+    #[test]
+    fn collect_rebuild_sources_includes_method_nodes() {
+        let db = TEST_DB_NODES.as_ref().expect("test db init").clone();
+        let triples = collect_rebuild_sources(db.as_ref()).expect("collect names");
+
+        // First, verify we have some triples
+        assert!(!triples.is_empty(), "expected some nodes to rebuild from");
+
+        // Get the total count of methods in the database for context
+        let method_count_script = r#"?[count(id)] := *method { id, name @ 'NOW' }"#;
+        let method_count_result = db
+            .raw_query(method_count_script)
+            .expect("query method count");
+        let total_methods = match &method_count_result.rows[0][0] {
+            DataValue::Num(cozo::Num::Int(n)) => *n as usize,
+            _ => 0,
+        };
+        eprintln!("Total methods in database: {}", total_methods);
+
+        // THE FAILING ASSERTION: Method nodes should be included in rebuild sources
+        // This will FAIL initially because collect_rebuild_sources doesn't process methods
+        let method_triples: Vec<_> = triples
+            .iter()
+            .filter(|(id, name, _th, _ns)| {
+                // Check if this ID exists in the method relation
+                let check_script = format!(
+                    r#"?[id] := *method {{ id, name @ 'NOW' }}, id == {}"#,
+                    cozo_datavalue_uuid(*id)
+                );
+                db.raw_query(&check_script)
+                    .map(|r| !r.rows.is_empty())
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        eprintln!(
+            "Method triples found in rebuild sources: {}",
+            method_triples.len()
+        );
+
+        assert!(
+            !method_triples.is_empty(),
+            "Expected Method nodes to be included in collect_rebuild_sources, but found none. \
+             This indicates that collect_rebuild_sources is not iterating over NodeType::Method. \
+             To fix: Change primary_nodes() to primary_and_assoc_nodes() and add METHOD_NODE_ANCESTOR_RULE for Method nodes."
+        );
+
+        eprintln!(
+            "SUCCESS: collect_rebuild_sources includes {} Method nodes",
+            method_triples.len()
+        );
+    }
+}
+
+/// Helper to format a UUID for CozoScript
+fn cozo_datavalue_uuid(id: Uuid) -> String {
+    format!("to_uuid(\"{}\")", id)
 }
