@@ -152,7 +152,7 @@ impl FixtureEmbeddingExpectation {
 
 pub const FIXTURE_NODES_CANONICAL: FixtureDb = FixtureDb {
     id: "fixture_nodes_canonical",
-    rel_path: "tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite",
+    rel_path: "tests/backup_dbs/fixture_nodes_canonical_2026-04-01.sqlite",
     parsed_targets: &["tests/fixture_crates/fixture_nodes"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureCrateMultiEmbedding {
@@ -164,13 +164,13 @@ pub const FIXTURE_NODES_CANONICAL: FixtureDb = FixtureDb {
     requires_primary_index: true,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-03-20",
+    last_updated: "2026-04-01",
     notes: "Canonical current-schema fixture_nodes backup. It is imported as a plain backup, but regeneration intentionally uses setup_db_full_multi_embedding so the saved snapshot includes the current multi-embedding schema relations expected by downstream tests without seeding local vectors.",
 };
 
 pub const FIXTURE_NODES_LOCAL_EMBEDDINGS: FixtureDb = FixtureDb {
     id: "fixture_nodes_local_embeddings",
-    rel_path: "tests/backup_dbs/fixture_nodes_local_embeddings_2026-03-20.sqlite",
+    rel_path: "tests/backup_dbs/fixture_nodes_local_embeddings_2026-04-01.sqlite",
     parsed_targets: &["tests/fixture_crates/fixture_nodes"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureCrateLocalEmbeddings {

@@ -507,11 +507,11 @@ impl RagService {
             .next()
             .ok_or_else(|| RagError::Embed("failed to generate query embedding".to_string()))?;
 
-        // Collect results from all node types; pre-allocate to avoid reallocations
-        let mut all_results: Vec<(Uuid, f32)> =
-            Vec::with_capacity(NodeType::primary_nodes().len() * top_k);
+        // Collect results from all node types including methods; pre-allocate to avoid reallocations
+        let node_types = NodeType::primary_and_assoc_nodes();
+        let mut all_results: Vec<(Uuid, f32)> = Vec::with_capacity(node_types.len() * top_k);
 
-        for node_type in NodeType::primary_nodes() {
+        for node_type in node_types {
             let params = self.cfg.params_for(node_type);
             let max_hits = if params.max_hits == 0 {
                 top_k
