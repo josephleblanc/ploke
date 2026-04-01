@@ -111,7 +111,7 @@ For example:
 ```
 
 #### Select an embedding provider 
-Default: [codestral](https://openrouter.ai/mistralai/codestral-embed-2505)\
+Default: local, can be slow (update coming soon, select a model if possible)\
 This opens an overlay for embedding models available through openrouter, e.g. codestral by searching "code" or qwen-3 by searching "q" or "qwen".
 ```txt
 /embedding search <model>
