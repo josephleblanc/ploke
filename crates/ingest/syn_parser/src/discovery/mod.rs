@@ -4,13 +4,16 @@ pub mod workspace;
 
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
-    fs,
     path::{Path, PathBuf},
 };
 
 pub use error::*;
+use cargo_toml::Manifest;
 use serde::Serialize;
 pub use single_crate::*;
+use single_crate::{
+    dependencies_from_cargo_toml, dev_dependencies_from_cargo_toml, features_from_cargo_toml,
+};
 pub use workspace::{
     WorkspaceManifestMetadata, locate_workspace_manifest, resolve_workspace_version,
     try_parse_manifest,
@@ -71,210 +74,41 @@ pub fn run_discovery_phase_with_target(
             crate_path: Some(crate_root_path.clone()),
             content: None,
         };
-        let cargo_content = match fs::read_to_string(&cargo_toml_path)
-            .with_discovery_err(manifest_ctx.clone())
-            .for_read()
-        {
-            Ok(content) => content,
-            Err(e) => {
-                // Critical error: Cannot proceed without Cargo.toml content.
-                return Err(e);
-            }
-        };
-        let manifest: CargoManifest = match toml::from_str(&cargo_content)
-            .with_discovery_err(manifest_ctx.with_content(&cargo_content))
-            .for_toml()
-        {
+        let manifest: Manifest = match Manifest::from_path(&cargo_toml_path) {
             Ok(m) => m,
-            Err(e) => {
-                // Critical error: Invalid TOML structure prevents further processing.
-                return Err(e);
-            }
+            Err(e) => return Err(discovery_error_from_cargo_toml(manifest_ctx, e)),
+        };
+
+        let Some(package) = manifest.package.as_ref() else {
+            return Err(DiscoveryError::MissingPackageName {
+                path: cargo_toml_path.clone(),
+            });
         };
 
         tracing::info!(?manifest);
-        let CargoManifest {
-            package,
-            features,
-            dependencies,
-            dev_dependencies,
-            lib,
-            bin,
-            test,
-            example,
-            bench,
-        } = manifest;
 
-        // --- Extract Package Info (Non-Fatal Errors) ---
-        let crate_name = package.name.clone();
-        let autobins_enabled = package.autobins != Some(false);
-        let autotests_enabled = package.autotests != Some(false);
-        let autoexamples_enabled = package.autoexamples != Some(false);
-        let autobenches_enabled = package.autobenches != Some(false);
-        let crate_version = package.version.resolve(crate_root_path)?;
+        let crate_name = package.name().to_string();
+        let autotests_enabled = package.autotests;
+        let autoexamples_enabled = package.autoexamples;
+        let autobenches_enabled = package.autobenches;
+        let crate_version = package.version().to_string();
 
-        // --- Namespace Generation (Called below) ---
         let namespace = derive_crate_namespace(&crate_name, &crate_version);
 
-        // --- File Discovery Logic ---
+        let features = features_from_cargo_toml(manifest.features.clone());
+        let dependencies = dependencies_from_cargo_toml(manifest.dependencies.clone());
+        let dev_dependencies = dev_dependencies_from_cargo_toml(manifest.dev_dependencies.clone());
+
         let src_path = crate_root_path.join("src");
         let tests_path = crate_root_path.join("tests");
         let examples_path = crate_root_path.join("examples");
         let benches_path = crate_root_path.join("benches");
         let mut files_set: HashSet<PathBuf> = HashSet::new();
-        let mut target_specs: Vec<TargetSpec> = Vec::new();
+        let mut target_specs =
+            collect_targets_from_cargo_manifest(&manifest, crate_root_path, &crate_name);
 
-        // --- Add custom lib path if specified (for non-standard layouts) ---
-        if let Some(lib_target) = lib {
-            let lib_path = crate_root_path.join(lib_target.path);
-            if lib_path.exists() && lib_path.is_file() {
-                files_set.insert(lib_path.clone());
-                target_specs.push(TargetSpec {
-                    kind: TargetKind::Lib,
-                    name: crate_name.clone(),
-                    root: lib_path,
-                });
-            }
-        } else {
-            let lib_path = crate_root_path.join("src/lib.rs");
-            if lib_path.exists() && lib_path.is_file() {
-                files_set.insert(lib_path.clone());
-                target_specs.push(TargetSpec {
-                    kind: TargetKind::Lib,
-                    name: crate_name.clone(),
-                    root: lib_path,
-                });
-            }
-        }
-
-        // --- Add custom bin paths if specified ---
-        if let Some(bin_targets) = bin {
-            for bin_target in bin_targets {
-                let bin_path = crate_root_path.join(bin_target.path);
-                if bin_path.exists() && bin_path.is_file() {
-                    files_set.insert(bin_path.clone());
-                    target_specs.push(TargetSpec {
-                        kind: TargetKind::Bin,
-                        name: bin_target.name,
-                        root: bin_path,
-                    });
-                }
-            }
-        }
-
-        if autobins_enabled {
-            let main_path = src_path.join("main.rs");
-            if main_path.exists() && main_path.is_file() {
-                files_set.insert(main_path.clone());
-                target_specs.push(TargetSpec {
-                    kind: TargetKind::Bin,
-                    name: crate_name.clone(),
-                    root: main_path,
-                });
-            }
-
-            let src_bin_path = src_path.join("bin");
-            if src_bin_path.exists() && src_bin_path.is_dir() {
-                let walker = WalkDir::new(&src_bin_path).max_depth(1).into_iter();
-                for entry_result in walker {
-                    match entry_result {
-                        Ok(entry)
-                            if entry.file_type().is_file()
-                                && entry.path().extension().is_some_and(|ext| ext == "rs") =>
-                        {
-                            let file_path = entry.path().to_path_buf();
-                            files_set.insert(file_path.clone());
-                            let name = file_path
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("bin")
-                                .to_string();
-                            target_specs.push(TargetSpec {
-                                kind: TargetKind::Bin,
-                                name,
-                                root: file_path,
-                            });
-                        }
-                        Ok(_non_rust_file) => {}
-                        Err(e) => {
-                            let path = e.path().unwrap_or(&src_bin_path).to_path_buf();
-                            non_fatal_errors.push(DiscoveryError::walkdir(path, e));
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(test_targets) = test {
-            for test_target in test_targets {
-                let Some(test_path) = resolve_explicit_target_path(
-                    crate_root_path,
-                    "tests",
-                    test_target.name.as_deref(),
-                    test_target.path.as_deref(),
-                ) else {
-                    continue;
-                };
-                if test_path.exists() && test_path.is_file() {
-                    files_set.insert(test_path.clone());
-                    let name = test_target
-                        .name
-                        .unwrap_or_else(|| file_stem_name(&test_path, "test"));
-                    target_specs.push(TargetSpec {
-                        kind: TargetKind::Test,
-                        name,
-                        root: test_path,
-                    });
-                }
-            }
-        }
-
-        if let Some(example_targets) = example {
-            for example_target in example_targets {
-                let Some(example_path) = resolve_explicit_target_path(
-                    crate_root_path,
-                    "examples",
-                    example_target.name.as_deref(),
-                    example_target.path.as_deref(),
-                ) else {
-                    continue;
-                };
-                if example_path.exists() && example_path.is_file() {
-                    files_set.insert(example_path.clone());
-                    let name = example_target
-                        .name
-                        .unwrap_or_else(|| file_stem_name(&example_path, "example"));
-                    target_specs.push(TargetSpec {
-                        kind: TargetKind::Example,
-                        name,
-                        root: example_path,
-                    });
-                }
-            }
-        }
-
-        if let Some(bench_targets) = bench {
-            for bench_target in bench_targets {
-                let Some(bench_path) = resolve_explicit_target_path(
-                    crate_root_path,
-                    "benches",
-                    bench_target.name.as_deref(),
-                    bench_target.path.as_deref(),
-                ) else {
-                    continue;
-                };
-                if bench_path.exists() && bench_path.is_file() {
-                    files_set.insert(bench_path.clone());
-                    let name = bench_target
-                        .name
-                        .unwrap_or_else(|| file_stem_name(&bench_path, "bench"));
-                    target_specs.push(TargetSpec {
-                        kind: TargetKind::Bench,
-                        name,
-                        root: bench_path,
-                    });
-                }
-            }
+        for spec in &target_specs {
+            files_set.insert(spec.root.clone());
         }
 
         // --- Walk src/ directory if it exists ---
@@ -303,36 +137,12 @@ pub fn run_discovery_phase_with_target(
 
         if autotests_enabled {
             collect_rs_files_under(&tests_path, &mut files_set, &mut non_fatal_errors);
-            if tests_path.exists() && tests_path.is_dir() {
-                collect_root_targets_from_dir(
-                    &tests_path,
-                    TargetKind::Test,
-                    &mut target_specs,
-                    &mut non_fatal_errors,
-                );
-            }
         }
         if autoexamples_enabled {
             collect_rs_files_under(&examples_path, &mut files_set, &mut non_fatal_errors);
-            if examples_path.exists() && examples_path.is_dir() {
-                collect_root_targets_from_dir(
-                    &examples_path,
-                    TargetKind::Example,
-                    &mut target_specs,
-                    &mut non_fatal_errors,
-                );
-            }
         }
         if autobenches_enabled {
             collect_rs_files_under(&benches_path, &mut files_set, &mut non_fatal_errors);
-            if benches_path.exists() && benches_path.is_dir() {
-                collect_root_targets_from_dir(
-                    &benches_path,
-                    TargetKind::Bench,
-                    &mut target_specs,
-                    &mut non_fatal_errors,
-                );
-            }
         }
 
         target_specs = dedup_targets_by_root(target_specs);
@@ -482,6 +292,111 @@ pub fn run_discovery_phase(
     discovery_phase(workspace_root, target_crates)
 }
 
+fn file_stem_name(path: &Path, fallback: &str) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(fallback)
+        .to_string()
+}
+
+fn collect_targets_from_cargo_manifest(
+    manifest: &Manifest,
+    crate_root_path: &Path,
+    package_name: &str,
+) -> Vec<TargetSpec> {
+    let mut target_specs = Vec::new();
+    let lib_name_default = package_name.replace('-', "_");
+
+    if let Some(lib) = &manifest.lib {
+        if let Some(rel) = lib.path.as_deref() {
+            let lib_path = crate_root_path.join(rel);
+            if lib_path.is_file() {
+                let name = lib
+                    .name
+                    .as_deref()
+                    .unwrap_or(&lib_name_default)
+                    .to_string();
+                target_specs.push(TargetSpec {
+                    kind: TargetKind::Lib,
+                    name,
+                    root: lib_path,
+                });
+            }
+        }
+    }
+
+    for product in &manifest.bin {
+        if let Some(rel) = product.path.as_deref() {
+            let bin_path = crate_root_path.join(rel);
+            if bin_path.is_file() {
+                let name = product
+                    .name
+                    .as_deref()
+                    .unwrap_or(package_name)
+                    .to_string();
+                target_specs.push(TargetSpec {
+                    kind: TargetKind::Bin,
+                    name,
+                    root: bin_path,
+                });
+            }
+        }
+    }
+
+    for product in &manifest.test {
+        if let Some(rel) = product.path.as_deref() {
+            let test_path = crate_root_path.join(rel);
+            if test_path.is_file() {
+                let name = product
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| file_stem_name(&test_path, "test"));
+                target_specs.push(TargetSpec {
+                    kind: TargetKind::Test,
+                    name,
+                    root: test_path,
+                });
+            }
+        }
+    }
+
+    for product in &manifest.example {
+        if let Some(rel) = product.path.as_deref() {
+            let example_path = crate_root_path.join(rel);
+            if example_path.is_file() {
+                let name = product
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| file_stem_name(&example_path, "example"));
+                target_specs.push(TargetSpec {
+                    kind: TargetKind::Example,
+                    name,
+                    root: example_path,
+                });
+            }
+        }
+    }
+
+    for product in &manifest.bench {
+        if let Some(rel) = product.path.as_deref() {
+            let bench_path = crate_root_path.join(rel);
+            if bench_path.is_file() {
+                let name = product
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| file_stem_name(&bench_path, "bench"));
+                target_specs.push(TargetSpec {
+                    kind: TargetKind::Bench,
+                    name,
+                    root: bench_path,
+                });
+            }
+        }
+    }
+
+    target_specs
+}
+
 fn collect_rs_files_under(
     root: &Path,
     files_set: &mut HashSet<PathBuf>,
@@ -506,58 +421,6 @@ fn collect_rs_files_under(
             }
         }
     }
-}
-
-fn collect_root_targets_from_dir(
-    root: &Path,
-    kind: TargetKind,
-    targets: &mut Vec<TargetSpec>,
-    non_fatal_errors: &mut Vec<DiscoveryError>,
-) {
-    let walker = WalkDir::new(root).max_depth(1).into_iter();
-    for entry_result in walker {
-        match entry_result {
-            Ok(entry)
-                if entry.file_type().is_file()
-                    && entry.path().extension().is_some_and(|ext| ext == "rs") =>
-            {
-                let file_path = entry.path().to_path_buf();
-                targets.push(TargetSpec {
-                    kind: kind.clone(),
-                    name: file_stem_name(&file_path, "target"),
-                    root: file_path,
-                });
-            }
-            Ok(_non_rust_file) => {}
-            Err(e) => {
-                let path = e.path().unwrap_or(root).to_path_buf();
-                non_fatal_errors.push(DiscoveryError::walkdir(path, e));
-            }
-        }
-    }
-}
-
-fn file_stem_name(path: &Path, fallback: &str) -> String {
-    path.file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(fallback)
-        .to_string()
-}
-
-fn resolve_explicit_target_path(
-    crate_root_path: &Path,
-    default_dir: &str,
-    name: Option<&str>,
-    explicit_path: Option<&Path>,
-) -> Option<PathBuf> {
-    if let Some(path) = explicit_path {
-        return Some(crate_root_path.join(path));
-    }
-    name.map(|target_name| {
-        crate_root_path
-            .join(default_dir)
-            .join(format!("{target_name}.rs"))
-    })
 }
 
 fn dedup_targets_by_root(targets: Vec<TargetSpec>) -> Vec<TargetSpec> {
@@ -1054,8 +917,8 @@ path = "src/main.rs"
             "src/main.rs should dedup to one target"
         );
         assert_eq!(
-            main_targets[0].name, "dedup_targets_pkg",
-            "implicit bin name should win by deterministic precedence"
+            main_targets[0].name, "named_bin",
+            "cargo_toml merges bin products for the same path; explicit [[bin]] name is preserved"
         );
         Ok(())
     }

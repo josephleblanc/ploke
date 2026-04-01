@@ -1,0 +1,8 @@
+[package]
+name = "ws_fixture_path_stem_collision_repro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"

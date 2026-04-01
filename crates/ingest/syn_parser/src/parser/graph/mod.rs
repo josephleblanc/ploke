@@ -66,6 +66,7 @@ pub trait GraphAccess {
     fn unresolved_nodes_mut(&mut self) -> &mut Vec<UnresolvedNode>;
 
     // ----- Secondary node methods -----
+    // ANCHOR: find_methods_in_module_lookup
     fn find_methods_in_module(
         &self,
         module_id: ModuleNodeId,
@@ -86,6 +87,7 @@ pub trait GraphAccess {
             })
         })
     }
+    // ANCHOR_END: find_methods_in_module_lookup
 
     fn validate_unique_rels(&self) -> bool {
         let rels: &[SyntacticRelation] = self.relations(); // Use updated type
@@ -772,6 +774,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
 
     // Not sure how I want to deal with this. Leaving it for now. It is only being used in a couple
     // places and they all have `todo!()` on them now.
+    // ANCHOR: find_any_node_lookup
     fn find_any_node(&self, item_id: AnyNodeId) -> Option<&dyn GraphNode> {
         // Check all node collections for matching ID
         self.functions()
@@ -854,6 +857,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                     .map(|n| n as &dyn GraphNode)
             })
     }
+    // ANCHOR_END: find_any_node_lookup
 
     fn find_nodes_by_id(&self, item_id: AnyNodeId) -> Vec<&dyn GraphNode> {
         self.functions()

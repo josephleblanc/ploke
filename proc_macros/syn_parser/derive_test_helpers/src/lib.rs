@@ -986,10 +986,16 @@ check
     // --- Generate the inherent impl block for Expected*Data ---
     let find_node_by_values_body = if node_struct_name == "MethodNode" {
         quote! {
-            // For MethodNode, value-based search across a single top-level collection is not straightforward
-            // as methods are nested. Return an empty iterator for now.
-            // Tests will rely on ID-based lookup.
-            std::iter::empty()
+             // Methods live under impl and trait nodes; flatten both collections.
+             parsed.graph.impls.iter()
+                 .flat_map(|impl_node| impl_node.methods.iter())
+                 .chain(
+                     parsed.graph.traits.iter()
+                         .flat_map(|trait_node| trait_node.methods.iter()),
+                 )
+                 .inspect(move |node_candidate| self.log_target_id(node_candidate))
+                 #(#find_node_by_values_filters)* // Apply *selective* filters
+                 .inspect(move |node_candidate| self.log_all_match(node_candidate))
         }
     } else {
         quote! {
@@ -1003,12 +1009,34 @@ check
         }
     };
 
+    let log_target_id_body = if node_struct_name == "MethodNode" {
+        // MethodNodeId implements AssociatedItemNodeIdTrait only, not PrimaryNodeIdTrait (no to_pid).
+        quote! {
+                 log::debug!(target: #log_target,
+                     "Checking {}",
+                     node.id.to_string().log_id(),
+                 );
+        }
+    } else {
+        quote! {
+                 log::debug!(target: #log_target,
+                     "Checking {}",
+                     node.id.to_pid().to_string().log_id(),
+                 );
+        }
+    };
+
+    let primary_node_id_trait_import = if node_struct_name == "MethodNode" {
+        quote! {}
+    } else {
+        quote! { use crate::parser::nodes::PrimaryNodeIdTrait; }
+    };
+
     let expected_data_inherent_impl = quote! {
         use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug}; // For logging styles
         use crate::parser::nodes::{GraphNode, HasAttributes}; // For accessing node fields via traits
         use ::ploke_core::IdTrait; // For TypeId::is_synthetic, etc.
-        // Import PrimaryNodeIdTrait if needed for to_pid() in log_target_id
-        use crate::parser::nodes::PrimaryNodeIdTrait;
+        #primary_node_id_trait_import
          impl #expected_data_struct_name {
              // These use statements are for the *body* of ALL generated inherent methods
 
@@ -1017,11 +1045,7 @@ check
 
              // --- Helper logging methods ---
              fn log_target_id(&self, node: &crate::parser::nodes::#node_struct_name) {
-                 // Assuming node.id implements PrimaryNodeIdTrait for .to_pid()
-                 log::debug!(target: #log_target,
-                     "Checking {}",
-                     node.id.to_pid().to_string().log_id(),
-                 );
+                 #log_target_id_body
              }
 
              fn log_all_match(&self, node: &crate::parser::nodes::#node_struct_name) {

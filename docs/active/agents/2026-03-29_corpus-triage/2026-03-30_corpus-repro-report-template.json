@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "report_kind": "corpus_repro_handoff",
+  "status": "pending",
+  "run_id": null,
+  "snapshot_mode": null,
+  "corpus_repro_selector": {
+    "run": null,
+    "artifact_dir": null,
+    "target": null,
+    "member": null,
+    "cluster": null,
+    "failure": null
+  },
+  "cluster": {
+    "key": null,
+    "slug": null,
+    "stage": null,
+    "failure_kind": null,
+    "error_signature": null,
+    "occurrence_count": null
+  },
+  "assessment": {
+    "suspected_root_cause": null,
+    "confidence": null,
+    "scope_assessment": null,
+    "touches_sensitive_pipeline": null,
+    "matches_known_limitation": null,
+    "known_limitation_path": null,
+    "fix_vs_document_recommendation": null,
+    "recommended_next_step": null,
+    "minimal_repro_status": "not_started"
+  },
+  "canonical_example": {
+    "failure_id": "",
+    "run_id": "",
+    "cluster_key": "",
+    "cluster_slug": "",
+    "target": "",
+    "normalized_repo": "",
+    "repository_kind": "",
+    "commit_sha": null,
+    "source": "",
+    "member_label": null,
+    "member_path": null,
+    "member_artifact_dir": null,
+    "stage": "",
+    "failure_kind": "",
+    "panic": false,
+    "error_signature": "",
+    "error_excerpt": "",
+    "checkout_path": null,
+    "checkout_present": null,
+    "artifact_path": null,
+    "artifact_present": null,
+    "failure_artifact_path": null,
+    "failure_artifact_present": null,
+    "target_summary_path": null,
+    "target_summary_present": null,
+    "workspace_summary_path": null,
+    "workspace_summary_present": null,
+    "suggested_inspection_command": "",
+    "suggested_repro_command": null,
+    "suggested_test_assertion": null,
+    "relevant_artifacts": [],
+    "relevant_code_paths": []
+  },
+  "evidence": {
+    "backtrace_or_diagnostic_summary": null,
+    "notes": []
+  }
+}

@@ -128,6 +128,7 @@ pub fn transform_parsed_graph(
     parsed_graph: ParsedCodeGraph,
     tree: &ModuleTree,
 ) -> Result<(), TransformError> {
+    // ANCHOR: transform_parsed_graph_methods
     let code_graph = parsed_graph.graph;
     let crate_context = parsed_graph
         .crate_context
@@ -163,6 +164,7 @@ pub fn transform_parsed_graph(
     transform_crate_context(db, crate_context)?;
 
     Ok(())
+    // ANCHOR_END: transform_parsed_graph_methods
 }
 
 #[instrument(skip_all)]

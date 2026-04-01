@@ -1,5 +1,6 @@
 use std::backtrace::Backtrace;
 use std::fmt;
+use std::fs;
 use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -103,8 +104,118 @@ impl<'a, T> ManifestTomlOutcome<'a, T> {
     #[track_caller]
     pub fn for_toml(self) -> Result<T, DiscoveryError> {
         let emission_site = DiagnosticSite::from_location(Location::caller());
+        self.result.map_err(|e| {
+            DiscoveryError::manifest_parse_toml_at_site(self.ctx, e, emission_site.clone())
+        })
+    }
+}
+
+/// Adapter for [`Result<T, cargo_toml::Error>`] → [`DiscoveryError`] (read vs parse, see [`discovery_error_from_cargo_toml`]).
+pub struct ManifestCargoTomlOutcome<'a, T> {
+    result: Result<T, cargo_toml::Error>,
+    ctx: ManifestCtx<'a>,
+}
+
+/// Maps a `cargo_toml` load/parse error into [`DiscoveryError`] via [`ManifestCargoTomlOutcome::for_cargo_toml`].
+pub trait WithDiscoveryManifestCargoToml<T>: Sized {
+    #[track_caller]
+    fn with_discovery_err(self, ctx: ManifestCtx<'_>) -> ManifestCargoTomlOutcome<'_, T>;
+}
+
+impl<T> WithDiscoveryManifestCargoToml<T> for Result<T, cargo_toml::Error> {
+    #[track_caller]
+    fn with_discovery_err(self, ctx: ManifestCtx<'_>) -> ManifestCargoTomlOutcome<'_, T> {
+        ManifestCargoTomlOutcome {
+            result: self,
+            ctx,
+        }
+    }
+}
+
+impl<'a, T> ManifestCargoTomlOutcome<'a, T> {
+    #[track_caller]
+    pub fn for_cargo_toml(self) -> Result<T, DiscoveryError> {
+        let emission_site = DiagnosticSite::from_location(Location::caller());
         self.result
-            .map_err(|e| DiscoveryError::manifest_parse_at_site(self.ctx, e, emission_site.clone()))
+            .map_err(|e| discovery_error_from_cargo_toml_at_site(self.ctx, e, emission_site))
+    }
+}
+
+/// Cloneable parse error payload for [`DiscoveryError::ManifestParse`] (TOML deserialize, `cargo_toml`, or other).
+#[derive(Clone)]
+pub struct ManifestParseSource(pub Arc<dyn std::error::Error + Send + Sync + 'static>);
+
+impl fmt::Debug for ManifestParseSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ManifestParseSource")
+            .field(&format_args!("{}", self.0.as_ref()))
+            .finish()
+    }
+}
+
+impl fmt::Display for ManifestParseSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.0.as_ref(), f)
+    }
+}
+
+impl std::error::Error for ManifestParseSource {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
+/// If `err` or a nested [`cargo_toml::Error::Workspace`] contains a TOML deserialize failure, return it for span extraction.
+pub fn toml_de_error_from_cargo_toml(err: &cargo_toml::Error) -> Option<&toml::de::Error> {
+    match err {
+        cargo_toml::Error::Parse(e) => Some(e),
+        cargo_toml::Error::Workspace(boxed) => toml_de_error_from_cargo_toml(&boxed.0),
+        _ => None,
+    }
+}
+
+/// Maps [`cargo_toml::Error`] from [`cargo_toml::Manifest::from_path`] into [`DiscoveryError`].
+#[track_caller]
+pub fn discovery_error_from_cargo_toml(
+    ctx: ManifestCtx<'_>,
+    err: cargo_toml::Error,
+) -> DiscoveryError {
+    let emission_site = DiagnosticSite::from_location(Location::caller());
+    discovery_error_from_cargo_toml_at_site(ctx, err, emission_site)
+}
+
+fn discovery_error_from_cargo_toml_at_site(
+    ctx: ManifestCtx<'_>,
+    err: cargo_toml::Error,
+    emission_site: DiagnosticSite,
+) -> DiscoveryError {
+    match err {
+        cargo_toml::Error::Io(e) => DiscoveryError::manifest_read_at_site(ctx, e, emission_site),
+        cargo_toml::Error::Parse(e) => {
+            let content = fs::read_to_string(&ctx.manifest_path).ok();
+            let ctx = match content.as_ref() {
+                Some(c) => ctx.with_content(c.as_str()),
+                None => ctx,
+            };
+            DiscoveryError::manifest_parse_toml_at_site(ctx, *e, emission_site)
+        }
+        e => {
+            let content = fs::read_to_string(&ctx.manifest_path).ok();
+            let ctx = match content.as_ref() {
+                Some(c) => ctx.with_content(c.as_str()),
+                None => ctx,
+            };
+            let span = toml_de_error_from_cargo_toml(&e).and_then(|te| {
+                ctx.content
+                    .and_then(|c| toml_error_span(ctx.manifest_path.clone(), c, te))
+            });
+            DiscoveryError::manifest_parse_dyn_at_site(
+                ctx,
+                ManifestParseSource(Arc::new(e)),
+                span,
+                emission_site,
+            )
+        }
     }
 }
 
@@ -122,7 +233,7 @@ pub enum DiscoveryError {
         #[source]
         source: Arc<std::io::Error>, // Wrap in Arc
     },
-    /// Failed to deserialize TOML for a manifest.
+    /// Failed to deserialize or complete a manifest (TOML, `cargo_toml`, etc.).
     #[error("Failed to parse manifest at {manifest_path} ({manifest_kind}): {source}")]
     ManifestParse {
         manifest_kind: ManifestKind,
@@ -132,7 +243,7 @@ pub enum DiscoveryError {
         emission_site: DiagnosticSite,
         backtrace: Arc<Backtrace>,
         #[source]
-        source: Arc<toml::de::Error>, // Wrap in Arc
+        source: ManifestParseSource,
     },
     /// The `package.name` field was missing from a `Cargo.toml` file.
     #[error("Missing 'package.name' in Cargo.toml at {path}")]
@@ -267,7 +378,9 @@ impl DiagnosticInfo for DiscoveryError {
 
     fn diagnostic_detail(&self) -> Option<String> {
         match self {
-            DiscoveryError::ManifestParse { source, .. } => Some(source.message().into()),
+            DiscoveryError::ManifestParse { source, .. } => {
+                Some(manifest_parse_detail_message(source))
+            }
             DiscoveryError::NonFatalErrors(errors) => Some(format!(
                 "{} non-fatal discovery errors were collected",
                 errors.len()
@@ -419,7 +532,7 @@ impl DiscoveryError {
         )
     }
 
-    fn manifest_parse_at_site(
+    fn manifest_parse_toml_at_site(
         ctx: ManifestCtx<'_>,
         source: toml::de::Error,
         emission_site: DiagnosticSite,
@@ -434,13 +547,30 @@ impl DiscoveryError {
             span,
             emission_site,
             backtrace: Arc::new(Backtrace::force_capture()),
-            source: Arc::new(source),
+            source: ManifestParseSource(Arc::new(source)),
+        }
+    }
+
+    fn manifest_parse_dyn_at_site(
+        ctx: ManifestCtx<'_>,
+        source: ManifestParseSource,
+        span: Option<SourceSpan>,
+        emission_site: DiagnosticSite,
+    ) -> Self {
+        Self::ManifestParse {
+            manifest_kind: ctx.kind,
+            manifest_path: ctx.manifest_path,
+            crate_path: ctx.crate_path,
+            span,
+            emission_site,
+            backtrace: Arc::new(Backtrace::force_capture()),
+            source,
         }
     }
 
     #[track_caller]
     pub fn manifest_parse(ctx: ManifestCtx<'_>, source: toml::de::Error) -> Self {
-        Self::manifest_parse_at_site(
+        Self::manifest_parse_toml_at_site(
             ctx,
             source,
             DiagnosticSite::from_location(Location::caller()),
@@ -463,6 +593,15 @@ impl DiscoveryError {
             _ => None,
         }
     }
+}
+
+fn manifest_parse_detail_message(source: &ManifestParseSource) -> String {
+    source
+        .0
+        .as_ref()
+        .downcast_ref::<toml::de::Error>()
+        .map(|e| e.message().into())
+        .unwrap_or_else(|| source.to_string())
 }
 
 pub fn toml_error_span(
@@ -532,7 +671,7 @@ impl From<DiscoveryError> for ploke_error::Error {
                 ..
             } => ploke_error::FatalError::PathResolution {
                 path: format!("Failed to parse manifest at {}", manifest_path.display()),
-                source: Some(source),
+                source: Some(source.0.clone()),
             }
             .into(),
             DiscoveryError::MissingPackageName { path } => {
@@ -684,5 +823,40 @@ impl From<DiscoveryError> for ploke_error::Error {
             }
             .into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toml_de_error_from_cargo_toml_extracts_parse() {
+        let bad = "not toml {{{";
+        let tom_err = toml::from_str::<toml::Value>(bad).unwrap_err();
+        let cargo_err = cargo_toml::Error::Parse(Box::new(tom_err));
+        assert!(toml_de_error_from_cargo_toml(&cargo_err).is_some());
+    }
+
+    #[test]
+    fn toml_de_error_from_cargo_toml_recurses_workspace() {
+        let bad = "x";
+        let tom_err = toml::from_str::<toml::Value>(bad).unwrap_err();
+        let inner = cargo_toml::Error::Parse(Box::new(tom_err));
+        let ws = cargo_toml::Error::Workspace(Box::new((inner, None)));
+        assert!(toml_de_error_from_cargo_toml(&ws).is_some());
+    }
+
+    #[test]
+    fn discovery_error_from_cargo_toml_non_parse_maps_to_manifest_parse() {
+        let ctx = ManifestCtx {
+            kind: ManifestKind::Crate,
+            manifest_path: PathBuf::from("/tmp/nonexistent/Cargo.toml"),
+            crate_path: None,
+            content: None,
+        };
+        let err = cargo_toml::Error::InheritedUnknownValue;
+        let d = discovery_error_from_cargo_toml(ctx, err);
+        assert!(matches!(d, DiscoveryError::ManifestParse { .. }));
     }
 }

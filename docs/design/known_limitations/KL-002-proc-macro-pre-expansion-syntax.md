@@ -12,11 +12,21 @@ parseable as ordinary pre-expansion Rust syntax.
 The current reproduced case is `#[duplicate_item(...)]` placeholder syntax from
 `FuelLabs/sway`, captured by:
 
-- [`duplicate_item::repro_duplicate_item_placeholder_trait_signatures`](/home/brasides/code/ploke/crates/ingest/syn_parser/tests/repro/duplicate_item.rs)
+- [`repro_duplicate_item_placeholder_trait_signatures`](../../../crates/ingest/syn_parser/tests/repro/fail/proc_macro_parsing.rs)
 
 That source compiles when the `duplicate` attribute proc macro expands it, but
 the raw file fails during `syn::parse_file(...)` with parse errors such as
 `expected ','`.
+
+## Crate-level summary
+
+See [syn_parser known limitations — L5](../syn_parser_known_limitations.md).
+
+## Distinction from [KL-006](KL-006-partial-parse-non-compilable-files.md)
+
+KL-006 covers **intentionally non-compilable** template or example sources mixed
+with valid modules. KL-002 covers **compile-valid after macro expansion** source
+that `syn` still cannot parse **before** expansion.
 
 ## Why macro skipping does not help
 
@@ -57,3 +67,7 @@ is cheaper but brittle and macro-specific.
 - kept the repro test failing as an explicit unsupported case marker
 - chose explicit unsupported-crate/file errors over unresolved placeholder
   modeling
+
+## Repro tests (`syn_parser`)
+
+- [`repro_duplicate_item_placeholder_trait_signatures`](../../../crates/ingest/syn_parser/tests/repro/fail/proc_macro_parsing.rs)

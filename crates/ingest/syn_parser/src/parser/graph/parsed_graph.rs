@@ -299,6 +299,7 @@ impl ParsedCodeGraph {
         Ok(new_graph)
     }
 
+    // ANCHOR: parsed_graph_append_all
     #[instrument(target = TRACE_TARGET_MERGE, skip_all, fields(left_file = ?self.file_path.as_path(), right_file = ?other.file_path.as_path()))]
     pub fn append_all(&mut self, mut other: Self) -> Result<(), SynParserError> {
         self.graph.functions.append(&mut other.graph.functions);
@@ -342,6 +343,7 @@ impl ParsedCodeGraph {
 
         Ok(())
     }
+    // ANCHOR_END: parsed_graph_append_all
     //  We already have the following `Relation`s from parsing that will be useful here:
     //
     // ModuleNode definition---Contains--------------> all primary nodes (NodeId)
@@ -433,6 +435,7 @@ impl ParsedCodeGraph {
             tree.add_module(module.clone())?;
         }
 
+        // ANCHOR: build_module_tree_relations_and_links
         // 2: Copies all relations, stores them as TreeRelation for type safety
         //      - Notably, includes `Contains` relations between parent definition module and all
         //      child elements, e.g. other module declarations. Includes file--contains-->items.
@@ -476,6 +479,8 @@ impl ParsedCodeGraph {
         //    file-system derived NodePath to canonical NodePath for use in processing incremental
         //    updates later. See method comments for more info.
         tree.update_path_index_for_custom_paths()?;
+        #[cfg(feature = "validate")]
+        tree.debug_validate_staging_after_custom_path_reindex();
 
         // WARNING: This logic has moved. We are now creating ReExports after the ModuleTree is
         // built and we have resolved Ids to Cannonical Ids. Delete this code once we have
@@ -492,6 +497,8 @@ impl ParsedCodeGraph {
 
         // 6. Prune unlinked file modules from the ModuleTree state
         let pruned_items = tree.prune_unlinked_file_modules()?; // Call prune, graph is not modified
+        #[cfg(feature = "validate")]
+        tree.debug_validate_staging_empty_after_prune();
         if !pruned_items.pruned_module_ids.is_empty() {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and {} relations from ModuleTree.",
                 pruned_items.pruned_module_ids.len(),
@@ -502,6 +509,7 @@ impl ParsedCodeGraph {
         }
         // 7. Link definitions to the import sites that bring them into scope (internal only).
         tree.link_definition_imports(self)?;
+        // ANCHOR_END: build_module_tree_relations_and_links
         // By the time we are finished, we should have all the necessary relations to form the path
         // of all defined items by ModuleTree's shortest_public_path method.
         //  - Contains: Module --> contained items
@@ -564,6 +572,7 @@ impl ParsedCodeGraph {
         // removed when the parent is dropped; `retain` does not consult method IDs. Counting
         // `Method` in `len()` would inflate the expected removal count (see
         // `diagnose_prune_counts_serde_github_clone`).
+        // ANCHOR: prune_methods_and_retain
         let pruned_item_ids = pruned_items
             .pruned_item_ids
             .iter()
@@ -651,6 +660,7 @@ impl ParsedCodeGraph {
             .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
             .count();
         prune_counts.methods = methods_count_pre - methods_count_post;
+        // ANCHOR_END: prune_methods_and_retain
 
         // -- handle pruning module ids
         // file-based modules

@@ -20,7 +20,7 @@
 //! [`syn_parser::ParsedCodeGraph::merge_new`].
 //!
 //! `parse debug corpus` is especially useful when hunting invariant failures in real code. Each run
-//! writes a dedicated artifact tree under `target/debug_corpus_runs/<run-id>/` by default. Per
+//! writes a dedicated artifact tree under `xtask/debug_corpus_runs/<run-id>/` by default. Per
 //! target, you get:
 //! - `summary.json`
 //! - `discovery/discovery.json`
@@ -40,6 +40,7 @@
 //! cargo xtask --format json parse debug corpus --list-file /tmp/ploke-targets.txt --skip-merge
 //! cargo xtask parse debug corpus-show run-1774750473411 --target Amanieu/parking_lot --backtrace
 //! cargo xtask parse debug corpus-triage run-1774750473411
+//! cargo xtask --format json parse debug corpus-repro run-1774750473411 --cluster "merge|timeout|merge stage exceeded timeout after 300084ms"
 //! ```
 //!
 //! Suggested workflow:
@@ -70,7 +71,7 @@ use clap::{Args, Subcommand, ValueEnum};
 use ploke_error::DiagnosticInfo;
 use serde::{Deserialize, Serialize};
 
-use syn_parser::discovery::CargoManifest;
+use cargo_toml::Manifest;
 use syn_parser::discovery::{
     DiscoveryError, ManifestKind, run_discovery_phase, try_parse_manifest,
 };
@@ -84,6 +85,10 @@ use syn_parser::{
 use super::parse::{count_code_graph_nodes, resolve_parse_path};
 use super::{CommandContext, XtaskError};
 use crate::executor::Command;
+
+const CORPUS_REPRO_REPORT_TEMPLATE_REL_PATH: &str =
+    "docs/active/agents/2026-03-29_corpus-triage/2026-03-30_corpus-repro-report-template.json";
+const DEFAULT_CORPUS_ARTIFACT_DIR: &str = "xtask/debug_corpus_runs";
 
 /// `parse debug …` — nested subcommands (manifest, discovery, workspace, pipeline, path diagnostics).
 #[derive(Debug, Clone, Args)]
@@ -153,6 +158,9 @@ pub enum ParseDebugCmd {
 
     /// Build a triage index and pending report stubs from a persisted corpus run.
     CorpusTriage(DebugCorpusTriage),
+
+    /// Export a machine-readable repro handoff from a saved corpus run or triage snapshot.
+    CorpusRepro(DebugCorpusRepro),
 }
 
 impl ParseDebugCmd {
@@ -172,6 +180,7 @@ impl ParseDebugCmd {
             ParseDebugCmd::CorpusStage(c) => c.execute(ctx)?,
             ParseDebugCmd::CorpusShow(c) => c.execute(ctx)?,
             ParseDebugCmd::CorpusTriage(c) => c.execute(ctx)?,
+            ParseDebugCmd::CorpusRepro(c) => c.execute(ctx)?,
         };
         Ok(super::parse::ParseOutput::Debug(out))
     }
@@ -901,6 +910,7 @@ pub enum DebugOutput {
     CorpusStage(CorpusStageResult),
     CorpusShow(DebugCorpusShowOut),
     CorpusTriage(DebugCorpusTriageOut),
+    CorpusRepro(DebugCorpusReproOut),
 }
 
 fn path_relative_to(root: &Path, path: &Path) -> String {
@@ -920,46 +930,6 @@ fn symlink_info(path: &Path) -> (bool, Option<String>) {
         }
         _ => (false, None),
     }
-}
-
-fn resolve_corpus_summary_path(
-    ctx: &CommandContext,
-    run: &Path,
-    artifact_dir: &Path,
-) -> Result<PathBuf, XtaskError> {
-    let workspace_root = ctx.workspace_root()?;
-    let artifact_root = if artifact_dir.is_absolute() {
-        artifact_dir.to_path_buf()
-    } else {
-        workspace_root.join(artifact_dir)
-    };
-
-    let direct_path = if run.is_absolute() {
-        run.to_path_buf()
-    } else {
-        workspace_root.join(run)
-    };
-    if direct_path.exists() {
-        return normalize_corpus_summary_path(&direct_path);
-    }
-
-    normalize_corpus_summary_path(&artifact_root.join(run))
-}
-
-fn normalize_corpus_summary_path(path: &Path) -> Result<PathBuf, XtaskError> {
-    if path.is_file() {
-        return Ok(path.to_path_buf());
-    }
-    let summary_path = path.join("summary.json");
-    if summary_path.is_file() {
-        return Ok(summary_path);
-    }
-    Err(XtaskError::validation(format!(
-        "Could not find corpus summary at `{}` or `{}`",
-        path.display(),
-        summary_path.display()
-    ))
-    .into())
 }
 
 fn corpus_target_matches(target: &CorpusTargetResult, needle: &str) -> bool {
@@ -988,6 +958,18 @@ fn collect_corpus_triage_failures(run: &DebugCorpusOut) -> Vec<CorpusTriageFailu
     let mut next_id = 1usize;
 
     for target in &run.targets {
+        collect_target_stage_failure(
+            run,
+            target,
+            None,
+            "checkout",
+            "checkout",
+            target.checkout.as_ref(),
+            target.summary_path.as_deref(),
+            None,
+            &mut next_id,
+            &mut failures,
+        );
         collect_target_stage_failure(
             run,
             target,
@@ -1157,8 +1139,11 @@ fn triage_error_signature(error: Option<&str>, stage: &str, failure_kind: &str) 
 
 fn build_corpus_triage_clusters(
     failures: &[CorpusTriageFailure],
+    run: &DebugCorpusOut,
+    snapshot_mode: &str,
     run_id: &str,
     pending_report_dir: Option<&Path>,
+    report_template: &CorpusTriageReportTemplate,
 ) -> Result<Vec<CorpusTriageCluster>, XtaskError> {
     let mut grouped: BTreeMap<&str, Vec<&CorpusTriageFailure>> = BTreeMap::new();
     for failure in failures {
@@ -1188,31 +1173,20 @@ fn build_corpus_triage_clusters(
                 ))
             })?;
             let path = dir.join(format!("{}.json", first.cluster_slug));
-            let stub = CorpusTriageReportTemplate {
-                version: 1,
-                run_id: Some(run_id.to_string()),
-                cluster_key: Some(key.to_string()),
-                cluster_slug: Some(first.cluster_slug.clone()),
-                status: "pending".into(),
-                signature: Some(first.error_signature.clone()),
-                stage: Some(first.stage.clone()),
-                failure_kind: Some(first.failure_kind.clone()),
-                occurrence_count: Some(entries.len()),
-                example_failures: examples.clone(),
-                suspected_root_cause: None,
-                confidence: None,
-                scope_assessment: None,
-                touches_sensitive_pipeline: None,
-                recommended_next_step: None,
-                minimal_repro_status: "not_started".into(),
-                relevant_artifacts: entries
-                    .iter()
-                    .filter_map(|entry| entry.failure_artifact_path.clone())
-                    .take(5)
-                    .collect(),
-                relevant_code_paths: Vec::new(),
-                notes: Vec::new(),
-            };
+            let canonical_example = build_corpus_canonical_example(run, first);
+            let mut stub = report_template.clone();
+            stub.run_id = Some(run_id.to_string());
+            stub.snapshot_mode = Some(snapshot_mode.to_string());
+            stub.corpus_repro_selector.run = Some(run.run_id.clone());
+            stub.corpus_repro_selector.artifact_dir = Some(parent_dir_or_self(&run.artifact_root));
+            stub.corpus_repro_selector.cluster = Some(first.cluster_slug.clone());
+            stub.cluster.key = Some(key.to_string());
+            stub.cluster.slug = Some(first.cluster_slug.clone());
+            stub.cluster.stage = Some(first.stage.clone());
+            stub.cluster.failure_kind = Some(first.failure_kind.clone());
+            stub.cluster.error_signature = Some(first.error_signature.clone());
+            stub.cluster.occurrence_count = Some(entries.len());
+            stub.canonical_example = Some(canonical_example.clone());
             if !path.exists() {
                 write_json_file(&path, &stub)?;
             }
@@ -1220,6 +1194,7 @@ fn build_corpus_triage_clusters(
         } else {
             None
         };
+        let canonical_example = build_corpus_canonical_example(run, first);
 
         clusters.push(CorpusTriageCluster {
             key: key.to_string(),
@@ -1230,6 +1205,7 @@ fn build_corpus_triage_clusters(
             count: entries.len(),
             repos: repos.into_iter().collect(),
             examples,
+            canonical_example: Some(canonical_example),
             pending_report_path,
         });
     }
@@ -1242,6 +1218,11 @@ fn build_corpus_triage_out(
     cmd: &DebugCorpusTriage,
 ) -> Result<DebugCorpusTriageOut, XtaskError> {
     let (run, summary_path, run_dir) = load_corpus_run_snapshot(ctx, &cmd.run, &cmd.artifact_dir)?;
+    let snapshot_mode = if summary_path.is_some() {
+        "complete"
+    } else {
+        "partial"
+    };
 
     let triage_dir = if let Some(out_dir) = &cmd.out_dir {
         let workspace_root = ctx.workspace_root()?;
@@ -1263,38 +1244,20 @@ fn build_corpus_triage_out(
     let failures = collect_corpus_triage_failures(&run);
     let pending_report_dir = triage_dir.join("reports").join("pending");
     let report_template_path = triage_dir.join("reports").join("_report_template.json");
+    let report_template = load_corpus_repro_report_template(ctx)?;
     let clusters = build_corpus_triage_clusters(
         &failures,
+        &run,
+        snapshot_mode,
         &run.run_id,
         if cmd.no_report_stubs {
             None
         } else {
             Some(&pending_report_dir)
         },
+        &report_template,
     )?;
-
-    let template = CorpusTriageReportTemplate {
-        version: 1,
-        run_id: None,
-        cluster_key: None,
-        cluster_slug: None,
-        status: "pending".into(),
-        signature: None,
-        stage: None,
-        failure_kind: None,
-        occurrence_count: None,
-        example_failures: Vec::new(),
-        suspected_root_cause: None,
-        confidence: None,
-        scope_assessment: None,
-        touches_sensitive_pipeline: None,
-        recommended_next_step: None,
-        minimal_repro_status: "not_started".into(),
-        relevant_artifacts: Vec::new(),
-        relevant_code_paths: Vec::new(),
-        notes: Vec::new(),
-    };
-    write_json_file(&report_template_path, &template)?;
+    write_json_file(&report_template_path, &report_template)?;
 
     let failures_path = triage_dir.join("failures.jsonl");
     write_jsonl_file(&failures_path, &failures)?;
@@ -1303,11 +1266,7 @@ fn build_corpus_triage_out(
 
     let out = DebugCorpusTriageOut {
         run_id: run.run_id.clone(),
-        snapshot_mode: if summary_path.is_some() {
-            "complete".into()
-        } else {
-            "partial".into()
-        },
+        snapshot_mode: snapshot_mode.into(),
         summary_path: summary_path.map(|path| path.display().to_string()),
         triage_dir: triage_dir.display().to_string(),
         failures_path: failures_path.display().to_string(),
@@ -1327,12 +1286,472 @@ fn build_corpus_triage_out(
     Ok(out)
 }
 
+fn build_corpus_repro_out(
+    ctx: &CommandContext,
+    cmd: &DebugCorpusRepro,
+) -> Result<DebugCorpusReproOut, XtaskError> {
+    let (run, summary_path, run_dir) = load_corpus_run_snapshot(ctx, &cmd.run, &cmd.artifact_dir)?;
+    let triage_dir = run_dir.join("triage");
+    let triage_index_path = triage_dir.join("index.json");
+    let triage_clusters_path = triage_dir.join("clusters.json");
+    let snapshot_mode = if summary_path.is_some() {
+        "complete"
+    } else {
+        "partial"
+    };
+    let report_template = load_corpus_repro_report_template(ctx)?;
+    let failures = collect_corpus_triage_failures(&run);
+    let clusters = build_corpus_triage_clusters(
+        &failures,
+        &run,
+        snapshot_mode,
+        &run.run_id,
+        None,
+        &report_template,
+    )?;
+    let failure_count = failures.len();
+    let cluster_count = clusters.len();
+
+    let selected_failures: Vec<_> = failures
+        .into_iter()
+        .filter(|failure| corpus_repro_failure_matches(failure, cmd))
+        .collect();
+    if selected_failures.is_empty() {
+        return Err(XtaskError::validation(format!(
+            "No failures matched the requested repro selection in corpus run `{}`",
+            run.run_id
+        ))
+        .into());
+    }
+
+    let selected_failure_ids: BTreeSet<String> = selected_failures
+        .iter()
+        .map(|failure| failure.id.clone())
+        .collect();
+    let selected_clusters: Vec<_> = clusters
+        .into_iter()
+        .filter(|cluster| {
+            corpus_repro_cluster_matches(cluster, cmd, &selected_failure_ids, &selected_failures)
+        })
+        .collect();
+    if selected_clusters.is_empty() {
+        return Err(XtaskError::validation(format!(
+            "No clusters matched the requested repro selection in corpus run `{}`",
+            run.run_id
+        ))
+        .into());
+    }
+
+    let canonical_examples = selected_clusters
+        .iter()
+        .filter_map(|cluster| cluster.canonical_example.clone())
+        .collect();
+    let selected_examples = selected_failures
+        .iter()
+        .map(|failure| build_corpus_canonical_example(&run, failure))
+        .collect();
+
+    Ok(DebugCorpusReproOut {
+        schema_version: 2,
+        run_id: run.run_id.clone(),
+        snapshot_mode: if summary_path.is_some() {
+            "complete".into()
+        } else {
+            "partial".into()
+        },
+        summary_path: summary_path.map(|path| path.display().to_string()),
+        run_dir: run_dir.display().to_string(),
+        triage_dir: triage_dir.display().to_string(),
+        triage_present: triage_index_path.is_file() || triage_clusters_path.is_file(),
+        triage_index_path: triage_index_path
+            .is_file()
+            .then(|| triage_index_path.display().to_string()),
+        triage_clusters_path: triage_clusters_path
+            .is_file()
+            .then(|| triage_clusters_path.display().to_string()),
+        checkout_root: run.checkout_root.clone(),
+        artifact_root: run.artifact_root.clone(),
+        selected_target: cmd.target.clone(),
+        selected_member: cmd.member.clone(),
+        selected_cluster: cmd.cluster.clone(),
+        selected_failure: cmd.failure.clone(),
+        failure_count,
+        cluster_count,
+        selected_failure_count: selected_failures.len(),
+        selected_cluster_count: selected_clusters.len(),
+        failures: selected_failures,
+        clusters: selected_clusters,
+        canonical_examples,
+        selected_examples,
+    })
+}
+
+fn corpus_repro_failure_matches(failure: &CorpusTriageFailure, cmd: &DebugCorpusRepro) -> bool {
+    if let Some(target) = &cmd.target {
+        if !corpus_repro_target_matches_failure(failure, target) {
+            return false;
+        }
+    }
+    if let Some(member) = &cmd.member {
+        if !corpus_repro_member_matches_failure(failure, member) {
+            return false;
+        }
+    }
+    if let Some(cluster) = &cmd.cluster {
+        if failure.cluster_key != *cluster && failure.cluster_slug != *cluster {
+            return false;
+        }
+    }
+    if let Some(failure_id) = &cmd.failure {
+        if failure.id != *failure_id {
+            return false;
+        }
+    }
+    true
+}
+
+fn corpus_repro_cluster_matches(
+    cluster: &CorpusTriageCluster,
+    cmd: &DebugCorpusRepro,
+    selected_failure_ids: &BTreeSet<String>,
+    selected_failures: &[CorpusTriageFailure],
+) -> bool {
+    if let Some(cluster_selector) = &cmd.cluster {
+        if cluster.key != *cluster_selector && cluster.slug != *cluster_selector {
+            return false;
+        }
+    }
+    if let Some(failure_selector) = &cmd.failure {
+        let in_cluster = selected_failures
+            .iter()
+            .any(|failure| failure.id == *failure_selector && failure.cluster_key == cluster.key);
+        if !in_cluster {
+            return false;
+        }
+    }
+    selected_failures.iter().any(|failure| {
+        selected_failure_ids.contains(&failure.id) && failure.cluster_key == cluster.key
+    })
+}
+
+fn corpus_repro_target_matches_failure(failure: &CorpusTriageFailure, needle: &str) -> bool {
+    failure.normalized_repo == needle
+        || failure.target == needle
+        || failure.normalized_repo.replace('/', "__") == needle
+}
+
+fn corpus_repro_member_matches_failure(failure: &CorpusTriageFailure, needle: &str) -> bool {
+    failure.member_label.as_deref() == Some(needle)
+        || failure.member_path.as_deref() == Some(needle)
+        || failure
+            .member_path
+            .as_deref()
+            .and_then(|path| Path::new(path).file_name().and_then(|name| name.to_str()))
+            == Some(needle)
+        || failure
+            .member_artifact_dir
+            .as_deref()
+            .and_then(|path| Path::new(path).file_name().and_then(|name| name.to_str()))
+            == Some(needle)
+}
+
+fn build_corpus_canonical_example(
+    run: &DebugCorpusOut,
+    failure: &CorpusTriageFailure,
+) -> CorpusTriageCanonicalExample {
+    let target = find_corpus_target_for_failure(run, failure);
+    let stage_result = lookup_corpus_failure_stage_result(run, failure);
+    let checkout_path = target.map(|entry| entry.checkout_path.clone());
+    let checkout_present = checkout_path
+        .as_deref()
+        .map(|path| Path::new(path).exists());
+    let relevant_artifacts = vec![
+        failure.failure_artifact_path.clone(),
+        failure.artifact_path.clone(),
+        failure.target_summary_path.clone(),
+        failure.workspace_summary_path.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let relevant_code_paths = corpus_failure_relevant_code_paths(stage_result);
+
+    CorpusTriageCanonicalExample {
+        failure_id: failure.id.clone(),
+        run_id: failure.run_id.clone(),
+        cluster_key: failure.cluster_key.clone(),
+        cluster_slug: failure.cluster_slug.clone(),
+        target: failure.target.clone(),
+        normalized_repo: failure.normalized_repo.clone(),
+        repository_kind: failure.repository_kind.clone(),
+        commit_sha: failure.commit_sha.clone(),
+        checkout_path,
+        checkout_present,
+        source: failure.source.clone(),
+        member_label: failure.member_label.clone(),
+        member_path: failure.member_path.clone(),
+        member_artifact_dir: failure.member_artifact_dir.clone(),
+        stage: failure.stage.clone(),
+        failure_kind: failure.failure_kind.clone(),
+        panic: failure.panic,
+        error_signature: failure.error_signature.clone(),
+        error_excerpt: failure.error_excerpt.clone(),
+        artifact_path: failure.artifact_path.clone(),
+        artifact_present: failure.artifact_path.as_deref().map(path_exists),
+        failure_artifact_path: failure.failure_artifact_path.clone(),
+        failure_artifact_present: failure.failure_artifact_path.as_deref().map(path_exists),
+        target_summary_path: failure.target_summary_path.clone(),
+        target_summary_present: failure.target_summary_path.as_deref().map(path_exists),
+        workspace_summary_path: failure.workspace_summary_path.clone(),
+        workspace_summary_present: failure.workspace_summary_path.as_deref().map(path_exists),
+        suggested_inspection_command: corpus_repro_suggested_inspection_command(run, failure),
+        suggested_repro_command: corpus_repro_suggested_repro_command(target, failure),
+        suggested_test_assertion: Some(corpus_repro_suggested_test_assertion(failure)),
+        relevant_artifacts,
+        relevant_code_paths,
+    }
+}
+
+fn corpus_repro_suggested_inspection_command(
+    run: &DebugCorpusOut,
+    failure: &CorpusTriageFailure,
+) -> String {
+    let run_selector = shell_quoted(&run.artifact_root);
+    let artifact_arg = if run.artifact_root.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " --artifact-dir {}",
+            shell_quoted(&parent_dir_or_self(&run.artifact_root))
+        )
+    };
+    if let Some(member) = failure
+        .member_label
+        .as_deref()
+        .or(failure.member_path.as_deref())
+    {
+        return format!(
+            "cargo xtask parse debug corpus-show {run_selector}{artifact_arg} --target {} --member {} --backtrace",
+            shell_quoted(&failure.normalized_repo),
+            shell_quoted(member),
+        );
+    }
+    format!(
+        "cargo xtask parse debug corpus-show {run_selector}{artifact_arg} --target {} --backtrace",
+        shell_quoted(&failure.normalized_repo),
+    )
+}
+
+fn corpus_repro_suggested_repro_command(
+    target: Option<&CorpusTargetResult>,
+    failure: &CorpusTriageFailure,
+) -> Option<String> {
+    match failure.source.as_str() {
+        "workspace_member" => {
+            let checkout_path = target.map(|entry| entry.checkout_path.as_str())?;
+            Some(format!(
+                "cargo xtask parse debug workspace {}",
+                shell_quoted(checkout_path)
+            ))
+        }
+        "checkout" => None,
+        _ => {
+            let checkout_path = target.map(|entry| entry.checkout_path.as_str())?;
+            Some(format!(
+                "cargo xtask parse debug pipeline {}",
+                shell_quoted(checkout_path)
+            ))
+        }
+    }
+}
+
+fn corpus_repro_suggested_test_assertion(failure: &CorpusTriageFailure) -> String {
+    match (failure.source.as_str(), failure.stage.as_str()) {
+        ("checkout", _) => format!(
+            "assert checkout failure `{}` is persisted for `{}`",
+            failure.failure_kind, failure.normalized_repo
+        ),
+        ("workspace_member", stage) => format!(
+            "assert workspace member `{}` fails `{stage}` with `{}`",
+            failure.member_label.as_deref().unwrap_or("unknown"),
+            failure.failure_kind
+        ),
+        (_, stage) => format!(
+            "assert `{}` fails `{stage}` with `{}`",
+            failure.normalized_repo, failure.failure_kind
+        ),
+    }
+}
+
+fn lookup_corpus_failure_stage_result<'a>(
+    run: &'a DebugCorpusOut,
+    failure: &CorpusTriageFailure,
+) -> Option<&'a CorpusStageResult> {
+    let target = find_corpus_target_for_failure(run, failure)?;
+    if failure.source == "workspace_member" {
+        let probe = target.workspace_probe.as_ref()?;
+        let member = probe
+            .members
+            .iter()
+            .find(|member| corpus_workspace_member_matches_by_failure(member, failure))?;
+        return match failure.stage.as_str() {
+            "discovery" => Some(&member.discovery),
+            "resolve" => member.resolve.as_ref(),
+            "merge" => member.merge.as_ref(),
+            _ => None,
+        };
+    }
+
+    match failure.stage.as_str() {
+        "checkout" => target.checkout.as_ref(),
+        "discovery" => target.discovery.as_ref(),
+        "resolve" => target.resolve.as_ref(),
+        "merge" => target.merge.as_ref(),
+        _ => None,
+    }
+}
+
+fn find_corpus_target_for_failure<'a>(
+    run: &'a DebugCorpusOut,
+    failure: &CorpusTriageFailure,
+) -> Option<&'a CorpusTargetResult> {
+    run.targets.iter().find(|target| {
+        corpus_target_matches(target, &failure.normalized_repo)
+            || corpus_target_matches(target, &failure.target)
+    })
+}
+
+fn corpus_workspace_member_matches_by_failure(
+    member: &CorpusWorkspaceMemberResult,
+    failure: &CorpusTriageFailure,
+) -> bool {
+    if let Some(label) = failure.member_label.as_deref() {
+        if corpus_workspace_member_matches(member, label) {
+            return true;
+        }
+    }
+    if let Some(path) = failure.member_path.as_deref() {
+        if corpus_workspace_member_matches(member, path) {
+            return true;
+        }
+    }
+    if let Some(artifact_dir) = failure.member_artifact_dir.as_deref() {
+        if corpus_workspace_member_matches(member, artifact_dir) {
+            return true;
+        }
+    }
+    false
+}
+
+fn corpus_failure_relevant_code_paths(stage_result: Option<&CorpusStageResult>) -> Vec<String> {
+    let mut paths = Vec::new();
+    if let Some(stage_result) = stage_result {
+        if let Some(diagnostic) = stage_result.diagnostic.as_ref() {
+            collect_corpus_diagnostic_code_paths(diagnostic, &mut paths);
+        }
+    }
+    paths
+}
+
+fn collect_corpus_diagnostic_code_paths(diagnostic: &CorpusDiagnostic, paths: &mut Vec<String>) {
+    if let Some(path) = diagnostic.source_path.as_deref() {
+        if !paths.iter().any(|existing| existing == path) {
+            paths.push(path.to_string());
+        }
+    }
+    if let Some(site) = diagnostic.emission_site.as_ref() {
+        if !paths.iter().any(|existing| existing == &site.file) {
+            paths.push(site.file.clone());
+        }
+    }
+    for child in &diagnostic.children {
+        collect_corpus_diagnostic_code_paths(child, paths);
+    }
+}
+
+fn path_exists(path: &str) -> bool {
+    Path::new(path).exists()
+}
+
+fn load_corpus_repro_report_template(
+    ctx: &CommandContext,
+) -> Result<CorpusTriageReportTemplate, XtaskError> {
+    let template_path = ctx
+        .workspace_root()?
+        .join(CORPUS_REPRO_REPORT_TEMPLATE_REL_PATH);
+    let content = std::fs::read_to_string(&template_path).map_err(|e| {
+        XtaskError::Resource(format!(
+            "Failed to read corpus repro report template {}: {e}",
+            template_path.display()
+        ))
+    })?;
+    serde_json::from_str(&content).map_err(|e| {
+        XtaskError::Serialization(format!(
+            "Failed to parse corpus repro report template {}: {e}",
+            template_path.display()
+        ))
+        .into()
+    })
+}
+
+fn is_transient_corpus_snapshot_error(err: &XtaskError) -> bool {
+    let Some(message) = corpus_snapshot_error_message(err) else {
+        return false;
+    };
+
+    let touches_snapshot_file = [
+        "summary.json",
+        "workspace_summary.json",
+        "failure.json",
+        "stage_summary.json",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle));
+    if !touches_snapshot_file {
+        return false;
+    }
+
+    message.contains("Failed to read")
+        || message.contains("Failed to parse")
+        || message.contains("EOF while parsing")
+        || message.contains("expected value")
+        || message.contains("trailing characters")
+}
+
+fn corpus_snapshot_error_message(err: &XtaskError) -> Option<&str> {
+    match err {
+        XtaskError::Parse(message)
+        | XtaskError::Resource(message)
+        | XtaskError::Io(message)
+        | XtaskError::Serialization(message) => Some(message),
+        _ => None,
+    }
+}
+
+fn parent_dir_or_self(path: &str) -> String {
+    let path = Path::new(path);
+    path.parent().unwrap_or(path).display().to_string()
+}
+
+fn shell_quoted(value: &str) -> String {
+    if value.is_empty() {
+        "''".into()
+    } else if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-' | '_' | '.' | ':'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
+}
+
 fn load_corpus_run_snapshot(
     ctx: &CommandContext,
     run: &Path,
     artifact_dir: &Path,
 ) -> Result<(DebugCorpusOut, Option<PathBuf>, PathBuf), XtaskError> {
-    let run_dir = resolve_corpus_run_dir(ctx, run, artifact_dir)?;
+    let run_dir = resolve_corpus_run_snapshot_dir(ctx, run, artifact_dir)?;
     let summary_path = run_dir.join("summary.json");
     if summary_path.is_file() {
         let content = std::fs::read_to_string(&summary_path).map_err(|e| {
@@ -1402,7 +1821,7 @@ fn load_corpus_run_snapshot(
         .to_string();
     let mut out = DebugCorpusOut {
         run_id,
-        checkout_root: String::new(),
+        checkout_root: derive_checkout_root(&targets),
         artifact_root: run_dir.display().to_string(),
         list_files: Vec::new(),
         requested_entries: 0,
@@ -1419,10 +1838,62 @@ fn load_corpus_run_snapshot(
         merge_failures: 0,
         panic_failures: 0,
         workspace_mode: "unknown".into(),
+        checkout_timeout_minutes: None,
+        resolve_timeout_minutes: None,
+        merge_timeout_minutes: None,
         targets,
     };
     recompute_corpus_counts(&mut out);
     Ok((out, None, run_dir))
+}
+
+fn resolve_corpus_run_snapshot_dir(
+    ctx: &CommandContext,
+    run: &Path,
+    artifact_dir: &Path,
+) -> Result<PathBuf, XtaskError> {
+    let run_dir = resolve_corpus_run_dir(ctx, run, artifact_dir)?;
+    Ok(strip_corpus_triage_dir(&run_dir))
+}
+
+fn strip_corpus_triage_dir(path: &Path) -> PathBuf {
+    for ancestor in path.ancestors() {
+        if ancestor.file_name().and_then(|name| name.to_str()) == Some("triage") {
+            return ancestor.parent().unwrap_or(ancestor).to_path_buf();
+        }
+    }
+    path.to_path_buf()
+}
+
+fn derive_checkout_root(targets: &[CorpusTargetResult]) -> String {
+    let paths: Vec<PathBuf> = targets
+        .iter()
+        .filter_map(|target| {
+            if target.checkout_path.is_empty() {
+                None
+            } else {
+                let path = PathBuf::from(&target.checkout_path);
+                Some(path.parent().unwrap_or(path.as_path()).to_path_buf())
+            }
+        })
+        .collect();
+    common_path_prefix(&paths)
+        .map(|path| path.display().to_string())
+        .unwrap_or_default()
+}
+
+fn common_path_prefix(paths: &[PathBuf]) -> Option<PathBuf> {
+    let mut iter = paths.iter();
+    let first = iter.next()?.clone();
+    let mut prefix = first;
+    for path in iter {
+        while !path.starts_with(&prefix) {
+            if !prefix.pop() {
+                return None;
+            }
+        }
+    }
+    Some(prefix)
 }
 
 fn load_partial_workspace_probe_target(
@@ -1478,6 +1949,7 @@ fn load_partial_workspace_probe_target(
             action: "in_progress".into(),
             error: None,
         },
+        checkout: None,
         commit_sha: None,
         discovery: None,
         resolve: None,
@@ -1894,37 +2366,40 @@ impl Command for DebugDiscoveryRules {
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let canon = resolve_debug_target_path(ctx, &self.path)?;
         let manifest_path = canon.join("Cargo.toml");
-        let manifest_str = std::fs::read_to_string(&manifest_path).map_err(|e| {
-            XtaskError::Resource(format!("Failed to read {}: {e}", manifest_path.display()))
-        })?;
-        let manifest: CargoManifest = toml::from_str(&manifest_str).map_err(|e| {
-            XtaskError::Parse(format!("Failed to parse {}: {e}", manifest_path.display()))
+        let manifest: Manifest = Manifest::from_path(&manifest_path).map_err(|e| {
+            XtaskError::Parse(format!(
+                "Failed to parse {}: {e}",
+                manifest_path.display()
+            ))
         })?;
 
         let src_scan_root = canon.join("src");
-        let custom_lib_path = manifest
-            .lib
-            .as_ref()
-            .map(|lib| canon.join(&lib.path).display().to_string());
+        let custom_lib_path = manifest.lib.as_ref().and_then(|lib| {
+            lib.path
+                .as_ref()
+                .map(|p| canon.join(p).display().to_string())
+        });
         let mut custom_bin_paths: Vec<String> = manifest
             .bin
-            .as_ref()
-            .map(|bins| {
-                bins.iter()
-                    .map(|b| canon.join(&b.path).display().to_string())
-                    .collect()
+            .iter()
+            .filter_map(|b| {
+                b.path
+                    .as_ref()
+                    .map(|p| canon.join(p).display().to_string())
             })
-            .unwrap_or_default();
+            .collect();
         custom_bin_paths.sort();
 
         let mut candidates = Vec::new();
         candidates.push(candidate_for("src_walk", &src_scan_root));
         if let Some(ref lib) = manifest.lib {
-            candidates.push(candidate_for("lib_target", &canon.join(&lib.path)));
+            if let Some(ref p) = lib.path {
+                candidates.push(candidate_for("lib_target", &canon.join(p)));
+            }
         }
-        if let Some(ref bins) = manifest.bin {
-            for b in bins {
-                candidates.push(candidate_for("bin_target", &canon.join(&b.path)));
+        for b in &manifest.bin {
+            if let Some(ref p) = b.path {
+                candidates.push(candidate_for("bin_target", &canon.join(p)));
             }
         }
 
@@ -1974,7 +2449,7 @@ pub struct DebugCorpus {
     ///
     /// Artifact layout:
     /// ```text
-    /// target/debug_corpus_runs/<run-id>/
+    /// xtask/debug_corpus_runs/<run-id>/
     ///   summary.json
     ///   <target-slug>/
     ///     summary.json
@@ -2013,7 +2488,7 @@ pub struct DebugCorpus {
     ///
     /// The command creates a timestamp-like run directory under this root and writes both
     /// run-level and per-target summaries there.
-    #[arg(long, value_name = "DIR", default_value = "target/debug_corpus_runs")]
+    #[arg(long, value_name = "DIR", default_value = DEFAULT_CORPUS_ARTIFACT_DIR)]
     pub artifact_dir: PathBuf,
 
     /// Max number of unique targets to process after deduplication (0 = unlimited).
@@ -2044,6 +2519,10 @@ pub struct DebugCorpus {
     /// Skip a target if its merge stage runs longer than this many minutes (0 = disabled).
     #[arg(long, default_value_t = 5)]
     pub merge_timeout_minutes: u64,
+
+    /// Skip checkout if the clone step runs longer than this many minutes (0 = disabled).
+    #[arg(long, default_value_t = 5)]
+    pub checkout_timeout_minutes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2066,6 +2545,12 @@ pub struct DebugCorpusOut {
     pub merge_failures: usize,
     pub panic_failures: usize,
     pub workspace_mode: String,
+    #[serde(default)]
+    pub checkout_timeout_minutes: Option<u64>,
+    #[serde(default)]
+    pub resolve_timeout_minutes: Option<u64>,
+    #[serde(default)]
+    pub merge_timeout_minutes: Option<u64>,
     pub targets: Vec<CorpusTargetResult>,
 }
 
@@ -2083,6 +2568,8 @@ pub struct CorpusTargetResult {
     pub classification_error: Option<String>,
     pub classification_diagnostic: Option<CorpusDiagnostic>,
     pub clone: CorpusCloneStatus,
+    #[serde(default)]
+    pub checkout: Option<CorpusStageResult>,
     pub commit_sha: Option<String>,
     pub discovery: Option<CorpusStageResult>,
     pub resolve: Option<CorpusStageResult>,
@@ -2111,6 +2598,42 @@ pub struct CorpusStageResult {
     pub file_count: Option<usize>,
     pub artifact_path: Option<String>,
     pub failure_artifact_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorpusTriageCanonicalExample {
+    pub failure_id: String,
+    pub run_id: String,
+    pub cluster_key: String,
+    pub cluster_slug: String,
+    pub target: String,
+    pub normalized_repo: String,
+    pub repository_kind: String,
+    pub commit_sha: Option<String>,
+    pub checkout_path: Option<String>,
+    pub checkout_present: Option<bool>,
+    pub source: String,
+    pub member_label: Option<String>,
+    pub member_path: Option<String>,
+    pub member_artifact_dir: Option<String>,
+    pub stage: String,
+    pub failure_kind: String,
+    pub panic: bool,
+    pub error_signature: String,
+    pub error_excerpt: String,
+    pub artifact_path: Option<String>,
+    pub artifact_present: Option<bool>,
+    pub failure_artifact_path: Option<String>,
+    pub failure_artifact_present: Option<bool>,
+    pub target_summary_path: Option<String>,
+    pub target_summary_present: Option<bool>,
+    pub workspace_summary_path: Option<String>,
+    pub workspace_summary_present: Option<bool>,
+    pub suggested_inspection_command: String,
+    pub suggested_repro_command: Option<String>,
+    pub suggested_test_assertion: Option<String>,
+    pub relevant_artifacts: Vec<String>,
+    pub relevant_code_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -2347,6 +2870,7 @@ impl Command for DebugCorpus {
             let checkout_path = checkout_root.join(&spec.checkout_slug);
             let target_artifact_dir = artifact_root.join(&spec.checkout_slug);
             let target_label = spec.normalized_repo.clone();
+            let checkout_timeout = resolve_timeout_duration(self.checkout_timeout_minutes);
             emit_corpus_progress_line(format_args!(
                 "[{}/{}] target {}",
                 index + 1,
@@ -2372,7 +2896,14 @@ impl Command for DebugCorpus {
                     }
                 ));
             }
-            let clone = ensure_corpus_checkout(&spec, &checkout_path, self.skip_clone)?;
+            let checkout = ensure_corpus_checkout(
+                &spec,
+                &checkout_path,
+                &target_artifact_dir,
+                self.skip_clone,
+                checkout_timeout,
+            )?;
+            let clone = checkout.clone.clone();
             emit_corpus_progress_line(format_args!(
                 "[{}/{}] {} checkout {}{}",
                 index + 1,
@@ -2408,20 +2939,9 @@ impl Command for DebugCorpus {
                     ),
                     classification_diagnostic: None,
                     clone,
+                    checkout: checkout.checkout,
                     commit_sha: None,
-                    discovery: Some(CorpusStageResult {
-                        ok: false,
-                        panic: false,
-                        failure_kind: Some("clone".into()),
-                        error: Some("clone step did not produce a usable checkout".into()),
-                        diagnostic: None,
-                        duration_ms: 0,
-                        nodes_parsed: None,
-                        relations_found: None,
-                        file_count: None,
-                        artifact_path: None,
-                        failure_artifact_path: None,
-                    }),
+                    discovery: None,
                     resolve: None,
                     merge: None,
                     workspace_probe: None,
@@ -2508,6 +3028,7 @@ impl Command for DebugCorpus {
                     classification_error: classification.classification_error,
                     classification_diagnostic: classification.classification_diagnostic,
                     clone,
+                    checkout: None,
                     commit_sha,
                     discovery: None,
                     resolve: None,
@@ -2548,6 +3069,7 @@ impl Command for DebugCorpus {
                     classification_error: classification.classification_error.clone(),
                     classification_diagnostic: classification.classification_diagnostic.clone(),
                     clone,
+                    checkout: None,
                     commit_sha,
                     discovery: Some(discovery),
                     resolve: None,
@@ -2612,6 +3134,7 @@ impl Command for DebugCorpus {
                 classification_error: classification.classification_error,
                 classification_diagnostic: classification.classification_diagnostic,
                 clone,
+                checkout: None,
                 commit_sha,
                 discovery: Some(discovery),
                 resolve: Some(resolve),
@@ -2650,6 +3173,9 @@ impl Command for DebugCorpus {
             merge_failures,
             panic_failures,
             workspace_mode: self.workspace_mode.as_str().to_string(),
+            checkout_timeout_minutes: Some(self.checkout_timeout_minutes),
+            resolve_timeout_minutes: Some(self.resolve_timeout_minutes),
+            merge_timeout_minutes: Some(self.merge_timeout_minutes),
             targets,
         };
         persist_run_summary(&artifact_root, &out)?;
@@ -2685,7 +3211,7 @@ pub struct DebugCorpusShow {
     pub run: PathBuf,
 
     /// Corpus artifact base dir used when resolving a run ID.
-    #[arg(long, value_name = "DIR", default_value = "target/debug_corpus_runs")]
+    #[arg(long, value_name = "DIR", default_value = DEFAULT_CORPUS_ARTIFACT_DIR)]
     pub artifact_dir: PathBuf,
 
     /// Narrow output to one target (`owner/repo` or `owner__repo`).
@@ -2712,7 +3238,8 @@ pub struct DebugCorpusShowOut {
     pub selected_member: Option<String>,
     pub show_backtrace: bool,
     pub show_backtrace_full: bool,
-    pub summary_path: String,
+    pub summary_path: Option<String>,
+    pub run_dir: String,
 }
 
 #[derive(Debug, Clone, clap::Args)]
@@ -2722,7 +3249,7 @@ pub struct DebugCorpusTriage {
     pub run: PathBuf,
 
     /// Corpus artifact base dir used when resolving a run ID.
-    #[arg(long, value_name = "DIR", default_value = "target/debug_corpus_runs")]
+    #[arg(long, value_name = "DIR", default_value = DEFAULT_CORPUS_ARTIFACT_DIR)]
     pub artifact_dir: PathBuf,
 
     /// Directory used to store triage indexes and pending report stubs.
@@ -2800,30 +3327,133 @@ pub struct CorpusTriageCluster {
     pub count: usize,
     pub repos: Vec<String>,
     pub examples: Vec<String>,
+    #[serde(default)]
+    pub canonical_example: Option<CorpusTriageCanonicalExample>,
     pub pending_report_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CorpusTriageReportTemplate {
-    version: u32,
-    run_id: Option<String>,
-    cluster_key: Option<String>,
-    cluster_slug: Option<String>,
+    schema_version: u32,
+    report_kind: String,
     status: String,
-    signature: Option<String>,
+    run_id: Option<String>,
+    snapshot_mode: Option<String>,
+    corpus_repro_selector: CorpusReproSelectorTemplate,
+    cluster: CorpusReproClusterTemplate,
+    assessment: CorpusReproAssessmentTemplate,
+    #[serde(default)]
+    canonical_example: Option<CorpusTriageCanonicalExample>,
+    evidence: CorpusReproEvidenceTemplate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct CorpusReproSelectorTemplate {
+    run: Option<String>,
+    artifact_dir: Option<String>,
+    target: Option<String>,
+    member: Option<String>,
+    cluster: Option<String>,
+    failure: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct CorpusReproClusterTemplate {
+    key: Option<String>,
+    slug: Option<String>,
     stage: Option<String>,
     failure_kind: Option<String>,
+    error_signature: Option<String>,
     occurrence_count: Option<usize>,
-    example_failures: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CorpusReproAssessmentTemplate {
     suspected_root_cause: Option<String>,
     confidence: Option<String>,
     scope_assessment: Option<String>,
     touches_sensitive_pipeline: Option<bool>,
+    matches_known_limitation: Option<bool>,
+    known_limitation_path: Option<String>,
+    fix_vs_document_recommendation: Option<String>,
     recommended_next_step: Option<String>,
     minimal_repro_status: String,
-    relevant_artifacts: Vec<String>,
-    relevant_code_paths: Vec<String>,
+}
+
+impl Default for CorpusReproAssessmentTemplate {
+    fn default() -> Self {
+        Self {
+            suspected_root_cause: None,
+            confidence: None,
+            scope_assessment: None,
+            touches_sensitive_pipeline: None,
+            matches_known_limitation: None,
+            known_limitation_path: None,
+            fix_vs_document_recommendation: None,
+            recommended_next_step: None,
+            minimal_repro_status: "not_started".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct CorpusReproEvidenceTemplate {
+    backtrace_or_diagnostic_summary: Option<String>,
     notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct DebugCorpusRepro {
+    /// Corpus run ID like `run-1774750473411`, or a path to a run directory / `summary.json` / triage dir.
+    #[arg(value_name = "RUN_OR_PATH")]
+    pub run: PathBuf,
+
+    /// Corpus artifact base dir used when resolving a run ID.
+    #[arg(long, value_name = "DIR", default_value = DEFAULT_CORPUS_ARTIFACT_DIR)]
+    pub artifact_dir: PathBuf,
+
+    /// Narrow output to one target (`owner/repo` or `owner__repo`).
+    #[arg(long, value_name = "TARGET")]
+    pub target: Option<String>,
+
+    /// Narrow workspace probe output to one member label or path component.
+    #[arg(long, value_name = "MEMBER")]
+    pub member: Option<String>,
+
+    /// Narrow output to one failure cluster key or slug.
+    #[arg(long, value_name = "CLUSTER")]
+    pub cluster: Option<String>,
+
+    /// Narrow output to one failure id.
+    #[arg(long, value_name = "FAILURE")]
+    pub failure: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugCorpusReproOut {
+    pub schema_version: u32,
+    pub run_id: String,
+    pub snapshot_mode: String,
+    pub summary_path: Option<String>,
+    pub run_dir: String,
+    pub triage_dir: String,
+    pub triage_present: bool,
+    pub triage_index_path: Option<String>,
+    pub triage_clusters_path: Option<String>,
+    pub checkout_root: String,
+    pub artifact_root: String,
+    pub selected_target: Option<String>,
+    pub selected_member: Option<String>,
+    pub selected_cluster: Option<String>,
+    pub selected_failure: Option<String>,
+    pub failure_count: usize,
+    pub cluster_count: usize,
+    pub selected_failure_count: usize,
+    pub selected_cluster_count: usize,
+    pub failures: Vec<CorpusTriageFailure>,
+    pub clusters: Vec<CorpusTriageCluster>,
+    pub canonical_examples: Vec<CorpusTriageCanonicalExample>,
+    pub selected_examples: Vec<CorpusTriageCanonicalExample>,
 }
 
 impl Command for DebugCorpusShow {
@@ -2831,19 +3461,8 @@ impl Command for DebugCorpusShow {
     type Error = XtaskError;
 
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
-        let summary_path = resolve_corpus_summary_path(ctx, &self.run, &self.artifact_dir)?;
-        let content = std::fs::read_to_string(&summary_path).map_err(|e| {
-            XtaskError::Resource(format!(
-                "Failed to read corpus summary {}: {e}",
-                summary_path.display()
-            ))
-        })?;
-        let mut run: DebugCorpusOut = serde_json::from_str(&content).map_err(|e| {
-            XtaskError::Parse(format!(
-                "Failed to parse corpus summary {}: {e}",
-                summary_path.display()
-            ))
-        })?;
+        let (mut run, summary_path, run_dir) =
+            load_corpus_run_snapshot(ctx, &self.run, &self.artifact_dir)?;
 
         if let Some(target) = &self.target {
             let matches: Vec<_> = run
@@ -2903,7 +3522,8 @@ impl Command for DebugCorpusShow {
             selected_member: self.member.clone(),
             show_backtrace: self.backtrace,
             show_backtrace_full: self.backtrace_full,
-            summary_path: summary_path.display().to_string(),
+            summary_path: summary_path.map(|path| path.display().to_string()),
+            run_dir: run_dir.display().to_string(),
         }))
     }
 }
@@ -2915,7 +3535,19 @@ impl Command for DebugCorpusTriage {
     fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
         let mut last_status = None::<String>;
         loop {
-            let out = build_corpus_triage_out(ctx, self)?;
+            let out = match build_corpus_triage_out(ctx, self) {
+                Ok(out) => out,
+                Err(err) if self.watch && is_transient_corpus_snapshot_error(&err) => {
+                    emit_corpus_progress_line(format_args!(
+                        "[triage] waiting for stable snapshot files: {}",
+                        corpus_snapshot_error_message(&err)
+                            .unwrap_or("transient snapshot read error")
+                    ));
+                    thread::sleep(std::time::Duration::from_secs(self.interval_secs.max(1)));
+                    continue;
+                }
+                Err(err) => return Err(err),
+            };
             let status = format!(
                 "{}:{}:{}:{}",
                 out.snapshot_mode, out.failure_count, out.cluster_count, out.pending_report_count
@@ -2937,6 +3569,16 @@ impl Command for DebugCorpusTriage {
 
             thread::sleep(std::time::Duration::from_secs(self.interval_secs.max(1)));
         }
+    }
+}
+
+impl Command for DebugCorpusRepro {
+    type Output = DebugOutput;
+    type Error = XtaskError;
+
+    fn execute(&self, ctx: &CommandContext) -> Result<Self::Output, Self::Error> {
+        let out = build_corpus_repro_out(ctx, self)?;
+        Ok(DebugOutput::CorpusRepro(out))
     }
 }
 
@@ -3059,36 +3701,97 @@ fn url_slug(source: &str) -> Option<String> {
     Some(format!("{owner}/{repo}"))
 }
 
+#[derive(Debug, Clone)]
+struct CorpusCheckoutOutcome {
+    clone: CorpusCloneStatus,
+    checkout: Option<CorpusStageResult>,
+}
+
+fn persist_corpus_checkout_failure(
+    target_artifact_dir: &Path,
+    failure_kind: &str,
+    message: &str,
+    duration_ms: u64,
+) -> Result<CorpusStageResult, XtaskError> {
+    let stage_dir = target_artifact_dir.join("checkout");
+    std::fs::create_dir_all(&stage_dir).map_err(|e| {
+        XtaskError::Resource(format!(
+            "Failed to create checkout artifact dir {}: {e}",
+            stage_dir.display()
+        ))
+    })?;
+    let failure_artifact_path =
+        persist_stage_failure(&stage_dir, "checkout", false, message, None)?
+            .display()
+            .to_string();
+    let result = CorpusStageResult {
+        ok: false,
+        panic: false,
+        failure_kind: Some(failure_kind.to_string()),
+        error: Some(message.to_string()),
+        diagnostic: None,
+        duration_ms,
+        nodes_parsed: None,
+        relations_found: None,
+        file_count: None,
+        artifact_path: None,
+        failure_artifact_path: Some(failure_artifact_path),
+    };
+    persist_stage_payload(&stage_dir, "", "stage_summary.json", &result)?;
+    Ok(result)
+}
+
 fn ensure_corpus_checkout(
     spec: &CorpusTargetSpec,
     checkout_path: &Path,
+    target_artifact_dir: &Path,
     skip_clone: bool,
-) -> Result<CorpusCloneStatus, XtaskError> {
+    timeout: Option<std::time::Duration>,
+) -> Result<CorpusCheckoutOutcome, XtaskError> {
     if checkout_path.join(".git").is_dir() {
-        return Ok(CorpusCloneStatus {
-            ok: true,
-            action: "reused".into(),
-            error: None,
+        return Ok(CorpusCheckoutOutcome {
+            clone: CorpusCloneStatus {
+                ok: true,
+                action: "reused".into(),
+                error: None,
+            },
+            checkout: None,
         });
     }
     if checkout_path.exists() && !checkout_path.join(".git").is_dir() {
-        return Ok(CorpusCloneStatus {
-            ok: false,
-            action: "invalid_existing_path".into(),
-            error: Some(format!(
-                "Checkout path {} exists but is not a git repository",
-                checkout_path.display()
-            )),
+        let message = format!(
+            "Checkout path {} exists but is not a git repository",
+            checkout_path.display()
+        );
+        let checkout = persist_corpus_checkout_failure(
+            target_artifact_dir,
+            "invalid_existing_path",
+            &message,
+            0,
+        )?;
+        return Ok(CorpusCheckoutOutcome {
+            clone: CorpusCloneStatus {
+                ok: false,
+                action: "invalid_existing_path".into(),
+                error: Some(message),
+            },
+            checkout: Some(checkout),
         });
     }
     if skip_clone {
-        return Ok(CorpusCloneStatus {
-            ok: false,
-            action: "skipped_missing".into(),
-            error: Some(format!(
-                "Checkout {} does not exist and --skip-clone was set",
-                checkout_path.display()
-            )),
+        let message = format!(
+            "Checkout {} does not exist and --skip-clone was set",
+            checkout_path.display()
+        );
+        let checkout =
+            persist_corpus_checkout_failure(target_artifact_dir, "skipped_missing", &message, 0)?;
+        return Ok(CorpusCheckoutOutcome {
+            clone: CorpusCloneStatus {
+                ok: false,
+                action: "skipped_missing".into(),
+                error: Some(message),
+            },
+            checkout: Some(checkout),
         });
     }
     if let Some(parent) = checkout_path.parent() {
@@ -3099,6 +3802,85 @@ fn ensure_corpus_checkout(
             ))
         })?;
     }
+    if let Some(timeout) = timeout {
+        let mut child = ProcessCommand::new("git")
+            .arg("clone")
+            .arg("--depth")
+            .arg("1")
+            .arg(&spec.clone_url)
+            .arg(checkout_path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| XtaskError::Resource(format!("Failed to spawn git clone: {e}")))?;
+        let start = Instant::now();
+        loop {
+            match child.try_wait().map_err(|e| {
+                XtaskError::Resource(format!(
+                    "Failed to poll git clone for {}: {e}",
+                    checkout_path.display()
+                ))
+            })? {
+                Some(status) => {
+                    let output = child.wait_with_output().map_err(|e| {
+                        XtaskError::Resource(format!(
+                            "Failed to collect git clone output for {}: {e}",
+                            checkout_path.display()
+                        ))
+                    })?;
+                    if status.success() {
+                        return Ok(CorpusCheckoutOutcome {
+                            clone: CorpusCloneStatus {
+                                ok: true,
+                                action: "cloned".into(),
+                                error: None,
+                            },
+                            checkout: None,
+                        });
+                    }
+                    let message = stderr_or_status(&output);
+                    let checkout = persist_corpus_checkout_failure(
+                        target_artifact_dir,
+                        "clone_failed",
+                        &message,
+                        start.elapsed().as_millis() as u64,
+                    )?;
+                    return Ok(CorpusCheckoutOutcome {
+                        clone: CorpusCloneStatus {
+                            ok: false,
+                            action: "clone_failed".into(),
+                            error: Some(message),
+                        },
+                        checkout: Some(checkout),
+                    });
+                }
+                None if start.elapsed() >= timeout => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let message = format!(
+                        "checkout clone exceeded timeout after {}ms",
+                        start.elapsed().as_millis()
+                    );
+                    let checkout = persist_corpus_checkout_failure(
+                        target_artifact_dir,
+                        "timeout",
+                        &message,
+                        start.elapsed().as_millis() as u64,
+                    )?;
+                    return Ok(CorpusCheckoutOutcome {
+                        clone: CorpusCloneStatus {
+                            ok: false,
+                            action: "timeout".into(),
+                            error: Some(message),
+                        },
+                        checkout: Some(checkout),
+                    });
+                }
+                None => thread::sleep(std::time::Duration::from_millis(100)),
+            }
+        }
+    }
+
     let output = ProcessCommand::new("git")
         .arg("clone")
         .arg("--depth")
@@ -3108,16 +3890,25 @@ fn ensure_corpus_checkout(
         .output()
         .map_err(|e| XtaskError::Resource(format!("Failed to spawn git clone: {e}")))?;
     if output.status.success() {
-        Ok(CorpusCloneStatus {
-            ok: true,
-            action: "cloned".into(),
-            error: None,
+        Ok(CorpusCheckoutOutcome {
+            clone: CorpusCloneStatus {
+                ok: true,
+                action: "cloned".into(),
+                error: None,
+            },
+            checkout: None,
         })
     } else {
-        Ok(CorpusCloneStatus {
-            ok: false,
-            action: "clone_failed".into(),
-            error: Some(stderr_or_status(&output)),
+        let message = stderr_or_status(&output);
+        let checkout =
+            persist_corpus_checkout_failure(target_artifact_dir, "clone_failed", &message, 0)?;
+        Ok(CorpusCheckoutOutcome {
+            clone: CorpusCloneStatus {
+                ok: false,
+                action: "clone_failed".into(),
+                error: Some(message),
+            },
+            checkout: Some(checkout),
         })
     }
 }
@@ -3153,10 +3944,20 @@ fn classify_corpus_checkout(checkout_path: &Path) -> CorpusCheckoutClassificatio
     match try_parse_manifest(checkout_path, ManifestKind::WorkspaceRoot) {
         Ok(metadata) => {
             if let Some(workspace) = metadata.workspace {
+                let mut member_count = workspace.members.len();
+                // Implicit workspaces often omit `members` in Cargo.toml; Cargo still resolves
+                // workspace members (see `cargo metadata`). Match that when the manifest lists none.
+                if member_count == 0 {
+                    if let Some(fallback) = classify_corpus_checkout_via_metadata(checkout_path) {
+                        if fallback.repository_kind == "workspace" {
+                            member_count = fallback.workspace_member_count.unwrap_or(0);
+                        }
+                    }
+                }
                 CorpusCheckoutClassification {
                     repository_kind: "workspace".into(),
                     recommended_parser: "parse_workspace_with_config".into(),
-                    workspace_member_count: Some(workspace.members.len()),
+                    workspace_member_count: Some(member_count),
                     classification_error: None,
                     classification_diagnostic: None,
                     should_run_single_crate_pipeline: false,
@@ -3421,7 +4222,9 @@ fn persist_workspace_probe_summary(
 fn resolve_workspace_probe_members(workspace_root: &Path) -> Result<Vec<PathBuf>, XtaskError> {
     if let Ok(metadata) = try_parse_manifest(workspace_root, ManifestKind::WorkspaceRoot) {
         if let Some(workspace) = metadata.workspace {
-            return Ok(workspace.members);
+            if !workspace.members.is_empty() {
+                return Ok(workspace.members);
+            }
         }
     }
 

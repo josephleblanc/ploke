@@ -54,6 +54,8 @@
   - [ploke-tui](./crate-reference/ploke-tui.md)
   - [xtask and Proc Macros](./crate-reference/xtask-and-proc-macros.md)
 
+- [Node Reference](./node-reference/index.md)
+
 - [Design Patterns and Decisions](./design-patterns-and-decisions/index.md)
   - [Typed IDs and Newtypes](./design-patterns-and-decisions/typed-ids-and-newtypes.md)
   - [State-Bearing Types](./design-patterns-and-decisions/state-bearing-types.md)

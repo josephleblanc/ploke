@@ -670,6 +670,7 @@ impl IndexerTask {
         &self,
         num_not_proc: usize,
     ) -> Result<Option<Vec<TypedEmbedData>>, EmbedError> {
+        // ANCHOR: next_batch_primary_nodes
         tracing::trace!("starting next_batch");
         let mut batch = Vec::new();
         let mut total_counted = 0;
@@ -741,6 +742,7 @@ impl IndexerTask {
         } else {
             Ok(None)
         }
+        // ANCHOR_END: next_batch_primary_nodes
     }
 
     #[instrument(skip_all, fields(batch_size))]

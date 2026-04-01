@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use cargo_toml::Manifest;
 use itertools::Itertools;
 use ploke_core::workspace_glob::expand_simple_workspace_member;
 use serde::{Deserialize, Serialize};
@@ -8,16 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::discovery::DiscoveryError;
 use crate::discovery::ManifestCtx;
 use crate::discovery::ManifestKind;
+use crate::discovery::WithDiscoveryManifestCargoToml;
 use crate::discovery::WithDiscoveryManifestRead;
-use crate::discovery::WithDiscoveryManifestToml;
-
-/// Indicates that a version should be inherited from the workspace metadata. Cargo effectively
-/// treats `workspace = true` as the only supported value, so we surface explicit errors for other
-/// values to keep the type system honest.
-#[derive(Deserialize, Debug, Clone)]
-pub struct WorkspaceVersionLink {
-    pub(super) workspace: bool,
-}
 
 /// Partial view of a manifest that may or may not declare workspace metadata. `workspace = None`
 /// signals that the inspected manifest isn't a workspace boundary.
@@ -186,7 +179,11 @@ pub fn locate_workspace_manifest(
     })
 }
 
-/// Parse `target_dir/Cargo.toml` into [`WorkspaceManifestMetadata`].
+/// Parse `target_dir/Cargo.toml` into [`WorkspaceManifestMetadata`] using [`cargo_toml::Manifest`].
+///
+/// Parsing uses [`Manifest::from_str`] (not [`Manifest::from_path`]) so workspace discovery can
+/// read `[workspace]` without requiring Cargo’s manifest completion (e.g. when walking ancestors
+/// past crates that use workspace inheritance).
 ///
 /// `kind` classifies the manifest for diagnostics ([`DiscoveryError::ManifestRead`] /
 /// [`DiscoveryError::ManifestParse`]). Callers walking from a crate toward the filesystem root
@@ -203,53 +200,58 @@ pub fn try_parse_manifest(
         crate_path: None,
         content: None,
     };
+    // Use `from_str` without `complete_from_path` so ancestor walks can inspect manifests that
+    // declare `package.version.workspace = true` even when no workspace root exists yet (matches
+    // the legacy `toml::from_str` behavior for [`WorkspaceManifestMetadata`]).
     let content = fs::read_to_string(&candidate_manifest)
         .with_discovery_err(ctx.clone())
         .for_read()?;
-
-    let mut metadata: WorkspaceManifestMetadata = toml::from_str(&content)
+    let manifest: Manifest = Manifest::from_str(&content)
         .with_discovery_err(ctx.with_content(&content))
-        .for_toml()?;
+        .for_cargo_toml()?;
 
-    let workspace_root =
-        candidate_manifest
-            .parent()
-            .ok_or_else(|| DiscoveryError::ParentNotFound {
-                workspace_path: candidate_manifest.clone(),
-            })?;
+    let workspace_root = candidate_manifest.parent().ok_or_else(|| {
+        DiscoveryError::ParentNotFound {
+            workspace_path: candidate_manifest.clone(),
+        }
+    })?;
 
-    if let Some(workspace) = metadata.workspace.as_mut() {
-        workspace.path = workspace_root.to_path_buf();
-        workspace.members = workspace
+    let workspace = manifest.workspace.map(|ws| {
+        let mut members: Vec<PathBuf> = ws
             .members
             .iter()
-            .flat_map(|path| expand_simple_workspace_member(workspace_root, path))
+            .flat_map(|m| expand_simple_workspace_member(workspace_root, Path::new(m)))
             .collect();
-        workspace.members.sort();
-        workspace.members.dedup();
-        workspace.exclude = workspace
-            .exclude
-            .take()
-            .map(|paths| paths.iter().map(|path| workspace_root.join(path)).collect());
-    }
+        members.sort();
+        members.dedup();
 
-    Ok(metadata)
+        let exclude = if ws.exclude.is_empty() {
+            None
+        } else {
+            Some(ws.exclude.iter().map(|e| workspace_root.join(e)).collect())
+        };
+
+        WorkspaceMetadataSection {
+            path: workspace_root.to_path_buf(),
+            exclude,
+            resolver: ws.resolver.map(|r| r.to_string()),
+            members,
+            package: ws.package.as_ref().map(|p| WorkspacePackageMetadata {
+                version: p.version.clone(),
+            }),
+        }
+    });
+
+    Ok(WorkspaceManifestMetadata { workspace })
 }
 
-#[derive(Clone, Debug, Deserialize)]
-pub struct WorkspaceBuildWrapper {
-    workspace: WorkspaceMetaBuilder,
-}
-
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct WorkspaceMetaBuilder {
     exclude: Option<Vec<String>>,
     resolver: Option<String>,
     members: Option<Vec<String>>,
     package: Option<WorkspacePackageMetadata>,
-    #[serde(skip)]
     path: PathBuf,
-    #[serde(skip)]
     build_status: BuildStatus,
 }
 
@@ -258,6 +260,7 @@ impl WorkspaceMetaBuilder {
         let cargo_toml_path = fp.join("Cargo.toml");
         Self::from_toml_path(&cargo_toml_path)
     }
+
     pub fn from_toml_path(fp: &Path) -> Result<Self, DiscoveryError> {
         let ctx = ManifestCtx {
             kind: ManifestKind::WorkspaceRoot,
@@ -269,28 +272,47 @@ impl WorkspaceMetaBuilder {
             .with_discovery_err(ctx.clone())
             .for_read()?;
 
-        let workspace_wrapper: WorkspaceBuildWrapper = toml::from_str(&cargo_content)
+        let manifest: Manifest = Manifest::from_str(&cargo_content)
             .with_discovery_err(ctx.with_content(&cargo_content))
-            .for_toml()?;
-        let mut workspace_toml = workspace_wrapper.workspace;
-        if workspace_toml
-            .members
-            .as_ref()
-            .is_some_and(|m| !m.is_empty())
-        {
-            workspace_toml.build_status = BuildStatus::Ready;
-        }
-        workspace_toml.path = match fp.parent() {
-            Some(p) => p.to_path_buf(),
-            None => {
-                return Err(DiscoveryError::ParentNotFound {
-                    workspace_path: workspace_toml.path.to_path_buf(),
-                });
-            }
+            .for_cargo_toml()?;
+
+        let path = fp.parent().ok_or_else(|| DiscoveryError::ParentNotFound {
+            workspace_path: fp.to_path_buf(),
+        })?;
+
+        let Some(ws) = manifest.workspace else {
+            return Ok(WorkspaceMetaBuilder {
+                exclude: None,
+                resolver: None,
+                members: None,
+                package: None,
+                path: path.to_path_buf(),
+                build_status: BuildStatus::Empty,
+            });
         };
 
-        Ok(workspace_toml)
+        let build_status = if !ws.members.is_empty() {
+            BuildStatus::Ready
+        } else {
+            BuildStatus::Empty
+        };
+
+        Ok(WorkspaceMetaBuilder {
+            exclude: if ws.exclude.is_empty() {
+                None
+            } else {
+                Some(ws.exclude.clone())
+            },
+            resolver: ws.resolver.map(|r| r.to_string()),
+            members: Some(ws.members.clone()),
+            package: ws.package.as_ref().map(|p| WorkspacePackageMetadata {
+                version: p.version.clone(),
+            }),
+            path: path.to_path_buf(),
+            build_status,
+        })
     }
+
     pub fn build(self) -> Result<WorkspaceMetadataSection, DiscoveryError> {
         let WorkspaceMetaBuilder {
             exclude,
@@ -308,25 +330,24 @@ impl WorkspaceMetaBuilder {
             });
         }
         let exclude_final: Option<Vec<PathBuf>> =
-            exclude.map(|ex| ex.into_iter().map(|s| path.as_path().join(s)).collect_vec());
-        let members_final: Vec<PathBuf> = members
-            .ok_or_else(|| DiscoveryError::WorkspaceMembersNone {
+            exclude.map(|ex| ex.into_iter().map(|s| path.join(s)).collect_vec());
+        let members_list = members.ok_or_else(|| DiscoveryError::WorkspaceMembersNone {
+            workspace_path: path.clone(),
+            build_status: build_status.to_string(),
+        })?;
+        if members_list.is_empty() {
+            return Err(DiscoveryError::WorkspaceNoMembers {
                 workspace_path: path.clone(),
                 build_status: build_status.to_string(),
-            })
-            .and_then(|list| {
-                if list.is_empty() {
-                    Err(DiscoveryError::WorkspaceNoMembers {
-                        workspace_path: path.clone(),
-                        build_status: build_status.to_string(),
-                    })
-                } else {
-                    Ok(list)
-                }
-            })?
+            });
+        }
+
+        let mut members_final: Vec<PathBuf> = members_list
             .into_iter()
-            .map(|s| path.as_path().join(s))
+            .flat_map(|s| expand_simple_workspace_member(path.as_path(), Path::new(&s)))
             .collect();
+        members_final.sort();
+        members_final.dedup();
 
         Ok(WorkspaceMetadataSection {
             path,
@@ -338,11 +359,10 @@ impl WorkspaceMetaBuilder {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, PartialOrd, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Default)]
 enum BuildStatus {
     #[default]
     Empty,
-    Incomplete,
     Ready,
 }
 
@@ -350,7 +370,6 @@ impl std::fmt::Display for BuildStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuildStatus::Empty => write!(f, "Empty"),
-            BuildStatus::Incomplete => write!(f, "Incomplete"),
             BuildStatus::Ready => write!(f, "Ready"),
         }
     }
@@ -358,6 +377,8 @@ impl std::fmt::Display for BuildStatus {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use ploke_common::workspace_root;
     use ploke_error::Error as PlokeError;

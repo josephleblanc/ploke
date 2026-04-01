@@ -7,6 +7,7 @@ use crate::define_schema;
 //  - attributes (Attribute)
 // NOTE: Temporary field (probably remove later)
 //  - owner_id (impl id)
+// ANCHOR: method_node_schema
 define_schema!(MethodNodeSchema {
     "method",
     id: "Uuid",
@@ -20,3 +21,4 @@ define_schema!(MethodNodeSchema {
     cfgs: "[String]",
     owner_id: "Uuid",
 });
+// ANCHOR_END: method_node_schema

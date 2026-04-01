@@ -177,6 +177,24 @@ fn format_human_corpus_triage(value: &Value) -> Option<String> {
                 out.push_str(&format!(
                     "- [{count}] {stage}/{failure_kind}: {signature}\n"
                 ));
+                if let Some(path) = cluster_obj
+                    .get("pending_report_path")
+                    .and_then(Value::as_str)
+                {
+                    out.push_str(&format!("  report: {path}\n"));
+                }
+                if let Some(examples) = cluster_obj.get("examples").and_then(Value::as_array) {
+                    let examples: Vec<&str> = examples.iter().filter_map(Value::as_str).collect();
+                    if !examples.is_empty() {
+                        out.push_str(&format!("  examples: {}\n", examples.join(", ")));
+                    }
+                }
+                if let Some(repos) = cluster_obj.get("repos").and_then(Value::as_array) {
+                    let repos: Vec<&str> = repos.iter().filter_map(Value::as_str).collect();
+                    if !repos.is_empty() {
+                        out.push_str(&format!("  repos: {}\n", repos.join(", ")));
+                    }
+                }
             }
         }
     }
@@ -188,6 +206,10 @@ fn format_human_corpus_triage(value: &Value) -> Option<String> {
     ));
     out.push_str(&format!(
         "- Query clusters: jq -c '.clusters[]' {}\n",
+        clusters_path
+    ));
+    out.push_str(&format!(
+        "- Open a pending report: jq -r '.clusters[0].pending_report_path' {}\n",
         clusters_path
     ));
     out.push_str(
@@ -214,13 +236,21 @@ fn format_human_corpus_show(value: &Value) -> Option<String> {
         .get("show_backtrace_full")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let summary_path = obj.get("summary_path").and_then(Value::as_str)?;
+    let summary_path = obj.get("summary_path").and_then(Value::as_str);
+    let run_dir = obj.get("run_dir").and_then(Value::as_str)?;
 
     let mut out = render_human_corpus(run, true)?;
-    out.push_str(&format!(
-        "\n\nLoaded from: {}",
-        shorten_path_for_display(&value_str(run, "artifact_root"), summary_path)
-    ));
+    if let Some(summary_path) = summary_path {
+        out.push_str(&format!(
+            "\n\nLoaded from summary: {}",
+            shorten_path_for_display(&value_str(run, "artifact_root"), summary_path)
+        ));
+    } else {
+        out.push_str(&format!(
+            "\n\nLoaded from run dir: {}",
+            shorten_path_for_display(&value_str(run, "artifact_root"), run_dir)
+        ));
+    }
 
     if let Some(target) = selected_target {
         out.push_str(&format!("\nSelected target: {target}"));
@@ -2031,59 +2061,63 @@ mod tests {
 
     #[test]
     fn test_output_format_human_corpus_show_backtrace() {
-        let data = serde_json::json!({
-            "kind": "corpus_show",
-            "selected_target": "fail/repo",
-            "show_backtrace": true,
-            "show_backtrace_full": false,
-            "summary_path": "/tmp/artifacts/run-789/summary.json",
-            "run": {
-                "run_id": "run-789",
-                "checkout_root": "/tmp/checkouts",
-                "artifact_root": "/tmp/artifacts/run-789",
-                "workspace_mode": "skip",
-                "list_files": ["/tmp/list-a.txt"],
-                "requested_entries": 5,
-                "unique_targets": 5,
-                "processed_targets": 1,
-                "single_crate_targets": 0,
-                "workspace_targets": 0,
-                "reused_targets": 1,
-                "cloned_targets": 0,
-                "skipped_targets": 0,
-                "clone_failures": 0,
-                "discovery_failures": 0,
-                "resolve_failures": 0,
-                "merge_failures": 0,
-                "panic_failures": 0,
-                "targets": [
-                    {
-                        "normalized_repo": "fail/repo",
-                        "repository_kind": "unknown",
-                        "classification_error": "Failed to parse manifest",
-                        "classification_diagnostic": {
-                            "kind": "manifest_parse",
-                            "summary": "Failed to parse manifest",
-                            "detail": "missing field `members`",
-                            "source_path": "/tmp/checkouts/fail__repo/Cargo.toml",
-                            "source_span": { "start": 10, "end": 19, "line": 1, "col": 11 },
-                            "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/workspace.rs", "line": 212, "column": 10 },
-                            "backtrace": "stack backtrace:\n  0: syn_parser::discovery::workspace",
-                            "context": []
-                        },
-                        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                        "summary_path": "/tmp/artifacts/run-789/fail__repo/summary.json",
-                        "clone": { "ok": true, "action": "reused", "error": null },
-                        "discovery": null,
-                        "resolve": null,
-                        "merge": null
-                    }
-                ]
-            }
-        });
+        let data: serde_json::Value = serde_json::from_str(
+            r#"{
+  "kind": "corpus_show",
+  "selected_target": "fail/repo",
+  "show_backtrace": true,
+  "show_backtrace_full": false,
+  "summary_path": "/tmp/artifacts/run-789/summary.json",
+  "run_dir": "/tmp/artifacts/run-789",
+  "run": {
+    "run_id": "run-789",
+    "checkout_root": "/tmp/checkouts",
+    "artifact_root": "/tmp/artifacts/run-789",
+    "workspace_mode": "skip",
+    "list_files": ["/tmp/list-a.txt"],
+    "requested_entries": 5,
+    "unique_targets": 5,
+    "processed_targets": 1,
+    "single_crate_targets": 0,
+    "workspace_targets": 0,
+    "reused_targets": 1,
+    "cloned_targets": 0,
+    "skipped_targets": 0,
+    "clone_failures": 0,
+    "discovery_failures": 0,
+    "resolve_failures": 0,
+    "merge_failures": 0,
+    "panic_failures": 0,
+    "targets": [
+      {
+        "normalized_repo": "fail/repo",
+        "repository_kind": "unknown",
+        "classification_error": "Failed to parse manifest",
+        "classification_diagnostic": {
+          "kind": "manifest_parse",
+          "summary": "Failed to parse manifest",
+          "detail": "missing field `members`",
+          "source_path": "/tmp/checkouts/fail__repo/Cargo.toml",
+          "source_span": { "start": 10, "end": 19, "line": 1, "col": 11 },
+          "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/workspace.rs", "line": 212, "column": 10 },
+          "backtrace": "stack backtrace:\n  0: syn_parser::discovery::workspace",
+          "context": []
+        },
+        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "summary_path": "/tmp/artifacts/run-789/fail__repo/summary.json",
+        "clone": { "ok": true, "action": "reused", "error": null },
+        "discovery": null,
+        "resolve": null,
+        "merge": null
+      }
+    ]
+  }
+}"#,
+        )
+        .unwrap();
 
         let formatted = OutputFormat::Human.format(&data).unwrap();
-        assert!(formatted.contains("Loaded from: summary.json"));
+        assert!(formatted.contains("Loaded from summary: summary.json"));
         assert!(formatted.contains("Selected target: fail/repo"));
         assert!(formatted.contains("\nBacktrace summaries:\n- fail/repo [manifest_parse]\n"));
         assert!(formatted.contains("  parser:\n"));
@@ -2092,56 +2126,60 @@ mod tests {
 
     #[test]
     fn test_output_format_human_corpus_show_backtrace_full() {
-        let data = serde_json::json!({
-            "kind": "corpus_show",
-            "selected_target": "fail/repo",
-            "show_backtrace": false,
-            "show_backtrace_full": true,
-            "summary_path": "/tmp/artifacts/run-789/summary.json",
-            "run": {
-                "run_id": "run-789",
-                "checkout_root": "/tmp/checkouts",
-                "artifact_root": "/tmp/artifacts/run-789",
-                "workspace_mode": "skip",
-                "list_files": ["/tmp/list-a.txt"],
-                "requested_entries": 5,
-                "unique_targets": 5,
-                "processed_targets": 1,
-                "single_crate_targets": 0,
-                "workspace_targets": 0,
-                "reused_targets": 1,
-                "cloned_targets": 0,
-                "skipped_targets": 0,
-                "clone_failures": 0,
-                "discovery_failures": 0,
-                "resolve_failures": 0,
-                "merge_failures": 0,
-                "panic_failures": 0,
-                "targets": [
-                    {
-                        "normalized_repo": "fail/repo",
-                        "repository_kind": "unknown",
-                        "classification_error": "Failed to parse manifest",
-                        "classification_diagnostic": {
-                            "kind": "manifest_parse",
-                            "summary": "Failed to parse manifest",
-                            "detail": "missing field `members`",
-                            "source_path": "/tmp/checkouts/fail__repo/Cargo.toml",
-                            "source_span": { "start": 10, "end": 19, "line": 1, "col": 11 },
-                            "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/workspace.rs", "line": 212, "column": 10 },
-                            "backtrace": "stack backtrace:\n  0: syn_parser::discovery::workspace\n  1: xtask::commands::parse_debug::classify_corpus_checkout",
-                            "context": []
-                        },
-                        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                        "summary_path": "/tmp/artifacts/run-789/fail__repo/summary.json",
-                        "clone": { "ok": true, "action": "reused", "error": null },
-                        "discovery": null,
-                        "resolve": null,
-                        "merge": null
-                    }
-                ]
-            }
-        });
+        let data: serde_json::Value = serde_json::from_str(
+            r#"{
+  "kind": "corpus_show",
+  "selected_target": "fail/repo",
+  "show_backtrace": false,
+  "show_backtrace_full": true,
+  "summary_path": "/tmp/artifacts/run-789/summary.json",
+  "run_dir": "/tmp/artifacts/run-789",
+  "run": {
+    "run_id": "run-789",
+    "checkout_root": "/tmp/checkouts",
+    "artifact_root": "/tmp/artifacts/run-789",
+    "workspace_mode": "skip",
+    "list_files": ["/tmp/list-a.txt"],
+    "requested_entries": 5,
+    "unique_targets": 5,
+    "processed_targets": 1,
+    "single_crate_targets": 0,
+    "workspace_targets": 0,
+    "reused_targets": 1,
+    "cloned_targets": 0,
+    "skipped_targets": 0,
+    "clone_failures": 0,
+    "discovery_failures": 0,
+    "resolve_failures": 0,
+    "merge_failures": 0,
+    "panic_failures": 0,
+    "targets": [
+      {
+        "normalized_repo": "fail/repo",
+        "repository_kind": "unknown",
+        "classification_error": "Failed to parse manifest",
+        "classification_diagnostic": {
+          "kind": "manifest_parse",
+          "summary": "Failed to parse manifest",
+          "detail": "missing field `members`",
+          "source_path": "/tmp/checkouts/fail__repo/Cargo.toml",
+          "source_span": { "start": 10, "end": 19, "line": 1, "col": 11 },
+          "emission_site": { "file": "crates/ingest/syn_parser/src/discovery/workspace.rs", "line": 212, "column": 10 },
+          "backtrace": "stack backtrace:\n  0: syn_parser::discovery::workspace\n  1: xtask::commands::parse_debug::classify_corpus_checkout",
+          "context": []
+        },
+        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "summary_path": "/tmp/artifacts/run-789/fail__repo/summary.json",
+        "clone": { "ok": true, "action": "reused", "error": null },
+        "discovery": null,
+        "resolve": null,
+        "merge": null
+      }
+    ]
+  }
+}"#,
+        )
+        .unwrap();
 
         let formatted = OutputFormat::Human.format(&data).unwrap();
         assert!(formatted.contains("\nBacktraces (full):\n- fail/repo [manifest_parse]\n"));
@@ -2158,6 +2196,7 @@ mod tests {
   "show_backtrace": false,
   "show_backtrace_full": false,
   "summary_path": "/tmp/artifacts/run-999/summary.json",
+  "run_dir": "/tmp/artifacts/run-999",
   "run": {
     "run_id": "run-999",
     "checkout_root": "/tmp/checkouts",
@@ -2276,7 +2315,15 @@ mod tests {
             formatted.contains("Top clusters:\n- [2] resolve/panic: Duplicate Macro node ID\n")
         );
         assert!(formatted.contains(
+            "  report: /tmp/artifacts/run-555/triage/reports/pending/resolve_panic_duplicate_macro_node_id.json\n"
+        ));
+        assert!(formatted.contains("  examples: failure-0001, failure-0002\n"));
+        assert!(formatted.contains("  repos: single/fail, workspace/fail\n"));
+        assert!(formatted.contains(
             "Next steps:\n- Query failures: jq -c '.failures[]' /tmp/artifacts/run-555/triage/index.json\n"
+        ));
+        assert!(formatted.contains(
+            "- Open a pending report: jq -r '.clusters[0].pending_report_path' /tmp/artifacts/run-555/triage/clusters.json\n"
         ));
         assert!(formatted.contains(
             "Dispatch sub-agents on new failures as they appear; use clusters to dedupe"

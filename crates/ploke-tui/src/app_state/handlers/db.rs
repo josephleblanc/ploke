@@ -1,8 +1,10 @@
+use ploke_error::DomainError;
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::app_state::events::SystemEvent;
+use crate::app_state::handlers::chat::add_msg_immediate_sysinfo_unpinned;
 use crate::{AppEvent, EventBus, app_state::database, error::ErrorExt as _};
 
 use crate::AppState;
@@ -112,7 +114,11 @@ pub async fn load_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>, workspace
         match e {
             ploke_error::Error::Fatal(_) => e.emit_fatal(),
             ploke_error::Error::Warning(_) | ploke_error::Error::Internal(_) => e.emit_warning(),
+            ploke_error::Error::Domain(DomainError::Ui { message }) => {
+                add_msg_immediate_sysinfo_unpinned(state, event_bus, Uuid::new_v4(), message).await;
+            }
             _ => {
+                tracing::error!("Received unexpected error kind, expected Error/DomainError, got: {e}");
                 todo!("These should never happen.")
             }
         }

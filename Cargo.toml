@@ -66,6 +66,8 @@ proc-macro-error = "1.0"                                       # For better erro
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ron = "0.11"
+toml = "0.9"
+cargo_toml = "0.22"
 
 # Concurrency and parallelism
 rayon = "1.10.0"

@@ -1,3 +1,4 @@
+mod assoc_nodes;
 mod basic;
 mod determinism;
 mod ids;

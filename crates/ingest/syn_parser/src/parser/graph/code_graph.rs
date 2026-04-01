@@ -161,6 +161,7 @@ impl CodeGraph {
         Ok(new_graph)
     }
 
+    // ANCHOR: code_graph_append_all
     fn append_all(&mut self, mut other: Self) -> Result<(), Box<SynParserError>> {
         self.functions.append(&mut other.functions);
         self.defined_types.append(&mut other.defined_types);
@@ -177,4 +178,5 @@ impl CodeGraph {
         self.unresolved_nodes.append(&mut other.unresolved_nodes);
         Ok(())
     }
+    // ANCHOR_END: code_graph_append_all
 }

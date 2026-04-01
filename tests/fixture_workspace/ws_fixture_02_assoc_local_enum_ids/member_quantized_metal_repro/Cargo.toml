@@ -1,0 +1,11 @@
+[package]
+name = "ws_fixture_quantized_metal_repro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+metal = []
+
+[lib]
+path = "src/lib.rs"
