@@ -54,8 +54,28 @@ members = [
     "proc_macros/ploke-db-derive",
     # Add more modules as needed
 ]
+default-members = ["crates/ploke-tui"]
+
+[workspace.package]
+rust-version = "1.85"
 
 [workspace.dependencies]
+syn_parser = { path = "crates/ingest/syn_parser" }
+ploke-mbe = { path = "crates/ingest/ploke-mbe" }
+ploke-transform = { path = "crates/ingest/ploke-transform" }
+ploke-embed = { path = "crates/ingest/ploke-embed" }
+ploke-db = { path = "crates/ploke-db" }
+common = { path = "crates/common" }
+ploke-test-utils = { path = "crates/test-utils" }
+ploke-core = { path = "crates/ploke-core" }
+syn-parser-macros = { path = "proc_macros/syn_parser/syn_parser_macros" }
+ploke-test-macros = { path = "proc_macros/syn_parser/ploke-test-macros" }
+derive-test-helpers = { path = "proc_macros/syn_parser/derive_test_helpers" }
+ploke-error = { path = "crates/ploke-error" }
+ploke-tui = { path = "crates/ploke-tui" }
+ploke-rag = { path = "crates/ploke-rag" }
+ploke-io = { path = "crates/ploke-io" }
+ploke-ty-mcp = { path = "crates/ploke-ty-mcp" }
 # Parsing and code generation
 syn = { version = "2.0.100", features = ["full", "visit"] }
 quote = "1"
@@ -101,9 +121,6 @@ itertools = "0.14"
 
 # pre-caching 
 lazy_static = "1.5.0"
-
-# Ploke Core Types
-ploke-core = { path = "crates/ploke-core", version = "0.1.0" }
 
 mpatch = "1.3"
 

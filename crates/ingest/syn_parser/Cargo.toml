@@ -33,7 +33,6 @@ ploke-common = { path = "../../common" }
 ploke-core = { path = "../../ploke-core", features = [] }
 ploke-error = { path = "../../ploke-error" }
 syn_parser_macros = { path = "../../../proc_macros/syn_parser/syn_parser_macros" } # Add dependency on the
-anyhow = "1.0"
 
 # Added for Phase 1 Discovery (Optional)
 toml = { workspace = true }
@@ -63,6 +62,7 @@ env_logger = "0.11"                                                             
 tracing-subscriber = { workspace = true }
 tracing-appender = "0.2"                                                           # For file-based tracing output
 ploke-test-macros = { path = "../../../proc_macros/syn_parser/ploke-test-macros" } # Add dependency on the
+anyhow = "1.0"
 
 [[bench]]
 name = "parse_pipeline"
@@ -72,10 +72,11 @@ harness = false
 [features]
 default = [
     "type_bearing_ids",
-    "validate",
     "reexport",
     "not_wip_marker",
     "cfg_eval",
+    # turn off for release
+    # "validate",
 ]
 feature_a = [] # Add feature_a used by fixture
 feature_b = [] # Add feature_b used by test
