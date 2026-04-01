@@ -2756,7 +2756,7 @@ mod test {
         //     eprintln!("Skipping: PLOKE_RUN_UPDATE_EMBED!=1");
         //     return Ok(());
         // }
-        let _guard = init_test_tracing_with_target(TUI_SCAN_TARGET, tracing::Level::INFO);
+        let _guard = init_test_tracing_with_target(TUI_SCAN_TARGET, tracing::Level::ERROR);
         let workspace_root = std::path::Path::new(std::env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("Error parsing workspace directory from crate `common`") // crates/

@@ -5,7 +5,6 @@ use crate::{
         ModuleTreeError, PruningResult, TreeRelation, UnlinkedModuleInfo, module_tree::ModuleTree,
     },
 };
-use anyhow::Result;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -961,7 +960,7 @@ impl ParsedCodeGraph {
             + self.graph.unresolved_nodes.len()
     }
 
-    pub fn root_file(&self) -> Result<&Path> {
+    pub fn root_file(&self) -> Result<&Path, SynParserError> {
         let context = self
             .crate_context
             .as_ref() // Borrow the context

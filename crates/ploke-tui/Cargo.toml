@@ -2,6 +2,7 @@
 name = "ploke-tui"
 version = "0.1.0"
 edition = "2024"
+rust-version.workspace = true
 
 [dependencies]
 # parser
@@ -124,6 +125,10 @@ test_harness = []
 json_visitor = []
 xxx = []
 loom = []
+
+[[bin]]
+name = "ploke"
+path = "src/main.rs"
 
 [[bench]]
 name = "ui_measure"
