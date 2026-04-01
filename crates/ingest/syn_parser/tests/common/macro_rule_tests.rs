@@ -322,6 +322,194 @@ macro_rules! paranoid_test_fields_and_values {
     };
 }
 
+/// Like [`paranoid_test_fields_and_values!`], but for associated [`syn_parser::parser::nodes::MethodNode`] items.
+///
+/// Uses [`crate::common::AssocParanoidArgs`] and [`crate::common::AssocParanoidArgs::generate_method_pid`] so
+/// synthetic IDs match the owning `impl` / `trait` scope. Asserts
+/// [`syn_parser::parser::relations::SyntacticRelation::ImplAssociatedItem`] or
+/// [`syn_parser::parser::relations::SyntacticRelation::TraitAssociatedItem`] (not `Contains` from the parent module).
+///
+/// Map keys in `$args_map` / `$expected_data_map` must match `$data_key`. Expected data type is typically
+/// [`syn_parser::parser::nodes::ExpectedMethodNode`].
+#[macro_export]
+macro_rules! assoc_paranoid_test_fields_and_values {
+    (
+        $test_name:ident,
+        $data_key:expr,
+        $args_map:ident,
+        $expected_data_map:ident,
+        $node_type:path,
+        $expected_data_type:path,
+        $downcast_method:ident,
+        $log_target:ident
+    ) => {
+        #[test]
+        fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
+            let _ = env_logger::builder()
+                .is_test(true)
+                .format_timestamp(None)
+                .try_init();
+
+            let args = $args_map.get($data_key).unwrap_or_else(|| {
+                panic!("AssocParanoidArgs not found for key: {}", $data_key);
+            });
+            let expected_data: &$expected_data_type = $expected_data_map.get($data_key).unwrap_or_else(|| {
+                 panic!("{} not found for key: {}", stringify!($expected_data_type), $data_key);
+            });
+
+            let successful_graphs = match args.fixture {
+                "fixture_nodes" => &*$crate::common::PARSED_FIXTURE_CRATE_NODES,
+                "file_dir_detection" => &*$crate::common::PARSED_FIXTURE_CRATE_DIR_DETECTION,
+                "fixture_types" => &*$crate::common::PARSED_FIXTURE_CRATE_TYPES,
+                _ => panic!("Unknown fixture name for lazy_static lookup: {}. Ensure it's defined in tests/common/parsed_fixtures.rs and matched here.", args.fixture),
+            };
+
+            let target_graph_data = successful_graphs
+                .iter()
+                .find(|pg| pg.file_path.ends_with(args.relative_file_path))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Target graph '{}' not found for item '{}'.",
+                        args.relative_file_path, $data_key
+                    )
+                });
+
+            args.check_graph(target_graph_data)?;
+
+            let node_any_id_result = match args.generate_method_pid(&successful_graphs) {
+                Ok(test_info) => {
+                    match test_info.target_data().find_node_unique(test_info.test_any_id()) {
+                        Ok(node) => {
+                            if let Some(specific_node) = node.$downcast_method() {
+                               log::info!(target: $log_target, "Performing individual field checks for ident '{}' via ID lookup.", args.ident);
+                               assert!(expected_data.check_all_fields(specific_node),
+                                    "One or more field checks failed (see logs for ident '{}' with qualified path (data_key) '{}')",
+                                    args.ident,
+                                    $data_key
+                                );
+
+                                args.assert_associated_item_relation(target_graph_data, specific_node.method_id())?;
+
+                                log::debug!(target: $log_target, "   Relation Check: Found ImplAssociatedItem or TraitAssociatedItem for method.");
+
+                                Ok(specific_node.any_id())
+
+                            } else {
+                                panic!("Node found by ID for '{}' was not a {}.", args.ident, stringify!($node_type));
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!(target: $log_target, "Node lookup by generated id {:?} failed for '{}' (Error: {:?}). Proceeding with value-based check only.", test_info.test_method_id(), args.ident, e);
+                            Err(e)
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!(target: $log_target, "Method PID generation failed for '{}' (Error: {:?}). Proceeding with value-based check only.", args.ident, e);
+                    Err(e)
+                }
+            };
+
+            log::info!(target: $log_target, "Performing value-based lookup for '{}'.", args.ident);
+            let matched_nodes_by_value: Vec<_> = expected_data.find_node_by_values(target_graph_data).collect();
+            let node_any_id_match = node_any_id_result.inspect_err(|_| {
+                log::trace!(target: $log_target,
+                    "Found {} matches by value.\n{:=^60}\n{}\n {:=^60}\n{:#?}",
+                    matched_nodes_by_value.len(),
+                    " Matched Items ",
+                    matched_nodes_by_value
+                        .iter()
+                        .enumerate()
+                        .map(|(i, node)| {
+                            format!("Match #{}:\n\tName: {}\n\tExpected Path: {:?}\n\tId: {:?}\n\tFull: {:?}",
+                                i, args.ident, args.expected_path, node.any_id(), node.any_id()
+                            )
+                    }).collect::<Vec<String>>().join("\n"),
+                    " Matched Item Info Dump ",
+                    matched_nodes_by_value
+                );
+            })?;
+            let value_matches_not_any = matched_nodes_by_value.iter().filter(|n| n.any_id() != node_any_id_match);
+            for value_dup_node in value_matches_not_any {
+            assert!(
+                node_any_id_match != value_dup_node.any_id(),
+                "Duplicate node id for Expected: {:?}, Actual: {:?}. Data dump of duplicate node follows: {:#?}",
+                node_any_id_match, value_dup_node.any_id(),
+                value_dup_node
+            );
+            log::warn!(target: $log_target,
+                "{}: {}\n{}\n\t{}\n\t{} {}\n\t{}",
+                "Duplicate values on different path: ",
+                "",
+                "More than one target was found with matching values.",
+                "This indicates that there were duplicate nodes at different path locations.",
+                "That is fine, so long as you expected to find duplicate nodes with the same",
+                "values (e.g. name, docstring, etc) in two different files.",
+                "If you are seeing this check it means their Ids were correctly not duplicates."
+            );
+            }
+
+            let value_and_any_matches: Vec<_> = matched_nodes_by_value.iter().filter(|n| n.any_id() == node_any_id_match).collect();
+            assert_eq!(value_and_any_matches.len(), 1,
+                    "Expected to find exactly one {} matching values and ID for '{}'. Found {}.\n{} {:#?}",
+                    stringify!($node_type),
+                    $data_key,
+                    matched_nodes_by_value.len(),
+                    "Data dump of duplicate nodes:",
+                    value_and_any_matches,
+            );
+
+            Ok(())
+        }
+    };
+}
+
+/// Name-only check for an associated [`syn_parser::parser::nodes::MethodNode`], mirroring [`paranoid_test_name_check!`]
+/// but using [`crate::common::AssocParanoidArgs`] and [`crate::common::AssocParanoidArgs::generate_method_pid`].
+#[macro_export]
+macro_rules! assoc_paranoid_test_name_check {
+    (
+        $test_name:ident,
+        fixture: $fixture_name:expr,
+        relative_file_path: $rel_path:expr,
+        expected_path: $exp_path:expr,
+        owner: $owner:expr,
+        ident: $item_ident:expr,
+        expected_cfg: $cfg:expr
+    ) => {
+        #[test]
+        fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
+            let successful_graphs = $crate::common::run_phases_and_collect($fixture_name);
+
+            let args = $crate::common::AssocParanoidArgs {
+                fixture: $fixture_name,
+                relative_file_path: $rel_path,
+                expected_path: $exp_path,
+                owner: $owner,
+                ident: $item_ident,
+                expected_cfg: $cfg,
+            };
+
+            let test_info = args.generate_method_pid(&successful_graphs)?;
+
+            let graph_data = test_info.target_data();
+            let expected_any = test_info.test_any_id();
+            let found_node: &dyn syn_parser::parser::graph::GraphNode =
+                graph_data.find_node_unique(expected_any)?;
+
+            assert_eq!(
+                found_node.name(),
+                args.ident,
+                "Mismatch for name field. Expected: '{}', Actual: '{}'",
+                args.ident,
+                found_node.name()
+            );
+
+            Ok(())
+        }
+    };
+}
+
 #[macro_export]
 macro_rules! paranoid_test_setup {
     (

@@ -12,9 +12,13 @@ use ploke_core::{ItemKind, NodeId};
 use syn_parser::TestIds;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::relations::SyntacticRelation;
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 use syn_parser::parser::{ParsedCodeGraph, nodes::*};
+use syn_parser::utils::LogStyle;
 use syn_parser::utils::logging::LOG_TEST_ID_REGEN;
+
+use super::LOG_PARANOID_CHECK;
 
 /// Owning scope for a [`MethodNode`]: an inherent / trait impl block, or a trait definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +66,11 @@ impl<'a> AssocTestInfo<'a> {
 
     pub fn test_method_id(&self) -> MethodNodeId {
         self.test_method_id
+    }
+
+    /// [`AnyNodeId`] for the regenerated method id (for [`GraphAccess::find_node_unique`]).
+    pub fn test_any_id(&self) -> AnyNodeId {
+        self.test_method_id.into()
     }
 }
 
@@ -199,5 +208,103 @@ impl<'a> AssocParanoidArgs<'a> {
             target_data,
             test_method_id,
         })
+    }
+}
+
+impl AssocParanoidArgs<'_> {
+    /// Same logging and structural checks as [`super::ParanoidArgs::check_graph`] for the target file.
+    pub fn check_graph(&self, parsed: &ParsedCodeGraph) -> Result<(), SynParserError> {
+        let exp_fp = self.relative_file_path;
+
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "{}\n{}: {}\n\t{}: {}\n\t{}: {}",
+                "Checking Graph".log_header(),
+                "Expected Relative File Path: ".log_step(),
+                "Expected Relative File Path: ".log_step(),
+                exp_fp.log_path(),
+                parsed.file_path.to_str().unwrap().log_path(),
+                "Match?".log_orange(),
+                parsed.file_path.ends_with(exp_fp).to_string().log_orange(),
+        );
+
+        let mut file_modules = parsed.modules().iter().filter(|m| m.is_file_based());
+        let local_root_module = file_modules.next().ok_or_else(|| {
+            SynParserError::InternalState(format!(
+                "No file-based root module found in ParsedCodeGraph for file: {}",
+                parsed.file_path.display()
+            ))
+        })?;
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "\t{}: \n\t{} \n\t{}\n\t{}: {}",
+                "Root Module Path of Graph".log_step(),
+                self.expected_path.join("::").log_path(),
+                local_root_module.path().join("::").log_path(),
+                "Match?".log_orange(),
+                self.expected_path == local_root_module.path(),
+        );
+        if let Some(dup_local_file_mod) = file_modules.next() {
+            Err(SynParserError::InternalState(format!(
+                "Duplicate file-level module found in ParsedCodeGraph for file '{}': First: '{}' ({}), Second: '{}' ({})",
+                parsed.file_path.display(),
+                local_root_module.name,
+                local_root_module.id,
+                dup_local_file_mod.name,
+                dup_local_file_mod.id
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Asserts there is an [`SyntacticRelation::ImplAssociatedItem`] or [`SyntacticRelation::TraitAssociatedItem`]
+    /// from the resolved owner to `AssociatedItemNodeId::Method(method_id)`.
+    pub fn assert_associated_item_relation<G: GraphAccess + ?Sized>(
+        &self,
+        graph: &G,
+        method_id: MethodNodeId,
+    ) -> Result<(), SynParserError> {
+        let exp_path: Vec<String> = self.expected_path.iter().copied().map(String::from).collect();
+        let target_assoc = AssociatedItemNodeId::Method(method_id);
+        match self.owner {
+            AssocOwner::Impl { span } => {
+                let imp = find_impl_by_span_checked(graph, span)?;
+                let relation_found = graph.relations().iter().any(|rel| {
+                    matches!(
+                        rel,
+                        SyntacticRelation::ImplAssociatedItem { source, target }
+                            if *source == imp.id() && *target == target_assoc
+                    )
+                });
+                assert!(
+                    relation_found,
+                    "Missing SyntacticRelation::ImplAssociatedItem from impl {} to associated item {:?}. \
+                     Owner span: {:?}, method ident: {}",
+                    imp.id(),
+                    target_assoc,
+                    span,
+                    self.ident,
+                );
+            }
+            AssocOwner::Trait { trait_name } => {
+                let tr = find_trait_in_module_by_name_checked(graph, &exp_path, trait_name)?;
+                let relation_found = graph.relations().iter().any(|rel| {
+                    matches!(
+                        rel,
+                        SyntacticRelation::TraitAssociatedItem { source, target }
+                            if *source == tr.trait_id() && *target == target_assoc
+                    )
+                });
+                assert!(
+                    relation_found,
+                    "Missing SyntacticRelation::TraitAssociatedItem from trait {} to associated item {:?}. \
+                     trait_name: {}, method ident: {}",
+                    tr.trait_id(),
+                    target_assoc,
+                    trait_name,
+                    self.ident,
+                );
+            }
+        }
+        Ok(())
     }
 }
