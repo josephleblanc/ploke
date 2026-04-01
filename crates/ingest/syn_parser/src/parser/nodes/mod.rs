@@ -1,6 +1,7 @@
 mod consts;
 mod enums;
 mod function;
+mod method;
 mod impls;
 mod import;
 mod macros;
@@ -31,7 +32,8 @@ use serde::{Deserialize, Serialize};
 // Re-export all node types from submodules
 pub use consts::ConstNode;
 pub use enums::{EnumNode, VariantNode};
-pub use function::{FunctionNode, MethodNode, ParamData}; // Added MethodNode
+pub use function::{FunctionNode, ParamData};
+pub use method::{ExpectedMethodNode, MethodNode};
 pub use impls::ImplNode;
 pub use import::{ImportKind, ImportNode};
 pub use macros::{MacroKind, MacroNode, ProcMacroKind};
