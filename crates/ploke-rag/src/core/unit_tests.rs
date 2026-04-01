@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, default, sync::Arc};
+    use std::{collections::BTreeMap, default, ops::Deref, sync::Arc};
 
     use crate::{RetrievalStrategy, TokenBudget};
     use itertools::Itertools;
@@ -796,6 +796,158 @@ mod tests {
 
         let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
         fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    // ============================================================================
+    // Phase 4: Method Node RAG Tests
+    // ============================================================================
+
+    /// Phase 4 TDD test: Dense search finds method nodes.
+    ///
+    /// This test verifies that `rag.search()` can find method nodes when they
+    /// have embeddings. It uses the fixture_nodes database which contains
+    /// methods like `SimpleStruct::new`.
+    #[tokio::test]
+    async fn dense_search_finds_method_by_unique_token() -> Result<(), Error> {
+        use ploke_test_utils::fixture_dbs::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
+
+        init_tracing_once();
+
+        // Load fixture database and set up RAG with embedder
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)?;
+        let db = Arc::new(db_raw);
+        let _rag = init_test_rag(Arc::clone(&db));
+
+        // Get a known method ID and its name
+        let method_result = db
+            .raw_query(r#"?[id] := *method { id, name }, name == "new""#)
+            .map_err(ploke_error::Error::from)?;
+
+        let method_id = method_result
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(|val| ploke_db::to_uuid(val).ok())
+            .expect("should find 'new' method in fixture");
+
+        eprintln!("Testing method search with method_id: {}", method_id);
+
+        // Set up embedding set with small dims for speed
+        let embedding_set = db.with_active_set(|set| set.clone())?;
+        db.ensure_embedding_relation(&embedding_set)?;
+
+        // Create a test vector and insert it for the method
+        let dims = embedding_set.dims() as usize;
+        let mut test_vector: Vec<f32> = vec![0.1; dims];
+        test_vector[0] = 0.99; // Make distinctive
+        test_vector[1] = 0.98;
+        db.update_embeddings_batch(vec![(method_id, test_vector.clone())])?;
+
+        // Create HNSW index
+        db.create_embedding_index(&embedding_set)?;
+
+        // Use the same vector as query - should find the method
+        let query_vec = test_vector;
+
+        // Search using search_similar_for_set directly with Method node type
+        let result = db.search_similar_for_set(
+            &embedding_set,
+            ploke_db::NodeType::Method,
+            LOADED_WORKSPACE_SCOPE,
+            query_vec,
+            5,
+            10,
+            5,
+            None,
+        )?;
+
+        let found_ids: Vec<Uuid> = result.typed_data.v.iter().map(|node| node.id).collect();
+        eprintln!(
+            "Search returned {} results: {:?}",
+            found_ids.len(),
+            found_ids
+        );
+
+        assert!(
+            found_ids.contains(&method_id),
+            "Expected search to find method_id {}. Got results: {:?}",
+            method_id,
+            found_ids
+        );
+
+        Ok(())
+    }
+
+    /// Phase 4 TDD test: get_nodes_ordered returns expected snippet for method nodes.
+    ///
+    /// This test verifies that `db.get_nodes_ordered()` can retrieve method node
+    /// data that can be used to fetch snippets via IoManagerHandle.
+    #[tokio::test]
+    async fn get_nodes_ordered_snippet_contains_expected_substring() -> Result<(), Error> {
+        use ploke_test_utils::fixture_dbs::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
+
+        init_tracing_once();
+
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)?;
+        let db = Arc::new(db_raw);
+        let io = IoManagerHandle::new();
+
+        // Get a known method ID (SimpleStruct::new)
+        let method_result = db
+            .raw_query(r#"?[id] := *method { id, name }, name == "new""#)
+            .map_err(ploke_error::Error::from)?;
+
+        let method_id = method_result
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(|val| ploke_db::to_uuid(val).ok())
+            .expect("should find 'new' method in fixture");
+
+        eprintln!("Testing get_nodes_ordered with method_id: {}", method_id);
+
+        // Insert an embedding for the method so get_nodes_ordered can find it
+        let embedding_set = db.with_active_set(|set| set.clone())?;
+        db.ensure_embedding_relation(&embedding_set)?;
+
+        let dims = embedding_set.dims() as usize;
+        let test_vector: Vec<f32> = vec![0.5; dims];
+        db.update_embeddings_batch(vec![(method_id, test_vector)])?;
+
+        // Get nodes ordered for the method ID
+        let nodes = db.get_nodes_ordered(vec![method_id])?;
+
+        assert!(
+            !nodes.is_empty(),
+            "Expected get_nodes_ordered to return node for method_id {}",
+            method_id
+        );
+
+        // Fetch snippet using IoManagerHandle
+        let snippets = io
+            .get_snippets_batch(nodes)
+            .await
+            .expect("Problem receiving")
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+
+        assert!(
+            !snippets.is_empty(),
+            "Expected to get snippet for method_id {}",
+            method_id
+        );
+
+        // The snippet should contain "fn new" or similar method signature
+        let snippet = &snippets[0];
+        assert!(
+            snippet.contains("fn new") || snippet.contains("pub fn new"),
+            "Expected snippet to contain method signature, got: {}",
+            snippet
+        );
+
+        eprintln!("Successfully retrieved snippet for method: {}", snippet);
+
         Ok(())
     }
 }

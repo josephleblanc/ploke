@@ -380,8 +380,13 @@ has_embedding[id, name, distance] :=
         };
         let script = format!(
             r#"
+# Standard ancestor rules for Contains edges
 parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
 
+# Method ancestor rules: connect methods to their impl/trait owners
+{method_ancestor_rule}
+
+# Transitive ancestor (combines Contains edges with method parent edges)
 ancestor[desc, asc] := parent_of[desc, asc]
 ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
@@ -418,6 +423,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
             rel = rel,
             radius_clause = radius_clause,
             scope_filter_clause = scope_filter_clause,
+            method_ancestor_rule = crate::multi_embedding::db_ext::METHOD_NODE_ANCESTOR_RULE,
         );
         debug!(target: "cozo-script", hnsw_script = %script);
 

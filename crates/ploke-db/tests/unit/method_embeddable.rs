@@ -1,12 +1,217 @@
-//! Phase 0-1 TDD tests for MethodNode embeddable set integration
+//! Phase 0-4 TDD tests for MethodNode embeddable set integration
 //!
 //! These tests verify that:
 //! - Phase 0: Method rows exist in the database with expected IDs
 //! - Phase 1: Embeddable set includes methods via METHOD_NODE_ANCESTOR_RULE
+//! - Phase 2: Method rows can be joined with embedding vectors
+//! - Phase 4: HNSW search can find method nodes via search_similar_for_set
 
 use cozo::DataValue;
 use ploke_test_utils::fixture_dbs::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
 use std::collections::{BTreeMap, BTreeSet};
+
+// ============================================================================
+// Phase 2: Method rows joined with embedding vectors
+// ============================================================================
+
+/// Phase 2 test: Verify that a method ID can be joined with a vector relation.
+///
+/// This test inserts a minimal vector for a known method ID and verifies
+/// that Cozo can successfully join the `method` relation with the vector
+/// relation using the method's UUID.
+#[test]
+fn method_with_vector_join_returns_non_empty_vector() {
+    use ploke_core::embeddings::{
+        EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+    };
+    use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
+    use std::ops::Deref;
+
+    let db = fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)
+        .expect("should load fixture_nodes_canonical backup");
+
+    // Get a known method ID (SimpleStruct::new from Phase 0)
+    let method_id = get_simple_struct_new_id(&db);
+
+    // Create a test embedding set with small dimension for speed
+    const TEST_DIMS: u32 = 64;
+    let embedding_set = EmbeddingSet::new(
+        EmbeddingProviderSlug::new_from_str("test_provider"),
+        EmbeddingModelId::new_from_str("test_model"),
+        EmbeddingShape::new_dims_default(TEST_DIMS),
+    );
+
+    // Ensure the embedding set and vector relation exist
+    db.ensure_embedding_set_relation()
+        .expect("should create embedding_set relation");
+    db.put_embedding_set(&embedding_set)
+        .expect("should put embedding set");
+    db.ensure_vector_embedding_relation(&embedding_set)
+        .expect("should create vector embedding relation");
+
+    // Insert a vector for the method using raw EmbeddingExt API (explicit embedding set)
+    let test_vector: Vec<f64> = vec![0.5; TEST_DIMS as usize];
+    db.deref()
+        .update_embeddings_batch(vec![(method_id, test_vector)], &embedding_set)
+        .expect("should insert method vector");
+
+    // Query to join method relation with vector relation
+    let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
+    let join_script = format!(
+        r#"
+        ?[method_id, method_name, vector] :=
+            *method {{ id: method_id, name: method_name }},
+            *{embed_rel} {{ node_id: method_id, vector }}
+        "#
+    );
+
+    let result = db
+        .raw_query(&join_script)
+        .expect("join query should succeed");
+
+    // Verify we found the method with its vector
+    assert!(
+        !result.rows.is_empty(),
+        "Expected to find method joined with vector, but got no results"
+    );
+
+    // Find the specific row for our method
+    let method_row = result
+        .rows
+        .iter()
+        .find(|row| matches!(&row[0], DataValue::Uuid(cozo::UuidWrapper(id)) if *id == method_id));
+
+    assert!(
+        method_row.is_some(),
+        "Expected to find the specific method row with vector"
+    );
+
+    // Verify the method name
+    let name_val = &method_row.unwrap()[1];
+    assert!(
+        is_str_with(name_val, "new"),
+        "Expected method name to be 'new', got {:?}",
+        name_val
+    );
+
+    // Verify the vector is present and has expected dimension
+    let vector_val = &method_row.unwrap()[2];
+    let vec_len = match vector_val {
+        DataValue::List(components) => components.len(),
+        DataValue::Vec(components) => components.len(),
+        other => panic!("Expected vector to be a List or Vec, got {:?}", other),
+    };
+    assert_eq!(
+        vec_len, TEST_DIMS as usize,
+        "Expected vector dimension to be {}, got {}",
+        TEST_DIMS, vec_len
+    );
+
+    eprintln!(
+        "Successfully joined method {} with vector of dimension {}",
+        method_id, TEST_DIMS
+    );
+}
+
+/// Helper to get the SimpleStruct::new method ID
+fn get_simple_struct_new_id(db: &ploke_db::Database) -> uuid::Uuid {
+    let script = r#"
+        ?[id, name, vis_kind] := *method { id, name, vis_kind }, name == "new"
+    "#;
+
+    let result = db.raw_query(script).expect("should query method ids");
+
+    // Find the public "new" method (SimpleStruct::new)
+    let row = result
+        .rows
+        .iter()
+        .find(|row| is_str_with(&row[2], "public"))
+        .expect("should find public 'new' method");
+
+    extract_uuid(&row[0]).expect("should extract UUID")
+}
+
+// ============================================================================
+// Phase 3: Counting invariants - baseline + method delta
+// ============================================================================
+
+/// Phase 3 test: Verify that count_pending_embeddings_including_methods = baseline + method_delta.
+///
+/// This test establishes the counting invariant:
+/// - `count_pending_embeddings` = legacy count (primary nodes only)
+/// - `count_pending_embeddings_including_methods` = extended count (primary + method nodes)
+/// - The delta between them should equal the number of unembedded method nodes
+#[test]
+fn pending_methods_only_delta() {
+    use ploke_core::embeddings::{
+        EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+    };
+    use ploke_db::multi_embedding::db_ext::EmbeddingExt;
+    use std::ops::Deref;
+
+    let db = fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)
+        .expect("should load fixture_nodes_canonical backup");
+
+    // Create a fresh embedding set to ensure no nodes are embedded yet
+    const TEST_DIMS: u32 = 64;
+    let embedding_set = EmbeddingSet::new(
+        EmbeddingProviderSlug::new_from_str("test_provider_phase3"),
+        EmbeddingModelId::new_from_str("test_model_phase3"),
+        EmbeddingShape::new_dims_default(TEST_DIMS),
+    );
+
+    // Set up the embedding set and vector relation
+    db.ensure_embedding_set_relation()
+        .expect("should create embedding_set relation");
+    db.put_embedding_set(&embedding_set)
+        .expect("should put embedding set");
+    db.ensure_vector_embedding_relation(&embedding_set)
+        .expect("should create vector embedding relation");
+
+    // Get baseline count (primary nodes only) - using raw EmbeddingExt API
+    let baseline = db
+        .deref()
+        .count_pending_embeddings(&embedding_set)
+        .expect("should count pending embeddings");
+
+    // Get extended count (primary nodes + methods) - using raw EmbeddingExt API
+    let extended = db
+        .deref()
+        .count_pending_embeddings_including_methods(&embedding_set)
+        .expect("should count pending including methods");
+
+    // Calculate the delta
+    let delta = extended - baseline;
+
+    eprintln!("Baseline (primary nodes only): {}", baseline);
+    eprintln!("Extended (including methods): {}", extended);
+    eprintln!("Delta (methods only): {}", delta);
+
+    // Get the count of method nodes from Phase 0/1
+    let method_count = collect_method_ids(&db).len();
+    eprintln!("Total method IDs in fixture: {}", method_count);
+
+    // The delta should equal the number of embeddable methods
+    // All 41 methods should be embeddable (can reach root modules via METHOD_NODE_ANCESTOR_RULE)
+    assert_eq!(
+        delta, method_count,
+        "Expected delta ({}) to equal total method count ({})",
+        delta, method_count
+    );
+
+    // Extended should be greater than baseline
+    assert!(
+        extended > baseline,
+        "Extended count ({}) should be greater than baseline ({})",
+        extended,
+        baseline
+    );
+
+    eprintln!(
+        "Phase 3 invariant verified: {} (baseline) + {} (methods) = {} (extended)",
+        baseline, delta, extended
+    );
+}
 
 /// Helper function to check if a DataValue is a string with expected content
 fn is_str_with(value: &DataValue, expected: &str) -> bool {
@@ -171,7 +376,9 @@ fn method_fixture_count_nonzero() {
 // Phase 1: METHOD_NODE_ANCESTOR_RULE + embeddable set union tests
 // ============================================================================
 
-use ploke_db::multi_embedding::db_ext::METHOD_NODE_ANCESTOR_RULE;
+use ploke_db::multi_embedding::{
+    db_ext::METHOD_NODE_ANCESTOR_RULE, hnsw_ext::HnswExt, schema::EmbeddingSetExt,
+};
 
 /// Phase 1 validation test: Verify METHOD_NODE_ANCESTOR_RULE is well-formed CozoScript.
 ///
@@ -446,4 +653,193 @@ fn embeddable_extended_minus_legacy_is_exactly_method_ids() {
         !new_ids.is_empty() || all_method_ids.is_empty(),
         "Expected extended set to include at least some method IDs, but none were found"
     );
+}
+
+// ============================================================================
+// Phase 4: HNSW search for method nodes
+// ============================================================================
+
+use ploke_core::RetrievalScope;
+
+/// Phase 4 TDD test: Verify that `search_similar_for_set` can find method nodes.
+///
+/// This test creates a fresh database with method nodes, inserts a vector for a known
+/// method ID, creates an HNSW index, and then searches to verify the method is found.
+///
+/// This test will FAIL until:
+/// 1. `search_similar_for_set` is updated to use `METHOD_NODE_ANCESTOR_RULE` instead of
+///    just `ANCESTOR_RULES_NOW`
+/// 2. Method nodes can be properly joined with their ancestors to reach root modules
+///
+/// Current issue: `search_similar_for_set` uses `ANCESTOR_RULES_NOW` which doesn't include
+/// the method parent relations (`ImplAssociatedItem` / `TraitAssociatedItem`), so method
+/// nodes cannot be joined to their file_mod ancestors.
+#[test]
+fn search_similar_for_set_finds_method_node() {
+    use ploke_core::embeddings::{
+        EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+    };
+    use ploke_db::multi_embedding::db_ext::EmbeddingExt;
+    use std::ops::Deref;
+
+    let db = fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)
+        .expect("should load fixture_nodes_canonical backup");
+
+    // Get a known method ID (SimpleStruct::new from Phase 0)
+    let method_id = get_simple_struct_new_id(&db);
+    eprintln!("Testing with method_id: {}", method_id);
+
+    // Create a test embedding set with small dimension for speed
+    const TEST_DIMS: u32 = 64;
+    let embedding_set = EmbeddingSet::new(
+        EmbeddingProviderSlug::new_from_str("test_provider_phase4"),
+        EmbeddingModelId::new_from_str("test_model_phase4"),
+        EmbeddingShape::new_dims_default(TEST_DIMS),
+    );
+
+    // Set up the embedding set and vector relation
+    db.ensure_embedding_set_relation()
+        .expect("should create embedding_set relation");
+    db.put_embedding_set(&embedding_set)
+        .expect("should put embedding set");
+    db.ensure_vector_embedding_relation(&embedding_set)
+        .expect("should create vector embedding relation");
+
+    // Insert a vector for the method using a unique pattern for easy identification
+    // Use a vector with high values in specific positions to make it easily searchable
+    let mut test_vector: Vec<f64> = vec![0.1; TEST_DIMS as usize];
+    test_vector[0] = 0.99; // Make it distinctive
+    test_vector[1] = 0.98;
+    db.deref()
+        .update_embeddings_batch(vec![(method_id, test_vector.clone())], &embedding_set)
+        .expect("should insert method vector");
+
+    // Create HNSW index for the embedding set
+    db.deref()
+        .create_embedding_index(&embedding_set)
+        .expect("should create HNSW index");
+
+    // Convert test vector to f32 for the search query
+    let query_vector: Vec<f32> = test_vector.iter().map(|&v| v as f32).collect();
+
+    // Attempt to search for the method node
+    // Note: Currently this will likely fail because search_similar_for_set uses
+    // ANCESTOR_RULES_NOW which doesn't include METHOD_NODE_ANCESTOR_RULE
+    let search_result = db.deref().search_similar_for_set(
+        &embedding_set,
+        ploke_db::NodeType::Method,
+        RetrievalScope::LoadedWorkspace,
+        query_vector,
+        5,    // k
+        10,   // ef
+        5,    // limit
+        None, // radius
+    );
+
+    match &search_result {
+        Ok(result) => {
+            let found_ids: Vec<_> = result.typed_data.v.iter().map(|node| node.id).collect();
+            eprintln!(
+                "Search returned {} results: {:?}",
+                found_ids.len(),
+                found_ids
+            );
+
+            // Check if our method_id is in the results
+            assert!(
+                found_ids.contains(&method_id),
+                "Expected search_similar_for_set to find method_id {}. \
+                 Got results: {:?}. \
+                 This may indicate that METHOD_NODE_ANCESTOR_RULE is not being used in search_similar_for_set.",
+                method_id,
+                found_ids
+            );
+        }
+        Err(e) => {
+            // If the search fails, that's also a failure case for this test
+            panic!(
+                "search_similar_for_set failed with error: {:?}. \
+                 This may indicate that the method node cannot be joined to ancestors \
+                 (METHOD_NODE_ANCESTOR_RULE not applied).",
+                e
+            );
+        }
+    }
+
+    eprintln!(
+        "Phase 4 TDD test passed: search_similar_for_set successfully found method {}",
+        method_id
+    );
+}
+
+/// Phase 4 TDD test: Verify that method nodes can be found via ancestor traversal
+/// using the METHOD_NODE_ANCESTOR_RULE within the search context.
+///
+/// This is a more focused test that directly verifies the ancestor rule works
+/// in the context of HNSW search filtering.
+#[test]
+fn method_node_ancestor_rule_works_in_search_context() {
+    let db = fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)
+        .expect("should load fixture_nodes_canonical backup");
+
+    // Get a known method ID
+    let method_id = get_simple_struct_new_id(&db);
+
+    // Verify the method can reach a root module using the combined rules
+    // This mimics what search_similar_for_set should be doing internally
+    let script = format!(
+        r#"
+# Standard ancestor rules
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+
+# Method ancestor rule (this is what should be included in search_similar_for_set)
+{}
+
+# Transitive ancestor
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+# Root module identification
+is_root_module[id] := *module{{id}}, *file_mod {{owner_id: id}}
+
+# Test: Can our method reach a root module?
+?[method_id, root_id] :=
+    *method {{ id: method_id }},
+    method_id = $target_method,
+    ancestor[method_id, root_id],
+    is_root_module[root_id]
+"#,
+        ploke_db::multi_embedding::db_ext::METHOD_NODE_ANCESTOR_RULE
+    );
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "target_method".to_string(),
+        cozo::DataValue::Uuid(cozo::UuidWrapper(method_id)),
+    );
+
+    let result = db.raw_query_params(&script, params);
+
+    match &result {
+        Ok(rows) => {
+            assert!(
+                !rows.rows.is_empty(),
+                "Method {} should be able to reach a root module via ancestor rules. \
+                 This is a prerequisite for search_similar_for_set to find method nodes.",
+                method_id
+            );
+            eprintln!(
+                "Method {} can reach root module(s): {:?}",
+                method_id, rows.rows
+            );
+        }
+        Err(e) => {
+            panic!(
+                "Ancestor rule query failed: {:?}. \
+                 This indicates METHOD_NODE_ANCESTOR_RULE may have syntax issues \
+                 or the method cannot reach root modules.",
+                e
+            );
+        }
+    }
 }

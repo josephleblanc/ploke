@@ -73,6 +73,20 @@ pub trait EmbeddingExt {
     /// Useful in `ploke-embed` when processing vector embeddings.
     fn count_pending_embeddings(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError>;
 
+    /// Counts pending embeddings including method nodes (extended embeddable set).
+    ///
+    /// This is similar to `count_pending_embeddings`, but includes method nodes that can reach
+    /// root modules via the METHOD_NODE_ANCESTOR_RULE. The extended embeddable set includes:
+    /// - All primary nodes (functions, structs, enums, traits, modules, consts, statics, macros, type_aliases, unions)
+    /// - Method nodes connected to impl/trait owners that can reach root modules
+    ///
+    /// This count is useful when determining how many total nodes (including methods) still need
+    /// embeddings generated, as opposed to `count_pending_embeddings` which only counts primary nodes.
+    fn count_pending_embeddings_including_methods(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<usize, DbError>;
+
     /// Helper function to specifically count unembedded non-files.
     ///
     /// Similar to `count_pending_embeddings`, it is useful when processing vector embeddings in
@@ -123,6 +137,16 @@ pub trait EmbeddingExt {
     /// use for embeddings.
     fn script_embeddable_nodes_now_rhs() -> &'static str;
 
+    /// Returns a CozoScript RHS that defines the extended embeddable set including methods.
+    ///
+    /// The extended set includes:
+    /// - All primary nodes (from `embeddable_nodes_now()`)
+    /// - Method nodes that can reach root modules via METHOD_NODE_ANCESTOR_RULE
+    ///
+    /// This is used for counting and retrieving nodes that should have embeddings,
+    /// including methods that are associated with impl/trait blocks.
+    fn script_embeddable_nodes_extended_rhs(&self, embedding_set: &EmbeddingSet) -> String;
+
     /// The script used to get the common nodes in `get_common_nodes`
     fn script_get_common_nodes(&self) -> Result<String, DbError>;
 
@@ -155,8 +179,6 @@ pub trait EmbeddingExt {
         embedding_set: &EmbeddingSet,
     ) -> Result<TypedEmbedData, PlokeError>;
 
-    // TODO: After we get this to work, try removing the async (I don't know if it really wins us
-    // anything here)
     fn update_embeddings_batch(
         &self,
         updates: Vec<(Uuid, Vec<f64>)>,
@@ -382,6 +404,103 @@ not *{embed_rel}{{node_id: id}}
         EMBEDDABLE_NODES_NOW.as_str()
     }
 
+    fn script_embeddable_nodes_extended_rhs(&self, embedding_set: &EmbeddingSet) -> String {
+        let primary_nodes_rhs = Self::script_embeddable_nodes_now_rhs();
+        let emb_vec_rel = embedding_set.rel_name();
+
+        // Build the extended RHS that includes methods via METHOD_NODE_ANCESTOR_RULE
+        //
+        // The structure:
+        // 1. Define inline rules (parent_of, ancestor, is_root_module, embeddable_method)
+        // 2. The final expression combines primary_nodes OR embeddable_method, then anti-joins
+        //
+        // Note: Cozo doesn't support using defined rules in the query RHS directly,
+        // so we need to inline the logic. We use the ancestor path inline for methods.
+        let script = format!(
+            r#"
+# Method ancestor rules (defines parent_of for methods)
+{method_ancestor_rule}
+
+# Transitive ancestor (combines Contains edges with method parent edges)
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+# Root module check inline
+is_root_module[id] := *module{{id}}, *file_mod{{owner_id: id}}
+
+# Extended pending nodes: (primary nodes OR methods reaching root) without embeddings
+(
+    ({primary_nodes_rhs})
+    or
+    (
+        *method{{id}},
+        ancestor[id, root_id],
+        is_root_module[root_id]
+    )
+),
+not *{emb_vec_rel}{{node_id: id}}
+"#,
+            method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE
+        );
+        debug!(script_embeddable_nodes_extended_rhs = ?script);
+        script
+    }
+
+    fn count_pending_embeddings_including_methods(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<usize, DbError> {
+        // Build a complete script that defines rules and then queries the result
+        let primary_nodes_rhs = Self::script_embeddable_nodes_now_rhs();
+        let emb_vec_rel = embedding_set.rel_name();
+
+        // This script defines all necessary rules first, then queries the count
+        let script = format!(
+            r#"
+# Method ancestor rules (extends parent_of for methods)
+{method_ancestor_rule}
+
+# Standard ancestor rules for Contains edges
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+
+# Transitive ancestor
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+# Root module check
+is_root_module[id] := *module{{id}}, *file_mod{{owner_id: id}}
+
+# Method nodes that can reach root
+embeddable_method[id] := *method{{id}}, ancestor[id, root_id], is_root_module[root_id]
+
+# Extended embeddable set: primary nodes OR embeddable methods
+embeddable_extended[id] := {primary_nodes_rhs}
+embeddable_extended[id] := embeddable_method[id]
+
+# Pending extended: embeddable nodes without embeddings
+pending_extended[id] := embeddable_extended[id], not *{emb_vec_rel}{{node_id: id}}
+
+# Query: count pending extended nodes
+?[count(id)] := pending_extended[id]
+"#,
+            method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE
+        );
+
+        debug!(target: "cozo-script", script = %script);
+
+        let result = self
+            .run_script(
+                &script,
+                Default::default(),
+                cozo::ScriptMutability::Immutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        let count = Database::into_usize(result);
+        debug!(count_pending_including_methods = ?count);
+        count
+    }
+
     fn script_get_common_nodes(&self) -> Result<String, DbError> {
         let embeddable_nodes_rule = format!(
             "embeddable[id, name, tracking_hash, span] := {}",
@@ -439,7 +558,7 @@ not *{embed_rel}{{node_id: id}}
         }
 
         let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
-        let has_embedding_rule = NodeType::primary_nodes()
+        let has_embedding_rule = NodeType::primary_and_assoc_nodes()
             .iter()
             .map(|ty| {
                 format!(
@@ -459,7 +578,15 @@ has_embedding[id, name, hash, span] :=
             r#"
 target_ids[id, ordering] <- $data
 
-{ancestor_rules}
+# Standard ancestor rules for Contains edges
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+
+# Method ancestor rules: connect methods to their impl/trait owners
+{method_ancestor_rule}
+
+# Transitive ancestor (combines Contains edges with method parent edges)
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
 {has_embedding_rule}
 
@@ -474,7 +601,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
     batch[id, name, file_path, file_hash, hash, span, namespace, ordering]
 :sort ordering
 "#,
-            ancestor_rules = ANCESTOR_RULES_NOW,
+            method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE,
             has_embedding_rule = has_embedding_rule
         );
 
@@ -1128,6 +1255,19 @@ impl EmbeddingExt for Database {
 
     fn script_pending_nodes_rhs(&self, embedding_set: &EmbeddingSet) -> String {
         self.deref().script_pending_nodes_rhs(embedding_set)
+    }
+
+    fn script_embeddable_nodes_extended_rhs(&self, embedding_set: &EmbeddingSet) -> String {
+        self.deref()
+            .script_embeddable_nodes_extended_rhs(embedding_set)
+    }
+
+    fn count_pending_embeddings_including_methods(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<usize, DbError> {
+        self.deref()
+            .count_pending_embeddings_including_methods(embedding_set)
     }
 
     fn set_embeddings_rule(&self, embedding_set: &EmbeddingSet) -> String {
