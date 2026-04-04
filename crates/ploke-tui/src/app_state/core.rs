@@ -142,39 +142,10 @@ impl SystemState {
         self
     }
 
-    pub async fn is_stale_err(&self) -> Result<(), ploke_error::Error> {
-        if self.read().await.any_loaded_crate_stale() {
-            Err(ploke_error::Error::Domain(DomainError::Ui {
-                message: "Loaded crate index is stale; reindex to query code items.".to_string(),
-            }))
-        } else {
-            Ok(())
-        }
-    }
+    // Note: is_stale_err has been moved to AppState to use the transaction pattern
 
-    /// # Deprecated
-    /// Direct read lock access is deprecated. Use `AppState::with_system_read()` instead
-    /// for compile-time guarantees against holding locks across await points.
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use AppState::with_system_read() or AppState::with_system_txn() instead. \
-                Direct RwLock access makes deadlocks possible."
-    )]
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, SystemStatus> {
-        self.0.read().await
-    }
-
-    /// # Deprecated
-    /// Direct write lock access is deprecated. Use `AppState::with_system_txn()` instead
-    /// for compile-time guarantees against holding locks across await points.
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use AppState::with_system_txn() instead. \
-                Direct RwLock access makes deadlocks possible."
-    )]
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, SystemStatus> {
-        self.0.write().await
-    }
+    // Direct read/write methods are removed. Use AppState::with_system_read() or
+    // AppState::with_system_txn() instead for compile-time lock safety.
 }
 
 /// # Deprecation Notice
@@ -451,6 +422,20 @@ impl AppState {
         }
     }
 
+    /// Returns an error if any loaded crate is stale (needs reindexing).
+    pub async fn is_stale_err(&self) -> Result<(), ploke_error::Error> {
+        let is_stale = self
+            .with_system_read(|sys| sys.any_loaded_crate_stale())
+            .await;
+        if is_stale {
+            Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: "Loaded crate index is stale; reindex to query code items.".to_string(),
+            }))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Execute a transaction on SystemStatus with compile-time lock safety.
     ///
     /// The provided closure receives a `&mut SystemTxn` which has **no async methods**.
@@ -479,7 +464,7 @@ impl AppState {
         &self,
         f: impl FnOnce(&mut SystemTxn<'_>) -> R,
     ) -> TxnOutcome<R, PostCommit> {
-        let guard = self.system.write().await;
+        let guard = self.system.0.write().await;
         let mut txn = SystemTxn {
             effects: Vec::new(),
             state: guard,
@@ -504,7 +489,7 @@ impl AppState {
     /// }).await;
     /// ```
     pub async fn with_system_read<R>(&self, f: impl FnOnce(&SystemStatus) -> R) -> R {
-        let guard = self.system.read().await;
+        let guard = self.system.0.read().await;
         let result = f(&*guard);
         drop(guard); // Explicit drop for consistency with write path
         result
@@ -522,7 +507,7 @@ impl AppState {
     /// responsibility when using raw guard access.
     #[cfg(feature = "test_harness")]
     pub async fn with_system_raw<R>(&self, f: impl FnOnce(&mut SystemStatus) -> R) -> R {
-        let mut guard = self.system.write().await;
+        let mut guard = self.system.0.write().await;
         let result = f(&mut *guard);
         drop(guard);
         result
@@ -531,7 +516,7 @@ impl AppState {
     /// Test-only read helper for direct SystemStatus inspection.
     #[cfg(feature = "test_harness")]
     pub async fn with_system_raw_read<R>(&self, f: impl FnOnce(&SystemStatus) -> R) -> R {
-        let guard = self.system.read().await;
+        let guard = self.system.0.read().await;
         let result = f(&*guard);
         drop(guard);
         result
@@ -947,6 +932,43 @@ impl<R, E> TxnOutcome<R, E> {
 /// The `state` (guard) field is declared last so it's dropped last if the
 /// whole struct is dropped normally. However, we prefer explicit `drop(txn)`
 /// after extracting effects to make the lock release boundary unambiguous.
+///
+// TODO: Needs explicit clarity + tests around policy re:
+// 1. deduping effects
+// ```
+// state.with_system_txn(|txn| {
+//     txn.set_pwd("/a".into());
+//     txn.set_pwd("/a".into());
+// }); // both or just one?
+// ```
+// 2. coalescing effects
+// state.with_system_txn(|txn| {
+//     txn.set_pwd("/a".into());
+//     txn.set_pwd("/b".into());
+// }); // emit both or just one?
+// ```
+// 3. ordering guarantees
+// ```
+// state.with_system_txn(|txn| {
+//     txn.load_workspace(root, members);
+//     txn.set_pwd(root.join("crate_a"));
+// }); // WorkspaceUpdated before PwdChanged?
+// ```
+// 4. partial failure after commit
+// - e.g. receiver closed from sent event following txn
+//  -> Q: stat changed, following op failed:
+//      - log + continue?
+//      - retry?
+//      - reconcile(?) later
+//      - treat as best-effort?
+// 5. retry behavior
+//  - Suppose persistence fails transiently, what happens?
+//      - Do you retry?
+//      - How many times?
+//      - In-place?
+//      - On a background worker?
+//      - Does the effect need to be idempotent?
+// - effect dispatch ownership
 pub struct SystemTxn<'a> {
     effects: Vec<PostCommit>,
     // Private - can only be constructed by AppState::with_system_txn
@@ -967,6 +989,65 @@ impl<'a> SystemTxn<'a> {
     /// Returns the current pwd without mutation.
     pub fn pwd(&self) -> &std::path::Path {
         self.state.pwd()
+    }
+
+    /// Returns true if any crates have been loaded.
+    pub fn has_loaded_crates(&self) -> bool {
+        self.state.has_loaded_crates()
+    }
+
+    /// Returns true if the "no workspace tip" has already been shown.
+    pub fn no_workspace_tip_shown(&self) -> bool {
+        self.state.no_workspace_tip_shown
+    }
+
+    /// Marks the "no workspace tip" as shown.
+    pub fn mark_no_workspace_tip_shown(&mut self) {
+        self.state.no_workspace_tip_shown = true;
+    }
+
+    /// Record a successful parse.
+    pub fn record_parse_success(&mut self) {
+        self.state.record_parse_success();
+    }
+
+    /// Record a parse failure.
+    pub fn record_parse_failure(&mut self, target_dir: PathBuf, message: String) {
+        self.state.record_parse_failure(target_dir, message);
+    }
+
+    /// Set workspace freshness for a crate.
+    pub fn set_workspace_freshness(&mut self, crate_id: CrateId, freshness: WorkspaceFreshness) {
+        self.state.set_workspace_freshness(crate_id, freshness);
+    }
+
+    /// Load a workspace with the given members and focused crate.
+    pub fn set_loaded_workspace(
+        &mut self,
+        workspace_root: PathBuf,
+        member_roots: Vec<PathBuf>,
+        focused_root: Option<PathBuf>,
+    ) {
+        self.state
+            .set_loaded_workspace(workspace_root, member_roots, focused_root);
+    }
+
+    /// Derive the path policy from the current workspace state.
+    pub fn derive_path_policy(&self, extra_read_roots: &[PathBuf]) -> Option<PathPolicy> {
+        self.state.derive_path_policy(extra_read_roots)
+    }
+
+    /// Get the focused crate's root path, if any.
+    pub fn focused_crate_root(&self) -> Option<PathBuf> {
+        self.state.focused_crate_root()
+    }
+
+    /// Set focus to the crate with the given root path.
+    ///
+    /// If the crate is already in the loaded workspace, focuses it.
+    /// Otherwise, creates a single-crate workspace for this crate.
+    pub fn set_focus_from_root(&mut self, root: PathBuf) -> CrateId {
+        self.state.set_focus_from_root(root)
     }
 
     /// Take ownership of the effects buffer.
