@@ -57,7 +57,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    ArcStr, ModelId, UiError,
+    ArcStr, ModelId,
+    app::error::UiError,
     tools::{Ctx, ToolCall, ToolName, ToolUiPayload},
 };
 
