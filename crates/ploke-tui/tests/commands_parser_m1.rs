@@ -5,12 +5,11 @@ use ploke_tui::mock::create_mock_app;
 use ploke_tui::user_config::CommandStyle;
 use uuid::Uuid;
 
-#[test]
-#[ignore = "needs refactor, fails without tokio runtime"]
-fn parses_edit_approve_and_deny() {
+#[tokio::test]
+async fn parses_edit_approve_and_deny() {
     let id = Uuid::new_v4();
     let cmd = format!("edit approve {}", id);
-    let mut app: App = create_mock_app().await;
+    let mut app: App = create_mock_app();
     app.set_selected_model("openrouter/moonshotai/kimi-k2".to_string());
     match parse(&app, &cmd, CommandStyle::NeoVim) {
         Command::EditApprove(x) => assert_eq!(x, id),
@@ -24,10 +23,9 @@ fn parses_edit_approve_and_deny() {
     }
 }
 
-#[test]
-#[ignore = "needs refactor, fails without tokio runtime"]
-fn parses_edit_preview_mode_and_lines_and_auto() {
-    let mut app: App = create_mock_app().await;
+#[tokio::test]
+async fn parses_edit_preview_mode_and_lines_and_auto() {
+    let mut app: App = create_mock_app();
     app.set_selected_model("openrouter/moonshotai/kimi-k2".to_owned());
     match parse(&app, "edit preview mode diff", CommandStyle::NeoVim) {
         Command::EditSetPreviewMode(PreviewMode::Diff) => {}

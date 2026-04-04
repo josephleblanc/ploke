@@ -174,9 +174,11 @@ fn resolve_index_target_relative_fixture_path_fails_from_ploke_tui_crate_dir() {
     let repo_root = workspace_root();
     let _guard = CwdGuard::set_to(&repo_root.join("crates/ploke-tui"));
 
-    let err = resolve_index_target(Some(PathBuf::from(
-        "tests/fixture_crates/fixture_update_embed",
-    )))
+    let pwd = std::env::current_dir().unwrap();
+    let err = resolve_index_target(
+        Some(PathBuf::from("tests/fixture_crates/fixture_update_embed")),
+        &pwd,
+    )
     .expect_err("relative path should fail from crate dir");
 
     let msg = err.to_string();
@@ -197,8 +199,9 @@ fn resolve_index_target_absolute_fixture_path_succeeds_from_ploke_tui_crate_dir(
     let _guard = CwdGuard::set_to(&repo_root.join("crates/ploke-tui"));
     let fixture_root = repo_root.join("tests/fixture_crates/fixture_update_embed");
 
+    let pwd = std::env::current_dir().unwrap();
     let resolved =
-        resolve_index_target(Some(fixture_root.clone())).expect("absolute path resolves");
+        resolve_index_target(Some(fixture_root.clone()), &pwd).expect("absolute path resolves");
 
     assert_eq!(resolved.kind, IndexTargetKind::Crate);
     assert_eq!(resolved.requested_path, fixture_root);

@@ -167,6 +167,7 @@ async fn index_start_keeps_ui_responsive_in_app_loop() {
             "openai/gpt-4o".to_string(),
             ToolVerbosity::Normal,
             cancel_tx.clone(),
+            std::env::current_dir().expect("current dir"),
         );
         let (input_tx, input_rx) = mpsc::channel::<crossterm::event::Event>(32);
         let input_stream = ReceiverStream::new(input_rx).map(Ok);
@@ -305,6 +306,7 @@ async fn indexing_completed_event_does_not_block_input_when_system_read_held() {
             "openai/gpt-4o".to_string(),
             ToolVerbosity::Normal,
             cancel_tx.clone(),
+            std::env::current_dir().expect("current dir"),
         );
         let (input_tx, input_rx) = mpsc::channel::<crossterm::event::Event>(32);
         let input_stream = ReceiverStream::new(input_rx).map(Ok);
