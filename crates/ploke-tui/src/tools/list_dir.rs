@@ -154,10 +154,8 @@ impl super::Tool for ListDir {
 
         let (primary_root, policy) = ctx
             .state
-            .system
-            .read()
+            .with_system_read(|sys| sys.tool_path_context())
             .await
-            .tool_path_context()
             .ok_or_else(|| {
                 ploke_error::Error::Domain(DomainError::Ui {
                     message: "No workspace is loaded; load a workspace before using list_dir."

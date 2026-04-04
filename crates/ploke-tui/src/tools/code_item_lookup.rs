@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::tools::{Tool, ValidatesAbolutePath};
 
 const FILE_DESC: &str = "Absolute or workspace-relative file path.";
-const MODULE_PATH: &str = r#"canonical module path, e.g. "crate::mod_one::nested_mod". 
+const MODULE_PATH: &str = r#"canonical module path, e.g. "crate::mod_one::nested_mod".
     Note that this does not include the target item's identifier."#;
 const NODE_KIND: &str = r#"The kind of code item this is. Must be one of:
 - function
@@ -26,11 +26,11 @@ const NODE_KIND: &str = r#"The kind of code item this is. Must be one of:
 - trait
 - type_alias
 - union"#;
-const ITEM_NAME: &str = r#"The name of the item being search for, e.g. 
+const ITEM_NAME: &str = r#"The name of the item being search for, e.g.
 if looking for
 
 ```rust
-fn example_func() {}`, 
+fn example_func() {}`,
 ```
 
 This would be the string: example_func
@@ -122,7 +122,7 @@ impl Tool for CodeItemLookup {
     ) -> Result<super::ToolResult, ploke_error::Error> {
         use ploke_error::{DomainError, InternalError};
 
-        ctx.state.system.is_stale_err().await?;
+        ctx.state.is_stale_err().await?;
 
         // validate inputs and produce helpful error messages to help llm recover.
         check_empty(
@@ -164,10 +164,11 @@ impl Tool for CodeItemLookup {
 
         let (primary_root, policy) = ctx
             .state
-            .system
-            .read()
+            .with_system_read(|sys| {
+                sys.tool_path_context()
+                    .map(|(p, pol)| (p.clone(), pol.clone()))
+            })
             .await
-            .tool_path_context()
             .ok_or_else(|| {
                 ploke_error::Error::Domain(DomainError::Ui {
                     message:
@@ -182,7 +183,7 @@ impl Tool for CodeItemLookup {
                 ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
                         r#"The target file could not be found at the resolved absolute path.
-Original error message: {e} This indicates an incorrect file path. 
+Original error message: {e} This indicates an incorrect file path.
 Tip: consider using `request_code_context` with the item name, signature, or anticipated contents
 for a more fuzzy search."#
                     )

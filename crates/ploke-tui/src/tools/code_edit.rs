@@ -133,14 +133,10 @@ pub async fn print_code_edit_results(
 ) -> Result<ToolResult, ploke_error::Error> {
     let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
     if let Some(prop) = proposal_opt {
-        let primary_root = {
-            ctx.state
-                .system
-                .read()
-                .await
-                .tool_path_context()
-                .map(|(r, _)| r)
-        };
+        let primary_root = ctx
+            .state
+            .with_system_read(|sys| sys.tool_path_context().map(|(r, _)| r.clone()))
+            .await;
         let staged = if matches!(tool_name, ToolName::NsPatch) {
             prop.edits_ns.len()
         } else {
