@@ -990,14 +990,8 @@ pub(super) async fn load_db(
         }
     };
 
-    state
-        .db
-        .clear_hnsw_idx()
-        .await?;
-    state
-        .db
-        .clear_relations()
-        .await?;
+    state.db.clear_hnsw_idx().await?;
+    state.db.clear_relations().await?;
     state
         .db
         .import_backup_with_embeddings(&valid_file)
@@ -1302,8 +1296,15 @@ async fn scan_for_change_target(
         // TODO: Move this into `syn_parser` probably
         // WARN: Just going to use a quick and dirty approach for now to get proof of concept, then later
         // on I'll do something more efficient.
+
+        // Extract pwd from SystemState before calling sync function
+        let pwd = {
+            let system_guard = state.system.read().await;
+            system_guard.pwd().to_path_buf()
+        };
+
         let mut parser_output =
-            match run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone())) {
+            match run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()), &pwd) {
                 Ok(output) => {
                     let mut system_guard = state.system.write().await;
                     system_guard.record_parse_success();
@@ -2875,12 +2876,14 @@ mod test {
 
         let (cancellation_token, cancel_handle) = CancellationToken::new();
         let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);
+        let pwd = std::env::current_dir().expect("current dir");
         let file_manager = FileManager::new(
             io_handle.clone(),
             event_bus.subscribe(EventPriority::Background),
             event_bus.background_tx.clone(),
             rag_event_tx.clone(),
             event_bus.realtime_tx.clone(),
+            pwd,
         );
 
         tokio::spawn(file_manager.run());
@@ -2904,10 +2907,10 @@ mod test {
         let vec_rel = embedding_set.rel_name.clone();
         let script = format!(
             r#"?[name, time, is_assert, maybe_null, id] := *function{{ id, at, name }}
-                                or *struct{{ id, at, name }} 
-                                or *module{{ id, at, name }} 
-                                or *static{{ id, at, name }} 
-                                or *const{{ id, at, name }}, 
+                                or *struct{{ id, at, name }}
+                                or *module{{ id, at, name }}
+                                or *static{{ id, at, name }}
+                                or *const{{ id, at, name }},
                                   time = format_timestamp(at),
                                   *{vec_rel} {{ node_id @ 'NOW' }},
                                   maybe_null = ( node_id == id ),

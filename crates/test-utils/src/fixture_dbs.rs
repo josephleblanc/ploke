@@ -59,6 +59,14 @@ pub enum FixtureAutomation {
         crate_name: &'static str,
         output_stem: &'static str,
     },
+    /// Extract a single member crate from a workspace fixture.
+    /// This creates a DB with only one crate's graph plus workspace metadata,
+    /// simulating the "focused crate" scenario in a workspace.
+    FixtureWorkspaceMember {
+        fixture_name: &'static str,
+        member_crate: &'static str,
+        output_stem: &'static str,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +133,10 @@ impl FixtureDb {
                 ..
             })
             | FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceCrate {
+                output_stem,
+                ..
+            })
+            | FixtureCreationStrategy::Automated(FixtureAutomation::FixtureWorkspaceMember {
                 output_stem,
                 ..
             }) => output_stem,
@@ -251,6 +263,28 @@ pub const WS_FIXTURE_01_CANONICAL: FixtureDb = FixtureDb {
     notes: "Canonical plain backup for the committed multi-member workspace fixture `tests/fixture_workspace/ws_fixture_01`. Regeneration parses the on-disk workspace fixture, transforms `workspace_metadata` plus crate graphs into a fresh DB, and writes a strict plain-backup snapshot without assuming any embedding model contract.",
 };
 
+/// Single-member workspace fixture for testing focused-crate scenarios.
+/// This contains only `member_root` from ws_fixture_01, simulating a workspace
+/// where only one crate has been indexed/loaded.
+pub const WS_FIXTURE_01_MEMBER_SINGLE: FixtureDb = FixtureDb {
+    id: "ws_fixture_01_member_single",
+    rel_path: "tests/backup_dbs/ws_fixture_01_member_single_2026-04-03.sqlite",
+    parsed_targets: &["tests/fixture_workspace/ws_fixture_01/member_root"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureWorkspaceMember {
+        fixture_name: "ws_fixture_01",
+        member_crate: "member_root",
+        output_stem: "ws_fixture_01_member_single",
+    }),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: true,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-04-03",
+    notes: "Single-member slice of ws_fixture_01 containing only `member_root`. Used for testing scenarios where a workspace is loaded but only one member crate is indexed/focused. Regeneration extracts only the member crate's graph plus workspace metadata (without other members).",
+};
+
 pub const PLOKE_DB_ORPHANED: FixtureDb = FixtureDb {
     id: "ploke_db_orphaned",
     rel_path: "tests/backup_dbs/ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45",
@@ -278,6 +312,7 @@ pub const BACKUP_DB_FIXTURES: &[&FixtureDb] = &[
     &FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1,
     &PLOKE_DB_PRIMARY,
     &WS_FIXTURE_01_CANONICAL,
+    &WS_FIXTURE_01_MEMBER_SINGLE,
     &PLOKE_DB_ORPHANED,
 ];
 

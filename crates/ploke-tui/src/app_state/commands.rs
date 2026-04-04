@@ -242,6 +242,10 @@ pub enum StateCommand {
     UpdateContextTokens {
         tokens: ContextTokens,
     },
+    /// Set the current working directory (pwd) in SystemStatus and emit PwdChanged event.
+    SetPwd {
+        new_pwd: PathBuf,
+    },
 }
 
 impl StateCommand {
@@ -308,6 +312,7 @@ impl StateCommand {
             DecrementChatTtl { .. } => "DecrementChatTtl",
             SelectEmbeddingModel { .. } => "SelectEmbeddingModel",
             UpdateContextTokens { .. } => "UpdateContextTokens",
+            SetPwd { .. } => "SetPwd",
         }
     }
 }

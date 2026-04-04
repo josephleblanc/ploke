@@ -2,6 +2,8 @@ pub(crate) mod exec;
 #[cfg(feature = "live_api_tests")]
 mod exec_real_tools_live_tests;
 pub mod parser;
+#[cfg(test)]
+mod unit_tests;
 
 use crate::app::App;
 

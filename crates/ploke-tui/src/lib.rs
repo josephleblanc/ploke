@@ -74,7 +74,7 @@ use ui::UiEvent;
 use user_config::{OPENROUTER_URL, UserConfig};
 use utils::layout::layout_statusline;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, env::current_dir, sync::Arc};
 
 use chat_history::{ChatHistory, UpdateFailedEvent};
 use color_eyre::Result;
@@ -218,11 +218,13 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus));
     // tokio::spawn(context_manager.run());
 
+    let pwd = current_dir()?;
+    let system = SystemState::default().init_pwd(pwd.clone()).await;
     let rag_budget = rag_budget_from_config(&runtime_cfg.rag);
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
         config: ConfigState::new(runtime_cfg),
-        system: SystemState::default(),
+        system,
         indexing_state: RwLock::new(None), // Initialize as None
         indexer_task: Some(Arc::clone(&indexer_task)),
         indexing_control: Arc::new(Mutex::new(None)),
@@ -250,6 +252,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         event_bus.background_tx.clone(),
         rag_event_tx.clone(),
         event_bus.realtime_tx.clone(),
+        pwd.clone(),
     );
 
     tokio::spawn(file_manager.run());
@@ -291,6 +294,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         default_model(),
         tool_verbosity,
         cancel_tx,
+        pwd,
     );
     let result = app.run(terminal).await;
     ratatui::restore();
@@ -311,6 +315,7 @@ pub mod ui {
 }
 
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
+#[deprecated(note = "use app::error::UiError instead")]
 pub enum UiError {
     ExampleError,
 }

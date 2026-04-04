@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use ploke_db::TypedEmbedData;
@@ -17,6 +18,8 @@ pub struct FileManager {
     event_tx: broadcast::Sender<AppEvent>,
     context_tx: mpsc::Sender<RagEvent>,
     realtime_event_tx: broadcast::Sender<AppEvent>,
+    /// Cached working directory from SystemStatus (updated via PwdChanged events)
+    pwd: PathBuf,
 }
 
 impl FileManager {
@@ -27,6 +30,7 @@ impl FileManager {
         event_tx: broadcast::Sender<AppEvent>,
         context_tx: mpsc::Sender<RagEvent>,
         realtime_event_tx: broadcast::Sender<AppEvent>,
+        pwd: PathBuf,
     ) -> Self {
         Self {
             io_handle,
@@ -34,6 +38,7 @@ impl FileManager {
             event_tx,
             context_tx,
             realtime_event_tx,
+            pwd,
         }
     }
 
@@ -47,23 +52,11 @@ impl FileManager {
     /// Processes incoming file-related events
     async fn handle_event(&mut self, event: AppEvent) {
         match event {
+            AppEvent::System(SystemEvent::PwdChanged(new_pwd)) => {
+                self.pwd = new_pwd;
+            }
             AppEvent::System(SystemEvent::SaveRequested(content)) => {
-                let path = match std::env::current_dir() {
-                    Ok(pwd_path) => pwd_path,
-                    Err(e) => {
-                        error!(
-                            "Save faild, working directory invalid
-                            Either cwd does not exist or insufficient permissions, prop error\n{}",
-                            e.to_string()
-                        );
-                        // Surface to UI
-                        let _ = self.event_tx.send(AppEvent::Error(ErrorEvent {
-                            message: format!("Save failed: working directory invalid: {}", e),
-                            severity: ErrorSeverity::Error,
-                        }));
-                        return;
-                    }
-                };
+                let path = self.pwd.clone();
                 match self.save_content(&path, &content).await {
                     Ok(final_path) => {
                         info!("Chat history saved to {}", final_path.display());
@@ -88,13 +81,7 @@ impl FileManager {
                 file_name,
                 query_name,
             }) => {
-                let path = match std::env::current_dir() {
-                    Ok(pwd_path) => pwd_path.join("query").join(file_name),
-                    Err(e) => {
-                        self.send_path_error(e);
-                        return;
-                    }
-                };
+                let path = self.pwd.join("query").join(file_name);
                 let query_content = match tokio::fs::read_to_string(path).await {
                     Ok(s) => s,
                     Err(e) => {

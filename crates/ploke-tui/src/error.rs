@@ -35,7 +35,18 @@ pub trait ErrorExt {
     }
 }
 
+use std::{marker::PhantomData, ops::Deref, sync::Arc};
+
+use syn_parser::discovery::DiscoveryError;
 use tracing::{error, warn};
+use uuid::Uuid;
+
+use crate::{
+    AppEvent, EventBus,
+    app::commands::parser::Command,
+    app_state::{AppState, events::SystemEvent, handlers::chat::add_msg_immediate},
+    chat_history::MessageKind,
+};
 
 impl<T, E> ResultExt<T> for Result<T, E>
 where
@@ -77,3 +88,121 @@ where
         }
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+pub struct UiError<A, R = Absent>
+where
+    A: AudienceMarker,
+{
+    message: Option<String>,
+    // Might want to make this app::Command instead of String, or a struct that
+    // includes app::Command and optionally other info like a PathBuf for
+    // suggestions like: "Try the `/index crate <path>`", where path is filled in.
+    recovery_command: Option<String>,
+    formatted_message: Option<String>,
+    audience: PhantomData<A>,
+    _has_recovery: PhantomData<R>,
+}
+
+pub struct Absent;
+pub struct Present;
+pub struct Formatted;
+
+pub struct Message<A: AudienceMarker> {
+    message: String,
+    _audience: PhantomData<A>,
+}
+
+impl Message<UserAudience> {
+    fn user_new(message: String) -> Self {
+        Message {
+            message,
+            _audience: PhantomData,
+        }
+    }
+}
+
+// works for any audience, e.g. UserAudience, LlmAudience, etc that implements AudienceMarker
+// should inherit audience type A from Message
+impl<A: AudienceMarker> UiError<A, Absent> {
+    fn new_from_message(m: Message<A>) -> UiError<A, Absent> {
+        UiError {
+            message: Some(m.message),
+            recovery_command: None,
+            formatted_message: None,
+            audience: PhantomData,
+            _has_recovery: PhantomData,
+        }
+    }
+
+    // once recovery is present we transform into UiError<A, P: PresentMarker>
+    // could also make `recovery` typed but that might be too spooky
+    fn with_recovery(self, recovery: String) -> UiError<A, Present> {
+        UiError {
+            message: self.message,
+            recovery_command: Some(recovery),
+            formatted_message: None,
+            audience: PhantomData,
+            _has_recovery: PhantomData,
+        }
+    }
+}
+
+// works for any audience type, uses formatting via a closure
+// same audience in as out
+impl<A: AudienceMarker> UiError<A, Present> {
+    pub fn format_recovery(
+        self,
+        format: impl FnOnce(String, String) -> String,
+    ) -> UiError<A, Formatted> {
+        let formatted = match (self.recovery_command, self.message) {
+            (Some(r), Some(m)) => format(r, m),
+            _ => unreachable!(),
+        };
+        UiError {
+            message: None,
+            recovery_command: None,
+            formatted_message: Some(formatted),
+            audience: PhantomData,
+            _has_recovery: PhantomData,
+        }
+    }
+}
+
+// now that it's formatted we are ready to send it to UI
+impl UiError<UserAudience, Formatted> {
+    pub fn send_ui(self, event_ctx: EventCtx<UserAudience>) -> impl Future<Output = ()> {
+        let content = match self.formatted_message {
+            Some(c) => c,
+            None => unreachable!(),
+        };
+        event_ctx.send_sysinfo(content.into())
+    }
+}
+
+pub struct EventCtx<'s, A>
+where
+    A: AudienceMarker,
+{
+    event_bus: &'s Arc<EventBus>,
+    state: &'s Arc<AppState>,
+    audience: A,
+}
+impl<'s> EventCtx<'s, UserAudience> {
+    fn send_sysinfo(self, content: String) -> impl Future<Output = ()> {
+        add_msg_immediate(
+            self.state,
+            self.event_bus,
+            Uuid::new_v4(),
+            content,
+            MessageKind::SysInfo,
+        )
+    }
+}
+
+pub trait AudienceMarker {}
+// later maybe add
+// LlmAudience
+// SystemAudience
+pub struct UserAudience;
+impl AudienceMarker for UserAudience {}

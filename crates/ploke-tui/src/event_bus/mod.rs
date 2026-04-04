@@ -186,6 +186,10 @@ impl EventBus {
     pub fn index_subscriber(&self) -> broadcast::Receiver<indexer::IndexingStatus> {
         self.index_tx.subscribe()
     }
+
+    pub fn error_subscriber(&self) -> broadcast::Receiver<ErrorEvent> {
+        self.error_tx.subscribe()
+    }
 }
 
 #[cfg(test)]

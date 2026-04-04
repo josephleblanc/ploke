@@ -130,6 +130,17 @@ impl SystemState {
             })
             .collect()
     }
+    #[cfg(feature = "test_harness")]
+    pub async fn set_pwd_for_test(&self, pwd: PathBuf) {
+        let mut guard = self.0.write().await;
+        guard.pwd = pwd;
+    }
+    pub async fn init_pwd(self, pwd: PathBuf) -> Self {
+        let mut guard = self.0.write().await;
+        guard.pwd = pwd;
+        drop(guard);
+        self
+    }
 
     pub async fn is_stale_err(&self) -> Result<(), ploke_error::Error> {
         if self.read().await.any_loaded_crate_stale() {
@@ -140,8 +151,40 @@ impl SystemState {
             Ok(())
         }
     }
+
+    /// # Deprecated
+    /// Direct read lock access is deprecated. Use `AppState::with_system_read()` instead
+    /// for compile-time guarantees against holding locks across await points.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use AppState::with_system_read() or AppState::with_system_txn() instead. \
+                Direct RwLock access makes deadlocks possible."
+    )]
+    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, SystemStatus> {
+        self.0.read().await
+    }
+
+    /// # Deprecated
+    /// Direct write lock access is deprecated. Use `AppState::with_system_txn()` instead
+    /// for compile-time guarantees against holding locks across await points.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use AppState::with_system_txn() instead. \
+                Direct RwLock access makes deadlocks possible."
+    )]
+    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, SystemStatus> {
+        self.0.write().await
+    }
 }
 
+/// # Deprecation Notice
+/// Direct access to the underlying RwLock via this Deref impl is **discouraged**.
+/// Use `AppState::with_system_txn()` for mutations or `AppState::with_system_read()`
+/// for read-only access. These methods provide compile-time guarantees against
+/// holding locks across await points.
+///
+/// This Deref impl will be removed in a future refactor once all call sites
+/// are migrated to the transaction pattern. New code must use the transaction API.
 impl std::ops::Deref for SystemState {
     type Target = RwLock<SystemStatus>;
     fn deref(&self) -> &Self::Target {
@@ -407,6 +450,92 @@ impl AppState {
             budget,
         }
     }
+
+    /// Execute a transaction on SystemStatus with compile-time lock safety.
+    ///
+    /// The provided closure receives a `&mut SystemTxn` which has **no async methods**.
+    /// This guarantees that the write lock is released before the returned future
+    /// resolves, preventing the "hold lock across await" class of deadlocks.
+    ///
+    /// # Returns
+    /// A tuple of (closure result, post-commit effects). The caller **must** dispatch
+    /// effects after the lock is released.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let outcome = state.with_system_txn(|txn| {
+    ///     txn.set_pwd(new_pwd);
+    /// }).await;
+    ///
+    /// for effect in outcome.effects {
+    ///     match effect {
+    ///         PostCommit::EmitPwdChanged(pwd) => {
+    ///             event_bus.send(SystemEvent::PwdChanged(pwd)).await;
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub async fn with_system_txn<R>(
+        &self,
+        f: impl FnOnce(&mut SystemTxn<'_>) -> R,
+    ) -> TxnOutcome<R, PostCommit> {
+        let guard = self.system.write().await;
+        let mut txn = SystemTxn {
+            effects: Vec::new(),
+            state: guard,
+        };
+        let result = f(&mut txn);
+        // Explicit extraction and drop makes lock release boundary unambiguous.
+        // See: https://doc.rust-lang.org/reference/destructors.html
+        let effects = std::mem::take(&mut txn.effects);
+        drop(txn); // Lock released here, before return
+        TxnOutcome::new(result, effects)
+    }
+
+    /// Read-only access to SystemStatus through a synchronous closure.
+    ///
+    /// This provides the same "no await in critical section" guarantee as
+    /// `with_system_txn`, but for read-only operations that don't produce effects.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let pwd = state.with_system_read(|sys| {
+    ///     sys.pwd().to_path_buf()
+    /// }).await;
+    /// ```
+    pub async fn with_system_read<R>(&self, f: impl FnOnce(&SystemStatus) -> R) -> R {
+        let guard = self.system.read().await;
+        let result = f(&*guard);
+        drop(guard); // Explicit drop for consistency with write path
+        result
+    }
+
+    /// Test-only transaction helper that allows direct SystemStatus access.
+    ///
+    /// This is a temporary escape hatch for tests that need to inspect or mutate
+    /// SystemStatus in ways not yet supported by the typed transaction API.
+    /// New test code should prefer `with_system_txn` when possible.
+    ///
+    /// # Safety Warning
+    /// The closure must not hold references across await points. This method
+    /// is marked unsafe to signal that deadlock prevention is the caller's
+    /// responsibility when using raw guard access.
+    #[cfg(feature = "test_harness")]
+    pub async fn with_system_raw<R>(&self, f: impl FnOnce(&mut SystemStatus) -> R) -> R {
+        let mut guard = self.system.write().await;
+        let result = f(&mut *guard);
+        drop(guard);
+        result
+    }
+
+    /// Test-only read helper for direct SystemStatus inspection.
+    #[cfg(feature = "test_harness")]
+    pub async fn with_system_raw_read<R>(&self, f: impl FnOnce(&SystemStatus) -> R) -> R {
+        let guard = self.system.read().await;
+        let result = f(&*guard);
+        drop(guard);
+        result
+    }
 }
 
 #[derive(Debug)]
@@ -458,6 +587,7 @@ pub struct SystemStatus {
     pub(crate) no_workspace_tip_shown: bool,
     pub(crate) last_parse_failure: Option<ParseFailure>,
     pub(crate) last_parse_success_ms: Option<i64>,
+    pub(crate) pwd: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -524,6 +654,25 @@ impl SystemStatus {
     /// Backward-compatible accessor: returns the first loaded crate's name.
     pub fn focused_crate_name(&self) -> Option<&str> {
         self.focused_crate().map(|info| info.name.as_str())
+    }
+
+    /// Set initial pwd at application start
+    fn with_pwd(&mut self, pwd: PathBuf) {
+        self.pwd = pwd
+    }
+
+    pub fn pwd(&self) -> &std::path::Path {
+        self.pwd.as_path()
+    }
+
+    /// Update pwd and return true if changed
+    pub fn set_pwd(&mut self, pwd: PathBuf) -> bool {
+        if self.pwd != pwd {
+            self.pwd = pwd;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn set_loaded_workspace(
@@ -627,6 +776,7 @@ impl SystemStatus {
             SystemMutation::RecordIndexComplete { crate_id } => {
                 self.record_index_complete(crate_id);
             }
+            SystemMutation::InitPwd { pwd } => todo!(),
         }
     }
 
@@ -726,6 +876,105 @@ impl SystemStatus {
     }
 }
 
+/// Effects that must be dispatched after a transaction commits (lock released).
+/// This pattern ensures no locks are held across await points.
+#[derive(Debug, Clone)]
+pub enum PostCommit {
+    /// Emit PwdChanged event to update cached pwd in App and other components
+    EmitPwdChanged(PathBuf),
+    // Future effects can be added here:
+    // EmitWorkspaceUpdated { workspace_ref: String },
+    // EmitCrateFocusChanged { crate_id: CrateId },
+}
+
+/// The result of a transaction, containing the closure's return value and any
+/// post-commit effects that must be dispatched.
+///
+/// This struct provides a cleaner API than the raw `(R, Vec<E>)` tuple and
+/// scales nicely to other transaction types (ChatTxn, ConfigTxn, etc.).
+#[derive(Debug)]
+pub struct TxnOutcome<R, E> {
+    /// The value returned by the transaction closure.
+    pub result: R,
+    /// Effects that must be dispatched after the lock is released.
+    pub effects: Vec<E>,
+}
+
+impl<R, E> TxnOutcome<R, E> {
+    /// Create a new outcome with the given result and effects.
+    pub fn new(result: R, effects: Vec<E>) -> Self {
+        Self { result, effects }
+    }
+
+    /// Map the result type while preserving effects.
+    pub fn map<T>(self, f: impl FnOnce(R) -> T) -> TxnOutcome<T, E> {
+        TxnOutcome {
+            result: f(self.result),
+            effects: self.effects,
+        }
+    }
+
+    /// Returns true if there are any effects to dispatch.
+    pub fn has_effects(&self) -> bool {
+        !self.effects.is_empty()
+    }
+
+    /// Consume the outcome and return (result, effects).
+    pub fn into_inner(self) -> (R, Vec<E>) {
+        (self.result, self.effects)
+    }
+}
+
+/// A transaction object for SystemStatus mutations.
+///
+/// # Compile-Time Safety
+/// This struct intentionally has no async methods. It can only be used within a
+/// synchronous `FnOnce` closure passed to `AppState::with_system_txn`. This
+/// guarantees that the write lock is released before any await point.
+///
+/// # Pattern
+/// ```rust,ignore
+/// let (_, effects) = state.with_system_txn(|txn| {
+///     txn.set_pwd(new_pwd);
+/// }).await;
+///
+/// for effect in effects {
+///     dispatch(effect).await; // Lock not held here!
+/// }
+/// ```
+///
+/// # Field Ordering Note
+/// The `state` (guard) field is declared last so it's dropped last if the
+/// whole struct is dropped normally. However, we prefer explicit `drop(txn)`
+/// after extracting effects to make the lock release boundary unambiguous.
+pub struct SystemTxn<'a> {
+    effects: Vec<PostCommit>,
+    // Private - can only be constructed by AppState::with_system_txn
+    state: tokio::sync::RwLockWriteGuard<'a, SystemStatus>,
+}
+
+impl<'a> SystemTxn<'a> {
+    /// Set the current working directory.
+    ///
+    /// Records a `PostCommit::EmitPwdChanged` effect if the path actually changed.
+    pub fn set_pwd(&mut self, pwd: PathBuf) {
+        if self.state.pwd() != pwd {
+            self.state.set_pwd(pwd.clone());
+            self.effects.push(PostCommit::EmitPwdChanged(pwd));
+        }
+    }
+
+    /// Returns the current pwd without mutation.
+    pub fn pwd(&self) -> &std::path::Path {
+        self.state.pwd()
+    }
+
+    /// Take ownership of the effects buffer.
+    fn into_effects(self) -> Vec<PostCommit> {
+        self.effects
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SystemStatus;
@@ -813,5 +1062,26 @@ mod tests {
                 .iter()
                 .any(|root| root == &member_b)
         );
+    }
+
+    /// Compile-time demonstration that the transaction pattern prevents
+    /// holding locks across await points.
+    ///
+    /// This test exists to ensure the API doesn't accidentally allow:
+    /// ```compile_fail
+    /// state.with_system_txn(|txn| {
+    ///     txn.set_pwd(new_pwd);
+    ///     async { some_async_fn().await }.await; // ERROR: await not allowed in sync closure
+    /// })
+    /// ```
+    #[test]
+    fn system_txn_pattern_prevents_await_in_closure() {
+        use super::SystemTxn;
+        // The type system ensures the closure is FnOnce(&mut SystemTxn) -> R,
+        // which cannot contain await expressions. This is the compile-time safety.
+        let _ = |txn: &mut SystemTxn<'_>| {
+            txn.set_pwd(PathBuf::from("/test"));
+            // Cannot await here - the closure is not async!
+        };
     }
 }

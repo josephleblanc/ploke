@@ -12,8 +12,9 @@ pub use fixture_dbs::{
     BACKUP_DB_FIXTURES, FIXTURE_NODES_CANONICAL, FIXTURE_NODES_LOCAL_EMBEDDINGS,
     FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
     FixtureEmbeddingExpectation, FixtureImportMode, FixtureManualRecreation, FixtureStatus,
-    PLOKE_DB_ORPHANED, PLOKE_DB_PRIMARY, WS_FIXTURE_01_CANONICAL, backup_db_fixture,
-    fresh_backup_fixture_db, shared_backup_fixture_db, validate_backup_fixture_contract,
+    PLOKE_DB_ORPHANED, PLOKE_DB_PRIMARY, WS_FIXTURE_01_CANONICAL, WS_FIXTURE_01_MEMBER_SINGLE,
+    backup_db_fixture, fresh_backup_fixture_db, shared_backup_fixture_db,
+    validate_backup_fixture_contract,
 };
 
 use std::path::{Path, PathBuf};
@@ -321,6 +322,63 @@ pub fn setup_db_full_workspace_fixture(
 }
 
 #[cfg(feature = "test_setup")]
+/// Setup database with only a single member crate from a workspace fixture.
+/// This simulates the "focused crate" scenario where workspace metadata exists
+/// but only one member crate has been indexed.
+pub fn setup_db_full_workspace_member_fixture(
+    fixture: &'static str,
+    member_crate: &'static str,
+) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
+    use syn_parser::{parse_workspace, utils::LogStyle};
+
+    tracing::info!(
+        "Setup database with setup_db_full_workspace_member_fixture: {}/{}",
+        fixture,
+        member_crate
+    );
+
+    let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
+    tracing::info!("{}: Initialize", "Database".log_step());
+    db.initialize().expect("Failed to initialize database");
+    tracing::info!(
+        "{}: Create and Insert Schema",
+        "Transform/Database".log_step()
+    );
+    ploke_transform::schema::create_schema_all(&db)?;
+
+    let workspace_path = workspace_root()
+        .join("tests/fixture_workspace")
+        .join(fixture);
+
+    // Build the member path as a &Path for selection
+    let member_path = workspace_path.join(member_crate);
+    let selected_crates: &[&std::path::Path] = &[&member_path];
+
+    tracing::info!(
+        "{}: parse workspace {} with selected crate {}",
+        "Parse".log_step(),
+        workspace_path.display(),
+        member_crate
+    );
+
+    // parse_workspace with selected_crates only parses the specified crate(s)
+    // but still includes workspace metadata
+    let parsed_workspace = parse_workspace(&workspace_path, Some(selected_crates))?;
+
+    tracing::info!(
+        "{}: transform single-member workspace into db",
+        "Transform".log_step()
+    );
+    ploke_transform::transform::transform_parsed_workspace(&db, parsed_workspace)?;
+    tracing::info!(
+        "{}: Single-member workspace fixture parsing and database transform complete",
+        "Setup".log_step()
+    );
+
+    setup_db_create_multi_embeddings(db)
+}
+
+#[cfg(feature = "test_setup")]
 /// Uses the crates in the `ploke` workspace itself as the target.
 /// As such, cannot rely on stable inputs over time, but is a more robust example to test against
 /// than the fixtures, which usually have various examples but may not have many nodes in total.
@@ -540,14 +598,14 @@ pub fn find_function_by_name(graph: &CodeGraph, name: &str) -> Option<NodeId> {
     todo!()
 }
 
-/// Find a struct node by name in a CodeGraph  
+/// Find a struct node by name in a CodeGraph
 // Again, we have better ways to do this in `syn_parser`
 // Look for good helpers from test functions
 pub fn find_struct_(graph: &CodeGraph, name: &str) -> Option<NodeId> {
     todo!()
 }
 
-/// Find a module node by path in a CodeGraph                          
+/// Find a module node by path in a CodeGraph
 // Again, we have better ways to do this in `syn_parser`
 // Look for good helpers from test functions
 pub fn find_module_by_(graph: &CodeGraph, path: &[String]) -> Option<NodeId> {

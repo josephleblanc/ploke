@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-03-21
-Last updated: 2026-03-21
+Last reviewed: 2026-04-03
+Last updated: 2026-04-03
 
 This document is the current inventory for backup database fixtures under
 `tests/backup_dbs/`. It records which source targets produced each fixture,
@@ -69,6 +69,7 @@ example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
 | `fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92` | `tests/fixture_crates/fixture_nodes` | legacy multi-embedding schema snapshot | 2026-03-20 |
 | `ploke_db_primary_2026-03-21.sqlite` | `crates/ploke-db` | current-schema `ploke-db` graph backup | 2026-03-21 |
 | `ws_fixture_01_canonical_2026-03-21.sqlite` | `tests/fixture_workspace/ws_fixture_01` | canonical plain backup of committed multi-member workspace fixture | 2026-03-21 |
+| `ws_fixture_01_member_single_2026-04-03.sqlite` | `tests/fixture_workspace/ws_fixture_01/member_root` | single-member slice of workspace fixture | 2026-04-03 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
 ## `fixture_nodes_canonical_2026-03-20.sqlite`
@@ -163,6 +164,26 @@ example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
   - this fixture is the canonical plain workspace backup required by the
     workspace rollout readiness gate
   - the filename is dated `2026-03-21` because `cargo xtask recreate-backup-db`
+    stamps outputs with UTC date
+
+## `ws_fixture_01_member_single_2026-04-03.sqlite`
+
+- File: `tests/backup_dbs/ws_fixture_01_member_single_2026-04-03.sqlite`
+- Parsed target(s): `tests/fixture_workspace/ws_fixture_01/member_root`
+- Expected DB config:
+  - plain backup import
+  - primary HNSW index must be created after import by the caller
+  - no embedding model contract is assumed by default
+  - generated from the workspace fixture, but only includes the `member_root` crate
+    plus workspace metadata (excluding `nested/member_nested`)
+- Tests using this fixture:
+  - `ploke-tui` command decision tree tests:
+    - Single workspace member scenarios (focused crate)
+    - "db already loaded and is: single crate and workspace" paths
+- Notes:
+  - this fixture simulates a workspace where only one member has been indexed
+  - used for testing focused-crate operations within a multi-member workspace context
+  - the filename is dated `2026-04-03` because `cargo xtask recreate-backup-db`
     stamps outputs with UTC date
 
 ## `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45`

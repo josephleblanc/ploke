@@ -62,7 +62,14 @@ pub async fn index_workspace(
     } else {
         stopgap_pathbuf.clone()
     };
-    let resolved = match resolve_index_target(resolved_target) {
+
+    // Extract pwd from SystemState before calling sync function
+    let pwd = {
+        let system_guard = state.system.read().await;
+        system_guard.pwd().to_path_buf()
+    };
+
+    let resolved = match resolve_index_target(resolved_target, &pwd) {
         Ok(resolved) => resolved,
         Err(err) => {
             let msg = err.to_string();

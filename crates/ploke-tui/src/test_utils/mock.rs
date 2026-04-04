@@ -56,6 +56,7 @@ pub fn create_mock_app() -> App {
     let (cancel_tx, _cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
     let event_bus = EventBus::new(crate::EventBusCaps::default());
     let active_model_id = "mock-model".to_string();
+    let pwd = std::env::current_dir().expect("current dir");
 
     App::new(
         CommandStyle::Slash,
@@ -65,6 +66,7 @@ pub fn create_mock_app() -> App {
         active_model_id,
         ToolVerbosity::Normal,
         cancel_tx,
+        pwd,
     )
 }
 

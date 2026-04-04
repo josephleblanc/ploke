@@ -19,6 +19,8 @@ use ploke_llm::embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddings};
 use ploke_llm::router_only::openrouter::OpenRouter;
 use serde::Deserialize;
 use tokio::sync::mpsc;
+#[cfg(test)]
+use tokio::sync::watch;
 use tracing::{trace_span, warn};
 
 use super::commands::StateCommand;
@@ -555,6 +557,23 @@ pub async fn state_manager(
                 let mut chat_guard = state.chat.0.write().await;
                 chat_guard.set_current_context_tokens(tokens);
                 event_bus.send(MessageUpdatedEvent::new(chat_guard.current).into());
+            }
+            StateCommand::SetPwd { new_pwd } => {
+                // Transaction pattern: compile-time guarantee that lock is not held across await
+                let outcome = state
+                    .with_system_txn(|txn| {
+                        txn.set_pwd(new_pwd);
+                    })
+                    .await;
+
+                // Dispatch post-commit effects after lock is released
+                for effect in outcome.effects {
+                    match effect {
+                        super::PostCommit::EmitPwdChanged(pwd) => {
+                            event_bus.send(crate::AppEvent::System(SystemEvent::PwdChanged(pwd)));
+                        }
+                    }
+                }
             }
 
             _ => {}

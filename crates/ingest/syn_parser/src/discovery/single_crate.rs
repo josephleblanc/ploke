@@ -20,8 +20,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::discovery::DiscoveryError;
-
 // PROJECT_NAMESPACE_UUID is now defined in ploke_core
 // The old comment block explaining it remains relevant but the constant itself is moved.
 // Define a stable PROJECT_NAMESPACE UUID.
@@ -635,166 +633,6 @@ impl CrateContext {
     }
 }
 
-/// Output of the entire discovery phase, containing context for all target crates.
-///
-/// This struct automatically implements `Send + Sync` because its members
-/// (`HashMap<String, CrateContext>` and `HashMap<PathBuf, Vec<String>>`)
-/// are composed of types that are `Send + Sync`.
-///
-/// `HashMap` is used here because this structure is generated once during the
-/// single-threaded discovery phase and is expected to be used as read-only
-/// context by the parallel parsing phase (Phase 2). If Phase 2 required
-/// concurrent *writes* to this shared structure, `dashmap::DashMap` would be
-/// necessary.
-#[derive(Debug, Clone, Serialize)]
-pub struct DiscoveryOutput {
-    /// Context information for each successfully discovered crate, keyed by the absolute crate
-    /// root path.
-    pub crate_contexts: HashMap<PathBuf, CrateContext>,
-    // Removed initial_module_map: HashMap<PathBuf, Vec<String>>
-    /// A list of non-fatal errors (warnings) encountered during discovery.
-    /// The caller can inspect this list to decide how to handle issues like
-    /// walkdir errors or module scanning problems that didn't prevent the
-    /// overall discovery process from completing for the affected crate(s).
-    /// Note: Missing `src` directories are treated as critical errors and will
-    /// cause `run_discovery_phase` to return `Err`, not just add a warning here.
-    pub warnings: Vec<DiscoveryError>,
-}
-
-impl DiscoveryOutput {
-    /// Returns a reference to the `CrateContext` for the given crate root path, if found.
-    ///
-    /// # Example
-    /// ```
-    /// use syn_parser::discovery::{run_discovery_phase, DiscoveryOutput};
-    /// use tempfile::tempdir;
-    /// use std::fs;
-    ///
-    /// let root = tempdir().unwrap();
-    /// let crate_root = root.path().join("demo");
-    /// fs::create_dir_all(crate_root.join("src")).unwrap();
-    /// fs::write(
-    ///     root.path().join("Cargo.toml"),
-    ///     "[workspace]\nmembers = [\"demo\"]\n",
-    /// ).unwrap();
-    /// fs::write(
-    ///     crate_root.join("Cargo.toml"),
-    ///     r#"[package]
-    /// name = "demo"
-    /// version = "0.1.0"
-    /// edition = "2021"
-    /// "#,
-    /// ).unwrap();
-    /// fs::write(crate_root.join("src/lib.rs"), "pub fn demo() {}").unwrap();
-    ///
-    /// let discovery = run_discovery_phase(Some(root.path()), &[crate_root.clone()]).unwrap();
-    /// let context = discovery.get_crate_context(&crate_root).unwrap();
-    /// assert_eq!(context.name, "demo");
-    /// ```
-    pub fn get_crate_context(&self, crate_root_path: &Path) -> Option<&CrateContext> {
-        self.crate_contexts.get(crate_root_path)
-    }
-
-    /// Returns an iterator over the crate root paths and their corresponding `CrateContext`.
-    ///
-    /// # Example
-    /// ```
-    /// use syn_parser::discovery::run_discovery_phase;
-    /// use tempfile::tempdir;
-    /// use std::fs;
-    ///
-    /// let root = tempdir().unwrap();
-    /// fs::write(
-    ///     root.path().join("Cargo.toml"),
-    ///     "[workspace]\nmembers = [\"crate_a\", \"crate_b\"]\n",
-    /// ).unwrap();
-    /// for (name, version) in [("crate_a", "0.1.0"), ("crate_b", "0.2.0")] {
-    ///     let crate_root = root.path().join(name);
-    ///     fs::create_dir_all(crate_root.join("src")).unwrap();
-    ///     fs::write(
-    ///         crate_root.join("Cargo.toml"),
-    ///         format!(
-    ///             "[package]\nname = \"{}\"\nversion = \"{}\"\nedition = \"2021\"\n",
-    ///             name, version
-    ///         ),
-    ///     )
-    ///     .unwrap();
-    ///     fs::write(crate_root.join("src/lib.rs"), format!("pub fn {}_fn() {{}}\n", name)).unwrap();
-    /// }
-    ///
-    /// let crate_paths = ["crate_a", "crate_b"]
-    ///     .into_iter()
-    ///     .map(|name| root.path().join(name))
-    ///     .collect::<Vec<_>>();
-    /// let discovery = run_discovery_phase(Some(root.path()), &crate_paths).unwrap();
-    ///
-    /// let mut names: Vec<_> = discovery
-    ///     .iter_crate_contexts()
-    ///     .map(|(_, ctx)| ctx.name.as_str())
-    ///     .collect();
-    /// names.sort();
-    /// assert_eq!(names, ["crate_a", "crate_b"]);
-    /// ```
-    pub fn iter_crate_contexts(&self) -> impl Iterator<Item = (&PathBuf, &CrateContext)> + '_ {
-        self.crate_contexts.iter()
-    }
-
-    /// Returns a slice containing all non-fatal warnings collected during discovery.
-    ///
-    /// # Example
-    /// ```
-    /// use syn_parser::discovery::{DiscoveryError, DiscoveryOutput};
-    /// use std::collections::HashMap;
-    /// use std::path::PathBuf;
-    ///
-    /// let warning = DiscoveryError::MissingPackageName {
-    ///     path: PathBuf::from("/tmp/bad/Cargo.toml"),
-    /// };
-    /// let discovery = DiscoveryOutput {
-    ///     crate_contexts: HashMap::new(),
-    ///     workspace: None,
-    ///     warnings: vec![warning.clone()],
-    /// };
-    ///
-    /// assert!(matches!(
-    ///     discovery.warnings(),
-    ///     [DiscoveryError::MissingPackageName { .. }]
-    /// ));
-    /// ```
-    pub fn warnings(&self) -> &[DiscoveryError] {
-        &self.warnings
-    }
-
-    /// Returns `true` if any non-fatal warnings were collected during discovery.
-    ///
-    /// # Example
-    /// ```
-    /// use syn_parser::discovery::{DiscoveryError, DiscoveryOutput};
-    /// use std::collections::HashMap;
-    /// use std::path::PathBuf;
-    ///
-    /// let discovery = DiscoveryOutput {
-    ///     crate_contexts: HashMap::new(),
-    ///     workspace: None,
-    ///     warnings: vec![DiscoveryError::MissingPackageName {
-    ///         path: PathBuf::from("/tmp/bad/Cargo.toml"),
-    ///     }],
-    /// };
-    ///
-    /// assert!(discovery.has_warnings());
-    ///
-    /// let clean = DiscoveryOutput {
-    ///     crate_contexts: HashMap::new(),
-    ///     workspace: None,
-    ///     warnings: vec![],
-    /// };
-    /// assert!(!clean.has_warnings());
-    /// ```
-    pub fn has_warnings(&self) -> bool {
-        !self.warnings.is_empty()
-    }
-}
-
 pub(crate) fn features_from_cargo_toml(features: cargo_toml::FeatureSet) -> Features {
     Features(features.into_iter().collect())
 }
@@ -869,6 +707,7 @@ pub fn derive_crate_namespace(name: &str, _version: &str) -> Uuid {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::discovery::DiscoveryError;
 
     #[test]
     fn test_derive_crate_namespace_consistency() {
