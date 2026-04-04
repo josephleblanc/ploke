@@ -314,20 +314,6 @@ pub mod ui {
     }
 }
 
-#[derive(Debug, Clone, Error, Serialize, Deserialize)]
-#[deprecated(note = "use app::error::UiError instead")]
-pub enum UiError {
-    ExampleError,
-}
-
-impl std::fmt::Display for UiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            UiError::ExampleError => write!(f, "Example error occurred"),
-        }
-    }
-}
-
 // Other domains: file, rag, agent, system, ...
 
 #[derive(Clone, Debug)]

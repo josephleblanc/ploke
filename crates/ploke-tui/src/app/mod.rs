@@ -9,6 +9,7 @@ use ploke_llm::manager::events::endpoint;
 pub mod clipboard;
 pub mod commands;
 pub mod editor;
+pub mod error;
 pub mod events;
 pub mod input;
 pub mod message_item;
