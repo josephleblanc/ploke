@@ -153,14 +153,15 @@ async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata
     )
     .await;
 
-    {
-        let mut system_guard = state.system.write().await;
-        system_guard.set_loaded_workspace(
-            workspace_root.clone(),
-            vec![member_root.clone(), nested_root.clone()],
-            Some(member_root.clone()),
-        );
-    }
+    state
+        .with_system_txn(|txn| {
+            txn.set_loaded_workspace(
+                workspace_root.clone(),
+                vec![member_root.clone(), nested_root.clone()],
+                Some(member_root.clone()),
+            );
+        })
+        .await;
 
     let active_set = state
         .db
@@ -210,12 +211,12 @@ async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata
     );
     assert_eq!(
         state
-            .system
-            .read()
-            .await
-            .derive_path_policy(&[])
-            .expect("path policy after remove")
-            .roots,
+            .with_system_read(|sys| {
+                sys.derive_path_policy(&[])
+                    .expect("path policy after remove")
+                    .roots
+            })
+            .await,
         vec![workspace_root.clone(), nested_root.clone()]
     );
     assert!(
@@ -329,14 +330,15 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
     )
     .await;
 
-    {
-        let mut system_guard = state.system.write().await;
-        system_guard.set_loaded_workspace(
-            workspace_root.clone(),
-            vec![member_root.clone(), nested_root.clone()],
-            Some(member_root.clone()),
-        );
-    }
+    state
+        .with_system_txn(|txn| {
+            txn.set_loaded_workspace(
+                workspace_root.clone(),
+                vec![member_root.clone(), nested_root.clone()],
+                Some(member_root.clone()),
+            );
+        })
+        .await;
 
     let active_set = state
         .db
@@ -411,14 +413,13 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
     );
     assert_eq!(
         state
-            .system
-            .read()
+            .with_system_read(|sys| {
+                sys.derive_path_policy(&[])
+                    .expect("path policy after import")
+                    .roots
+            })
             .await
-            .derive_path_policy(&[])
-            .expect("path policy after import")
-            .roots
-            .iter()
-            .cloned()
+            .into_iter()
             .collect::<std::collections::BTreeSet<_>>(),
         [
             workspace_root.clone(),
@@ -569,14 +570,15 @@ async fn workspace_load_crates_conflict_preserves_runtime_state() {
     )
     .await;
 
-    {
-        let mut system_guard = state.system.write().await;
-        system_guard.set_loaded_workspace(
-            workspace_root.clone(),
-            vec![member_root.clone(), nested_root.clone()],
-            Some(nested_root.clone()),
-        );
-    }
+    state
+        .with_system_txn(|txn| {
+            txn.set_loaded_workspace(
+                workspace_root.clone(),
+                vec![member_root.clone(), nested_root.clone()],
+                Some(nested_root.clone()),
+            );
+        })
+        .await;
 
     let active_set = state
         .db
@@ -620,12 +622,12 @@ async fn workspace_load_crates_conflict_preserves_runtime_state() {
     );
     assert_eq!(
         state
-            .system
-            .read()
-            .await
-            .derive_path_policy(&[])
-            .expect("path policy after failed import")
-            .roots,
+            .with_system_read(|sys| {
+                sys.derive_path_policy(&[])
+                    .expect("path policy after failed import")
+                    .roots
+            })
+            .await,
         vec![
             workspace_root.clone(),
             member_root.clone(),

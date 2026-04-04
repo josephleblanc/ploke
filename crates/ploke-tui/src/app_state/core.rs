@@ -148,21 +148,6 @@ impl SystemState {
     // AppState::with_system_txn() instead for compile-time lock safety.
 }
 
-/// # Deprecation Notice
-/// Direct access to the underlying RwLock via this Deref impl is **discouraged**.
-/// Use `AppState::with_system_txn()` for mutations or `AppState::with_system_read()`
-/// for read-only access. These methods provide compile-time guarantees against
-/// holding locks across await points.
-///
-/// This Deref impl will be removed in a future refactor once all call sites
-/// are migrated to the transaction pattern. New code must use the transaction API.
-impl std::ops::Deref for SystemState {
-    type Target = RwLock<SystemStatus>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 #[derive(Debug)]
 pub struct IndexingState(Arc<Mutex<IndexingStatus>>);
 
@@ -520,6 +505,25 @@ impl AppState {
         let result = f(&*guard);
         drop(guard);
         result
+    }
+
+    /// Non-blocking read access to SystemStatus.
+    ///
+    /// Returns `None` if the lock is currently held by another task.
+    /// This is useful for UI code that needs to be non-blocking.
+    pub fn try_system_read<R>(&self, f: impl FnOnce(&SystemStatus) -> R) -> Option<R> {
+        self.system.0.try_read().ok().map(|guard| f(&*guard))
+    }
+
+    /// Test-only method that returns the raw read guard.
+    ///
+    /// # Safety Warning
+    /// This intentionally allows holding the lock across await points, which
+    /// can cause deadlocks in production code. Use only for testing concurrent
+    /// lock behavior.
+    #[cfg(feature = "test_harness")]
+    pub async fn system_raw_read_guard(&self) -> tokio::sync::RwLockReadGuard<'_, SystemStatus> {
+        self.system.0.read().await
     }
 }
 
@@ -996,6 +1000,11 @@ impl<'a> SystemTxn<'a> {
         self.state.has_loaded_crates()
     }
 
+    /// Returns a vector of all loaded crate IDs.
+    pub fn loaded_crate_ids(&self) -> Vec<CrateId> {
+        self.state.loaded_crates.keys().copied().collect()
+    }
+
     /// Returns true if the "no workspace tip" has already been shown.
     pub fn no_workspace_tip_shown(&self) -> bool {
         self.state.no_workspace_tip_shown
@@ -1019,6 +1028,14 @@ impl<'a> SystemTxn<'a> {
     /// Set workspace freshness for a crate.
     pub fn set_workspace_freshness(&mut self, crate_id: CrateId, freshness: WorkspaceFreshness) {
         self.state.set_workspace_freshness(crate_id, freshness);
+    }
+
+    /// Record index completion for a crate, incrementing its version and marking
+    /// dependent crates as invalidated.
+    ///
+    /// Returns the new version number for the crate.
+    pub fn record_index_complete(&mut self, crate_id: CrateId) -> u64 {
+        self.state.record_index_complete(crate_id)
     }
 
     /// Load a workspace with the given members and focused crate.

@@ -126,13 +126,9 @@ async fn workspace_restore_assigns_loaded_workspace_membership_from_db() {
         "member_root should be in loaded crates"
     );
 
-    let policy_roots = {
-        let guard = state.system.read().await;
-        guard
-            .derive_path_policy(&[])
-            .expect("workspace policy")
-            .roots
-    };
+    let policy_roots = state
+        .with_system_read(|sys| sys.derive_path_policy(&[]).expect("workspace policy").roots)
+        .await;
     let mut expected_policy_roots = vec![fixture_workspace_root.clone()];
     expected_policy_roots.extend(expected_member_roots.iter().cloned());
     assert_eq!(policy_roots, expected_policy_roots);

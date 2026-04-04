@@ -80,7 +80,9 @@ async fn index_workspace_resolves_ancestor_workspace_from_nested_path() {
     )
     .await;
 
-    let nested_failure = state.system.read().await.last_parse_failure().cloned();
+    let nested_failure = state
+        .with_system_read(|sys| sys.last_parse_failure().cloned())
+        .await;
     assert!(
         nested_failure.is_none(),
         "unexpected parse failure: {:?}",
@@ -100,12 +102,12 @@ async fn index_workspace_resolves_ancestor_workspace_from_nested_path() {
     );
 
     let policy_roots = state
-        .system
-        .read()
-        .await
-        .derive_path_policy(&[])
-        .expect("path policy after workspace index")
-        .roots;
+        .with_system_read(|sys| {
+            sys.derive_path_policy(&[])
+                .expect("path policy after workspace index")
+                .roots
+        })
+        .await;
     assert_eq!(
         policy_roots,
         vec![
@@ -128,14 +130,15 @@ async fn index_workspace_failure_keeps_previous_loaded_workspace_state() {
         .join("not_a_cargo_target");
     std::fs::create_dir_all(&missing_target).expect("create missing target dir");
 
-    {
-        let mut system_guard = state.system.write().await;
-        system_guard.set_loaded_workspace(
-            existing_root.clone(),
-            existing_members.clone(),
-            Some(existing_root.clone()),
-        );
-    }
+    state
+        .with_system_txn(|txn| {
+            txn.set_loaded_workspace(
+                existing_root.clone(),
+                existing_members.clone(),
+                Some(existing_root.clone()),
+            );
+        })
+        .await;
 
     index_workspace(
         &state,
@@ -155,11 +158,8 @@ async fn index_workspace_failure_keeps_previous_loaded_workspace_state() {
     );
 
     let last_failure = state
-        .system
-        .read()
+        .with_system_read(|sys| sys.last_parse_failure().cloned())
         .await
-        .last_parse_failure()
-        .cloned()
         .expect("parse failure recorded");
     assert!(
         last_failure
@@ -226,10 +226,11 @@ async fn index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_d
     let state = test_state();
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
     let fixture_root = repo_root.join("tests/fixture_crates/fixture_update_embed");
-    {
-        let mut system_guard = state.system.write().await;
-        system_guard.set_focus_from_root(fixture_root.clone());
-    }
+    state
+        .with_system_txn(|txn| {
+            txn.set_focus_from_root(fixture_root.clone());
+        })
+        .await;
 
     index_workspace(
         &state,
@@ -241,7 +242,9 @@ async fn index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_d
     )
     .await;
 
-    let failure = state.system.read().await.last_parse_failure().cloned();
+    let failure = state
+        .with_system_read(|sys| sys.last_parse_failure().cloned())
+        .await;
     assert!(
         failure.is_none(),
         "unexpected parse failure after relative target anchoring: {:?}",

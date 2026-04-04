@@ -171,19 +171,22 @@ pub async fn state_manager(
                 handlers::db::update_database(&state, &event_bus).await;
             }
             StateCommand::RecordIndexCompleted => {
-                let mut sys = state.system.write().await;
-                let loaded_ids: Vec<_> = sys.loaded_crates.keys().copied().collect();
-                if loaded_ids.is_empty() {
-                    tracing::warn!("Indexing completed but no crates are loaded");
-                }
-                for crate_id in loaded_ids {
-                    let version = sys.record_index_complete(crate_id);
-                    tracing::debug!(
-                        "Indexing complete; crate_id={:?} version={}",
-                        crate_id,
-                        version
-                    );
-                }
+                state
+                    .with_system_txn(|txn| {
+                        let loaded_ids = txn.loaded_crate_ids();
+                        if loaded_ids.is_empty() {
+                            tracing::warn!("Indexing completed but no crates are loaded");
+                        }
+                        for crate_id in loaded_ids {
+                            let version = txn.record_index_complete(crate_id);
+                            tracing::debug!(
+                                "Indexing complete; crate_id={:?} version={}",
+                                crate_id,
+                                version
+                            );
+                        }
+                    })
+                    .await;
             }
 
             StateCommand::EmbedMessage {

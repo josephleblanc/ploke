@@ -53,21 +53,19 @@ async fn workspace_fixture_app_state() -> Arc<AppState> {
     let member_a = ws.join("member_root");
     let member_b = ws.join("nested/member_nested");
 
-    {
-        let mut g = state.system.write().await;
-        g.set_loaded_workspace(
-            ws.clone(),
-            vec![member_a.clone(), member_b.clone()],
-            Some(member_a.clone()),
-        );
-    }
+    state
+        .with_system_txn(|txn| {
+            txn.set_loaded_workspace(
+                ws.clone(),
+                vec![member_a.clone(), member_b.clone()],
+                Some(member_a.clone()),
+            );
+        })
+        .await;
 
     let policy = state
-        .system
-        .read()
-        .await
-        .derive_path_policy(&[])
-        .expect("path policy after load");
+        .with_system_read(|sys| sys.derive_path_policy(&[]).expect("path policy after load"))
+        .await;
     state
         .io_handle
         .update_roots(Some(policy.roots.clone()), Some(policy.symlink_policy))
