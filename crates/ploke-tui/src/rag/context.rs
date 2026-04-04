@@ -171,15 +171,17 @@ pub async fn process_with_rag(
     }
 
     // Conversation-only fallback: prepend a short system notice then send PromptConstructed
-    let (crate_loaded, first_tip): (bool, bool) = {
-        let mut sys = state.system.write().await;
-        let loaded = sys.has_loaded_crates();
-        let first = !sys.no_workspace_tip_shown;
-        if !loaded {
-            sys.no_workspace_tip_shown = true;
-        }
-        (loaded, first)
-    };
+    let outcome = state
+        .with_system_txn(|txn| {
+            let loaded = txn.has_loaded_crates();
+            let first = !txn.no_workspace_tip_shown();
+            if !loaded {
+                txn.mark_no_workspace_tip_shown();
+            }
+            (loaded, first)
+        })
+        .await;
+    let (crate_loaded, first_tip) = outcome.result;
     // If no crate is loaded, surface a user-facing tip in chat
     if !crate_loaded && first_tip {
         add_msg("No workspace is selected. Tip: use 'index start <path>' to index a project or 'load crate <name>' to load a saved database. Proceeding without code context.").await;

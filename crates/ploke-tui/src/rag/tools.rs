@@ -196,7 +196,10 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         typed_req,
         call_id,
     } = tool_call_params.clone();
-    if let Some(parse_failure) = state.system.read().await.last_parse_failure() {
+    if let Some(parse_failure) = state
+        .with_system_read(|sys| sys.last_parse_failure().cloned())
+        .await
+    {
         tool_call_params.tool_call_failed(parse_failure.message.clone());
         return;
     }
@@ -237,7 +240,12 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     }
 
     // Resolve each edit by canonical path -> EmbeddingData -> WriteSnippetData
-    let tool_paths = { state.system.read().await.tool_path_context() };
+    let tool_paths = state
+        .with_system_read(|sys| {
+            sys.tool_path_context()
+                .map(|(p, pol)| (p.clone(), pol.clone()))
+        })
+        .await;
     let primary_root = tool_paths.as_ref().map(|(p, _)| p.clone());
     let editing_cfg = { state.config.read().await.editing.clone() };
     let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
@@ -729,19 +737,19 @@ pub async fn apply_ns_code_edit_tool(
         //         .join(p)
         // };
 
-        let (primary_root, policy) =
-            state
-                .system
-                .read()
-                .await
-                .tool_path_context()
-                .ok_or_else(|| {
-                    ploke_error::Error::Domain(DomainError::Ui {
+        let (primary_root, policy) = state
+            .with_system_read(|sys| {
+                sys.tool_path_context()
+                    .map(|(p, pol)| (p.clone(), pol.clone()))
+            })
+            .await
+            .ok_or_else(|| {
+                ploke_error::Error::Domain(DomainError::Ui {
                     message:
                         "No workspace is loaded; load a workspace before using non_semantic_patch."
                             .to_string(),
                 })
-                })?;
+            })?;
 
         let requested_path = PathBuf::from(file.as_str());
         let abs_path = path_scoping::resolve_tool_path(
