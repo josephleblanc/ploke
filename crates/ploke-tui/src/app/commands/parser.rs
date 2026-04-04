@@ -68,6 +68,11 @@ pub enum Command {
     WorkspaceUpdate,
     WorkspaceRemove(String),
     CopySelection,
+    /// Index command: `/index` with optional target path
+    /// Target resolution (workspace vs crate) happens in executor based on PWD context.
+    Index {
+        target: Option<String>,
+    },
     Raw(String),
     SearchContext(String),
     OpenContextPlan,
@@ -339,6 +344,17 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             Command::SearchContext(search_term.to_string())
         }
         "contextplan" | "context plan" => Command::OpenContextPlan,
+        "index" => Command::Index { target: None },
+        s if s.starts_with("index ") => {
+            let rest = s.trim_start_matches("index ").trim();
+            if rest.is_empty() {
+                Command::Index { target: None }
+            } else {
+                Command::Index {
+                    target: Some(rest.to_string()),
+                }
+            }
+        }
         other => Command::Raw(other.to_string()),
     }
 }

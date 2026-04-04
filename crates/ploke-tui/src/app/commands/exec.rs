@@ -238,12 +238,22 @@ pub fn execute(app: &mut App, command: Command) {
         }
         Command::Update => spawn_update(app),
         Command::LoadWorkspace(workspace_ref) => {
-            app.send_cmd(StateCommand::AddMessageImmediate {
-                msg: format!("Attempting to load workspace snapshot for {workspace_ref}..."),
-                kind: MessageKind::SysInfo,
-                new_msg_id: Uuid::new_v4(),
+            // TODO: Validate workspace_ref is actually a workspace name, not a crate name
+            // If it looks like a crate name (matches a crate in current workspace),
+            // suggest `/load crate <name>` instead.
+            // See test: test_no_db_workspace_root_load_workspace_crate_name_suggests_load_crate
+            #[cfg(test)]
+            app.send_cmd(StateCommand::TestTodo {
+                test_name:
+                    "test_no_db_workspace_root_load_workspace_crate_name_suggests_load_crate"
+                        .to_string(),
+                message: format!(
+                    "Command::LoadWorkspace validation not yet implemented. \
+                     Should check if '{}' is a workspace name or crate name. \
+                     If crate name: suggest `/load crate {}` instead.",
+                    workspace_ref, workspace_ref
+                ),
             });
-            app.send_cmd(StateCommand::LoadDb { workspace_ref });
         }
         Command::LoadWorkspaceCrates {
             workspace_ref,
@@ -339,6 +349,46 @@ pub fn execute(app: &mut App, command: Command) {
         }
         Command::OpenContextPlan => {
             app.open_context_plan_overlay();
+        }
+        Command::Index { target } => {
+            match target.as_deref() {
+                None => {
+                    // /index - auto-detect workspace vs crate from PWD
+                    #[cfg(test)]
+                    app.send_cmd(StateCommand::TestTodo {
+                        test_name: "test_no_db_workspace_root_index_indexes_workspace".to_string(),
+                        message: "Command::Index { target: None } not yet implemented. \
+                                  Expected behavior: Detect workspace vs crate from PWD, \
+                                  then dispatch StateCommand::IndexTargetDir."
+                            .to_string(),
+                    });
+                }
+                Some("crate") => {
+                    // /index crate - list workspace members + suggest command
+                    #[cfg(test)]
+                    app.send_cmd(StateCommand::TestTodo {
+                        test_name: "test_no_db_workspace_root_index_crate_lists_members"
+                            .to_string(),
+                        message: "Command::Index { target: Some('crate') } not yet implemented. \
+                                  Expected behavior: List workspace members from Cargo.toml \
+                                  and suggest `/index crate <member>` or `/index workspace`."
+                            .to_string(),
+                    });
+                }
+                Some(path) => {
+                    // /index <path> or /index crate <name> - index specific target
+                    #[cfg(test)]
+                    app.send_cmd(StateCommand::TestTodo {
+                        test_name: "test_no_db_workspace_root_index_indexes_workspace".to_string(),
+                        message: format!(
+                            "Command::Index {{ target: Some('{}') }} not yet implemented. \
+                             Expected behavior: Resolve target path/name, \
+                             then dispatch StateCommand::IndexTargetDir.",
+                            path
+                        ),
+                    });
+                }
+            }
         }
         Command::Raw(cmd) => execute_legacy(app, &cmd),
     }

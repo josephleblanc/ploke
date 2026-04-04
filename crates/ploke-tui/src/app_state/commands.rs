@@ -246,6 +246,14 @@ pub enum StateCommand {
     SetPwd {
         new_pwd: PathBuf,
     },
+    /// Test-only marker command for TDD-style tests.
+    /// Used to mark unimplemented executor paths without panicking.
+    /// The string describes what behavior is expected when implemented.
+    #[cfg(test)]
+    TestTodo {
+        test_name: String,
+        message: String,
+    },
 }
 
 impl StateCommand {
@@ -313,6 +321,8 @@ impl StateCommand {
             SelectEmbeddingModel { .. } => "SelectEmbeddingModel",
             UpdateContextTokens { .. } => "UpdateContextTokens",
             SetPwd { .. } => "SetPwd",
+            #[cfg(test)]
+            TestTodo { .. } => "TestTodo",
         }
     }
 }

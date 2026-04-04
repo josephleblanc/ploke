@@ -1,3 +1,87 @@
+//! ## Overview
+//!
+//! `TestRuntime` is a type-state builder for setting up isolated integration
+//! tests. It incrementally spawns the async actors that make up the app
+//! (FileManager, StateManager, EventBus, etc.) while giving you hooks to
+//! intercept and observe events/commands.
+//!
+//! ## The Type Parameters (F, S, E, L, O)
+//!
+//! Each generic parameter tracks whether an actor is `Spawned` or `NotSpawned`:
+//!
+//! | Param | Actor           | What it does                                       |
+//! |-------|-----------------|----------------------------------------------------|
+//! | `F`   | FileManager     | File I/O + watcher                                 |
+//! | `S`   | StateManager    | Core state machine (intercepts commands via relay) |
+//! | `E`   | EventBus        | Pub/sub for events                                 |
+//! | `L`   | LlmManager      | LLM requests                                       |
+//! | `O`   | Observability   | Tracing/metrics                                    |
+//!
+//! This is a **compile-time state machine** — once you call
+//! `spawn_state_manager()`, the return type has `S=Spawned` and you can't spawn
+//! it again. Prevents double-spawn bugs at compile time.
+//!
+//! ## Key Design: The Relay Pattern
+//!
+//! The most important piece is `RelayStateCmd` (lines 40-124). When you spawn the state manager:
+//!
+//! 1. **Interception**: Your test's `cmd_tx` actually sends to the relay, not
+//! the real state manager
+//! 2. **Debug emission**: The relay converts every `StateCommand` to a
+//! `DebugStateCommand` (string representation) and forwards it to
+//! `debug_string_rx`
+//! 3. **Proxying**: Commands with `oneshot::Sender` fields get proxied so
+//! callers still receive responses
+//! 4. **Forwarding**: The actual command goes to the real state manager
+//!
+//! The presence of the Relay means tests can `recv()` on `debug_string_rx` to
+//! assert exactly which `StateCommand` was issued without needing the real
+//! state manager to process it.
+//!
+//! ## Usage Patterns
+//!
+//! ### 1. Minimal Setup (App handle only, no actors)
+//! ```rust,norun
+//! let rt = TestRuntime::new(&fixture_db);  // All params = NotSpawned
+//! let app = rt.into_app(pwd);              // Get App handle, no spawning needed
+//! // Use app.state_cmd_tx() to send commands, but nothing processes them
+//! ```
+//!
+//! ### 2. With State Manager (most command tests)
+//! ```rust,norun
+//! let rt = TestRuntime::new(&fixture_db)
+//!     .spawn_state_manager();              // Returns TestRuntime<_, Spawned, _, _, _>
+//!
+//! let events = rt.events_builder().build_app_only();
+//! let mut debug_rx = events.app_actor_events.debug_string_rx.unwrap();
+//!
+//! let app = rt.into_app(pwd);
+//! // Send command, assert on debug_rx.recv()
+//! ```
+//!
+//! ### 3. Full Stack (for integration tests)
+//! ```rust,norun
+//! let rt = TestRuntime::new(&fixture_db)
+//!     .spawn_file_manager()
+//!     .spawn_state_manager()
+//!     .spawn_event_bus()
+//!     .spawn_llm_manager()
+//!     .spawn_observability();
+//! ```
+//!
+//! ## The Events Builder
+//!
+//! After spawning, `rt.events_builder()` gives you a **type-state builder** for subscribing to channels:
+//!
+//! ```rust,norun
+//! let events = rt.events_builder()
+//!     .build_app_only();           // Just app actor events + debug_string_rx
+//!     .build_app_io();             // App + I/O manager
+//!     .build_app_event_bus();      // App + event bus subscriptions
+//!     .build_all();                 // Everything
+//! ```
+// AI_DOC:written kimi-k2.5 2026-04-04
+// AI_DOC:checked JL        2026-04-04
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use color_eyre::Result;
@@ -35,6 +119,11 @@ impl DebugStateCommand {
         let debug_string = format!("{:?}", cmd);
         Self(debug_string)
     }
+
+    /// Returns the debug string representation of the StateCommand.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 pub(crate) struct RelayStateCmd {
@@ -42,9 +131,6 @@ pub(crate) struct RelayStateCmd {
     state_cmd_tx: mpsc::Sender<StateCommand>,
     debug_string_tx: mpsc::Sender<DebugStateCommand>,
 }
-
-// pub(crate) impl RelayStateCmd {
-// }
 
 async fn relay_oneshot<T: Send + 'static>(
     original: oneshot::Sender<T>,
@@ -199,6 +285,8 @@ impl RelayStateCmd {
 // | oneshot::Receiver<T> | Forward as-is     | Test creates pair, keeps Sender|
 //
 // =============================================================================
+// AI_DOC:written kimi-k2.5 2026-04-03
+// AI_DOC:checked JL        2026-04-04
 
 // example mock setup of sub-component that would usually interact with external
 // resources like filesystem
