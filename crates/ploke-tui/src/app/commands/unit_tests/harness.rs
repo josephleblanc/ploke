@@ -82,7 +82,7 @@
 //! ```
 // AI_DOC:written kimi-k2.5 2026-04-04
 // AI_DOC:checked JL        2026-04-04
-use std::{fmt::Debug, path::PathBuf, sync::Arc};
+use std::{fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
 
 use color_eyre::Result;
 use lazy_static::lazy_static;
@@ -97,13 +97,14 @@ use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
 use tempfile::{TempDir, tempdir};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot, watch};
+use tokio::time::timeout;
 
 use crate::{
     AppEvent, CancelChatToken, ErrorEvent, EventBus, EventBusCaps, EventPriority, RagEvent,
     app::App,
-    app_state::{
-        AppState, ChatState, ConfigState, RuntimeConfig, StateCommand, SystemState, state_manager,
-    },
+    app_state::commands::{emit_validation_error, validate_state_command},
+    app_state::state_manager,
+    app_state::{AppState, ChatState, ConfigState, RuntimeConfig, StateCommand, SystemState},
     chat_history::ChatHistory,
     context_plan,
     file_man::FileManager,
@@ -126,10 +127,46 @@ impl DebugStateCommand {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ValidationProbeEvent {
+    command: String,
+    validation: Option<Result<(), String>>,
+    /// User-facing error message (if any)
+    error_message: Option<String>,
+    /// Recovery suggestion (if any)
+    recovery_suggestion: Option<String>,
+}
+
+impl ValidationProbeEvent {
+    pub fn command(&self) -> &str {
+        &self.command
+    }
+
+    pub fn validation(&self) -> Option<&Result<(), String>> {
+        self.validation.as_ref()
+    }
+
+    pub fn error_message(&self) -> Option<&str> {
+        self.error_message.as_deref()
+    }
+
+    pub fn recovery_suggestion(&self) -> Option<&str> {
+        self.recovery_suggestion.as_deref()
+    }
+}
+
 pub(crate) struct RelayStateCmd {
     state_cmd_rx: mpsc::Receiver<StateCommand>,
     state_cmd_tx: mpsc::Sender<StateCommand>,
     debug_string_tx: mpsc::Sender<DebugStateCommand>,
+}
+
+pub(crate) struct ValidationRelayStateCmd {
+    state_cmd_rx: mpsc::Receiver<StateCommand>,
+    debug_string_tx: mpsc::Sender<DebugStateCommand>,
+    validation_tx: mpsc::Sender<ValidationProbeEvent>,
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
 }
 
 async fn relay_oneshot<T: Send + 'static>(
@@ -205,6 +242,64 @@ impl RelayStateCmd {
                 .send(proxied_cmd)
                 .await
                 .inspect_err(|e| tracing::error!("{e}"));
+        }
+    }
+}
+
+impl ValidationRelayStateCmd {
+    pub(crate) async fn run_relay(self) {
+        let ValidationRelayStateCmd {
+            mut state_cmd_rx,
+            debug_string_tx,
+            validation_tx,
+            state,
+            event_bus,
+        } = self;
+
+        // Subscribe to error events for capturing user-facing errors
+        let mut error_rx = event_bus.subscribe(EventPriority::Realtime);
+
+        while let Some(cmd) = state_cmd_rx.recv().await {
+            let debug_string = DebugStateCommand::debug_string_from_ref(&cmd);
+            let _ = debug_string_tx
+                .send(debug_string)
+                .await
+                .inspect_err(|e| tracing::error!("{e}"));
+
+            let validation: Option<Result<(), String>> =
+                match validate_state_command(&cmd, &state).await {
+                    Some(Ok(())) => Some(Ok(())),
+                    Some(Err(err)) => {
+                        emit_validation_error(&event_bus, err.clone());
+                        Some(Err(err.to_string()))
+                    }
+                    None => None,
+                };
+
+            // Try to capture any error events that occur as a result of this command
+            // Use a short timeout to avoid blocking tests
+            let (error_message, recovery_suggestion) =
+                match timeout(Duration::from_millis(10), error_rx.recv()).await {
+                    Ok(Ok(AppEvent::Error(error_event))) => {
+                        // Extract error message from ErrorEvent
+                        let msg = Some(error_event.message.clone());
+                        // TODO: When UiError is implemented, extract recovery suggestion
+                        (msg, None)
+                    }
+                    _ => (None, None),
+                };
+
+            if validation.is_some() || error_message.is_some() || recovery_suggestion.is_some() {
+                let _ = validation_tx
+                    .send(ValidationProbeEvent {
+                        command: cmd.discriminant().to_string(),
+                        validation,
+                        error_message,
+                        recovery_suggestion,
+                    })
+                    .await
+                    .inspect_err(|e| tracing::error!("{e}"));
+            }
         }
     }
 }
@@ -324,6 +419,7 @@ pub struct TestInAppActorBuilder {
     pub cancel_chat_rx: Option<watch::Receiver<CancelChatToken>>,
     pub context_plan_history: Option<Arc<std::sync::RwLock<context_plan::ContextPlanHistory>>>,
     pub debug_string_rx: Option<mpsc::Receiver<DebugStateCommand>>,
+    pub validation_rx: Option<mpsc::Receiver<ValidationProbeEvent>>,
 }
 
 /// Listens for items that could be recieved by sent by App
@@ -334,6 +430,7 @@ pub struct TestInAppActor {
     pub cancel_chat_rx: watch::Receiver<CancelChatToken>,
     pub context_plan_history: Option<Arc<std::sync::RwLock<context_plan::ContextPlanHistory>>>,
     pub debug_string_rx: Option<mpsc::Receiver<DebugStateCommand>>,
+    pub validation_rx: Option<mpsc::Receiver<ValidationProbeEvent>>,
 }
 
 /// Listens for broadcast events that could be sent by the IoManagerHandle
@@ -445,6 +542,7 @@ impl Default for TestInAppActorBuilder {
             cancel_chat_rx: None,
             context_plan_history: None,
             debug_string_rx: None,
+            validation_rx: None,
         }
     }
 }
@@ -477,6 +575,7 @@ impl TestInAppActorBuilder {
         event_bus: &EventBus,
         cancel_tx: &watch::Sender<CancelChatToken>,
         debug_string_rx: Option<mpsc::Receiver<DebugStateCommand>>,
+        validation_rx: Option<mpsc::Receiver<ValidationProbeEvent>>,
     ) -> Self {
         Self {
             event_rx: Some(event_bus.subscribe(EventPriority::Realtime)),
@@ -484,6 +583,7 @@ impl TestInAppActorBuilder {
             cancel_chat_rx: Some(cancel_tx.subscribe()),
             context_plan_history: None,
             debug_string_rx,
+            validation_rx,
         }
     }
 
@@ -494,6 +594,7 @@ impl TestInAppActorBuilder {
             cancel_chat_rx: self.cancel_chat_rx.expect("cancel_chat_rx not set"),
             context_plan_history: self.context_plan_history,
             debug_string_rx: self.debug_string_rx,
+            validation_rx: self.validation_rx,
         }
     }
 }
@@ -667,6 +768,7 @@ struct TestRuntimeInner {
     cmd_tx: mpsc::Sender<StateCommand>,
     cmd_rx: std::sync::Mutex<Option<mpsc::Receiver<StateCommand>>>,
     debug_string_rx: std::sync::Mutex<Option<mpsc::Receiver<DebugStateCommand>>>,
+    validation_rx: std::sync::Mutex<Option<mpsc::Receiver<ValidationProbeEvent>>>,
     rag_event_tx: mpsc::Sender<RagEvent>,
     cancel_tx: watch::Sender<CancelChatToken>,
 }
@@ -721,6 +823,49 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
         Arc::new(Mutex::new(self.into_app(pwd)))
     }
 
+    /// Set up SystemStatus to reflect a loaded workspace/crate state.
+    /// This simulates the state after a successful `/load` command without requiring
+    /// the actual load process (registry lookup, DB restore, etc.).
+    ///
+    /// # Arguments
+    /// * `workspace_root` - Path to the workspace root directory
+    /// * `member_roots` - Paths to workspace member crate roots
+    /// * `focused_root` - Path to the initially focused crate (must be in member_roots)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// rt.setup_loaded_workspace(
+    ///     "/path/to/workspace".into(),
+    ///     vec!["/path/to/workspace/member_a".into(), "/path/to/workspace/member_b".into()],
+    ///     Some("/path/to/workspace/member_a".into()),
+    /// ).await;
+    /// ```
+    pub async fn setup_loaded_workspace(
+        &self,
+        workspace_root: PathBuf,
+        member_roots: Vec<PathBuf>,
+        focused_root: Option<PathBuf>,
+    ) {
+        let _ = self
+            .inner
+            .state
+            .with_system_raw(|sys| {
+                sys.set_loaded_workspace(workspace_root, member_roots, focused_root);
+            })
+            .await;
+    }
+
+    /// Set up SystemStatus to reflect a loaded standalone crate (no workspace).
+    /// Standalone crates are loaded as a single-member workspace.
+    ///
+    /// # Arguments
+    /// * `crate_root` - Path to the crate root directory
+    pub async fn setup_loaded_standalone_crate(&self, crate_root: PathBuf) {
+        // A standalone crate is treated as a single-member workspace
+        self.setup_loaded_workspace(crate_root.clone(), vec![crate_root], None)
+            .await;
+    }
+
     /// Returns a fully-populated [`TestEventsBuilder`] wired to this runtime's channels.
     pub fn events_builder(
         &self,
@@ -735,11 +880,18 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             .lock()
             .expect("debug_string_rx mutex poisoned")
             .take();
+        let validation_rx = self
+            .inner
+            .validation_rx
+            .lock()
+            .expect("validation_rx mutex poisoned")
+            .take();
         TestEventsBuilder::default()
             .with_app(TestInAppActorBuilder::from_app(
                 &self.inner.event_bus,
                 &self.inner.cancel_tx,
                 debug_string_rx,
+                validation_rx,
             ))
             .with_io(TestOutIoManagerHandleBuilder::from_io(
                 &self.inner.state.io_handle,
@@ -827,6 +979,7 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
                 cmd_tx,
                 cmd_rx: std::sync::Mutex::new(Some(cmd_rx)),
                 debug_string_rx: std::sync::Mutex::new(None),
+                validation_rx: std::sync::Mutex::new(None),
                 rag_event_tx,
                 cancel_tx,
             }),
@@ -889,6 +1042,40 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             Arc::clone(&self.inner.event_bus),
             self.inner.rag_event_tx.clone(),
         ));
+        self._cast()
+    }
+
+    pub fn spawn_validation_probe(self) -> TestRuntime<F, Spawned, E, L, O> {
+        let cmd_rx = self
+            .inner
+            .cmd_rx
+            .lock()
+            .expect("cmd_rx mutex poisoned")
+            .take()
+            .expect("cmd_rx already consumed; validation probe can only be spawned once");
+
+        let (debug_string_tx, debug_string_rx) = mpsc::channel::<DebugStateCommand>(1024);
+        let (validation_tx, validation_rx) = mpsc::channel::<ValidationProbeEvent>(1024);
+        let probe = ValidationRelayStateCmd {
+            state_cmd_rx: cmd_rx,
+            debug_string_tx,
+            validation_tx,
+            state: Arc::clone(&self.inner.state),
+            event_bus: Arc::clone(&self.inner.event_bus),
+        };
+
+        *self
+            .inner
+            .debug_string_rx
+            .lock()
+            .expect("debug_string_rx mutex poisoned") = Some(debug_string_rx);
+        *self
+            .inner
+            .validation_rx
+            .lock()
+            .expect("validation_rx mutex poisoned") = Some(validation_rx);
+
+        tokio::spawn(probe.run_relay());
         self._cast()
     }
 

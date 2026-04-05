@@ -125,10 +125,7 @@ pub trait WithDiscoveryManifestCargoToml<T>: Sized {
 impl<T> WithDiscoveryManifestCargoToml<T> for Result<T, cargo_toml::Error> {
     #[track_caller]
     fn with_discovery_err(self, ctx: ManifestCtx<'_>) -> ManifestCargoTomlOutcome<'_, T> {
-        ManifestCargoTomlOutcome {
-            result: self,
-            ctx,
-        }
+        ManifestCargoTomlOutcome { result: self, ctx }
     }
 }
 

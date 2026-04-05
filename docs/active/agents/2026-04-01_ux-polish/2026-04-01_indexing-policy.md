@@ -245,92 +245,12 @@ A crate path is **valid** for `/index` operations when all of the following are 
 ## 2. Add a smoke test in TDD style for new decision tree behavior
 status: in progress
 
+Note: previous attempt divurged from inital instructions, we are going to refactor/delete later.
 Test file: `crates/ploke-tui/tests/command_decision_tree_smoke.rs`
-
-The smoke test follows TDD principles - it should fail until the new decision tree is implemented. Test run results:
-
-```
-Summary: 8/13 tests passed, 5 failed
-
-Failed tests:
-1. save_db_no_db_loaded - Expected error about no crate/workspace, got "Success: Cozo data saved..."
-2. update_no_db_loaded - Expected error about no crate/workspace, got actual behavior
-3. (and 3 others)
-```
-
-This confirms the test correctly captures the expected new behavior. Once the decision tree is implemented (Step 3), these tests should pass.
-
-Before writing test, verify that no `ploke-tui` tests are red. If any red, stop
-and ask for guidance.
-
-Test design:
-- cover all cases in the decision tree
-- use tracing subscriber with test-specific target and optional file append
-- create mocked app
-  - for actor that manages input, use or mirror actual default construction
-  - for incoming/outgoing events, use mocked senders/receivers
-- use expected input events sent with mocked sender
-- validate expected output events with mocked receivers
-- instead of panicking at first failure to match expected output, collect events and use tracing::error to print errors with event for context and tracing::debug to print successes with event for context
-- keep a vec of tuple (successes, failures) for each success/failure
-- after all inputs tested, enumerate on output, panic at first failure
-- test should have a timeout
-
-Test should fail until we implement new decision tree, confirm by running new test
-
-## 2.5 Add event-based smoke test (CORRECT implementation)
-status: not started
-
-**Reference**: See `command_flow_analysis.md` for detailed architecture research.
-
-### What happened in Step 2 (Initial Attempt)
-
-The initial implementation in `crates/ploke-tui/tests/command_decision_tree_smoke.rs` was comprehensive but diverged from the specific instructions. It:
-
-1. **Tested state, not events**: Polls `harness.state.chat` to check for `MessageKind::SysInfo` messages rather than validating output events from mocked receivers
-2. **Used string matching**: Brittle predicates like `s.contains("indexing")` on UI text rather than checking event types
-3. **Required expensive actor operations**: State setup involved actual indexing/parsing, making tests slow (~44 seconds for 72 cases)
-
-**IMPORTANT**: The current comprehensive test is NOT a source of truth. Due to string matching brittleness, it may have false positives/negatives. It will need significant refactoring or may be scrapped entirely. **Do not rely on it for correctness.**
 
 ### Correct Step 2.5 Implementation
 
-Create a NEW test file: `crates/ploke-tui/tests/command_decision_tree_smoke.rs` (replace the current one)
-
-**Focus**: Test the **command parser + dispatcher** component directly via its event interface.
-
-**Architecture Overview**:
-
-Current: TODO
-
-Desired: TODO
-
-**Implementation Steps**:
-
-1. Sort tests by DB access required (group all with same access in single test function)
-
-TODO
-
-**Test Design Requirements**:
-TODO: Verify 65 correct number for all cases
-- **Fast**: Each test <10ms (65 cases × 10ms = 650ms total)
-- **Complete coverage**: All ~65 decision tree scenarios
-
-**Key Files to Reference**:
-- `app/commands/parser.rs` - Command parsing
-- `app/commands/exec.rs` - Current (legacy) execution
-- `app_state/commands.rs` - StateCommand definitions
-- `app_state/dispatcher.rs` - Command dispatch
-- `event_bus/mod.rs` - Event broadcasting
-- `app_state/events.rs` - SystemEvent definitions
-
-**Why this is better**:
-1. **Fast**: No expensive actor operations; only validation logic runs
-2. **Precise**: Tests the dispatcher contract other actors depend on
-3. **Stable**: Event types are API; UI strings are implementation detail
-4. **Focused**: Validates the component being refactored
-
-**The comprehensive test**: Keep as `command_decision_tree_comprehensive.rs` but do not rely on it. Serves as scenario reference only. May be deleted after Step 2.5 is complete.
+Note: due to complexity of implementation and updating/refactoring some related pieces of the code base, these instructions have been removed in favor of more direct, guided implementation of the test.
 
 ## 3. Implement new decision tree
 status: not started

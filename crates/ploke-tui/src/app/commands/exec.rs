@@ -20,7 +20,10 @@ use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
 use crate::llm::{self, LlmEvent, ProviderKey};
 use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url};
-use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
+use crate::{
+    AppEvent, app_state::StateCommand, app_state::commands::WorkspaceCmd,
+    chat_history::MessageKind, emit_app_event,
+};
 use itertools::Itertools;
 use ploke_core::{ArcStr, RetrievalScope};
 use ploke_llm::embeddings::{EmbClientConfig, HasEmbeddingModels};
@@ -40,6 +43,19 @@ const TEST_QUERY_RESULTS: &str = "results.json";
 
 /// Execute a parsed command. Falls back to legacy handler for commands
 /// not yet migrated to structured parsing.
+///
+/// # Architecture Note: Validation happens in AppState, not here
+///
+/// This function MUST NOT validate business logic (e.g., "is a workspace loaded?").
+/// It only performs:
+/// 1. Immediate UI effects (open overlays, etc.)
+/// 2. Unconditional forwarding to AppState via `StateCommand`
+///
+/// **Why?** App runs on the UI thread and must not block on state access.
+/// AppState has authoritative access to SystemStatus and performs all validation.
+/// If you need to check state here, use `AppState` handlers instead.
+///
+/// See `state_manager` in `app_state/dispatcher.rs` for validation logic.
 pub fn execute(app: &mut App, command: Command) {
     match command {
         Command::Quit => app.quit(),
@@ -248,23 +264,32 @@ pub fn execute(app: &mut App, command: Command) {
                         .to_string(),
                 });
             } else {
-                // TODO: Validate workspace_ref is actually a workspace name, not a crate name
-                // If it looks like a crate name (matches a crate in current workspace),
-                // suggest `/load crate <name>` instead.
-                // See test: test_no_db_workspace_root_load_workspace_crate_name_suggests_load_crate
-                #[cfg(test)]
-                app.send_cmd(StateCommand::TestTodo {
-                    test_name:
-                        "test_no_db_workspace_root_load_workspace_crate_name_suggests_load_crate"
-                            .to_string(),
-                    message: format!(
-                        "Command::LoadWorkspace validation not yet implemented. \
-                         Should check if '{}' is a workspace name or crate name. \
-                         If crate name: suggest `/load crate {}` instead.",
-                        workspace_ref, workspace_ref
-                    ),
-                });
+                // Use the new WorkspaceCmd for validated workspace operations
+                app.send_cmd(StateCommand::Workspace(WorkspaceCmd::LoadDb {
+                    workspace_ref,
+                }));
             }
+        }
+        Command::LoadCrate(crate_ref) => {
+            // /load crate <name> - loading a crate requires validation
+            // When a standalone crate is loaded and we try to load another standalone crate,
+            // this is a transition that needs special handling (check unsaved changes, etc.)
+            // This is not yet implemented, so we emit a TestTodo.
+            #[cfg(test)]
+            app.send_cmd(StateCommand::TestTodo {
+                test_name: "test_transition_load_crate_standalone_to_standalone".to_string(),
+                message: format!(
+                    "Command::LoadCrate('{}') not yet implemented. \
+                     Expected: Check for unsaved changes and handle standalone→standalone transition.",
+                    crate_ref
+                ),
+            });
+            #[cfg(not(test))]
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: format!("Loading crate '{}' is not yet implemented.", crate_ref),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
         }
         Command::LoadWorkspaceCrates {
             workspace_ref,
@@ -277,19 +302,25 @@ pub fn execute(app: &mut App, command: Command) {
                 kind: MessageKind::SysInfo,
                 new_msg_id: Uuid::new_v4(),
             });
-            app.send_cmd(StateCommand::LoadWorkspaceCrates {
+            // Use the new WorkspaceCmd for validated workspace operations
+            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::LoadWorkspaceCrates {
                 workspace_ref,
                 crate_ref,
-            });
+            }));
         }
         Command::WorkspaceStatus => {
-            app.send_cmd(StateCommand::WorkspaceStatus);
+            // Use the new WorkspaceCmd for validated workspace operations
+            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::WorkspaceStatus));
         }
         Command::WorkspaceUpdate => {
-            app.send_cmd(StateCommand::WorkspaceUpdate);
+            // Use the new WorkspaceCmd for validated workspace operations
+            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::WorkspaceUpdate));
         }
         Command::WorkspaceRemove(crate_ref) => {
-            app.send_cmd(StateCommand::WorkspaceRemove { crate_ref });
+            // Use the new WorkspaceCmd for validated workspace operations
+            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::WorkspaceRemove {
+                crate_ref,
+            }));
         }
         Command::EditApprove(id) => {
             app.send_cmd(StateCommand::ApproveEdits { request_id: id });
@@ -1101,15 +1132,7 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             if has_loaded {
                 app.send_cmd(StateCommand::SaveDb);
             } else {
-                // No DB loaded - should show error
-                #[cfg(test)]
-                app.send_cmd(StateCommand::TestTodo {
-                    test_name: "test_no_db_save_db_error".to_string(),
-                    message: "Command::SaveDb with no loaded crate/workspace not yet implemented. \
-                              Expected: Error message 'No crate/workspace in db'"
-                        .to_string(),
-                });
-                #[cfg(not(test))]
+                // No DB loaded - show error
                 app.send_cmd(StateCommand::AddMessageImmediate {
                     msg: "Error: No crate or workspace is loaded to save.".to_string(),
                     kind: crate::chat_history::MessageKind::SysInfo,

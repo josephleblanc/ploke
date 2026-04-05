@@ -25,6 +25,7 @@ pub enum Command {
     Help,
     HelpTopic(String),
     LoadWorkspace(String),
+    LoadCrate(String),
     LoadWorkspaceCrates {
         workspace_ref: String,
         crate_ref: String,
@@ -226,11 +227,11 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             }
         }
         s if s.starts_with("load crate ") => {
-            let workspace_ref = s.trim_start_matches("load crate ").trim().to_string();
-            if workspace_ref.is_empty() || workspace_ref.contains(' ') {
+            let crate_ref = s.trim_start_matches("load crate ").trim().to_string();
+            if crate_ref.is_empty() || crate_ref.contains(' ') {
                 Command::Raw(trimmed.to_string())
             } else {
-                Command::LoadWorkspace(workspace_ref)
+                Command::LoadCrate(crate_ref)
             }
         }
         s if s.starts_with("load crates ") => {

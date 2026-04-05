@@ -210,11 +210,12 @@ pub fn try_parse_manifest(
         .with_discovery_err(ctx.with_content(&content))
         .for_cargo_toml()?;
 
-    let workspace_root = candidate_manifest.parent().ok_or_else(|| {
-        DiscoveryError::ParentNotFound {
-            workspace_path: candidate_manifest.clone(),
-        }
-    })?;
+    let workspace_root =
+        candidate_manifest
+            .parent()
+            .ok_or_else(|| DiscoveryError::ParentNotFound {
+                workspace_path: candidate_manifest.clone(),
+            })?;
 
     let workspace = manifest.workspace.map(|ws| {
         let mut members: Vec<PathBuf> = ws

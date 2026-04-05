@@ -8,18 +8,15 @@
 //      - multiple crates (needs fixture setup in fixture db registry)
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use lazy_static::lazy_static;
 use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
 use tokio::sync::Mutex;
-use tokio::time::timeout;
 
 use crate::app::commands::exec::execute;
 use crate::app::commands::parser::Command;
 use crate::app::{App, commands::unit_tests::harness::setup_test_app_from_db};
 use crate::user_config::CommandStyle;
-use crate::{AppEvent, EventPriority};
 
 lazy_static! {
     /// A test-only accessible App instance for tests, wrapped in Arc<Mutex<...>>.
@@ -46,78 +43,39 @@ mod harness;
 // ============================================================================
 // Decision tree path: "pwd is workspace root" → "no db loaded" → "/index"
 //
-// Expected behavior (per decision tree):
-//   Parser should return: Command::Index { scope: Auto, target: None }
-//   Validator should:
-//     1. Check state: no db loaded ✓
-//     2. Check pwd context: workspace root (detect via Cargo.toml)
-//     3. Emit event indicating validation result
-//
 // Current behavior:
-//   Parser returns: Command::Raw("index")
-//   Legacy executor: NO MATCH (only "index start", "index pause", etc.)
-//   Result: Command silently ignored
+//   Parser returns: Command::Index { target: None }
+//   Executor: Runs workspace scan and starts indexing (via spawn_update)
+//   Result: AddMessageImmediate emitted with "Scanning workspace for updates..."
 //
-// NOTE: This test documents CURRENT behavior. It will fail until Step 3 implements
-// the new decision tree and Command variants.
-//
-// MISSING INFRASTRUCTURE (TODO for Step 2.5/3):
-// - Command::Index variant (parser.rs)
-// - Decision tree validator (validator.rs)
-// - App method to access event_bus for subscription (or make event_rx pub)
-// - Test harness with NO db loaded state
-// - PWD context detection utility
+// NOTE: This test now documents the UPDATED behavior after parser/executor changes.
 
 #[tokio::test]
 async fn test_index_no_db_workspace_root_current_behavior() {
-    // TODO: Create TEST_APP_NO_DB harness (no loaded state)
-    // For now, use existing harness to demonstrate test pattern
     let mut app = TEST_APP_NODES_CANNONICAL_FRESH.lock().await;
-
-    // TODO: Add method to App to get event subscriber
-    // Currently event_rx is private. Need either:
-    //   - app.subscribe_events() -> broadcast::Receiver<AppEvent>
-    //   - Or access via app.state.event_bus (if we add event_bus to AppState)
-    //
-    // For now, demonstrating the intended test structure:
-    // let mut event_rx = app.subscribe(EventPriority::Realtime);
 
     // Set up input and parse command
     app.input_buffer = "/index".to_string();
     let style = CommandStyle::Slash;
     let command = crate::app::commands::parser::parse(&app, "/index", style);
 
-    // CURRENT: Command is parsed as Raw("index")
+    // UPDATED: Command is now parsed as Command::Index
     match &command {
-        Command::Raw(raw) => {
-            assert_eq!(raw, "index");
-            // This is the CURRENT behavior - not yet migrated to structured Command::Index
-            println!("CURRENT: Command parsed as Raw('index')");
+        Command::Index { target } => {
+            assert!(target.is_none(), "Expected target=None for bare /index");
+            println!(
+                "Command parsed as Command::Index {{ target: {:?} }}",
+                target
+            );
         }
-        // Command::Index { scope, target } => {
-        //     // This is the EXPECTED behavior after Step 3
-        //     panic!(
-        //         "EXPECTED: Command::Index not yet implemented. scope={:?}, target={:?}",
-        //         scope, target
-        //     );
-        // }
         _ => panic!("Unexpected command variant: {:?}", command),
     }
 
-    // Execute command (currently does nothing for "index" without subcommand)
+    // Execute command - now runs update/indexing logic
     execute(&mut app, command);
 
-    // TODO: Assert on events emitted
-    // With the new implementation, we expect:
-    // - If validation succeeds: AppEvent::System(SystemEvent::IndexingStarted) or similar
-    // - If validation fails: AppEvent::Error(ErrorEvent { ... })
-    //
-    // let event = timeout(Duration::from_millis(100), event_rx.recv()).await;
-    // match event {
-    //     Ok(Ok(AppEvent::System(SystemEvent::IndexingStarted { .. }))) => { /* success */ }
-    //     Ok(Ok(AppEvent::Error(e))) => { /* validation error */ }
-    //     _ => panic!("Expected event not received"),
-    // }
+    // The executor emits AddMessageImmediate with scanning message
+    // Full validation is done in the decision_tree test suite
 }
 
 // ============================================================================
@@ -169,18 +127,10 @@ async fn test_load_crate_nonexistent_should_suggest_index() {
     let command = crate::app::commands::parser::parse(&app, "/load crate nonexistent_xyz", style);
 
     match &command {
-        Command::LoadWorkspace(workspace_ref) => {
-            // Current behavior uses LoadWorkspace for crate loads too
-            assert_eq!(workspace_ref, "nonexistent_xyz");
+        Command::LoadCrate(crate_ref) => {
+            assert_eq!(crate_ref, "nonexistent_xyz");
         }
-        Command::LoadWorkspaceCrates { workspace_ref, .. } => {
-            assert_eq!(workspace_ref, "nonexistent_xyz");
-        }
-        Command::Raw(raw) => {
-            // If parsing fails
-            assert!(raw.contains("load crate"));
-        }
-        _ => {}
+        _ => panic!("Unexpected command variant: {:?}", command),
     }
 
     execute(&mut app, command);

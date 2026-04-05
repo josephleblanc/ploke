@@ -23,13 +23,28 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tracing::{trace_span, warn};
 
-use super::commands::StateCommand;
+use super::commands::{StateCommand, WorkspaceCmd, emit_validation_error, validate_workspace_cmd};
 use super::core::AppState;
 use super::events::SystemEvent;
 use super::{database, handlers};
+use crate::AppEvent;
 use crate::chat_history::MessageKind;
 use uuid::Uuid;
 
+/// The central command dispatcher for AppState.
+///
+/// # Validation Contract
+///
+/// All `StateCommand` handlers MUST validate preconditions before acting.
+/// This is where authoritative business logic validation happens because:
+/// 1. AppState has full access to `SystemStatus` (not just `try_read`)
+/// 2. Validation failures can emit proper `AppEvent::System(SystemEvent::Error)`
+/// 3. App (UI thread) must not block on state checks
+///
+/// **Example:** `SaveDb` must check `has_loaded_crates()` and emit an error
+/// event if no workspace is loaded, rather than silently failing or panicking.
+///
+/// See `execute` in `app/commands/exec.rs` for the forwarding side of this contract.
 pub async fn state_manager(
     state: Arc<AppState>,
     mut cmd_rx: mpsc::Receiver<StateCommand>,
@@ -267,7 +282,7 @@ pub async fn state_manager(
                 handlers::db::read_query(&event_bus, query_name, file_name).await;
             }
             StateCommand::SaveDb => {
-                database::save_db(&state, &event_bus).await;
+                let _ = database::save_db(&state, &event_bus).await;
             }
             StateCommand::BatchPromptSearch {
                 prompt_file,
@@ -306,6 +321,22 @@ pub async fn state_manager(
             }
             StateCommand::ScanForChange { scan_tx } => {
                 handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
+            }
+
+            // NEW: Grouped workspace commands with validation
+            StateCommand::Workspace(cmd) => {
+                // Validate the command before execution
+                match validate_workspace_cmd(&cmd, &state).await {
+                    Ok(()) => {
+                        if let Err(e) = handle_workspace_cmd(&state, &event_bus, cmd).await {
+                            tracing::error!("Workspace command failed: {}", e);
+                        }
+                    }
+                    Err(validation_err) => {
+                        tracing::warn!("Workspace command validation failed: {}", validation_err);
+                        emit_validation_error(&event_bus, validation_err);
+                    }
+                }
             }
 
             StateCommand::Bm25Rebuild => rag::search::bm25_rebuild(&state, &event_bus).await,
@@ -581,5 +612,67 @@ pub async fn state_manager(
 
             _ => {}
         };
+    }
+}
+
+/// Handles validated workspace commands.
+///
+/// This function assumes validation has already been performed by the caller.
+/// Each command variant is dispatched to the appropriate handler module.
+async fn handle_workspace_cmd(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    cmd: WorkspaceCmd,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        WorkspaceCmd::SaveDb => {
+            let _ = database::save_db(state, event_bus).await;
+            Ok(())
+        }
+        WorkspaceCmd::LoadDb { workspace_ref } => {
+            let _ = database::load_db(state, event_bus, workspace_ref).await;
+            Ok(())
+        }
+        WorkspaceCmd::LoadWorkspaceCrates {
+            workspace_ref,
+            crate_ref,
+        } => {
+            let _ =
+                database::load_workspace_crates(state, event_bus, workspace_ref, crate_ref).await;
+            Ok(())
+        }
+        WorkspaceCmd::WorkspaceStatus => {
+            let _ = database::workspace_status(state, event_bus).await;
+            Ok(())
+        }
+        WorkspaceCmd::WorkspaceUpdate => {
+            let _ = database::workspace_update(state, event_bus).await;
+            Ok(())
+        }
+        WorkspaceCmd::WorkspaceRemove { crate_ref } => {
+            let _ = database::workspace_remove(state, event_bus, crate_ref).await;
+            Ok(())
+        }
+        WorkspaceCmd::ScanForChange { scan_tx } => {
+            let _ = database::scan_for_change(state, event_bus, scan_tx).await;
+            Ok(())
+        }
+        WorkspaceCmd::SetPwd { new_pwd } => {
+            let outcome = state
+                .with_system_txn(|txn| {
+                    txn.set_pwd(new_pwd);
+                })
+                .await;
+
+            // Dispatch post-commit effects after lock is released
+            for effect in outcome.effects {
+                match effect {
+                    super::PostCommit::EmitPwdChanged(pwd) => {
+                        event_bus.send(crate::AppEvent::System(SystemEvent::PwdChanged(pwd)));
+                    }
+                }
+            }
+            Ok(())
+        }
     }
 }

@@ -8,72 +8,41 @@
 //! ### No DB Loaded (Section 1 & 2)
 //! - 100% coverage (24/24 cases defined)
 //! - 24/24 cases tested
-//! - All currently expect TestTodo (TDD pending implementation)
+//! - 2/24 cases implemented (/save db error handling)
+//! - 22/24 cases pending TestTodo
 //!
 //! ### Single Workspace Member Loaded (Section 3)
-//! - [ ] single crate + workspace member: `/index` re-indexes focused crate
-//! - [ ] single crate + workspace member: `/index workspace` re-indexes entire workspace
-//! - [ ] single crate + workspace member: `/index crate <focused>` re-indexes focused
-//! - [ ] single crate + workspace member: `/index crate <other member>` switches focus + indexes
-//! - [ ] single crate + workspace member: `/index crate <not member>` error + guidance
-//! - [ ] single crate + workspace member: `/load crate <member>` suggests `/index crate`
-//! - [ ] single crate + workspace member: `/load crate <not member>` error + guidance
-//! - [ ] single crate + workspace member: `/load crate <not in registry>` suggests index
-//! - [ ] single crate + workspace member: `/save db` saves workspace snapshot
-//! - [ ] single crate + workspace member: `/update` scans focused crate, re-indexes if stale
+//! - 100% coverage (10/10 cases defined)
+//! - 10/10 cases tested
+//! - 0/10 cases implemented
 //!
 //! ### Standalone Crate Loaded (Section 4)
-//! - [ ] standalone crate: `/index` re-indexes loaded crate
-//! - [ ] standalone crate: `/index crate <loaded>` re-indexes
-//! - [ ] standalone crate: `/index crate <different>` error "use `/load crate`"
-//! - [ ] standalone crate: `/index workspace` error "not a workspace"
-//! - [ ] standalone crate: `/load crate <name>` check unsaved, then load (or force)
-//! - [ ] standalone crate: `/load workspace <name>` check unsaved, then load workspace
-//! - [ ] standalone crate: `/save db` saves standalone snapshot
-//! - [ ] standalone crate: `/update` scans and re-indexes if stale
-//! - [ ] standalone crate: `/index path/to/other` error "use `/load crate`"
+//! - 100% coverage (9/9 cases defined)
+//! - 9/9 cases tested
+//! - 0/9 cases implemented
 //!
 //! ### Full Workspace Loaded (Section 5)
-//! - [ ] multi crate + workspace: `/index` re-indexes all members
-//! - [ ] multi crate + workspace: `/index crate <member>` indexes that member
-//! - [ ] multi crate + workspace: `/index crate <not member>` error + guidance
-//! - [ ] multi crate + workspace: `/index workspace` re-indexes all (same as `/index`)
-//! - [ ] multi crate + workspace: `/index path/to/crate` indexes if within workspace
-//! - [ ] multi crate + workspace: `/index path/to/crate` error if outside workspace
-//! - [ ] multi crate + workspace: `/load crate <member>` suggests `/index crate`
-//! - [ ] multi crate + workspace: `/load crate <not member>` check unsaved, unload, load single
-//! - [ ] multi crate + workspace: `/load crate <not in registry>` suggests index
-//! - [ ] multi crate + workspace: `/load workspace <different>` check unsaved, load new
-//! - [ ] multi crate + workspace: `/save db` saves workspace snapshot
-//! - [ ] multi crate + workspace: `/update` scans all members, re-indexes stale
+//! - 100% coverage (12/12 cases defined)
+//! - 12/12 cases tested
+//! - 0/12 cases implemented
 //!
 //! ### DB Loaded, PWD is Crate (Section 6)
-//! - [ ] pwd=crate, db loaded: `/index` re-indexes crate at pwd if loaded
-//! - [ ] pwd=crate, db loaded: `/index` error if pwd crate not loaded
-//! - [ ] pwd=crate, db loaded: `/index workspace` re-indexes workspace if pwd is member
-//! - [ ] pwd=crate, db loaded: `/index workspace` error if pwd not member
-//! - [ ] pwd=crate, db loaded: `/index crate <pwd match>` re-indexes
-//! - [ ] pwd=crate, db loaded: `/index crate <different loaded>` switches focus + indexes
-//! - [ ] pwd=crate, db loaded: `/index crate <not loaded>` follows workspace rules
-//! - [ ] pwd=crate, db loaded: `/load crate <pwd match>` error "already loaded"
-//! - [ ] pwd=crate, db loaded: `/load crate <different>` check unsaved, then load
-//! - [ ] pwd=crate, db loaded: `/load workspace <name>` check unsaved, then load
-//! - [ ] pwd=crate, db loaded: `/save db`, `/update` same as workspace root rules
+//! - 100% coverage (11/11 cases defined)
+//! - 11/11 cases tested
+//! - 0/11 cases implemented
 //!
 //! ### Transition Cases (Section 7)
-//! - [ ] `/load workspace <name>` when standalone loaded: check unsaved, prompt or force
-//! - [ ] `/load crate <name>` when workspace loaded: check unsaved, prompt or force
-//! - [ ] `/load crate <name>` standalone→standalone: check unsaved, prompt or force
-//! - [ ] `/index` when db loaded: destructive re-parse (no force needed)
+//! - 100% coverage (4/4 cases defined)
+//! - 4/4 cases tested
+//! - 0/4 cases implemented
 //!
-//! Total: ~65 test cases
+//! Total: 70 test cases (0/70 implemented)
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::app::commands::unit_tests::harness::{
-    DebugStateCommand, Present, TestAppAccessor, TestInAppActorBuilder, TestOutEventBusBuilder,
-    TestRuntime,
+    DebugStateCommand, TestRuntime, ValidationProbeEvent,
 };
 use crate::{AppEvent, StateCommand};
 use ploke_test_utils::{
@@ -99,7 +68,7 @@ use tokio::time::timeout;
 // 10. [x] pwd is workspace root, no db: `/load crate <not exists>`         lists crates + suggests
 // 11. [x] pwd is workspace root, no db: `/load workspace <crate-name>`     suggests `/load crate`
 // 12. [x] pwd is workspace root, no db: `/load workspace`                  loads if exists, else suggests `/index`
-// 13. [x] pwd is workspace root, no db: `/save db`                         error (TestTodo)
+// 13. [✓] pwd is workspace root, no db: `/save db`                         error (AddMessageImmediate)
 // 14. [x] pwd is workspace root, no db: `/update`                          error (TestTodo)
 //
 // Section 2: PWD is crate root, no DB
@@ -111,18 +80,113 @@ use tokio::time::timeout;
 // 20. [x] pwd is crate, no db:          `/index path/to/crate`             indexes that crate
 // 21. [x] pwd is crate, no db:          `/load crate <name>`               loads from registry or suggests index
 // 22. [x] pwd is crate, no db:          `/load workspace <name>`           loads or suggests index workspace root
-// 23. [x] pwd is crate, no db:          `/save db`                         error (TestTodo)
+// 23. [✓] pwd is crate, no db:          `/save db`                         error (AddMessageImmediate)
 // 24. [x] pwd is crate, no db:          `/update`                          error (TestTodo)
 //
 // Note: All cases are defined and tested. [x] indicates test exists (expects TestTodo until implemented)
+//
+// ## TDD Workflow for Implementing Tests
+//
+// 1. **Initial State**: All cases start with `expected_state_cmd: "TestTodo"` and run with `[PENDING]` status
+//
+// 2. **When Implementing a Command**:
+//    - Replace `TestTodo` with the actual StateCommand discriminant (e.g., "IndexTargetDir", "AddMessageImmediate")
+//    - If the command contains a message/error, set `expected_msg_contains` to verify content
+//    - Remove `expected_todo_test_name` (only used for TestTodo)
+//
+// 3. **Test Output Will Show**:
+//    - `[PENDING]` - Command not yet implemented (TestTodo received)
+//    - `[IMPLEMENTED]` - Command matches expected_state_cmd (and expected_msg_contains if set)
+//    - **PANIC** - Implementation returns wrong command or message
+//
+// Example transition for case 13 (/save db error):
+// ```rust
+// // BEFORE (TDD - pending):
+// expected_state_cmd: "TestTodo",
+// expected_todo_test_name: Some("test_no_db_workspace_root_save_db_error"),
+// expected_msg_contains: None,
+//
+// // AFTER (implemented):
+// expected_state_cmd: "AddMessageImmediate",
+// expected_todo_test_name: None,
+// expected_msg_contains: Some("No crate or workspace is loaded"),
+// ```
 
-/// Test parameters for "No DB Loaded" decision tree tests
+/// Database setup variants for test cases.
+/// Each variant maps to a fixture that will be loaded before running the test cases.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+enum DbSetup {
+    /// Fresh empty database (no data loaded)
+    #[default]
+    None,
+    /// Single workspace member loaded (WS_FIXTURE_01_MEMBER_SINGLE)
+    SingleMember,
+    /// Full workspace with multiple members (WS_FIXTURE_01_CANONICAL)
+    FullWorkspace,
+    /// Standalone crate not in any workspace (FIXTURE_NODES_CANONICAL)
+    StandaloneCrate,
+}
+
+/// Working directory variants for test cases.
+/// Each variant carries the path to use as the working directory.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum TestPwd {
+    /// Working directory is a workspace root
+    Workspace(&'static str),
+    /// Working directory is a crate root
+    Crate(&'static str),
+}
+
+impl Default for TestPwd {
+    fn default() -> Self {
+        TestPwd::Workspace("")
+    }
+}
+
+impl TestPwd {
+    /// Returns the path string for filesystem operations
+    fn path(&self) -> &'static str {
+        match self {
+            TestPwd::Workspace(p) | TestPwd::Crate(p) => p,
+        }
+    }
+
+    /// Returns true if this is a workspace PWD
+    fn is_workspace(&self) -> bool {
+        matches!(self, TestPwd::Workspace(_))
+    }
+}
+
+/// Validation expectation for command execution
+#[derive(Clone, Debug, PartialEq)]
+pub enum ValidationExpectation {
+    /// No validation required (command doesn't need preconditions)
+    None,
+    /// Validation should succeed
+    Success,
+    /// Validation should fail with optional reason
+    Failure { reason: Option<String> },
+}
+
+/// Expected user-facing error information
+#[derive(Clone, Debug)]
+pub struct ExpectedUiError {
+    /// Substring that should appear in the error message
+    pub message_contains: Option<String>,
+    /// Optional recovery command suggestion
+    pub recovery_suggestion: Option<String>,
+}
+
+/// Test parameters for command decision tree tests.
+/// Works for any DB state (None, SingleMember, FullWorkspace, StandaloneCrate).
 #[derive(Clone)]
-struct NoDbTestCase {
+struct TestCase {
     /// Human-readable test name for error messages
     name: &'static str,
-    /// PWD type: "workspace" or "crate"
-    pwd_type: &'static str,
+    /// Database setup: which fixture to load (or None for empty)
+    db_setup: DbSetup,
+    /// Working directory: workspace or crate path
+    pwd: TestPwd,
     /// The command string to type (e.g., "/index", "/save db")
     input: &'static str,
     /// The expected StateCommand discriminant when implemented.
@@ -135,155 +199,488 @@ struct NoDbTestCase {
     /// Optional: expected test_name field if the command emits TestTodo.
     /// Used to verify the right decision tree branch is being hit during TDD.
     expected_todo_test_name: Option<&'static str>,
+    /// Expected validation result (new field, defaults to None for backward compatibility)
+    expected_validation: ValidationExpectation,
+    /// Expected user-facing error (if any)
+    expected_error: ExpectedUiError,
 }
 
-/// Runs multiple "No DB Loaded" test cases using a single app instance with TestBackend.
+impl Default for ExpectedUiError {
+    fn default() -> Self {
+        Self {
+            message_contains: None,
+            recovery_suggestion: None,
+        }
+    }
+}
+
+impl TestCase {
+    /// Builder method to create a TestCase with common fields, using defaults for new fields.
+    fn new(
+        name: &'static str,
+        db_setup: DbSetup,
+        pwd: TestPwd,
+        input: &'static str,
+        expected_state_cmd: &'static str,
+        expected_msg_contains: Option<&'static str>,
+        expected_todo_test_name: Option<&'static str>,
+    ) -> Self {
+        Self {
+            name,
+            db_setup,
+            pwd,
+            input,
+            expected_state_cmd,
+            expected_msg_contains,
+            expected_todo_test_name,
+            expected_validation: ValidationExpectation::None,
+            expected_error: ExpectedUiError {
+                message_contains: None,
+                recovery_suggestion: None,
+            },
+        }
+    }
+}
+
+impl Default for TestCase {
+    fn default() -> Self {
+        Self {
+            name: "",
+            db_setup: DbSetup::None,
+            pwd: TestPwd::Workspace(""),
+            input: "",
+            expected_state_cmd: "",
+            expected_msg_contains: None,
+            expected_todo_test_name: None,
+            expected_validation: ValidationExpectation::None,
+            expected_error: ExpectedUiError::default(),
+        }
+    }
+}
+
+impl Default for ValidationExpectation {
+    fn default() -> Self {
+        ValidationExpectation::None
+    }
+}
+
+// Backwards compatibility alias - all NoDbTestCase usages should work
+pub type NoDbTestCase = TestCase;
+
+/// Helper to load a database fixture based on DbSetup variant.
+fn load_db_fixture(setup: DbSetup) -> Arc<ploke_db::Database> {
+    match setup {
+        DbSetup::None => Arc::new(ploke_db::Database::init_with_schema().expect("create empty db")),
+        DbSetup::SingleMember => Arc::new(
+            fresh_backup_fixture_db(&WS_FIXTURE_01_MEMBER_SINGLE)
+                .expect("load ws_fixture_01_member_single"),
+        ),
+        DbSetup::FullWorkspace => Arc::new(
+            fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)
+                .expect("load ws_fixture_01_canonical"),
+        ),
+        DbSetup::StandaloneCrate => Arc::new(
+            fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)
+                .expect("load fixture_nodes_canonical"),
+        ),
+    }
+}
+
+/// Helper to resolve a TestPwd to an absolute PathBuf.
+fn resolve_pwd(pwd: TestPwd) -> std::path::PathBuf {
+    let base = pwd.path();
+    if base.starts_with('/') {
+        std::path::PathBuf::from(base)
+    } else {
+        ploke_test_utils::workspace_root().join(base)
+    }
+}
+
+/// Runs multiple test cases grouped by (DbSetup, TestPwd) to minimize fixture loads.
 ///
-/// This is more efficient than running cases individually since we only set up the
-/// TestRuntime, App, and Terminal once.
-async fn run_no_db_test_cases(cases: &[NoDbTestCase]) {
+/// Cases are automatically batched so each unique (fixture, pwd) combination only loads once.
+async fn run_test_cases(cases: &[TestCase]) {
     use crossterm::event::{Event, KeyCode, KeyEvent};
     use futures::StreamExt;
     use ratatui::{Terminal, backend::TestBackend};
+    use std::collections::HashMap;
     use tokio_stream::wrappers::UnboundedReceiverStream;
 
-    // 1. Create fresh/empty database
-    let db = ploke_db::Database::init_with_schema().expect("create empty db");
-    let db = Arc::new(db);
-
-    // 2. Set up TestRuntime with state manager spawned
-    let rt = TestRuntime::new(&db).spawn_state_manager();
-
-    // 3. Get debug receiver BEFORE into_app consumes rt
-    let events = rt.events_builder().build_app_only();
-    let mut debug_rx = events
-        .app_actor_events
-        .debug_string_rx
-        .expect("debug_string_rx should be available");
-
-    // All cases use the same PWD type, so determine it once from first case
-    let pwd = match cases.first().map(|c| c.pwd_type).unwrap_or("workspace") {
-        "workspace" => {
-            ploke_test_utils::workspace_root().join("tests/fixture_workspace/ws_fixture_01")
-        }
-        "crate" => ploke_test_utils::workspace_root().join("tests/fixture_crates/fixture_nodes"),
-        other => panic!("Unknown pwd_type: {}", other),
-    };
-
-    // 4. Create App
-    let app = rt.into_app(pwd);
-
-    // 5. Setup headless terminal
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::new(backend).expect("create terminal");
-
-    // 6. Create input channel
-    let (input_tx, input_rx) =
-        tokio::sync::mpsc::unbounded_channel::<Result<crossterm::event::Event, std::io::Error>>();
-    let input = UnboundedReceiverStream::new(input_rx);
-
-    // 7. Run app in background
-    let app_task = tokio::spawn(async move {
-        app.run_with(
-            terminal,
-            input,
-            crate::app::RunOptions {
-                setup_terminal_modes: false,
-            },
-        )
-        .await
-    });
-
-    // 8. Run each case sequentially
+    // Group cases by (db_setup, pwd) to minimize fixture loads
+    let mut groups: HashMap<(DbSetup, TestPwd), Vec<&TestCase>> = HashMap::new();
     for case in cases {
-        // Send keystrokes (each char + yields)
-        for ch in case.input.chars() {
-            input_tx
-                .send(Ok(Event::Key(KeyEvent::from(KeyCode::Char(ch)))))
-                .expect("send key");
-            tokio::task::yield_now().await;
+        groups
+            .entry((case.db_setup, case.pwd))
+            .or_default()
+            .push(case);
+    }
+
+    // Run each group
+    for ((db_setup, pwd), group_cases) in groups {
+        let db = load_db_fixture(db_setup);
+        let rt = TestRuntime::new(&db).spawn_validation_probe();
+
+        let events = rt.events_builder().build_app_only();
+        let mut debug_rx = events
+            .app_actor_events
+            .debug_string_rx
+            .expect("debug_string_rx should be available");
+        let mut validation_rx = events
+            .app_actor_events
+            .validation_rx
+            .expect("validation_rx should be available");
+
+        let pwd_path = resolve_pwd(pwd);
+
+        // Set up SystemStatus based on DbSetup before creating the app
+        // This simulates the state after a successful `/load` command
+        match db_setup {
+            DbSetup::None => {
+                // No setup needed - empty DB
+            }
+            DbSetup::SingleMember => {
+                // Load workspace with single member
+                rt.setup_loaded_workspace(
+                    ploke_test_utils::workspace_root()
+                        .join("tests/fixture_workspace/ws_fixture_01"),
+                    vec![
+                        ploke_test_utils::workspace_root()
+                            .join("tests/fixture_workspace/ws_fixture_01/member_root"),
+                    ],
+                    Some(
+                        ploke_test_utils::workspace_root()
+                            .join("tests/fixture_workspace/ws_fixture_01/member_root"),
+                    ),
+                )
+                .await;
+            }
+            DbSetup::FullWorkspace => {
+                // Load full workspace with all members
+                rt.setup_loaded_workspace(
+                    ploke_test_utils::workspace_root()
+                        .join("tests/fixture_workspace/ws_fixture_01"),
+                    vec![
+                        ploke_test_utils::workspace_root()
+                            .join("tests/fixture_workspace/ws_fixture_01/member_root"),
+                        ploke_test_utils::workspace_root()
+                            .join("tests/fixture_workspace/ws_fixture_01/nested/member_nested"),
+                    ],
+                    Some(
+                        ploke_test_utils::workspace_root()
+                            .join("tests/fixture_workspace/ws_fixture_01/member_root"),
+                    ),
+                )
+                .await;
+            }
+            DbSetup::StandaloneCrate => {
+                // Load standalone crate
+                rt.setup_loaded_standalone_crate(
+                    ploke_test_utils::workspace_root().join("tests/fixture_crates/fixture_nodes"),
+                )
+                .await;
+            }
         }
-        input_tx
-            .send(Ok(Event::Key(KeyEvent::from(KeyCode::Enter))))
-            .expect("send enter");
 
-        // Wait for StateCommand (100ms timeout for TestBackend)
-        let timeout_result = timeout(Duration::from_millis(100), debug_rx.recv()).await;
+        let app = rt.into_app(pwd_path);
 
-        // Check results
-        match timeout_result {
-            Ok(Some(cmd)) => {
-                let cmd_str = cmd.as_str();
+        // Setup headless terminal
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::new(backend).expect("create terminal");
 
-                if cmd_str.starts_with("TestTodo") {
-                    // Command not yet implemented - print pending status but PASS
-                    let todo_name = case.expected_todo_test_name.unwrap_or("unknown");
-                    println!(
-                        "  [PENDING] {} - awaiting implementation (TestTodo: {})",
-                        case.name, todo_name
-                    );
-                } else {
-                    // Real command received - validate it matches expected behavior
-                    let discriminant_match = cmd_str.starts_with(case.expected_state_cmd);
-                    let msg_match = case
-                        .expected_msg_contains
-                        .map_or(true, |expected_msg| cmd_str.contains(expected_msg));
+        // Create input channel
+        let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel::<
+            Result<crossterm::event::Event, std::io::Error>,
+        >();
+        let input = UnboundedReceiverStream::new(input_rx);
 
-                    if discriminant_match && msg_match {
-                        println!(
-                            "  [IMPLEMENTED] {} - {}",
-                            case.name, case.expected_state_cmd
-                        );
-                    } else {
-                        // Implementation doesn't match expected behavior - PANIC
-                        let expected_desc = if let Some(msg) = case.expected_msg_contains {
-                            format!("{} containing '{}'", case.expected_state_cmd, msg)
+        // Run app in background. The validation probe captures StateCommands
+        // without forwarding them into the real state manager.
+        let app_task = tokio::spawn(async move {
+            app.run_with(
+                terminal,
+                input,
+                crate::app::RunOptions {
+                    setup_terminal_modes: false,
+                },
+            )
+            .await
+        });
+
+        // Run each case in this group sequentially
+        for case in group_cases {
+            // Send keystrokes (each char + yields)
+            for ch in case.input.chars() {
+                input_tx
+                    .send(Ok(Event::Key(KeyEvent::from(KeyCode::Char(ch)))))
+                    .expect("send key");
+                tokio::task::yield_now().await;
+            }
+            input_tx
+                .send(Ok(Event::Key(KeyEvent::from(KeyCode::Enter))))
+                .expect("send enter");
+
+            let (commands, validations): (Vec<DebugStateCommand>, Vec<ValidationProbeEvent>) =
+                collect_case_trace(&mut debug_rx, &mut validation_rx).await;
+
+            // Check results
+            match commands.first() {
+                Some(cmd) => {
+                    let cmd_str = cmd.as_str();
+                    let validation = validations.first();
+
+                    if cmd_str.starts_with("TestTodo") {
+                        if case.expected_state_cmd == "TestTodo" {
+                            let todo_name = case.expected_todo_test_name.unwrap_or("unknown");
+                            println!(
+                                "  [PENDING] {} - awaiting implementation (TestTodo: {})",
+                                case.name, todo_name
+                            );
+                            assert!(
+                                validation.is_none(),
+                                "TestTodo should not require validation, got {:?}",
+                                validation
+                            );
                         } else {
-                            case.expected_state_cmd.to_string()
-                        };
-                        panic!(
-                            "Test '{}' failed: Expected '{}' but got '{}'",
-                            case.name, expected_desc, cmd_str
-                        );
+                            panic!(
+                                "Test '{}' failed: expected '{}' but got TestTodo ({:?})",
+                                case.name, case.expected_state_cmd, case.expected_todo_test_name
+                            );
+                        }
+                    } else {
+                        // Real command received - validate it matches expected behavior
+                        let discriminant_match = cmd_str.starts_with(case.expected_state_cmd);
+                        let msg_match = case
+                            .expected_msg_contains
+                            .map_or(true, |expected_msg| cmd_str.contains(expected_msg));
+
+                        if discriminant_match && msg_match {
+                            // Validate according to expected_validation field
+                            match &case.expected_validation {
+                                ValidationExpectation::None => {
+                                    // For backward compatibility, preserve old Workspace special handling
+                                    if case.expected_state_cmd == "Workspace" {
+                                        let validation =
+                                            validation.expect("validation event missing");
+                                        if case.expected_msg_contains == Some("LoadDb") {
+                                            assert_eq!(
+                                                validation.command(),
+                                                "WorkspaceCmd::LoadDb",
+                                                "Workspace validation should expose the inner WorkspaceCmd discriminant"
+                                            );
+                                        } else {
+                                            assert!(
+                                                validation.command().starts_with("WorkspaceCmd::"),
+                                                "Workspace validation should expose a WorkspaceCmd discriminant, got {:?}",
+                                                validation.command()
+                                            );
+                                        }
+                                        assert_eq!(
+                                            validation.validation(),
+                                            Some(&Ok(())),
+                                            "Workspace commands should validate successfully in the fast suite"
+                                        );
+                                    } else {
+                                        assert!(
+                                            validation.is_none(),
+                                            "Non-workspace commands should not emit validation results, got {:?}",
+                                            validation
+                                        );
+                                    }
+                                }
+                                ValidationExpectation::Success => {
+                                    let validation = validation.expect("validation event missing");
+                                    assert_eq!(
+                                        validation.validation(),
+                                        Some(&Ok(())),
+                                        "Command should validate successfully"
+                                    );
+                                }
+                                ValidationExpectation::Failure { reason } => {
+                                    let validation = validation.expect("validation event missing");
+                                    match validation.validation() {
+                                        Some(Err(err_msg)) => {
+                                            if let Some(expected_reason) = reason {
+                                                assert!(
+                                                    err_msg.contains(expected_reason),
+                                                    "Validation error should contain '{}', got '{}'",
+                                                    expected_reason,
+                                                    err_msg
+                                                );
+                                            }
+                                        }
+                                        other => {
+                                            panic!("Expected validation failure, got {:?}", other)
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Check for expected user-facing errors
+                            if case.expected_error.message_contains.is_some()
+                                || case.expected_error.recovery_suggestion.is_some()
+                            {
+                                // Assert on error message if expected
+                                if let Some(expected_msg) = &case.expected_error.message_contains {
+                                    let actual_msg =
+                                        validation.and_then(|v| v.error_message()).or_else(|| {
+                                            commands.iter().skip(1).find_map(|cmd| {
+                                                if cmd.as_str().contains(expected_msg) {
+                                                    Some(cmd.as_str())
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                        });
+                                    if let Some(actual_msg) = actual_msg {
+                                        assert!(
+                                            actual_msg.contains(expected_msg),
+                                            "Error message should contain '{}', got '{}'",
+                                            expected_msg,
+                                            actual_msg
+                                        );
+                                    } else {
+                                        panic!(
+                                            "Expected error message containing '{}', but no error was emitted",
+                                            expected_msg
+                                        );
+                                    }
+                                }
+
+                                // Assert on recovery suggestion if expected
+                                if let Some(expected_recovery) =
+                                    &case.expected_error.recovery_suggestion
+                                {
+                                    if let Some(actual_recovery) =
+                                        validation.and_then(|v| v.recovery_suggestion())
+                                    {
+                                        assert!(
+                                            actual_recovery.contains(expected_recovery),
+                                            "Recovery suggestion should contain '{}', got '{}'",
+                                            expected_recovery,
+                                            actual_recovery
+                                        );
+                                    } else {
+                                        panic!(
+                                            "Expected recovery suggestion containing '{}', but none was provided",
+                                            expected_recovery
+                                        );
+                                    }
+                                }
+                            }
+
+                            println!(
+                                "  [IMPLEMENTED] {} - {}",
+                                case.name, case.expected_state_cmd
+                            );
+                        } else {
+                            // Implementation doesn't match expected behavior - PANIC
+                            let expected_desc = if let Some(msg) = case.expected_msg_contains {
+                                format!("{} containing '{}'", case.expected_state_cmd, msg)
+                            } else {
+                                case.expected_state_cmd.to_string()
+                            };
+                            panic!(
+                                "Test '{}' failed: Expected '{}' but got '{}'",
+                                case.name, expected_desc, cmd_str
+                            );
+                        }
                     }
                 }
+                None => panic!(
+                    "Test '{}' failed: Channel closed or no command captured",
+                    case.name
+                ),
             }
-            Ok(None) => panic!(
-                "Test '{}' failed: Channel closed - app terminated early?",
-                case.name
-            ),
-            Err(_) => panic!(
-                "Test '{}' failed: Timeout waiting for StateCommand '{}'",
-                case.name, case.expected_state_cmd
-            ),
+        }
+
+        // Cleanup this group
+        app_task.abort();
+        let _ = app_task.await;
+    }
+}
+
+/// Runs a single test case using the full app with TestBackend.
+/// Convenience wrapper around run_test_cases for single-case tests.
+async fn run_test_case(case: &TestCase) {
+    run_test_cases(std::slice::from_ref(case)).await;
+}
+
+// Backwards compatibility wrapper
+async fn run_no_db_test_cases(cases: &[NoDbTestCase]) {
+    // Convert NoDbTestCase (old struct) to TestCase (new struct with db_setup and pwd)
+    // This is a shim for backwards compatibility until all callers are updated
+    run_test_cases(cases).await;
+}
+
+async fn run_no_db_test_case(case: &NoDbTestCase) {
+    run_test_case(case).await;
+}
+
+async fn collect_case_trace(
+    debug_rx: &mut tokio::sync::mpsc::Receiver<DebugStateCommand>,
+    validation_rx: &mut tokio::sync::mpsc::Receiver<ValidationProbeEvent>,
+) -> (Vec<DebugStateCommand>, Vec<ValidationProbeEvent>) {
+    let mut commands = Vec::new();
+    let mut validations = Vec::new();
+
+    match timeout(Duration::from_millis(100), debug_rx.recv()).await {
+        Ok(Some(cmd)) => commands.push(cmd),
+        Ok(None) => return (commands, validations),
+        Err(_) => return (commands, validations),
+    }
+
+    if let Ok(Some(validation)) = timeout(Duration::from_millis(100), validation_rx.recv()).await {
+        validations.push(validation);
+    }
+
+    let mut idle_rounds = 0;
+    while idle_rounds < 2 {
+        let mut got_any = false;
+
+        match timeout(Duration::from_millis(10), debug_rx.recv()).await {
+            Ok(Some(cmd)) => {
+                commands.push(cmd);
+                got_any = true;
+            }
+            Ok(None) => break,
+            Err(_) => {}
+        }
+
+        match timeout(Duration::from_millis(10), validation_rx.recv()).await {
+            Ok(Some(validation)) => {
+                validations.push(validation);
+                got_any = true;
+            }
+            Ok(None) => break,
+            Err(_) => {}
+        }
+
+        if got_any {
+            idle_rounds = 0;
+        } else {
+            idle_rounds += 1;
+            tokio::task::yield_now().await;
         }
     }
 
-    // Cleanup
-    app_task.abort();
-    let _ = app_task.await;
-}
-
-/// Runs a single "No DB Loaded" test case using the full app with TestBackend.
-/// Convenience wrapper around run_no_db_test_cases for single-case tests.
-async fn run_no_db_test_case(case: &NoDbTestCase) {
-    run_no_db_test_cases(std::slice::from_ref(case)).await;
+    (commands, validations)
 }
 
 /// Test case 1b: Same as test case 1, but using the full app run loop with TestBackend.
 ///
-/// This test exercises the complete flow:
-/// Key events → Action::ExecuteCommand → parser::parse → exec::execute → StateCommand relay
+/// This test exercises the input-to-command path:
+/// Key events → Action::ExecuteCommand → parser::parse → exec::execute → probe relay
 #[tokio::test]
 async fn test_no_db_workspace_root_index_indexes_workspace_full_app() {
-    run_no_db_test_case(&NoDbTestCase {
-        name: "/index at workspace root -> IndexTargetDir",
-        pwd_type: "workspace",
-        input: "/index",
-        expected_state_cmd: "TestTodo", // Not yet implemented
-        expected_msg_contains: None,
-        expected_todo_test_name: Some("test_no_db_workspace_root_index_indexes_workspace"),
-    })
+    run_test_case(&TestCase::new(
+        "/index at workspace root -> IndexTargetDir",
+        DbSetup::None,
+        TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+        "/index",
+        "TestTodo", // Not yet implemented
+        None,
+        Some("test_no_db_workspace_root_index_indexes_workspace"),
+    ))
     .await;
 }
 
@@ -295,225 +692,227 @@ async fn test_no_db_workspace_root_index_indexes_workspace_full_app() {
 async fn test_no_db_loaded_all_cases() {
     let cases = vec![
         // Section 1: PWD is workspace root, no DB (14 cases)
-        NoDbTestCase {
-            name: "1. /index at workspace root",
-            pwd_type: "workspace",
-            input: "/index",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_workspace_root_index_indexes_workspace"),
-        },
-        NoDbTestCase {
-            name: "2. /index workspace at workspace root",
-            pwd_type: "workspace",
-            input: "/index workspace",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_workspace_root_index_indexes_workspace"),
-        },
-        NoDbTestCase {
-            name: "3. /index workspace . at workspace root",
-            pwd_type: "workspace",
-            input: "/index workspace .",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_workspace_root_index_indexes_workspace"),
-        },
-        NoDbTestCase {
-            name: "4. /index path/to/crate at workspace root",
-            pwd_type: "workspace",
-            input: "/index member_root",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_workspace_root_index_path_to_crate"),
-        },
-        NoDbTestCase {
-            name: "5. /index crate path/to/crate at workspace root",
-            pwd_type: "workspace",
-            input: "/index crate member_root",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_workspace_root_index_crate_path"),
-        },
-        NoDbTestCase {
-            name: "6. /index crate <member-name> at workspace root",
-            pwd_type: "workspace",
-            input: "/index crate member_root",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_workspace_root_index_crate_member_name"),
-        },
-        NoDbTestCase {
-            name: "7. /index crate at workspace root (list members)",
-            pwd_type: "workspace",
-            input: "/index crate",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_workspace_root_index_crate_lists_members"),
-        },
-        NoDbTestCase {
-            name: "8. /load crate <exists> at workspace root",
-            pwd_type: "workspace",
-            input: "/load crate fixture_nodes",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_workspace_root_load_crate_exists"),
-        },
-        NoDbTestCase {
-            name: "9. /load crate <not exists, is member> suggests index",
-            pwd_type: "workspace",
-            input: "/load crate member_root",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some(
-                "test_no_db_workspace_root_load_crate_not_exists_is_member",
-            ),
-        },
-        NoDbTestCase {
-            name: "10. /load crate <not exists, not member> lists crates",
-            pwd_type: "workspace",
-            input: "/load crate nonexistent_crate",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some(
-                "test_no_db_workspace_root_load_crate_not_exists_lists_crates",
-            ),
-        },
-        NoDbTestCase {
-            name: "11. /load workspace <crate-name> suggests /load crate",
-            pwd_type: "workspace",
-            input: "/load workspace member_root",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some(
-                "test_no_db_workspace_root_load_workspace_crate_name_suggests_load_crate",
-            ),
-        },
-        NoDbTestCase {
-            name: "12. /load workspace (no arg) loads or suggests /index",
-            pwd_type: "workspace",
-            input: "/load workspace",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_workspace_root_load_workspace_no_arg"),
-        },
-        NoDbTestCase {
-            name: "13. /save db at workspace root (error - no db loaded)",
-            pwd_type: "workspace",
-            input: "/save db",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_workspace_root_save_db_error"),
-        },
-        NoDbTestCase {
-            name: "14. /update at workspace root (error - no db loaded)",
-            pwd_type: "workspace",
-            input: "/update",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_workspace_root_update_error"),
-        },
+        TestCase::new(
+            "1. /index at workspace root",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index",
+            "TestTodo",
+            None,
+            Some("test_no_db_workspace_root_index_indexes_workspace"),
+        ),
+        TestCase::new(
+            "2. /index workspace at workspace root",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index workspace",
+            "TestTodo",
+            None,
+            Some("test_no_db_workspace_root_index_indexes_workspace"),
+        ),
+        TestCase::new(
+            "3. /index workspace . at workspace root",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index workspace .",
+            "TestTodo",
+            None,
+            Some("test_no_db_workspace_root_index_indexes_workspace"),
+        ),
+        TestCase::new(
+            "4. /index path/to/crate at workspace root",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index member_root",
+            "TestTodo",
+            None,
+            Some("test_no_db_workspace_root_index_path_to_crate"),
+        ),
+        TestCase::new(
+            "5. /index crate path/to/crate at workspace root",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index crate member_root",
+            "TestTodo",
+            None,
+            Some("test_no_db_workspace_root_index_crate_path"),
+        ),
+        TestCase::new(
+            "6. /index crate <member-name> at workspace root",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index crate member_root",
+            "TestTodo",
+            None,
+            Some("test_no_db_workspace_root_index_crate_member_name"),
+        ),
+        TestCase::new(
+            "7. /index crate at workspace root (list members)",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index crate",
+            "TestTodo",
+            None,
+            Some("test_no_db_workspace_root_index_crate_lists_members"),
+        ),
+        TestCase::new(
+            "8. /load crate <exists> at workspace root",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load crate fixture_nodes",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "9. /load crate <member> forwards to Workspace(LoadDb) for validation",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load crate member_root",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "10. /load crate <nonexistent> forwards to Workspace(LoadDb) for validation",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load crate nonexistent_crate",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "11. /load workspace <name> forwards to Workspace(LoadDb) for validation",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load workspace member_root",
+            "Workspace",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "12. /load workspace (no arg) loads or suggests /index",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load workspace",
+            "TestTodo",
+            None,
+            Some("test_no_db_workspace_root_load_workspace_no_arg"),
+        ),
+        TestCase::new(
+            "13. /save db at workspace root (error - no db loaded)",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/save db",
+            "AddMessageImmediate",
+            Some("No crate or workspace is loaded"),
+            None,
+        ),
+        TestCase::new(
+            "14. /update at workspace root (error - no db loaded)",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/update",
+            "TestTodo",
+            None,
+            Some("test_no_db_workspace_root_update_error"),
+        ),
         // Section 2: PWD is crate root, no DB (10 cases)
-        NoDbTestCase {
-            name: "15. /index at crate root",
-            pwd_type: "crate",
-            input: "/index",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_crate_root_index"),
-        },
-        NoDbTestCase {
-            name: "16. /index crate at crate root",
-            pwd_type: "crate",
-            input: "/index crate",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_crate_root_index_crate"),
-        },
-        NoDbTestCase {
-            name: "17. /index crate . at crate root",
-            pwd_type: "crate",
-            input: "/index crate .",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_crate_root_index_crate_dot"),
-        },
-        NoDbTestCase {
-            name: "18. /index workspace at crate root (if member)",
-            pwd_type: "crate",
-            input: "/index workspace",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_crate_root_index_workspace_if_member"),
-        },
-        NoDbTestCase {
-            name: "19. /index workspace at crate root (error if not member)",
-            pwd_type: "crate",
-            input: "/index workspace",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_crate_root_index_workspace_not_member"),
-        },
-        NoDbTestCase {
-            name: "20. /index path/to/crate at crate root",
-            pwd_type: "crate",
-            input: "/index /some/other/crate",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_crate_root_index_path"),
-        },
-        NoDbTestCase {
-            name: "21. /load crate <name> at crate root",
-            pwd_type: "crate",
-            input: "/load crate fixture_nodes",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_crate_root_load_crate"),
-        },
-        NoDbTestCase {
-            name: "22. /load workspace <name> at crate root",
-            pwd_type: "crate",
-            input: "/load workspace some_workspace",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_crate_root_load_workspace"),
-        },
-        NoDbTestCase {
-            name: "23. /save db at crate root (error - no db loaded)",
-            pwd_type: "crate",
-            input: "/save db",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_crate_root_save_db_error"),
-        },
-        NoDbTestCase {
-            name: "24. /update at crate root (error - no db loaded)",
-            pwd_type: "crate",
-            input: "/update",
-            expected_state_cmd: "TestTodo",
-            expected_msg_contains: None,
-            expected_todo_test_name: Some("test_no_db_crate_root_update_error"),
-        },
+        TestCase::new(
+            "15. /index at crate root",
+            DbSetup::None,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index",
+            "TestTodo",
+            None,
+            Some("test_no_db_crate_root_index"),
+        ),
+        TestCase::new(
+            "16. /index crate at crate root",
+            DbSetup::None,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index crate",
+            "TestTodo",
+            None,
+            Some("test_no_db_crate_root_index_crate"),
+        ),
+        TestCase::new(
+            "17. /index crate . at crate root",
+            DbSetup::None,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index crate .",
+            "TestTodo",
+            None,
+            Some("test_no_db_crate_root_index_crate_dot"),
+        ),
+        TestCase::new(
+            "18. /index workspace at crate root (if member)",
+            DbSetup::None,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index workspace",
+            "TestTodo",
+            None,
+            Some("test_no_db_crate_root_index_workspace_if_member"),
+        ),
+        TestCase::new(
+            "19. /index workspace at crate root (error if not member)",
+            DbSetup::None,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index workspace",
+            "TestTodo",
+            None,
+            Some("test_no_db_crate_root_index_workspace_not_member"),
+        ),
+        TestCase::new(
+            "20. /index path/to/crate at crate root",
+            DbSetup::None,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index /some/other/crate",
+            "TestTodo",
+            None,
+            Some("test_no_db_crate_root_index_path"),
+        ),
+        TestCase::new(
+            "21. /load crate <name> at crate root",
+            DbSetup::None,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/load crate fixture_nodes",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "22. /load workspace <name> at crate root",
+            DbSetup::None,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/load workspace some_workspace",
+            "Workspace",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "23. /save db at crate root (error - no db loaded)",
+            DbSetup::None,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/save db",
+            "AddMessageImmediate",
+            Some("No crate or workspace is loaded"),
+            None,
+        ),
+        TestCase::new(
+            "24. /update at crate root (error - no db loaded)",
+            DbSetup::None,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/update",
+            "TestTodo",
+            None,
+            Some("test_no_db_crate_root_update_error"),
+        ),
     ];
 
-    // Split cases by PWD type since each app instance has one fixed PWD
-    let workspace_cases: Vec<_> = cases.iter().filter(|c| c.pwd_type == "workspace").collect();
-    let crate_cases: Vec<_> = cases.iter().filter(|c| c.pwd_type == "crate").collect();
-
-    // Run workspace cases with one app instance
-    if !workspace_cases.is_empty() {
-        println!("Running {} workspace cases...", workspace_cases.len());
-        // Convert Vec<&NoDbTestCase> to Vec<NoDbTestCase> by cloning
-        let workspace_cases_owned: Vec<_> = workspace_cases.into_iter().cloned().collect();
-        run_no_db_test_cases(&workspace_cases_owned).await;
-    }
-
-    // Run crate cases with another app instance
-    if !crate_cases.is_empty() {
-        println!("Running {} crate cases...", crate_cases.len());
-        let crate_cases_owned: Vec<_> = crate_cases.into_iter().cloned().collect();
-        run_no_db_test_cases(&crate_cases_owned).await;
-    }
+    // Run all cases - the runner automatically groups by (db_setup, pwd)
+    run_test_cases(&cases).await;
 
     println!("\n========================================");
     println!("All {} test cases passed!", cases.len());
@@ -533,7 +932,7 @@ async fn test_no_db_loaded_all_cases() {
 // async fn test_my_specific_case() {
 //     run_no_db_test_case(&NoDbTestCase {
 //         name: "my case",
-//         pwd_type: "workspace",  // or "crate"
+//         pwd: TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),  // or TestPwd::Crate(...)
 //         input: "/my command",
 //         expected_state_cmd: "TestTodo",  // or "IndexTargetDir", etc.
 //         expected_msg_contains: None,
@@ -548,6 +947,123 @@ async fn test_no_db_loaded_all_cases() {
 // =============================================================================
 // Test: Single Workspace Member Loaded
 // =============================================================================
+//
+// - [ ] single crate + workspace member: `/index` re-indexes focused crate
+// - [ ] single crate + workspace member: `/index workspace` re-indexes entire workspace
+// - [ ] single crate + workspace member: `/index crate <focused>` re-indexes focused
+// - [ ] single crate + workspace member: `/index crate <other member>` switches focus + indexes
+// - [ ] single crate + workspace member: `/index crate <not member>` error + guidance
+// - [ ] single crate + workspace member: `/load crate <member>` suggests `/index crate`
+// - [ ] single crate + workspace member: `/load crate <not member>` error + guidance
+// - [ ] single crate + workspace member: `/load crate <not in registry>` suggests index
+// - [ ] single crate + workspace member: `/save db` saves workspace snapshot
+// - [ ] single crate + workspace member: `/update` scans focused crate, re-indexes if stale
+
+/// Batch test: Runs all "Single Workspace Member Loaded" test cases sequentially.
+///
+/// Uses `WS_FIXTURE_01_MEMBER_SINGLE` fixture which has one workspace member loaded.
+/// This provides a quick overview of which cases are passing/failing.
+#[tokio::test]
+async fn test_single_member_all_cases() {
+    let cases = vec![
+        // Section 3: Single workspace member loaded (10 cases)
+        TestCase::new(
+            "3.1 /index re-indexes focused crate",
+            DbSetup::SingleMember,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index",
+            "TestTodo",
+            None,
+            Some("test_single_member_index_reindexes_focused"),
+        ),
+        TestCase::new(
+            "3.2 /index workspace re-indexes entire workspace",
+            DbSetup::SingleMember,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index workspace",
+            "TestTodo",
+            None,
+            Some("test_single_member_index_workspace"),
+        ),
+        TestCase::new(
+            "3.3 /index crate <focused> re-indexes focused",
+            DbSetup::SingleMember,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index crate member_root",
+            "TestTodo",
+            None,
+            Some("test_single_member_index_crate_focused"),
+        ),
+        TestCase::new(
+            "3.4 /index crate <other member> switches focus + indexes",
+            DbSetup::SingleMember,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index crate member_nested",
+            "TestTodo",
+            None,
+            Some("test_single_member_index_crate_other_member"),
+        ),
+        TestCase::new(
+            "3.5 /index crate <not member> error + guidance",
+            DbSetup::SingleMember,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index crate not_a_member",
+            "TestTodo",
+            None,
+            Some("test_single_member_index_crate_not_member"),
+        ),
+        TestCase::new(
+            "3.6 /load crate <member> forwards to Workspace(LoadDb) for validation",
+            DbSetup::SingleMember,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load crate member_root",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "3.7 /load crate <not member> forwards to Workspace(LoadDb) for validation",
+            DbSetup::SingleMember,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load crate not_a_member",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "3.8 /load crate <not in registry> forwards to Workspace(LoadDb) for validation",
+            DbSetup::SingleMember,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load crate new_crate",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "3.9 /save db saves workspace snapshot",
+            DbSetup::SingleMember,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/save db",
+            "SaveDb", // TODO: Fixture needs to populate SystemStatus.loaded_crates
+            None,
+            None,
+        ),
+        TestCase::new(
+            "3.10 /update scans focused crate, re-indexes if stale",
+            DbSetup::SingleMember,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/update",
+            "AddMessageImmediate", // TODO: Better validation of update behavior
+            None,
+            None,
+        ),
+    ];
+
+    run_test_cases(&cases).await;
+
+    println!("\n========================================");
+    println!("All {} single-member test cases completed!", cases.len());
+}
 
 /// Tests `/index` when single workspace member is loaded re-indexes the focused crate.
 /// Pattern: Single workspace member → /index → IndexTargetDir for focused crate
@@ -563,6 +1079,112 @@ async fn test_workspace_member_single_index_reindexes_focused() {
 // =============================================================================
 // Test: Standalone Crate Loaded
 // =============================================================================
+//
+// - [ ] standalone crate: `/index` re-indexes loaded crate
+// - [ ] standalone crate: `/index crate <loaded>` re-indexes
+// - [ ] standalone crate: `/index crate <different>` error "use `/load crate`"
+// - [ ] standalone crate: `/index workspace` error "not a workspace"
+// - [ ] standalone crate: `/load crate <name>` check unsaved, then load (or force)
+// - [ ] standalone crate: `/load workspace <name>` check unsaved, then load workspace
+// - [ ] standalone crate: `/save db` saves standalone snapshot
+// - [ ] standalone crate: `/update` scans and re-indexes if stale
+// - [ ] standalone crate: `/index path/to/other` error "use `/load crate`"
+
+/// Batch test: Runs all "Standalone Crate Loaded" test cases sequentially.
+///
+/// Uses `FIXTURE_NODES_CANONICAL` fixture which has a standalone crate loaded.
+#[tokio::test]
+async fn test_standalone_crate_all_cases() {
+    let cases = vec![
+        // Section 4: Standalone crate loaded (9 cases)
+        TestCase::new(
+            "4.1 /index re-indexes loaded crate",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index",
+            "TestTodo",
+            None,
+            Some("test_standalone_index_reindexes"),
+        ),
+        TestCase::new(
+            "4.2 /index crate <loaded> re-indexes",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index crate fixture_nodes",
+            "TestTodo",
+            None,
+            Some("test_standalone_index_crate_loaded"),
+        ),
+        TestCase::new(
+            "4.3 /index crate <different> error 'use /load crate'",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index crate other_crate",
+            "TestTodo",
+            None,
+            Some("test_standalone_index_crate_different"),
+        ),
+        TestCase::new(
+            "4.4 /index workspace error 'not a workspace'",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index workspace",
+            "TestTodo",
+            None,
+            Some("test_standalone_index_workspace_error"),
+        ),
+        TestCase::new(
+            "4.5 /load crate <name> forwards to Workspace(LoadDb) for validation",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/load crate other_crate",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "4.6 /load workspace <name> (now forwards to LoadDb)",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/load workspace some_workspace",
+            "Workspace",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "4.7 /save db saves standalone snapshot",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/save db",
+            "SaveDb", // TODO: Fixture needs to populate SystemStatus.loaded_crates
+            None,
+            None,
+        ),
+        TestCase::new(
+            "4.8 /update scans and re-indexes if stale",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/update",
+            "AddMessageImmediate", // TODO: Better validation of update behavior
+            None,
+            None,
+        ),
+        TestCase::new(
+            "4.9 /index path/to/other runs update (not validating target)",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index /some/other/crate",
+            "TestTodo",
+            None,
+            Some("test_standalone_index_path"),
+        ),
+    ];
+
+    run_test_cases(&cases).await;
+
+    println!("\n========================================");
+    println!("All {} standalone crate test cases completed!", cases.len());
+}
 
 /// Tests `/index workspace` when standalone crate is loaded returns an error.
 /// Pattern: Standalone crate → /index workspace → error "not a workspace"
@@ -577,6 +1199,141 @@ async fn test_standalone_crate_index_workspace_error() {
 // =============================================================================
 // Test: Full Workspace Loaded
 // =============================================================================
+// - [ ] multi crate + workspace: `/index` re-indexes all members
+// - [ ] multi crate + workspace: `/index crate <member>` indexes that member
+// - [ ] multi crate + workspace: `/index crate <not member>` error + guidance
+// - [ ] multi crate + workspace: `/index workspace` re-indexes all (same as `/index`)
+// - [ ] multi crate + workspace: `/index path/to/crate` indexes if within workspace
+// - [ ] multi crate + workspace: `/index path/to/crate` error if outside workspace
+// - [ ] multi crate + workspace: `/load crate <member>` suggests `/index crate`
+// - [ ] multi crate + workspace: `/load crate <not member>` check unsaved, unload, load single
+// - [ ] multi crate + workspace: `/load crate <not in registry>` suggests index
+// - [ ] multi crate + workspace: `/load workspace <different>` check unsaved, load new
+// - [ ] multi crate + workspace: `/save db` saves workspace snapshot
+// - [ ] multi crate + workspace: `/update` scans all members, re-indexes stale
+
+/// Batch test: Runs all "Full Workspace Loaded" test cases sequentially.
+///
+/// Uses `WS_FIXTURE_01_CANONICAL` fixture which has multiple workspace members loaded.
+#[tokio::test]
+async fn test_full_workspace_all_cases() {
+    let cases = vec![
+        // Section 5: Full workspace loaded (11 cases)
+        TestCase::new(
+            "5.1 /index re-indexes all members",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index",
+            "TestTodo",
+            None,
+            Some("test_full_workspace_index"),
+        ),
+        TestCase::new(
+            "5.2 /index crate <member> indexes that member",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index crate member_root",
+            "TestTodo",
+            None,
+            Some("test_full_workspace_index_crate_member"),
+        ),
+        TestCase::new(
+            "5.3 /index crate <not member> error + guidance",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index crate not_a_member",
+            "TestTodo",
+            None,
+            Some("test_full_workspace_index_crate_not_member"),
+        ),
+        TestCase::new(
+            "5.4 /index workspace re-indexes all (same as /index)",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index workspace",
+            "TestTodo",
+            None,
+            Some("test_full_workspace_index_workspace"),
+        ),
+        TestCase::new(
+            "5.5 /index path/to/crate indexes if within workspace",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index member_root",
+            "TestTodo",
+            None,
+            Some("test_full_workspace_index_path_within"),
+        ),
+        TestCase::new(
+            "5.6 /index path/to/crate error if outside workspace",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index /outside/workspace/crate",
+            "TestTodo",
+            None,
+            Some("test_full_workspace_index_path_outside"),
+        ),
+        TestCase::new(
+            "5.7 /load crate <member> (now forwards to LoadDb)",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load crate member_root",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "5.8 /load crate <not member> (now forwards to LoadDb)",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load crate not_a_member",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "5.9 /load crate <not in registry> (now forwards to LoadDb)",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load crate new_crate",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "5.10 /load workspace <different> (now forwards to LoadDb)",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load workspace other_workspace",
+            "Workspace",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "5.11 /save db saves workspace snapshot",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/save db",
+            "SaveDb", // TODO: Fixture needs to populate SystemStatus.loaded_crates
+            None,
+            None,
+        ),
+        TestCase::new(
+            "5.12 /update scans all members, re-indexes stale",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/update",
+            "AddMessageImmediate", // TODO: Better validation of update behavior
+            None,
+            None,
+        ),
+    ];
+
+    run_test_cases(&cases).await;
+
+    println!("\n========================================");
+    println!("All {} full workspace test cases completed!", cases.len());
+}
 
 /// Tests command behavior when a full workspace with multiple members is loaded.
 /// Uses `WS_FIXTURE_01_CANONICAL` fixture.
@@ -586,6 +1343,196 @@ async fn test_full_workspace_index_commands() {
     let fixture_db = Arc::new(
         fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL).expect("load ws_fixture_01_canonical"),
     );
+}
+
+// =============================================================================
+// Test: DB Loaded, PWD is Crate (Section 6)
+// =============================================================================
+//
+// - [ ] pwd=crate, db loaded: `/index` re-indexes crate at pwd if loaded
+// - [ ] pwd=crate, db loaded: `/index` error if pwd crate not loaded
+// - [ ] pwd=crate, db loaded: `/index workspace` re-indexes workspace if pwd is member
+// - [ ] pwd=crate, db loaded: `/index workspace` error if pwd not member
+// - [ ] pwd=crate, db loaded: `/index crate <pwd match>` re-indexes
+// - [ ] pwd=crate, db loaded: `/index crate <different loaded>` switches focus + indexes
+// - [ ] pwd=crate, db loaded: `/index crate <not loaded>` follows workspace rules
+// - [ ] pwd=crate, db loaded: `/load crate <pwd match>` error "already loaded"
+// - [ ] pwd=crate, db loaded: `/load crate <different>` check unsaved, then load
+// - [ ] pwd=crate, db loaded: `/load workspace <name>` check unsaved, then load
+// - [ ] pwd=crate, db loaded: `/save db`, `/update` same as workspace root rules
+
+/// Batch test: Runs all "DB Loaded, PWD is Crate" test cases sequentially.
+///
+/// Uses `WS_FIXTURE_01_CANONICAL` fixture with PWD set to a member crate.
+#[tokio::test]
+async fn test_pwd_crate_loaded_all_cases() {
+    let cases = vec![
+        // Section 6: DB loaded, PWD is crate (11 cases)
+        TestCase::new(
+            "6.1 /index re-indexes crate at PWD if loaded",
+            DbSetup::FullWorkspace,
+            TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
+            "/index",
+            "TestTodo",
+            None,
+            Some("test_pwd_crate_index_loaded"),
+        ),
+        TestCase::new(
+            "6.2 /index error if PWD crate not loaded",
+            DbSetup::FullWorkspace,
+            TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/not_a_member"),
+            "/index",
+            "TestTodo",
+            None,
+            Some("test_pwd_crate_index_not_loaded"),
+        ),
+        TestCase::new(
+            "6.3 /index workspace re-indexes workspace if PWD is member",
+            DbSetup::FullWorkspace,
+            TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
+            "/index workspace",
+            "TestTodo",
+            None,
+            Some("test_pwd_crate_index_workspace_member"),
+        ),
+        TestCase::new(
+            "6.4 /index workspace error if PWD not member",
+            DbSetup::FullWorkspace,
+            TestPwd::Crate("/some/random/crate"),
+            "/index workspace",
+            "TestTodo",
+            None,
+            Some("test_pwd_crate_index_workspace_not_member"),
+        ),
+        TestCase::new(
+            "6.5 /index crate <PWD match> re-indexes",
+            DbSetup::FullWorkspace,
+            TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
+            "/index crate member_root",
+            "TestTodo",
+            None,
+            Some("test_pwd_crate_index_crate_pwd_match"),
+        ),
+        TestCase::new(
+            "6.6 /index crate <different loaded> switches focus + indexes",
+            DbSetup::FullWorkspace,
+            TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
+            "/index crate member_nested",
+            "TestTodo",
+            None,
+            Some("test_pwd_crate_index_crate_different"),
+        ),
+        TestCase::new(
+            "6.7 /index crate <not loaded> follows workspace rules",
+            DbSetup::FullWorkspace,
+            TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
+            "/index crate not_loaded_crate",
+            "TestTodo",
+            None,
+            Some("test_pwd_crate_index_crate_not_loaded"),
+        ),
+        TestCase::new(
+            "6.8 /load crate <PWD match> (now forwards to LoadDb)",
+            DbSetup::FullWorkspace,
+            TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
+            "/load crate member_root",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "6.9 /load crate <different> (now forwards to LoadDb)",
+            DbSetup::FullWorkspace,
+            TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
+            "/load crate different_crate",
+            "TestTodo",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "6.10 /load workspace <name> (now forwards to LoadDb)",
+            DbSetup::FullWorkspace,
+            TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
+            "/load workspace other_workspace",
+            "Workspace",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "6.11 /save db, /update same as workspace root rules",
+            DbSetup::FullWorkspace,
+            TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
+            "/save db",
+            "SaveDb", // TODO: Fixture needs to populate SystemStatus.loaded_crates
+            None,
+            None,
+        ),
+    ];
+
+    run_test_cases(&cases).await;
+
+    println!("\n========================================");
+    println!("All {} PWD-crate test cases completed!", cases.len());
+}
+
+// =============================================================================
+// Test: Transition Cases (Section 7)
+// =============================================================================
+//
+// - [ ] `/load workspace <name>` when standalone loaded: check unsaved, prompt or force
+// - [ ] `/load crate <name>` when workspace loaded: check unsaved, prompt or force
+// - [ ] `/load crate <name>` standalone→standalone: check unsaved, prompt or force
+// - [ ] `/index` when db loaded: destructive re-parse (no force needed)
+
+/// Batch test: Runs all "Transition Cases" test cases sequentially.
+///
+/// Tests behavior when switching between different loaded states.
+#[tokio::test]
+async fn test_transition_all_cases() {
+    let cases = vec![
+        // Section 7: Transition cases (4 cases)
+        TestCase::new(
+            "7.1 /load workspace <name> when standalone (now forwards to LoadDb)",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/load workspace some_workspace",
+            "Workspace",
+            Some("LoadDb"),
+            None,
+        ),
+        TestCase::new(
+            "7.2 /load crate <name> when workspace loaded: check unsaved, prompt or force",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/load crate some_crate",
+            "TestTodo",
+            None,
+            Some("test_transition_load_crate_from_workspace"),
+        ),
+        TestCase::new(
+            "7.3 /load crate <name> standalone→standalone: check unsaved, prompt or force",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/load crate other_crate",
+            "TestTodo",
+            None,
+            Some("test_transition_load_crate_standalone_to_standalone"),
+        ),
+        TestCase::new(
+            "7.4 /index when db loaded: destructive re-parse (no force needed)",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index",
+            "TestTodo",
+            None,
+            Some("test_transition_index_when_loaded"),
+        ),
+    ];
+
+    run_test_cases(&cases).await;
+
+    println!("\n========================================");
+    println!("All {} transition test cases completed!", cases.len());
 }
 
 // =============================================================================
