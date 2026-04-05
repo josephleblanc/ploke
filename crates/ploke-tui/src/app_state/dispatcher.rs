@@ -657,7 +657,44 @@ async fn handle_load_cmd(state: &Arc<AppState>, event_bus: &Arc<EventBus>, cmd: 
         return;
     }
 
+    if resolution.replaces_loaded_state {
+        emit_load_replace_notice(state, event_bus, &resolution.workspace_ref).await;
+    }
     handlers::db::load_db(state, event_bus, resolution.workspace_ref).await;
+}
+
+fn load_replace_notice(workspace_ref: &str) -> String {
+    format!(
+        "Loading snapshot '{workspace_ref}' replaces current in-memory state. Consider using `/save db` first. Similar command: `/load crates <workspace-name-or-id> <crate-name-or-exact-root>` adds one crate to the current loaded workspace."
+    )
+}
+
+async fn emit_load_replace_notice(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    workspace_ref: &str,
+) {
+    handlers::chat::add_msg_immediate(
+        state,
+        event_bus,
+        Uuid::new_v4(),
+        load_replace_notice(workspace_ref),
+        MessageKind::SysInfo,
+    )
+    .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_replace_notice;
+
+    #[test]
+    fn load_replace_notice_mentions_replacement_and_options() {
+        let msg = load_replace_notice("my_ws");
+        assert!(msg.contains("Loading snapshot 'my_ws'"));
+        assert!(msg.contains("/save db"));
+        assert!(msg.contains("/load crates"));
+    }
 }
 
 async fn emit_load_validation_error(

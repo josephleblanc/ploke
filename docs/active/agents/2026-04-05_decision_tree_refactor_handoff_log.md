@@ -535,6 +535,22 @@
   - `cargo test -p ploke-tui --lib test_transition_all_cases -- --nocapture`
   - `cargo test -p ploke-tui --lib`
 
+## Entry 27: `/load` Guidance Messaging
+- Slice: add pre-load advisory and clarify help text
+- Files changed:
+  - crates/ploke-tui/src/app_state/dispatcher.rs
+  - crates/ploke-tui/src/app/commands/mod.rs
+- Contract decisions:
+  - `/load` now emits a sysinfo notice before replacing the current snapshot so users see the destructive behavior and alternative commands (`/save db`, `/load crates ...`).
+  - Help text distinguishes snapshot-restore (`/load workspace|crate`) from additive subset import (`/load crates`).
+  - Added a small unit test to pin the advisory wording.
+- Placeholders left in place:
+  - No semantic change to `/load`; Section 7 transition rows still depend on future policy.
+- Tests run:
+  - `cargo test -p ploke-tui --lib load_replace_notice_mentions_replacement_and_options -- --nocapture`
+- Open risks / follow-ups:
+  - Broader `/load` transition rows remain pending until unsaved-state policy is finalized.
+
 ## Entry 25: `/load` Registry Sandbox Narrowing
 - Slice: make the fast decision-tree `/load` rows deterministic against a minimal isolated workspace registry
 - Files changed:
