@@ -88,6 +88,7 @@ async fn make_app_with_proposals() -> (
         "openai/gpt-4o".to_string(),
         cfg.tool_verbosity,
         cancel_tx,
+        std::env::current_dir().unwrap(),
     );
     // Open overlay and set mode (mode is irrelevant for overlay keys)
     app.mode = Mode::Insert;
@@ -166,6 +167,7 @@ async fn make_app_with_proposals_and_editor(
         "openai/gpt-4o".to_string(),
         cfg.tool_verbosity,
         cancel_tx,
+        std::env::current_dir().unwrap(),
     );
     // Open overlay and set mode (mode is irrelevant for overlay keys)
     app.mode = Mode::Insert;

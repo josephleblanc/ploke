@@ -112,12 +112,15 @@ lazy_static! {
 
         let (cancellation_token, cancel_handle) = CancellationToken::new();
         let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);
+        // Get pwd from current directory for FileManager
+        let pwd = std::env::current_dir().expect("current dir");
         let file_manager = FileManager::new(
             io_handle.clone(),
             event_bus.subscribe(EventPriority::Background),
             event_bus.background_tx.clone(),
             rag_event_tx.clone(),
             event_bus.realtime_tx.clone(),
+            pwd,
         );
 
         tokio::spawn(file_manager.run());
@@ -146,6 +149,7 @@ lazy_static! {
             event_bus.clone(),
             state.clone(),
         ));
+        let pwd = std::env::current_dir().expect("current dir");
         let app = App::new(
             command_style,
             state,
@@ -154,6 +158,7 @@ lazy_static! {
             default_model(),
             tool_verbosity,
             cancel_tx,
+            pwd,
         );
 
         Arc::new(Mutex::new(app))

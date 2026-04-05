@@ -105,13 +105,10 @@ fn find_trait_in_module_by_name_checked<'a, G: GraphAccess + ?Sized>(
     trait_name: &str,
 ) -> Result<&'a TraitNode, SynParserError> {
     let module = graph.find_module_by_path_checked(module_path)?;
-        let matches: Vec<&TraitNode> = graph
+    let matches: Vec<&TraitNode> = graph
         .traits()
         .iter()
-        .filter(|t| {
-            t.name == trait_name
-                && graph.module_contains_node(module.id, t.id.into())
-        })
+        .filter(|t| t.name == trait_name && graph.module_contains_node(module.id, t.id.into()))
         .collect();
     match matches.as_slice() {
         [] => Err(SynParserError::InternalState(format!(
@@ -263,7 +260,12 @@ impl AssocParanoidArgs<'_> {
         graph: &G,
         method_id: MethodNodeId,
     ) -> Result<(), SynParserError> {
-        let exp_path: Vec<String> = self.expected_path.iter().copied().map(String::from).collect();
+        let exp_path: Vec<String> = self
+            .expected_path
+            .iter()
+            .copied()
+            .map(String::from)
+            .collect();
         let target_assoc = AssociatedItemNodeId::Method(method_id);
         match self.owner {
             AssocOwner::Impl { span } => {

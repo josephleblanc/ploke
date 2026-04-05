@@ -758,11 +758,8 @@ async fn test_tool_result_structure() {
         // Simulate the tool result construction logic from apply_code_edit_tool
         let primary_root = harness
             .state
-            .system
-            .read()
-            .await
-            .tool_path_context()
-            .map(|(r, _)| r);
+            .with_system_read(|sys| sys.tool_path_context().map(|(r, _)| r))
+            .await;
         let display_files: Vec<String> = proposal
             .files
             .iter()

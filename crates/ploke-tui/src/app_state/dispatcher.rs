@@ -19,15 +19,37 @@ use ploke_llm::embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddings};
 use ploke_llm::router_only::openrouter::OpenRouter;
 use serde::Deserialize;
 use tokio::sync::mpsc;
+#[cfg(test)]
+use tokio::sync::watch;
 use tracing::{trace_span, warn};
 
-use super::commands::StateCommand;
+use super::IndexTargetDir;
+use super::commands::{
+    IndexCmd, IndexResolveError, LoadCmd, LoadResolveError, LoadValidationError, StateCommand,
+    Validate, WorkspaceCmd, emit_validation_error, validate_workspace_cmd,
+};
 use super::core::AppState;
 use super::events::SystemEvent;
 use super::{database, handlers};
+use crate::AppEvent;
 use crate::chat_history::MessageKind;
+use crate::error::{EventCtx, Message, UiError};
 use uuid::Uuid;
 
+/// The central command dispatcher for AppState.
+///
+/// # Validation Contract
+///
+/// All `StateCommand` handlers MUST validate preconditions before acting.
+/// This is where authoritative business logic validation happens because:
+/// 1. AppState has full access to `SystemStatus` (not just `try_read`)
+/// 2. Validation failures can emit proper `AppEvent::System(SystemEvent::Error)`
+/// 3. App (UI thread) must not block on state checks
+///
+/// **Example:** `SaveDb` must check `has_loaded_crates()` and emit an error
+/// event if no workspace is loaded, rather than silently failing or panicking.
+///
+/// See `execute` in `app/commands/exec.rs` for the forwarding side of this contract.
 pub async fn state_manager(
     state: Arc<AppState>,
     mut cmd_rx: mpsc::Receiver<StateCommand>,
@@ -141,21 +163,21 @@ pub async fn state_manager(
                 .await;
             }
 
+            StateCommand::Index(cmd) => {
+                if let Err(e) = handle_index_cmd(&state, &event_bus, cmd).await {
+                    emit_index_resolve_error(&state, &event_bus, e).await;
+                }
+            }
+
+            StateCommand::Load(cmd) => {
+                handle_load_cmd(&state, &event_bus, cmd).await;
+            }
+
             StateCommand::IndexTargetDir {
                 target_dir,
                 needs_parse,
             } => {
-                let state = Arc::clone(&state);
-                let event_bus = Arc::clone(&event_bus);
-                tokio::spawn(async move {
-                    handlers::indexing::index_workspace(
-                        &state,
-                        &event_bus,
-                        target_dir,
-                        needs_parse,
-                    )
-                    .await;
-                });
+                spawn_index_workspace(&state, &event_bus, target_dir, needs_parse);
             }
             StateCommand::PauseIndexing => handlers::indexing::pause(&state).await,
             StateCommand::ResumeIndexing => handlers::indexing::resume(&state).await,
@@ -169,19 +191,22 @@ pub async fn state_manager(
                 handlers::db::update_database(&state, &event_bus).await;
             }
             StateCommand::RecordIndexCompleted => {
-                let mut sys = state.system.write().await;
-                let loaded_ids: Vec<_> = sys.loaded_crates.keys().copied().collect();
-                if loaded_ids.is_empty() {
-                    tracing::warn!("Indexing completed but no crates are loaded");
-                }
-                for crate_id in loaded_ids {
-                    let version = sys.record_index_complete(crate_id);
-                    tracing::debug!(
-                        "Indexing complete; crate_id={:?} version={}",
-                        crate_id,
-                        version
-                    );
-                }
+                state
+                    .with_system_txn(|txn| {
+                        let loaded_ids = txn.loaded_crate_ids();
+                        if loaded_ids.is_empty() {
+                            tracing::warn!("Indexing completed but no crates are loaded");
+                        }
+                        for crate_id in loaded_ids {
+                            let version = txn.record_index_complete(crate_id);
+                            tracing::debug!(
+                                "Indexing complete; crate_id={:?} version={}",
+                                crate_id,
+                                version
+                            );
+                        }
+                    })
+                    .await;
             }
 
             StateCommand::EmbedMessage {
@@ -262,7 +287,7 @@ pub async fn state_manager(
                 handlers::db::read_query(&event_bus, query_name, file_name).await;
             }
             StateCommand::SaveDb => {
-                database::save_db(&state, &event_bus).await;
+                let _ = database::save_db(&state, &event_bus).await;
             }
             StateCommand::BatchPromptSearch {
                 prompt_file,
@@ -303,6 +328,7 @@ pub async fn state_manager(
                 handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
             }
 
+            // NEW: Grouped workspace commands with validation
             StateCommand::Bm25Rebuild => rag::search::bm25_rebuild(&state, &event_bus).await,
             StateCommand::Bm25Search { query, top_k } => {
                 rag::search::bm25_search(&state, &event_bus, query, top_k).await
@@ -556,8 +582,225 @@ pub async fn state_manager(
                 chat_guard.set_current_context_tokens(tokens);
                 event_bus.send(MessageUpdatedEvent::new(chat_guard.current).into());
             }
+            StateCommand::SetPwd { new_pwd } => {
+                // Transaction pattern: compile-time guarantee that lock is not held across await
+                let outcome = state
+                    .with_system_txn(|txn| {
+                        txn.set_pwd(new_pwd);
+                    })
+                    .await;
+
+                // Dispatch post-commit effects after lock is released
+                for effect in outcome.effects {
+                    match effect {
+                        super::PostCommit::EmitPwdChanged(pwd) => {
+                            event_bus.send(crate::AppEvent::System(SystemEvent::PwdChanged(pwd)));
+                        }
+                    }
+                }
+            }
 
             _ => {}
         };
+    }
+}
+
+fn spawn_index_workspace(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    target_dir: Option<IndexTargetDir>,
+    needs_parse: bool,
+) {
+    let state = Arc::clone(state);
+    let event_bus = Arc::clone(event_bus);
+    tokio::spawn(async move {
+        handlers::indexing::index_workspace(&state, &event_bus, target_dir, needs_parse).await;
+    });
+}
+
+async fn handle_index_cmd(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    cmd: IndexCmd,
+) -> Result<(), IndexResolveError> {
+    let resolution = cmd.resolve(state).await?;
+    if let Some(focus_root) = resolution.focus_root.clone() {
+        state
+            .with_system_txn(|txn| {
+                txn.set_focus_from_root(focus_root);
+            })
+            .await;
+    }
+    spawn_index_workspace(
+        state,
+        event_bus,
+        Some(resolution.target_dir),
+        resolution.needs_parse,
+    );
+    Ok(())
+}
+
+async fn handle_load_cmd(state: &Arc<AppState>, event_bus: &Arc<EventBus>, cmd: LoadCmd) {
+    let LoadCmd { kind, force, .. } = &cmd;
+    tracing::debug!(?kind, force, "Handling load command boundary");
+
+    let resolution = match cmd.resolve(state).await {
+        Ok(resolution) => resolution,
+        Err(error) => {
+            emit_load_resolve_error(state, event_bus, error).await;
+            return;
+        }
+    };
+
+    if let Err(error) = cmd.validate(state, &resolution).await {
+        emit_load_validation_error(state, event_bus, error).await;
+        return;
+    }
+
+    if resolution.replaces_loaded_state {
+        emit_load_replace_notice(state, event_bus, &resolution.workspace_ref).await;
+    }
+    handlers::db::load_db(state, event_bus, resolution.workspace_ref).await;
+}
+
+fn load_replace_notice(workspace_ref: &str) -> String {
+    format!(
+        "Loading snapshot '{workspace_ref}' replaces current in-memory state. Consider using `/save db` first. Similar command: `/load crates <workspace-name-or-id> <crate-name-or-exact-root>` adds one crate to the current loaded workspace."
+    )
+}
+
+async fn emit_load_replace_notice(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    workspace_ref: &str,
+) {
+    handlers::chat::add_msg_immediate(
+        state,
+        event_bus,
+        Uuid::new_v4(),
+        load_replace_notice(workspace_ref),
+        MessageKind::SysInfo,
+    )
+    .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_replace_notice;
+
+    #[test]
+    fn load_replace_notice_mentions_replacement_and_options() {
+        let msg = load_replace_notice("my_ws");
+        assert!(msg.contains("Loading snapshot 'my_ws'"));
+        assert!(msg.contains("/save db"));
+        assert!(msg.contains("/load crates"));
+    }
+}
+
+async fn emit_load_validation_error(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    error: LoadValidationError,
+) {
+    let message = error.to_string();
+    let recovery = error.recovery_suggestion();
+    tracing::error!("Load command failed: {}", message);
+    UiError::new_from_message(Message::user_new(message))
+        .with_recovery(recovery)
+        .format_recovery(|recovery, message| format!("{message}\nConsider using: {recovery}"))
+        .send_ui(EventCtx::new_user_facing(event_bus, state))
+        .await;
+}
+
+async fn emit_load_resolve_error(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    error: LoadResolveError,
+) {
+    let message = error.user_message();
+    let recovery = error.recovery_suggestion();
+    tracing::error!("Load command failed: {}", message);
+    UiError::new_from_message(Message::user_new(message))
+        .with_recovery(recovery)
+        .format_recovery(|recovery, message| format!("{message}\nConsider using: {recovery}"))
+        .send_ui(EventCtx::new_user_facing(event_bus, state))
+        .await;
+}
+
+async fn emit_index_resolve_error(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    error: IndexResolveError,
+) {
+    // Keep the error direct and the recovery hint indirect.
+    let message = error.user_message();
+    let recovery = error.recovery_suggestion();
+    tracing::error!("Index command failed: {}", message);
+    UiError::new_from_message(Message::user_new(message))
+        .with_recovery(recovery)
+        .format_recovery(|recovery, message| format!("{message}\nConsider using: {recovery}"))
+        .send_ui(EventCtx::new_user_facing(event_bus, state))
+        .await;
+}
+
+/// Handles validated workspace commands.
+///
+/// This function assumes validation has already been performed by the caller.
+/// Each command variant is dispatched to the appropriate handler module.
+async fn handle_workspace_cmd(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    cmd: WorkspaceCmd,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        WorkspaceCmd::SaveDb => {
+            let _ = database::save_db(state, event_bus).await;
+            Ok(())
+        }
+        WorkspaceCmd::LoadDb { workspace_ref } => {
+            let _ = database::load_db(state, event_bus, workspace_ref).await;
+            Ok(())
+        }
+        WorkspaceCmd::LoadWorkspaceCrates {
+            workspace_ref,
+            crate_ref,
+        } => {
+            let _ =
+                database::load_workspace_crates(state, event_bus, workspace_ref, crate_ref).await;
+            Ok(())
+        }
+        WorkspaceCmd::WorkspaceStatus => {
+            let _ = database::workspace_status(state, event_bus).await;
+            Ok(())
+        }
+        WorkspaceCmd::WorkspaceUpdate => {
+            let _ = database::workspace_update(state, event_bus).await;
+            Ok(())
+        }
+        WorkspaceCmd::WorkspaceRemove { crate_ref } => {
+            let _ = database::workspace_remove(state, event_bus, crate_ref).await;
+            Ok(())
+        }
+        WorkspaceCmd::ScanForChange { scan_tx } => {
+            let _ = database::scan_for_change(state, event_bus, scan_tx).await;
+            Ok(())
+        }
+        WorkspaceCmd::SetPwd { new_pwd } => {
+            let outcome = state
+                .with_system_txn(|txn| {
+                    txn.set_pwd(new_pwd);
+                })
+                .await;
+
+            // Dispatch post-commit effects after lock is released
+            for effect in outcome.effects {
+                match effect {
+                    super::PostCommit::EmitPwdChanged(pwd) => {
+                        event_bus.send(crate::AppEvent::System(SystemEvent::PwdChanged(pwd)));
+                    }
+                }
+            }
+            Ok(())
+        }
     }
 }

@@ -24,7 +24,8 @@ const FIXTURE: &str = "fixture_nodes";
 lazy_static! {
     static ref EXPECTED_METHOD_ARGS: HashMap<&'static str, AssocParanoidArgs<'static>> = {
         let mut m = HashMap::new();
-        m.insert("crate::impls::inherent_SimpleStruct::new",
+        m.insert(
+            "crate::impls::inherent_SimpleStruct::new",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -32,9 +33,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (520, 750) },
                 ident: "new",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::inherent_SimpleStruct::private_method",
+        m.insert(
+            "crate::impls::inherent_SimpleStruct::private_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -42,9 +44,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (520, 750) },
                 ident: "private_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::inherent_SimpleStruct::public_method",
+        m.insert(
+            "crate::impls::inherent_SimpleStruct::public_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -52,9 +55,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (520, 750) },
                 ident: "public_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::inherent_PrivateStruct::get_secret_len",
+        m.insert(
+            "crate::impls::inherent_PrivateStruct::get_secret_len",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -62,9 +66,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (790, 884) },
                 ident: "get_secret_len",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::inherent_GenericStruct_T::get_value_ref",
+        m.insert(
+            "crate::impls::inherent_GenericStruct_T::get_value_ref",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -72,9 +77,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (968, 1062) },
                 ident: "get_value_ref",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::inherent_GenericStruct_T_Debug::print_value",
+        m.insert(
+            "crate::impls::inherent_GenericStruct_T_Debug::print_value",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -82,9 +88,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (1106, 1217) },
                 ident: "print_value",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::inherent_GenericStruct_str::get_str_len",
+        m.insert(
+            "crate::impls::inherent_GenericStruct_str::get_str_len",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -92,9 +99,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (1251, 1354) },
                 ident: "get_str_len",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::impl_SimpleTrait_for_SimpleStruct::trait_method",
+        m.insert(
+            "crate::impls::impl_SimpleTrait_for_SimpleStruct::trait_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -102,9 +110,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (1411, 1508) },
                 ident: "trait_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::impl_PrivateTrait_for_SimpleStruct::private_trait_method",
+        m.insert(
+            "crate::impls::impl_PrivateTrait_for_SimpleStruct::private_trait_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -112,9 +121,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (1543, 1679) },
                 ident: "private_trait_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::impl_SimpleTrait_for_GenericStruct::trait_method",
+        m.insert(
+            "crate::impls::impl_SimpleTrait_for_GenericStruct::trait_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -122,9 +132,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (1732, 1885) },
                 ident: "trait_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::impl_GenericTrait_for_GenericStruct::generic_trait_method",
+        m.insert(
+            "crate::impls::impl_GenericTrait_for_GenericStruct::generic_trait_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -132,9 +143,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (1928, 2097) },
                 ident: "generic_trait_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::impl_SimpleTrait_for_i32::trait_method",
+        m.insert(
+            "crate::impls::impl_SimpleTrait_for_i32::trait_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -142,9 +154,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (2354, 2438) },
                 ident: "trait_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::impl_AssocTrait_for_SimpleStruct::create_output",
+        m.insert(
+            "crate::impls::impl_AssocTrait_for_SimpleStruct::create_output",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -152,9 +165,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (2487, 2666) },
                 ident: "create_output",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::impl_SimpleTrait_for_ref_SimpleStruct::trait_method",
+        m.insert(
+            "crate::impls::impl_SimpleTrait_for_ref_SimpleStruct::trait_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -162,9 +176,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (2697, 2802) },
                 ident: "trait_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::inner::inherent_SimpleStruct::method_in_module",
+        m.insert(
+            "crate::impls::inner::inherent_SimpleStruct::method_in_module",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -172,9 +187,10 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (2958, 3074) },
                 ident: "method_in_module",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::inner::impl_SimpleTrait_for_InnerStruct::trait_method",
+        m.insert(
+            "crate::impls::inner::impl_SimpleTrait_for_InnerStruct::trait_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
@@ -182,835 +198,951 @@ lazy_static! {
                 owner: AssocOwner::Impl { span: (3136, 3241) },
                 ident: "trait_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::trait_SimpleTrait::trait_method",
+        m.insert(
+            "crate::impls::trait_SimpleTrait::trait_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
                 expected_path: &["crate", "impls"],
-                owner: AssocOwner::Trait { trait_name: "SimpleTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "SimpleTrait",
+                },
                 ident: "trait_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::trait_PrivateTrait::private_trait_method",
+        m.insert(
+            "crate::impls::trait_PrivateTrait::private_trait_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
                 expected_path: &["crate", "impls"],
-                owner: AssocOwner::Trait { trait_name: "PrivateTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "PrivateTrait",
+                },
                 ident: "private_trait_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::trait_GenericTrait::generic_trait_method",
+        m.insert(
+            "crate::impls::trait_GenericTrait::generic_trait_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
                 expected_path: &["crate", "impls"],
-                owner: AssocOwner::Trait { trait_name: "GenericTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "GenericTrait",
+                },
                 ident: "generic_trait_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::impls::trait_AssocTrait::create_output",
+        m.insert(
+            "crate::impls::trait_AssocTrait::create_output",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/impls.rs",
                 expected_path: &["crate", "impls"],
-                owner: AssocOwner::Trait { trait_name: "AssocTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "AssocTrait",
+                },
                 ident: "create_output",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::SimpleTrait::required_method",
+        m.insert(
+            "crate::traits::SimpleTrait::required_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "SimpleTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "SimpleTrait",
+                },
                 ident: "required_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::InternalTrait::default_method",
+        m.insert(
+            "crate::traits::InternalTrait::default_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "InternalTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "InternalTrait",
+                },
                 ident: "default_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::CrateTrait::crate_method",
+        m.insert(
+            "crate::traits::CrateTrait::crate_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "CrateTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "CrateTrait",
+                },
                 ident: "crate_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::DocumentedTrait::documented_method",
+        m.insert(
+            "crate::traits::DocumentedTrait::documented_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "DocumentedTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "DocumentedTrait",
+                },
                 ident: "documented_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::GenericTrait::process",
+        m.insert(
+            "crate::traits::GenericTrait::process",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "GenericTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "GenericTrait",
+                },
                 ident: "process",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::LifetimeTrait::get_ref",
+        m.insert(
+            "crate::traits::LifetimeTrait::get_ref",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "LifetimeTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "LifetimeTrait",
+                },
                 ident: "get_ref",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::ComplexGenericTrait::complex_process",
+        m.insert(
+            "crate::traits::ComplexGenericTrait::complex_process",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "ComplexGenericTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "ComplexGenericTrait",
+                },
                 ident: "complex_process",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::AssocTypeTrait::generate",
+        m.insert(
+            "crate::traits::AssocTypeTrait::generate",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "AssocTypeTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "AssocTypeTrait",
+                },
                 ident: "generate",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::AssocTypeWithBounds::generate_bounded",
+        m.insert(
+            "crate::traits::AssocTypeWithBounds::generate_bounded",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "AssocTypeWithBounds" },
+                owner: AssocOwner::Trait {
+                    trait_name: "AssocTypeWithBounds",
+                },
                 ident: "generate_bounded",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::AssocConstTrait::get_id",
+        m.insert(
+            "crate::traits::AssocConstTrait::get_id",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "AssocConstTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "AssocConstTrait",
+                },
                 ident: "get_id",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::SuperTrait::super_method",
+        m.insert(
+            "crate::traits::SuperTrait::super_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "SuperTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "SuperTrait",
+                },
                 ident: "super_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::MultiSuperTrait::multi_super_method",
+        m.insert(
+            "crate::traits::MultiSuperTrait::multi_super_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "MultiSuperTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "MultiSuperTrait",
+                },
                 ident: "multi_super_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::GenericSuperTrait::generic_super_method",
+        m.insert(
+            "crate::traits::GenericSuperTrait::generic_super_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "GenericSuperTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "GenericSuperTrait",
+                },
                 ident: "generic_super_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::AttributedTrait::calculate",
+        m.insert(
+            "crate::traits::AttributedTrait::calculate",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "AttributedTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "AttributedTrait",
+                },
                 ident: "calculate",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::UnsafeTrait::unsafe_method",
+        m.insert(
+            "crate::traits::UnsafeTrait::unsafe_method",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "UnsafeTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "UnsafeTrait",
+                },
                 ident: "unsafe_method",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::SelfUsageTrait::returns_self",
+        m.insert(
+            "crate::traits::SelfUsageTrait::returns_self",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "SelfUsageTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "SelfUsageTrait",
+                },
                 ident: "returns_self",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::SelfUsageTrait::takes_self",
+        m.insert(
+            "crate::traits::SelfUsageTrait::takes_self",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "SelfUsageTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "SelfUsageTrait",
+                },
                 ident: "takes_self",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::SelfInAssocBound::get_related",
+        m.insert(
+            "crate::traits::SelfInAssocBound::get_related",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits"],
-                owner: AssocOwner::Trait { trait_name: "SelfInAssocBound" },
+                owner: AssocOwner::Trait {
+                    trait_name: "SelfInAssocBound",
+                },
                 ident: "get_related",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::inner::InnerSecretTrait::secret_op",
+        m.insert(
+            "crate::traits::inner::InnerSecretTrait::secret_op",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits", "inner"],
-                owner: AssocOwner::Trait { trait_name: "InnerSecretTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "InnerSecretTrait",
+                },
                 ident: "secret_op",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::inner::InnerPublicTrait::public_inner_op",
+        m.insert(
+            "crate::traits::inner::InnerPublicTrait::public_inner_op",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits", "inner"],
-                owner: AssocOwner::Trait { trait_name: "InnerPublicTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "InnerPublicTrait",
+                },
                 ident: "public_inner_op",
                 expected_cfg: None,
-            }
+            },
         );
-        m.insert("crate::traits::inner::SuperGraphNodeTrait::super_visible_op",
+        m.insert(
+            "crate::traits::inner::SuperGraphNodeTrait::super_visible_op",
             AssocParanoidArgs {
                 fixture: FIXTURE,
                 relative_file_path: "src/traits.rs",
                 expected_path: &["crate", "traits", "inner"],
-                owner: AssocOwner::Trait { trait_name: "SuperGraphNodeTrait" },
+                owner: AssocOwner::Trait {
+                    trait_name: "SuperGraphNodeTrait",
+                },
                 ident: "super_visible_op",
                 expected_cfg: None,
-            }
+            },
         );
         m
     };
     static ref EXPECTED_METHOD_DATA: HashMap<&'static str, ExpectedMethodNode> = {
         let mut m = HashMap::new();
-        m.insert("crate::impls::inherent_SimpleStruct::new",
+        m.insert(
+            "crate::impls::inherent_SimpleStruct::new",
             ExpectedMethodNode {
-            name: "new",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "new",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::inherent_SimpleStruct::private_method",
+        m.insert(
+            "crate::impls::inherent_SimpleStruct::private_method",
             ExpectedMethodNode {
-            name: "private_method",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "private_method",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::inherent_SimpleStruct::public_method",
+        m.insert(
+            "crate::impls::inherent_SimpleStruct::public_method",
             ExpectedMethodNode {
-            name: "public_method",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "public_method",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::inherent_PrivateStruct::get_secret_len",
+        m.insert(
+            "crate::impls::inherent_PrivateStruct::get_secret_len",
             ExpectedMethodNode {
-            name: "get_secret_len",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "get_secret_len",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::inherent_GenericStruct_T::get_value_ref",
+        m.insert(
+            "crate::impls::inherent_GenericStruct_T::get_value_ref",
             ExpectedMethodNode {
-            name: "get_value_ref",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "get_value_ref",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::inherent_GenericStruct_T_Debug::print_value",
+        m.insert(
+            "crate::impls::inherent_GenericStruct_T_Debug::print_value",
             ExpectedMethodNode {
-            name: "print_value",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: true,
-        }
+                name: "print_value",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::inherent_GenericStruct_str::get_str_len",
+        m.insert(
+            "crate::impls::inherent_GenericStruct_str::get_str_len",
             ExpectedMethodNode {
-            name: "get_str_len",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "get_str_len",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::impl_SimpleTrait_for_SimpleStruct::trait_method",
+        m.insert(
+            "crate::impls::impl_SimpleTrait_for_SimpleStruct::trait_method",
             ExpectedMethodNode {
-            name: "trait_method",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "trait_method",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::impl_PrivateTrait_for_SimpleStruct::private_trait_method",
+        m.insert(
+            "crate::impls::impl_PrivateTrait_for_SimpleStruct::private_trait_method",
             ExpectedMethodNode {
-            name: "private_trait_method",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: true,
-        }
+                name: "private_trait_method",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::impl_SimpleTrait_for_GenericStruct::trait_method",
+        m.insert(
+            "crate::impls::impl_SimpleTrait_for_GenericStruct::trait_method",
             ExpectedMethodNode {
-            name: "trait_method",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "trait_method",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::impl_GenericTrait_for_GenericStruct::generic_trait_method",
+        m.insert(
+            "crate::impls::impl_GenericTrait_for_GenericStruct::generic_trait_method",
             ExpectedMethodNode {
-            name: "generic_trait_method",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 2,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: true,
-        }
+                name: "generic_trait_method",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 2,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::impl_SimpleTrait_for_i32::trait_method",
+        m.insert(
+            "crate::impls::impl_SimpleTrait_for_i32::trait_method",
             ExpectedMethodNode {
-            name: "trait_method",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "trait_method",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::impl_AssocTrait_for_SimpleStruct::create_output",
+        m.insert(
+            "crate::impls::impl_AssocTrait_for_SimpleStruct::create_output",
             ExpectedMethodNode {
-            name: "create_output",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "create_output",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::impl_SimpleTrait_for_ref_SimpleStruct::trait_method",
+        m.insert(
+            "crate::impls::impl_SimpleTrait_for_ref_SimpleStruct::trait_method",
             ExpectedMethodNode {
-            name: "trait_method",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "trait_method",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::inner::inherent_SimpleStruct::method_in_module",
+        m.insert(
+            "crate::impls::inner::inherent_SimpleStruct::method_in_module",
             ExpectedMethodNode {
-            name: "method_in_module",
-            visibility: VisibilityKind::Restricted(vec!["super".to_string()]),
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "method_in_module",
+                visibility: VisibilityKind::Restricted(vec!["super".to_string()]),
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::inner::impl_SimpleTrait_for_InnerStruct::trait_method",
+        m.insert(
+            "crate::impls::inner::impl_SimpleTrait_for_InnerStruct::trait_method",
             ExpectedMethodNode {
-            name: "trait_method",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "trait_method",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::impls::trait_SimpleTrait::trait_method",
+        m.insert(
+            "crate::impls::trait_SimpleTrait::trait_method",
             ExpectedMethodNode {
-            name: "trait_method",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: false,
-        }
+                name: "trait_method",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::impls::trait_PrivateTrait::private_trait_method",
+        m.insert(
+            "crate::impls::trait_PrivateTrait::private_trait_method",
             ExpectedMethodNode {
-            name: "private_trait_method",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "private_trait_method",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::impls::trait_GenericTrait::generic_trait_method",
+        m.insert(
+            "crate::impls::trait_GenericTrait::generic_trait_method",
             ExpectedMethodNode {
-            name: "generic_trait_method",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 2,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "generic_trait_method",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 2,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::impls::trait_AssocTrait::create_output",
+        m.insert(
+            "crate::impls::trait_AssocTrait::create_output",
             ExpectedMethodNode {
-            name: "create_output",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: false,
-        }
+                name: "create_output",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::SimpleTrait::required_method",
+        m.insert(
+            "crate::traits::SimpleTrait::required_method",
             ExpectedMethodNode {
-            name: "required_method",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: false,
-        }
+                name: "required_method",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::InternalTrait::default_method",
+        m.insert(
+            "crate::traits::InternalTrait::default_method",
             ExpectedMethodNode {
-            name: "default_method",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "default_method",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::traits::CrateTrait::crate_method",
+        m.insert(
+            "crate::traits::CrateTrait::crate_method",
             ExpectedMethodNode {
-            name: "crate_method",
-            visibility: VisibilityKind::Crate,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "crate_method",
+                visibility: VisibilityKind::Crate,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::DocumentedTrait::documented_method",
+        m.insert(
+            "crate::traits::DocumentedTrait::documented_method",
             ExpectedMethodNode {
-            name: "documented_method",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: Some("Required method documentation"),
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "documented_method",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: Some("Required method documentation"),
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::GenericTrait::process",
+        m.insert(
+            "crate::traits::GenericTrait::process",
             ExpectedMethodNode {
-            name: "process",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 2,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: false,
-        }
+                name: "process",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 2,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::LifetimeTrait::get_ref",
+        m.insert(
+            "crate::traits::LifetimeTrait::get_ref",
             ExpectedMethodNode {
-            name: "get_ref",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: false,
-        }
+                name: "get_ref",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::ComplexGenericTrait::complex_process",
+        m.insert(
+            "crate::traits::ComplexGenericTrait::complex_process",
             ExpectedMethodNode {
-            name: "complex_process",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 3,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: false,
-        }
+                name: "complex_process",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 3,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::AssocTypeTrait::generate",
+        m.insert(
+            "crate::traits::AssocTypeTrait::generate",
             ExpectedMethodNode {
-            name: "generate",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: false,
-        }
+                name: "generate",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::AssocTypeWithBounds::generate_bounded",
+        m.insert(
+            "crate::traits::AssocTypeWithBounds::generate_bounded",
             ExpectedMethodNode {
-            name: "generate_bounded",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: false,
-        }
+                name: "generate_bounded",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::AssocConstTrait::get_id",
+        m.insert(
+            "crate::traits::AssocConstTrait::get_id",
             ExpectedMethodNode {
-            name: "get_id",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: true,
-        }
+                name: "get_id",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: true,
+            },
         );
-        m.insert("crate::traits::SuperTrait::super_method",
+        m.insert(
+            "crate::traits::SuperTrait::super_method",
             ExpectedMethodNode {
-            name: "super_method",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "super_method",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::MultiSuperTrait::multi_super_method",
+        m.insert(
+            "crate::traits::MultiSuperTrait::multi_super_method",
             ExpectedMethodNode {
-            name: "multi_super_method",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "multi_super_method",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::GenericSuperTrait::generic_super_method",
+        m.insert(
+            "crate::traits::GenericSuperTrait::generic_super_method",
             ExpectedMethodNode {
-            name: "generic_super_method",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 2,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "generic_super_method",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 2,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::AttributedTrait::calculate",
+        m.insert(
+            "crate::traits::AttributedTrait::calculate",
             ExpectedMethodNode {
-            name: "calculate",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: false,
-        }
+                name: "calculate",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::UnsafeTrait::unsafe_method",
+        m.insert(
+            "crate::traits::UnsafeTrait::unsafe_method",
             ExpectedMethodNode {
-            name: "unsafe_method",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "unsafe_method",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::SelfUsageTrait::returns_self",
+        m.insert(
+            "crate::traits::SelfUsageTrait::returns_self",
             ExpectedMethodNode {
-            name: "returns_self",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: false,
-        }
+                name: "returns_self",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::SelfUsageTrait::takes_self",
+        m.insert(
+            "crate::traits::SelfUsageTrait::takes_self",
             ExpectedMethodNode {
-            name: "takes_self",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 2,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "takes_self",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 2,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::SelfInAssocBound::get_related",
+        m.insert(
+            "crate::traits::SelfInAssocBound::get_related",
             ExpectedMethodNode {
-            name: "get_related",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: true,
-            body_is_some: false,
-        }
+                name: "get_related",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: true,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::inner::InnerSecretTrait::secret_op",
+        m.insert(
+            "crate::traits::inner::InnerSecretTrait::secret_op",
             ExpectedMethodNode {
-            name: "secret_op",
-            visibility: VisibilityKind::Inherited,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "secret_op",
+                visibility: VisibilityKind::Inherited,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::inner::InnerPublicTrait::public_inner_op",
+        m.insert(
+            "crate::traits::inner::InnerPublicTrait::public_inner_op",
             ExpectedMethodNode {
-            name: "public_inner_op",
-            visibility: VisibilityKind::Public,
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "public_inner_op",
+                visibility: VisibilityKind::Public,
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
-        m.insert("crate::traits::inner::SuperGraphNodeTrait::super_visible_op",
+        m.insert(
+            "crate::traits::inner::SuperGraphNodeTrait::super_visible_op",
             ExpectedMethodNode {
-            name: "super_visible_op",
-            visibility: VisibilityKind::Restricted(vec!["super".to_string()]),
-            attributes: vec![],
-            docstring: None,
-            cfgs: vec![],
-            tracking_hash_check: true,
-            parameter_count: 1,
-            generic_param_count: 0,
-            return_type_is_some: false,
-            body_is_some: false,
-        }
+                name: "super_visible_op",
+                visibility: VisibilityKind::Restricted(vec!["super".to_string()]),
+                attributes: vec![],
+                docstring: None,
+                cfgs: vec![],
+                tracking_hash_check: true,
+                parameter_count: 1,
+                generic_param_count: 0,
+                return_type_is_some: false,
+                body_is_some: false,
+            },
         );
         m
     };
@@ -1038,8 +1170,7 @@ fn fixture_assoc_method_node_total_matches_graph() {
             .sum::<usize>();
     }
     assert_eq!(
-        total,
-        41,
+        total, 41,
         "Update EXPECTED_METHOD_* maps and this assert when fixture_nodes method inventory changes"
     );
 }

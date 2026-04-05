@@ -102,6 +102,7 @@ impl AppHarness {
         // TEST_DB_NODES
         let mut fixture_root = workspace_root();
         fixture_root.push("tests/fixture_crates/fixture_nodes");
+        let pwd = fixture_root.clone();
         let system = SystemState::new(SystemStatus::new(Some(fixture_root)));
 
         // Shared app state
@@ -162,6 +163,7 @@ impl AppHarness {
             default_model(),
             tool_verbosity,
             cancel_tx,
+            pwd,
         );
         let app_task = tokio::spawn(async move {
             let _ = app

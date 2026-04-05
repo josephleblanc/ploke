@@ -11,10 +11,32 @@
 // - `/model providers` to use currently selected model by default
 // - `/model providers <model_id>` should also work for aliases
 use crate::app::App;
+use crate::app_state::commands::IndexMode;
 use crate::app_state::core::PreviewMode;
 use crate::tools::ToolVerbosity;
 use crate::user_config::{CommandStyle, MessageVerbosityProfile, ModelRegistryStrictness};
 use uuid::Uuid;
+
+/// The load family the parser recognized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadKind {
+    Workspace,
+    Crate,
+}
+
+/// The save family the parser recognized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveKind {
+    Db,
+}
+
+/// The update family the parser recognized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateScope {
+    Auto,
+    Focused,
+    All,
+}
 
 /// Parsed command variants handled by the executor.
 /// Phase 3 wires a subset as examples and falls back to Raw for others.
@@ -24,7 +46,11 @@ pub enum Command {
     Quit,
     Help,
     HelpTopic(String),
-    LoadWorkspace(String),
+    Load {
+        kind: LoadKind,
+        name: Option<String>,
+        force: bool,
+    },
     LoadWorkspaceCrates {
         workspace_ref: String,
         crate_ref: String,
@@ -51,7 +77,9 @@ pub enum Command {
         model_id: String,
         provider_slug: String,
     },
-    Update,
+    Update {
+        scope: UpdateScope,
+    },
     EditApprove(Uuid),
     EditDeny(Uuid),
     CreateApprove(Uuid),
@@ -68,9 +96,70 @@ pub enum Command {
     WorkspaceUpdate,
     WorkspaceRemove(String),
     CopySelection,
+    /// Index command: `/index` with scope + optional target path/name.
+    Index {
+        mode: IndexMode,
+        target: Option<String>,
+    },
+    /// Save command family.
+    Save {
+        kind: SaveKind,
+    },
     Raw(String),
     SearchContext(String),
     OpenContextPlan,
+}
+
+fn parse_index_target(token: Option<&str>) -> Option<String> {
+    token.and_then(|value| {
+        if value == "." {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    })
+}
+
+fn parse_load_command(kind: LoadKind, rest: &str, raw: &str) -> Command {
+    if rest.is_empty() {
+        return Command::Load {
+            kind,
+            name: None,
+            force: false,
+        };
+    }
+
+    let mut name: Option<String> = None;
+    let mut force = false;
+
+    for token in rest.split_whitespace() {
+        match token {
+            "--force" => {
+                if force {
+                    return Command::Raw(raw.to_string());
+                }
+                force = true;
+            }
+            _ if token.starts_with("--") => {
+                return Command::Raw(raw.to_string());
+            }
+            _ if name.is_none() => {
+                name = Some(token.to_string());
+            }
+            _ => {
+                return Command::Raw(raw.to_string());
+            }
+        }
+    }
+
+    match name {
+        Some(name) => Command::Load {
+            kind,
+            name: Some(name),
+            force,
+        },
+        None => Command::Raw(raw.to_string()),
+    }
 }
 
 /// Parse the input buffer into a Command, stripping the style prefix.
@@ -210,22 +299,27 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
                 Command::Raw(trimmed.to_string())
             }
         }
-        "update" => Command::Update,
+        "update" => Command::Update {
+            scope: UpdateScope::Auto,
+        },
+        "save db" => Command::Save { kind: SaveKind::Db },
+        "load workspace" => Command::Load {
+            kind: LoadKind::Workspace,
+            name: None,
+            force: false,
+        },
         s if s.starts_with("load workspace ") => {
-            let workspace_ref = s.trim_start_matches("load workspace ").trim().to_string();
-            if workspace_ref.is_empty() || workspace_ref.contains(' ') {
-                Command::Raw(trimmed.to_string())
-            } else {
-                Command::LoadWorkspace(workspace_ref)
-            }
+            let rest = s.trim_start_matches("load workspace ").trim();
+            parse_load_command(LoadKind::Workspace, rest, trimmed)
         }
+        "load crate" => Command::Load {
+            kind: LoadKind::Crate,
+            name: None,
+            force: false,
+        },
         s if s.starts_with("load crate ") => {
-            let workspace_ref = s.trim_start_matches("load crate ").trim().to_string();
-            if workspace_ref.is_empty() || workspace_ref.contains(' ') {
-                Command::Raw(trimmed.to_string())
-            } else {
-                Command::LoadWorkspace(workspace_ref)
-            }
+            let rest = s.trim_start_matches("load crate ").trim();
+            parse_load_command(LoadKind::Crate, rest, trimmed)
         }
         s if s.starts_with("load crates ") => {
             let rest = s.trim_start_matches("load crates ").trim();
@@ -339,6 +433,52 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             Command::SearchContext(search_term.to_string())
         }
         "contextplan" | "context plan" => Command::OpenContextPlan,
+        "index start" | "index pause" | "index resume" | "index cancel" => {
+            // Preserve the legacy indexing-control command path so these
+            // commands keep their immediate feedback behavior.
+            Command::Raw(trimmed.to_string())
+        }
+        s if s.starts_with("index start ") => Command::Raw(trimmed.to_string()),
+        "index" => Command::Index {
+            mode: IndexMode::Auto,
+            target: None,
+        },
+        s if s.starts_with("index ") => {
+            let rest = s.trim_start_matches("index ").trim();
+            if rest.is_empty() {
+                Command::Index {
+                    mode: IndexMode::Auto,
+                    target: None,
+                }
+            } else {
+                let mut parts = rest.split_whitespace();
+                match parts.next() {
+                    Some("workspace") => {
+                        let target = parse_index_target(parts.next());
+                        Command::Index {
+                            mode: IndexMode::Workspace,
+                            target,
+                        }
+                    }
+                    Some("crate") => {
+                        let target = parse_index_target(parts.next());
+                        if parts.next().is_some() {
+                            Command::Raw(trimmed.to_string())
+                        } else {
+                            Command::Index {
+                                mode: IndexMode::Crate,
+                                target,
+                            }
+                        }
+                    }
+                    Some(path) => Command::Index {
+                        mode: IndexMode::Auto,
+                        target: parse_index_target(Some(path)),
+                    },
+                    None => Command::Raw(trimmed.to_string()),
+                }
+            }
+        }
         other => Command::Raw(other.to_string()),
     }
 }

@@ -2,6 +2,8 @@ pub(crate) mod exec;
 #[cfg(feature = "live_api_tests")]
 mod exec_real_tools_live_tests;
 pub mod parser;
+#[cfg(test)]
+mod unit_tests;
 
 use crate::app::App;
 
@@ -25,9 +27,9 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     check api - Check API key configuration
     copy - Copy selected conversation message to clipboard
     save history - Save conversation history/state
-    load workspace &lt;name-or-id&gt; - Load a saved workspace snapshot by exact registry name or id
-    load crate &lt;name-or-id&gt; - Legacy alias for loading a saved workspace snapshot
-    load crates &lt;workspace-name-or-id&gt; &lt;crate-name-or-exact-root&gt; - Load one crate subset from a saved workspace snapshot into the current loaded workspace
+    load workspace &lt;name-or-id&gt; - Restore a saved workspace snapshot (replaces current in-memory state)
+    load crate &lt;name-or-id&gt; - Restore a saved standalone/workspace snapshot (replaces current in-memory state)
+    load crates &lt;workspace-name-or-id&gt; &lt;crate-name-or-exact-root&gt; - Add one crate from a saved workspace snapshot into the current loaded workspace
     save db | sd - Save the active workspace snapshot and registry entry
     workspace rm &lt;crate-name-or-exact-root&gt; - Remove one loaded crate namespace from the current workspace
     query load | ql - Load default query from default.dl

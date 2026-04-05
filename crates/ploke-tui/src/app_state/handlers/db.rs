@@ -118,7 +118,9 @@ pub async fn load_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>, workspace
                 add_msg_immediate_sysinfo_unpinned(state, event_bus, Uuid::new_v4(), message).await;
             }
             _ => {
-                tracing::error!("Received unexpected error kind, expected Error/DomainError, got: {e}");
+                tracing::error!(
+                    "Received unexpected error kind, expected Error/DomainError, got: {e}"
+                );
                 todo!("These should never happen.")
             }
         }

@@ -341,16 +341,19 @@ pub async fn process_llm_request(
         }
     };
 
-    if let Some(focus_hint) = {
-        let sys = llm_request_args.state.system.read().await;
-        sys.focused_crate().map(|info| {
-            format!(
-                "Focused crate: {} at {}. Workspace-wide graph is not loaded; tools operate on the focused crate. Cargo runs against the focused manifest unless a workspace package is specified.",
-                info.name.as_str(),
-                info.root_path.display()
-            )
+    if let Some(focus_hint) = llm_request_args
+        .state
+        .with_system_read(|sys| {
+            sys.focused_crate().map(|info| {
+                format!(
+                    "Focused crate: {} at {}. Workspace-wide graph is not loaded; tools operate on the focused crate. Cargo runs against the focused manifest unless a workspace package is specified.",
+                    info.name.as_str(),
+                    info.root_path.display()
+                )
+            })
         })
-    } {
+        .await
+    {
         messages.insert(0, RequestMessage::new_system(focus_hint.clone()));
         let tokenizer = ploke_llm::manager::ApproxCharTokenizer::default();
         context_tokens = context_tokens.saturating_add(tokenizer.count(&focus_hint));
@@ -495,10 +498,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     //      Construct a concrete request object that RequestSession will dispatch.
 
     // Gate tools by crate_focus: disable when no workspace is loaded
-    let crate_loaded = {
-        let sys = state.system.read().await;
-        sys.has_loaded_crates()
-    };
+    let crate_loaded = state.with_system_read(|sys| sys.has_loaded_crates()).await;
     let (tools, tool_choice) = if crate_loaded {
         (Some(tool_defs.clone()), Some(ToolChoice::Auto))
     } else {

@@ -252,10 +252,8 @@ impl ContextPlanOverlayState {
             self.sections = sections;
             self.clamp_selection();
             let focus_root = state
-                .system
-                .try_read()
-                .ok()
-                .and_then(|guard| guard.focused_crate_root());
+                .try_system_read(|sys| sys.focused_crate_root())
+                .flatten();
             let message_previews = self.build_message_previews(state, detail_width);
             let items = build_display_items(
                 &snapshot,

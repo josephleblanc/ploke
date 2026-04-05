@@ -7,8 +7,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub use error::*;
 use cargo_toml::Manifest;
+pub use error::*;
 use serde::Serialize;
 pub use single_crate::*;
 use single_crate::{
@@ -311,11 +311,7 @@ fn collect_targets_from_cargo_manifest(
         if let Some(rel) = lib.path.as_deref() {
             let lib_path = crate_root_path.join(rel);
             if lib_path.is_file() {
-                let name = lib
-                    .name
-                    .as_deref()
-                    .unwrap_or(&lib_name_default)
-                    .to_string();
+                let name = lib.name.as_deref().unwrap_or(&lib_name_default).to_string();
                 target_specs.push(TargetSpec {
                     kind: TargetKind::Lib,
                     name,
@@ -329,11 +325,7 @@ fn collect_targets_from_cargo_manifest(
         if let Some(rel) = product.path.as_deref() {
             let bin_path = crate_root_path.join(rel);
             if bin_path.is_file() {
-                let name = product
-                    .name
-                    .as_deref()
-                    .unwrap_or(package_name)
-                    .to_string();
+                let name = product.name.as_deref().unwrap_or(package_name).to_string();
                 target_specs.push(TargetSpec {
                     kind: TargetKind::Bin,
                     name,
@@ -1036,12 +1028,12 @@ edition = "2021"
     fn discovery_output_serializes_warning_errors_as_strings() {
         let discovery = DiscoveryOutput {
             crate_contexts: HashMap::new(),
-            workspace: None,
             warnings: vec![DiscoveryError::NonFatalErrors(Box::new(vec![
                 DiscoveryError::MissingPackageName {
                     path: PathBuf::from("/tmp/bad/Cargo.toml"),
                 },
             ]))],
+            workspace: None,
         };
 
         let json = serde_json::to_string(&discovery).expect("discovery output should serialize");

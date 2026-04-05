@@ -5,6 +5,7 @@ use itertools::Itertools;
 use ploke_error::Error;
 use ploke_transform::schema::edges::SyntacticRelationSchema;
 
+use ploke_transform::schema::assoc_nodes::MethodNodeSchema;
 use ploke_transform::schema::primary_nodes::{
     ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, ImplNodeSchema, ImportNodeSchema,
     MacroNodeSchema, ModuleNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema,
@@ -87,6 +88,7 @@ pub enum NodeType {
     Static,
     TypeAlias,
     Union,
+    Method,
     Param,
     Variant,
     Field,
@@ -112,7 +114,7 @@ pub enum NodeType {
 }
 
 impl NodeType {
-    pub fn all_variants() -> [Self; 34] {
+    pub fn all_variants() -> [Self; 35] {
         use NodeType::*;
         [
             Function,
@@ -127,6 +129,7 @@ impl NodeType {
             Static,
             TypeAlias,
             Union,
+            Method,
             Param,
             Variant,
             Field,
@@ -168,6 +171,25 @@ impl NodeType {
             .iter()
             .any(|pn| pn.relation_str() == type_name)
     }
+
+    pub fn primary_and_assoc_nodes() -> [Self; 11] {
+        use NodeType::*;
+        [
+            Function, Const, Enum,
+            // NOTE: leaving import and impl out, we don't generate a tracking hash for these for some
+            // reason?
+            // Import,
+            // Impl,
+            Macro, Module, Static, Struct, Trait, TypeAlias, Union, Method,
+        ]
+    }
+
+    pub fn is_primary_or_assoc(type_name: &str) -> bool {
+        Self::primary_and_assoc_nodes()
+            .iter()
+            .any(|pn| pn.relation_str() == type_name)
+    }
+
     pub fn embeddable_nodes() -> String {
         let star: &'static str = " *";
         let left: &'static str = " {";
@@ -588,6 +610,7 @@ define_static_fields!(
     (STATIC_FIELDS, StaticNodeSchema, Static),
     (TYPE_ALIAS_FIELDS, TypeAliasNodeSchema, TypeAlias),
     (UNION_FIELDS, UnionNodeSchema, Union),
+    (METHOD_FIELDS, MethodNodeSchema, Method),
     (PARAM_FIELDS, ParamNodeSchema, Param),
     (VARIANT_FIELDS, VariantNodeSchema, Variant),
     (FIELD_FIELDS, FieldNodeSchema, Field),

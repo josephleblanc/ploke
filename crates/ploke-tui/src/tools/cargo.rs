@@ -433,10 +433,8 @@ impl Tool for CargoTool {
 
         let crate_root = ctx
             .state
-            .system
-            .read()
+            .with_system_read(|sys| sys.focused_crate_root())
             .await
-            .focused_crate_root()
             .ok_or_else(|| {
                 tool_ui_error("No crate is currently focused; load a workspace first.")
             })?;

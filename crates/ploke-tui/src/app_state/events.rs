@@ -30,6 +30,9 @@ pub enum SystemMutation {
     RecordIndexComplete {
         crate_id: CrateId,
     },
+    InitPwd {
+        pwd: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -54,7 +57,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    ArcStr, ModelId, UiError,
+    ArcStr, ModelId,
+    app::error::UiError,
     tools::{Ctx, ToolCall, ToolName, ToolUiPayload},
 };
 
@@ -120,6 +124,8 @@ pub enum SystemEvent {
     ReIndex {
         workspace: String,
     },
+    /// Working directory changed - components should update their cached pwd
+    PwdChanged(PathBuf),
     #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
     TestHarnessApiResponse {
         request_id: Uuid,

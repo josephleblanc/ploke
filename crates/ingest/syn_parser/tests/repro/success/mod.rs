@@ -1,6 +1,6 @@
 mod cfg_gates_quantized_metal;
-mod kl005_manifest_cargo_alignment;
 mod file_links_staged_merge;
+mod kl005_manifest_cargo_alignment;
 mod path_attr_stem_collision;
 // tests on items within an executable scope, like a function body or closure.
 mod executable_scope;

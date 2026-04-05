@@ -9,6 +9,7 @@ use ploke_llm::manager::events::endpoint;
 pub mod clipboard;
 pub mod commands;
 pub mod editor;
+pub mod error;
 pub mod events;
 pub mod input;
 pub mod message_item;
@@ -165,6 +166,8 @@ pub struct App {
     clipboard: Option<SystemClipboard>,
     context_plan_history: Arc<std::sync::RwLock<context_plan::ContextPlanHistory>>,
     cancel_tx: watch::Sender<CancelChatToken>,
+    /// Cached working directory from SystemStatus (updated via PwdChanged events)
+    pwd: PathBuf,
 }
 
 impl App {
@@ -177,6 +180,7 @@ impl App {
         active_model_id: String,
         tool_verbosity: ToolVerbosity,
         cancel_tx: watch::Sender<CancelChatToken>,
+        pwd: PathBuf,
     ) -> Self {
         Self {
             running: false, // Will be set to true in run()
@@ -210,6 +214,7 @@ impl App {
                 context_plan::ContextPlanHistory::default(),
             )),
             cancel_tx,
+            pwd,
         }
     }
 
@@ -598,7 +603,7 @@ impl App {
             return None;
         }
 
-        let cwd = std::env::current_dir().ok()?;
+        let cwd = &self.pwd;
         if after_at.is_empty() {
             let mut ghost = cwd.display().to_string();
             if !ghost.ends_with(std::path::MAIN_SEPARATOR) {
@@ -2271,6 +2276,7 @@ mod tests {
         let (cmd_tx, _cmd_rx) = mpsc::channel(1024);
         let (cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
         let event_bus = EventBus::new(crate::EventBusCaps::default());
+        let pwd = std::env::current_dir().expect("current dir");
         let app = App::new(
             CommandStyle::Slash,
             state,
@@ -2279,6 +2285,7 @@ mod tests {
             "mock-model".to_string(),
             ToolVerbosity::Normal,
             cancel_tx,
+            pwd,
         );
         (app, cancel_rx)
     }

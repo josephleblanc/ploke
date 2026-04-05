@@ -167,6 +167,7 @@ async fn index_start_keeps_ui_responsive_in_app_loop() {
             "openai/gpt-4o".to_string(),
             ToolVerbosity::Normal,
             cancel_tx.clone(),
+            std::env::current_dir().expect("current dir"),
         );
         let (input_tx, input_rx) = mpsc::channel::<crossterm::event::Event>(32);
         let input_stream = ReceiverStream::new(input_rx).map(Ok);
@@ -265,10 +266,11 @@ async fn indexing_completed_event_does_not_block_input_when_system_read_held() {
 
         let focus_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixture_crates/fixture_nodes");
-        {
-            let mut sys = state.system.write().await;
-            sys.set_focus_from_root(focus_path);
-        }
+        state
+            .with_system_txn(|txn| {
+                txn.set_focus_from_root(focus_path);
+            })
+            .await;
 
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
         let (cmd_tx_state, cmd_rx_state) = mpsc::channel::<StateCommand>(64);
@@ -305,6 +307,7 @@ async fn indexing_completed_event_does_not_block_input_when_system_read_held() {
             "openai/gpt-4o".to_string(),
             ToolVerbosity::Normal,
             cancel_tx.clone(),
+            std::env::current_dir().expect("current dir"),
         );
         let (input_tx, input_rx) = mpsc::channel::<crossterm::event::Event>(32);
         let input_stream = ReceiverStream::new(input_rx).map(Ok);
@@ -333,7 +336,8 @@ async fn indexing_completed_event_does_not_block_input_when_system_read_held() {
         let (hold_tx, hold_rx) = oneshot::channel::<()>();
         let state_for_lock = Arc::clone(&state);
         tokio::spawn(async move {
-            let _guard = state_for_lock.system.read().await;
+            // Intentionally hold the lock across await to simulate concurrent access
+            let _guard = state_for_lock.system_raw_read_guard().await;
             let _ = hold_rx.await;
         });
 

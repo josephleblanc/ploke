@@ -55,9 +55,10 @@ impl fmt::Display for IndexTargetResolveError {
 
 pub fn resolve_index_target(
     user_dir: Option<PathBuf>,
+    pwd: &std::path::Path,
 ) -> Result<ResolvedIndexTarget, IndexTargetResolveError> {
     let requested_path =
-        resolve_target_dir(user_dir).map_err(IndexTargetResolveError::Resolution)?;
+        resolve_target_dir(user_dir, pwd).map_err(IndexTargetResolveError::Resolution)?;
     let local_manifest = requested_path.join("Cargo.toml");
 
     if local_manifest.is_file() {
@@ -139,26 +140,29 @@ pub fn resolve_index_target(
 ///
 /// // When user provides a path, it should be returned
 /// let user_path = env::current_dir().unwrap();
-/// let result = ploke_tui::parser::resolve_target_dir(Some(user_path.clone()));
+/// let pwd = env::current_dir().unwrap();
+/// let result = ploke_tui::parser::resolve_target_dir(Some(user_path.clone()), &pwd);
 /// assert_eq!(result.unwrap(), fs::canonicalize(user_path).unwrap());
 ///
-/// // When no path is provided, it should return current directory
+/// // When no path is provided, it should return pwd (current directory)
 /// let current_dir = env::current_dir().unwrap();
-/// let result = ploke_tui::parser::resolve_target_dir(None);
+/// let pwd = env::current_dir().unwrap();
+/// let result = ploke_tui::parser::resolve_target_dir(None, &pwd);
 /// assert_eq!(result.unwrap(), fs::canonicalize(current_dir).unwrap());
 /// ```
 #[instrument(fields(user_dir), err)]
-pub fn resolve_target_dir(user_dir: Option<PathBuf>) -> Result<PathBuf, SynParserError> {
+pub fn resolve_target_dir(
+    user_dir: Option<PathBuf>,
+    pwd: &std::path::Path,
+) -> Result<PathBuf, SynParserError> {
     let target_dir = match user_dir {
         Some(p) => p,
-        None => env::current_dir().map_err(SynParserError::from)?,
+        None => pwd.to_path_buf(),
     };
     let abs_target = if target_dir.is_absolute() {
         target_dir
     } else {
-        env::current_dir()
-            .map_err(SynParserError::from)?
-            .join(target_dir)
+        pwd.join(target_dir)
     };
     let policy = PathPolicy::new(vec![abs_target.clone()]);
     let normalized = normalize_target_path(&abs_target, &policy).map_err(|err| {
@@ -167,8 +171,12 @@ pub fn resolve_target_dir(user_dir: Option<PathBuf>) -> Result<PathBuf, SynParse
     Ok(normalized)
 }
 
-pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), SynParserError> {
-    let resolved = resolve_index_target(target_dir)
+pub fn run_parse(
+    db: Arc<Database>,
+    target_dir: Option<PathBuf>,
+    pwd: &std::path::Path,
+) -> Result<(), SynParserError> {
+    let resolved = resolve_index_target(target_dir, pwd)
         .map_err(|err| SynParserError::InternalState(err.to_string()))?;
     run_parse_resolved(db, &resolved)
 }
@@ -250,10 +258,11 @@ fn compilation_union_ingest_enabled() -> bool {
 pub fn run_parse_no_transform(
     db: Arc<Database>,
     target_dir: Option<PathBuf>,
+    pwd: &std::path::Path,
 ) -> Result<ParserOutput, SynParserError> {
     use syn_parser::utils::LogStyle;
 
-    let target = resolve_target_dir(target_dir)?;
+    let target = resolve_target_dir(target_dir, pwd)?;
     tracing::info!(
         "{}: run the parser on {}",
         "Parse".log_step(),
@@ -291,29 +300,34 @@ mod tests {
     fn test_resolve_target_dir_with_user_path() {
         let dir = tempdir().unwrap();
         let expected_path = std::fs::canonicalize(dir.path()).unwrap();
-        let result = resolve_target_dir(Some(dir.path().to_path_buf()));
+        let pwd = env::current_dir().unwrap();
+        let result = resolve_target_dir(Some(dir.path().to_path_buf()), &pwd);
         assert_eq!(result.unwrap(), expected_path);
     }
 
     #[test]
     fn test_resolve_target_dir_without_user_path() {
         let expected_path = std::fs::canonicalize(env::current_dir().unwrap()).unwrap();
-        let result = resolve_target_dir(None);
+        let pwd = env::current_dir().unwrap();
+        let result = resolve_target_dir(None, &pwd);
         assert_eq!(result.unwrap(), expected_path);
     }
 
     #[test]
     fn test_resolve_target_dir_with_empty_path() {
         let expected_path = std::fs::canonicalize(env::current_dir().unwrap()).unwrap();
-        let result = resolve_target_dir(Some(PathBuf::new()));
+        let pwd = env::current_dir().unwrap();
+        let result = resolve_target_dir(Some(PathBuf::new()), &pwd);
         assert_eq!(result.unwrap(), expected_path);
     }
 
     #[test]
     fn resolve_index_target_prefers_crate_root_when_pwd_is_crate_root() {
         let crate_root = workspace_root().join("tests/fixture_workspace/ws_fixture_01/member_root");
+        let pwd = env::current_dir().unwrap();
 
-        let resolved = resolve_index_target(Some(crate_root.clone())).expect("resolve crate root");
+        let resolved =
+            resolve_index_target(Some(crate_root.clone()), &pwd).expect("resolve crate root");
 
         assert_eq!(resolved.kind, IndexTargetKind::Crate);
         assert_eq!(resolved.focused_root, crate_root);
@@ -326,9 +340,10 @@ mod tests {
         let nested_src =
             workspace_root().join("tests/fixture_workspace/ws_fixture_01/nested/member_nested/src");
         let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_01");
+        let pwd = env::current_dir().unwrap();
 
-        let resolved =
-            resolve_index_target(Some(nested_src)).expect("resolve ancestor workspace from src");
+        let resolved = resolve_index_target(Some(nested_src), &pwd)
+            .expect("resolve ancestor workspace from src");
 
         assert_eq!(resolved.kind, IndexTargetKind::Workspace);
         assert_eq!(resolved.workspace_root, fixture_workspace_root);
@@ -346,8 +361,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let target = dir.path().join("not_a_cargo_target");
         std::fs::create_dir_all(&target).unwrap();
+        let pwd = env::current_dir().unwrap();
 
-        let err = resolve_index_target(Some(target.clone())).expect_err("missing target error");
+        let err =
+            resolve_index_target(Some(target.clone()), &pwd).expect_err("missing target error");
 
         match err {
             IndexTargetResolveError::NoCrateOrWorkspace { requested_path } => {

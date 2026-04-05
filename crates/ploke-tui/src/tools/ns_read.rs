@@ -148,10 +148,11 @@ Directories are not valid for read_file.";
 
         let (primary_root, policy) = ctx
             .state
-            .system
-            .read()
+            .with_system_read(|sys| {
+                sys.tool_path_context()
+                    .map(|(p, pol)| (p.clone(), pol.clone()))
+            })
             .await
-            .tool_path_context()
             .ok_or_else(|| {
                 ploke_error::Error::Domain(DomainError::Ui {
                     message: "No workspace is loaded; load a workspace before using read_file."

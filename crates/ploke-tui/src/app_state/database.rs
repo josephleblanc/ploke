@@ -428,13 +428,14 @@ fn workspace_drift_status(
 async fn loaded_crate_targets(
     state: &Arc<AppState>,
 ) -> Result<(Option<PathBuf>, Vec<LoadedCrateScanTarget>), ploke_error::Error> {
-    let (workspace_root, member_roots) = {
-        let system_guard = state.system.read().await;
-        (
-            system_guard.loaded_workspace_root(),
-            system_guard.loaded_workspace_member_roots(),
-        )
-    };
+    let (workspace_root, member_roots) = state
+        .with_system_read(|sys| {
+            (
+                sys.loaded_workspace_root(),
+                sys.loaded_workspace_member_roots(),
+            )
+        })
+        .await;
 
     let mut targets = Vec::with_capacity(member_roots.len());
     for root_path in member_roots {
@@ -456,16 +457,17 @@ async fn loaded_crate_targets(
 async fn primary_scan_target(
     state: &Arc<AppState>,
 ) -> Result<LoadedCrateScanTarget, ploke_error::Error> {
-    let root_path = {
-        let guard = state.system.read().await;
-        guard.focused_crate_root().ok_or_else(|| {
-            let e = ploke_error::Error::from(StateError::MissingCrateFocus {
-                msg: "No crate is loaded; cannot scan unspecified target crate",
-            });
-            e.emit_warning();
-            e
-        })?
-    };
+    let root_path = state
+        .with_system_read(|sys| {
+            sys.focused_crate_root().ok_or_else(|| {
+                let e = ploke_error::Error::from(StateError::MissingCrateFocus {
+                    msg: "No crate is loaded; cannot scan unspecified target crate",
+                });
+                e.emit_warning();
+                e
+            })
+        })
+        .await?;
     let crate_name = crate_name_for_root_path(state, &root_path)?;
     Ok(LoadedCrateScanTarget {
         crate_id: CrateInfo::from_root_path(root_path.clone()).id,
@@ -522,10 +524,11 @@ async fn collect_workspace_status_report(
     let mut members = Vec::with_capacity(targets.len());
     for target in targets {
         let freshness = freshness_for_target(state, &target).await?;
-        {
-            let mut system_guard = state.system.write().await;
-            system_guard.set_workspace_freshness(target.crate_id, freshness);
-        }
+        state
+            .with_system_txn(|txn| {
+                txn.set_workspace_freshness(target.crate_id, freshness);
+            })
+            .await;
         members.push(WorkspaceMemberStatus {
             crate_id: target.crate_id,
             crate_name: target.crate_name,
@@ -617,25 +620,26 @@ fn build_embedder_for_restored_set(
 async fn current_workspace_registry_entry(
     state: &Arc<AppState>,
 ) -> Result<WorkspaceRegistryEntry, ploke_error::Error> {
-    let (workspace_root, member_roots, focused_root) = {
-        let system_guard = state.system.read().await;
-        let focused_root = system_guard.focused_crate_root();
-        let member_roots = system_guard.loaded_workspace_member_roots();
-        let workspace_root = system_guard
-            .loaded_workspace_root()
-            .or_else(|| focused_root.clone())
-            .ok_or_else(|| {
-                ploke_error::Error::Domain(DomainError::Ui {
-                    message: "No loaded crate or workspace is available to save.".to_string(),
-                })
-            })?;
-        let member_roots = if member_roots.is_empty() {
-            vec![workspace_root.clone()]
-        } else {
-            member_roots
-        };
-        (workspace_root, member_roots, focused_root)
-    };
+    let (workspace_root, member_roots, focused_root) = state
+        .with_system_read(|sys| {
+            let focused_root = sys.focused_crate_root();
+            let member_roots = sys.loaded_workspace_member_roots();
+            let workspace_root = sys
+                .loaded_workspace_root()
+                .or_else(|| focused_root.clone())
+                .ok_or_else(|| {
+                    ploke_error::Error::Domain(DomainError::Ui {
+                        message: "No loaded crate or workspace is available to save.".to_string(),
+                    })
+                })?;
+            let member_roots = if member_roots.is_empty() {
+                vec![workspace_root.clone()]
+            } else {
+                member_roots
+            };
+            Ok::<_, ploke_error::Error>((workspace_root, member_roots, focused_root))
+        })
+        .await?;
 
     let workspace = WorkspaceInfo::from_root_path(workspace_root);
     let active_embedding_set_rel = state
@@ -731,15 +735,17 @@ async fn publish_loaded_workspace_snapshot(
     state: &Arc<AppState>,
     snapshot: &RestoredWorkspaceSnapshot,
 ) {
-    let policy = {
-        let mut system_guard = state.system.write().await;
-        system_guard.set_loaded_workspace(
-            snapshot.workspace.root_path.clone(),
-            snapshot.member_roots.clone(),
-            Some(snapshot.focused_root.clone()),
-        );
-        system_guard.derive_path_policy(&[])
-    };
+    let policy = state
+        .with_system_txn(|txn| {
+            txn.set_loaded_workspace(
+                snapshot.workspace.root_path.clone(),
+                snapshot.member_roots.clone(),
+                Some(snapshot.focused_root.clone()),
+            );
+            txn.derive_path_policy(&[])
+        })
+        .await
+        .result;
     if let Some(policy) = policy {
         state
             .io_handle
@@ -990,14 +996,8 @@ pub(super) async fn load_db(
         }
     };
 
-    state
-        .db
-        .clear_hnsw_idx()
-        .await?;
-    state
-        .db
-        .clear_relations()
-        .await?;
+    state.db.clear_hnsw_idx().await?;
+    state.db.clear_relations().await?;
     state
         .db
         .import_backup_with_embeddings(&valid_file)
@@ -1130,32 +1130,33 @@ pub(super) async fn load_db(
     // get count for sanity and user feedback
     match state.db.count_relations().await {
         Ok(count) if count > 0 => {
-            {
-                let mut system_guard = state.system.write().await;
-                let root_path = restored_snapshot.focused_root.clone();
-                system_guard.set_loaded_workspace(
-                    restored_snapshot.workspace.root_path.clone(),
-                    restored_snapshot.member_roots.clone(),
-                    Some(root_path.clone()),
-                );
-                // Also update IoManager roots for IO-level enforcement
-                debug!(load_db_crate_focus = ?root_path);
-                let policy = system_guard.derive_path_policy(&[]);
-                drop(system_guard);
-                if let Some(policy) = policy {
-                    state
-                        .io_handle
-                        .update_roots(Some(policy.roots), Some(policy.symlink_policy))
-                        .await;
-                }
-                event_bus.send(AppEvent::System(SystemEvent::LoadDb {
-                    workspace_ref,
-                    file_dir: Some(Arc::new(valid_file)),
-                    root_path: Some(Arc::new(root_path)),
-                    is_success: true,
-                    error: None,
-                }));
+            let root_path = restored_snapshot.focused_root.clone();
+            let policy = state
+                .with_system_txn(|txn| {
+                    txn.set_loaded_workspace(
+                        restored_snapshot.workspace.root_path.clone(),
+                        restored_snapshot.member_roots.clone(),
+                        Some(root_path.clone()),
+                    );
+                    // Also update IoManager roots for IO-level enforcement
+                    debug!(load_db_crate_focus = ?root_path);
+                    txn.derive_path_policy(&[])
+                })
+                .await
+                .result;
+            if let Some(policy) = policy {
+                state
+                    .io_handle
+                    .update_roots(Some(policy.roots), Some(policy.symlink_policy))
+                    .await;
             }
+            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                workspace_ref,
+                file_dir: Some(Arc::new(valid_file)),
+                root_path: Some(Arc::new(root_path)),
+                is_success: true,
+                error: None,
+            }));
             Ok(())
         }
         Ok(_count) => {
@@ -1192,21 +1193,28 @@ pub async fn test_set_crate_focus_from_db(
         })
         .map(|v| v.get_str().expect("Crate must always be a string"))?;
     let root_path = std::path::PathBuf::from(crate_root_path);
-    let policy = {
-        let mut system_guard = state.system.write().await;
-        if let Some((workspace_root, member_roots)) = restored_workspace_members_from_db(&state.db)?
-        {
-            let focused_root = if member_roots.iter().any(|member| member == &root_path) {
-                Some(root_path.clone())
+
+    // Query DB outside of system state lock
+    let restored_members = restored_workspace_members_from_db(&state.db)?;
+
+    // Perform state mutation inside system write lock
+    let policy = state
+        .with_system_txn(|txn| {
+            if let Some((workspace_root, member_roots)) = restored_members {
+                let focused_root = if member_roots.iter().any(|member| member == &root_path) {
+                    Some(root_path.clone())
+                } else {
+                    member_roots.first().cloned()
+                };
+                txn.set_loaded_workspace(workspace_root, member_roots, focused_root);
             } else {
-                member_roots.first().cloned()
-            };
-            system_guard.set_loaded_workspace(workspace_root, member_roots, focused_root);
-        } else {
-            system_guard.set_focus_from_root(root_path.clone());
-        }
-        system_guard.derive_path_policy(&[])
-    };
+                txn.set_focus_from_root(root_path.clone());
+            }
+            txn.derive_path_policy(&[])
+        })
+        .await
+        .result;
+
     if let Some(policy) = policy {
         state
             .io_handle
@@ -1302,19 +1310,27 @@ async fn scan_for_change_target(
         // TODO: Move this into `syn_parser` probably
         // WARN: Just going to use a quick and dirty approach for now to get proof of concept, then later
         // on I'll do something more efficient.
+
+        // Extract pwd from SystemState before calling sync function
+        let pwd = state.with_system_read(|sys| sys.pwd().to_path_buf()).await;
+
         let mut parser_output =
-            match run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone())) {
+            match run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()), &pwd) {
                 Ok(output) => {
-                    let mut system_guard = state.system.write().await;
-                    system_guard.record_parse_success();
+                    state
+                        .with_system_txn(|txn| {
+                            txn.record_parse_success();
+                        })
+                        .await;
                     output
                 }
                 Err(err) => {
                     let msg = format_parse_failure(&crate_path, &err);
-                    {
-                        let mut system_guard = state.system.write().await;
-                        system_guard.record_parse_failure(crate_path.clone(), msg.clone());
-                    }
+                    state
+                        .with_system_txn(|txn| {
+                            txn.record_parse_failure(crate_path.clone(), msg.clone());
+                        })
+                        .await;
                     event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
                         message: msg.clone(),
                         severity: crate::error::ErrorSeverity::Error,
@@ -1329,10 +1345,11 @@ async fn scan_for_change_target(
             Ok(merged) => merged,
             Err(err) => {
                 let msg = format_parse_failure(&crate_path, &err);
-                {
-                    let mut system_guard = state.system.write().await;
-                    system_guard.record_parse_failure(crate_path.clone(), msg.clone());
-                }
+                state
+                    .with_system_txn(|txn| {
+                        txn.record_parse_failure(crate_path.clone(), msg.clone());
+                    })
+                    .await;
                 event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
                     message: msg.clone(),
                     severity: crate::error::ErrorSeverity::Error,
@@ -1351,10 +1368,11 @@ module tree process or run_parse_no_transform"
             Ok(tree) => tree,
             Err(err) => {
                 let msg = format_parse_failure(&crate_path, &err);
-                {
-                    let mut system_guard = state.system.write().await;
-                    system_guard.record_parse_failure(crate_path.clone(), msg.clone());
-                }
+                state
+                    .with_system_txn(|txn| {
+                        txn.record_parse_failure(crate_path.clone(), msg.clone());
+                    })
+                    .await;
                 event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
                     message: msg.clone(),
                     severity: crate::error::ErrorSeverity::Error,
@@ -1710,17 +1728,17 @@ pub(super) async fn workspace_update(
         let _ = scan_rx.await;
     }
 
-    let workspace_target = {
-        let system_guard = state.system.read().await;
-        system_guard
-            .loaded_workspace_root()
-            .or_else(|| system_guard.focused_crate_root())
-            .ok_or_else(|| {
-                ploke_error::Error::Domain(DomainError::Ui {
-                    message: "No loaded crate or workspace is available to update.".to_string(),
+    let workspace_target = state
+        .with_system_read(|sys| {
+            sys.loaded_workspace_root()
+                .or_else(|| sys.focused_crate_root())
+                .ok_or_else(|| {
+                    ploke_error::Error::Domain(DomainError::Ui {
+                        message: "No loaded crate or workspace is available to update.".to_string(),
+                    })
                 })
-            })?
-    };
+        })
+        .await?;
 
     crate::app_state::handlers::indexing::index_workspace(
         state,
@@ -1748,10 +1766,9 @@ pub(super) async fn load_workspace_crates(
     workspace_ref: String,
     crate_ref: String,
 ) -> Result<(), ploke_error::Error> {
-    let (loaded_workspace_root, focused_root) = {
-        let guard = state.system.read().await;
-        (guard.loaded_workspace_root(), guard.focused_crate_root())
-    };
+    let (loaded_workspace_root, focused_root) = state
+        .with_system_read(|sys| (sys.loaded_workspace_root(), sys.focused_crate_root()))
+        .await;
     let Some(loaded_workspace_root) = loaded_workspace_root else {
         return Err(ploke_error::Error::Domain(DomainError::Ui {
             message: "No loaded workspace is available to mutate.".to_string(),
@@ -1849,14 +1866,15 @@ pub(super) async fn workspace_remove(
     event_bus: &Arc<EventBus>,
     crate_ref: String,
 ) -> Result<(), ploke_error::Error> {
-    let (workspace_root, member_roots, focused_root) = {
-        let guard = state.system.read().await;
-        (
-            guard.loaded_workspace_root(),
-            guard.loaded_workspace_member_roots(),
-            guard.focused_crate_root(),
-        )
-    };
+    let (workspace_root, member_roots, focused_root) = state
+        .with_system_read(|sys| {
+            (
+                sys.loaded_workspace_root(),
+                sys.loaded_workspace_member_roots(),
+                sys.focused_crate_root(),
+            )
+        })
+        .await;
 
     let Some(workspace_root) = workspace_root else {
         return Err(ploke_error::Error::Domain(DomainError::Ui {
@@ -1995,10 +2013,7 @@ pub(super) async fn write_query(state: &Arc<AppState>, query_content: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        collections::BTreeMap,
-        sync::{Mutex as StdMutex, OnceLock},
-    };
+    use std::collections::BTreeMap;
 
     use cozo::{DataValue, ScriptMutability, UuidWrapper};
     use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingShape};
@@ -2008,11 +2023,7 @@ mod tests {
     use tempfile::TempDir;
 
     const HNSW_SUFFIX: &str = ":hnsw_idx";
-
-    fn config_home_lock() -> &'static StdMutex<()> {
-        static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| StdMutex::new(()))
-    }
+    use crate::test_support::config_home_lock;
 
     struct XdgConfigHomeGuard {
         old_xdg: Option<String>,
@@ -2079,7 +2090,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_db_restores_saved_embedding_set_and_index() {
-        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
@@ -2216,7 +2227,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_db_requires_workspace_registry_entry_instead_of_prefix_lookup() {
-        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
@@ -2245,7 +2256,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads() {
-        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
@@ -2335,7 +2346,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot() {
-        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
@@ -2855,16 +2866,19 @@ mod test {
             rag: Some(Arc::new(rag)),
             budget: TokenBudget::default(), // rag_tx: rag_event_tx.clone()
         });
-        {
-            let mut system_guard = state.system.write().await;
-            let path = workspace_root.join(target_dir);
-            system_guard.set_focus_from_root(path.clone());
-            trace!(
-                target: TUI_SCAN_TARGET,
-                "system_guard.focused_crate_root: {:?}",
-                system_guard.focused_crate_root()
-            );
-        }
+        let focused_root = state
+            .with_system_txn(|txn| {
+                let path = workspace_root.join(target_dir);
+                txn.set_focus_from_root(path);
+                txn.focused_crate_root()
+            })
+            .await
+            .result;
+        trace!(
+            target: TUI_SCAN_TARGET,
+            "system_guard.focused_crate_root: {:?}",
+            focused_root
+        );
 
         // Create command channel with backpressure
         let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
@@ -2875,12 +2889,14 @@ mod test {
 
         let (cancellation_token, cancel_handle) = CancellationToken::new();
         let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);
+        let pwd = std::env::current_dir().expect("current dir");
         let file_manager = FileManager::new(
             io_handle.clone(),
             event_bus.subscribe(EventPriority::Background),
             event_bus.background_tx.clone(),
             rag_event_tx.clone(),
             event_bus.realtime_tx.clone(),
+            pwd,
         );
 
         tokio::spawn(file_manager.run());
@@ -2904,10 +2920,10 @@ mod test {
         let vec_rel = embedding_set.rel_name.clone();
         let script = format!(
             r#"?[name, time, is_assert, maybe_null, id] := *function{{ id, at, name }}
-                                or *struct{{ id, at, name }} 
-                                or *module{{ id, at, name }} 
-                                or *static{{ id, at, name }} 
-                                or *const{{ id, at, name }}, 
+                                or *struct{{ id, at, name }}
+                                or *module{{ id, at, name }}
+                                or *static{{ id, at, name }}
+                                or *const{{ id, at, name }},
                                   time = format_timestamp(at),
                                   *{vec_rel} {{ node_id @ 'NOW' }},
                                   maybe_null = ( node_id == id ),
@@ -3080,13 +3096,13 @@ mod test {
 
         // ---
 
-        let mut target_file = {
-            let mut system_guard = state.system.write().await;
-            system_guard.set_focus_from_root(workspace_root.join(target_dir));
-            system_guard
-                .focused_crate_root()
-                .expect("Crate focus not set")
-        };
+        let mut target_file = state
+            .with_system_txn(|txn| {
+                txn.set_focus_from_root(workspace_root.join(target_dir));
+                txn.focused_crate_root().expect("Crate focus not set")
+            })
+            .await
+            .result;
         trace!(target: TUI_SCAN_TARGET, "target_file before pushes:\n{}", target_file.display());
         target_file.push("src");
         target_file.push("main.rs");

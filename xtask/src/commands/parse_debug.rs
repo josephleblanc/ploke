@@ -2367,10 +2367,7 @@ impl Command for DebugDiscoveryRules {
         let canon = resolve_debug_target_path(ctx, &self.path)?;
         let manifest_path = canon.join("Cargo.toml");
         let manifest: Manifest = Manifest::from_path(&manifest_path).map_err(|e| {
-            XtaskError::Parse(format!(
-                "Failed to parse {}: {e}",
-                manifest_path.display()
-            ))
+            XtaskError::Parse(format!("Failed to parse {}: {e}", manifest_path.display()))
         })?;
 
         let src_scan_root = canon.join("src");
@@ -2382,11 +2379,7 @@ impl Command for DebugDiscoveryRules {
         let mut custom_bin_paths: Vec<String> = manifest
             .bin
             .iter()
-            .filter_map(|b| {
-                b.path
-                    .as_ref()
-                    .map(|p| canon.join(p).display().to_string())
-            })
+            .filter_map(|b| b.path.as_ref().map(|p| canon.join(p).display().to_string()))
             .collect();
         custom_bin_paths.sort();
 

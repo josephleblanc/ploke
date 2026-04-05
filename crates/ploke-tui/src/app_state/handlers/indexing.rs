@@ -54,25 +54,29 @@ pub async fn index_workspace(
     let stopgap_pathbuf = target_dir.clone().map(|p| p.as_path().to_path_buf());
 
     let resolved_target = if let Some(dir) = target_dir {
-        let anchored = {
-            let system_guard = state.system.read().await;
-            dir.resolve_against_loaded_state(&system_guard)
-        };
+        let anchored = state
+            .with_system_read(|sys| dir.resolve_against_loaded_state(sys))
+            .await;
         Some(anchored.unwrap_or(dir).as_path().to_path_buf())
     } else {
         stopgap_pathbuf.clone()
     };
-    let resolved = match resolve_index_target(resolved_target) {
+
+    // Extract pwd from SystemState before calling sync function
+    let pwd = state.with_system_read(|sys| sys.pwd().to_path_buf()).await;
+
+    let resolved = match resolve_index_target(resolved_target, &pwd) {
         Ok(resolved) => resolved,
         Err(err) => {
             let msg = err.to_string();
-            {
-                let mut system_guard = state.system.write().await;
-                system_guard.record_parse_failure(
-                    stopgap_pathbuf.unwrap_or_else(|| PathBuf::from("todo-add-error-handling")),
-                    msg.clone(),
-                );
-            }
+            state
+                .with_system_txn(|txn| {
+                    txn.record_parse_failure(
+                        stopgap_pathbuf.unwrap_or_else(|| PathBuf::from("todo-add-error-handling")),
+                        msg.clone(),
+                    );
+                })
+                .await;
             add_msg_shortcut(&msg).await;
             event_bus.send(AppEvent::Error(ErrorEvent {
                 message: msg,
@@ -92,10 +96,11 @@ pub async fn index_workspace(
             }
             Err(e) => {
                 let msg = format_parse_failure(&resolved.focused_root, &e);
-                {
-                    let mut system_guard = state.system.write().await;
-                    system_guard.record_parse_failure(resolved.requested_path.clone(), msg.clone());
-                }
+                state
+                    .with_system_txn(|txn| {
+                        txn.record_parse_failure(resolved.requested_path.clone(), msg.clone());
+                    })
+                    .await;
                 event_bus.send(AppEvent::Error(ErrorEvent {
                     message: msg,
                     severity: ErrorSeverity::Error,
@@ -106,16 +111,18 @@ pub async fn index_workspace(
         }
     }
 
-    let policy = {
-        let mut system_guard = state.system.write().await;
-        system_guard.set_loaded_workspace(
-            resolved.workspace_root.clone(),
-            resolved.member_roots.clone(),
-            Some(resolved.focused_root.clone()),
-        );
-        system_guard.record_parse_success();
-        system_guard.derive_path_policy(&[])
-    };
+    let outcome = state
+        .with_system_txn(|txn| {
+            txn.set_loaded_workspace(
+                resolved.workspace_root.clone(),
+                resolved.member_roots.clone(),
+                Some(resolved.focused_root.clone()),
+            );
+            txn.record_parse_success();
+            txn.derive_path_policy(&[])
+        })
+        .await;
+    let policy = outcome.result;
     if let Some(policy) = policy {
         state
             .io_handle

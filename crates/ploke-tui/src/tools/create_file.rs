@@ -107,14 +107,10 @@ impl super::Tool for CreateFile {
                 .cloned()
         };
         if let Some(prop) = proposal_opt {
-            let primary_root = {
-                ctx.state
-                    .system
-                    .read()
-                    .await
-                    .tool_path_context()
-                    .map(|(r, _)| r)
-            };
+            let primary_root = ctx
+                .state
+                .with_system_read(|sys| sys.tool_path_context().map(|(r, _)| r))
+                .await;
             tracing::debug!(primary_root = ?primary_root);
             let display_files: Vec<String> = prop
                 .files
@@ -225,7 +221,7 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
     }
 
     // Resolve absolute path against workspace root when relative
-    let (primary_root, policy) = match state.system.read().await.tool_path_context() {
+    let (primary_root, policy) = match state.with_system_read(|sys| sys.tool_path_context()).await {
         Some(ctx) => ctx,
         None => {
             let tool_error = tool_call_params

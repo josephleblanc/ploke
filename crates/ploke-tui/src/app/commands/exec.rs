@@ -15,12 +15,14 @@
 use super::parser::Command;
 use crate::app::App;
 use crate::app_state::IndexTargetDir;
+use crate::app_state::StateCommand;
+use crate::app_state::commands::{IndexCmd, LoadCmd, WorkspaceCmd};
 use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
 use crate::llm::{self, LlmEvent, ProviderKey};
 use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url};
-use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
+use crate::{AppEvent, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
 use ploke_core::{ArcStr, RetrievalScope};
 use ploke_llm::embeddings::{EmbClientConfig, HasEmbeddingModels};
@@ -40,6 +42,19 @@ const TEST_QUERY_RESULTS: &str = "results.json";
 
 /// Execute a parsed command. Falls back to legacy handler for commands
 /// not yet migrated to structured parsing.
+///
+/// # Architecture Note: Validation happens in AppState, not here
+///
+/// This function MUST NOT validate business logic (e.g., "is a workspace loaded?").
+/// It only performs:
+/// 1. Immediate UI effects (open overlays, etc.)
+/// 2. Unconditional forwarding to AppState via `StateCommand`
+///
+/// **Why?** App runs on the UI thread and must not block on state access.
+/// AppState has authoritative access to SystemStatus and performs all validation.
+/// If you need to check state here, use `AppState` handlers instead.
+///
+/// See `state_manager` in `app_state/dispatcher.rs` for validation logic.
 pub fn execute(app: &mut App, command: Command) {
     match command {
         Command::Quit => app.quit(),
@@ -236,14 +251,12 @@ pub fn execute(app: &mut App, command: Command) {
                 provider_key: Some(provider_key),
             });
         }
-        Command::Update => spawn_update(app),
-        Command::LoadWorkspace(workspace_ref) => {
-            app.send_cmd(StateCommand::AddMessageImmediate {
-                msg: format!("Attempting to load workspace snapshot for {workspace_ref}..."),
-                kind: MessageKind::SysInfo,
-                new_msg_id: Uuid::new_v4(),
-            });
-            app.send_cmd(StateCommand::LoadDb { workspace_ref });
+        Command::Update { scope } => {
+            let _ = scope;
+            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::WorkspaceUpdate));
+        }
+        Command::Load { kind, name, force } => {
+            app.send_cmd(StateCommand::Load(LoadCmd { kind, name, force }));
         }
         Command::LoadWorkspaceCrates {
             workspace_ref,
@@ -256,19 +269,28 @@ pub fn execute(app: &mut App, command: Command) {
                 kind: MessageKind::SysInfo,
                 new_msg_id: Uuid::new_v4(),
             });
-            app.send_cmd(StateCommand::LoadWorkspaceCrates {
-                workspace_ref,
-                crate_ref,
-            });
+            // Use the existing validated workspace command for this effect path.
+            app.send_cmd(StateCommand::Workspace(
+                crate::app_state::commands::WorkspaceCmd::LoadWorkspaceCrates {
+                    workspace_ref,
+                    crate_ref,
+                },
+            ));
         }
         Command::WorkspaceStatus => {
-            app.send_cmd(StateCommand::WorkspaceStatus);
+            app.send_cmd(StateCommand::Workspace(
+                crate::app_state::commands::WorkspaceCmd::WorkspaceStatus,
+            ));
         }
         Command::WorkspaceUpdate => {
-            app.send_cmd(StateCommand::WorkspaceUpdate);
+            app.send_cmd(StateCommand::Workspace(
+                crate::app_state::commands::WorkspaceCmd::WorkspaceUpdate,
+            ));
         }
         Command::WorkspaceRemove(crate_ref) => {
-            app.send_cmd(StateCommand::WorkspaceRemove { crate_ref });
+            app.send_cmd(StateCommand::Workspace(
+                crate::app_state::commands::WorkspaceCmd::WorkspaceRemove { crate_ref },
+            ));
         }
         Command::EditApprove(id) => {
             app.send_cmd(StateCommand::ApproveEdits { request_id: id });
@@ -340,37 +362,15 @@ pub fn execute(app: &mut App, command: Command) {
         Command::OpenContextPlan => {
             app.open_context_plan_overlay();
         }
+        Command::Index { mode, target } => {
+            app.send_cmd(StateCommand::Index(IndexCmd { mode, target }));
+        }
+        Command::Save { kind } => {
+            let _ = kind;
+            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::SaveDb));
+        }
         Command::Raw(cmd) => execute_legacy(app, &cmd),
     }
-}
-
-fn spawn_update(app: &App) {
-    app.send_cmd(StateCommand::AddMessageImmediate {
-        msg: "Scanning workspace for updates...".to_string(),
-        kind: MessageKind::SysInfo,
-        new_msg_id: Uuid::new_v4(),
-    });
-    let cmd_tx = app.cmd_tx.clone();
-    tokio::task::spawn(async move {
-        let (scan_tx, scan_rx) = oneshot::channel();
-        let _ = cmd_tx.send(StateCommand::ScanForChange { scan_tx }).await;
-
-        let files = match scan_rx.await {
-            Ok(files) => {
-                files.map(|v| v.into_iter().map(|f| format!("{}", f.display())).join("\n"))
-            }
-            Err(_) => None,
-        };
-        let mut msg = String::from("Updating database with files:\n  ");
-        msg.push_str(&files.unwrap_or_else(|| "No updates needed".to_string()));
-        let _ = cmd_tx
-            .send(StateCommand::AddMessageImmediate {
-                msg,
-                kind: MessageKind::SysInfo,
-                new_msg_id: Uuid::new_v4(),
-            })
-            .await;
-    });
 }
 
 fn show_model_info_async(app: &App) {
@@ -1008,11 +1008,27 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             });
         }
         "save db" | "sd" => {
-            app.send_cmd(StateCommand::SaveDb);
+            // Check if any crate/workspace is loaded
+            let has_loaded = app
+                .state
+                .try_system_read(|sys| sys.has_loaded_crates())
+                .unwrap_or(false);
+
+            if has_loaded {
+                app.send_cmd(StateCommand::SaveDb);
+            } else {
+                // No DB loaded - show error
+                app.send_cmd(StateCommand::AddMessageImmediate {
+                    msg: "Error: No crate or workspace is loaded to save.".to_string(),
+                    kind: crate::chat_history::MessageKind::SysInfo,
+                    new_msg_id: uuid::Uuid::new_v4(),
+                });
+            }
         }
         "update" => {
-            // De-blocked: already implemented in spawn_update
-            spawn_update(app);
+            app.send_cmd(StateCommand::Workspace(
+                crate::app_state::commands::WorkspaceCmd::WorkspaceUpdate,
+            ));
         }
         cmd if cmd.starts_with("query load ") => {
             if let Some((query_name, file_name)) =
