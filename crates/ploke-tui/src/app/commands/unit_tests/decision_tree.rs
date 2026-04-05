@@ -238,7 +238,7 @@ impl TestCase {
         expected_msg_contains: Option<&'static str>,
         expected_todo_test_name: Option<&'static str>,
     ) -> Self {
-        let case = Self {
+        let mut case = Self {
             name,
             db_setup,
             pwd,
@@ -259,6 +259,13 @@ impl TestCase {
 
         if input.starts_with("/index") {
             case.with_index_contract()
+        } else if input.starts_with("/load") {
+            // Keep the `/load` forwarding boundary visible in every row.
+            // The slice boundary is the new `Load` state command.
+            case.expected_forwarded_contains = Some("Load(");
+            case.expected_state_cmd = "Load";
+            case.expected_msg_contains = None;
+            case
         } else {
             case
         }

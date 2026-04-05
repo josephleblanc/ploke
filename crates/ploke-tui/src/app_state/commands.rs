@@ -2,6 +2,7 @@ use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 use crate::ModelId;
+use crate::app::commands::parser::LoadKind;
 use crate::app_state::database::IndexTargetDir;
 use crate::chat_history::{ContextTokens, MessageKind};
 use crate::llm::{ChatHistoryTarget, LLMParameters, ProviderKey};
@@ -143,6 +144,14 @@ pub struct IndexCmd {
     pub target: Option<String>,
 }
 
+/// `/load` command forwarded from the executor.
+#[derive(Debug, Clone)]
+pub struct LoadCmd {
+    pub kind: LoadKind,
+    pub name: Option<String>,
+    pub force: bool,
+}
+
 /// Resolved `/index` request after applying mode + target semantics.
 #[derive(Debug, Clone)]
 pub struct IndexResolution {
@@ -154,7 +163,9 @@ pub struct IndexResolution {
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum IndexResolveError {
     // Informative errors stay direct; recovery text is formatted separately.
-    #[error("Current directory is not a loaded crate. Use `/index crate <path>` to index a specific crate.")]
+    #[error(
+        "Current directory is not a loaded crate. Use `/index crate <path>` to index a specific crate."
+    )]
     CurrentDirectoryNotLoadedCrate,
     #[error("Current directory is not a workspace member")]
     CurrentDirectoryNotWorkspaceMember,
@@ -283,6 +294,13 @@ impl IndexCmd {
     }
 }
 
+impl LoadCmd {
+    /// Returns the discriminant name for logging/debugging.
+    pub fn discriminant(&self) -> &'static str {
+        "Load"
+    }
+}
+
 fn resolve_loaded_crate_target(
     target: &Path,
     loaded_workspace_root: Option<&Path>,
@@ -312,11 +330,7 @@ fn resolve_loaded_crate_target(
 
     if let Some(loaded_match) = loaded_member_roots
         .iter()
-        .find(|root| {
-            root.file_name()
-                .and_then(|name| name.to_str())
-                == Some(target_name)
-        })
+        .find(|root| root.file_name().and_then(|name| name.to_str()) == Some(target_name))
         .cloned()
     {
         return Some(loaded_match);
@@ -407,7 +421,6 @@ pub enum WorkspaceCmd {
     /// Set the current working directory.
     SetPwd { new_pwd: PathBuf },
 }
-
 
 impl Validate for WorkspaceCmd {
     async fn validate(&self, state: &super::AppState) -> Result<(), ValidationError> {
@@ -572,6 +585,10 @@ pub enum StateCommand {
     // Workspace operations - VALIDATED (see WorkspaceCmd above)
     /// `/index` command, resolved in state based on current pwd/loading context.
     Index(IndexCmd),
+
+    /// `/load` command boundary forwarded from the executor.
+    /// Temporary backend routing keeps the current behavior intact.
+    Load(LoadCmd),
 
     /// Save workspace snapshot. Validated: requires loaded workspace.
     ///
@@ -833,6 +850,7 @@ impl StateCommand {
             UpdateContextTokens { .. } => "UpdateContextTokens",
             SetPwd { .. } => "SetPwd",
             Index(cmd) => cmd.discriminant(),
+            Load(cmd) => cmd.discriminant(),
             // NEW: Grouped commands
             Workspace(cmd) => cmd.discriminant(),
             #[cfg(test)]

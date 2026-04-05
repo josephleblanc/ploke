@@ -404,3 +404,25 @@
 - Remaining gaps:
   - The remaining `/index` user-facing wording is still serviceable but not yet fully polished against the final policy language.
   - `/load` and `/update` still need the same contract cleanup pattern applied after `/index`.
+
+## Entry 20: `/load` State Boundary Slice 1
+- Slice: introduce `StateCommand::Load(LoadCmd)` as the executor boundary while keeping current backend behavior
+- Files changed:
+  - crates/ploke-tui/src/app_state/commands.rs
+  - crates/ploke-tui/src/app_state/dispatcher.rs
+  - crates/ploke-tui/src/app/commands/exec.rs
+  - crates/ploke-tui/src/app/commands/unit_tests/decision_tree.rs
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - `/load` now forwards through `StateCommand::Load(LoadCmd { kind, name, force })` instead of the legacy `Workspace(LoadDb)` shape.
+  - The executor preserves the parsed `force` bit in the forwarded state command.
+  - The dispatcher routes the new load boundary through the existing backend load path for now, so this slice stays behaviorally equivalent.
+  - The canonical decision table now asserts the forwarded `Load(` boundary for `/load` rows, while the concrete effect logic remains pending for later slices.
+- Tests run:
+  - `cargo fmt --all`
+  - `cargo test -p ploke-tui --lib`
+- Result:
+  - Passed: `189 passed; 0 failed; 5 ignored`
+- Remaining gaps:
+  - `/load` resolution / unsaved-state policy is still pending for the next slice.
+  - `/update` has not been refactored yet and still follows the older transitional contract.

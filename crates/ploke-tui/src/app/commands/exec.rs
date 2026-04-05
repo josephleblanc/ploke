@@ -12,11 +12,11 @@
 //! - Model switching delegated to `StateCommand::SwitchModel` which should broadcast
 //!   `SystemEvent::ModelSwitched` for UI updates.
 
-use super::parser::{Command, LoadKind};
+use super::parser::Command;
 use crate::app::App;
 use crate::app_state::IndexTargetDir;
 use crate::app_state::StateCommand;
-use crate::app_state::commands::{IndexCmd, WorkspaceCmd};
+use crate::app_state::commands::{IndexCmd, LoadCmd, WorkspaceCmd};
 use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
@@ -256,16 +256,7 @@ pub fn execute(app: &mut App, command: Command) {
             app.send_cmd(StateCommand::Workspace(WorkspaceCmd::WorkspaceUpdate));
         }
         Command::Load { kind, name, force } => {
-            let workspace_cmd = match kind {
-                LoadKind::Workspace => WorkspaceCmd::LoadDb {
-                    workspace_ref: name.unwrap_or_default(),
-                },
-                LoadKind::Crate => WorkspaceCmd::LoadDb {
-                    workspace_ref: name.unwrap_or_default(),
-                },
-            };
-            let _ = force;
-            app.send_cmd(StateCommand::Workspace(workspace_cmd));
+            app.send_cmd(StateCommand::Load(LoadCmd { kind, name, force }));
         }
         Command::LoadWorkspaceCrates {
             workspace_ref,

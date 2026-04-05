@@ -25,8 +25,8 @@ use tracing::{trace_span, warn};
 
 use super::IndexTargetDir;
 use super::commands::{
-    IndexCmd, IndexResolveError, StateCommand, Validate, WorkspaceCmd, emit_validation_error,
-    validate_workspace_cmd,
+    IndexCmd, IndexResolveError, LoadCmd, StateCommand, Validate, WorkspaceCmd,
+    emit_validation_error, validate_workspace_cmd,
 };
 use super::core::AppState;
 use super::events::SystemEvent;
@@ -167,6 +167,10 @@ pub async fn state_manager(
                 if let Err(e) = handle_index_cmd(&state, &event_bus, cmd).await {
                     emit_index_resolve_error(&state, &event_bus, e).await;
                 }
+            }
+
+            StateCommand::Load(cmd) => {
+                handle_load_cmd(&state, &event_bus, cmd).await;
             }
 
             StateCommand::IndexTargetDir {
@@ -634,6 +638,18 @@ async fn handle_index_cmd(
         resolution.needs_parse,
     );
     Ok(())
+}
+
+async fn handle_load_cmd(state: &Arc<AppState>, event_bus: &Arc<EventBus>, cmd: LoadCmd) {
+    let LoadCmd { kind, name, force } = cmd;
+    let workspace_ref = name.unwrap_or_default();
+    tracing::debug!(
+        ?kind,
+        force,
+        workspace_ref = %workspace_ref,
+        "Handling load command boundary"
+    );
+    handlers::db::load_db(state, event_bus, workspace_ref).await;
 }
 
 async fn emit_index_resolve_error(
