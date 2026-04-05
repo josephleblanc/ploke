@@ -2013,10 +2013,7 @@ pub(super) async fn write_query(state: &Arc<AppState>, query_content: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        collections::BTreeMap,
-        sync::{Mutex as StdMutex, OnceLock},
-    };
+    use std::collections::BTreeMap;
 
     use cozo::{DataValue, ScriptMutability, UuidWrapper};
     use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingShape};
@@ -2026,11 +2023,7 @@ mod tests {
     use tempfile::TempDir;
 
     const HNSW_SUFFIX: &str = ":hnsw_idx";
-
-    fn config_home_lock() -> &'static StdMutex<()> {
-        static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| StdMutex::new(()))
-    }
+    use crate::test_support::config_home_lock;
 
     struct XdgConfigHomeGuard {
         old_xdg: Option<String>,
@@ -2097,7 +2090,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_db_restores_saved_embedding_set_and_index() {
-        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
@@ -2234,7 +2227,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_db_requires_workspace_registry_entry_instead_of_prefix_lookup() {
-        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
@@ -2263,7 +2256,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads() {
-        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
@@ -2353,7 +2346,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot() {
-        let _lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 

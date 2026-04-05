@@ -25,6 +25,8 @@ pub mod utils;
 pub use event_bus::*;
 pub mod rag;
 #[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
 mod tests;
 pub mod tools;
 pub mod ui_theme;

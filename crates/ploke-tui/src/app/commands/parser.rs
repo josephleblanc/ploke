@@ -433,6 +433,12 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             Command::SearchContext(search_term.to_string())
         }
         "contextplan" | "context plan" => Command::OpenContextPlan,
+        "index start" | "index pause" | "index resume" | "index cancel" => {
+            // Preserve the legacy indexing-control command path so these
+            // commands keep their immediate feedback behavior.
+            Command::Raw(trimmed.to_string())
+        }
+        s if s.starts_with("index start ") => Command::Raw(trimmed.to_string()),
         "index" => Command::Index {
             mode: IndexMode::Auto,
             target: None,

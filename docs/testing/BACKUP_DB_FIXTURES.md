@@ -64,17 +64,17 @@ example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
 
 | Fixture | Parsed target(s) | Primary usage | Last update |
 | --- | --- | --- | --- |
-| `fixture_nodes_canonical_2026-03-20.sqlite` | `tests/fixture_crates/fixture_nodes` | canonical parsed `fixture_nodes` backup | 2026-03-20 |
-| `fixture_nodes_local_embeddings_2026-03-20.sqlite` | `tests/fixture_crates/fixture_nodes` | local-embedding `fixture_nodes` backup | 2026-03-20 |
+| `fixture_nodes_canonical_2026-04-01.sqlite` | `tests/fixture_crates/fixture_nodes` | canonical parsed `fixture_nodes` backup | 2026-04-01 |
+| `fixture_nodes_local_embeddings_2026-04-01.sqlite` | `tests/fixture_crates/fixture_nodes` | local-embedding `fixture_nodes` backup | 2026-04-01 |
 | `fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92` | `tests/fixture_crates/fixture_nodes` | legacy multi-embedding schema snapshot | 2026-03-20 |
 | `ploke_db_primary_2026-03-21.sqlite` | `crates/ploke-db` | current-schema `ploke-db` graph backup | 2026-03-21 |
 | `ws_fixture_01_canonical_2026-03-21.sqlite` | `tests/fixture_workspace/ws_fixture_01` | canonical plain backup of committed multi-member workspace fixture | 2026-03-21 |
 | `ws_fixture_01_member_single_2026-04-03.sqlite` | `tests/fixture_workspace/ws_fixture_01/member_root` | single-member slice of workspace fixture | 2026-04-03 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
-## `fixture_nodes_canonical_2026-03-20.sqlite`
+## `fixture_nodes_canonical_2026-04-01.sqlite`
 
-- File: `tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite`
+- File: `tests/backup_dbs/fixture_nodes_canonical_2026-04-01.sqlite`
 - Parsed target(s): `tests/fixture_crates/fixture_nodes`
 - Expected DB config:
   - plain backup import
@@ -94,10 +94,12 @@ example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
     - [crates/ploke-tui/src/test_harness.rs](/home/brasides/code/ploke/crates/ploke-tui/src/test_harness.rs): shared mutable app harness DB
     - [crates/ploke-tui/src/app/commands/exec_real_tools_live_tests.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec_real_tools_live_tests.rs): shared mutable DB for live-tool scaffolding
     - [crates/ploke-tui/src/rag/tests/apply_code_edit_tests.rs](/home/brasides/code/ploke/crates/ploke-tui/src/rag/tests/apply_code_edit_tests.rs): fixture dependency note, immutable expectations
+- Notes:
+  - older backups remain on disk (for example `fixture_nodes_canonical_2026-03-20.sqlite`) but the active registry entry points at the 2026-04-01 snapshot
 
-## `fixture_nodes_local_embeddings_2026-03-20.sqlite`
+## `fixture_nodes_local_embeddings_2026-04-01.sqlite`
 
-- File: `tests/backup_dbs/fixture_nodes_local_embeddings_2026-03-20.sqlite`
+- File: `tests/backup_dbs/fixture_nodes_local_embeddings_2026-04-01.sqlite`
 - Parsed target(s): `tests/fixture_crates/fixture_nodes`
 - Expected DB config:
   - import with `Database::import_backup_with_embeddings`
@@ -118,6 +120,8 @@ example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
     - [crates/ploke-tui/src/test_utils/new_test_harness.rs](/home/brasides/code/ploke/crates/ploke-tui/src/test_utils/new_test_harness.rs): shared immutable headless harness DB via `shared_backup_fixture_db`
     - [crates/ploke-tui/tests/get_code_edges_regression.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/get_code_edges_regression.rs): shared immutable DB via harness
     - [crates/ploke-tui/tests/tool_ui_payload_fixture.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/tool_ui_payload_fixture.rs): shared immutable DB via harness
+- Notes:
+  - older backups remain on disk (for example `fixture_nodes_local_embeddings_2026-03-20.sqlite`) but the active registry entry points at the 2026-04-01 snapshot
 
 ## `fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`
 

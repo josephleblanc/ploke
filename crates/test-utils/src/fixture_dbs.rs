@@ -438,7 +438,7 @@ mod tests {
 
         assert_eq!(
             fixture.filename(),
-            "fixture_nodes_canonical_2026-03-20.sqlite"
+            "fixture_nodes_canonical_2026-04-01.sqlite"
         );
         assert_eq!(fixture.status, FixtureStatus::Active);
     }

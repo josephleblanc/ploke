@@ -896,7 +896,7 @@ pub enum StateCommand {
     /// event if validation fails.
     ///
     /// Example:
-    /// ```rust
+    /// ```rust,ignore
     /// app.send_cmd(StateCommand::Workspace(WorkspaceCmd::SaveDb));
     /// ```
     Workspace(WorkspaceCmd),

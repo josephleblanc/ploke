@@ -38,7 +38,7 @@
 //!
 //! Total: 70 test cases (0/70 implemented)
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::app::commands::unit_tests::harness::{
@@ -46,6 +46,7 @@ use crate::app::commands::unit_tests::harness::{
 };
 use crate::app::commands::{exec, parser};
 use crate::app_state::core::WorkspaceFreshness;
+use crate::test_support::config_home_lock;
 use crate::user_config::{CommandStyle, WorkspaceRegistry, WorkspaceRegistryEntry};
 use ploke_core::WorkspaceInfo;
 use ploke_test_utils::{
@@ -370,11 +371,6 @@ impl Default for ValidationExpectation {
 // Backwards compatibility alias - all NoDbTestCase usages should work
 pub type NoDbTestCase = TestCase;
 
-fn load_registry_lock() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-}
-
 struct XdgConfigHomeGuard {
     old_xdg: Option<String>,
 }
@@ -410,7 +406,7 @@ struct LoadRegistrySandbox {
 }
 
 async fn setup_load_registry() -> LoadRegistrySandbox {
-    let lock = load_registry_lock().lock().await;
+    let lock = config_home_lock().lock().await;
     let tmp_dir = tempdir().expect("temp xdg config dir");
     let xdg_guard = XdgConfigHomeGuard::set_to(tmp_dir.path());
 
