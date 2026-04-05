@@ -38,18 +38,21 @@
 //!
 //! Total: 70 test cases (0/70 implemented)
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crate::app::commands::unit_tests::harness::{
     DebugStateCommand, TestRuntime, ValidationProbeEvent,
 };
 use crate::app::commands::{exec, parser};
-use crate::user_config::CommandStyle;
+use crate::app_state::core::WorkspaceFreshness;
+use crate::user_config::{CommandStyle, WorkspaceRegistry, WorkspaceRegistryEntry};
+use ploke_core::WorkspaceInfo;
 use ploke_test_utils::{
     FIXTURE_NODES_CANONICAL, WS_FIXTURE_01_CANONICAL, WS_FIXTURE_01_MEMBER_SINGLE,
     fresh_backup_fixture_db,
 };
+use tempfile::{TempDir, tempdir};
 use tokio::time::timeout;
 
 // =============================================================================
@@ -229,6 +232,8 @@ struct TestCase {
     expected_focus_root_contains: Option<&'static str>,
     /// Expected validation result (new field, defaults to None for backward compatibility)
     expected_validation: ValidationExpectation,
+    /// Marks the currently loaded state stale before the command is sent.
+    stale_loaded_state: bool,
     /// Expected user-facing error (if any)
     expected_error: ExpectedUiError,
 }
@@ -268,6 +273,7 @@ impl TestCase {
             expected_resolved_index_target_contains: None,
             expected_focus_root_contains: None,
             expected_validation: ValidationExpectation::None,
+            stale_loaded_state: false,
             expected_error: ExpectedUiError {
                 message_contains: None,
                 recovery_suggestion: None,
@@ -299,6 +305,7 @@ impl Default for TestCase {
             expected_resolved_index_target_contains: None,
             expected_focus_root_contains: None,
             expected_validation: ValidationExpectation::None,
+            stale_loaded_state: false,
             expected_error: ExpectedUiError::default(),
         }
     }
@@ -344,6 +351,11 @@ impl TestCase {
         self
     }
 
+    fn with_stale_loaded_state(mut self) -> Self {
+        self.stale_loaded_state = true;
+        self
+    }
+
     fn with_error(mut self, expected: ExpectedUiError) -> Self {
         self.with_resolve_ui_error(expected)
     }
@@ -357,6 +369,77 @@ impl Default for ValidationExpectation {
 
 // Backwards compatibility alias - all NoDbTestCase usages should work
 pub type NoDbTestCase = TestCase;
+
+fn load_registry_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+struct XdgConfigHomeGuard {
+    old_xdg: Option<String>,
+}
+
+impl XdgConfigHomeGuard {
+    fn set_to(path: &std::path::Path) -> Self {
+        let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", path);
+        }
+        Self { old_xdg }
+    }
+}
+
+impl Drop for XdgConfigHomeGuard {
+    fn drop(&mut self) {
+        if let Some(old_xdg) = self.old_xdg.take() {
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", old_xdg);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+    }
+}
+
+struct LoadRegistrySandbox {
+    _lock: tokio::sync::MutexGuard<'static, ()>,
+    _tmp_dir: TempDir,
+    _xdg_guard: XdgConfigHomeGuard,
+}
+
+async fn setup_load_registry() -> LoadRegistrySandbox {
+    let lock = load_registry_lock().lock().await;
+    let tmp_dir = tempdir().expect("temp xdg config dir");
+    let xdg_guard = XdgConfigHomeGuard::set_to(tmp_dir.path());
+
+    let repo_root = ploke_test_utils::workspace_root();
+    let fixture_crate_root = repo_root.join("tests/fixture_crates/fixture_nodes");
+
+    let fixture_crate = WorkspaceInfo::from_root_path(fixture_crate_root.clone());
+    let registry = WorkspaceRegistry {
+        version: 1,
+        entries: vec![WorkspaceRegistryEntry {
+            workspace_id: fixture_crate.id.uuid().to_string(),
+            workspace_name: fixture_crate.name.clone(),
+            workspace_root: fixture_crate_root.clone(),
+            snapshot_file: FIXTURE_NODES_CANONICAL.path(),
+            focused_root: Some(fixture_crate_root.clone()),
+            member_roots: vec![fixture_crate_root],
+            active_embedding_set_rel: None,
+        }],
+    };
+    registry
+        .save_to_path(&WorkspaceRegistry::default_registry_path())
+        .expect("save test workspace registry");
+
+    LoadRegistrySandbox {
+        _lock: lock,
+        _tmp_dir: tmp_dir,
+        _xdg_guard: xdg_guard,
+    }
+}
 
 /// Helper to load a database fixture based on DbSetup variant.
 fn load_db_fixture(setup: DbSetup) -> Arc<ploke_db::Database> {
@@ -393,15 +476,17 @@ fn resolve_pwd(pwd: TestPwd) -> std::path::PathBuf {
 async fn run_test_cases(cases: &[TestCase]) {
     use std::collections::HashMap;
 
-    let mut groups: HashMap<(DbSetup, TestPwd), Vec<&TestCase>> = HashMap::new();
+    let _load_registry = setup_load_registry().await;
+
+    let mut groups: HashMap<(DbSetup, TestPwd, bool), Vec<&TestCase>> = HashMap::new();
     for case in cases {
         groups
-            .entry((case.db_setup, case.pwd))
+            .entry((case.db_setup, case.pwd, case.stale_loaded_state))
             .or_default()
             .push(case);
     }
 
-    for ((db_setup, pwd), group_cases) in groups {
+    for ((db_setup, pwd, stale_loaded_state), group_cases) in groups {
         let db = load_db_fixture(db_setup);
         let rt = TestRuntime::new(&db).spawn_validation_probe();
 
@@ -457,6 +542,16 @@ async fn run_test_cases(cases: &[TestCase]) {
                 )
                 .await;
             }
+        }
+
+        if stale_loaded_state {
+            rt.state_arc()
+                .with_system_txn(|txn| {
+                    for crate_id in txn.loaded_crate_ids() {
+                        txn.set_workspace_freshness(crate_id, WorkspaceFreshness::Stale);
+                    }
+                })
+                .await;
         }
 
         let mut app = rt.into_app_with_state_pwd(pwd_path).await;
@@ -531,9 +626,10 @@ fn assert_load_contract(case: &TestCase, trace: &CaseTrace) {
         expected
     );
 
-    let cmd = trace.commands.first().unwrap_or_else(|| {
-        panic!("Test '{}' failed: no forwarded command captured", case.name)
-    });
+    let cmd = trace
+        .commands
+        .first()
+        .unwrap_or_else(|| panic!("Test '{}' failed: no forwarded command captured", case.name));
     let cmd_str = cmd.as_str();
     assert!(
         cmd_str.contains("Load(LoadCmd {")
@@ -816,6 +912,8 @@ async fn run_test_case(case: &TestCase) {
     use ratatui::{Terminal, backend::TestBackend};
     use tokio_stream::wrappers::UnboundedReceiverStream;
 
+    let _load_registry = setup_load_registry().await;
+
     let db = load_db_fixture(case.db_setup);
     let rt = TestRuntime::new(&db).spawn_validation_probe();
 
@@ -868,6 +966,16 @@ async fn run_test_case(case: &TestCase) {
             )
             .await;
         }
+    }
+
+    if case.stale_loaded_state {
+        rt.state_arc()
+            .with_system_txn(|txn| {
+                for crate_id in txn.loaded_crate_ids() {
+                    txn.set_workspace_freshness(crate_id, WorkspaceFreshness::Stale);
+                }
+            })
+            .await;
     }
 
     let app = rt.into_app_with_state_pwd(pwd_path).await;
@@ -1101,7 +1209,13 @@ async fn test_no_db_loaded_all_cases() {
             None,
             None,
         )
-        .with_load_contract(parser::LoadKind::Crate, Some("member_root"), false),
+        .with_load_contract(parser::LoadKind::Crate, Some("member_root"), false)
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved crate named 'member_root' was found.".to_string()),
+            recovery_suggestion: Some(
+                "`/index crate member_root` to index it before loading.".to_string(),
+            ),
+        }),
         TestCase::new(
             "10. /load crate <nonexistent> forwards to Workspace(LoadDb) for validation",
             DbSetup::None,
@@ -1111,11 +1225,15 @@ async fn test_no_db_loaded_all_cases() {
             None,
             None,
         )
-        .with_load_contract(
-            parser::LoadKind::Crate,
-            Some("nonexistent_crate"),
-            false,
-        ),
+        .with_load_contract(parser::LoadKind::Crate, Some("nonexistent_crate"), false)
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some(
+                "No saved crate named 'nonexistent_crate' was found.".to_string(),
+            ),
+            recovery_suggestion: Some(
+                "`/index crate nonexistent_crate` to index it before loading.".to_string(),
+            ),
+        }),
         TestCase::new(
             "11. /load workspace <name> forwards to Workspace(LoadDb) for validation",
             DbSetup::None,
@@ -1125,20 +1243,27 @@ async fn test_no_db_loaded_all_cases() {
             None,
             None,
         )
-        .with_load_contract(
-            parser::LoadKind::Workspace,
-            Some("member_root"),
-            false,
-        ),
+        .with_load_contract(parser::LoadKind::Workspace, Some("member_root"), false)
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("Workspace 'member_root' was not found.".to_string()),
+            recovery_suggestion: Some("`/load crate member_root` if you meant the crate.".to_string()),
+        }),
         TestCase::new(
             "12. /load workspace (no arg) loads or suggests /index",
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load workspace",
-            "TestTodo",
+            "Load",
             None,
-            Some("test_no_db_workspace_root_load_workspace_no_arg"),
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Workspace, None, false)
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved workspace named 'ws_fixture_01' was found.".to_string()),
+            recovery_suggestion: Some(
+                "`/index workspace` from the workspace root before loading it.".to_string(),
+            ),
+        }),
         TestCase {
             expected_validation: ValidationExpectation::Failure {
                 reason: Some("No crate or workspace is loaded".to_string()),
@@ -1254,7 +1379,12 @@ async fn test_no_db_loaded_all_cases() {
             None,
         )
         .with_load_contract(parser::LoadKind::Workspace, Some("some_workspace"), false)
-        .with_resolved_load_ref("some_workspace"),
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved workspace named 'some_workspace' was found.".to_string()),
+            recovery_suggestion: Some(
+                "`/index workspace` from the workspace root before loading it.".to_string(),
+            ),
+        }),
         TestCase {
             expected_validation: ValidationExpectation::Failure {
                 reason: Some("No crate or workspace is loaded".to_string()),
@@ -1425,7 +1555,12 @@ async fn test_single_member_all_cases() {
             None,
         )
         .with_load_contract(parser::LoadKind::Crate, Some("not_a_member"), false)
-        .with_resolved_load_ref("not_a_member"),
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved crate named 'not_a_member' was found.".to_string()),
+            recovery_suggestion: Some(
+                "`/index crate not_a_member` to index it before loading.".to_string(),
+            ),
+        }),
         TestCase::new(
             "3.8 /load crate <not in registry> forwards to Workspace(LoadDb) for validation",
             DbSetup::SingleMember,
@@ -1436,7 +1571,10 @@ async fn test_single_member_all_cases() {
             None,
         )
         .with_load_contract(parser::LoadKind::Crate, Some("new_crate"), false)
-        .with_resolved_load_ref("new_crate"),
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved crate named 'new_crate' was found.".to_string()),
+            recovery_suggestion: Some("`/index crate new_crate` to index it before loading.".to_string()),
+        }),
         TestCase::new(
             "3.9 /save db saves workspace snapshot",
             DbSetup::SingleMember,
@@ -1556,7 +1694,12 @@ async fn test_standalone_crate_all_cases() {
             None,
         )
         .with_load_contract(parser::LoadKind::Crate, Some("other_crate"), false)
-        .with_resolved_load_ref("other_crate"),
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved crate named 'other_crate' was found.".to_string()),
+            recovery_suggestion: Some(
+                "`/index crate other_crate` to index it before loading.".to_string(),
+            ),
+        }),
         TestCase::new(
             "4.6 /load workspace <name> (now forwards to LoadDb)",
             DbSetup::StandaloneCrate,
@@ -1567,7 +1710,12 @@ async fn test_standalone_crate_all_cases() {
             None,
         )
         .with_load_contract(parser::LoadKind::Workspace, Some("some_workspace"), false)
-        .with_resolved_load_ref("some_workspace"),
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved workspace named 'some_workspace' was found.".to_string()),
+            recovery_suggestion: Some(
+                "`/index workspace` from the workspace root before loading it.".to_string(),
+            ),
+        }),
         TestCase::new(
             "4.7 /save db saves standalone snapshot",
             DbSetup::StandaloneCrate,
@@ -1723,16 +1871,21 @@ async fn test_full_workspace_all_cases() {
             recovery_suggestion: Some("`/index` to re-index 'member_root'.".to_string()),
         }),
         TestCase::new(
-            "5.8 /load crate <not member> (now forwards to LoadDb)",
+            "5.8 /load crate <not member> with --force (now forwards to LoadDb)",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
-            "/load crate not_a_member",
+            "/load crate not_a_member --force",
             "Load",
             None,
             None,
         )
-        .with_load_contract(parser::LoadKind::Crate, Some("not_a_member"), false)
-        .with_resolved_load_ref("not_a_member"),
+        .with_load_contract(parser::LoadKind::Crate, Some("not_a_member"), true)
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved crate named 'not_a_member' was found.".to_string()),
+            recovery_suggestion: Some(
+                "`/index crate not_a_member` to index it before loading.".to_string(),
+            ),
+        }),
         TestCase::new(
             "5.9 /load crate <not in registry> (now forwards to LoadDb)",
             DbSetup::FullWorkspace,
@@ -1743,22 +1896,26 @@ async fn test_full_workspace_all_cases() {
             None,
         )
         .with_load_contract(parser::LoadKind::Crate, Some("new_crate"), false)
-        .with_resolved_load_ref("new_crate"),
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved crate named 'new_crate' was found.".to_string()),
+            recovery_suggestion: Some("`/index crate new_crate` to index it before loading.".to_string()),
+        }),
         TestCase::new(
-            "5.10 /load workspace <different> (now forwards to LoadDb)",
+            "5.10 /load workspace <different> with --force (now forwards to LoadDb)",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
-            "/load workspace other_workspace",
+            "/load workspace other_workspace --force",
             "Load",
             None,
             None,
         )
-        .with_load_contract(
-            parser::LoadKind::Workspace,
-            Some("other_workspace"),
-            false,
-        )
-        .with_resolved_load_ref("other_workspace"),
+        .with_load_contract(parser::LoadKind::Workspace, Some("other_workspace"), true)
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved workspace named 'other_workspace' was found.".to_string()),
+            recovery_suggestion: Some(
+                "`/index workspace` from the workspace root before loading it.".to_string(),
+            ),
+        }),
         TestCase::new(
             "5.11 /save db saves workspace snapshot",
             DbSetup::FullWorkspace,
@@ -1931,7 +2088,12 @@ async fn test_pwd_crate_loaded_all_cases() {
             None,
         )
         .with_load_contract(parser::LoadKind::Crate, Some("different_crate"), false)
-        .with_resolved_load_ref("different_crate"),
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved crate named 'different_crate' was found.".to_string()),
+            recovery_suggestion: Some(
+                "`/index crate different_crate` to index it before loading.".to_string(),
+            ),
+        }),
         TestCase::new(
             "6.10 /load workspace <name> (now forwards to LoadDb)",
             DbSetup::FullWorkspace,
@@ -1942,7 +2104,12 @@ async fn test_pwd_crate_loaded_all_cases() {
             None,
         )
         .with_load_contract(parser::LoadKind::Workspace, Some("other_workspace"), false)
-        .with_resolved_load_ref("other_workspace"),
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved workspace named 'other_workspace' was found.".to_string()),
+            recovery_suggestion: Some(
+                "`/index workspace` from the workspace root before loading it.".to_string(),
+            ),
+        }),
         TestCase::new(
             "6.11 /save db, /update same as workspace root rules",
             DbSetup::FullWorkspace,
@@ -1975,7 +2142,7 @@ async fn test_pwd_crate_loaded_all_cases() {
 #[tokio::test]
 async fn test_transition_all_cases() {
     let cases = vec![
-        // Section 7: Transition cases (4 cases)
+        // Section 7: Transition cases
         TestCase::new(
             "7.1 /load workspace <name> when standalone (now forwards to LoadDb)",
             DbSetup::StandaloneCrate,
@@ -1986,7 +2153,12 @@ async fn test_transition_all_cases() {
             None,
         )
         .with_load_contract(parser::LoadKind::Workspace, Some("some_workspace"), false)
-        .with_resolved_load_ref("some_workspace"),
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("No saved workspace named 'some_workspace' was found.".to_string()),
+            recovery_suggestion: Some(
+                "`/index workspace` from the workspace root before loading it.".to_string(),
+            ),
+        }),
         TestCase::new(
             "7.2 /load crate <name> when workspace loaded: check unsaved, prompt or force",
             DbSetup::FullWorkspace,
@@ -2020,6 +2192,68 @@ async fn test_transition_all_cases() {
 
     println!("\n========================================");
     println!("All {} transition test cases completed!", cases.len());
+}
+
+#[tokio::test]
+async fn test_load_validate_blocks_stale_state_without_force() {
+    let db = load_db_fixture(DbSetup::StandaloneCrate);
+    let rt = TestRuntime::new(&db).spawn_validation_probe();
+    let crate_root = ploke_test_utils::workspace_root().join("tests/fixture_crates/fixture_nodes");
+    rt.setup_loaded_standalone_crate(crate_root).await;
+
+    rt.state_arc()
+        .with_system_txn(|txn| {
+            for crate_id in txn.loaded_crate_ids() {
+                txn.set_workspace_freshness(crate_id, WorkspaceFreshness::Stale);
+            }
+        })
+        .await;
+
+    let cmd = crate::app_state::commands::LoadCmd {
+        kind: parser::LoadKind::Workspace,
+        name: Some("ws_fixture_01".to_string()),
+        force: false,
+    };
+    let resolution = crate::app_state::commands::LoadResolution {
+        workspace_ref: "ws_fixture_01".to_string(),
+        replaces_loaded_state: true,
+    };
+
+    let err = cmd
+        .validate(&rt.state_arc(), &resolution)
+        .await
+        .expect_err("stale loaded state should block /load without --force");
+    assert_eq!(err.to_string(), "Current loaded crate or workspace has stale state");
+}
+
+#[tokio::test]
+async fn test_load_validate_allows_stale_state_with_force() {
+    let db = load_db_fixture(DbSetup::StandaloneCrate);
+    let rt = TestRuntime::new(&db).spawn_validation_probe();
+    let crate_root = ploke_test_utils::workspace_root().join("tests/fixture_crates/fixture_nodes");
+    rt.setup_loaded_standalone_crate(crate_root).await;
+
+    rt.state_arc()
+        .with_system_txn(|txn| {
+            for crate_id in txn.loaded_crate_ids() {
+                txn.set_workspace_freshness(crate_id, WorkspaceFreshness::Stale);
+            }
+        })
+        .await;
+
+    let cmd = crate::app_state::commands::LoadCmd {
+        kind: parser::LoadKind::Workspace,
+        name: Some("ws_fixture_01".to_string()),
+        force: true,
+    };
+    let resolution = crate::app_state::commands::LoadResolution {
+        workspace_ref: "ws_fixture_01".to_string(),
+        replaces_loaded_state: true,
+    };
+
+    cmd.validate(&rt.state_arc(), &resolution)
+        .await
+        .expect("force should bypass stale-state load validation");
 }
 
 // =============================================================================

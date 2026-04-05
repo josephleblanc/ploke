@@ -120,6 +120,48 @@ fn parse_index_target(token: Option<&str>) -> Option<String> {
     })
 }
 
+fn parse_load_command(kind: LoadKind, rest: &str, raw: &str) -> Command {
+    if rest.is_empty() {
+        return Command::Load {
+            kind,
+            name: None,
+            force: false,
+        };
+    }
+
+    let mut name: Option<String> = None;
+    let mut force = false;
+
+    for token in rest.split_whitespace() {
+        match token {
+            "--force" => {
+                if force {
+                    return Command::Raw(raw.to_string());
+                }
+                force = true;
+            }
+            _ if token.starts_with("--") => {
+                return Command::Raw(raw.to_string());
+            }
+            _ if name.is_none() => {
+                name = Some(token.to_string());
+            }
+            _ => {
+                return Command::Raw(raw.to_string());
+            }
+        }
+    }
+
+    match name {
+        Some(name) => Command::Load {
+            kind,
+            name: Some(name),
+            force,
+        },
+        None => Command::Raw(raw.to_string()),
+    }
+}
+
 /// Parse the input buffer into a Command, stripping the style prefix.
 pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
     let trimmed = match style {
@@ -267,16 +309,8 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             force: false,
         },
         s if s.starts_with("load workspace ") => {
-            let workspace_ref = s.trim_start_matches("load workspace ").trim().to_string();
-            if workspace_ref.is_empty() || workspace_ref.contains(' ') {
-                Command::Raw(trimmed.to_string())
-            } else {
-                Command::Load {
-                    kind: LoadKind::Workspace,
-                    name: Some(workspace_ref),
-                    force: false,
-                }
-            }
+            let rest = s.trim_start_matches("load workspace ").trim();
+            parse_load_command(LoadKind::Workspace, rest, trimmed)
         }
         "load crate" => Command::Load {
             kind: LoadKind::Crate,
@@ -284,16 +318,8 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             force: false,
         },
         s if s.starts_with("load crate ") => {
-            let crate_ref = s.trim_start_matches("load crate ").trim().to_string();
-            if crate_ref.is_empty() || crate_ref.contains(' ') {
-                Command::Raw(trimmed.to_string())
-            } else {
-                Command::Load {
-                    kind: LoadKind::Crate,
-                    name: Some(crate_ref),
-                    force: false,
-                }
-            }
+            let rest = s.trim_start_matches("load crate ").trim();
+            parse_load_command(LoadKind::Crate, rest, trimmed)
         }
         s if s.starts_with("load crates ") => {
             let rest = s.trim_start_matches("load crates ").trim();

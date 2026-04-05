@@ -26,8 +26,7 @@ use tracing::{trace_span, warn};
 use super::IndexTargetDir;
 use super::commands::{
     IndexCmd, IndexResolveError, LoadCmd, LoadResolveError, LoadValidationError, StateCommand,
-    Validate, WorkspaceCmd,
-    emit_validation_error, validate_workspace_cmd,
+    Validate, WorkspaceCmd, emit_validation_error, validate_workspace_cmd,
 };
 use super::core::AppState;
 use super::events::SystemEvent;

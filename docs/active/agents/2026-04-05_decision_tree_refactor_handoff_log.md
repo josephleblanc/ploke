@@ -476,3 +476,72 @@
   - `cargo test -p ploke-tui --lib test_full_workspace_all_cases -- --nocapture`
   - `cargo test -p ploke-tui --lib test_pwd_crate_loaded_all_cases -- --nocapture`
   - `cargo test -p ploke-tui --lib`
+
+## Entry 24: `/load` `--force` Parser Shape Promotion
+- Slice: add strict `--force` parsing for named `/load crate` and `/load workspace` inputs, then promote the stable canonical rows that only need the force-flag shape
+- Files changed:
+  - crates/ploke-tui/src/app/commands/parser.rs
+  - crates/ploke-tui/src/app/commands/unit_tests/decision_tree.rs
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - The parser now recognizes `--force` on named `/load crate ...` and `/load workspace ...` forms and carries it through as `Command::Load { force: true }`.
+  - The canonical table now pins the force shape on stable forwarded rows only, without changing any runtime files or loosening the existing load contract.
+  - Existing no-force `/load` coverage remains in place through the other canonical rows.
+- Remaining gaps:
+  - No-argument `/load workspace` is still pending.
+  - Other load-transition semantics remain outside this parser-only slice.
+- Tests run: none
+
+## Entry 25: Registry-Aware `/load` Resolution
+- Slice: make `/load` resolve against a deterministic saved-target set in the fast lib decision-tree tests
+- Files changed:
+  - crates/ploke-tui/src/app_state/commands.rs
+  - crates/ploke-tui/src/app/commands/unit_tests/decision_tree.rs
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - `/load` now distinguishes:
+    - already-loaded targets
+    - missing saved crate targets
+    - missing saved workspace targets
+    - workspace names that look like crate targets
+    - ambiguous saved target names
+  - The fast decision-tree tests install a temp XDG config sandbox with a deterministic registry that includes only `fixture_nodes` as a saved target.
+  - That keeps `/load crate fixture_nodes` as a stable success path and forces the registry-miss rows down one deterministic user-facing branch every run.
+  - `/load workspace` with no argument now resolves to the current workspace name and takes the registry-miss branch in the fast test sandbox.
+- Remaining gaps:
+  - The fast lib sandbox intentionally does not model arbitrary saved workspaces, so placeholder names like `some_workspace` and `other_workspace` remain registry-miss cases.
+  - Transition rows that need a real saved alternate target still remain pending in the canonical matrix.
+- Tests run:
+  - `cargo test -p ploke-tui --lib test_no_db_loaded_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib test_single_member_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib test_standalone_crate_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib test_full_workspace_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib test_pwd_crate_loaded_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib test_transition_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib`
+
+## Entry 26: `/load` Stale-State Gate Coverage
+- Slice: cover the validate phase explicitly without overloading the decision-tree relay
+- Files changed:
+  - crates/ploke-tui/src/app/commands/unit_tests/decision_tree.rs
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - The transition matrix keeps the user-facing stale-state behavior out of the registry-miss rows.
+  - Two direct unit tests now assert `LoadCmd::validate(...)` blocks stale replacement loads without `--force` and allows them with `--force`.
+  - This keeps the canonical table focused on input -> user-facing outcome while still proving the non-trivial `/load` validation gate directly.
+- Tests run:
+  - `cargo test -p ploke-tui --lib test_load_validate_blocks_stale_state_without_force -- --nocapture`
+  - `cargo test -p ploke-tui --lib test_load_validate_allows_stale_state_with_force -- --nocapture`
+  - `cargo test -p ploke-tui --lib test_transition_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib`
+
+## Entry 25: `/load` Registry Sandbox Narrowing
+- Slice: make the fast decision-tree `/load` rows deterministic against a minimal isolated workspace registry
+- Files changed:
+  - crates/ploke-tui/src/app/commands/unit_tests/decision_tree.rs
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - The fast `/load` decision-tree runner now seeds a temp XDG config directory and writes only the `fixture_nodes` registry entry.
+  - That keeps `/load crate fixture_nodes` stable as the only no-db registry hit while forcing the registry-miss rows to resolve through the same deterministic failure paths every run.
+  - Promoted the no-arg `/load workspace` no-db row to the stable registry-miss assertion for `ws_fixture_01` instead of treating it as a forwarded success.
+- Tests run: none

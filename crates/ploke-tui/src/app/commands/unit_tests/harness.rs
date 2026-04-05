@@ -107,7 +107,9 @@ use crate::{
     app_state::{AppState, ChatState, ConfigState, RuntimeConfig, StateCommand, SystemState},
     app_state::{
         IndexTargetDir,
-        commands::{IndexResolution, LoadResolution, emit_validation_error, validate_state_command},
+        commands::{
+            IndexResolution, LoadResolution, emit_validation_error, validate_state_command,
+        },
     },
     chat_history::ChatHistory,
     context_plan,
@@ -364,22 +366,21 @@ impl ValidationRelayStateCmd {
 
             // Capture either a validation error event or the user-facing resolve
             // failure summary. Use a short timeout to avoid blocking tests.
-            let (error_message, recovery_suggestion) = if resolve_error.is_some()
-                || index_recovery_suggestion.is_some()
-            {
-                (None, index_recovery_suggestion)
-            } else if load_error_message.is_some() || load_recovery_suggestion.is_some() {
-                (load_error_message.clone(), load_recovery_suggestion)
-            } else {
-                match timeout(Duration::from_millis(10), error_rx.recv()).await {
-                    Ok(Ok(AppEvent::Error(error_event))) => {
-                        // Extract error message from ErrorEvent
-                        let msg = Some(error_event.message.clone());
-                        (msg, None)
+            let (error_message, recovery_suggestion) =
+                if resolve_error.is_some() || index_recovery_suggestion.is_some() {
+                    (None, index_recovery_suggestion)
+                } else if load_error_message.is_some() || load_recovery_suggestion.is_some() {
+                    (load_error_message.clone(), load_recovery_suggestion)
+                } else {
+                    match timeout(Duration::from_millis(10), error_rx.recv()).await {
+                        Ok(Ok(AppEvent::Error(error_event))) => {
+                            // Extract error message from ErrorEvent
+                            let msg = Some(error_event.message.clone());
+                            (msg, None)
+                        }
+                        _ => (None, None),
                     }
-                    _ => (None, None),
-                }
-            };
+                };
 
             if validation.is_some()
                 || error_message.is_some()
@@ -925,6 +926,10 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
     pub async fn into_app_with_state_pwd(self, pwd: PathBuf) -> App {
         self.inner.state.system.set_pwd_for_test(pwd.clone()).await;
         self.into_app(pwd)
+    }
+
+    pub fn state_arc(&self) -> Arc<AppState> {
+        Arc::clone(&self.inner.state)
     }
 
     /// Convenience wrapper that returns the app wrapped in `Arc<Mutex<App>>`.

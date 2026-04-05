@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::event_bus::ErrorEvent;
 use crate::parser::resolve_index_target;
+use crate::user_config::WorkspaceRegistry;
 use crate::{AppEvent, ErrorSeverity, EventBus};
 
 #[derive(thiserror::Error, Clone, Debug)]
@@ -185,6 +186,16 @@ pub enum LoadResolveError {
     AlreadyLoadedWorkspaceMember { target: String },
     #[error("Workspace '{target}' is already loaded.")]
     AlreadyLoadedWorkspace { target: String },
+    #[error("No saved crate named '{target}' was found.")]
+    MissingSavedCrate { target: String },
+    #[error("No saved workspace named '{target}' was found.")]
+    MissingSavedWorkspace { target: String },
+    #[error("Workspace '{target}' was not found.")]
+    WorkspaceTargetLooksLikeCrate { target: String },
+    #[error("Saved workspace lookup for '{target}' is ambiguous.")]
+    AmbiguousSavedTarget { target: String },
+    #[error("Failed to load the saved workspace registry.")]
+    RegistryUnavailable,
 }
 
 impl LoadResolveError {
@@ -203,6 +214,21 @@ impl LoadResolveError {
             }
             LoadResolveError::AlreadyLoadedWorkspaceMember { target } => {
                 format!("`/index crate {target}` to re-index that member.")
+            }
+            LoadResolveError::MissingSavedCrate { target } => {
+                format!("`/index crate {target}` to index it before loading.")
+            }
+            LoadResolveError::MissingSavedWorkspace { .. } => {
+                "`/index workspace` from the workspace root before loading it.".to_string()
+            }
+            LoadResolveError::WorkspaceTargetLooksLikeCrate { target } => {
+                format!("`/load crate {target}` if you meant the crate.")
+            }
+            LoadResolveError::AmbiguousSavedTarget { target } => {
+                format!("the exact workspace id for '{target}'.")
+            }
+            LoadResolveError::RegistryUnavailable => {
+                "checking the saved workspace registry configuration.".to_string()
             }
         }
     }
@@ -379,12 +405,9 @@ impl LoadCmd {
         &self,
         state: &super::AppState,
     ) -> Result<LoadResolution, LoadResolveError> {
-        let Some(workspace_ref) = self.name.clone() else {
-            return Err(LoadResolveError::MissingTarget);
-        };
-
-        let (loaded_workspace_root, loaded_workspace_name, loaded_crate_refs) = state
+        let (pwd, loaded_workspace_root, loaded_workspace_name, loaded_crate_refs) = state
             .with_system_read(|sys| {
+                let pwd = sys.pwd().to_path_buf();
                 let loaded_workspace_root = sys.loaded_workspace_root();
                 let loaded_workspace_name = sys
                     .loaded_workspace
@@ -400,9 +423,24 @@ impl LoadCmd {
                         )
                     })
                     .collect::<Vec<_>>();
-                (loaded_workspace_root, loaded_workspace_name, loaded_crate_refs)
+                (
+                    pwd,
+                    loaded_workspace_root,
+                    loaded_workspace_name,
+                    loaded_crate_refs,
+                )
             })
             .await;
+        let has_loaded_context = !loaded_crate_refs.is_empty();
+        let workspace_ref = match (self.kind, self.name.clone()) {
+            (_, Some(name)) => name,
+            (LoadKind::Workspace, None) => pwd
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+                .ok_or(LoadResolveError::MissingTarget)?,
+            (LoadKind::Crate, None) => return Err(LoadResolveError::MissingTarget),
+        };
 
         let matches_loaded_crate = loaded_crate_refs
             .iter()
@@ -432,11 +470,80 @@ impl LoadCmd {
             };
         }
 
+        match registry_lookup_state(&workspace_ref) {
+            Ok(RegistryLookupState::Found) => {}
+            Ok(RegistryLookupState::Missing) => {
+                if matches!(self.kind, LoadKind::Workspace)
+                    && workspace_root_from_pwd(&pwd)
+                        .and_then(|root| workspace_member_match(&workspace_ref, root.as_path()))
+                        .is_some()
+                {
+                    return Err(LoadResolveError::WorkspaceTargetLooksLikeCrate {
+                        target: workspace_ref,
+                    });
+                }
+
+                return Err(match self.kind {
+                    LoadKind::Crate => LoadResolveError::MissingSavedCrate {
+                        target: workspace_ref,
+                    },
+                    LoadKind::Workspace => LoadResolveError::MissingSavedWorkspace {
+                        target: workspace_ref,
+                    },
+                });
+            }
+            Ok(RegistryLookupState::Ambiguous) => {
+                return Err(LoadResolveError::AmbiguousSavedTarget {
+                    target: workspace_ref,
+                });
+            }
+            Err(_) => return Err(LoadResolveError::RegistryUnavailable),
+        }
+
         Ok(LoadResolution {
             workspace_ref,
-            replaces_loaded_state: !loaded_crate_refs.is_empty(),
+            replaces_loaded_state: has_loaded_context,
         })
     }
+}
+
+enum RegistryLookupState {
+    Found,
+    Missing,
+    Ambiguous,
+}
+
+fn registry_lookup_state(workspace_ref: &str) -> color_eyre::Result<RegistryLookupState> {
+    let registry = WorkspaceRegistry::load_from_path(&WorkspaceRegistry::default_registry_path())?;
+    if registry
+        .entries
+        .iter()
+        .any(|entry| entry.workspace_id == workspace_ref)
+    {
+        return Ok(RegistryLookupState::Found);
+    }
+
+    let matches = registry
+        .entries
+        .iter()
+        .filter(|entry| entry.workspace_name == workspace_ref)
+        .count();
+
+    Ok(match matches {
+        0 => RegistryLookupState::Missing,
+        1 => RegistryLookupState::Found,
+        _ => RegistryLookupState::Ambiguous,
+    })
+}
+
+fn workspace_root_from_pwd(pwd: &Path) -> Option<PathBuf> {
+    try_parse_manifest(pwd, ManifestKind::WorkspaceRoot)
+        .ok()
+        .and_then(|manifest| manifest.workspace.map(|_| pwd.to_path_buf()))
+}
+
+fn workspace_member_match(target: &str, workspace_root: &Path) -> Option<PathBuf> {
+    resolve_loaded_crate_target(Path::new(target), Some(workspace_root), &[], false)
 }
 
 fn resolve_loaded_crate_target(
