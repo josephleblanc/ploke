@@ -178,6 +178,17 @@ pub struct ExpectedUiError {
     pub recovery_suggestion: Option<String>,
 }
 
+/// Stable `/load` contract expectation captured from parser and forwarded state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadExpectation {
+    /// Parsed/forwarded load family.
+    pub kind: parser::LoadKind,
+    /// Optional target name or path.
+    pub name: Option<&'static str>,
+    /// Whether the command was forced.
+    pub force: bool,
+}
+
 /// Test parameters for command decision tree tests.
 /// Works for any DB state (None, SingleMember, FullWorkspace, StandaloneCrate).
 #[derive(Clone)]
@@ -206,6 +217,10 @@ struct TestCase {
     /// Optional: substring expected in the first forwarded `StateCommand`.
     /// Used to verify the executor forwards intent without resolving early.
     expected_forwarded_contains: Option<&'static str>,
+    /// Optional: exact `/load` contract assertion for parser + forwarded state command.
+    expected_load_contract: Option<LoadExpectation>,
+    /// Optional: exact resolved `/load` target after state-side classification.
+    expected_resolved_load_ref_contains: Option<&'static str>,
     /// Optional: substring expected in the resolved `/index` target directory.
     /// This keeps successful state-side resolution in the canonical contract.
     expected_resolved_index_target_contains: Option<&'static str>,
@@ -248,6 +263,8 @@ impl TestCase {
             expected_todo_test_name,
             expected_parsed_contains: None,
             expected_forwarded_contains: None,
+            expected_load_contract: None,
+            expected_resolved_load_ref_contains: None,
             expected_resolved_index_target_contains: None,
             expected_focus_root_contains: None,
             expected_validation: ValidationExpectation::None,
@@ -259,13 +276,6 @@ impl TestCase {
 
         if input.starts_with("/index") {
             case.with_index_contract()
-        } else if input.starts_with("/load") {
-            // Keep the `/load` forwarding boundary visible in every row.
-            // The slice boundary is the new `Load` state command.
-            case.expected_forwarded_contains = Some("Load(");
-            case.expected_state_cmd = "Load";
-            case.expected_msg_contains = None;
-            case
         } else {
             case
         }
@@ -284,6 +294,8 @@ impl Default for TestCase {
             expected_todo_test_name: None,
             expected_parsed_contains: None,
             expected_forwarded_contains: None,
+            expected_load_contract: None,
+            expected_resolved_load_ref_contains: None,
             expected_resolved_index_target_contains: None,
             expected_focus_root_contains: None,
             expected_validation: ValidationExpectation::None,
@@ -309,9 +321,31 @@ impl TestCase {
         self
     }
 
-    fn with_error(mut self, expected: ExpectedUiError) -> Self {
+    fn with_load_contract(
+        mut self,
+        kind: parser::LoadKind,
+        name: Option<&'static str>,
+        force: bool,
+    ) -> Self {
+        self.expected_state_cmd = "Load";
+        self.expected_parsed_contains = Some("Load {");
+        self.expected_forwarded_contains = Some("Load(LoadCmd {");
+        self.expected_load_contract = Some(LoadExpectation { kind, name, force });
+        self
+    }
+
+    fn with_resolved_load_ref(mut self, expected: &'static str) -> Self {
+        self.expected_resolved_load_ref_contains = Some(expected);
+        self
+    }
+
+    fn with_resolve_ui_error(mut self, expected: ExpectedUiError) -> Self {
         self.expected_error = expected;
         self
+    }
+
+    fn with_error(mut self, expected: ExpectedUiError) -> Self {
+        self.with_resolve_ui_error(expected)
     }
 }
 
@@ -474,10 +508,72 @@ fn assert_forwarded_contract(case: &TestCase, trace: &CaseTrace) {
     }
 }
 
+fn assert_load_contract(case: &TestCase, trace: &CaseTrace) {
+    let Some(expected) = &case.expected_load_contract else {
+        return;
+    };
+
+    let expected_kind = format!("kind: {:?}", expected.kind);
+    let expected_name = match expected.name {
+        Some(name) => format!("name: Some(\"{}\")", name),
+        None => "name: None".to_string(),
+    };
+    let expected_force = format!("force: {}", expected.force);
+
+    assert!(
+        trace.parsed.contains("Load {")
+            && trace.parsed.contains(&expected_kind)
+            && trace.parsed.contains(&expected_name)
+            && trace.parsed.contains(&expected_force),
+        "Test '{}' failed: parsed load command '{}' did not match {:?}",
+        case.name,
+        trace.parsed,
+        expected
+    );
+
+    let cmd = trace.commands.first().unwrap_or_else(|| {
+        panic!("Test '{}' failed: no forwarded command captured", case.name)
+    });
+    let cmd_str = cmd.as_str();
+    assert!(
+        cmd_str.contains("Load(LoadCmd {")
+            && cmd_str.contains(&expected_kind)
+            && cmd_str.contains(&expected_name)
+            && cmd_str.contains(&expected_force),
+        "Test '{}' failed: forwarded load command '{}' did not match {:?}",
+        case.name,
+        cmd_str,
+        expected
+    );
+}
+
 fn assert_effect_contract(case: &TestCase, trace: &CaseTrace) {
     let commands = &trace.commands;
     let validations = &trace.validations;
     let is_index_case = case.input.starts_with("/index");
+
+    assert_load_contract(case, trace);
+
+    if let Some(expected_load_ref) = case.expected_resolved_load_ref_contains {
+        let resolved_load_ref = validations.iter().find_map(|validation| {
+            validation
+                .resolved_load()
+                .map(|resolution| resolution.workspace_ref.clone())
+        });
+        let resolved_load_ref = resolved_load_ref.unwrap_or_else(|| {
+            panic!(
+                "Test '{}' failed: expected resolved load ref containing '{}' but none was captured",
+                case.name, expected_load_ref
+            )
+        });
+        assert!(
+            resolved_load_ref.contains(expected_load_ref),
+            "Test '{}' failed: resolved load ref '{}' did not contain '{}'",
+            case.name,
+            resolved_load_ref,
+            expected_load_ref
+        );
+    }
 
     if let Some(expected_target) = case.expected_resolved_index_target_contains {
         let resolved_target = validations.iter().find_map(|validation| {
@@ -551,6 +647,12 @@ fn assert_effect_contract(case: &TestCase, trace: &CaseTrace) {
                     case.name, cmd_str, todo_name
                 );
             } else if cmd_str.starts_with("Workspace") && case.expected_state_cmd == "TestTodo" {
+                let todo_name = case.expected_todo_test_name.unwrap_or("unknown");
+                println!(
+                    "  [FORWARDED] {} - intent forwarded ({}) while downstream behavior remains pending ({})",
+                    case.name, cmd_str, todo_name
+                );
+            } else if cmd_str.starts_with("Load") && case.expected_state_cmd == "TestTodo" {
                 let todo_name = case.expected_todo_test_name.unwrap_or("unknown");
                 println!(
                     "  [FORWARDED] {} - intent forwarded ({}) while downstream behavior remains pending ({})",
@@ -984,36 +1086,49 @@ async fn test_no_db_loaded_all_cases() {
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate fixture_nodes",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("fixture_nodes"), false)
+        .with_resolved_load_ref("fixture_nodes"),
         TestCase::new(
             "9. /load crate <member> forwards to Workspace(LoadDb) for validation",
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate member_root",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("member_root"), false),
         TestCase::new(
             "10. /load crate <nonexistent> forwards to Workspace(LoadDb) for validation",
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate nonexistent_crate",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
+            None,
+        )
+        .with_load_contract(
+            parser::LoadKind::Crate,
+            Some("nonexistent_crate"),
+            false,
         ),
         TestCase::new(
             "11. /load workspace <name> forwards to Workspace(LoadDb) for validation",
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load workspace member_root",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
+            None,
+        )
+        .with_load_contract(
+            parser::LoadKind::Workspace,
+            Some("member_root"),
+            false,
         ),
         TestCase::new(
             "12. /load workspace (no arg) loads or suggests /index",
@@ -1123,19 +1238,23 @@ async fn test_no_db_loaded_all_cases() {
             DbSetup::None,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/load crate fixture_nodes",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("fixture_nodes"), false)
+        .with_resolved_load_ref("fixture_nodes"),
         TestCase::new(
             "22. /load workspace <name> at crate root",
             DbSetup::None,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/load workspace some_workspace",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Workspace, Some("some_workspace"), false)
+        .with_resolved_load_ref("some_workspace"),
         TestCase {
             expected_validation: ValidationExpectation::Failure {
                 reason: Some("No crate or workspace is loaded".to_string()),
@@ -1287,28 +1406,37 @@ async fn test_single_member_all_cases() {
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate member_root",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("member_root"), false)
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("Crate 'member_root' is already loaded.".to_string()),
+            recovery_suggestion: Some("`/index` to re-index 'member_root'.".to_string()),
+        }),
         TestCase::new(
             "3.7 /load crate <not member> forwards to Workspace(LoadDb) for validation",
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate not_a_member",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("not_a_member"), false)
+        .with_resolved_load_ref("not_a_member"),
         TestCase::new(
             "3.8 /load crate <not in registry> forwards to Workspace(LoadDb) for validation",
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate new_crate",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("new_crate"), false)
+        .with_resolved_load_ref("new_crate"),
         TestCase::new(
             "3.9 /save db saves workspace snapshot",
             DbSetup::SingleMember,
@@ -1423,19 +1551,23 @@ async fn test_standalone_crate_all_cases() {
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/load crate other_crate",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("other_crate"), false)
+        .with_resolved_load_ref("other_crate"),
         TestCase::new(
             "4.6 /load workspace <name> (now forwards to LoadDb)",
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/load workspace some_workspace",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Workspace, Some("some_workspace"), false)
+        .with_resolved_load_ref("some_workspace"),
         TestCase::new(
             "4.7 /save db saves standalone snapshot",
             DbSetup::StandaloneCrate,
@@ -1581,37 +1713,52 @@ async fn test_full_workspace_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate member_root",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("member_root"), false)
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("Crate 'member_root' is already loaded.".to_string()),
+            recovery_suggestion: Some("`/index` to re-index 'member_root'.".to_string()),
+        }),
         TestCase::new(
             "5.8 /load crate <not member> (now forwards to LoadDb)",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate not_a_member",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("not_a_member"), false)
+        .with_resolved_load_ref("not_a_member"),
         TestCase::new(
             "5.9 /load crate <not in registry> (now forwards to LoadDb)",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate new_crate",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("new_crate"), false)
+        .with_resolved_load_ref("new_crate"),
         TestCase::new(
             "5.10 /load workspace <different> (now forwards to LoadDb)",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load workspace other_workspace",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(
+            parser::LoadKind::Workspace,
+            Some("other_workspace"),
+            false,
+        )
+        .with_resolved_load_ref("other_workspace"),
         TestCase::new(
             "5.11 /save db saves workspace snapshot",
             DbSetup::FullWorkspace,
@@ -1765,28 +1912,37 @@ async fn test_pwd_crate_loaded_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
             "/load crate member_root",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("member_root"), false)
+        .with_resolve_ui_error(ExpectedUiError {
+            message_contains: Some("Crate 'member_root' is already loaded.".to_string()),
+            recovery_suggestion: Some("`/index` to re-index 'member_root'.".to_string()),
+        }),
         TestCase::new(
             "6.9 /load crate <different> (now forwards to LoadDb)",
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
             "/load crate different_crate",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Crate, Some("different_crate"), false)
+        .with_resolved_load_ref("different_crate"),
         TestCase::new(
             "6.10 /load workspace <name> (now forwards to LoadDb)",
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
             "/load workspace other_workspace",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Workspace, Some("other_workspace"), false)
+        .with_resolved_load_ref("other_workspace"),
         TestCase::new(
             "6.11 /save db, /update same as workspace root rules",
             DbSetup::FullWorkspace,
@@ -1825,16 +1981,18 @@ async fn test_transition_all_cases() {
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/load workspace some_workspace",
-            "Workspace",
-            Some("LoadDb"),
+            "Load",
             None,
-        ),
+            None,
+        )
+        .with_load_contract(parser::LoadKind::Workspace, Some("some_workspace"), false)
+        .with_resolved_load_ref("some_workspace"),
         TestCase::new(
             "7.2 /load crate <name> when workspace loaded: check unsaved, prompt or force",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate some_crate",
-            "Workspace",
+            "TestTodo",
             None,
             Some("test_transition_load_crate_from_workspace"),
         ),
@@ -1843,7 +2001,7 @@ async fn test_transition_all_cases() {
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/load crate other_crate",
-            "Workspace",
+            "TestTodo",
             None,
             Some("test_transition_load_crate_standalone_to_standalone"),
         ),

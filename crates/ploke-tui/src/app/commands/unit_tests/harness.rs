@@ -107,7 +107,7 @@ use crate::{
     app_state::{AppState, ChatState, ConfigState, RuntimeConfig, StateCommand, SystemState},
     app_state::{
         IndexTargetDir,
-        commands::{IndexResolution, emit_validation_error, validate_state_command},
+        commands::{IndexResolution, LoadResolution, emit_validation_error, validate_state_command},
     },
     chat_history::ChatHistory,
     context_plan,
@@ -143,6 +143,8 @@ pub struct ValidationProbeEvent {
     resolve_error: Option<String>,
     /// Structured `/index` resolution when the command maps to a concrete target.
     resolved_index_target: Option<IndexResolution>,
+    /// Structured `/load` resolution when the command maps to a concrete target.
+    resolved_load: Option<LoadResolution>,
     /// Focus root hint for `/index` when the resolved target should become focused.
     focus_root: Option<PathBuf>,
 }
@@ -170,6 +172,10 @@ impl ValidationProbeEvent {
 
     pub fn resolved_index_target(&self) -> Option<&IndexResolution> {
         self.resolved_index_target.as_ref()
+    }
+
+    pub fn resolved_load(&self) -> Option<&LoadResolution> {
+        self.resolved_load.as_ref()
     }
 
     pub fn focus_root(&self) -> Option<&std::path::Path> {
@@ -291,6 +297,9 @@ impl ValidationRelayStateCmd {
             let mut resolve_error = None;
             let mut index_recovery_suggestion = None;
             let mut focus_root = None;
+            let mut load_validation_error = None;
+            let mut load_error_message = None;
+            let mut load_recovery_suggestion = None;
             let resolved_index_target = match &cmd {
                 StateCommand::Index(cmd) => match cmd.resolve(&state).await {
                     Ok(resolution) => {
@@ -313,38 +322,71 @@ impl ValidationRelayStateCmd {
                 }),
                 _ => None,
             };
+            let resolved_load = match &cmd {
+                StateCommand::Load(cmd) => match cmd.resolve(&state).await {
+                    Ok(resolution) => match cmd.validate(&state, &resolution).await {
+                        Ok(()) => Some(resolution),
+                        Err(err) => {
+                            load_validation_error = Some(err.to_string());
+                            load_error_message = Some(err.to_string());
+                            load_recovery_suggestion = Some(err.recovery_suggestion());
+                            None
+                        }
+                    },
+                    Err(err) => {
+                        load_error_message = Some(err.user_message());
+                        load_recovery_suggestion = Some(err.recovery_suggestion());
+                        None
+                    }
+                },
+                _ => None,
+            };
 
-            let validation: Option<Result<(), String>> =
-                match validate_state_command(&cmd, &state).await {
+            let validation: Option<Result<(), String>> = match &cmd {
+                StateCommand::Load(_) => {
+                    if let Some(error_message) = load_validation_error.clone() {
+                        Some(Err(error_message))
+                    } else if resolved_load.is_some() {
+                        Some(Ok(()))
+                    } else {
+                        None
+                    }
+                }
+                _ => match validate_state_command(&cmd, &state).await {
                     Some(Ok(())) => Some(Ok(())),
                     Some(Err(err)) => {
                         emit_validation_error(&event_bus, err.clone());
                         Some(Err(err.to_string()))
                     }
                     None => None,
-                };
+                },
+            };
 
-            // Capture either a validation error event or the user-facing `/index`
-            // resolve failure summary. Use a short timeout to avoid blocking tests.
-            let (error_message, recovery_suggestion) =
-                if resolve_error.is_some() || index_recovery_suggestion.is_some() {
-                    (None, index_recovery_suggestion)
-                } else {
-                    match timeout(Duration::from_millis(10), error_rx.recv()).await {
-                        Ok(Ok(AppEvent::Error(error_event))) => {
-                            // Extract error message from ErrorEvent
-                            let msg = Some(error_event.message.clone());
-                            (msg, None)
-                        }
-                        _ => (None, None),
+            // Capture either a validation error event or the user-facing resolve
+            // failure summary. Use a short timeout to avoid blocking tests.
+            let (error_message, recovery_suggestion) = if resolve_error.is_some()
+                || index_recovery_suggestion.is_some()
+            {
+                (None, index_recovery_suggestion)
+            } else if load_error_message.is_some() || load_recovery_suggestion.is_some() {
+                (load_error_message.clone(), load_recovery_suggestion)
+            } else {
+                match timeout(Duration::from_millis(10), error_rx.recv()).await {
+                    Ok(Ok(AppEvent::Error(error_event))) => {
+                        // Extract error message from ErrorEvent
+                        let msg = Some(error_event.message.clone());
+                        (msg, None)
                     }
-                };
+                    _ => (None, None),
+                }
+            };
 
             if validation.is_some()
                 || error_message.is_some()
                 || recovery_suggestion.is_some()
                 || resolve_error.is_some()
                 || resolved_index_target.is_some()
+                || resolved_load.is_some()
                 || focus_root.is_some()
             {
                 let _ = validation_tx
@@ -355,6 +397,7 @@ impl ValidationRelayStateCmd {
                         recovery_suggestion,
                         resolve_error,
                         resolved_index_target,
+                        resolved_load,
                         focus_root,
                     })
                     .await

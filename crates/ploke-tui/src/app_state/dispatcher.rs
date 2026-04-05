@@ -25,7 +25,8 @@ use tracing::{trace_span, warn};
 
 use super::IndexTargetDir;
 use super::commands::{
-    IndexCmd, IndexResolveError, LoadCmd, StateCommand, Validate, WorkspaceCmd,
+    IndexCmd, IndexResolveError, LoadCmd, LoadResolveError, LoadValidationError, StateCommand,
+    Validate, WorkspaceCmd,
     emit_validation_error, validate_workspace_cmd,
 };
 use super::core::AppState;
@@ -641,15 +642,53 @@ async fn handle_index_cmd(
 }
 
 async fn handle_load_cmd(state: &Arc<AppState>, event_bus: &Arc<EventBus>, cmd: LoadCmd) {
-    let LoadCmd { kind, name, force } = cmd;
-    let workspace_ref = name.unwrap_or_default();
-    tracing::debug!(
-        ?kind,
-        force,
-        workspace_ref = %workspace_ref,
-        "Handling load command boundary"
-    );
-    handlers::db::load_db(state, event_bus, workspace_ref).await;
+    let LoadCmd { kind, force, .. } = &cmd;
+    tracing::debug!(?kind, force, "Handling load command boundary");
+
+    let resolution = match cmd.resolve(state).await {
+        Ok(resolution) => resolution,
+        Err(error) => {
+            emit_load_resolve_error(state, event_bus, error).await;
+            return;
+        }
+    };
+
+    if let Err(error) = cmd.validate(state, &resolution).await {
+        emit_load_validation_error(state, event_bus, error).await;
+        return;
+    }
+
+    handlers::db::load_db(state, event_bus, resolution.workspace_ref).await;
+}
+
+async fn emit_load_validation_error(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    error: LoadValidationError,
+) {
+    let message = error.to_string();
+    let recovery = error.recovery_suggestion();
+    tracing::error!("Load command failed: {}", message);
+    UiError::new_from_message(Message::user_new(message))
+        .with_recovery(recovery)
+        .format_recovery(|recovery, message| format!("{message}\nConsider using: {recovery}"))
+        .send_ui(EventCtx::new_user_facing(event_bus, state))
+        .await;
+}
+
+async fn emit_load_resolve_error(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    error: LoadResolveError,
+) {
+    let message = error.user_message();
+    let recovery = error.recovery_suggestion();
+    tracing::error!("Load command failed: {}", message);
+    UiError::new_from_message(Message::user_new(message))
+        .with_recovery(recovery)
+        .format_recovery(|recovery, message| format!("{message}\nConsider using: {recovery}"))
+        .send_ui(EventCtx::new_user_facing(event_bus, state))
+        .await;
 }
 
 async fn emit_index_resolve_error(

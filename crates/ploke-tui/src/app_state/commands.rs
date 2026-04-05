@@ -152,6 +152,62 @@ pub struct LoadCmd {
     pub force: bool,
 }
 
+#[derive(Debug, thiserror::Error, Clone)]
+pub enum LoadValidationError {
+    #[error("Current loaded crate or workspace has stale state")]
+    StaleLoadedState,
+}
+
+impl LoadValidationError {
+    pub fn recovery_suggestion(&self) -> String {
+        match self {
+            LoadValidationError::StaleLoadedState => {
+                "`/save db` before loading another snapshot, or rerunning the load with `--force`."
+                    .to_string()
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadResolution {
+    pub workspace_ref: String,
+    pub replaces_loaded_state: bool,
+}
+
+#[derive(Debug, thiserror::Error, Clone)]
+pub enum LoadResolveError {
+    #[error("Missing load target")]
+    MissingTarget,
+    #[error("Crate '{target}' is already loaded.")]
+    AlreadyLoadedCrate { target: String },
+    #[error("Crate '{target}' is already loaded in the current workspace.")]
+    AlreadyLoadedWorkspaceMember { target: String },
+    #[error("Workspace '{target}' is already loaded.")]
+    AlreadyLoadedWorkspace { target: String },
+}
+
+impl LoadResolveError {
+    pub fn user_message(&self) -> String {
+        self.to_string()
+    }
+
+    pub fn recovery_suggestion(&self) -> String {
+        match self {
+            LoadResolveError::MissingTarget => {
+                "providing a saved workspace name or id.".to_string()
+            }
+            LoadResolveError::AlreadyLoadedCrate { target }
+            | LoadResolveError::AlreadyLoadedWorkspace { target } => {
+                format!("`/index` to re-index '{target}'.")
+            }
+            LoadResolveError::AlreadyLoadedWorkspaceMember { target } => {
+                format!("`/index crate {target}` to re-index that member.")
+            }
+        }
+    }
+}
+
 /// Resolved `/index` request after applying mode + target semantics.
 #[derive(Debug, Clone)]
 pub struct IndexResolution {
@@ -298,6 +354,88 @@ impl LoadCmd {
     /// Returns the discriminant name for logging/debugging.
     pub fn discriminant(&self) -> &'static str {
         "Load"
+    }
+
+    pub async fn validate(
+        &self,
+        state: &super::AppState,
+        resolution: &LoadResolution,
+    ) -> Result<(), LoadValidationError> {
+        if self.force || !resolution.replaces_loaded_state {
+            return Ok(());
+        }
+
+        let stale_loaded_state = state
+            .with_system_read(|sys| sys.any_loaded_crate_stale())
+            .await;
+        if stale_loaded_state {
+            Err(LoadValidationError::StaleLoadedState)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub async fn resolve(
+        &self,
+        state: &super::AppState,
+    ) -> Result<LoadResolution, LoadResolveError> {
+        let Some(workspace_ref) = self.name.clone() else {
+            return Err(LoadResolveError::MissingTarget);
+        };
+
+        let (loaded_workspace_root, loaded_workspace_name, loaded_crate_refs) = state
+            .with_system_read(|sys| {
+                let loaded_workspace_root = sys.loaded_workspace_root();
+                let loaded_workspace_name = sys
+                    .loaded_workspace
+                    .as_ref()
+                    .map(|loaded| loaded.workspace.name.clone());
+                let loaded_crate_refs = sys
+                    .loaded_crates
+                    .values()
+                    .map(|loaded| {
+                        (
+                            loaded.info.name.clone(),
+                            loaded.info.root_path.display().to_string(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                (loaded_workspace_root, loaded_workspace_name, loaded_crate_refs)
+            })
+            .await;
+
+        let matches_loaded_crate = loaded_crate_refs
+            .iter()
+            .any(|(name, root)| workspace_ref == *name || workspace_ref == *root);
+
+        let matches_loaded_workspace = loaded_workspace_root.as_ref().is_some_and(|root| {
+            workspace_ref == root.display().to_string()
+                || loaded_workspace_name
+                    .as_ref()
+                    .is_some_and(|name| workspace_ref == *name)
+        });
+
+        if matches_loaded_workspace {
+            return Err(LoadResolveError::AlreadyLoadedWorkspace {
+                target: workspace_ref,
+            });
+        }
+
+        if matches_loaded_crate {
+            return match self.kind {
+                LoadKind::Crate => Err(LoadResolveError::AlreadyLoadedCrate {
+                    target: workspace_ref,
+                }),
+                LoadKind::Workspace => Err(LoadResolveError::AlreadyLoadedWorkspaceMember {
+                    target: workspace_ref,
+                }),
+            };
+        }
+
+        Ok(LoadResolution {
+            workspace_ref,
+            replaces_loaded_state: !loaded_crate_refs.is_empty(),
+        })
     }
 }
 

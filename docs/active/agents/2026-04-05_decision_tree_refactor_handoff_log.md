@@ -426,3 +426,53 @@
 - Remaining gaps:
   - `/load` resolution / unsaved-state policy is still pending for the next slice.
   - `/update` has not been refactored yet and still follows the older transitional contract.
+
+## Entry 21: `/load` State-Owned Resolve Boundary
+- Slice: move the cheap `/load` semantics into app state with validate/resolve boundaries and public `UiError` emission
+- Files changed:
+  - crates/ploke-tui/src/app_state/commands.rs
+  - crates/ploke-tui/src/app_state/dispatcher.rs
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - `LoadCmd::resolve(...)` now short-circuits already-loaded targets from current state instead of unconditionally falling through to `load_db`.
+  - `LoadCmd::validate(...)` now gates only destructive replacement loads after resolution, so already-loaded no-op errors do not get masked by the stale-state check.
+  - Loaded-workspace-member targets now get a state-owned guidance error so the runtime can steer member-vs-workspace cases without registry sandbox setup.
+  - Successful load resolutions still reuse `handlers::db::load_db(...)` underneath.
+- Remaining gaps:
+  - Validation still uses the existing loaded-state freshness signal as a cheap proxy; it does not yet track a true unsaved/dirty workspace marker.
+  - No-argument `/load workspace` and registry-backed negative lookups are still left for later slices.
+- Tests run: none
+
+## Entry 22: Canonical `/load` Promotion Hooks
+- Slice: prepare the canonical decision table for stable `/load` promotion without changing runtime files
+- Files changed:
+  - crates/ploke-tui/src/app/commands/unit_tests/decision_tree.rs
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - Added a dedicated `LoadExpectation` hook so stable `/load` rows can assert the parsed `Load` family and the forwarded `Load(LoadCmd { kind, name, force })` shape in one place.
+  - Added a semantic `with_resolve_ui_error(...)` alias so `/load` rows can describe resolve-time `UiError` assertions without overloading the generic message field.
+  - Stable `/load` rows now opt into explicit `LoadCmd` assertions, while the transitional `/load` rows remain `TestTodo` and are treated as forwarded-but-pending.
+- Supported assertions after this slice:
+  - parsed `/load` family plus `kind/name/force`
+  - forwarded `StateCommand::Load(LoadCmd { ... })`
+  - resolve-time `UiError` message/recovery text through the existing error hook
+- Tests run: none
+
+## Entry 23: `/load` Harness + Stable Row Promotion
+- Slice: expose `/load` resolve/validation phases through the fast relay and promote the stable canonical rows
+- Files changed:
+  - crates/ploke-tui/src/app/commands/unit_tests/harness.rs
+  - crates/ploke-tui/src/app/commands/unit_tests/decision_tree.rs
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - The validation probe now records `LoadResolution` separately from `/load` validation failures, so resolve-time `UiError` cases do not masquerade as validation errors.
+  - Stable `/load` rows now assert one of:
+    - forwarded `LoadCmd` contract
+    - resolved load target
+    - resolve-time `UiError` for already-loaded targets
+  - Registry-miss and no-argument `/load workspace` rows remain pending until the runtime carries their policy-specific guidance.
+- Tests run:
+  - `cargo test -p ploke-tui --lib test_single_member_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib test_full_workspace_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib test_pwd_crate_loaded_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib`
