@@ -464,66 +464,12 @@ fn show_command_help(app: &App) {
 
 /// Show targeted help for a topic prefix (e.g., "model", "edit", "bm25", "provider", "index").
 fn show_topic_help(app: &App, topic_prefix: &str) {
-    let t = topic_prefix.to_lowercase();
-    let msg = if t.starts_with("model") {
-        r#"Model commands:
-  model list                         - List available models
-  model info                         - Show active model/provider settings
-  model use &lt;name&gt;                 - Switch to a configured model by alias or id
-  model refresh [--local]            - Refresh model registry (OpenRouter) and API keys; use --local to skip network
-  model load [path]                  - Load configuration from path (default: ~/.config/ploke/config.toml)
-  model save [path] [--with-keys]    - Save configuration; omit --with-keys to redact secrets
-  model search &lt;keyword&gt;           - Search OpenRouter models; interactive browser opens:
-                                       ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, q/Esc to close
-"#
-        .to_string()
-    } else if t.starts_with("edit") {
-        r#"Edit commands:
-  edit preview mode &lt;code|diff&gt;    - Set edit preview mode for proposals
-  edit preview lines &lt;N&gt;           - Set max preview lines per section
-  edit auto &lt;on|off&gt;               - Toggle auto-approval of staged edits
-  edit approve &lt;request_id&gt;        - Apply staged code edits with this request ID
-  edit deny &lt;request_id&gt;           - Deny and discard staged code edits
-"#
-        .to_string()
-    } else if t.starts_with("create") {
-        r#"Create commands:
-  create approve &lt;request_id&gt;      - Apply staged file creations with this request ID
-  create deny &lt;request_id&gt;         - Deny and discard staged file creations
-"#
-        .to_string()
-    } else if t.starts_with("bm25") {
-        r#"BM25 commands:
-  bm25 rebuild                       - Rebuild sparse BM25 index
-  bm25 status                        - Show sparse BM25 index status
-  bm25 save &lt;path&gt;                 - Save sparse index sidecar to file
-  bm25 load &lt;path&gt;                 - Load sparse index sidecar from file
-  bm25 search &lt;query&gt; [top_k]      - Search with BM25
-  hybrid &lt;query&gt; [top_k]           - Hybrid (BM25 + dense) search
-"#
-        .to_string()
-    } else if t.starts_with("provider") {
-        r#"Provider commands:
-  provider strictness &lt;openrouter-only|allow-custom|allow-any&gt;
-                                     - Restrict selectable providers
-  provider tools-only &lt;on|off&gt;     - Enforce using only models/providers that support tool calls
-  model providers &lt;model_id&gt;       - List provider endpoints for a model and show tool support and slugs
-  provider select &lt;model_id&gt; &lt;provider_slug&gt;
-                                     - Pin a model to a specific provider endpoint
-  provider pin &lt;model_id&gt; &lt;provider_slug&gt;
-                                     - Alias for 'provider select'
-"#
-        .to_string()
-    } else if t.starts_with("index") {
-        r#"Indexing commands:
-  index start [path]                 - Index a crate root, or else the nearest ancestor workspace
-  index pause/resume/cancel          - Pause, resume, or cancel indexing
-"#
-        .to_string()
+    let msg = if let Some(topic_help) = super::help_topic_markdown(topic_prefix) {
+        topic_help
     } else {
         format!(
-            "Unknown help topic '{}'. Try 'help model', 'help edit', 'help bm25', 'help provider', or 'help index'.",
-            topic_prefix
+            "Unknown help topic '{}'. Try 'help index', 'help workspace', 'help model', 'help provider', 'help bm25', 'help edit', or 'help create'.",
+            topic_prefix.trim()
         )
     };
 
