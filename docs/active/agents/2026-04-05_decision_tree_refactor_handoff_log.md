@@ -551,6 +551,15 @@
 - Open risks / follow-ups:
   - Broader `/load` transition rows remain pending until unsaved-state policy is finalized.
 
+## Entry 28: Remove Legacy Decision-Tree Smoke Test
+- Slice: delete the old integration smoke test that tried to restate the whole command/effect matrix
+- Files changed:
+  - crates/ploke-tui/tests/command_decision_tree_smoke.rs
+- Contract decisions:
+  - The old smoke test was not aligned with the current contract shape and duplicated behavior already covered by the canonical `decision_tree.rs` table plus the fast lib harness.
+  - Removing it keeps the test surface focused on the canonical input -> parse -> forward -> resolve -> effect contract.
+- Tests run: none
+
 ## Entry 25: `/load` Registry Sandbox Narrowing
 - Slice: make the fast decision-tree `/load` rows deterministic against a minimal isolated workspace registry
 - Files changed:
