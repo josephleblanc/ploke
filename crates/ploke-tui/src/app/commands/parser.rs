@@ -216,6 +216,7 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             }
         }
         "update" => Command::Update,
+        "load workspace" => Command::LoadWorkspace(String::new()),
         s if s.starts_with("load workspace ") => {
             let workspace_ref = s.trim_start_matches("load workspace ").trim().to_string();
             if workspace_ref.is_empty() || workspace_ref.contains(' ') {

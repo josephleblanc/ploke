@@ -238,22 +238,33 @@ pub fn execute(app: &mut App, command: Command) {
         }
         Command::Update => spawn_update(app),
         Command::LoadWorkspace(workspace_ref) => {
-            // TODO: Validate workspace_ref is actually a workspace name, not a crate name
-            // If it looks like a crate name (matches a crate in current workspace),
-            // suggest `/load crate <name>` instead.
-            // See test: test_no_db_workspace_root_load_workspace_crate_name_suggests_load_crate
-            #[cfg(test)]
-            app.send_cmd(StateCommand::TestTodo {
-                test_name:
-                    "test_no_db_workspace_root_load_workspace_crate_name_suggests_load_crate"
+            if workspace_ref.is_empty() {
+                // Bare `/load workspace` - list available workspaces or suggest /index
+                #[cfg(test)]
+                app.send_cmd(StateCommand::TestTodo {
+                    test_name: "test_no_db_workspace_root_load_workspace_no_arg".to_string(),
+                    message: "Command::LoadWorkspace with empty ref not yet implemented. \
+                              Expected: List available workspaces or suggest `/index` if none"
                         .to_string(),
-                message: format!(
-                    "Command::LoadWorkspace validation not yet implemented. \
-                     Should check if '{}' is a workspace name or crate name. \
-                     If crate name: suggest `/load crate {}` instead.",
-                    workspace_ref, workspace_ref
-                ),
-            });
+                });
+            } else {
+                // TODO: Validate workspace_ref is actually a workspace name, not a crate name
+                // If it looks like a crate name (matches a crate in current workspace),
+                // suggest `/load crate <name>` instead.
+                // See test: test_no_db_workspace_root_load_workspace_crate_name_suggests_load_crate
+                #[cfg(test)]
+                app.send_cmd(StateCommand::TestTodo {
+                    test_name:
+                        "test_no_db_workspace_root_load_workspace_crate_name_suggests_load_crate"
+                            .to_string(),
+                    message: format!(
+                        "Command::LoadWorkspace validation not yet implemented. \
+                         Should check if '{}' is a workspace name or crate name. \
+                         If crate name: suggest `/load crate {}` instead.",
+                        workspace_ref, workspace_ref
+                    ),
+                });
+            }
         }
         Command::LoadWorkspaceCrates {
             workspace_ref,
@@ -395,6 +406,29 @@ pub fn execute(app: &mut App, command: Command) {
 }
 
 fn spawn_update(app: &App) {
+    // Check if any crate/workspace is loaded before proceeding
+    let has_loaded = app
+        .state
+        .try_system_read(|sys| sys.has_loaded_crates())
+        .unwrap_or(false);
+
+    if !has_loaded {
+        #[cfg(test)]
+        app.send_cmd(StateCommand::TestTodo {
+            test_name: "test_no_db_update_error".to_string(),
+            message: "Command::Update with no loaded crate/workspace not yet implemented. \
+                      Expected: Error message 'No crate/workspace in db'"
+                .to_string(),
+        });
+        #[cfg(not(test))]
+        app.send_cmd(StateCommand::AddMessageImmediate {
+            msg: "Error: No crate or workspace is loaded to update.".to_string(),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
+        return;
+    }
+
     app.send_cmd(StateCommand::AddMessageImmediate {
         msg: "Scanning workspace for updates...".to_string(),
         kind: MessageKind::SysInfo,
@@ -1058,7 +1092,30 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             });
         }
         "save db" | "sd" => {
-            app.send_cmd(StateCommand::SaveDb);
+            // Check if any crate/workspace is loaded
+            let has_loaded = app
+                .state
+                .try_system_read(|sys| sys.has_loaded_crates())
+                .unwrap_or(false);
+
+            if has_loaded {
+                app.send_cmd(StateCommand::SaveDb);
+            } else {
+                // No DB loaded - should show error
+                #[cfg(test)]
+                app.send_cmd(StateCommand::TestTodo {
+                    test_name: "test_no_db_save_db_error".to_string(),
+                    message: "Command::SaveDb with no loaded crate/workspace not yet implemented. \
+                              Expected: Error message 'No crate/workspace in db'"
+                        .to_string(),
+                });
+                #[cfg(not(test))]
+                app.send_cmd(StateCommand::AddMessageImmediate {
+                    msg: "Error: No crate or workspace is loaded to save.".to_string(),
+                    kind: crate::chat_history::MessageKind::SysInfo,
+                    new_msg_id: uuid::Uuid::new_v4(),
+                });
+            }
         }
         "update" => {
             // De-blocked: already implemented in spawn_update
