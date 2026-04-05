@@ -679,6 +679,7 @@ impl App {
             .iter()
             .map(|(display, is_dir, _, _)| CommandSuggestion {
                 command: display.clone(),
+                key_hint: None,
                 description: if *is_dir {
                     "dir".to_string()
                 } else {
@@ -744,6 +745,7 @@ impl App {
             .iter()
             .map(|entry| CommandSuggestion {
                 command: format!("{prefix}{}", entry.completion),
+                key_hint: entry.key_hint.map(|hint| hint.to_string()),
                 description: entry.description.to_string(),
             })
             .collect::<Vec<_>>();

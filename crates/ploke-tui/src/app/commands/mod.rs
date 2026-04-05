@@ -171,6 +171,7 @@ pub struct CommandEntry {
     pub command: &'static str,
     pub completion: &'static str,
     pub description: &'static str,
+    pub key_hint: Option<&'static str>,
 }
 
 macro_rules! command_entry {
@@ -180,6 +181,19 @@ macro_rules! command_entry {
             command: $command,
             completion: $completion,
             description: $description,
+            key_hint: None,
+        }
+    };
+}
+
+macro_rules! command_entry_hint {
+    ($topic:ident, $command:expr, $completion:expr, $description:expr, $key_hint:expr) => {
+        CommandEntry {
+            topic: CommandTopic::$topic,
+            command: $command,
+            completion: $completion,
+            description: $description,
+            key_hint: Some($key_hint),
         }
     };
 }
@@ -200,11 +214,12 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
         "check api",
         "Check API key configuration"
     ),
-    command_entry!(
+    command_entry_hint!(
         General,
         "copy",
         "copy",
-        "Copy the selected conversation message to clipboard"
+        "Copy the selected conversation message to clipboard",
+        "y"
     ),
     command_entry!(Model, "model list", "model list", "List available models"),
     command_entry!(
@@ -309,17 +324,19 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
         "bm25 search <query> [top_k]",
         "Search with BM25"
     ),
-    command_entry!(
+    command_entry_hint!(
         Bm25,
         "hybrid",
         "hybrid <query> [top_k]",
-        "Hybrid search (BM25 + dense)"
+        "Hybrid search (BM25 + dense)",
+        "/"
     ),
-    command_entry!(
+    command_entry_hint!(
         Editing,
         "preview",
         "preview [on|off|toggle]",
-        "Toggle the context preview panel"
+        "Toggle the context preview panel",
+        "P"
     ),
     command_entry!(
         Editing,
@@ -363,11 +380,12 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
         "create deny <request_id>",
         "Deny and discard staged file creations"
     ),
-    command_entry!(
+    command_entry_hint!(
         Editing,
         "tool verbosity",
         "tool verbosity <minimal|normal|verbose|toggle>",
-        "Set or cycle tool output verbosity"
+        "Set or cycle tool output verbosity",
+        "v"
     ),
     command_entry!(
         Editing,
@@ -375,8 +393,8 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
         "verbosity profile <minimal|normal|verbose|custom>",
         "Set the conversation message verbosity profile"
     ),
-    command_entry!(General, "quit", "quit", "Quit the application"),
-    command_entry!(General, "help", "help [topic]", "Show this help"),
+    command_entry_hint!(General, "quit", "quit", "Quit the application", "q"),
+    command_entry_hint!(General, "help", "help [topic]", "Show this help", "?"),
     command_entry!(
         General,
         "search",
@@ -467,5 +485,22 @@ mod tests {
         let create_help = help_topic_markdown("create").expect("create help");
         assert!(create_help.contains("create approve"));
         assert!(!create_help.contains("edit approve"));
+    }
+
+    #[test]
+    fn direct_key_hints_are_registered_for_completion() {
+        let hints: Vec<(&str, Option<&str>)> = COMMAND_ENTRIES
+            .iter()
+            .map(|entry| (entry.command, entry.key_hint))
+            .filter(|(_, hint)| hint.is_some())
+            .collect();
+
+        assert_eq!(hints.len(), 6);
+        assert!(hints.contains(&("quit", Some("q"))));
+        assert!(hints.contains(&("help", Some("?"))));
+        assert!(hints.contains(&("copy", Some("y"))));
+        assert!(hints.contains(&("hybrid", Some("/"))));
+        assert!(hints.contains(&("preview", Some("P"))));
+        assert!(hints.contains(&("tool verbosity", Some("v"))));
     }
 }
