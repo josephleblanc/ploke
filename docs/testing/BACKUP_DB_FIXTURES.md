@@ -60,6 +60,15 @@ One exception currently remains for `ploke-db` lib-unit tests: because
 split for `Database`. In that case, use the shared registry constant (for
 example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
 
+Test isolation note:
+
+- Tests that temporarily override `XDG_CONFIG_HOME` to point
+  `WorkspaceRegistry::default_registry_path()` at a temp directory must
+  serialize that mutation across the full workspace test run.
+- This is test-only env mutation and does not change normal app behavior.
+- Prefer a shared test lock/helper over per-module mutexes when multiple test
+  binaries need to write the workspace registry.
+
 ## Fixture Summary
 
 | Fixture | Parsed target(s) | Primary usage | Last update |
