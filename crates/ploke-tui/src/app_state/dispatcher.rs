@@ -23,12 +23,17 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tracing::{trace_span, warn};
 
-use super::commands::{StateCommand, WorkspaceCmd, emit_validation_error, validate_workspace_cmd};
+use super::IndexTargetDir;
+use super::commands::{
+    IndexCmd, IndexResolveError, StateCommand, Validate, WorkspaceCmd, emit_validation_error,
+    validate_workspace_cmd,
+};
 use super::core::AppState;
 use super::events::SystemEvent;
 use super::{database, handlers};
 use crate::AppEvent;
 use crate::chat_history::MessageKind;
+use crate::error::{EventCtx, Message, UiError};
 use uuid::Uuid;
 
 /// The central command dispatcher for AppState.
@@ -158,21 +163,17 @@ pub async fn state_manager(
                 .await;
             }
 
+            StateCommand::Index(cmd) => {
+                if let Err(e) = handle_index_cmd(&state, &event_bus, cmd).await {
+                    emit_index_resolve_error(&state, &event_bus, e).await;
+                }
+            }
+
             StateCommand::IndexTargetDir {
                 target_dir,
                 needs_parse,
             } => {
-                let state = Arc::clone(&state);
-                let event_bus = Arc::clone(&event_bus);
-                tokio::spawn(async move {
-                    handlers::indexing::index_workspace(
-                        &state,
-                        &event_bus,
-                        target_dir,
-                        needs_parse,
-                    )
-                    .await;
-                });
+                spawn_index_workspace(&state, &event_bus, target_dir, needs_parse);
             }
             StateCommand::PauseIndexing => handlers::indexing::pause(&state).await,
             StateCommand::ResumeIndexing => handlers::indexing::resume(&state).await,
@@ -324,21 +325,6 @@ pub async fn state_manager(
             }
 
             // NEW: Grouped workspace commands with validation
-            StateCommand::Workspace(cmd) => {
-                // Validate the command before execution
-                match validate_workspace_cmd(&cmd, &state).await {
-                    Ok(()) => {
-                        if let Err(e) = handle_workspace_cmd(&state, &event_bus, cmd).await {
-                            tracing::error!("Workspace command failed: {}", e);
-                        }
-                    }
-                    Err(validation_err) => {
-                        tracing::warn!("Workspace command validation failed: {}", validation_err);
-                        emit_validation_error(&event_bus, validation_err);
-                    }
-                }
-            }
-
             StateCommand::Bm25Rebuild => rag::search::bm25_rebuild(&state, &event_bus).await,
             StateCommand::Bm25Search { query, top_k } => {
                 rag::search::bm25_search(&state, &event_bus, query, top_k).await
@@ -613,6 +599,56 @@ pub async fn state_manager(
             _ => {}
         };
     }
+}
+
+fn spawn_index_workspace(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    target_dir: Option<IndexTargetDir>,
+    needs_parse: bool,
+) {
+    let state = Arc::clone(state);
+    let event_bus = Arc::clone(event_bus);
+    tokio::spawn(async move {
+        handlers::indexing::index_workspace(&state, &event_bus, target_dir, needs_parse).await;
+    });
+}
+
+async fn handle_index_cmd(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    cmd: IndexCmd,
+) -> Result<(), IndexResolveError> {
+    let resolution = cmd.resolve(state).await?;
+    if let Some(focus_root) = resolution.focus_root.clone() {
+        state
+            .with_system_txn(|txn| {
+                txn.set_focus_from_root(focus_root);
+            })
+            .await;
+    }
+    spawn_index_workspace(
+        state,
+        event_bus,
+        Some(resolution.target_dir),
+        resolution.needs_parse,
+    );
+    Ok(())
+}
+
+async fn emit_index_resolve_error(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    error: IndexResolveError,
+) {
+    let message = error.user_message();
+    let recovery = error.recovery_suggestion();
+    tracing::error!("Index command failed: {}", message);
+    UiError::new_from_message(Message::user_new(message))
+        .with_recovery(recovery)
+        .format_recovery(|recovery, message| format!("{message}\nRecovery: {recovery}"))
+        .send_ui(EventCtx::new_user_facing(event_bus, state))
+        .await;
 }
 
 /// Handles validated workspace commands.

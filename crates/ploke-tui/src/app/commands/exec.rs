@@ -12,18 +12,17 @@
 //! - Model switching delegated to `StateCommand::SwitchModel` which should broadcast
 //!   `SystemEvent::ModelSwitched` for UI updates.
 
-use super::parser::Command;
+use super::parser::{Command, LoadKind};
 use crate::app::App;
 use crate::app_state::IndexTargetDir;
+use crate::app_state::StateCommand;
+use crate::app_state::commands::{IndexCmd, WorkspaceCmd};
 use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
 use crate::llm::{self, LlmEvent, ProviderKey};
 use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url};
-use crate::{
-    AppEvent, app_state::StateCommand, app_state::commands::WorkspaceCmd,
-    chat_history::MessageKind, emit_app_event,
-};
+use crate::{AppEvent, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
 use ploke_core::{ArcStr, RetrievalScope};
 use ploke_llm::embeddings::{EmbClientConfig, HasEmbeddingModels};
@@ -252,44 +251,21 @@ pub fn execute(app: &mut App, command: Command) {
                 provider_key: Some(provider_key),
             });
         }
-        Command::Update => spawn_update(app),
-        Command::LoadWorkspace(workspace_ref) => {
-            if workspace_ref.is_empty() {
-                // Bare `/load workspace` - list available workspaces or suggest /index
-                #[cfg(test)]
-                app.send_cmd(StateCommand::TestTodo {
-                    test_name: "test_no_db_workspace_root_load_workspace_no_arg".to_string(),
-                    message: "Command::LoadWorkspace with empty ref not yet implemented. \
-                              Expected: List available workspaces or suggest `/index` if none"
-                        .to_string(),
-                });
-            } else {
-                // Use the new WorkspaceCmd for validated workspace operations
-                app.send_cmd(StateCommand::Workspace(WorkspaceCmd::LoadDb {
-                    workspace_ref,
-                }));
-            }
+        Command::Update { scope } => {
+            let _ = scope;
+            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::WorkspaceUpdate));
         }
-        Command::LoadCrate(crate_ref) => {
-            // /load crate <name> - loading a crate requires validation
-            // When a standalone crate is loaded and we try to load another standalone crate,
-            // this is a transition that needs special handling (check unsaved changes, etc.)
-            // This is not yet implemented, so we emit a TestTodo.
-            #[cfg(test)]
-            app.send_cmd(StateCommand::TestTodo {
-                test_name: "test_transition_load_crate_standalone_to_standalone".to_string(),
-                message: format!(
-                    "Command::LoadCrate('{}') not yet implemented. \
-                     Expected: Check for unsaved changes and handle standalone→standalone transition.",
-                    crate_ref
-                ),
-            });
-            #[cfg(not(test))]
-            app.send_cmd(StateCommand::AddMessageImmediate {
-                msg: format!("Loading crate '{}' is not yet implemented.", crate_ref),
-                kind: MessageKind::SysInfo,
-                new_msg_id: Uuid::new_v4(),
-            });
+        Command::Load { kind, name, force } => {
+            let workspace_cmd = match kind {
+                LoadKind::Workspace => WorkspaceCmd::LoadDb {
+                    workspace_ref: name.unwrap_or_default(),
+                },
+                LoadKind::Crate => WorkspaceCmd::LoadDb {
+                    workspace_ref: name.unwrap_or_default(),
+                },
+            };
+            let _ = force;
+            app.send_cmd(StateCommand::Workspace(workspace_cmd));
         }
         Command::LoadWorkspaceCrates {
             workspace_ref,
@@ -302,25 +278,28 @@ pub fn execute(app: &mut App, command: Command) {
                 kind: MessageKind::SysInfo,
                 new_msg_id: Uuid::new_v4(),
             });
-            // Use the new WorkspaceCmd for validated workspace operations
-            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::LoadWorkspaceCrates {
-                workspace_ref,
-                crate_ref,
-            }));
+            // Use the existing validated workspace command for this effect path.
+            app.send_cmd(StateCommand::Workspace(
+                crate::app_state::commands::WorkspaceCmd::LoadWorkspaceCrates {
+                    workspace_ref,
+                    crate_ref,
+                },
+            ));
         }
         Command::WorkspaceStatus => {
-            // Use the new WorkspaceCmd for validated workspace operations
-            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::WorkspaceStatus));
+            app.send_cmd(StateCommand::Workspace(
+                crate::app_state::commands::WorkspaceCmd::WorkspaceStatus,
+            ));
         }
         Command::WorkspaceUpdate => {
-            // Use the new WorkspaceCmd for validated workspace operations
-            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::WorkspaceUpdate));
+            app.send_cmd(StateCommand::Workspace(
+                crate::app_state::commands::WorkspaceCmd::WorkspaceUpdate,
+            ));
         }
         Command::WorkspaceRemove(crate_ref) => {
-            // Use the new WorkspaceCmd for validated workspace operations
-            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::WorkspaceRemove {
-                crate_ref,
-            }));
+            app.send_cmd(StateCommand::Workspace(
+                crate::app_state::commands::WorkspaceCmd::WorkspaceRemove { crate_ref },
+            ));
         }
         Command::EditApprove(id) => {
             app.send_cmd(StateCommand::ApproveEdits { request_id: id });
@@ -392,100 +371,15 @@ pub fn execute(app: &mut App, command: Command) {
         Command::OpenContextPlan => {
             app.open_context_plan_overlay();
         }
-        Command::Index { target } => {
-            match target.as_deref() {
-                None => {
-                    // /index - auto-detect workspace vs crate from PWD
-                    #[cfg(test)]
-                    app.send_cmd(StateCommand::TestTodo {
-                        test_name: "test_no_db_workspace_root_index_indexes_workspace".to_string(),
-                        message: "Command::Index { target: None } not yet implemented. \
-                                  Expected behavior: Detect workspace vs crate from PWD, \
-                                  then dispatch StateCommand::IndexTargetDir."
-                            .to_string(),
-                    });
-                }
-                Some("crate") => {
-                    // /index crate - list workspace members + suggest command
-                    #[cfg(test)]
-                    app.send_cmd(StateCommand::TestTodo {
-                        test_name: "test_no_db_workspace_root_index_crate_lists_members"
-                            .to_string(),
-                        message: "Command::Index { target: Some('crate') } not yet implemented. \
-                                  Expected behavior: List workspace members from Cargo.toml \
-                                  and suggest `/index crate <member>` or `/index workspace`."
-                            .to_string(),
-                    });
-                }
-                Some(path) => {
-                    // /index <path> or /index crate <name> - index specific target
-                    #[cfg(test)]
-                    app.send_cmd(StateCommand::TestTodo {
-                        test_name: "test_no_db_workspace_root_index_indexes_workspace".to_string(),
-                        message: format!(
-                            "Command::Index {{ target: Some('{}') }} not yet implemented. \
-                             Expected behavior: Resolve target path/name, \
-                             then dispatch StateCommand::IndexTargetDir.",
-                            path
-                        ),
-                    });
-                }
-            }
+        Command::Index { mode, target } => {
+            app.send_cmd(StateCommand::Index(IndexCmd { mode, target }));
+        }
+        Command::Save { kind } => {
+            let _ = kind;
+            app.send_cmd(StateCommand::Workspace(WorkspaceCmd::SaveDb));
         }
         Command::Raw(cmd) => execute_legacy(app, &cmd),
     }
-}
-
-fn spawn_update(app: &App) {
-    // Check if any crate/workspace is loaded before proceeding
-    let has_loaded = app
-        .state
-        .try_system_read(|sys| sys.has_loaded_crates())
-        .unwrap_or(false);
-
-    if !has_loaded {
-        #[cfg(test)]
-        app.send_cmd(StateCommand::TestTodo {
-            test_name: "test_no_db_update_error".to_string(),
-            message: "Command::Update with no loaded crate/workspace not yet implemented. \
-                      Expected: Error message 'No crate/workspace in db'"
-                .to_string(),
-        });
-        #[cfg(not(test))]
-        app.send_cmd(StateCommand::AddMessageImmediate {
-            msg: "Error: No crate or workspace is loaded to update.".to_string(),
-            kind: MessageKind::SysInfo,
-            new_msg_id: Uuid::new_v4(),
-        });
-        return;
-    }
-
-    app.send_cmd(StateCommand::AddMessageImmediate {
-        msg: "Scanning workspace for updates...".to_string(),
-        kind: MessageKind::SysInfo,
-        new_msg_id: Uuid::new_v4(),
-    });
-    let cmd_tx = app.cmd_tx.clone();
-    tokio::task::spawn(async move {
-        let (scan_tx, scan_rx) = oneshot::channel();
-        let _ = cmd_tx.send(StateCommand::ScanForChange { scan_tx }).await;
-
-        let files = match scan_rx.await {
-            Ok(files) => {
-                files.map(|v| v.into_iter().map(|f| format!("{}", f.display())).join("\n"))
-            }
-            Err(_) => None,
-        };
-        let mut msg = String::from("Updating database with files:\n  ");
-        msg.push_str(&files.unwrap_or_else(|| "No updates needed".to_string()));
-        let _ = cmd_tx
-            .send(StateCommand::AddMessageImmediate {
-                msg,
-                kind: MessageKind::SysInfo,
-                new_msg_id: Uuid::new_v4(),
-            })
-            .await;
-    });
 }
 
 fn show_model_info_async(app: &App) {
@@ -1141,8 +1035,9 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             }
         }
         "update" => {
-            // De-blocked: already implemented in spawn_update
-            spawn_update(app);
+            app.send_cmd(StateCommand::Workspace(
+                crate::app_state::commands::WorkspaceCmd::WorkspaceUpdate,
+            ));
         }
         cmd if cmd.starts_with("query load ") => {
             if let Some((query_name, file_name)) =

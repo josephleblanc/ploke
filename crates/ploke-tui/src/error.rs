@@ -114,7 +114,7 @@ pub struct Message<A: AudienceMarker> {
 }
 
 impl Message<UserAudience> {
-    fn user_new(message: String) -> Self {
+    pub fn user_new(message: String) -> Self {
         Message {
             message,
             _audience: PhantomData,
@@ -125,7 +125,7 @@ impl Message<UserAudience> {
 // works for any audience, e.g. UserAudience, LlmAudience, etc that implements AudienceMarker
 // should inherit audience type A from Message
 impl<A: AudienceMarker> UiError<A, Absent> {
-    fn new_from_message(m: Message<A>) -> UiError<A, Absent> {
+    pub fn new_from_message(m: Message<A>) -> UiError<A, Absent> {
         UiError {
             message: Some(m.message),
             recovery_command: None,
@@ -137,7 +137,7 @@ impl<A: AudienceMarker> UiError<A, Absent> {
 
     // once recovery is present we transform into UiError<A, P: PresentMarker>
     // could also make `recovery` typed but that might be too spooky
-    fn with_recovery(self, recovery: String) -> UiError<A, Present> {
+    pub fn with_recovery(self, recovery: String) -> UiError<A, Present> {
         UiError {
             message: self.message,
             recovery_command: Some(recovery),
@@ -188,8 +188,16 @@ where
     state: &'s Arc<AppState>,
     audience: A,
 }
+
 impl<'s> EventCtx<'s, UserAudience> {
-    fn send_sysinfo(self, content: String) -> impl Future<Output = ()> {
+    pub fn new_user_facing(event_bus: &'s Arc<EventBus>, state: &'s Arc<AppState>) -> Self {
+        Self {
+            event_bus,
+            state,
+            audience: UserAudience,
+        }
+    }
+    pub fn send_sysinfo(self, content: String) -> impl Future<Output = ()> {
         add_msg_immediate(
             self.state,
             self.event_bus,

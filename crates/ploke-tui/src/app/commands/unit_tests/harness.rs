@@ -100,11 +100,15 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot, watch};
 use tokio::time::timeout;
 
 use crate::{
-    AppEvent, CancelChatToken, ErrorEvent, EventBus, EventBusCaps, EventPriority, RagEvent,
+    AppEvent, CancelChatToken, ErrorEvent, ErrorSeverity, EventBus, EventBusCaps, EventPriority,
+    RagEvent,
     app::App,
-    app_state::commands::{emit_validation_error, validate_state_command},
     app_state::state_manager,
     app_state::{AppState, ChatState, ConfigState, RuntimeConfig, StateCommand, SystemState},
+    app_state::{
+        IndexTargetDir,
+        commands::{IndexResolution, emit_validation_error, validate_state_command},
+    },
     chat_history::ChatHistory,
     context_plan,
     file_man::FileManager,
@@ -135,6 +139,12 @@ pub struct ValidationProbeEvent {
     error_message: Option<String>,
     /// Recovery suggestion (if any)
     recovery_suggestion: Option<String>,
+    /// Resolution failure from `/index` (if any)
+    resolve_error: Option<String>,
+    /// Structured `/index` resolution when the command maps to a concrete target.
+    resolved_index_target: Option<IndexResolution>,
+    /// Focus root hint for `/index` when the resolved target should become focused.
+    focus_root: Option<PathBuf>,
 }
 
 impl ValidationProbeEvent {
@@ -152,6 +162,18 @@ impl ValidationProbeEvent {
 
     pub fn recovery_suggestion(&self) -> Option<&str> {
         self.recovery_suggestion.as_deref()
+    }
+
+    pub fn resolve_error(&self) -> Option<&str> {
+        self.resolve_error.as_deref()
+    }
+
+    pub fn resolved_index_target(&self) -> Option<&IndexResolution> {
+        self.resolved_index_target.as_ref()
+    }
+
+    pub fn focus_root(&self) -> Option<&std::path::Path> {
+        self.focus_root.as_deref()
     }
 }
 
@@ -266,6 +288,32 @@ impl ValidationRelayStateCmd {
                 .await
                 .inspect_err(|e| tracing::error!("{e}"));
 
+            let mut resolve_error = None;
+            let mut index_recovery_suggestion = None;
+            let mut focus_root = None;
+            let resolved_index_target = match &cmd {
+                StateCommand::Index(cmd) => match cmd.resolve(&state).await {
+                    Ok(resolution) => {
+                        focus_root = resolution.focus_root.clone();
+                        Some(resolution)
+                    }
+                    Err(err) => {
+                        resolve_error = Some(err.user_message());
+                        index_recovery_suggestion = Some(err.recovery_suggestion());
+                        None
+                    }
+                },
+                StateCommand::IndexTargetDir {
+                    target_dir,
+                    needs_parse,
+                } => target_dir.clone().map(|target_dir| IndexResolution {
+                    target_dir,
+                    needs_parse: *needs_parse,
+                    focus_root: None,
+                }),
+                _ => None,
+            };
+
             let validation: Option<Result<(), String>> =
                 match validate_state_command(&cmd, &state).await {
                     Some(Ok(())) => Some(Ok(())),
@@ -276,26 +324,38 @@ impl ValidationRelayStateCmd {
                     None => None,
                 };
 
-            // Try to capture any error events that occur as a result of this command
-            // Use a short timeout to avoid blocking tests
+            // Capture either a validation error event or the user-facing `/index`
+            // resolve failure summary. Use a short timeout to avoid blocking tests.
             let (error_message, recovery_suggestion) =
-                match timeout(Duration::from_millis(10), error_rx.recv()).await {
-                    Ok(Ok(AppEvent::Error(error_event))) => {
-                        // Extract error message from ErrorEvent
-                        let msg = Some(error_event.message.clone());
-                        // TODO: When UiError is implemented, extract recovery suggestion
-                        (msg, None)
+                if resolve_error.is_some() || index_recovery_suggestion.is_some() {
+                    (None, index_recovery_suggestion)
+                } else {
+                    match timeout(Duration::from_millis(10), error_rx.recv()).await {
+                        Ok(Ok(AppEvent::Error(error_event))) => {
+                            // Extract error message from ErrorEvent
+                            let msg = Some(error_event.message.clone());
+                            (msg, None)
+                        }
+                        _ => (None, None),
                     }
-                    _ => (None, None),
                 };
 
-            if validation.is_some() || error_message.is_some() || recovery_suggestion.is_some() {
+            if validation.is_some()
+                || error_message.is_some()
+                || recovery_suggestion.is_some()
+                || resolve_error.is_some()
+                || resolved_index_target.is_some()
+                || focus_root.is_some()
+            {
                 let _ = validation_tx
                     .send(ValidationProbeEvent {
                         command: cmd.discriminant().to_string(),
                         validation,
                         error_message,
                         recovery_suggestion,
+                        resolve_error,
+                        resolved_index_target,
+                        focus_root,
                     })
                     .await
                     .inspect_err(|e| tracing::error!("{e}"));
@@ -816,6 +876,12 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             self.inner.cancel_tx.clone(),
             pwd,
         )
+    }
+
+    /// Build the [`App`] handle after seeding `SystemState.pwd` for fast-path tests.
+    pub async fn into_app_with_state_pwd(self, pwd: PathBuf) -> App {
+        self.inner.state.system.set_pwd_for_test(pwd.clone()).await;
+        self.into_app(pwd)
     }
 
     /// Convenience wrapper that returns the app wrapped in `Arc<Mutex<App>>`.

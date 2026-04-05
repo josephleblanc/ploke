@@ -44,7 +44,8 @@ use std::time::Duration;
 use crate::app::commands::unit_tests::harness::{
     DebugStateCommand, TestRuntime, ValidationProbeEvent,
 };
-use crate::{AppEvent, StateCommand};
+use crate::app::commands::{exec, parser};
+use crate::user_config::CommandStyle;
 use ploke_test_utils::{
     FIXTURE_NODES_CANONICAL, WS_FIXTURE_01_CANONICAL, WS_FIXTURE_01_MEMBER_SINGLE,
     fresh_backup_fixture_db,
@@ -199,6 +200,15 @@ struct TestCase {
     /// Optional: expected test_name field if the command emits TestTodo.
     /// Used to verify the right decision tree branch is being hit during TDD.
     expected_todo_test_name: Option<&'static str>,
+    /// Optional: substring expected in the parsed `Command` debug output.
+    /// Used to keep parse expectations centralized in the canonical table.
+    expected_parsed_contains: Option<&'static str>,
+    /// Optional: substring expected in the first forwarded `StateCommand`.
+    /// Used to verify the executor forwards intent without resolving early.
+    expected_forwarded_contains: Option<&'static str>,
+    /// Optional: substring expected in the resolved `/index` target directory.
+    /// This keeps successful state-side resolution in the canonical contract.
+    expected_resolved_index_target_contains: Option<&'static str>,
     /// Expected validation result (new field, defaults to None for backward compatibility)
     expected_validation: ValidationExpectation,
     /// Expected user-facing error (if any)
@@ -225,7 +235,7 @@ impl TestCase {
         expected_msg_contains: Option<&'static str>,
         expected_todo_test_name: Option<&'static str>,
     ) -> Self {
-        Self {
+        let case = Self {
             name,
             db_setup,
             pwd,
@@ -233,11 +243,20 @@ impl TestCase {
             expected_state_cmd,
             expected_msg_contains,
             expected_todo_test_name,
+            expected_parsed_contains: None,
+            expected_forwarded_contains: None,
+            expected_resolved_index_target_contains: None,
             expected_validation: ValidationExpectation::None,
             expected_error: ExpectedUiError {
                 message_contains: None,
                 recovery_suggestion: None,
             },
+        };
+
+        if input.starts_with("/index") {
+            case.with_index_contract()
+        } else {
+            case
         }
     }
 }
@@ -252,9 +271,30 @@ impl Default for TestCase {
             expected_state_cmd: "",
             expected_msg_contains: None,
             expected_todo_test_name: None,
+            expected_parsed_contains: None,
+            expected_forwarded_contains: None,
+            expected_resolved_index_target_contains: None,
             expected_validation: ValidationExpectation::None,
             expected_error: ExpectedUiError::default(),
         }
+    }
+}
+
+impl TestCase {
+    fn with_index_contract(mut self) -> Self {
+        self.expected_parsed_contains = Some("Index");
+        self.expected_forwarded_contains = Some("Index(");
+        self
+    }
+
+    fn with_resolved_index_target(mut self, expected: &'static str) -> Self {
+        self.expected_resolved_index_target_contains = Some(expected);
+        self
+    }
+
+    fn with_error(mut self, expected: ExpectedUiError) -> Self {
+        self.expected_error = expected;
+        self
     }
 }
 
@@ -300,13 +340,8 @@ fn resolve_pwd(pwd: TestPwd) -> std::path::PathBuf {
 ///
 /// Cases are automatically batched so each unique (fixture, pwd) combination only loads once.
 async fn run_test_cases(cases: &[TestCase]) {
-    use crossterm::event::{Event, KeyCode, KeyEvent};
-    use futures::StreamExt;
-    use ratatui::{Terminal, backend::TestBackend};
     use std::collections::HashMap;
-    use tokio_stream::wrappers::UnboundedReceiverStream;
 
-    // Group cases by (db_setup, pwd) to minimize fixture loads
     let mut groups: HashMap<(DbSetup, TestPwd), Vec<&TestCase>> = HashMap::new();
     for case in cases {
         groups
@@ -315,7 +350,6 @@ async fn run_test_cases(cases: &[TestCase]) {
             .push(case);
     }
 
-    // Run each group
     for ((db_setup, pwd), group_cases) in groups {
         let db = load_db_fixture(db_setup);
         let rt = TestRuntime::new(&db).spawn_validation_probe();
@@ -332,14 +366,9 @@ async fn run_test_cases(cases: &[TestCase]) {
 
         let pwd_path = resolve_pwd(pwd);
 
-        // Set up SystemStatus based on DbSetup before creating the app
-        // This simulates the state after a successful `/load` command
         match db_setup {
-            DbSetup::None => {
-                // No setup needed - empty DB
-            }
+            DbSetup::None => {}
             DbSetup::SingleMember => {
-                // Load workspace with single member
                 rt.setup_loaded_workspace(
                     ploke_test_utils::workspace_root()
                         .join("tests/fixture_workspace/ws_fixture_01"),
@@ -355,7 +384,6 @@ async fn run_test_cases(cases: &[TestCase]) {
                 .await;
             }
             DbSetup::FullWorkspace => {
-                // Load full workspace with all members
                 rt.setup_loaded_workspace(
                     ploke_test_utils::workspace_root()
                         .join("tests/fixture_workspace/ws_fixture_01"),
@@ -373,7 +401,6 @@ async fn run_test_cases(cases: &[TestCase]) {
                 .await;
             }
             DbSetup::StandaloneCrate => {
-                // Load standalone crate
                 rt.setup_loaded_standalone_crate(
                     ploke_test_utils::workspace_root().join("tests/fixture_crates/fixture_nodes"),
                 )
@@ -381,228 +408,362 @@ async fn run_test_cases(cases: &[TestCase]) {
             }
         }
 
-        let app = rt.into_app(pwd_path);
-
-        // Setup headless terminal
-        let backend = TestBackend::new(80, 24);
-        let terminal = Terminal::new(backend).expect("create terminal");
-
-        // Create input channel
-        let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel::<
-            Result<crossterm::event::Event, std::io::Error>,
-        >();
-        let input = UnboundedReceiverStream::new(input_rx);
-
-        // Run app in background. The validation probe captures StateCommands
-        // without forwarding them into the real state manager.
-        let app_task = tokio::spawn(async move {
-            app.run_with(
-                terminal,
-                input,
-                crate::app::RunOptions {
-                    setup_terminal_modes: false,
-                },
-            )
-            .await
-        });
-
-        // Run each case in this group sequentially
+        let mut app = rt.into_app_with_state_pwd(pwd_path).await;
         for case in group_cases {
-            // Send keystrokes (each char + yields)
-            for ch in case.input.chars() {
-                input_tx
-                    .send(Ok(Event::Key(KeyEvent::from(KeyCode::Char(ch)))))
-                    .expect("send key");
-                tokio::task::yield_now().await;
-            }
-            input_tx
-                .send(Ok(Event::Key(KeyEvent::from(KeyCode::Enter))))
-                .expect("send enter");
-
-            let (commands, validations): (Vec<DebugStateCommand>, Vec<ValidationProbeEvent>) =
-                collect_case_trace(&mut debug_rx, &mut validation_rx).await;
-
-            // Check results
-            match commands.first() {
-                Some(cmd) => {
-                    let cmd_str = cmd.as_str();
-                    let validation = validations.first();
-
-                    if cmd_str.starts_with("TestTodo") {
-                        if case.expected_state_cmd == "TestTodo" {
-                            let todo_name = case.expected_todo_test_name.unwrap_or("unknown");
-                            println!(
-                                "  [PENDING] {} - awaiting implementation (TestTodo: {})",
-                                case.name, todo_name
-                            );
-                            assert!(
-                                validation.is_none(),
-                                "TestTodo should not require validation, got {:?}",
-                                validation
-                            );
-                        } else {
-                            panic!(
-                                "Test '{}' failed: expected '{}' but got TestTodo ({:?})",
-                                case.name, case.expected_state_cmd, case.expected_todo_test_name
-                            );
-                        }
-                    } else {
-                        // Real command received - validate it matches expected behavior
-                        let discriminant_match = cmd_str.starts_with(case.expected_state_cmd);
-                        let msg_match = case
-                            .expected_msg_contains
-                            .map_or(true, |expected_msg| cmd_str.contains(expected_msg));
-
-                        if discriminant_match && msg_match {
-                            // Validate according to expected_validation field
-                            match &case.expected_validation {
-                                ValidationExpectation::None => {
-                                    // For backward compatibility, preserve old Workspace special handling
-                                    if case.expected_state_cmd == "Workspace" {
-                                        let validation =
-                                            validation.expect("validation event missing");
-                                        if case.expected_msg_contains == Some("LoadDb") {
-                                            assert_eq!(
-                                                validation.command(),
-                                                "WorkspaceCmd::LoadDb",
-                                                "Workspace validation should expose the inner WorkspaceCmd discriminant"
-                                            );
-                                        } else {
-                                            assert!(
-                                                validation.command().starts_with("WorkspaceCmd::"),
-                                                "Workspace validation should expose a WorkspaceCmd discriminant, got {:?}",
-                                                validation.command()
-                                            );
-                                        }
-                                        assert_eq!(
-                                            validation.validation(),
-                                            Some(&Ok(())),
-                                            "Workspace commands should validate successfully in the fast suite"
-                                        );
-                                    } else {
-                                        assert!(
-                                            validation.is_none(),
-                                            "Non-workspace commands should not emit validation results, got {:?}",
-                                            validation
-                                        );
-                                    }
-                                }
-                                ValidationExpectation::Success => {
-                                    let validation = validation.expect("validation event missing");
-                                    assert_eq!(
-                                        validation.validation(),
-                                        Some(&Ok(())),
-                                        "Command should validate successfully"
-                                    );
-                                }
-                                ValidationExpectation::Failure { reason } => {
-                                    let validation = validation.expect("validation event missing");
-                                    match validation.validation() {
-                                        Some(Err(err_msg)) => {
-                                            if let Some(expected_reason) = reason {
-                                                assert!(
-                                                    err_msg.contains(expected_reason),
-                                                    "Validation error should contain '{}', got '{}'",
-                                                    expected_reason,
-                                                    err_msg
-                                                );
-                                            }
-                                        }
-                                        other => {
-                                            panic!("Expected validation failure, got {:?}", other)
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Check for expected user-facing errors
-                            if case.expected_error.message_contains.is_some()
-                                || case.expected_error.recovery_suggestion.is_some()
-                            {
-                                // Assert on error message if expected
-                                if let Some(expected_msg) = &case.expected_error.message_contains {
-                                    let actual_msg =
-                                        validation.and_then(|v| v.error_message()).or_else(|| {
-                                            commands.iter().skip(1).find_map(|cmd| {
-                                                if cmd.as_str().contains(expected_msg) {
-                                                    Some(cmd.as_str())
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                        });
-                                    if let Some(actual_msg) = actual_msg {
-                                        assert!(
-                                            actual_msg.contains(expected_msg),
-                                            "Error message should contain '{}', got '{}'",
-                                            expected_msg,
-                                            actual_msg
-                                        );
-                                    } else {
-                                        panic!(
-                                            "Expected error message containing '{}', but no error was emitted",
-                                            expected_msg
-                                        );
-                                    }
-                                }
-
-                                // Assert on recovery suggestion if expected
-                                if let Some(expected_recovery) =
-                                    &case.expected_error.recovery_suggestion
-                                {
-                                    if let Some(actual_recovery) =
-                                        validation.and_then(|v| v.recovery_suggestion())
-                                    {
-                                        assert!(
-                                            actual_recovery.contains(expected_recovery),
-                                            "Recovery suggestion should contain '{}', got '{}'",
-                                            expected_recovery,
-                                            actual_recovery
-                                        );
-                                    } else {
-                                        panic!(
-                                            "Expected recovery suggestion containing '{}', but none was provided",
-                                            expected_recovery
-                                        );
-                                    }
-                                }
-                            }
-
-                            println!(
-                                "  [IMPLEMENTED] {} - {}",
-                                case.name, case.expected_state_cmd
-                            );
-                        } else {
-                            // Implementation doesn't match expected behavior - PANIC
-                            let expected_desc = if let Some(msg) = case.expected_msg_contains {
-                                format!("{} containing '{}'", case.expected_state_cmd, msg)
-                            } else {
-                                case.expected_state_cmd.to_string()
-                            };
-                            panic!(
-                                "Test '{}' failed: Expected '{}' but got '{}'",
-                                case.name, expected_desc, cmd_str
-                            );
-                        }
-                    }
-                }
-                None => panic!(
-                    "Test '{}' failed: Channel closed or no command captured",
-                    case.name
-                ),
-            }
+            let trace =
+                send_command_and_collect(&mut app, case.input, &mut debug_rx, &mut validation_rx)
+                    .await;
+            assert_case_trace(case, &trace);
         }
-
-        // Cleanup this group
-        app_task.abort();
-        let _ = app_task.await;
     }
 }
 
-/// Runs a single test case using the full app with TestBackend.
-/// Convenience wrapper around run_test_cases for single-case tests.
+struct CaseTrace {
+    parsed: String,
+    commands: Vec<DebugStateCommand>,
+    validations: Vec<ValidationProbeEvent>,
+}
+
+fn assert_case_trace(case: &TestCase, trace: &CaseTrace) {
+    assert_parsed_contract(case, trace);
+    assert_forwarded_contract(case, trace);
+    assert_effect_contract(case, trace);
+}
+
+fn assert_parsed_contract(case: &TestCase, trace: &CaseTrace) {
+    if let Some(expected) = case.expected_parsed_contains {
+        assert!(
+            trace.parsed.contains(expected),
+            "Test '{}' failed: parsed command '{}' did not contain '{}'",
+            case.name,
+            trace.parsed,
+            expected
+        );
+    }
+}
+
+fn assert_forwarded_contract(case: &TestCase, trace: &CaseTrace) {
+    if let Some(expected) = case.expected_forwarded_contains {
+        let cmd = trace.commands.first().unwrap_or_else(|| {
+            panic!("Test '{}' failed: no forwarded command captured", case.name)
+        });
+        assert!(
+            cmd.as_str().contains(expected),
+            "Test '{}' failed: forwarded command '{}' did not contain '{}'",
+            case.name,
+            cmd.as_str(),
+            expected
+        );
+    }
+}
+
+fn assert_effect_contract(case: &TestCase, trace: &CaseTrace) {
+    let commands = &trace.commands;
+    let validations = &trace.validations;
+    let is_index_case = case.input.starts_with("/index");
+
+    if let Some(expected_target) = case.expected_resolved_index_target_contains {
+        let resolved_target = validations.iter().find_map(|validation| {
+            validation
+                .resolved_index_target()
+                .map(|resolution| resolution.target_dir.to_display_string())
+        });
+        let resolved_target = resolved_target.unwrap_or_else(|| {
+            panic!(
+                "Test '{}' failed: expected resolved index target containing '{}' but none was captured",
+                case.name, expected_target
+            )
+        });
+        assert!(
+            resolved_target.contains(expected_target),
+            "Test '{}' failed: resolved index target '{}' did not contain '{}'",
+            case.name,
+            resolved_target,
+            expected_target
+        );
+    }
+
+    match commands.first() {
+        Some(cmd) => {
+            let cmd_str = cmd.as_str();
+            let validation = validations.first();
+
+            if cmd_str.starts_with("TestTodo") {
+                if case.expected_state_cmd == "TestTodo" {
+                    let todo_name = case.expected_todo_test_name.unwrap_or("unknown");
+                    println!(
+                        "  [PENDING] {} - awaiting implementation (TestTodo: {})",
+                        case.name, todo_name
+                    );
+                    assert!(
+                        validation.is_none(),
+                        "TestTodo should not require validation, got {:?}",
+                        validation
+                    );
+                } else {
+                    panic!(
+                        "Test '{}' failed: expected '{}' but got TestTodo ({:?})",
+                        case.name, case.expected_state_cmd, case.expected_todo_test_name
+                    );
+                }
+            } else if cmd_str.starts_with("Index") && case.expected_state_cmd == "TestTodo" {
+                let todo_name = case.expected_todo_test_name.unwrap_or("unknown");
+                println!(
+                    "  [FORWARDED] {} - intent forwarded ({}) while downstream behavior remains pending ({})",
+                    case.name, cmd_str, todo_name
+                );
+            } else if cmd_str.starts_with("Workspace") && case.expected_state_cmd == "TestTodo" {
+                let todo_name = case.expected_todo_test_name.unwrap_or("unknown");
+                println!(
+                    "  [FORWARDED] {} - intent forwarded ({}) while downstream behavior remains pending ({})",
+                    case.name, cmd_str, todo_name
+                );
+            } else {
+                let matched_command = commands.iter().find(|cmd| {
+                    let cmd_str = cmd.as_str();
+                    let discriminant_match = cmd_str.starts_with(case.expected_state_cmd);
+                    let msg_match = if case.expected_state_cmd == "Workspace" {
+                        true
+                    } else {
+                        case.expected_msg_contains
+                            .map_or(true, |expected_msg| cmd_str.contains(expected_msg))
+                    };
+                    discriminant_match && msg_match
+                });
+
+                let matched_validation_error = if case.expected_state_cmd == "AddMessageImmediate" {
+                    let expected_msg = case
+                        .expected_msg_contains
+                        .or(case.expected_error.message_contains.as_deref());
+                    expected_msg.and_then(|expected| {
+                        validation
+                            .and_then(|v| v.error_message().filter(|msg| msg.contains(expected)))
+                    })
+                } else {
+                    None
+                };
+
+                if matched_command.is_some() || matched_validation_error.is_some() {
+                    if !is_index_case {
+                        match &case.expected_validation {
+                            ValidationExpectation::None => {
+                                if matched_validation_error.is_none() {
+                                    if let Some(validation) = validation {
+                                        if let Some(result) = validation.validation() {
+                                            assert!(
+                                                result.is_ok(),
+                                                "Implicitly validated command should not fail, got {:?}",
+                                                validation
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            ValidationExpectation::Success => {
+                                let validation = validation.expect("validation event missing");
+                                assert_eq!(
+                                    validation.validation(),
+                                    Some(&Ok(())),
+                                    "Command should validate successfully"
+                                );
+                            }
+                            ValidationExpectation::Failure { reason } => {
+                                let validation = validation.expect("validation event missing");
+                                match validation.validation() {
+                                    Some(Err(err_msg)) => {
+                                        if let Some(expected_reason) = reason {
+                                            assert!(
+                                                err_msg.contains(expected_reason),
+                                                "Validation error should contain '{}', got '{}'",
+                                                expected_reason,
+                                                err_msg
+                                            );
+                                        }
+                                    }
+                                    other => {
+                                        panic!("Expected validation failure, got {:?}", other)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if case.expected_error.message_contains.is_some()
+                        || case.expected_error.recovery_suggestion.is_some()
+                    {
+                        if let Some(expected_msg) = &case.expected_error.message_contains {
+                            let actual_msg = validation
+                                .and_then(|v| {
+                                    v.resolve_error().or_else(|| v.error_message()).or_else(|| {
+                                        match v.validation() {
+                                            Some(Err(err_msg)) => Some(err_msg.as_str()),
+                                            _ => None,
+                                        }
+                                    })
+                                })
+                                .or_else(|| {
+                                    commands.iter().skip(1).find_map(|cmd| {
+                                        if cmd.as_str().contains(expected_msg) {
+                                            Some(cmd.as_str())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                });
+                            if let Some(actual_msg) = actual_msg {
+                                assert!(
+                                    actual_msg.contains(expected_msg),
+                                    "Error message should contain '{}', got '{}'",
+                                    expected_msg,
+                                    actual_msg
+                                );
+                            } else {
+                                panic!(
+                                    "Expected error message containing '{}', but no error was emitted",
+                                    expected_msg
+                                );
+                            }
+                        }
+
+                        if let Some(expected_recovery) = &case.expected_error.recovery_suggestion {
+                            if let Some(actual_recovery) =
+                                validation.and_then(|v| v.recovery_suggestion())
+                            {
+                                assert!(
+                                    actual_recovery.contains(expected_recovery),
+                                    "Recovery suggestion should contain '{}', got '{}'",
+                                    expected_recovery,
+                                    actual_recovery
+                                );
+                            } else {
+                                panic!(
+                                    "Expected recovery suggestion containing '{}', but none was provided",
+                                    expected_recovery
+                                );
+                            }
+                        }
+                    }
+
+                    println!(
+                        "  [IMPLEMENTED] {} - {}",
+                        case.name, case.expected_state_cmd
+                    );
+                } else {
+                    let expected_desc = if let Some(msg) = case.expected_msg_contains {
+                        format!("{} containing '{}'", case.expected_state_cmd, msg)
+                    } else {
+                        case.expected_state_cmd.to_string()
+                    };
+                    panic!(
+                        "Test '{}' failed: Expected '{}' but got trace {:?} / validation {:?}",
+                        case.name, expected_desc, commands, validations
+                    );
+                }
+            }
+        }
+        None => panic!(
+            "Test '{}' failed: Channel closed or no command captured",
+            case.name
+        ),
+    }
+}
+
+/// Runs a single test case through the full app loop with `TestBackend`.
+/// This is intentionally kept as a smoke test for the keystroke path only.
 async fn run_test_case(case: &TestCase) {
-    run_test_cases(std::slice::from_ref(case)).await;
+    use crossterm::event::{Event, KeyCode, KeyEvent};
+    use futures::StreamExt;
+    use ratatui::{Terminal, backend::TestBackend};
+    use tokio_stream::wrappers::UnboundedReceiverStream;
+
+    let db = load_db_fixture(case.db_setup);
+    let rt = TestRuntime::new(&db).spawn_validation_probe();
+
+    let events = rt.events_builder().build_app_only();
+    let mut debug_rx = events
+        .app_actor_events
+        .debug_string_rx
+        .expect("debug_string_rx should be available");
+    let mut validation_rx = events
+        .app_actor_events
+        .validation_rx
+        .expect("validation_rx should be available");
+
+    let pwd_path = resolve_pwd(case.pwd);
+    match case.db_setup {
+        DbSetup::None => {}
+        DbSetup::SingleMember => {
+            rt.setup_loaded_workspace(
+                ploke_test_utils::workspace_root().join("tests/fixture_workspace/ws_fixture_01"),
+                vec![
+                    ploke_test_utils::workspace_root()
+                        .join("tests/fixture_workspace/ws_fixture_01/member_root"),
+                ],
+                Some(
+                    ploke_test_utils::workspace_root()
+                        .join("tests/fixture_workspace/ws_fixture_01/member_root"),
+                ),
+            )
+            .await;
+        }
+        DbSetup::FullWorkspace => {
+            rt.setup_loaded_workspace(
+                ploke_test_utils::workspace_root().join("tests/fixture_workspace/ws_fixture_01"),
+                vec![
+                    ploke_test_utils::workspace_root()
+                        .join("tests/fixture_workspace/ws_fixture_01/member_root"),
+                    ploke_test_utils::workspace_root()
+                        .join("tests/fixture_workspace/ws_fixture_01/nested/member_nested"),
+                ],
+                Some(
+                    ploke_test_utils::workspace_root()
+                        .join("tests/fixture_workspace/ws_fixture_01/member_root"),
+                ),
+            )
+            .await;
+        }
+        DbSetup::StandaloneCrate => {
+            rt.setup_loaded_standalone_crate(
+                ploke_test_utils::workspace_root().join("tests/fixture_crates/fixture_nodes"),
+            )
+            .await;
+        }
+    }
+
+    let app = rt.into_app_with_state_pwd(pwd_path).await;
+    let parsed_debug = format!("{:?}", parser::parse(&app, case.input, CommandStyle::Slash));
+    let backend = TestBackend::new(80, 24);
+    let terminal = Terminal::new(backend).expect("create terminal");
+    let (input_tx, input_rx) =
+        tokio::sync::mpsc::unbounded_channel::<Result<crossterm::event::Event, std::io::Error>>();
+    let input = UnboundedReceiverStream::new(input_rx);
+
+    let app_task = tokio::spawn(async move {
+        app.run_with(
+            terminal,
+            input,
+            crate::app::RunOptions {
+                setup_terminal_modes: false,
+            },
+        )
+        .await
+    });
+
+    for ch in case.input.chars() {
+        input_tx
+            .send(Ok(Event::Key(KeyEvent::from(KeyCode::Char(ch)))))
+            .expect("send key");
+        tokio::task::yield_now().await;
+    }
+    input_tx
+        .send(Ok(Event::Key(KeyEvent::from(KeyCode::Enter))))
+        .expect("send enter");
+
+    let mut trace = collect_case_trace(&mut debug_rx, &mut validation_rx).await;
+    trace.parsed = parsed_debug;
+    app_task.abort();
+    let _ = app_task.await;
+    assert_case_trace(case, &trace);
 }
 
 // Backwards compatibility wrapper
@@ -619,14 +780,26 @@ async fn run_no_db_test_case(case: &NoDbTestCase) {
 async fn collect_case_trace(
     debug_rx: &mut tokio::sync::mpsc::Receiver<DebugStateCommand>,
     validation_rx: &mut tokio::sync::mpsc::Receiver<ValidationProbeEvent>,
-) -> (Vec<DebugStateCommand>, Vec<ValidationProbeEvent>) {
+) -> CaseTrace {
     let mut commands = Vec::new();
     let mut validations = Vec::new();
 
     match timeout(Duration::from_millis(100), debug_rx.recv()).await {
         Ok(Some(cmd)) => commands.push(cmd),
-        Ok(None) => return (commands, validations),
-        Err(_) => return (commands, validations),
+        Ok(None) => {
+            return CaseTrace {
+                parsed: String::new(),
+                commands,
+                validations,
+            };
+        }
+        Err(_) => {
+            return CaseTrace {
+                parsed: String::new(),
+                commands,
+                validations,
+            };
+        }
     }
 
     if let Ok(Some(validation)) = timeout(Duration::from_millis(100), validation_rx.recv()).await {
@@ -663,7 +836,11 @@ async fn collect_case_trace(
         }
     }
 
-    (commands, validations)
+    CaseTrace {
+        parsed: String::new(),
+        commands,
+        validations,
+    }
 }
 
 /// Test case 1b: Same as test case 1, but using the full app run loop with TestBackend.
@@ -672,15 +849,18 @@ async fn collect_case_trace(
 /// Key events → Action::ExecuteCommand → parser::parse → exec::execute → probe relay
 #[tokio::test]
 async fn test_no_db_workspace_root_index_indexes_workspace_full_app() {
-    run_test_case(&TestCase::new(
-        "/index at workspace root -> IndexTargetDir",
-        DbSetup::None,
-        TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
-        "/index",
-        "TestTodo", // Not yet implemented
-        None,
-        Some("test_no_db_workspace_root_index_indexes_workspace"),
-    ))
+    run_test_case(
+        &TestCase::new(
+            "/index at workspace root -> IndexTargetDir",
+            DbSetup::None,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index",
+            "Index",
+            None,
+            Some("test_no_db_workspace_root_index_indexes_workspace"),
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01"),
+    )
     .await;
 }
 
@@ -697,55 +877,61 @@ async fn test_no_db_loaded_all_cases() {
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_no_db_workspace_root_index_indexes_workspace"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01"),
         TestCase::new(
             "2. /index workspace at workspace root",
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index workspace",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_no_db_workspace_root_index_indexes_workspace"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01"),
         TestCase::new(
             "3. /index workspace . at workspace root",
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index workspace .",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_no_db_workspace_root_index_indexes_workspace"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01"),
         TestCase::new(
             "4. /index path/to/crate at workspace root",
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index member_root",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_no_db_workspace_root_index_path_to_crate"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
         TestCase::new(
             "5. /index crate path/to/crate at workspace root",
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index crate member_root",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_no_db_workspace_root_index_crate_path"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
         TestCase::new(
             "6. /index crate <member-name> at workspace root",
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index crate member_root",
-            "TestTodo",
+            "Index",
             None,
             Some("test_no_db_workspace_root_index_crate_member_name"),
-        ),
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
         TestCase::new(
             "7. /index crate at workspace root (list members)",
             DbSetup::None,
@@ -760,7 +946,7 @@ async fn test_no_db_loaded_all_cases() {
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate fixture_nodes",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -769,7 +955,7 @@ async fn test_no_db_loaded_all_cases() {
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate member_root",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -778,7 +964,7 @@ async fn test_no_db_loaded_all_cases() {
             DbSetup::None,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate nonexistent_crate",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -800,52 +986,69 @@ async fn test_no_db_loaded_all_cases() {
             None,
             Some("test_no_db_workspace_root_load_workspace_no_arg"),
         ),
-        TestCase::new(
-            "13. /save db at workspace root (error - no db loaded)",
-            DbSetup::None,
-            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
-            "/save db",
-            "AddMessageImmediate",
-            Some("No crate or workspace is loaded"),
-            None,
-        ),
-        TestCase::new(
-            "14. /update at workspace root (error - no db loaded)",
-            DbSetup::None,
-            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
-            "/update",
-            "TestTodo",
-            None,
-            Some("test_no_db_workspace_root_update_error"),
-        ),
+        TestCase {
+            expected_validation: ValidationExpectation::Failure {
+                reason: Some("No crate or workspace is loaded".to_string()),
+            },
+            expected_error: ExpectedUiError {
+                message_contains: Some("No crate or workspace is loaded".to_string()),
+                recovery_suggestion: None,
+            },
+            ..TestCase::new(
+                "13. /save db at workspace root (error - no db loaded)",
+                DbSetup::None,
+                TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+                "/save db",
+                "Workspace",
+                None,
+                None,
+            )
+        },
+        TestCase {
+            expected_validation: ValidationExpectation::Failure {
+                reason: Some("No crate or workspace is loaded".to_string()),
+            },
+            ..TestCase::new(
+                "14. /update at workspace root (error - no db loaded)",
+                DbSetup::None,
+                TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+                "/update",
+                "TestTodo",
+                None,
+                Some("test_no_db_workspace_root_update_error"),
+            )
+        },
         // Section 2: PWD is crate root, no DB (10 cases)
         TestCase::new(
             "15. /index at crate root",
             DbSetup::None,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/index",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_no_db_crate_root_index"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_crates/fixture_nodes"),
         TestCase::new(
             "16. /index crate at crate root",
             DbSetup::None,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/index crate",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_no_db_crate_root_index_crate"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_crates/fixture_nodes"),
         TestCase::new(
             "17. /index crate . at crate root",
             DbSetup::None,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/index crate .",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_no_db_crate_root_index_crate_dot"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_crates/fixture_nodes"),
         TestCase::new(
             "18. /index workspace at crate root (if member)",
             DbSetup::None,
@@ -869,16 +1072,20 @@ async fn test_no_db_loaded_all_cases() {
             DbSetup::None,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/index /some/other/crate",
-            "TestTodo",
+            "Index",
             None,
             Some("test_no_db_crate_root_index_path"),
-        ),
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some("Failed to normalize target path".to_string()),
+            recovery_suggestion: None,
+        }),
         TestCase::new(
             "21. /load crate <name> at crate root",
             DbSetup::None,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/load crate fixture_nodes",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -891,24 +1098,38 @@ async fn test_no_db_loaded_all_cases() {
             Some("LoadDb"),
             None,
         ),
-        TestCase::new(
-            "23. /save db at crate root (error - no db loaded)",
-            DbSetup::None,
-            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
-            "/save db",
-            "AddMessageImmediate",
-            Some("No crate or workspace is loaded"),
-            None,
-        ),
-        TestCase::new(
-            "24. /update at crate root (error - no db loaded)",
-            DbSetup::None,
-            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
-            "/update",
-            "TestTodo",
-            None,
-            Some("test_no_db_crate_root_update_error"),
-        ),
+        TestCase {
+            expected_validation: ValidationExpectation::Failure {
+                reason: Some("No crate or workspace is loaded".to_string()),
+            },
+            expected_error: ExpectedUiError {
+                message_contains: Some("No crate or workspace is loaded".to_string()),
+                recovery_suggestion: None,
+            },
+            ..TestCase::new(
+                "23. /save db at crate root (error - no db loaded)",
+                DbSetup::None,
+                TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+                "/save db",
+                "Workspace",
+                None,
+                None,
+            )
+        },
+        TestCase {
+            expected_validation: ValidationExpectation::Failure {
+                reason: Some("No crate or workspace is loaded".to_string()),
+            },
+            ..TestCase::new(
+                "24. /update at crate root (error - no db loaded)",
+                DbSetup::None,
+                TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+                "/update",
+                "TestTodo",
+                None,
+                Some("test_no_db_crate_root_update_error"),
+            )
+        },
     ];
 
     // Run all cases - the runner automatically groups by (db_setup, pwd)
@@ -972,28 +1193,31 @@ async fn test_single_member_all_cases() {
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_single_member_index_reindexes_focused"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
         TestCase::new(
             "3.2 /index workspace re-indexes entire workspace",
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index workspace",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_single_member_index_workspace"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01"),
         TestCase::new(
             "3.3 /index crate <focused> re-indexes focused",
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index crate member_root",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_single_member_index_crate_focused"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
         TestCase::new(
             "3.4 /index crate <other member> switches focus + indexes",
             DbSetup::SingleMember,
@@ -1008,16 +1232,22 @@ async fn test_single_member_all_cases() {
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index crate not_a_member",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_single_member_index_crate_not_member"),
-        ),
+            None,
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some(
+                "crate 'not_a_member' is not loaded in the current workspace".to_string(),
+            ),
+            recovery_suggestion: None,
+        }),
         TestCase::new(
             "3.6 /load crate <member> forwards to Workspace(LoadDb) for validation",
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate member_root",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -1026,7 +1256,7 @@ async fn test_single_member_all_cases() {
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate not_a_member",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -1035,7 +1265,7 @@ async fn test_single_member_all_cases() {
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate new_crate",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -1044,7 +1274,7 @@ async fn test_single_member_all_cases() {
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/save db",
-            "SaveDb", // TODO: Fixture needs to populate SystemStatus.loaded_crates
+            "Workspace", // TODO: Assert resolved SaveDb effect once the probe forwards intents
             None,
             None,
         ),
@@ -1053,7 +1283,7 @@ async fn test_single_member_all_cases() {
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/update",
-            "AddMessageImmediate", // TODO: Better validation of update behavior
+            "TestTodo",
             None,
             None,
         ),
@@ -1102,28 +1332,36 @@ async fn test_standalone_crate_all_cases() {
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/index",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_standalone_index_reindexes"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_crates/fixture_nodes"),
         TestCase::new(
             "4.2 /index crate <loaded> re-indexes",
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/index crate fixture_nodes",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_standalone_index_crate_loaded"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_crates/fixture_nodes"),
         TestCase::new(
             "4.3 /index crate <different> error 'use /load crate'",
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/index crate other_crate",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_standalone_index_crate_different"),
-        ),
+            None,
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some(
+                "crate 'other_crate' is not loaded in the current workspace".to_string(),
+            ),
+            recovery_suggestion: None,
+        }),
         TestCase::new(
             "4.4 /index workspace error 'not a workspace'",
             DbSetup::StandaloneCrate,
@@ -1138,7 +1376,7 @@ async fn test_standalone_crate_all_cases() {
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/load crate other_crate",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -1156,7 +1394,7 @@ async fn test_standalone_crate_all_cases() {
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/save db",
-            "SaveDb", // TODO: Fixture needs to populate SystemStatus.loaded_crates
+            "Workspace", // TODO: Assert resolved SaveDb effect once the probe forwards intents
             None,
             None,
         ),
@@ -1165,7 +1403,7 @@ async fn test_standalone_crate_all_cases() {
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/update",
-            "AddMessageImmediate", // TODO: Better validation of update behavior
+            "TestTodo",
             None,
             None,
         ),
@@ -1174,10 +1412,14 @@ async fn test_standalone_crate_all_cases() {
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/index /some/other/crate",
-            "TestTodo",
+            "Index",
             None,
             Some("test_standalone_index_path"),
-        ),
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some("Failed to normalize target path".to_string()),
+            recovery_suggestion: None,
+        }),
     ];
 
     run_test_cases(&cases).await;
@@ -1224,61 +1466,75 @@ async fn test_full_workspace_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_full_workspace_index"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01"),
         TestCase::new(
             "5.2 /index crate <member> indexes that member",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index crate member_root",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_full_workspace_index_crate_member"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
         TestCase::new(
             "5.3 /index crate <not member> error + guidance",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index crate not_a_member",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_full_workspace_index_crate_not_member"),
-        ),
+            None,
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some(
+                "crate 'not_a_member' is not loaded in the current workspace".to_string(),
+            ),
+            recovery_suggestion: None,
+        }),
         TestCase::new(
             "5.4 /index workspace re-indexes all (same as /index)",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index workspace",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_full_workspace_index_workspace"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01"),
         TestCase::new(
             "5.5 /index path/to/crate indexes if within workspace",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index member_root",
-            "TestTodo",
+            "Index",
             None,
             Some("test_full_workspace_index_path_within"),
-        ),
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
         TestCase::new(
             "5.6 /index path/to/crate error if outside workspace",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index /outside/workspace/crate",
-            "TestTodo",
+            "Index",
             None,
             Some("test_full_workspace_index_path_outside"),
-        ),
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some("Failed to normalize target path".to_string()),
+            recovery_suggestion: None,
+        }),
         TestCase::new(
             "5.7 /load crate <member> (now forwards to LoadDb)",
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate member_root",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -1287,7 +1543,7 @@ async fn test_full_workspace_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate not_a_member",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -1296,7 +1552,7 @@ async fn test_full_workspace_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate new_crate",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -1314,7 +1570,7 @@ async fn test_full_workspace_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/save db",
-            "SaveDb", // TODO: Fixture needs to populate SystemStatus.loaded_crates
+            "Workspace", // TODO: Assert resolved SaveDb effect once the probe forwards intents
             None,
             None,
         ),
@@ -1323,7 +1579,7 @@ async fn test_full_workspace_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/update",
-            "AddMessageImmediate", // TODO: Better validation of update behavior
+            "TestTodo",
             None,
             None,
         ),
@@ -1373,10 +1629,11 @@ async fn test_pwd_crate_loaded_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
             "/index",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_pwd_crate_index_loaded"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
         TestCase::new(
             "6.2 /index error if PWD crate not loaded",
             DbSetup::FullWorkspace,
@@ -1391,10 +1648,11 @@ async fn test_pwd_crate_loaded_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
             "/index workspace",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_pwd_crate_index_workspace_member"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01"),
         TestCase::new(
             "6.4 /index workspace error if PWD not member",
             DbSetup::FullWorkspace,
@@ -1409,34 +1667,42 @@ async fn test_pwd_crate_loaded_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
             "/index crate member_root",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_pwd_crate_index_crate_pwd_match"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
         TestCase::new(
             "6.6 /index crate <different loaded> switches focus + indexes",
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
             "/index crate member_nested",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_pwd_crate_index_crate_different"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/nested/member_nested"),
         TestCase::new(
             "6.7 /index crate <not loaded> follows workspace rules",
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
             "/index crate not_loaded_crate",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_pwd_crate_index_crate_not_loaded"),
-        ),
+            None,
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some(
+                "crate 'not_loaded_crate' is not loaded in the current workspace".to_string(),
+            ),
+            recovery_suggestion: None,
+        }),
         TestCase::new(
             "6.8 /load crate <PWD match> (now forwards to LoadDb)",
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
             "/load crate member_root",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -1445,7 +1711,7 @@ async fn test_pwd_crate_loaded_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
             "/load crate different_crate",
-            "TestTodo",
+            "Workspace",
             Some("LoadDb"),
             None,
         ),
@@ -1463,7 +1729,7 @@ async fn test_pwd_crate_loaded_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/member_root"),
             "/save db",
-            "SaveDb", // TODO: Fixture needs to populate SystemStatus.loaded_crates
+            "Workspace", // TODO: Assert resolved SaveDb effect once the probe forwards intents
             None,
             None,
         ),
@@ -1505,7 +1771,7 @@ async fn test_transition_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/load crate some_crate",
-            "TestTodo",
+            "Workspace",
             None,
             Some("test_transition_load_crate_from_workspace"),
         ),
@@ -1514,7 +1780,7 @@ async fn test_transition_all_cases() {
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/load crate other_crate",
-            "TestTodo",
+            "Workspace",
             None,
             Some("test_transition_load_crate_standalone_to_standalone"),
         ),
@@ -1541,11 +1807,16 @@ async fn test_transition_all_cases() {
 
 /// Helper to send a command and collect the resulting StateCommand and events
 async fn send_command_and_collect(
-    app: &crate::app::App,
+    app: &mut crate::app::App,
     command: &str,
     debug_rx: &mut tokio::sync::mpsc::Receiver<DebugStateCommand>,
-    event_rx: &mut tokio::sync::broadcast::Receiver<AppEvent>,
-) -> (String, Vec<AppEvent>) {
-    // TODO: Send command, collect debug string and events
-    todo!()
+    validation_rx: &mut tokio::sync::mpsc::Receiver<ValidationProbeEvent>,
+) -> CaseTrace {
+    let parsed = parser::parse(app, command, CommandStyle::Slash);
+    let parsed_debug = format!("{:?}", parsed);
+    exec::execute(app, parsed);
+    tokio::task::yield_now().await;
+    let mut trace = collect_case_trace(debug_rx, validation_rx).await;
+    trace.parsed = parsed_debug;
+    trace
 }

@@ -44,9 +44,9 @@ mod harness;
 // Decision tree path: "pwd is workspace root" → "no db loaded" → "/index"
 //
 // Current behavior:
-//   Parser returns: Command::Index { target: None }
-//   Executor: Runs workspace scan and starts indexing (via spawn_update)
-//   Result: AddMessageImmediate emitted with "Scanning workspace for updates..."
+//   Parser returns: Command::Index { mode: Auto, target: None }
+//   Executor: forwards StateCommand::Index
+//   Result: state layer handles indexing effects
 //
 // NOTE: This test now documents the UPDATED behavior after parser/executor changes.
 
@@ -61,11 +61,12 @@ async fn test_index_no_db_workspace_root_current_behavior() {
 
     // UPDATED: Command is now parsed as Command::Index
     match &command {
-        Command::Index { target } => {
+        Command::Index { mode, target } => {
+            assert!(matches!(mode, crate::app_state::commands::IndexMode::Auto));
             assert!(target.is_none(), "Expected target=None for bare /index");
             println!(
-                "Command parsed as Command::Index {{ target: {:?} }}",
-                target
+                "Command parsed as Command::Index {{ mode: {:?}, target: {:?} }}",
+                mode, target
             );
         }
         _ => panic!("Unexpected command variant: {:?}", command),
@@ -76,6 +77,27 @@ async fn test_index_no_db_workspace_root_current_behavior() {
 
     // The executor emits AddMessageImmediate with scanning message
     // Full validation is done in the decision_tree test suite
+}
+
+#[tokio::test]
+async fn test_index_workspace_dot_normalizes_to_current_workspace() {
+    let app = TEST_APP_NODES_CANNONICAL_FRESH.lock().await;
+    let style = CommandStyle::Slash;
+    let command = crate::app::commands::parser::parse(&app, "/index workspace .", style);
+
+    match &command {
+        Command::Index { mode, target } => {
+            assert!(matches!(
+                mode,
+                crate::app_state::commands::IndexMode::Workspace
+            ));
+            assert!(
+                target.is_none(),
+                "Expected target=None for `/index workspace .`"
+            );
+        }
+        _ => panic!("Unexpected command variant: {:?}", command),
+    }
 }
 
 // ============================================================================
@@ -99,9 +121,10 @@ async fn test_save_db_no_db_loaded_should_error() {
     let command = crate::app::commands::parser::parse(&app, "/save db", style);
 
     match &command {
-        Command::Raw(raw) => assert!(raw.contains("save")),
-        // After migration: Command::Save { kind: SaveKind::Db }
-        _ => {}
+        Command::Save { kind } => {
+            assert!(matches!(kind, crate::app::commands::parser::SaveKind::Db))
+        }
+        _ => panic!("Unexpected command variant: {:?}", command),
     }
 
     execute(&mut app, command);
@@ -127,8 +150,13 @@ async fn test_load_crate_nonexistent_should_suggest_index() {
     let command = crate::app::commands::parser::parse(&app, "/load crate nonexistent_xyz", style);
 
     match &command {
-        Command::LoadCrate(crate_ref) => {
-            assert_eq!(crate_ref, "nonexistent_xyz");
+        Command::Load { kind, name, force } => {
+            assert!(matches!(
+                kind,
+                crate::app::commands::parser::LoadKind::Crate
+            ));
+            assert_eq!(name.as_deref(), Some("nonexistent_xyz"));
+            assert!(!force);
         }
         _ => panic!("Unexpected command variant: {:?}", command),
     }
@@ -149,8 +177,8 @@ async fn test_load_crate_nonexistent_should_suggest_index() {
 
 // [ ] 1. EXTEND Command ENUM (app/commands/parser.rs)
 //     Add variants:
-//     - Command::Index { scope: IndexScope, target: Option<String> }
-//       where IndexScope = Auto | Workspace | Crate
+//     - Command::Index { mode: IndexMode, target: Option<String> }
+//       where IndexMode = Auto | Workspace | Crate
 //     - Command::Load { kind: LoadKind, name: String, force: bool }
 //       where LoadKind = Crate | Workspace
 //     - Command::Save { kind: SaveKind }

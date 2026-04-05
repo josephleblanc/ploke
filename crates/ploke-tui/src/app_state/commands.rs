@@ -1,5 +1,5 @@
 use std::ops::ControlFlow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::ModelId;
 use crate::app_state::database::IndexTargetDir;
@@ -13,6 +13,7 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::event_bus::ErrorEvent;
+use crate::parser::resolve_index_target;
 use crate::{AppEvent, ErrorSeverity, EventBus};
 
 #[derive(thiserror::Error, Clone, Debug)]
@@ -85,6 +86,7 @@ pub enum ListNavigation {
 // ----------------
 // - ✅ WorkspaceCmd: Extracted and validated
 // - ⏳ DbCmd: Planned - will include ReadQuery, WriteQuery, BatchPromptSearch
+// - ⏳ IndexCmd: decision-tree command for `/index`
 // - ⏳ ChatCmd: Planned - all chat/history operations (AddMessage*, etc.)
 // - ⏳ LlmCmd: Planned - SwitchModel, SelectModelProvider, etc.
 // - ⏳ RagCmd: Planned - Bm25*, Hybrid*, ApproveEdits, etc.
@@ -124,6 +126,222 @@ pub trait Validate {
     ) -> impl std::future::Future<Output = Result<(), ValidationError>> + Send;
 }
 
+/// `/index` mode selected by the parser/executor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexMode {
+    Auto,
+    Workspace,
+    Crate,
+}
+
+/// `/index` command forwarded from the executor.
+#[derive(Debug, Clone)]
+pub struct IndexCmd {
+    pub mode: IndexMode,
+    pub target: Option<String>,
+}
+
+/// Resolved `/index` request after applying mode + target semantics.
+#[derive(Debug, Clone)]
+pub struct IndexResolution {
+    pub target_dir: IndexTargetDir,
+    pub needs_parse: bool,
+    pub focus_root: Option<PathBuf>,
+}
+
+#[derive(Debug, thiserror::Error, Clone)]
+pub enum IndexResolveError {
+    #[error("Current directory is not a loaded crate. Use `/index crate <path>` to index a specific crate.")]
+    CurrentDirectoryNotLoadedCrate,
+    #[error("Current directory is not a workspace member")]
+    CurrentDirectoryNotWorkspaceMember,
+    #[error("Cannot resolve `/index workspace` without loaded workspace context")]
+    MissingWorkspaceContext,
+    #[error("Cannot resolve `/index crate` without focused crate context")]
+    MissingCrateContext,
+    #[error("{0}")]
+    TargetResolution(String),
+}
+
+impl IndexCmd {
+    /// Resolve `/index` into a concrete target directory using current state.
+    pub async fn resolve(
+        &self,
+        state: &super::AppState,
+    ) -> Result<IndexResolution, IndexResolveError> {
+        let (pwd, loaded_workspace_root, loaded_member_roots, focused_crate_root) = state
+            .with_system_read(|sys| {
+                (
+                    sys.pwd().to_path_buf(),
+                    sys.loaded_workspace_root(),
+                    sys.loaded_workspace_member_roots(),
+                    sys.focused_crate_root(),
+                )
+            })
+            .await;
+
+        let has_loaded_context = !loaded_member_roots.is_empty();
+        let pwd_is_loaded_member = loaded_member_roots.iter().any(|root| root == &pwd);
+        let pwd_is_workspace_root = loaded_workspace_root
+            .as_ref()
+            .is_some_and(|root| root == &pwd);
+        let standalone_loaded_workspace =
+            loaded_member_roots.len() == 1 && loaded_workspace_root == focused_crate_root;
+        let base_dir = match self.mode {
+            IndexMode::Auto => {
+                if pwd_is_loaded_member {
+                    pwd.clone()
+                } else if pwd_is_workspace_root {
+                    if loaded_member_roots.len() == 1 {
+                        focused_crate_root
+                            .clone()
+                            .ok_or(IndexResolveError::MissingCrateContext)?
+                    } else {
+                        loaded_workspace_root
+                            .clone()
+                            .ok_or(IndexResolveError::MissingWorkspaceContext)?
+                    }
+                } else if has_loaded_context {
+                    return Err(IndexResolveError::CurrentDirectoryNotLoadedCrate);
+                } else {
+                    pwd.clone()
+                }
+            }
+            IndexMode::Workspace => {
+                if standalone_loaded_workspace {
+                    return Err(IndexResolveError::CurrentDirectoryNotWorkspaceMember);
+                }
+
+                if pwd_is_loaded_member || pwd_is_workspace_root {
+                    loaded_workspace_root
+                        .clone()
+                        .ok_or(IndexResolveError::MissingWorkspaceContext)?
+                } else if has_loaded_context {
+                    return Err(IndexResolveError::CurrentDirectoryNotWorkspaceMember);
+                } else {
+                    pwd.clone()
+                }
+            }
+            IndexMode::Crate => {
+                if let Some(root) = focused_crate_root.clone() {
+                    root
+                } else if has_loaded_context {
+                    return Err(IndexResolveError::MissingCrateContext);
+                } else {
+                    pwd.clone()
+                }
+            }
+        };
+
+        let mut focus_root = None;
+        let resolved_path = match &self.target {
+            Some(target) => {
+                let target_path = PathBuf::from(target);
+                if matches!(self.mode, IndexMode::Crate) && has_loaded_context {
+                    match resolve_loaded_crate_target(
+                        &target_path,
+                        loaded_workspace_root.as_deref(),
+                        &loaded_member_roots,
+                    ) {
+                        Some(resolved) => {
+                            focus_root = Some(resolved.clone());
+                            resolved
+                        }
+                        None => {
+                            return Err(IndexResolveError::TargetResolution(format!(
+                                "Failed to normalize target path: crate '{target}' is not loaded in the current workspace"
+                            )));
+                        }
+                    }
+                } else if target_path.is_absolute() {
+                    target_path
+                } else {
+                    base_dir.join(target_path)
+                }
+            }
+            None => base_dir,
+        };
+
+        let resolved = resolve_index_target(Some(resolved_path), &pwd)
+            .map_err(|err| IndexResolveError::TargetResolution(err.to_string()))?;
+
+        Ok(IndexResolution {
+            target_dir: IndexTargetDir::new(resolved.requested_path),
+            needs_parse: true,
+            focus_root,
+        })
+    }
+
+    pub fn discriminant(&self) -> &'static str {
+        "Index",
+    }
+}
+
+fn resolve_loaded_crate_target(
+    target: &Path,
+    loaded_workspace_root: Option<&Path>,
+    loaded_member_roots: &[PathBuf],
+) -> Option<PathBuf> {
+    if target.is_absolute() {
+        return loaded_member_roots
+            .iter()
+            .find(|root| root.as_path() == target)
+            .cloned();
+    }
+
+    if let Some(workspace_root) = loaded_workspace_root {
+        let candidate = workspace_root.join(target);
+        if let Some(root) = loaded_member_roots
+            .iter()
+            .find(|root| root.as_path() == candidate.as_path())
+        {
+            return Some(root.clone());
+        }
+    }
+
+    let Some(target_name) = target.file_name().and_then(|name| name.to_str()) else {
+        return None;
+    };
+
+    loaded_member_roots
+        .iter()
+        .find(|root| {
+            root.file_name()
+                .and_then(|name| name.to_str())
+                == Some(target_name)
+        })
+        .cloned()
+}
+
+impl IndexResolveError {
+    /// Human-readable message that should be surfaced to the user.
+    pub fn user_message(&self) -> String {
+        self.to_string()
+    }
+
+    /// Suggested recovery action for the current `/index` failure.
+    pub fn recovery_suggestion(&self) -> String {
+        match self {
+            IndexResolveError::CurrentDirectoryNotLoadedCrate => {
+                "Open or load a crate first, then run `/index` again.".to_string()
+            }
+            IndexResolveError::CurrentDirectoryNotWorkspaceMember => {
+                "Open or load a workspace member first, then run `/index workspace` again."
+                    .to_string()
+            }
+            IndexResolveError::MissingWorkspaceContext => {
+                "Open or load a workspace first, then run `/index` again.".to_string()
+            }
+            IndexResolveError::MissingCrateContext => {
+                "Open or load a crate first, then run `/index` again.".to_string()
+            }
+            IndexResolveError::TargetResolution(err) => {
+                format!("Check the target path and try again. ({err})")
+            }
+        }
+    }
+}
+
 /// Workspace-related commands that require a loaded workspace/crate.
 ///
 /// These commands operate on workspace state and all require that
@@ -152,6 +370,7 @@ pub enum WorkspaceCmd {
     /// Set the current working directory.
     SetPwd { new_pwd: PathBuf },
 }
+
 
 impl Validate for WorkspaceCmd {
     async fn validate(&self, state: &super::AppState) -> Result<(), ValidationError> {
@@ -314,6 +533,9 @@ pub enum StateCommand {
     },
 
     // Workspace operations - VALIDATED (see WorkspaceCmd above)
+    /// `/index` command, resolved in state based on current pwd/loading context.
+    Index(IndexCmd),
+
     /// Save workspace snapshot. Validated: requires loaded workspace.
     ///
     /// **Migration Note**: This is the legacy variant. New code should use
@@ -573,6 +795,7 @@ impl StateCommand {
             SelectEmbeddingModel { .. } => "SelectEmbeddingModel",
             UpdateContextTokens { .. } => "UpdateContextTokens",
             SetPwd { .. } => "SetPwd",
+            Index(cmd) => cmd.discriminant(),
             // NEW: Grouped commands
             Workspace(cmd) => cmd.discriminant(),
             #[cfg(test)]
