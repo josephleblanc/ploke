@@ -1246,7 +1246,9 @@ async fn test_no_db_loaded_all_cases() {
         .with_load_contract(parser::LoadKind::Workspace, Some("member_root"), false)
         .with_resolve_ui_error(ExpectedUiError {
             message_contains: Some("Workspace 'member_root' was not found.".to_string()),
-            recovery_suggestion: Some("`/load crate member_root` if you meant the crate.".to_string()),
+            recovery_suggestion: Some(
+                "`/load crate member_root` if you meant the crate.".to_string(),
+            ),
         }),
         TestCase::new(
             "12. /load workspace (no arg) loads or suggests /index",
@@ -1259,7 +1261,9 @@ async fn test_no_db_loaded_all_cases() {
         )
         .with_load_contract(parser::LoadKind::Workspace, None, false)
         .with_resolve_ui_error(ExpectedUiError {
-            message_contains: Some("No saved workspace named 'ws_fixture_01' was found.".to_string()),
+            message_contains: Some(
+                "No saved workspace named 'ws_fixture_01' was found.".to_string(),
+            ),
             recovery_suggestion: Some(
                 "`/index workspace` from the workspace root before loading it.".to_string(),
             ),
@@ -1380,7 +1384,9 @@ async fn test_no_db_loaded_all_cases() {
         )
         .with_load_contract(parser::LoadKind::Workspace, Some("some_workspace"), false)
         .with_resolve_ui_error(ExpectedUiError {
-            message_contains: Some("No saved workspace named 'some_workspace' was found.".to_string()),
+            message_contains: Some(
+                "No saved workspace named 'some_workspace' was found.".to_string(),
+            ),
             recovery_suggestion: Some(
                 "`/index workspace` from the workspace root before loading it.".to_string(),
             ),
@@ -1573,7 +1579,9 @@ async fn test_single_member_all_cases() {
         .with_load_contract(parser::LoadKind::Crate, Some("new_crate"), false)
         .with_resolve_ui_error(ExpectedUiError {
             message_contains: Some("No saved crate named 'new_crate' was found.".to_string()),
-            recovery_suggestion: Some("`/index crate new_crate` to index it before loading.".to_string()),
+            recovery_suggestion: Some(
+                "`/index crate new_crate` to index it before loading.".to_string(),
+            ),
         }),
         TestCase::new(
             "3.9 /save db saves workspace snapshot",
@@ -1711,7 +1719,9 @@ async fn test_standalone_crate_all_cases() {
         )
         .with_load_contract(parser::LoadKind::Workspace, Some("some_workspace"), false)
         .with_resolve_ui_error(ExpectedUiError {
-            message_contains: Some("No saved workspace named 'some_workspace' was found.".to_string()),
+            message_contains: Some(
+                "No saved workspace named 'some_workspace' was found.".to_string(),
+            ),
             recovery_suggestion: Some(
                 "`/index workspace` from the workspace root before loading it.".to_string(),
             ),
@@ -1898,7 +1908,9 @@ async fn test_full_workspace_all_cases() {
         .with_load_contract(parser::LoadKind::Crate, Some("new_crate"), false)
         .with_resolve_ui_error(ExpectedUiError {
             message_contains: Some("No saved crate named 'new_crate' was found.".to_string()),
-            recovery_suggestion: Some("`/index crate new_crate` to index it before loading.".to_string()),
+            recovery_suggestion: Some(
+                "`/index crate new_crate` to index it before loading.".to_string(),
+            ),
         }),
         TestCase::new(
             "5.10 /load workspace <different> with --force (now forwards to LoadDb)",
@@ -1911,7 +1923,9 @@ async fn test_full_workspace_all_cases() {
         )
         .with_load_contract(parser::LoadKind::Workspace, Some("other_workspace"), true)
         .with_resolve_ui_error(ExpectedUiError {
-            message_contains: Some("No saved workspace named 'other_workspace' was found.".to_string()),
+            message_contains: Some(
+                "No saved workspace named 'other_workspace' was found.".to_string(),
+            ),
             recovery_suggestion: Some(
                 "`/index workspace` from the workspace root before loading it.".to_string(),
             ),
@@ -2154,7 +2168,9 @@ async fn test_transition_all_cases() {
         )
         .with_load_contract(parser::LoadKind::Workspace, Some("some_workspace"), false)
         .with_resolve_ui_error(ExpectedUiError {
-            message_contains: Some("No saved workspace named 'some_workspace' was found.".to_string()),
+            message_contains: Some(
+                "No saved workspace named 'some_workspace' was found.".to_string(),
+            ),
             recovery_suggestion: Some(
                 "`/index workspace` from the workspace root before loading it.".to_string(),
             ),
@@ -2223,7 +2239,10 @@ async fn test_load_validate_blocks_stale_state_without_force() {
         .validate(&rt.state_arc(), &resolution)
         .await
         .expect_err("stale loaded state should block /load without --force");
-    assert_eq!(err.to_string(), "Current loaded crate or workspace has stale state");
+    assert_eq!(
+        err.to_string(),
+        "Current loaded crate or workspace has stale state"
+    );
 }
 
 #[tokio::test]
