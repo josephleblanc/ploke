@@ -1,0 +1,10 @@
+---
+source: crates/ploke-tui/tests/integration/ui_model_browser_snapshot.rs
+expression: text
+---
+> openai/gpt-4o — OpenAI: GPT-4o
+    context_length: 128000
+    supports_tools: true
+    pricing: in=$5.000 out=$15.000
+    providers:
+      (loading…)

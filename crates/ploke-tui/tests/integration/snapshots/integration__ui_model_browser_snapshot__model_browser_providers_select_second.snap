@@ -1,0 +1,11 @@
+---
+source: crates/ploke-tui/tests/integration/ui_model_browser_snapshot.rs
+expression: text
+---
+> deepseek/deepseek-chat-v3.1 — DeepSeek: DeepSeek V3.1
+    context_length: 163840
+    supports_tools: true
+    pricing: in=$0.200 out=$0.800
+    providers:
+      - Chutes in=$0.200 out=$0.800 ctx=163840 tools=true
+      > DeepInfra in=$0.250 out=$0.900 ctx=131072 tools=true
