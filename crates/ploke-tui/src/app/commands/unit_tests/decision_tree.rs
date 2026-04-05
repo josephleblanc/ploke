@@ -209,6 +209,9 @@ struct TestCase {
     /// Optional: substring expected in the resolved `/index` target directory.
     /// This keeps successful state-side resolution in the canonical contract.
     expected_resolved_index_target_contains: Option<&'static str>,
+    /// Optional: substring expected in the focus hint emitted by `/index`.
+    /// This keeps focus-switch behavior explicit without forcing mutation into resolve().
+    expected_focus_root_contains: Option<&'static str>,
     /// Expected validation result (new field, defaults to None for backward compatibility)
     expected_validation: ValidationExpectation,
     /// Expected user-facing error (if any)
@@ -246,6 +249,7 @@ impl TestCase {
             expected_parsed_contains: None,
             expected_forwarded_contains: None,
             expected_resolved_index_target_contains: None,
+            expected_focus_root_contains: None,
             expected_validation: ValidationExpectation::None,
             expected_error: ExpectedUiError {
                 message_contains: None,
@@ -274,6 +278,7 @@ impl Default for TestCase {
             expected_parsed_contains: None,
             expected_forwarded_contains: None,
             expected_resolved_index_target_contains: None,
+            expected_focus_root_contains: None,
             expected_validation: ValidationExpectation::None,
             expected_error: ExpectedUiError::default(),
         }
@@ -289,6 +294,11 @@ impl TestCase {
 
     fn with_resolved_index_target(mut self, expected: &'static str) -> Self {
         self.expected_resolved_index_target_contains = Some(expected);
+        self
+    }
+
+    fn with_focus_root(mut self, expected: &'static str) -> Self {
+        self.expected_focus_root_contains = Some(expected);
         self
     }
 
@@ -480,6 +490,27 @@ fn assert_effect_contract(case: &TestCase, trace: &CaseTrace) {
             case.name,
             resolved_target,
             expected_target
+        );
+    }
+
+    if let Some(expected_focus_root) = case.expected_focus_root_contains {
+        let actual_focus_root = validations.iter().find_map(|validation| {
+            validation
+                .focus_root()
+                .map(|path| path.to_string_lossy().into_owned())
+        });
+        let actual_focus_root = actual_focus_root.unwrap_or_else(|| {
+            panic!(
+                "Test '{}' failed: expected focus root containing '{}' but none was captured",
+                case.name, expected_focus_root
+            )
+        });
+        assert!(
+            actual_focus_root.contains(expected_focus_root),
+            "Test '{}' failed: focus root '{}' did not contain '{}'",
+            case.name,
+            actual_focus_root,
+            expected_focus_root
         );
     }
 
@@ -1223,10 +1254,12 @@ async fn test_single_member_all_cases() {
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/index crate member_nested",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_single_member_index_crate_other_member"),
-        ),
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/nested/member_nested")
+        .with_focus_root("tests/fixture_workspace/ws_fixture_01/nested/member_nested"),
         TestCase::new(
             "3.5 /index crate <not member> error + guidance",
             DbSetup::SingleMember,
@@ -1367,10 +1400,17 @@ async fn test_standalone_crate_all_cases() {
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/index workspace",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_standalone_index_workspace_error"),
-        ),
+            None,
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some("Current directory is not a workspace member".to_string()),
+            recovery_suggestion: Some(
+                "Open or load a workspace member first, then run `/index workspace` again."
+                    .to_string(),
+            ),
+        }),
         TestCase::new(
             "4.5 /load crate <name> forwards to Workspace(LoadDb) for validation",
             DbSetup::StandaloneCrate,
@@ -1639,10 +1679,19 @@ async fn test_pwd_crate_loaded_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Crate("tests/fixture_workspace/ws_fixture_01/not_a_member"),
             "/index",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_pwd_crate_index_not_loaded"),
-        ),
+            None,
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some(
+                "Current directory is not a loaded crate. Use `/index crate <path>` to index a specific crate."
+                    .to_string(),
+            ),
+            recovery_suggestion: Some(
+                "Open or load a crate first, then run `/index` again.".to_string(),
+            ),
+        }),
         TestCase::new(
             "6.3 /index workspace re-indexes workspace if PWD is member",
             DbSetup::FullWorkspace,
@@ -1658,10 +1707,17 @@ async fn test_pwd_crate_loaded_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Crate("/some/random/crate"),
             "/index workspace",
-            "TestTodo",
+            "Index",
             None,
-            Some("test_pwd_crate_index_workspace_not_member"),
-        ),
+            None,
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some("Current directory is not a workspace member".to_string()),
+            recovery_suggestion: Some(
+                "Open or load a workspace member first, then run `/index workspace` again."
+                    .to_string(),
+            ),
+        }),
         TestCase::new(
             "6.5 /index crate <PWD match> re-indexes",
             DbSetup::FullWorkspace,

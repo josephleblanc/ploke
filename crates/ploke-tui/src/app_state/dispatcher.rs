@@ -641,12 +641,13 @@ async fn emit_index_resolve_error(
     event_bus: &Arc<EventBus>,
     error: IndexResolveError,
 ) {
+    // Keep the error direct and the recovery hint indirect.
     let message = error.user_message();
     let recovery = error.recovery_suggestion();
     tracing::error!("Index command failed: {}", message);
     UiError::new_from_message(Message::user_new(message))
         .with_recovery(recovery)
-        .format_recovery(|recovery, message| format!("{message}\nRecovery: {recovery}"))
+        .format_recovery(|recovery, message| format!("{message}\nConsider using: {recovery}"))
         .send_ui(EventCtx::new_user_facing(event_bus, state))
         .await;
 }

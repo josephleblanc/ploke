@@ -9,6 +9,8 @@ use ploke_core::ArcStr;
 use ploke_core::embeddings::EmbeddingProviderSlug;
 use ploke_llm::ProviderName;
 use ploke_rag::{RetrievalStrategy, TokenBudget};
+use syn_parser::ManifestKind;
+use syn_parser::discovery::workspace::try_parse_manifest;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -151,6 +153,7 @@ pub struct IndexResolution {
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum IndexResolveError {
+    // Informative errors stay direct; recovery text is formatted separately.
     #[error("Current directory is not a loaded crate. Use `/index crate <path>` to index a specific crate.")]
     CurrentDirectoryNotLoadedCrate,
     #[error("Current directory is not a workspace member")]
@@ -242,14 +245,17 @@ impl IndexCmd {
                         &target_path,
                         loaded_workspace_root.as_deref(),
                         &loaded_member_roots,
+                        standalone_loaded_workspace,
                     ) {
                         Some(resolved) => {
-                            focus_root = Some(resolved.clone());
+                            if focused_crate_root.as_ref() != Some(&resolved) {
+                                focus_root = Some(resolved.clone());
+                            }
                             resolved
                         }
                         None => {
                             return Err(IndexResolveError::TargetResolution(format!(
-                                "Failed to normalize target path: crate '{target}' is not loaded in the current workspace"
+                                "crate '{target}' is not loaded in the current workspace. Failed to normalize target path."
                             )));
                         }
                     }
@@ -273,7 +279,7 @@ impl IndexCmd {
     }
 
     pub fn discriminant(&self) -> &'static str {
-        "Index",
+        "Index"
     }
 }
 
@@ -281,6 +287,7 @@ fn resolve_loaded_crate_target(
     target: &Path,
     loaded_workspace_root: Option<&Path>,
     loaded_member_roots: &[PathBuf],
+    standalone_loaded_workspace: bool,
 ) -> Option<PathBuf> {
     if target.is_absolute() {
         return loaded_member_roots
@@ -303,7 +310,7 @@ fn resolve_loaded_crate_target(
         return None;
     };
 
-    loaded_member_roots
+    if let Some(loaded_match) = loaded_member_roots
         .iter()
         .find(|root| {
             root.file_name()
@@ -311,6 +318,36 @@ fn resolve_loaded_crate_target(
                 == Some(target_name)
         })
         .cloned()
+    {
+        return Some(loaded_match);
+    }
+
+    let workspace_root = loaded_workspace_root?;
+    if standalone_loaded_workspace {
+        return None;
+    }
+
+    let manifest = try_parse_manifest(workspace_root, ManifestKind::WorkspaceRoot).ok()?;
+    let workspace = manifest.workspace?;
+
+    let candidate = workspace_root.join(target);
+    if let Some(member) = workspace
+        .members
+        .iter()
+        .find(|member| member.as_path() == candidate.as_path())
+    {
+        return Some(member.clone());
+    }
+
+    let mut basename_matches = workspace
+        .members
+        .into_iter()
+        .filter(|member| member.file_name().and_then(|name| name.to_str()) == Some(target_name));
+    let first = basename_matches.next()?;
+    if basename_matches.next().is_some() {
+        return None;
+    }
+    Some(first)
 }
 
 impl IndexResolveError {
@@ -319,7 +356,7 @@ impl IndexResolveError {
         self.to_string()
     }
 
-    /// Suggested recovery action for the current `/index` failure.
+    /// Recovery stays to a single suggestion; the UI formatter keeps the wording indirect.
     pub fn recovery_suggestion(&self) -> String {
         match self {
             IndexResolveError::CurrentDirectoryNotLoadedCrate => {

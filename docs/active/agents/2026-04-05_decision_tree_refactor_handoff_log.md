@@ -328,3 +328,79 @@
 - Remaining gaps:
   - The remaining `/index crate ...` rows in sections 3, 4, 5, and 6 are still pending canonical promotion.
   - The user-facing error wording remains coarse and should be tightened once the table is updated to assert the intended policy-specific messages.
+
+## Entry 16: `/index` Resolve Boundary and Focus Hint
+- Slice: fix the remaining resolve-time `/index` policy mismatches and carry a focus hint for crate-target switches without mutating inside `resolve()`
+- Files changed:
+  - crates/ploke-tui/src/app_state/commands.rs
+  - crates/ploke-tui/src/app_state/dispatcher.rs
+  - crates/ploke-tui/src/app/commands/unit_tests/harness.rs
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - `IndexCmd::resolve()` now returns explicit resolve-time errors for the policy branches where the current directory is not a loaded crate or not a workspace member.
+  - Standalone crate `/index workspace` now resolves to a user-facing `UiError` instead of falling through to workspace-root behavior.
+  - Loaded-workspace `/index crate <other member>` now carries a focus-root hint in `IndexResolution`, and the dispatcher applies `set_focus_from_root(...)` before spawning indexing.
+  - The test probe now records resolve failures as `resolve_error` and captures the optional focus hint for future canonical assertions.
+- Tests run:
+  - `cargo test -p ploke-tui --lib`
+- Result:
+  - Passed: `189 passed; 0 failed; 5 ignored`
+- Remaining gaps:
+  - The canonical decision table still needs explicit promotion for the newly stable `4.4`, `6.2`, `6.4`, and `3.4` rows.
+  - The new resolve-error wording is still intentionally coarse until those rows are tightened.
+
+## Entry 17: `/index` Canonical Table Tightening
+- Slice: promote the newly stable `/index` error rows after the resolve-boundary change, and leave the single-member `3.4` focus-switch case pending
+- Files changed:
+  - crates/ploke-tui/src/app/commands/unit_tests/decision_tree.rs
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - Promoted `4.4 /index workspace error 'not a workspace'` to an explicit `Index` failure with `Current directory is not a workspace member`.
+  - Promoted `6.2 /index error if PWD crate not loaded` to an explicit `Index` failure with `Current directory is not a loaded crate. Use `/index crate <path>` to index a specific crate.`
+  - Promoted `6.4 /index workspace error if PWD not member` to an explicit `Index` failure with `Current directory is not a workspace member`.
+  - Left `3.4 /index crate <other member> switches focus + indexes` pending because the single-member fixture still does not support that branch.
+  - The harness already exposes a `focus_root` hint, but there is no supported `3.4` case to assert it against yet.
+- Tests run: not run in this slice
+- Remaining gaps:
+  - `3.4` still needs a runtime-supporting fixture or policy change before it can be promoted.
+  - The `UiError` wording remains the coarse resolve-time wording for now.
+
+## Entry 18: `/index` Canonical Table Verification
+- Slice: verify the newly promoted `/index` error rows against the full `--lib` suite
+- Files changed:
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - The promoted `4.4`, `6.2`, and `6.4` rows hold under the current `UiError` boundary.
+  - `3.4` remains intentionally pending because the runtime still does not support that single-member focus-switch branch.
+- Tests run:
+  - `cargo test -p ploke-tui --lib`
+- Result:
+  - Passed: `189 passed; 0 failed; 5 ignored`
+- Remaining gaps:
+  - `3.4` still needs a supported runtime branch before it can be promoted.
+
+## Entry 19: `/index` Final Mismatch Cleanup
+- Slice: finish the remaining `/index` policy mismatches and promote the single-member focus-switch row with an explicit focus hint assertion
+- Files changed:
+  - crates/ploke-tui/src/app_state/commands.rs
+  - crates/ploke-tui/src/app_state/dispatcher.rs
+  - crates/ploke-tui/src/app/commands/unit_tests/harness.rs
+  - crates/ploke-tui/src/app/commands/unit_tests/decision_tree.rs
+  - docs/active/agents/2026-04-05_decision_tree_refactor_handoff_log.md
+- Contract decisions:
+  - `4.4 /index workspace` when a standalone crate is loaded now fails at resolve time with `Current directory is not a workspace member` and a recovery suggestion, instead of silently treating the standalone crate as a workspace.
+  - `6.2 /index` when `pwd` is outside the loaded workspace members now fails at resolve time with `Current directory is not a loaded crate. Use \`/index crate <path>\` to index a specific crate.` rather than falling back to the loaded workspace root.
+  - `6.4 /index workspace` when `pwd` is not a workspace member now fails at resolve time with `Current directory is not a workspace member`.
+  - `3.4 /index crate <other member>` is now modeled as: resolve target + focus hint in `IndexResolution`, then apply `set_focus_from_root(...)` in the dispatcher before spawning indexing. Mutation stays out of `resolve()`.
+  - `mode=Crate` now resolves unloaded workspace members by consulting the loaded workspace manifest, so basename targets like `member_nested` can map to `nested/member_nested` without a permissive recursive search.
+  - The canonical table now asserts the `3.4` focus hint explicitly via the harness.
+- Tests run:
+  - `cargo test -p ploke-tui --lib test_single_member_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib test_standalone_crate_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib test_pwd_crate_loaded_all_cases -- --nocapture`
+  - `cargo test -p ploke-tui --lib`
+- Result:
+  - Passed: `189 passed; 0 failed; 5 ignored`
+- Remaining gaps:
+  - The remaining `/index` user-facing wording is still serviceable but not yet fully polished against the final policy language.
+  - `/load` and `/update` still need the same contract cleanup pattern applied after `/index`.
