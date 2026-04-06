@@ -212,7 +212,7 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
         General,
         "check api",
         "check api",
-        "Check API key configuration"
+        "Check OpenRouter API key presence"
     ),
     command_entry_hint!(
         General,

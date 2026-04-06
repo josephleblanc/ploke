@@ -46,6 +46,7 @@ pub enum Command {
     Quit,
     Help,
     HelpTopic(String),
+    CheckApi,
     Load {
         kind: LoadKind,
         name: Option<String>,
@@ -172,6 +173,7 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
     match trimmed {
         "quit" => Command::Quit,
         "help" => Command::Help,
+        "check api" => Command::CheckApi,
         s if s.starts_with("help ") => {
             let topic = s.trim_start_matches("help ").trim().to_string();
             if topic.is_empty() {

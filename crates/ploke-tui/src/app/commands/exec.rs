@@ -60,6 +60,7 @@ pub fn execute(app: &mut App, command: Command) {
         Command::Quit => app.quit(),
         Command::Help => show_command_help(app),
         Command::HelpTopic(topic) => show_topic_help(app, &topic),
+        Command::CheckApi => check_api_keys(app),
         Command::CopySelection => app.copy_selected_message(),
         Command::ModelList => list_models_async(app),
         Command::ModelInfo => show_model_info_async(app),
@@ -514,18 +515,21 @@ fn list_models_async(app: &App) {
 }
 
 fn check_api_keys(app: &App) {
-    let help_msg = r#"API Key Configuration Check:
-
- To use LLM features, you need to set your API keys:
- - For OpenRouter models: export OPENROUTER_API_KEY="your-key-here"
- - For OpenAI models: export OPENAI_API_KEY="your-key-here"
- - For Anthropic models: export ANTHROPIC_API_KEY="your-key-here"
-
- After setting the environment variable, restart the application.
- Use 'model list' to see available models."#;
+    let key_msg = match std::env::var("OPENROUTER_API_KEY") {
+        Ok(key) if !key.trim().is_empty() => {
+            let prefix: String = key.chars().take(6).collect();
+            let masked = if key.chars().count() > 6 {
+                format!("{prefix}...")
+            } else {
+                prefix
+            };
+            format!("OpenRouter API key found: {masked}")
+        }
+        _ => "OpenRouter API key not found in OPENROUTER_API_KEY.".to_string(),
+    };
 
     app.send_cmd(StateCommand::AddMessageImmediate {
-        msg: help_msg.to_string(),
+        msg: key_msg,
         kind: MessageKind::SysInfo,
         new_msg_id: Uuid::new_v4(),
     });

@@ -12,10 +12,12 @@ use std::sync::Arc;
 use lazy_static::lazy_static;
 use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
 use tokio::sync::Mutex;
+use tokio::time::{Duration, timeout};
 
+use crate::app::App;
 use crate::app::commands::exec::execute;
 use crate::app::commands::parser::Command;
-use crate::app::{App, commands::unit_tests::harness::setup_test_app_from_db};
+use crate::app::commands::unit_tests::harness::{TestRuntime, setup_test_app_from_db};
 use crate::user_config::CommandStyle;
 
 lazy_static! {
@@ -33,6 +35,43 @@ lazy_static! {
         // helper builder
         setup_test_app_from_db(&fixture_db)
     };
+    static ref OPENROUTER_API_KEY_TEST_LOCK: Mutex<()> = Mutex::new(());
+}
+
+struct OpenRouterApiKeyGuard {
+    previous: Option<String>,
+}
+
+impl OpenRouterApiKeyGuard {
+    fn set_to(value: &str) -> Self {
+        let previous = std::env::var("OPENROUTER_API_KEY").ok();
+        unsafe {
+            std::env::set_var("OPENROUTER_API_KEY", value);
+        }
+        Self { previous }
+    }
+
+    fn clear() -> Self {
+        let previous = std::env::var("OPENROUTER_API_KEY").ok();
+        unsafe {
+            std::env::remove_var("OPENROUTER_API_KEY");
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for OpenRouterApiKeyGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            unsafe {
+                std::env::set_var("OPENROUTER_API_KEY", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("OPENROUTER_API_KEY");
+            }
+        }
+    }
 }
 
 mod decision_tree;
@@ -183,6 +222,78 @@ async fn test_load_crate_nonexistent_should_suggest_index() {
     //     severity: ErrorSeverity::Error,
     // })
     // Plus a message suggesting: "Use `/index crate <path>` to index it first"
+}
+
+#[tokio::test]
+async fn test_check_api_reports_openrouter_key_prefix() {
+    let _guard = OPENROUTER_API_KEY_TEST_LOCK.lock().await;
+    let _env_guard = OpenRouterApiKeyGuard::set_to("sk_test_abcdef123456");
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+
+    let rt = TestRuntime::new(&fixture_db).spawn_state_manager();
+    let mut events = rt.events_builder().build_app_only();
+    let mut debug_rx = events
+        .app_actor_events
+        .debug_string_rx
+        .take()
+        .expect("debug_string_rx should be available after spawn_state_manager");
+    let pwd = std::env::current_dir().expect("current dir");
+    let mut app = rt.into_app(pwd);
+
+    let command = crate::app::commands::parser::parse(&app, "/check api", CommandStyle::Slash);
+    assert!(matches!(command, Command::CheckApi));
+
+    execute(&mut app, command);
+
+    let debug_cmd = timeout(Duration::from_millis(500), debug_rx.recv())
+        .await
+        .expect("debug recv timeout")
+        .expect("debug channel closed")
+        .as_str()
+        .to_string();
+    assert!(
+        debug_cmd.contains("AddMessageImmediate"),
+        "Expected AddMessageImmediate, got: {debug_cmd}"
+    );
+    assert!(
+        debug_cmd.contains("OpenRouter API key found: sk_tes..."),
+        "Expected masked OpenRouter key prefix, got: {debug_cmd}"
+    );
+}
+
+#[tokio::test]
+async fn test_check_api_reports_missing_openrouter_key() {
+    let _guard = OPENROUTER_API_KEY_TEST_LOCK.lock().await;
+    let _env_guard = OpenRouterApiKeyGuard::clear();
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+
+    let rt = TestRuntime::new(&fixture_db).spawn_state_manager();
+    let mut events = rt.events_builder().build_app_only();
+    let mut debug_rx = events
+        .app_actor_events
+        .debug_string_rx
+        .take()
+        .expect("debug_string_rx should be available after spawn_state_manager");
+    let pwd = std::env::current_dir().expect("current dir");
+    let mut app = rt.into_app(pwd);
+
+    let command = crate::app::commands::parser::parse(&app, "/check api", CommandStyle::Slash);
+    assert!(matches!(command, Command::CheckApi));
+
+    execute(&mut app, command);
+
+    let debug_cmd = timeout(Duration::from_millis(500), debug_rx.recv())
+        .await
+        .expect("debug recv timeout")
+        .expect("debug channel closed")
+        .as_str()
+        .to_string();
+    assert!(
+        debug_cmd.contains("OpenRouter API key not found in OPENROUTER_API_KEY."),
+        "Expected missing-key message, got: {debug_cmd}"
+    );
 }
 
 // ============================================================================

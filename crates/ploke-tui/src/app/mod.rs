@@ -2122,26 +2122,6 @@ impl App {
         });
     }
 
-    fn check_api_keys(&self) {
-        // This would need to be async to check the actual config
-        // For now, we'll provide a helpful message
-        let help_msg = r#"API Key Configuration Check:
-
- To use LLM features, you need to set your API keys:
- - For OpenRouter models: export OPENROUTER_API_KEY="your-key-here"
- - For OpenAI models: export OPENAI_API_KEY="your-key-here"
- - For Anthropic models: export ANTHROPIC_API_KEY="your-key-here"
-
- After setting the environment variable, restart the application.
- Use 'model list' to see available models."#;
-
-        self.send_cmd(StateCommand::AddMessageImmediate {
-            msg: help_msg.to_string(),
-            kind: MessageKind::SysInfo,
-            new_msg_id: Uuid::new_v4(),
-        });
-    }
-
     /// Set running to false to quit the application.
     fn quit(&mut self) {
         self.running = false;
