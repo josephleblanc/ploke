@@ -106,3 +106,5 @@ docs/archive
 
 # Local upstream symlink
 /rust-analyzer-upstream
+github-project
+research-papers
