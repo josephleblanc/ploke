@@ -1020,14 +1020,24 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
     /// Create a lightweight runtime backed by `fixture_db`. No tasks are spawned yet.
     pub fn new(fixture_db: &Arc<ploke_db::Database>) -> Self {
         let config = UserConfig::default();
+        let processor = config
+            .load_embedding_processor()
+            .expect("load embedding processor");
+        Self::new_with_embedding_processor(fixture_db, processor)
+    }
+
+    /// Create a lightweight runtime backed by `fixture_db` using a caller-supplied
+    /// embedding processor. This keeps eval/test harnesses from implicitly
+    /// depending on the default local model configuration.
+    pub fn new_with_embedding_processor(
+        fixture_db: &Arc<ploke_db::Database>,
+        processor: EmbeddingProcessor,
+    ) -> Self {
+        let config = UserConfig::default();
         let runtime_cfg: RuntimeConfig = config.clone().into();
         let tool_verbosity = runtime_cfg.tool_verbosity;
 
         let db_handle = Arc::clone(fixture_db);
-
-        let processor = config
-            .load_embedding_processor()
-            .expect("load embedding processor");
         let embedding_runtime = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
             Arc::clone(&db_handle.active_embedding_set),
             processor,
@@ -1194,7 +1204,11 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
     }
 
     pub fn spawn_event_bus(self) -> TestRuntime<F, S, Spawned, L, O> {
-        tokio::spawn(run_event_bus(Arc::clone(&self.inner.event_bus)));
+        let event_bus = Arc::clone(&self.inner.event_bus);
+        tokio::spawn(async move {
+            crate::set_global_event_bus(Arc::clone(&event_bus)).await;
+            let _ = run_event_bus(event_bus).await;
+        });
         self._cast()
     }
 
@@ -1224,7 +1238,7 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
 // Back-compat convenience
 // ---------------------------------------------------------------------------
 
-pub(super) fn setup_test_app_from_db(fixture_db: &Arc<ploke_db::Database>) -> Arc<Mutex<App>> {
+pub fn setup_test_app_from_db(fixture_db: &Arc<ploke_db::Database>) -> Arc<Mutex<App>> {
     let pwd = std::env::current_dir().expect("current dir");
     TestRuntime::new(fixture_db)
         .spawn_file_manager()

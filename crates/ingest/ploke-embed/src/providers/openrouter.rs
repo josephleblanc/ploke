@@ -23,6 +23,8 @@ use ploke_llm::router_only::openrouter::embed::{
 };
 use ploke_llm::router_only::openrouter::{OpenRouter, embed::OpenRouterEmbeddingVector};
 
+const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
+
 #[derive(Debug, Clone)]
 struct RetryConfig {
     max_attempts: u32,
@@ -558,7 +560,9 @@ impl OpenRouterBackend {
     fn max_snippet_chars(&self) -> Option<usize> {
         let model_id = self.model.to_string();
         if let Some(tokens) = openrouter_embedding_context_length(&model_id) {
-            return Some((tokens as usize).saturating_mul(4));
+            // Conservative heuristic: use a tighter chars/token estimate than the
+            // OpenRouter context length to reduce oversized snippet payloads.
+            return Some((tokens as usize).saturating_mul(BYTES_PER_TOKEN_ESTIMATE));
         }
         let max_chars = self.dimensions.saturating_mul(24);
         tracing::warn!(

@@ -28,6 +28,8 @@ pub const TOKENS_TARGET: &str = "tokens";
 pub struct LoggingGuards {
     /// Guard for the main app log
     pub main: WorkerGuard,
+    /// Guard for the embed pipeline log
+    pub embed_pipeline: WorkerGuard,
     /// Guard for the API-only log
     pub api: WorkerGuard,
     /// Guard for the chat-only log
@@ -92,6 +94,22 @@ pub fn init_tracing() -> LoggingGuards {
         .with_ansi(false);
 
     let main_layer = common_fmt.with_writer(non_blocking_file);
+
+    // -------- Embed pipeline log (embeddings + indexing requests) --------
+    let embed_pipeline_appender =
+        tracing_appender::rolling::never(&log_dir, format!("embed_pipeline_{run_id}.log"));
+    let (embed_pipeline_non_blocking, embed_pipeline_guard) =
+        tracing_appender::non_blocking(embed_pipeline_appender);
+    let embed_pipeline_layer = fmt::layer()
+        .with_target(true)
+        .with_level(true)
+        .with_file(true)
+        .with_line_number(true)
+        .without_time()
+        .with_thread_ids(false)
+        .with_ansi(false)
+        .with_writer(embed_pipeline_non_blocking);
+    let only_embed_pipeline = filter::Targets::new().with_target("embed-pipeline", Level::TRACE);
 
     // -------- API-only pretty JSON log --------
     // Separate per-run file just for API responses
@@ -199,6 +217,7 @@ pub fn init_tracing() -> LoggingGuards {
         // .with(filter) // env filter for the main layer
         .with(targets)
         .with(main_layer) // normal app logs -> ploke.log
+        .with(embed_pipeline_layer.with_filter(only_embed_pipeline))
         .with(api_layer.with_filter(only_api_json)) // api_json events -> api_responses.log
         .with(chat_layer.with_filter(only_chat)) // chat events -> chat_*.log
         .with(message_update_layer.with_filter(only_message_updates)) // message update events -> message_update_*.log
@@ -209,6 +228,7 @@ pub fn init_tracing() -> LoggingGuards {
 
     LoggingGuards {
         main: main_guard,
+        embed_pipeline: embed_pipeline_guard,
         api: api_guard,
         chat: chat_guard,
         message_update: message_update_guard,

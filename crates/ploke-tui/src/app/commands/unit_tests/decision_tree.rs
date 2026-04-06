@@ -41,9 +41,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::app::commands::unit_tests::harness::{
-    DebugStateCommand, TestRuntime, ValidationProbeEvent,
-};
+use crate::app::commands::harness::{DebugStateCommand, TestRuntime, ValidationProbeEvent};
 use crate::app::commands::{exec, parser};
 use crate::app_state::core::WorkspaceFreshness;
 use crate::test_support::config_home_lock;

@@ -2091,6 +2091,69 @@ impl App {
         commands::exec::execute(self, command);
     }
 
+    #[cfg(any(test, feature = "test_harness"))]
+    pub async fn run_command_text(&mut self, command_text: &str) {
+        self.input_buffer = command_text.to_string();
+        self.execute_command();
+        self.pump_pending_events().await;
+    }
+
+    #[cfg(any(test, feature = "test_harness"))]
+    pub async fn pump_pending_events(&mut self) -> usize {
+        use tokio::sync::broadcast::error::TryRecvError;
+
+        let mut handled = 0usize;
+        loop {
+            let mut progressed = false;
+
+            loop {
+                match self.event_rx.try_recv() {
+                    Ok(event) => {
+                        events::handle_event(self, event).await;
+                        self.needs_redraw = true;
+                        handled += 1;
+                        progressed = true;
+                    }
+                    Err(TryRecvError::Lagged(_)) => {
+                        progressed = true;
+                        continue;
+                    }
+                    Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+                }
+            }
+
+            loop {
+                match self.bg_event_rx.try_recv() {
+                    Ok(event) => {
+                        events::handle_event(self, event).await;
+                        self.needs_redraw = true;
+                        handled += 1;
+                        progressed = true;
+                    }
+                    Err(TryRecvError::Lagged(_)) => {
+                        progressed = true;
+                        continue;
+                    }
+                    Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+                }
+            }
+
+            if !progressed {
+                break;
+            }
+        }
+
+        handled
+    }
+
+    #[cfg(any(test, feature = "test_harness"))]
+    pub fn test_embedding_browser_item_ids(&self) -> Vec<ModelId> {
+        self.overlay_manager
+            .embedding_browser_state()
+            .map(|eb| eb.items.iter().map(|item| item.id.clone()).collect())
+            .unwrap_or_default()
+    }
+
     fn show_command_help(&self) {
         self.send_cmd(StateCommand::AddMessageImmediate {
             msg: commands::help_commands_markdown(),

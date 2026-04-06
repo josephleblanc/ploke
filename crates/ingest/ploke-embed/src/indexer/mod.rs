@@ -745,6 +745,27 @@ impl IndexerTask {
         // ANCHOR_END: next_batch_primary_nodes
     }
 
+    /// Advance the internal batch cursor to `batch_number` and return that batch.
+    ///
+    /// `batch_number` is 1-based: `1` returns the first batch, `2` the second, etc.
+    pub async fn replay_batch(
+        &self,
+        batch_number: usize,
+    ) -> Result<Option<Vec<TypedEmbedData>>, EmbedError> {
+        if batch_number == 0 {
+            return Ok(None);
+        }
+
+        let num_not_proc = self.db.count_unembedded_nonfiles()?;
+        for _ in 1..batch_number {
+            if self.next_batch(num_not_proc).await?.is_none() {
+                return Ok(None);
+            }
+        }
+
+        self.next_batch(num_not_proc).await
+    }
+
     #[instrument(skip_all, fields(batch_size))]
     pub async fn process_batch(
         &self,

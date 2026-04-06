@@ -1,6 +1,9 @@
 pub(crate) mod exec;
 #[cfg(feature = "live_api_tests")]
 mod exec_real_tools_live_tests;
+#[cfg(any(test, feature = "test_harness"))]
+#[path = "unit_tests/harness.rs"]
+pub mod harness;
 pub mod parser;
 #[cfg(test)]
 mod unit_tests;

@@ -36,6 +36,7 @@ members = [
     "crates/ingest/ploke-mbe",
     "crates/ingest/ploke-transform",
     "crates/ingest/ploke-embed",
+    "crates/ploke-eval",
     "crates/ploke-db",
     "crates/common",
     "crates/test-utils",

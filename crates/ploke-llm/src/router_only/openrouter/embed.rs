@@ -100,6 +100,29 @@ impl super::OpenRouter {
         }
 
         let url = &env.embeddings_url;
+        let input_len = match &req.input {
+            crate::embeddings::EmbeddingInput::Single(_) => 1,
+            crate::embeddings::EmbeddingInput::Batch(items) => items.len(),
+        };
+        tracing::info!(
+            target: "embed-pipeline",
+            model = %req.model,
+            input_len,
+            encoding_format = ?req.encoding_format,
+            request_dimensions = ?req.router.dimensions,
+            request_router = ?req.router,
+            url = %url,
+            "sending OpenRouter embeddings request"
+        );
+        if tracing::enabled!(tracing::Level::TRACE) {
+            if let Ok(serialized) = serde_json::to_string(req) {
+                tracing::trace!(
+                    target: "embed-pipeline",
+                    request_json = %snippet_lossy(serialized.as_bytes(), 2048),
+                    "OpenRouter embeddings request body"
+                );
+            }
+        }
         let resp = client
             .post(url)
             .bearer_auth(&env.api_key)
@@ -130,6 +153,15 @@ impl super::OpenRouter {
                 .and_then(|s| s.parse::<u64>().ok())
                 .map(Duration::from_secs);
             let body = resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                target: "embed-pipeline",
+                status = %status,
+                model = %req.model,
+                url = %url,
+                request_id = ?request_id,
+                body_snippet = %snippet_lossy(body.as_bytes(), 512),
+                "OpenRouter embeddings request failed"
+            );
             let err = OpenRouterEmbeddingError::from_status(
                 status,
                 body,
@@ -170,6 +202,14 @@ impl super::OpenRouter {
             }
         })?;
 
+        tracing::info!(
+            target: "embed-pipeline",
+            model = %req.model,
+            url = %url,
+            response_model = %parsed.model,
+            response_count = parsed.data.len(),
+            "received OpenRouter embeddings response"
+        );
         Ok(parsed)
     }
 }

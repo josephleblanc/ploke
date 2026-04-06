@@ -34,6 +34,9 @@ mod config_overlay_message_verbosity;
 #[path = "integration/editor_command.rs"]
 mod editor_command;
 
+#[path = "integration/eval_embedding_selection_live.rs"]
+mod eval_embedding_selection_live;
+
 #[path = "integration/get_code_edges_regression.rs"]
 mod get_code_edges_regression;
 

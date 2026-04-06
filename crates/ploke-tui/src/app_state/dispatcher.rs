@@ -12,7 +12,7 @@ use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
 use ploke_db::multi_embedding::db_ext::EmbeddingExt;
-use ploke_embed::config::OpenRouterConfig;
+use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
 use ploke_llm::embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddings};
@@ -35,6 +35,31 @@ use crate::AppEvent;
 use crate::chat_history::MessageKind;
 use crate::error::{EventCtx, Message, UiError};
 use uuid::Uuid;
+
+fn openrouter_embedding_config(model: &str, dims: usize) -> OpenRouterConfig {
+    if model == "mistralai/codestral-embed-2505" {
+        OpenRouterConfig {
+            model: model.to_string(),
+            dimensions: Some(dims),
+            request_dimensions: None,
+            snippet_batch_size: 100,
+            max_in_flight: 2,
+            requests_per_second: None,
+            max_attempts: 5,
+            initial_backoff_ms: 250,
+            max_backoff_ms: 10000,
+            input_type: Some("code-snippet".into()),
+            timeout_secs: 30,
+            truncate_policy: TruncatePolicy::Truncate,
+        }
+    } else {
+        OpenRouterConfig {
+            model: model.to_string(),
+            dimensions: Some(dims),
+            ..Default::default()
+        }
+    }
+}
 
 /// The central command dispatcher for AppState.
 ///
@@ -497,11 +522,7 @@ pub async fn state_manager(
                 let embedding_set = EmbeddingSet::new(emb_provider, emb_model_id.clone(), shape);
                 // Rebuild or reuse embedder based on provider selection.
                 let new_embedder = if provider.as_ref().contains("openrouter") {
-                    let or_cfg = OpenRouterConfig {
-                        model: m.clone(),
-                        dimensions: Some(dims as usize),
-                        ..Default::default()
-                    };
+                    let or_cfg = openrouter_embedding_config(&m, dims as usize);
                     match OpenRouterBackend::new(&or_cfg) {
                         Ok(backend) => Arc::new(EmbeddingProcessor::new(
                             EmbeddingSource::OpenRouter(backend),

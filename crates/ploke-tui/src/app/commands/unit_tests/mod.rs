@@ -16,8 +16,8 @@ use tokio::time::{Duration, timeout};
 
 use crate::app::App;
 use crate::app::commands::exec::execute;
+use crate::app::commands::harness::{TestRuntime, setup_test_app_from_db};
 use crate::app::commands::parser::Command;
-use crate::app::commands::unit_tests::harness::{TestRuntime, setup_test_app_from_db};
 use crate::user_config::CommandStyle;
 
 lazy_static! {
@@ -75,7 +75,6 @@ impl Drop for OpenRouterApiKeyGuard {
 }
 
 mod decision_tree;
-mod harness;
 
 // ============================================================================
 // TEST CASE 1: /index with no db loaded at workspace root
