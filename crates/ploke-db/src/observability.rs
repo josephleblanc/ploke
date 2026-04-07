@@ -1,6 +1,10 @@
 // WARN: Note that none of these database methods have been tested, and must be validated.
 // - This is difficult without having a clear tool calling implementation, wait on further
 // implementation of observability until we have working tools.
+// - update (2026-04-07): We now have a working tool system, and it would be good to integrate this
+// system into the rest of the application. Some of how to do that would be:
+//  - moving the db queries into ploke-db
+//  - reviewing the query construction, mostly notional now
 
 use std::{collections::BTreeMap, sync::Arc};
 
