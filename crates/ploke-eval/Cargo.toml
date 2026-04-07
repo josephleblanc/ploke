@@ -25,6 +25,7 @@ chrono = { workspace = true }
 tempfile = "3.8"
 uuid = { workspace = true, features = ["serde"] }
 sha2 = "0.10"
+regex = "1"
 
 [[bin]]
 name = "ploke-eval"

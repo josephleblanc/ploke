@@ -75,6 +75,7 @@ string_enum_with_unknown!(
         Reasoning => "reasoning",
         RepetitionPenalty => "repetition_penalty",
         ResponseFormat => "response_format",
+        ParallelToolCalls => "parallel_tool_calls",
         Seed => "seed",
         Stop => "stop",
         StructuredOutputs => "structured_outputs",
@@ -86,7 +87,8 @@ string_enum_with_unknown!(
         TopLogprobs => "top_logprobs",
         TopP => "top_p",
         WebSearchOptions => "web_search_options",
-        Verbosity => "verbosity"
+        Verbosity => "verbosity",
+        ReasoningEffort => "reasoning_effort"
     }
 );
 
@@ -143,7 +145,19 @@ string_enum_with_unknown!(
     {
         TextToText => "text->text",
         TextImageToText => "text+image->text",
+        TextImageFileToText => "text+image+file->text",
+        TextImageVideoToText => "text+image+video->text",
+        TextAudioToText => "text+audio->text",
+        TextImageFileVideoToText => "text+image+file+video->text",
+        TextImageFileAudioToText => "text+image+file+audio->text",
+        TextImageAudioVideoToText => "text+image+audio+video->text",
+        TextImageToTextAudio => "text+image->text+audio",
+        TextAudioToTextAudio => "text+audio->text+audio",
         TextImageToTextImage => "text+image->text+image",
+        TextFileToText => "text+file->text",
+        TextImageFileToTextImage => "text+image+file->text+image",
+        TextImageFileAudioVideoToText => "text+image+file+audio+video->text",
+        TextImageFileAudioVideoToTextImage => "text+image+file+audio+video->text+image",
         TextToEmbeddings => "text->embeddings"
     }
 );
@@ -155,6 +169,7 @@ string_enum_with_unknown!(
         Claude => "Claude",
         Cohere => "Cohere",
         DeepSeek => "DeepSeek",
+        Gemma => "Gemma",
         GPT => "GPT",
         Gemini => "Gemini",
         Grok => "Grok",

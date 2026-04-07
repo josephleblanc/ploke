@@ -4672,6 +4672,7 @@ dependencies = [
  "ploke-embed",
  "ploke-llm",
  "ploke-tui",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
