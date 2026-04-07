@@ -255,6 +255,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 SystemEvent::ToolCallRequested { .. } => {}
                 SystemEvent::ToolCallCompleted { .. } => {}
                 SystemEvent::ToolCallFailed { .. } => {}
+                SystemEvent::ChatTurnFinished { .. } => {}
                 #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
                 SystemEvent::TestHarnessApiResponse { .. } => {
                     // Test harness API response - handled by test subscribers, no UI action needed

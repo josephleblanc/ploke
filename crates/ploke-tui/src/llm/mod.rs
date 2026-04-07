@@ -1,6 +1,10 @@
 // pub(crate) mod error;
 pub(crate) mod manager;
-pub(crate) use manager::{ChatEvt, ChatHistoryTarget, LlmEvent};
+pub(crate) use manager::ChatHistoryTarget;
+pub use manager::events::{
+    ContextPlan, ContextPlanExcludedMessage, ContextPlanMessage, ContextPlanRagPart,
+};
+pub use manager::{ChatEvt, LlmEvent, RequestMessage};
 
 pub(crate) use ploke_llm::error;
 pub(crate) use ploke_llm::registry;

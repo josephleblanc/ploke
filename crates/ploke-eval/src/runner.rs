@@ -10,17 +10,19 @@ use ploke_core::embeddings::{
 use ploke_db::Database;
 use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
-use ploke_embed::indexer::{
-    EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus,
-};
+use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
 use ploke_tui::AppEvent;
 use ploke_tui::app::App;
+use ploke_tui::app::commands::harness::TestAppAccessor;
 use ploke_tui::app::commands::harness::TestRuntime;
 use ploke_tui::app_state::AppState;
+use ploke_tui::app_state::core::{DiffPreview, EditProposalStatus};
+use ploke_tui::app_state::events::SystemEvent;
 use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, sleep};
 use tracing::info;
 
@@ -30,6 +32,12 @@ const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
 const OPENROUTER_CODESTRAL_DIMS: usize = 1536;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunMsbAgentSingleRequest {
+    pub run_manifest: PathBuf,
+    pub index_debug_snapshots: bool,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMsbSingleRequest {
@@ -53,6 +61,13 @@ pub struct RunArtifactPaths {
     pub indexing_checkpoint_db: PathBuf,
     pub indexing_failure_db: PathBuf,
     pub snapshot_status: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunArtifactPaths {
+    pub base: RunArtifactPaths,
+    pub turn_trace: PathBuf,
+    pub turn_summary: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +106,209 @@ pub struct ReplayBatchArtifact {
     pub run_manifest: PathBuf,
     pub batch_file: PathBuf,
     pub batch: Vec<ploke_db::TypedEmbedData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolRequestRecord {
+    pub request_id: String,
+    pub parent_id: String,
+    pub call_id: String,
+    pub tool: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCompletedRecord {
+    pub request_id: String,
+    pub parent_id: String,
+    pub call_id: String,
+    pub tool: String,
+    pub content: String,
+    pub ui_payload: Option<ploke_tui::tools::ToolUiPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolFailedRecord {
+    pub request_id: String,
+    pub parent_id: String,
+    pub call_id: String,
+    pub tool: Option<String>,
+    pub error: String,
+    pub ui_payload: Option<ploke_tui::tools::ToolUiPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageSnapshotRecord {
+    pub id: String,
+    pub kind: String,
+    pub status: String,
+    pub tool_call_id: Option<String>,
+    pub content_len: usize,
+    pub content_preview: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnFinishedRecord {
+    pub session_id: String,
+    pub request_id: String,
+    pub parent_id: String,
+    pub assistant_message_id: String,
+    pub outcome: String,
+    pub error_id: Option<String>,
+    pub summary: String,
+    pub attempts: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ObservedTurnEvent {
+    DebugCommand(String),
+    LlmEvent(String),
+    ToolRequested(ToolRequestRecord),
+    ToolCompleted(ToolCompletedRecord),
+    ToolFailed(ToolFailedRecord),
+    MessageUpdated(MessageSnapshotRecord),
+    TurnFinished(TurnFinishedRecord),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProposalSnapshotRecord {
+    pub request_id: String,
+    pub call_id: String,
+    pub status: String,
+    pub files: Vec<String>,
+    pub preview_mode: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchArtifact {
+    pub edit_proposals: Vec<ProposalSnapshotRecord>,
+    pub create_proposals: Vec<ProposalSnapshotRecord>,
+    pub applied: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTurnArtifact {
+    pub task_id: String,
+    pub issue_prompt: String,
+    pub user_message_id: String,
+    pub events: Vec<ObservedTurnEvent>,
+    pub prompt_debug: Option<String>,
+    pub terminal_record: Option<TurnFinishedRecord>,
+    pub final_assistant_message: Option<MessageSnapshotRecord>,
+    pub patch_artifact: PatchArtifact,
+}
+
+fn truncate_preview(input: &str, max_chars: usize) -> String {
+    let total = input.chars().count();
+    if total <= max_chars {
+        return input.to_string();
+    }
+    let truncated: String = input.chars().take(max_chars).collect();
+    format!("{truncated}...<truncated {} chars>", total - max_chars)
+}
+
+fn build_agent_issue_prompt(prepared: &PreparedSingleRun) -> String {
+    let mut out = String::new();
+    out.push_str("Solve the following benchmark issue.\n\n");
+    out.push_str(&format!("Task id: {}\n", prepared.task_id));
+    out.push_str(&format!(
+        "Repository root: {}\n",
+        prepared.repo_root.display()
+    ));
+    if let Some(base_sha) = &prepared.base_sha {
+        out.push_str(&format!("Base SHA: {}\n", base_sha));
+    }
+    if let Some(title) = &prepared.issue.title {
+        out.push_str(&format!("Title: {}\n", title));
+    }
+    out.push('\n');
+    if let Some(body) = &prepared.issue.body {
+        out.push_str(body.trim());
+        out.push('\n');
+    }
+    out.push_str("\nUse the repository tools to inspect the code, make the minimal fix, and finish by producing the patch output.");
+    out
+}
+
+fn snapshot_message(
+    state: &Arc<AppState>,
+    message_event: ploke_tui::app_state::events::MessageUpdatedEvent,
+) -> Option<MessageSnapshotRecord> {
+    let chat = state.chat.0.try_read().ok()?;
+    let msg = chat.messages.get(&message_event.0)?;
+    Some(MessageSnapshotRecord {
+        id: message_event.0.to_string(),
+        kind: msg.kind.to_string(),
+        status: msg.status.to_string(),
+        tool_call_id: msg.tool_call_id.as_ref().map(ToString::to_string),
+        content_len: msg.content.chars().count(),
+        content_preview: truncate_preview(&msg.content, 1_500),
+    })
+}
+
+async fn collect_patch_artifact(state: &Arc<AppState>) -> PatchArtifact {
+    let edit_proposals = {
+        let proposals = state.proposals.read().await;
+        proposals
+            .values()
+            .map(|proposal| ProposalSnapshotRecord {
+                request_id: proposal.request_id.to_string(),
+                call_id: proposal.call_id.to_string(),
+                status: proposal_status_label(&proposal.status).to_string(),
+                files: proposal
+                    .files
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect(),
+                preview_mode: match &proposal.preview {
+                    DiffPreview::CodeBlocks { .. } => "codeblock".to_string(),
+                    DiffPreview::UnifiedDiff { .. } => "diff".to_string(),
+                },
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let create_proposals = {
+        let proposals = state.create_proposals.read().await;
+        proposals
+            .values()
+            .map(|proposal| ProposalSnapshotRecord {
+                request_id: proposal.request_id.to_string(),
+                call_id: proposal.call_id.to_string(),
+                status: proposal_status_label(&proposal.status).to_string(),
+                files: proposal
+                    .files
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect(),
+                preview_mode: match &proposal.preview {
+                    DiffPreview::CodeBlocks { .. } => "codeblock".to_string(),
+                    DiffPreview::UnifiedDiff { .. } => "diff".to_string(),
+                },
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let applied = !edit_proposals.is_empty()
+        && edit_proposals.iter().all(|p| p.status == "Applied")
+        && create_proposals.iter().all(|p| p.status == "Applied");
+
+    PatchArtifact {
+        edit_proposals,
+        create_proposals,
+        applied,
+    }
+}
+
+fn proposal_status_label(status: &EditProposalStatus) -> &'static str {
+    match status {
+        EditProposalStatus::Pending => "Pending",
+        EditProposalStatus::Approved => "Approved",
+        EditProposalStatus::Denied => "Denied",
+        EditProposalStatus::Applied => "Applied",
+        EditProposalStatus::Failed(_) => "Failed",
+        EditProposalStatus::Stale(_) => "Stale",
+    }
 }
 
 impl RunMsbSingleRequest {
@@ -168,14 +386,20 @@ impl RunMsbSingleRequest {
         let currently_active_set: EmbeddingSet = runtime_db
             .with_active_set(|set| set.clone())
             .expect("active embedding set");
-        info!(?currently_active_set, "active embedding set before activation");
+        info!(
+            ?currently_active_set,
+            "active embedding set before activation"
+        );
 
         activate_codestral_runtime(&state)?;
 
         let currently_active_set: EmbeddingSet = runtime_db
             .with_active_set(|set| set.clone())
             .expect("active embedding set");
-        info!(?currently_active_set, "active embedding set after activation");
+        info!(
+            ?currently_active_set,
+            "active embedding set after activation"
+        );
         steps.push("activate_codestral_embedding_set".to_string());
         let mut app = runtime
             .into_app_with_state_pwd(prepared.repo_root.clone())
@@ -215,8 +439,12 @@ impl RunMsbSingleRequest {
             snapshot = %snapshot_file.display(),
             "runner phase: persisting final eval snapshot"
         );
-        persist_db_snapshot(Arc::clone(&state.db), snapshot_file.clone(), "final snapshot")
-            .await?;
+        persist_db_snapshot(
+            Arc::clone(&state.db),
+            snapshot_file.clone(),
+            "final snapshot",
+        )
+        .await?;
         steps.push("snapshot_completed".to_string());
         info!(snapshot_file = %snapshot_file.display(), "runner phase: snapshot completed");
 
@@ -258,6 +486,214 @@ impl RunMsbSingleRequest {
     }
 }
 
+impl RunMsbAgentSingleRequest {
+    pub async fn run(self) -> Result<AgentRunArtifactPaths, PrepareError> {
+        let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
+
+        fs::create_dir_all(&prepared.output_dir).map_err(|source| {
+            PrepareError::CreateOutputDir {
+                path: prepared.output_dir.clone(),
+                source,
+            }
+        })?;
+
+        let execution_log_path = prepared.output_dir.join("execution-log.json");
+        let repo_state_path = prepared.output_dir.join("repo-state.json");
+        let indexing_status_path = prepared.output_dir.join("indexing-status.json");
+        let snapshot_status_path = prepared.output_dir.join("snapshot-status.json");
+        let indexing_checkpoint_db = prepared.output_dir.join("indexing-checkpoint.db");
+        let indexing_failure_db = prepared.output_dir.join("indexing-failure.db");
+        let turn_trace_path = prepared.output_dir.join("agent-turn-trace.json");
+        let turn_summary_path = prepared.output_dir.join("agent-turn-summary.json");
+
+        let mut steps = vec!["load_manifest".to_string()];
+        checkout_repo_to_base(&prepared.repo_root, prepared.base_sha.as_deref())?;
+        steps.push("checkout_base_sha".to_string());
+
+        let repo_state = RepoStateArtifact {
+            repo_root: prepared.repo_root.clone(),
+            requested_base_sha: prepared.base_sha.clone(),
+            checked_out_head_sha: git_stdout(
+                &prepared.repo_root,
+                &["rev-parse", "HEAD"],
+                "git rev-parse HEAD",
+            )?
+            .map(|s| s.trim().to_string()),
+            git_status_porcelain: git_stdout(
+                &prepared.repo_root,
+                &["status", "--short"],
+                "git status --short",
+            )?
+            .unwrap_or_default(),
+        };
+        write_json(&repo_state_path, &repo_state)?;
+        steps.push("write_repo_state".to_string());
+
+        let runtime_db = init_runtime_db()?;
+        steps.push("init_runtime_db".to_string());
+
+        let config_home = prepared.output_dir.join("config");
+        fs::create_dir_all(&config_home).map_err(|source| PrepareError::CreateOutputDir {
+            path: config_home.clone(),
+            source,
+        })?;
+        let _config_guard = XdgConfigHomeGuard::set_to(&config_home);
+        steps.push("sandbox_config_home".to_string());
+
+        let embedding_processor = codestral_embedding_processor()?;
+        steps.push("init_codestral_embedder".to_string());
+
+        let runtime = TestRuntime::new_with_embedding_processor(&runtime_db, embedding_processor)
+            .spawn_file_manager()
+            .spawn_state_manager()
+            .spawn_event_bus()
+            .spawn_llm_manager()
+            .spawn_observability();
+        let events = runtime.events_builder().build_all();
+        let mut realtime_rx = events.event_bus_events.realtime_tx_rx;
+        let mut background_rx = events.event_bus_events.background_tx_rx;
+        let mut index_rx = Arc::try_unwrap(events.event_bus_events.index_tx_rx).map_err(|_| {
+            PrepareError::DatabaseSetup {
+                phase: "subscribe_index_status",
+                detail: "index receiver unexpectedly shared".to_string(),
+            }
+        })?;
+        let mut debug_rx =
+            events
+                .app_actor_events
+                .debug_string_rx
+                .ok_or_else(|| PrepareError::DatabaseSetup {
+                    phase: "subscribe_debug_string",
+                    detail: "missing debug string receiver".to_string(),
+                })?;
+        let state = runtime.state_arc();
+        {
+            let mut cfg = state.config.write().await;
+            cfg.editing.auto_confirm_edits = true;
+        }
+        info!("runner phase: inspect active embedding set before activation");
+        let currently_active_set: EmbeddingSet = runtime_db
+            .with_active_set(|set| set.clone())
+            .expect("active embedding set");
+        info!(
+            ?currently_active_set,
+            "active embedding set before activation"
+        );
+
+        activate_codestral_runtime(&state)?;
+
+        let currently_active_set: EmbeddingSet = runtime_db
+            .with_active_set(|set| set.clone())
+            .expect("active embedding set");
+        info!(
+            ?currently_active_set,
+            "active embedding set after activation"
+        );
+        steps.push("activate_codestral_embedding_set".to_string());
+        let mut app = runtime
+            .into_app_with_state_pwd(prepared.repo_root.clone())
+            .await;
+        steps.push("bootstrap_headless_runtime".to_string());
+
+        info!(task_id = %prepared.task_id, repo_root = %prepared.repo_root.display(), "runner phase: start indexing");
+        app.run_command_text("/index").await;
+        steps.push("run_index_command".to_string());
+
+        info!("runner phase: waiting for indexing completion");
+        wait_for_indexing_completion(
+            &mut app,
+            &mut realtime_rx,
+            &mut background_rx,
+            &mut index_rx,
+            Arc::clone(&state.db),
+            indexing_checkpoint_db.clone(),
+            indexing_failure_db.clone(),
+            self.index_debug_snapshots,
+        )
+        .await?;
+        steps.push("indexing_completed".to_string());
+        info!("runner phase: indexing completed");
+        app.pump_pending_events().await;
+        steps.push("pump_post_index_events".to_string());
+
+        let indexing_status = IndexingStatusArtifact {
+            status: "completed".to_string(),
+            detail: "Indexing completed through the full app command path.".to_string(),
+        };
+        write_json(&indexing_status_path, &indexing_status)?;
+        steps.push("write_indexing_status".to_string());
+
+        let turn_artifact = run_benchmark_turn(
+            &prepared,
+            &state,
+            &mut app,
+            &mut debug_rx,
+            &mut realtime_rx,
+            &mut background_rx,
+            &turn_trace_path,
+        )
+        .await?;
+        write_json(&turn_summary_path, &turn_artifact)?;
+        steps.push("benchmark_turn_completed".to_string());
+
+        let snapshot_file = prepared.output_dir.join("final-snapshot.db");
+        info!(
+            snapshot = %snapshot_file.display(),
+            "runner phase: persisting final eval snapshot"
+        );
+        persist_db_snapshot(
+            Arc::clone(&state.db),
+            snapshot_file.clone(),
+            "final snapshot",
+        )
+        .await?;
+        steps.push("snapshot_completed".to_string());
+        info!(snapshot_file = %snapshot_file.display(), "runner phase: snapshot completed");
+
+        let snapshot_status = SnapshotStatusArtifact {
+            status: "completed".to_string(),
+            snapshot_file: Some(snapshot_file.clone()),
+            registry_file: snapshot_file.clone(),
+            config_home,
+        };
+        write_json(&snapshot_status_path, &snapshot_status)?;
+        steps.push("write_snapshot_status".to_string());
+
+        let execution_log = ExecutionLog {
+            task_id: prepared.task_id,
+            repo_root: prepared.repo_root,
+            output_dir: prepared.output_dir,
+            steps,
+        };
+        write_json(&execution_log_path, &execution_log)?;
+        info!(
+            execution_log = %execution_log_path.display(),
+            repo_state = %repo_state_path.display(),
+            indexing_status = %indexing_status_path.display(),
+            indexing_checkpoint_db = %indexing_checkpoint_db.display(),
+            indexing_failure_db = %indexing_failure_db.display(),
+            snapshot_status = %snapshot_status_path.display(),
+            turn_trace = %turn_trace_path.display(),
+            turn_summary = %turn_summary_path.display(),
+            "runner phase: wrote run artifacts"
+        );
+
+        Ok(AgentRunArtifactPaths {
+            base: RunArtifactPaths {
+                run_manifest: manifest_path,
+                execution_log: execution_log_path,
+                repo_state: repo_state_path,
+                indexing_status: indexing_status_path,
+                indexing_checkpoint_db,
+                indexing_failure_db,
+                snapshot_status: snapshot_status_path,
+            },
+            turn_trace: turn_trace_path,
+            turn_summary: turn_summary_path,
+        })
+    }
+}
+
 impl ReplayMsbBatchRequest {
     pub async fn run(self) -> Result<PathBuf, PrepareError> {
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
@@ -267,14 +703,15 @@ impl ReplayMsbBatchRequest {
             .output_dir
             .join(format!("replay-batch-{:03}.json", self.batch_number));
 
-        let indexer_task = state
-            .indexer_task
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| PrepareError::DatabaseSetup {
-                phase: "replay_batch_indexer_task",
-                detail: "missing indexer task in app state".to_string(),
-            })?;
+        let indexer_task =
+            state
+                .indexer_task
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| PrepareError::DatabaseSetup {
+                    phase: "replay_batch_indexer_task",
+                    detail: "missing indexer task in app state".to_string(),
+                })?;
 
         let batch = indexer_task
             .replay_batch(self.batch_number)
@@ -308,9 +745,7 @@ impl ReplayMsbBatchRequest {
             .process_batch(batch, |current, total| {
                 info!(
                     batch_number = self.batch_number,
-                    current,
-                    total,
-                    "replay batch progress"
+                    current, total, "replay batch progress"
                 )
             })
             .await
@@ -384,9 +819,11 @@ async fn prepare_workspace_for_replay(
             detail: err.to_string(),
         })?;
 
-    run_parse_resolved(Arc::clone(&state.db), &resolved).map_err(|err| PrepareError::DatabaseSetup {
-        phase: "replay_run_parse_resolved",
-        detail: err.to_string(),
+    run_parse_resolved(Arc::clone(&state.db), &resolved).map_err(|err| {
+        PrepareError::DatabaseSetup {
+            phase: "replay_run_parse_resolved",
+            detail: err.to_string(),
+        }
     })?;
 
     let outcome = state
@@ -501,7 +938,10 @@ async fn wait_for_indexing_completion(
         }
 
         if last_heartbeat.elapsed() >= Duration::from_secs(WAIT_HEARTBEAT_SECS) {
-            info!(remaining_secs = remaining.as_secs(), "waiting for indexing completion");
+            info!(
+                remaining_secs = remaining.as_secs(),
+                "waiting for indexing completion"
+            );
             last_heartbeat = Instant::now();
         }
 
@@ -716,6 +1156,261 @@ fn run_git(
     }
 }
 
+async fn run_benchmark_turn(
+    prepared: &PreparedSingleRun,
+    state: &Arc<AppState>,
+    app: &mut App,
+    debug_rx: &mut mpsc::Receiver<ploke_tui::app::commands::harness::DebugStateCommand>,
+    realtime_rx: &mut broadcast::Receiver<AppEvent>,
+    background_rx: &mut broadcast::Receiver<AppEvent>,
+    trace_path: &Path,
+) -> Result<AgentTurnArtifact, PrepareError> {
+    let deadline = Instant::now() + Duration::from_secs(prepared.budget.wall_clock_secs as u64);
+    let issue_prompt = build_agent_issue_prompt(prepared);
+    let user_message_id = submit_benchmark_prompt(app, &issue_prompt).await?;
+    let mut artifact = AgentTurnArtifact {
+        task_id: prepared.task_id.clone(),
+        issue_prompt,
+        user_message_id,
+        events: Vec::new(),
+        prompt_debug: None,
+        terminal_record: None,
+        final_assistant_message: None,
+        patch_artifact: PatchArtifact {
+            edit_proposals: Vec::new(),
+            create_proposals: Vec::new(),
+            applied: false,
+        },
+    };
+    write_json(trace_path, &artifact)?;
+
+    loop {
+        app.pump_pending_events().await;
+
+        if artifact.terminal_record.is_some() {
+            break;
+        }
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            artifact.patch_artifact = collect_patch_artifact(state).await;
+            write_json(trace_path, &artifact)?;
+            return Err(PrepareError::Timeout {
+                phase: "benchmark_turn",
+                secs: prepared.budget.wall_clock_secs as u64,
+            });
+        }
+
+        let wait_for = remaining.min(Duration::from_millis(250));
+        tokio::select! {
+            debug = debug_rx.recv() => {
+                match debug {
+                    Some(debug) => {
+                        artifact.events.push(ObservedTurnEvent::DebugCommand(debug.as_str().to_string()));
+                        write_json(trace_path, &artifact)?;
+                    }
+                    None => {
+                        return Err(PrepareError::EventStreamClosed { phase: "benchmark_turn_debug" });
+                    }
+                }
+            }
+            realtime = realtime_rx.recv() => {
+                match realtime {
+                    Ok(event) => {
+                        handle_benchmark_event(&mut artifact, state, event).await;
+                        write_json(trace_path, &artifact)?;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        return Err(PrepareError::EventStreamClosed { phase: "benchmark_turn_realtime" });
+                    }
+                }
+            }
+            background = background_rx.recv() => {
+                match background {
+                    Ok(event) => {
+                        handle_benchmark_event(&mut artifact, state, event).await;
+                        write_json(trace_path, &artifact)?;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        return Err(PrepareError::EventStreamClosed { phase: "benchmark_turn_background" });
+                    }
+                }
+            }
+            _ = sleep(wait_for) => {
+                continue;
+            }
+        }
+    }
+
+    app.pump_pending_events().await;
+    artifact.final_assistant_message = None;
+    artifact.patch_artifact = collect_patch_artifact(state).await;
+    write_json(trace_path, &artifact)?;
+    Ok(artifact)
+}
+
+async fn handle_benchmark_event(
+    artifact: &mut AgentTurnArtifact,
+    state: &Arc<AppState>,
+    event: AppEvent,
+) {
+    match event {
+        AppEvent::Llm(event) => {
+            let rendered = format!("{event:?}");
+            if rendered.contains("PromptConstructed") {
+                artifact.prompt_debug = Some(rendered.clone());
+            }
+            artifact.events.push(ObservedTurnEvent::LlmEvent(rendered));
+        }
+        AppEvent::System(SystemEvent::ToolCallRequested {
+            request_id,
+            parent_id,
+            tool_call,
+        }) => {
+            let record = ToolRequestRecord {
+                request_id: request_id.to_string(),
+                parent_id: parent_id.to_string(),
+                call_id: tool_call.call_id.to_string(),
+                tool: tool_call.function.name.as_str().to_string(),
+                arguments: tool_call.function.arguments.clone(),
+            };
+            artifact
+                .events
+                .push(ObservedTurnEvent::ToolRequested(record));
+        }
+        AppEvent::System(SystemEvent::ToolCallCompleted {
+            request_id,
+            parent_id,
+            call_id,
+            content,
+            ui_payload,
+        }) => {
+            let tool = artifact
+                .events
+                .iter()
+                .rev()
+                .find_map(|ev| match ev {
+                    ObservedTurnEvent::ToolRequested(req) if req.call_id == call_id.to_string() => {
+                        Some(req.tool.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            let record = ToolCompletedRecord {
+                request_id: request_id.to_string(),
+                parent_id: parent_id.to_string(),
+                call_id: call_id.to_string(),
+                tool,
+                content,
+                ui_payload,
+            };
+            artifact
+                .events
+                .push(ObservedTurnEvent::ToolCompleted(record));
+        }
+        AppEvent::System(SystemEvent::ToolCallFailed {
+            request_id,
+            parent_id,
+            call_id,
+            error,
+            ui_payload,
+        }) => {
+            let tool = artifact.events.iter().rev().find_map(|ev| match ev {
+                ObservedTurnEvent::ToolRequested(req) if req.call_id == call_id.to_string() => {
+                    Some(req.tool.clone())
+                }
+                _ => None,
+            });
+            let record = ToolFailedRecord {
+                request_id: request_id.to_string(),
+                parent_id: parent_id.to_string(),
+                call_id: call_id.to_string(),
+                tool,
+                error,
+                ui_payload,
+            };
+            artifact.events.push(ObservedTurnEvent::ToolFailed(record));
+        }
+        AppEvent::MessageUpdated(message_event) => {
+            if let Some(snapshot) = snapshot_message(state, message_event) {
+                artifact
+                    .events
+                    .push(ObservedTurnEvent::MessageUpdated(snapshot));
+            }
+        }
+        AppEvent::System(SystemEvent::ChatTurnFinished {
+            session_id,
+            request_id,
+            parent_id,
+            assistant_message_id,
+            outcome,
+            error_id,
+            summary,
+            attempts,
+            ..
+        }) => {
+            let record = TurnFinishedRecord {
+                session_id: session_id.to_string(),
+                request_id: request_id.to_string(),
+                parent_id: parent_id.to_string(),
+                assistant_message_id: assistant_message_id.to_string(),
+                outcome,
+                error_id: error_id.map(|id| id.to_string()),
+                summary,
+                attempts,
+            };
+            artifact.terminal_record = Some(record.clone());
+            artifact
+                .events
+                .push(ObservedTurnEvent::TurnFinished(record));
+        }
+        _ => {}
+    }
+}
+
+async fn submit_benchmark_prompt(app: &mut App, prompt: &str) -> Result<String, PrepareError> {
+    let state_cmd_tx = app.state_cmd_tx();
+    let user_message_id = ploke_core::PROJECT_NAMESPACE_UUID;
+    let (completion_tx, completion_rx) = oneshot::channel();
+    let (scan_tx, scan_rx) = oneshot::channel();
+
+    state_cmd_tx
+        .send(
+            ploke_tui::app_state::commands::StateCommand::AddUserMessage {
+                content: prompt.to_string(),
+                new_user_msg_id: user_message_id,
+                completion_tx,
+            },
+        )
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "submit_benchmark_prompt_add_user",
+            detail: err.to_string(),
+        })?;
+    state_cmd_tx
+        .send(ploke_tui::app_state::commands::StateCommand::ScanForChange { scan_tx })
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "submit_benchmark_prompt_scan",
+            detail: err.to_string(),
+        })?;
+    state_cmd_tx
+        .send(ploke_tui::app_state::commands::StateCommand::EmbedMessage {
+            new_msg_id: user_message_id,
+            completion_rx,
+            scan_rx,
+        })
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "submit_benchmark_prompt_embed",
+            detail: err.to_string(),
+        })?;
+
+    Ok(user_message_id.to_string())
+}
+
 fn git_stdout(
     repo_root: &Path,
     args: &[&str],
@@ -749,9 +1444,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), PrepareError> 
     })
 }
 
-fn load_prepared_run(
-    run_manifest: PathBuf,
-) -> Result<(PathBuf, PreparedSingleRun), PrepareError> {
+fn load_prepared_run(run_manifest: PathBuf) -> Result<(PathBuf, PreparedSingleRun), PrepareError> {
     let manifest_path = canonicalize_file(&run_manifest)?;
     let manifest_text =
         fs::read_to_string(&manifest_path).map_err(|source| PrepareError::ReadManifest {
@@ -833,7 +1526,14 @@ impl Drop for XdgConfigHomeGuard {
 mod tests {
     use super::*;
 
+    use crate::EvalBudget;
     use ploke_db::multi_embedding::schema::EmbeddingSetExt;
+    use ploke_llm::response::FunctionCall;
+    use ploke_tui::app_state::core::{CreateProposal, EditProposal};
+    use ploke_tui::app_state::events::MessageUpdatedEvent;
+    use ploke_tui::test_utils::mock::create_mock_app_state;
+    use ploke_tui::tools::{FunctionMarker, ToolCall, ToolName};
+    use std::path::PathBuf;
     use tracing_subscriber::fmt::SubscriberBuilder;
 
     fn init_tracing() {
@@ -891,5 +1591,197 @@ mod tests {
 
         assert_ne!(before.hash_id(), after.hash_id());
         assert_eq!(after.hash_id(), codestral_embedding_set().hash_id());
+    }
+
+    #[test]
+    fn truncate_preview_limits_length() {
+        let preview = truncate_preview("abcdef", 4);
+        assert_eq!(preview, "abcd...<truncated 2 chars>");
+    }
+
+    #[test]
+    fn build_agent_issue_prompt_includes_core_fields() {
+        let prepared = PreparedSingleRun {
+            task_id: "case-123".to_string(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            output_dir: PathBuf::from("/tmp/out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some("abc123".to_string()),
+            head_sha: None,
+            budget: EvalBudget::default(),
+            source: None,
+        };
+
+        let prompt = build_agent_issue_prompt(&prepared);
+        assert!(prompt.contains("case-123"));
+        assert!(prompt.contains("/tmp/repo"));
+        assert!(prompt.contains("abc123"));
+        assert!(prompt.contains("Fix the thing"));
+        assert!(prompt.contains("The body text."));
+    }
+
+    #[tokio::test]
+    async fn collect_patch_artifact_snapshots_applied_proposals() {
+        let state = create_mock_app_state();
+        let state = Arc::new(state);
+        {
+            let mut proposals = state.proposals.write().await;
+            proposals.insert(
+                ploke_core::PROJECT_NAMESPACE_UUID,
+                EditProposal {
+                    request_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                    parent_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                    call_id: ploke_core::ArcStr::from("edit-call"),
+                    proposed_at_ms: 1,
+                    edits: Vec::new(),
+                    files: vec![PathBuf::from("src/lib.rs")],
+                    edits_ns: Vec::new(),
+                    preview: DiffPreview::UnifiedDiff {
+                        text: "--- a/src/lib.rs\n+++ b/src/lib.rs\n".to_string(),
+                    },
+                    status: EditProposalStatus::Applied,
+                    is_semantic: true,
+                },
+            );
+        }
+        {
+            let mut creates = state.create_proposals.write().await;
+            creates.insert(
+                ploke_core::PROJECT_NAMESPACE_UUID,
+                CreateProposal {
+                    request_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                    parent_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                    call_id: ploke_core::ArcStr::from("create-call"),
+                    proposed_at_ms: 2,
+                    creates: Vec::new(),
+                    files: vec![PathBuf::from("src/new.rs")],
+                    preview: DiffPreview::CodeBlocks {
+                        per_file: Vec::new(),
+                    },
+                    status: EditProposalStatus::Applied,
+                },
+            );
+        }
+
+        let patch = collect_patch_artifact(&state).await;
+        assert!(patch.applied);
+        assert_eq!(patch.edit_proposals.len(), 1);
+        assert_eq!(patch.create_proposals.len(), 1);
+        assert_eq!(patch.edit_proposals[0].status, "Applied");
+        assert_eq!(patch.create_proposals[0].files, vec!["src/new.rs"]);
+    }
+
+    #[tokio::test]
+    async fn handle_benchmark_event_records_prompt_tool_message_and_finish() {
+        let state = Arc::new(create_mock_app_state());
+        let root_id = {
+            let chat = state.chat.read().await;
+            chat.current
+        };
+        let user_id = ploke_core::PROJECT_NAMESPACE_UUID;
+        {
+            let mut chat = state.chat.write().await;
+            chat.add_message_user(root_id, user_id, "hello".to_string())
+                .expect("add user message");
+        }
+
+        let mut artifact = AgentTurnArtifact {
+            task_id: "case-123".to_string(),
+            issue_prompt: "prompt".to_string(),
+            user_message_id: user_id.to_string(),
+            events: Vec::new(),
+            prompt_debug: None,
+            terminal_record: None,
+            final_assistant_message: None,
+            patch_artifact: PatchArtifact {
+                edit_proposals: Vec::new(),
+                create_proposals: Vec::new(),
+                applied: false,
+            },
+        };
+
+        handle_benchmark_event(
+            &mut artifact,
+            &state,
+            AppEvent::MessageUpdated(MessageUpdatedEvent::new(user_id)),
+        )
+        .await;
+
+        handle_benchmark_event(
+            &mut artifact,
+            &state,
+            AppEvent::System(SystemEvent::ToolCallRequested {
+                request_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                parent_id: user_id,
+                tool_call: ToolCall {
+                    call_id: ploke_core::ArcStr::from("call-1"),
+                    call_type: FunctionMarker,
+                    function: FunctionCall {
+                        name: ToolName::ApplyCodeEdit,
+                        arguments: "{}".to_string(),
+                    },
+                },
+            }),
+        )
+        .await;
+
+        handle_benchmark_event(
+            &mut artifact,
+            &state,
+            AppEvent::System(SystemEvent::ToolCallCompleted {
+                request_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                parent_id: user_id,
+                call_id: ploke_core::ArcStr::from("call-1"),
+                content: "ok".to_string(),
+                ui_payload: None,
+            }),
+        )
+        .await;
+
+        handle_benchmark_event(
+            &mut artifact,
+            &state,
+            AppEvent::System(SystemEvent::ChatTurnFinished {
+                session_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                request_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                parent_id: user_id,
+                assistant_message_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                outcome: "success".to_string(),
+                error_id: None,
+                summary: "done".to_string(),
+                attempts: 1,
+            }),
+        )
+        .await;
+
+        assert!(artifact.prompt_debug.is_none());
+        assert!(artifact.terminal_record.is_some());
+        assert!(
+            artifact
+                .events
+                .iter()
+                .any(|ev| matches!(ev, ObservedTurnEvent::ToolRequested(_)))
+        );
+        assert!(
+            artifact
+                .events
+                .iter()
+                .any(|ev| matches!(ev, ObservedTurnEvent::ToolCompleted(_)))
+        );
+        assert!(
+            artifact
+                .events
+                .iter()
+                .any(|ev| matches!(ev, ObservedTurnEvent::MessageUpdated(_)))
+        );
+        assert_eq!(
+            artifact.terminal_record.as_ref().unwrap().outcome,
+            "success"
+        );
+        assert_eq!(artifact.terminal_record.as_ref().unwrap().summary, "done");
     }
 }

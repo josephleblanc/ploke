@@ -117,7 +117,7 @@ impl Default for MessageVerbosityProfiles {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserConfig {
     // llm registry preferences (profiles, strictness, router prefs)
     #[serde(default)]
@@ -165,6 +165,12 @@ pub struct UserConfig {
     /// Request timeout for chat HTTP calls (seconds).
     #[serde(default = "default_llm_timeout_secs")]
     pub llm_timeout_secs: u64,
+}
+
+impl Default for UserConfig {
+    fn default() -> Self {
+        toml::from_str("").expect("UserConfig defaults should deserialize")
+    }
 }
 
 /// Tooling-specific configuration values.
@@ -903,6 +909,7 @@ fn default_llm_timeout_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_state::core::RuntimeConfig;
 
     #[test]
     fn toml_round_trip_defaults() {
@@ -954,5 +961,17 @@ mod tests {
 
         let serialized = toml::to_string(&cfg).expect("serialize");
         assert!(serialized.contains("tool_retries"));
+    }
+
+    #[test]
+    fn default_user_config_uses_serde_llm_timeout_default() {
+        let cfg = UserConfig::default();
+        assert_eq!(cfg.llm_timeout_secs, ploke_llm::LLM_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn runtime_config_preserves_default_llm_timeout() {
+        let runtime_cfg: RuntimeConfig = UserConfig::default().into();
+        assert_eq!(runtime_cfg.llm_timeout_secs, ploke_llm::LLM_TIMEOUT_SECS);
     }
 }

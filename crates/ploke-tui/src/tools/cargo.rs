@@ -24,7 +24,12 @@
 //! ).unwrap();
 //! assert!(params.test_args.is_some());
 //! ```
-use std::{borrow::Cow, collections::VecDeque, path::Path, time::Duration};
+use std::{
+    borrow::Cow,
+    collections::VecDeque,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use cargo_metadata::Message;
 use serde::{Deserialize, Serialize};
@@ -39,7 +44,6 @@ use super::{
     ToolUiPayload, ToolVerbosity, tool_io_error, tool_ui_error,
 };
 use crate::tracing_setup::TOOL_CALL_TARGET;
-use ploke_test_utils::workspace_root;
 
 const MAX_DIAGNOSTICS: usize = 50;
 const MAX_SPANS_PER_DIAGNOSTIC: usize = 3;
@@ -441,7 +445,7 @@ impl Tool for CargoTool {
         let crate_root = tokio::fs::canonicalize(crate_root)
             .await
             .map_err(|err| tool_io_error(format!("Failed to resolve crate root: {err}")))?;
-        let current_workspace = workspace_root();
+        let current_workspace = loaded_workspace_root(&ctx).await?;
         if !crate_root.starts_with(&current_workspace) {
             return Err(tool_ui_error(format!(
                 "Focused crate path is outside the current workspace; database may be from another clone. focused={}, workspace={}",
@@ -677,6 +681,19 @@ impl Tool for CargoTool {
             ui_payload: Some(ui_payload),
         })
     }
+}
+
+async fn loaded_workspace_root(ctx: &super::Ctx) -> Result<PathBuf, ploke_error::Error> {
+    let current_workspace = ctx
+        .state
+        .with_system_read(|sys| sys.loaded_workspace_root())
+        .await
+        .ok_or_else(|| {
+            tool_ui_error("No workspace is currently loaded; load a workspace first.")
+        })?;
+    tokio::fs::canonicalize(current_workspace)
+        .await
+        .map_err(|err| tool_io_error(format!("Failed to resolve workspace root: {err}")))
 }
 
 fn validate_params(params: &CargoToolParams<'_>) -> Result<(), ToolInvocationError> {
@@ -1102,6 +1119,12 @@ fn enforce_response_cap(result: &mut CargoToolResult, max_bytes: usize) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event_bus::{EventBus, EventBusCaps};
+    use crate::test_utils::mock::create_mock_app_state;
+    use ploke_core::ArcStr;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+    use uuid::Uuid;
 
     #[test]
     fn deserialize_params_autoscopes_package_to_workspace() {
@@ -1206,5 +1229,34 @@ mod tests {
         };
         let truncated = enforce_response_cap(&mut result, 512);
         assert!(truncated);
+    }
+
+    #[tokio::test]
+    async fn loaded_workspace_root_reads_from_state() {
+        let workspace_root = tempdir().expect("workspace tempdir");
+        let state = Arc::new(create_mock_app_state());
+        state
+            .with_system_raw(|sys| {
+                sys.set_loaded_workspace(
+                    workspace_root.path().to_path_buf(),
+                    vec![workspace_root.path().to_path_buf()],
+                    Some(workspace_root.path().to_path_buf()),
+                );
+            })
+            .await;
+
+        let ctx = crate::tools::Ctx {
+            state,
+            event_bus: Arc::new(EventBus::new(EventBusCaps::default())),
+            request_id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            call_id: ArcStr::from("functions.cargo:0"),
+        };
+
+        let loaded = loaded_workspace_root(&ctx).await.expect("workspace root");
+        let expected = tokio::fs::canonicalize(workspace_root.path())
+            .await
+            .expect("canonicalize");
+        assert_eq!(loaded, expected);
     }
 }

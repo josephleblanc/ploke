@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use chrono::Local;
 use ploke_eval::ploke_eval_home;
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub fn init_tracing() -> Option<WorkerGuard> {
     let filter = EnvFilter::try_from_default_env()
@@ -27,7 +27,8 @@ pub fn init_tracing() -> Option<WorkerGuard> {
         std::process::id()
     );
     let log_file = log_dir.join(format!("ploke_eval_{run_id}.log"));
-    let file_appender = tracing_appender::rolling::never(&log_dir, format!("ploke_eval_{run_id}.log"));
+    let file_appender =
+        tracing_appender::rolling::never(&log_dir, format!("ploke_eval_{run_id}.log"));
     let (non_blocking_file, file_guard) = tracing_appender::non_blocking(file_appender);
 
     let file_layer = fmt::layer()

@@ -389,6 +389,7 @@ impl AppEvent {
             AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::ChatTurnFinished { .. }) => EventPriority::Realtime,
             AppEvent::System(_) => EventPriority::Background,
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,

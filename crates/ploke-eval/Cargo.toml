@@ -16,12 +16,14 @@ tokio = { workspace = true }
 ploke-db = { workspace = true }
 ploke-embed = { workspace = true }
 ploke-core = { workspace = true }
+ploke-llm = { path = "../ploke-llm" }
 ploke-tui = { path = "../ploke-tui", features = ["test_harness"] }
 tracing = {workspace = true}
 tracing-appender = "0.2"
 tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
 tempfile = "3.8"
+uuid = { workspace = true, features = ["serde"] }
 
 [[bin]]
 name = "ploke-eval"

@@ -11,6 +11,7 @@ pub use msb::PrepareMsbSingleRunRequest;
 pub use registry::{
     DatasetRegistryEntry, builtin_dataset_registry_entries, builtin_dataset_registry_entry,
 };
+pub use runner::{AgentRunArtifactPaths, AgentTurnArtifact, RunMsbAgentSingleRequest};
 pub use spec::{
     EvalBudget, IssueInput, MultiSweBenchSource, OutputMode, PrepareSingleRunRequest, PrepareWrite,
     PreparedSingleRun, RunSource,

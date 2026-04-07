@@ -4670,6 +4670,7 @@ dependencies = [
  "ploke-core",
  "ploke-db",
  "ploke-embed",
+ "ploke-llm",
  "ploke-tui",
  "reqwest",
  "serde",
@@ -4680,6 +4681,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

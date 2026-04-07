@@ -6,7 +6,7 @@ use clap::{ArgAction, Parser, Subcommand};
 use crate::layout::{repos_dir, runs_dir, workspace_root_for_key};
 use crate::msb::PrepareMsbSingleRunRequest;
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
-use crate::runner::{ReplayMsbBatchRequest, RunMsbSingleRequest};
+use crate::runner::{ReplayMsbBatchRequest, RunMsbAgentSingleRequest, RunMsbSingleRequest};
 use crate::spec::{
     EvalBudget, IssueInput, OutputMode, PrepareError, PrepareSingleRunRequest, PrepareWrite,
 };
@@ -93,6 +93,8 @@ pub enum Command {
     PrepareMsbSingle(PrepareMsbSingleCommand),
     /// Execute one prepared run through repo reset and initial artifact generation.
     RunMsbSingle(RunMsbSingleCommand),
+    /// Execute one prepared run and then run a single agentic benchmark turn.
+    RunMsbAgentSingle(RunMsbAgentSingleCommand),
     /// Replay one specific batch from a prepared run and print the exact snippets for it.
     ReplayMsbBatch(ReplayMsbBatchCommand),
     /// Clone or refresh a benchmark repo into ~/.ploke-eval/repos.
@@ -102,9 +104,7 @@ pub enum Command {
 }
 
 #[derive(Debug, Parser)]
-#[command(
-    about = "Normalize one ad hoc evaluation instance into a run manifest"
-)]
+#[command(about = "Normalize one ad hoc evaluation instance into a run manifest")]
 pub struct PrepareSingleCommand {
     /// Stable task identifier for this run.
     #[arg(long)]
@@ -170,6 +170,13 @@ impl Cli {
                 }
             },
             Command::RunMsbSingle(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Command::RunMsbAgentSingle(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
@@ -364,6 +371,30 @@ pub struct RunMsbSingleCommand {
 
 #[derive(Debug, Parser)]
 #[command(
+    about = "Execute one prepared Multi-SWE-bench run and one benchmark issue turn",
+    after_help = "\
+This extends the normal run with a single agentic turn that:
+  - submits the prepared issue prompt through the real app/state path
+  - records prompt construction, tool lifecycle, message updates, and turn completion
+  - writes a turn trace and summary beside the run artifacts
+"
+)]
+pub struct RunMsbAgentSingleCommand {
+    /// Path to a prepared run manifest. Defaults to ~/.ploke-eval/runs/<instance>/run.json.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub run: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/run.json.
+    #[arg(long, conflicts_with = "run")]
+    pub instance: Option<String>,
+
+    /// Disable eval-only DB checkpoint/failure snapshots during indexing.
+    #[arg(long = "no-index-debug-snapshots", action = ArgAction::SetFalse, default_value_t = true)]
+    pub index_debug_snapshots: bool,
+}
+
+#[derive(Debug, Parser)]
+#[command(
     about = "Replay one batch from a prepared Multi-SWE-bench run",
     after_help = "\
 Example:
@@ -409,6 +440,30 @@ impl RunMsbSingleCommand {
         .run()
         .await?;
         println!("{}", artifacts.execution_log.display());
+        Ok(())
+    }
+}
+
+impl RunMsbAgentSingleCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let run_manifest = match (self.run, self.instance) {
+            (Some(path), None) => path,
+            (None, Some(instance)) => runs_dir()?.join(instance).join("run.json"),
+            _ => {
+                return Err(PrepareError::MissingRunManifest(
+                    runs_dir()?.join("<instance>/run.json"),
+                ));
+            }
+        };
+
+        let artifacts = RunMsbAgentSingleRequest {
+            run_manifest,
+            index_debug_snapshots: self.index_debug_snapshots,
+        }
+        .run()
+        .await?;
+        println!("{}", artifacts.base.execution_log.display());
+        println!("{}", artifacts.turn_summary.display());
         Ok(())
     }
 }

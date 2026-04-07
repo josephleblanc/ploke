@@ -346,7 +346,7 @@ impl IndexerTask {
                                     received_completed.store(true, std::sync::atomic::Ordering::SeqCst);
                                     if callback_handler.is_finished() {
                                         callback_closed.store(true, std::sync::atomic::Ordering::Relaxed);
-                                        tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+                                        tracing::debug!("Callback Handler is Finished: {:?}", callback_handler);
                                         callback_handler.join().expect("Callback errror - not finished")?;
                                         break;
                                     } else {
@@ -370,14 +370,14 @@ impl IndexerTask {
                 res = &mut idx_handle => {
                     if callback_handler.is_finished() {
                         callback_closed.store(true, std::sync::atomic::Ordering::Relaxed);
-                        tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+                        tracing::debug!("Callback Handler is Finished: {:?}", callback_handler);
                         callback_handler.join().expect("Callback errror - not finished")?;
                         break;
                     } else {
                         tracing::warn!("Sending shutdown signal to CallbackManager.");
                         // shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
                         match shutdown.send(()) {
-                            Ok(_) => tracing::info!("Sending shutdown message"),
+                            Ok(_) => tracing::debug!("Sending shutdown message"),
                             Err(e) => tracing::error!("Cannot send shutdown message, other side dropped"),
                         };
                         // break;
@@ -454,7 +454,6 @@ impl IndexerTask {
 
         ploke_db::create_index_primary_with_index(&db_clone)?;
 
-        tracing::info!("Ending index_workspace: {workspace_dir}");
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
         tracing::info!(
             "Ending index_workspace: {workspace_dir}: total count {inner}, counter {total_count_not_indexed} | {inner}/{total_count_not_indexed}"
@@ -528,13 +527,13 @@ impl IndexerTask {
 
             match self
                 .process_batch(batch, |current, num_not_proc| {
-                    tracing::info!("Indexed {current}/{num_not_proc}")
+                    tracing::debug!("Indexed {current}/{num_not_proc}")
                 })
                 .await
             {
                 Ok(_) => {
                     state.recent_processed += node_count;
-                    tracing::info!(
+                    tracing::debug!(
                         "Processed batch: {}/{}",
                         state.recent_processed,
                         state.num_not_proc
@@ -545,7 +544,7 @@ impl IndexerTask {
                                 "state.recent_processed > num_not_proc | there is a miscount of nodes somewhere"
                             );
                         }
-                        tracing::info!(
+                        tracing::debug!(
                             "Break: {} >= {}",
                             state.recent_processed,
                             state.num_not_proc
@@ -591,7 +590,7 @@ impl IndexerTask {
 
         let total_processed = self.total_processed.load(Ordering::SeqCst);
         if total_processed >= state.num_not_proc {
-            tracing::info!(
+            tracing::debug!(
                 "Indexing completed: {}/{} - recently_processed: {}",
                 total_processed,
                 state.num_not_proc,
@@ -615,7 +614,7 @@ impl IndexerTask {
                 }
                 match resp_rx.await {
                     Ok(Ok(())) => {
-                        tracing::info!("BM25 FinalizeSeed acknowledged");
+                        tracing::debug!("BM25 FinalizeSeed acknowledged");
                     }
                     Ok(Err(err_msg)) => {
                         let msg = format!("BM25 FinalizeSeed failed: {}", err_msg);
@@ -708,7 +707,7 @@ impl IndexerTask {
             );
 
             if !nodes.is_empty() {
-                tracing::info!(
+                tracing::debug!(
                     "<<< Processing relation {rel_count} relations processed: {} | total_processed before: {:?} >>>",
                     node_type.relation_str(),
                     self.total_processed
@@ -733,7 +732,7 @@ impl IndexerTask {
 
         self.total_processed
             .fetch_add(total_counted, Ordering::SeqCst);
-        tracing::info!(
+        tracing::debug!(
             "<<< | total_processed after: {:?} >>>",
             self.total_processed,
         );
@@ -822,7 +821,7 @@ impl IndexerTask {
                 Err(e) => tracing::warn!("Snippet error: {:?}", e),
             }
         }
-        tracing::info!(
+        tracing::debug!(
             "snippet results | num_to_embed: {}, valid_nodes: {}, valid_emb_data: {}, valid_snippets: {}",
             num_to_embed,
             valid_nodes.len(),
@@ -995,7 +994,7 @@ fn log_embedding_failure_context(
 
 fn log_row(r: Vec<DataValue>) {
     for (i, row) in r.iter().enumerate() {
-        tracing::info!("{}: {:?}", i, row);
+        tracing::debug!("{}: {:?}", i, row);
     }
 }
 pub(crate) fn log_stuff(

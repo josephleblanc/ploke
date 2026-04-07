@@ -10,7 +10,7 @@ mod session;
 // some of the `ChatEvt` functionality - now renamed to `ChatEvt` in `ploke-llm`
 pub(crate) mod events;
 pub use crate::llm::manager::session::CancelChatToken;
-pub(crate) use events::{ChatEvt, LlmEvent};
+pub use events::{ChatEvt, LlmEvent};
 pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
 
 use crate::{
@@ -178,6 +178,30 @@ pub async fn llm_manager(
             break;
         }
     }
+}
+
+fn emit_chat_turn_finished(event_bus: &Arc<EventBus>, report: &ChatSessionReport) {
+    let outcome = match &report.outcome {
+        SessionOutcome::Completed => "completed",
+        SessionOutcome::Aborted { .. } => "aborted",
+        SessionOutcome::Exhausted { .. } => "exhausted",
+    };
+    let error_id = match &report.outcome {
+        SessionOutcome::Completed => None,
+        SessionOutcome::Aborted { error_id } | SessionOutcome::Exhausted { error_id } => {
+            Some(*error_id)
+        }
+    };
+    event_bus.send(AppEvent::System(SystemEvent::ChatTurnFinished {
+        session_id: report.session_id,
+        request_id: report.request_id,
+        parent_id: report.parent_id,
+        assistant_message_id: report.assistant_message_id,
+        outcome: outcome.to_string(),
+        error_id,
+        summary: report.summary(),
+        attempts: report.attempts,
+    }));
 }
 
 #[derive(Clone)]
@@ -412,6 +436,7 @@ pub async fn process_llm_request(
         }
     };
 
+    let event_bus_for_completion = llm_request_args.event_bus.clone();
     let LlmRequestArgs {
         state,
         cmd_tx,
@@ -440,6 +465,7 @@ pub async fn process_llm_request(
         summary = %summary,
         "LLM request completed"
     );
+    emit_chat_turn_finished(&event_bus_for_completion, &report);
     if let Some(err) = report.last_error() {
         tracing::warn!(
             target: "chat-loop",
@@ -718,6 +744,76 @@ mod tests {
         assert_eq!(parsed["role"], "tool");
         assert_eq!(parsed["content"], "test result");
         assert_eq!(parsed["tool_call_id"], "call_abc");
+    }
+
+    #[test]
+    fn chat_turn_finished_is_realtime() {
+        let report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let event = AppEvent::System(SystemEvent::ChatTurnFinished {
+            session_id: report.session_id,
+            request_id: report.request_id,
+            parent_id: report.parent_id,
+            assistant_message_id: report.assistant_message_id,
+            outcome: "completed".to_string(),
+            error_id: None,
+            summary: report.summary(),
+            attempts: report.attempts,
+        });
+        assert!(matches!(event.priority(), crate::EventPriority::Realtime));
+    }
+
+    #[tokio::test]
+    async fn chat_turn_finished_emits_on_realtime_bus() {
+        let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut rx = bus.subscribe(crate::EventPriority::Realtime);
+        let mut report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        report.outcome = SessionOutcome::Exhausted {
+            error_id: Uuid::new_v4(),
+        };
+        report.attempts = 3;
+
+        emit_chat_turn_finished(&bus, &report);
+
+        let event = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for chat turn finished event")
+            .expect("realtime channel closed unexpectedly");
+        match event {
+            AppEvent::System(SystemEvent::ChatTurnFinished {
+                session_id,
+                request_id,
+                parent_id,
+                assistant_message_id,
+                outcome,
+                error_id,
+                summary,
+                attempts,
+            }) => {
+                assert_eq!(session_id, report.session_id);
+                assert_eq!(request_id, report.request_id);
+                assert_eq!(parent_id, report.parent_id);
+                assert_eq!(assistant_message_id, report.assistant_message_id);
+                assert_eq!(outcome, "exhausted");
+                let expected_error_id = match &report.outcome {
+                    SessionOutcome::Exhausted { error_id } => Some(*error_id),
+                    _ => None,
+                };
+                assert_eq!(error_id, expected_error_id);
+                assert_eq!(summary, report.summary());
+                assert_eq!(attempts, 3);
+            }
+            other => panic!("expected ChatTurnFinished event, got: {other:?}"),
+        }
     }
 
     #[test]

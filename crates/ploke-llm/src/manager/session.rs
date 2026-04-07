@@ -4,7 +4,7 @@
     reason = "evolving api surface, may be useful, written 2025-12-15"
 )]
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ploke_core::ArcStr;
 use tracing::info;
@@ -66,9 +66,21 @@ pub async fn chat_step<R: Router>(
     })?;
 
     let request_json = serde_json::to_string_pretty(req).ok();
+    let request_bytes = request_json.as_ref().map_or(0, |body| body.len());
+    let message_count = req.core.messages.len();
+    let tool_count = req.tools.as_ref().map_or(0, Vec::len);
+    let start = Instant::now();
     if let Some(body) = request_json.as_ref() {
         let _ = log_api_request_json(url, body);
     }
+    trace_chat_http_start(
+        url,
+        &req.core.model.to_string(),
+        cfg.timeout,
+        message_count,
+        tool_count,
+        request_bytes,
+    );
     let resp = client
         .post(url)
         .bearer_auth(api_key)
@@ -79,18 +91,31 @@ pub async fn chat_step<R: Router>(
         .timeout(cfg.timeout)
         .send()
         .await
-        .map_err(|e| LlmError::Request {
-            message: format!("sending request to {url}: {e}"),
-            url: Some(url.to_string()),
-            is_timeout: e.is_timeout(),
+        .map_err(|e| {
+            trace_chat_http_error("send", url, start.elapsed(), e.is_timeout(), &e.to_string());
+            LlmError::Request {
+                message: format!("sending request to {url}: {e}"),
+                url: Some(url.to_string()),
+                is_timeout: e.is_timeout(),
+            }
         })?;
 
     let resp_url = resp.url().to_string();
     let status = resp.status().as_u16();
-    let body = resp.text().await.map_err(|e| LlmError::Request {
-        message: format!("while reading response body (status {status}): {e}"),
-        url: Some(resp_url.clone()),
-        is_timeout: e.is_timeout(),
+    trace_chat_http_headers(&resp_url, status, start.elapsed());
+    let body = resp.text().await.map_err(|e| {
+        trace_chat_http_error(
+            "body",
+            &resp_url,
+            start.elapsed(),
+            e.is_timeout(),
+            &e.to_string(),
+        );
+        LlmError::Request {
+            message: format!("while reading response body (status {status}): {e}"),
+            url: Some(resp_url.clone()),
+            is_timeout: e.is_timeout(),
+        }
     })?;
 
     let _ = log_api_raw_response(&resp_url, status, &body);
@@ -131,6 +156,48 @@ fn log_api_raw_response(url: &str, status: u16, body: &str) -> color_eyre::Resul
 fn log_api_request_json(url: &str, payload: &str) -> color_eyre::Result<()> {
     tracing::info!(target: "api_json", "\n// URL: {url}\n// Request\n{payload}\n");
     Ok(())
+}
+
+fn trace_chat_http_start(
+    url: &str,
+    model: &str,
+    timeout: Duration,
+    message_count: usize,
+    tool_count: usize,
+    request_bytes: usize,
+) {
+    tracing::info!(
+        target: "chat_http",
+        event = "chat_http_request_start",
+        url,
+        model,
+        timeout_secs = timeout.as_secs(),
+        message_count,
+        tool_count,
+        request_bytes
+    );
+}
+
+fn trace_chat_http_headers(url: &str, status: u16, elapsed: Duration) {
+    tracing::info!(
+        target: "chat_http",
+        event = "chat_http_response_headers",
+        url,
+        status,
+        elapsed_ms = elapsed.as_millis()
+    );
+}
+
+fn trace_chat_http_error(phase: &str, url: &str, elapsed: Duration, is_timeout: bool, error: &str) {
+    tracing::warn!(
+        target: "chat_http",
+        event = "chat_http_request_error",
+        phase,
+        url,
+        elapsed_ms = elapsed.as_millis(),
+        is_timeout,
+        error
+    );
 }
 
 #[derive(Debug)]
@@ -372,6 +439,10 @@ fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use tracing::Level;
+    use tracing::subscriber::set_default;
+    use tracing_subscriber::fmt::format::FmtSpan;
 
     #[test]
     fn parse_outcome_content_message() {

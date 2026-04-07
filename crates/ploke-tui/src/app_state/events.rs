@@ -99,6 +99,16 @@ pub enum SystemEvent {
         #[serde(default)]
         ui_payload: Option<ToolUiPayload>,
     },
+    ChatTurnFinished {
+        session_id: Uuid,
+        request_id: Uuid,
+        parent_id: Uuid,
+        assistant_message_id: Uuid,
+        outcome: String,
+        error_id: Option<Uuid>,
+        summary: String,
+        attempts: u32,
+    },
     ReadQuery {
         file_name: String,
         query_name: String,
