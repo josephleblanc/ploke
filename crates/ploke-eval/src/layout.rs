@@ -27,6 +27,26 @@ pub fn datasets_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("datasets"))
 }
 
+pub fn models_dir() -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?.join("models"))
+}
+
+pub fn model_registry_file() -> Result<PathBuf, PrepareError> {
+    Ok(models_dir()?.join("registry.json"))
+}
+
+pub fn active_model_file() -> Result<PathBuf, PrepareError> {
+    Ok(models_dir()?.join("active-model.json"))
+}
+
+pub fn cache_dir() -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?.join("cache"))
+}
+
+pub fn starting_db_cache_dir() -> Result<PathBuf, PrepareError> {
+    Ok(cache_dir()?.join("starting-dbs"))
+}
+
 pub fn workspace_root_for_key(dataset_key: &str) -> Result<PathBuf, PrepareError> {
     let entry = builtin_dataset_registry_entry(dataset_key)
         .ok_or_else(|| PrepareError::UnknownDatasetKey(dataset_key.to_string()))?;

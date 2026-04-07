@@ -8,6 +8,15 @@ We are using rust version 2024 in all crates.
 - Shared agent documents are in `docs/active/agents`
 - See `docs/active/agents/readme.md` for naming conventions of files and directories, and further details.
 
+## Reading Logs
+When the user asks you to "check the logs", "read the logs", "look into the logs", or similar:
+- use `jq` for `.json` logs
+  - make one initial query to see the shape, if the log structure is unfamiliar
+  - in follow-up queries, prefer to limit output lines, and focus on the highest-signal log elements
+- do not directly check/read/look into `.sqlite` logs or backup databases
+- use `rg` for logs of other file types
+
+
 ## Correctness Guardrails
 - Do not relax internal correctness, consistency, validation, schema, or import semantics without explicit user approval first.
 - If a possible fix would make the system more permissive, tolerate previously invalid states, silently skip expected data, or weaken invariants, stop and ask before implementing it.

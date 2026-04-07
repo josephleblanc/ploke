@@ -2,8 +2,17 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{ArgAction, Parser, Subcommand};
+use ploke_llm::Router;
+use ploke_llm::router_only::openrouter::OpenRouter;
 
-use crate::layout::{repos_dir, runs_dir, workspace_root_for_key};
+use crate::layout::{
+    active_model_file, cache_dir, datasets_dir, model_registry_file, models_dir, repos_dir,
+    runs_dir, starting_db_cache_dir, workspace_root_for_key,
+};
+use crate::model_registry::{
+    find_models, load_active_model, load_model_registry, refresh_model_registry,
+    registry_has_model, save_active_model,
+};
 use crate::msb::PrepareMsbSingleRunRequest;
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
 use crate::runner::{ReplayMsbBatchRequest, RunMsbAgentSingleRequest, RunMsbSingleRequest};
@@ -17,6 +26,8 @@ Minimal evaluation runner scaffolding for ploke.
 Defaults:
   PLOKE_EVAL_HOME    ~/.ploke-eval
   datasets cache     ~/.ploke-eval/datasets
+  model registry     ~/.ploke-eval/models/registry.json
+  active model       ~/.ploke-eval/models/active-model.json
   repo cache         ~/.ploke-eval/repos
   run artifacts      ~/.ploke-eval/runs
 
@@ -38,6 +49,10 @@ Quick Start: ripgrep single-run example
   cargo run -p ploke-eval -- fetch-msb-repo --dataset-key ripgrep
   cargo run -p ploke-eval -- prepare-msb-single --dataset-key ripgrep --instance BurntSushi__ripgrep-2209
   cargo run -p ploke-eval -- run-msb-single --instance BurntSushi__ripgrep-2209
+
+Health check
+
+  cargo run -p ploke-eval -- doctor
 
 Replay a specific embedding batch from a prepared run
 
@@ -101,6 +116,10 @@ pub enum Command {
     FetchMsbRepo(FetchMsbRepoCommand),
     /// List built-in dataset registry entries.
     ListMsbDatasets,
+    /// Inspect the current eval setup and report likely configuration issues.
+    Doctor,
+    /// Manage the cached OpenRouter model registry and active model selection.
+    Model(ModelCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -203,6 +222,20 @@ impl Cli {
                 }
                 ExitCode::SUCCESS
             }
+            Command::Doctor => match run_doctor() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Command::Model(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
         }
     }
 }
@@ -367,6 +400,10 @@ pub struct RunMsbSingleCommand {
     /// Disable eval-only DB checkpoint/failure snapshots during indexing.
     #[arg(long = "no-index-debug-snapshots", action = ArgAction::SetFalse, default_value_t = true)]
     pub index_debug_snapshots: bool,
+
+    /// Use the default model instead of the persisted active model selection.
+    #[arg(long)]
+    pub use_default_model: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -391,6 +428,110 @@ pub struct RunMsbAgentSingleCommand {
     /// Disable eval-only DB checkpoint/failure snapshots during indexing.
     #[arg(long = "no-index-debug-snapshots", action = ArgAction::SetFalse, default_value_t = true)]
     pub index_debug_snapshots: bool,
+
+    /// Use the default model instead of the persisted active model selection.
+    #[arg(long)]
+    pub use_default_model: bool,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Manage the cached OpenRouter model registry and active model selection",
+    after_help = "\
+Examples:
+
+  cargo run -p ploke-eval -- model refresh
+  cargo run -p ploke-eval -- model list
+  cargo run -p ploke-eval -- model find qwen
+  cargo run -p ploke-eval -- model set moonshotai/kimi-k2
+  cargo run -p ploke-eval -- model current
+"
+)]
+pub struct ModelCommand {
+    #[command(subcommand)]
+    pub command: ModelSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ModelSubcommand {
+    /// Download the latest OpenRouter model catalog into the local registry JSON.
+    Refresh,
+    /// List all cached models.
+    List,
+    /// Find models whose id, name, or canonical id matches the stem.
+    Find {
+        /// Stem or substring to search for.
+        query: String,
+    },
+    /// Persist the active model selection.
+    Set {
+        /// Exact model id to mark active.
+        model_id: String,
+    },
+    /// Show the current active model selection.
+    Current,
+}
+
+impl ModelCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            ModelSubcommand::Refresh => {
+                let registry = refresh_model_registry().await?;
+                println!("refreshed {} models", registry.data.len());
+                Ok(())
+            }
+            ModelSubcommand::List => {
+                let registry = load_model_registry()?;
+                let mut items: Vec<_> = registry.data.iter().collect();
+                items.sort_by(|a, b| a.id.cmp(&b.id));
+                for item in items {
+                    println!("{}\t{}", item.id, item.name.as_str());
+                }
+                Ok(())
+            }
+            ModelSubcommand::Find { query } => {
+                let registry = load_model_registry()?;
+                let mut matches = find_models(&registry, &query);
+                matches.sort_by(|a, b| a.id.cmp(&b.id));
+                for item in matches {
+                    println!("{}\t{}", item.id, item.name.as_str());
+                }
+                Ok(())
+            }
+            ModelSubcommand::Set { model_id } => {
+                let registry = load_model_registry()?;
+                let registry_path = crate::model_registry::model_registry_path()?;
+                let selected = registry
+                    .data
+                    .iter()
+                    .find(|item| item.id.to_string() == model_id)
+                    .ok_or_else(|| PrepareError::UnknownModelInRegistry {
+                        model: model_id.clone(),
+                        path: registry_path.clone(),
+                    })?;
+                save_active_model(&selected.id)?;
+                println!("{}", selected.id);
+                Ok(())
+            }
+            ModelSubcommand::Current => {
+                let active = load_active_model()?;
+                match load_model_registry() {
+                    Ok(registry) => {
+                        if let Some(item) =
+                            registry.data.iter().find(|item| item.id == active.model_id)
+                        {
+                            println!("{}\t{}", item.id, item.name.as_str());
+                        } else {
+                            println!("{}", active.model_id);
+                        }
+                    }
+                    Err(PrepareError::MissingModelRegistry(_)) => println!("{}", active.model_id),
+                    Err(err) => return Err(err),
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -436,6 +577,7 @@ impl RunMsbSingleCommand {
         let artifacts = RunMsbSingleRequest {
             run_manifest,
             index_debug_snapshots: self.index_debug_snapshots,
+            use_default_model: self.use_default_model,
         }
         .run()
         .await?;
@@ -459,6 +601,7 @@ impl RunMsbAgentSingleCommand {
         let artifacts = RunMsbAgentSingleRequest {
             run_manifest,
             index_debug_snapshots: self.index_debug_snapshots,
+            use_default_model: self.use_default_model,
         }
         .run()
         .await?;
@@ -489,6 +632,151 @@ impl ReplayMsbBatchCommand {
         .map(|batch_file| {
             println!("{}", batch_file.display());
         })
+    }
+}
+
+fn run_doctor() -> Result<(), PrepareError> {
+    let mut ok = 0usize;
+    let mut warn = 0usize;
+
+    println!("ploke-eval doctor");
+    println!();
+
+    let home = crate::layout::ploke_eval_home()?;
+    println!("home: {}", home.display());
+
+    let builtins = builtin_dataset_registry_entries();
+    println!(
+        "built-in datasets: {}{}",
+        builtins.len(),
+        if builtins.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " ({})",
+                builtins
+                    .iter()
+                    .map(|entry| entry.key)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    );
+
+    check_dir("datasets dir", datasets_dir()?, &mut ok, &mut warn);
+    check_dir("models dir", models_dir()?, &mut ok, &mut warn);
+    check_dir("repo cache dir", repos_dir()?, &mut ok, &mut warn);
+    check_dir("run artifacts dir", runs_dir()?, &mut ok, &mut warn);
+    check_dir(
+        "starting-db cache dir",
+        starting_db_cache_dir()?,
+        &mut ok,
+        &mut warn,
+    );
+    check_dir("cache dir", cache_dir()?, &mut ok, &mut warn);
+
+    match load_model_registry() {
+        Ok(registry) => {
+            ok += 1;
+            println!(
+                "[ok] model registry: {} models ({})",
+                registry.data.len(),
+                model_registry_file()?.display()
+            );
+        }
+        Err(PrepareError::MissingModelRegistry(path)) => {
+            warn += 1;
+            println!("[warn] model registry: missing ({})", path.display());
+        }
+        Err(err) => return Err(err),
+    }
+
+    match load_active_model() {
+        Ok(active) => match load_model_registry() {
+            Ok(registry) => {
+                if registry_has_model(&registry, &active.model_id) {
+                    ok += 1;
+                    println!(
+                        "[ok] active model: {} ({})",
+                        active.model_id,
+                        active_model_file()?.display()
+                    );
+                } else {
+                    warn += 1;
+                    println!(
+                        "[warn] active model: {} is not present in the current registry ({})",
+                        active.model_id,
+                        active_model_file()?.display()
+                    );
+                }
+            }
+            Err(PrepareError::MissingModelRegistry(_)) => {
+                warn += 1;
+                println!(
+                    "[warn] active model: {} ({})",
+                    active.model_id,
+                    active_model_file()?.display()
+                );
+            }
+            Err(err) => return Err(err),
+        },
+        Err(PrepareError::MissingActiveModel(path)) => {
+            warn += 1;
+            println!("[warn] active model: missing ({})", path.display());
+        }
+        Err(err) => return Err(err),
+    }
+
+    match OpenRouter::resolve_api_key() {
+        Ok(_) => {
+            ok += 1;
+            println!("[ok] OpenRouter API key: present");
+        }
+        Err(err) => {
+            warn += 1;
+            println!("[warn] OpenRouter API key: unavailable ({err})");
+        }
+    }
+
+    match std::process::Command::new("git").arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            ok += 1;
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            println!("[ok] git: {version}");
+        }
+        Ok(output) => {
+            warn += 1;
+            println!(
+                "[warn] git: command exited with status {}",
+                output.status.code().unwrap_or(-1)
+            );
+        }
+        Err(err) => {
+            warn += 1;
+            println!("[warn] git: unavailable ({err})");
+        }
+    }
+
+    println!();
+    println!("summary: {ok} ok, {warn} warnings");
+    Ok(())
+}
+
+fn check_dir(label: &str, path: PathBuf, ok: &mut usize, warn: &mut usize) {
+    if path.exists() {
+        if path.is_dir() {
+            *ok += 1;
+            println!("[ok] {label}: {}", path.display());
+        } else {
+            *warn += 1;
+            println!(
+                "[warn] {label}: exists but is not a directory ({})",
+                path.display()
+            );
+        }
+    } else {
+        *warn += 1;
+        println!("[warn] {label}: missing ({})", path.display());
     }
 }
 

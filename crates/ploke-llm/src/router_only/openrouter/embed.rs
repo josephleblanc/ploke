@@ -104,7 +104,7 @@ impl super::OpenRouter {
             crate::embeddings::EmbeddingInput::Single(_) => 1,
             crate::embeddings::EmbeddingInput::Batch(items) => items.len(),
         };
-        tracing::info!(
+        tracing::debug!(
             target: "embed-pipeline",
             model = %req.model,
             input_len,
@@ -114,14 +114,14 @@ impl super::OpenRouter {
             url = %url,
             "sending OpenRouter embeddings request"
         );
-        if tracing::enabled!(tracing::Level::TRACE) {
-            if let Ok(serialized) = serde_json::to_string(req) {
-                tracing::trace!(
-                    target: "embed-pipeline",
-                    request_json = %snippet_lossy(serialized.as_bytes(), 2048),
-                    "OpenRouter embeddings request body"
-                );
-            }
+        if tracing::enabled!(tracing::Level::TRACE)
+            && let Ok(serialized) = serde_json::to_string(req)
+        {
+            tracing::trace!(
+                target: "embed-pipeline",
+                request_json = %snippet_lossy(serialized.as_bytes(), 2048),
+                "OpenRouter embeddings request body"
+            );
         }
         let resp = client
             .post(url)
@@ -202,7 +202,7 @@ impl super::OpenRouter {
             }
         })?;
 
-        tracing::info!(
+        tracing::debug!(
             target: "embed-pipeline",
             model = %req.model,
             url = %url,

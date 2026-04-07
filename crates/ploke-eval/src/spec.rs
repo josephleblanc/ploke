@@ -133,6 +133,68 @@ pub enum PrepareError {
         path: PathBuf,
         source: serde_json::Error,
     },
+    #[error("failed to read model registry file '{path}': {source}")]
+    ReadModelRegistry {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to parse model registry file '{path}': {source}")]
+    ParseModelRegistry {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    #[error("failed to write model registry file '{path}': {source}")]
+    WriteModelRegistry {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to serialize model registry: {0}")]
+    SerializeModelRegistry(serde_json::Error),
+    #[error("failed to read active model file '{path}': {source}")]
+    ReadActiveModel {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to parse active model file '{path}': {source}")]
+    ParseActiveModel {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    #[error("failed to write active model file '{path}': {source}")]
+    WriteActiveModel {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to serialize active model selection: {0}")]
+    SerializeActiveModel(serde_json::Error),
+    #[error("failed to read starting db cache metadata file '{path}': {source}")]
+    ReadStartingDbCacheMetadata {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to parse starting db cache metadata file '{path}': {source}")]
+    ParseStartingDbCacheMetadata {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    #[error("failed to write starting db cache metadata file '{path}': {source}")]
+    WriteStartingDbCacheMetadata {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to serialize starting db cache metadata: {0}")]
+    SerializeStartingDbCacheMetadata(serde_json::Error),
+    #[error("failed to write starting db cache snapshot file '{path}': {source}")]
+    WriteStartingDbCacheSnapshot {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("model '{model}' was not found in registry '{path}'")]
+    UnknownModelInRegistry { model: String, path: PathBuf },
+    #[error("model registry file '{0}' does not exist")]
+    MissingModelRegistry(PathBuf),
+    #[error("active model file '{0}' does not exist")]
+    MissingActiveModel(PathBuf),
     #[error("failed to read dataset line {line} from '{path}': {source}")]
     ReadDatasetLine {
         path: PathBuf,

@@ -9,7 +9,7 @@ use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
-use tracing::{info, info_span, instrument};
+use tracing::{Level, info, info_span, instrument};
 
 use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 
@@ -229,7 +229,7 @@ impl ParsedCodeGraph {
         Ok((merged, tree))
     }
 
-    #[instrument(target = TRACE_TARGET_MERGE, skip_all, fields(graph_count = graphs.len()))]
+    #[instrument(target = TRACE_TARGET_MERGE, skip_all, fields(graph_count = graphs.len()), level = Level::DEBUG)]
     pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, SynParserError> {
         let selected_root_paths: HashSet<PathBuf> = graphs
             .iter()
@@ -254,14 +254,14 @@ impl ParsedCodeGraph {
             if found_context.is_none() {
                 found_context = graph.crate_context.take();
                 if let Some(ref ctx) = found_context {
-                    tracing::info!(
+                    tracing::trace!(
                         "name: {}, root_file: {:?}, files: {:#?}",
                         ctx.name,
                         ctx.root_file(),
                         ctx.files
                     );
                 } else {
-                    tracing::info!("no crate_context found");
+                    tracing::trace!("no crate_context found");
                 }
             }
             new_graph.append_all(graph)?;
@@ -547,7 +547,7 @@ impl ParsedCodeGraph {
     ///
     /// - reviewed by JL Jul 27, 2025
     /// - edited by JL Jul 28, 2025 (added limitation re: secondary nodes)
-    #[instrument(target = TRACE_TARGET_PRUNE, skip_all, fields(self.file_path = ?self.file_path.as_path()))]
+    #[instrument(target = TRACE_TARGET_PRUNE, skip_all, fields(self.file_path = ?self.file_path.as_path()), level = Level::DEBUG)]
     fn prune(&mut self, pruned_items: PruningResult) {
         // WARN: We are pruning all the unused items from the unlinked files, but that does not
         // include the unused types currently, meaning we could be ending up with unlinked types?
@@ -561,7 +561,7 @@ impl ParsedCodeGraph {
         //
         // -- handle pruning items
         let mut prune_counts = PruneCounts::default();
-        tracing::info!(unresolved_count = %self.unresolved_nodes().len(), unresolved_pruned = %pruned_items.unresolved_nodes.len());
+        tracing::debug!(unresolved_count = %self.unresolved_nodes().len(), unresolved_pruned = %pruned_items.unresolved_nodes.len());
 
         // WARN: We are not currently tracking the Field, Variant, GenericParam, or ExternCrate at
         // this granularity, removing them from the number of items being counted before and after
@@ -735,16 +735,16 @@ impl ParsedCodeGraph {
         let mut any_found = false;
         for id in all_graph_ids {
             if pruned_item_ids.contains(&id) {
-                tracing::info!("Found overlap: {id}");
+                tracing::debug!("Found overlap: {id}");
                 any_found = true;
             }
         }
         if !any_found {
-            tracing::info!("No intersection between pruned_item_ids and all_graph_ids");
+            tracing::debug!("No intersection between pruned_item_ids and all_graph_ids");
         }
         let unique_pruned_item_ids = pruned_item_ids.iter().unique().collect_vec();
         if unique_pruned_item_ids.len() != pruned_item_ids.len() {
-            tracing::info!(
+            tracing::debug!(
                 "pruned_item_ids: unique: {}, total: {}",
                 unique_pruned_item_ids.len(),
                 pruned_item_ids.len()
@@ -764,7 +764,7 @@ impl ParsedCodeGraph {
                 removed_count = %removed_items.len()
             );
         } else {
-            tracing::info!(diff_resolved = %prune_counts.diff_initial_resolved(),
+            tracing::debug!(diff_resolved = %prune_counts.diff_initial_resolved(),
                 pruned_count = %pruned_item_ids.len(),
                 orphan_method_count = %orphan_method_count,
                 removed_count = %removed_items.len());

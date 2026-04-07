@@ -20,7 +20,7 @@ pub use workspace::{
 };
 
 use itertools::Itertools as _;
-use tracing::instrument;
+use tracing::{Level, instrument};
 use walkdir::WalkDir;
 
 /// Runs the single-threaded discovery phase to gather context about target crates.
@@ -44,7 +44,7 @@ use walkdir::WalkDir;
 // * Assuming target_crates provides absolute paths for simplicity
 //  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
 //  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
-#[instrument(err)]
+#[instrument(err, level = Level::DEBUG)]
 pub fn run_discovery_phase_with_target(
     workspace_root: Option<&Path>,
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
@@ -85,7 +85,7 @@ pub fn run_discovery_phase_with_target(
             });
         };
 
-        tracing::info!(?manifest);
+        tracing::debug!(?manifest);
 
         let crate_name = package.name().to_string();
         let autotests_enabled = package.autotests;
@@ -307,17 +307,17 @@ fn collect_targets_from_cargo_manifest(
     let mut target_specs = Vec::new();
     let lib_name_default = package_name.replace('-', "_");
 
-    if let Some(lib) = &manifest.lib {
-        if let Some(rel) = lib.path.as_deref() {
-            let lib_path = crate_root_path.join(rel);
-            if lib_path.is_file() {
-                let name = lib.name.as_deref().unwrap_or(&lib_name_default).to_string();
-                target_specs.push(TargetSpec {
-                    kind: TargetKind::Lib,
-                    name,
-                    root: lib_path,
-                });
-            }
+    if let Some(lib) = &manifest.lib
+        && let Some(rel) = lib.path.as_deref()
+    {
+        let lib_path = crate_root_path.join(rel);
+        if lib_path.is_file() {
+            let name = lib.name.as_deref().unwrap_or(&lib_name_default).to_string();
+            target_specs.push(TargetSpec {
+                kind: TargetKind::Lib,
+                name,
+                root: lib_path,
+            });
         }
     }
 

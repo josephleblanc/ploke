@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod layout;
+pub mod model_registry;
 pub mod msb;
 pub mod registry;
 pub mod runner;

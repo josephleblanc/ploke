@@ -12,6 +12,7 @@ use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
+use ploke_llm::ModelId;
 use ploke_tui::AppEvent;
 use ploke_tui::app::App;
 use ploke_tui::app::commands::harness::TestAppAccessor;
@@ -21,28 +22,36 @@ use ploke_tui::app_state::core::{DiffPreview, EditProposalStatus};
 use ploke_tui::app_state::events::SystemEvent;
 use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, sleep};
-use tracing::info;
+use tracing::{info, warn};
 
+use crate::layout;
+use crate::model_registry::resolve_model_for_run;
 use crate::spec::{PrepareError, PreparedSingleRun};
 
 const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
 const OPENROUTER_CODESTRAL_DIMS: usize = 1536;
+const STARTING_DB_CACHE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMsbAgentSingleRequest {
     pub run_manifest: PathBuf,
     pub index_debug_snapshots: bool,
+    #[serde(default)]
+    pub use_default_model: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMsbSingleRequest {
     pub run_manifest: PathBuf,
     pub index_debug_snapshots: bool,
+    #[serde(default)]
+    pub use_default_model: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,11 +101,29 @@ pub struct SnapshotStatusArtifact {
     pub config_home: PathBuf,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StartingDbCacheMetadata {
+    pub version: u32,
+    pub task_id: String,
+    pub checkout_sha: Option<String>,
+    pub embedding_provider: String,
+    pub embedding_model: String,
+    pub embedding_dimensions: u32,
+    pub embedding_dtype: String,
+}
+
+#[derive(Debug, Clone)]
+struct StartingDbCachePaths {
+    snapshot: PathBuf,
+    metadata: PathBuf,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionLog {
     pub task_id: String,
     pub repo_root: PathBuf,
     pub output_dir: PathBuf,
+    pub selected_model: ModelId,
     pub steps: Vec<String>,
 }
 
@@ -189,6 +216,7 @@ pub struct PatchArtifact {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentTurnArtifact {
     pub task_id: String,
+    pub selected_model: ModelId,
     pub issue_prompt: String,
     pub user_message_id: String,
     pub events: Vec<ObservedTurnEvent>,
@@ -311,9 +339,133 @@ fn proposal_status_label(status: &EditProposalStatus) -> &'static str {
     }
 }
 
+fn starting_db_cache_metadata(prepared: &PreparedSingleRun) -> StartingDbCacheMetadata {
+    let embedding = codestral_embedding_set();
+    StartingDbCacheMetadata {
+        version: STARTING_DB_CACHE_VERSION,
+        task_id: prepared.task_id.clone(),
+        checkout_sha: prepared
+            .base_sha
+            .clone()
+            .or_else(|| prepared.head_sha.clone()),
+        embedding_provider: embedding.provider.to_string(),
+        embedding_model: embedding.model.to_string(),
+        embedding_dimensions: embedding.dims(),
+        embedding_dtype: embedding.shape.dtype_tag().to_string(),
+    }
+}
+
+fn starting_db_cache_key(prepared: &PreparedSingleRun) -> String {
+    let metadata = starting_db_cache_metadata(prepared);
+    let payload = format!(
+        "{version}:{task_id}:{checkout_sha}:{provider}:{model}:{dims}:{dtype}",
+        version = metadata.version,
+        task_id = metadata.task_id,
+        checkout_sha = metadata.checkout_sha.as_deref().unwrap_or("<none>"),
+        provider = metadata.embedding_provider,
+        model = metadata.embedding_model,
+        dims = metadata.embedding_dimensions,
+        dtype = metadata.embedding_dtype,
+    );
+    format!("{:x}", Sha256::digest(payload.as_bytes()))
+}
+
+fn starting_db_cache_paths_at(
+    eval_home: impl AsRef<Path>,
+    prepared: &PreparedSingleRun,
+) -> StartingDbCachePaths {
+    let key = starting_db_cache_key(prepared);
+    let base = eval_home.as_ref().join("cache").join("starting-dbs");
+    StartingDbCachePaths {
+        snapshot: base.join(format!("{key}.sqlite")),
+        metadata: base.join(format!("{key}.json")),
+    }
+}
+
+fn load_cached_starting_db_at(
+    eval_home: impl AsRef<Path>,
+    prepared: &PreparedSingleRun,
+) -> Result<Option<StartingDbCachePaths>, PrepareError> {
+    let paths = starting_db_cache_paths_at(eval_home, prepared);
+    if !paths.snapshot.exists() || !paths.metadata.exists() {
+        return Ok(None);
+    }
+
+    let text = match fs::read_to_string(&paths.metadata) {
+        Ok(text) => text,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(PrepareError::ReadStartingDbCacheMetadata {
+                path: paths.metadata.clone(),
+                source,
+            });
+        }
+    };
+    let metadata: StartingDbCacheMetadata = serde_json::from_str(&text).map_err(|source| {
+        PrepareError::ParseStartingDbCacheMetadata {
+            path: paths.metadata.clone(),
+            source,
+        }
+    })?;
+    if metadata != starting_db_cache_metadata(prepared) {
+        return Ok(None);
+    }
+
+    Ok(Some(paths))
+}
+
+fn load_cached_starting_db(
+    prepared: &PreparedSingleRun,
+) -> Result<Option<StartingDbCachePaths>, PrepareError> {
+    load_cached_starting_db_at(layout::ploke_eval_home()?, prepared)
+}
+
+async fn persist_starting_db_cache_at(
+    eval_home: impl AsRef<Path>,
+    prepared: &PreparedSingleRun,
+    snapshot_path: &Path,
+) -> Result<StartingDbCachePaths, PrepareError> {
+    let paths = starting_db_cache_paths_at(eval_home, prepared);
+    if let Some(parent) = paths.snapshot.parent() {
+        fs::create_dir_all(parent).map_err(|source| {
+            PrepareError::WriteStartingDbCacheSnapshot {
+                path: parent.to_path_buf(),
+                source,
+            }
+        })?;
+    }
+
+    fs::copy(snapshot_path, &paths.snapshot).map_err(|source| {
+        PrepareError::WriteStartingDbCacheSnapshot {
+            path: paths.snapshot.clone(),
+            source,
+        }
+    })?;
+
+    let metadata = starting_db_cache_metadata(prepared);
+    let json = serde_json::to_string_pretty(&metadata)
+        .map_err(PrepareError::SerializeStartingDbCacheMetadata)?;
+    fs::write(&paths.metadata, json).map_err(|source| {
+        PrepareError::WriteStartingDbCacheMetadata {
+            path: paths.metadata.clone(),
+            source,
+        }
+    })?;
+
+    Ok(paths)
+}
+
+async fn persist_starting_db_cache(
+    prepared: &PreparedSingleRun,
+    snapshot_path: &Path,
+) -> Result<StartingDbCachePaths, PrepareError> {
+    persist_starting_db_cache_at(layout::ploke_eval_home()?, prepared, snapshot_path).await
+}
+
 impl RunMsbSingleRequest {
     pub async fn run(self) -> Result<RunArtifactPaths, PrepareError> {
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
+        let selected_model = resolve_model_for_run(self.use_default_model)?;
 
         fs::create_dir_all(&prepared.output_dir).map_err(|source| {
             PrepareError::CreateOutputDir {
@@ -352,8 +504,41 @@ impl RunMsbSingleRequest {
         write_json(&repo_state_path, &repo_state)?;
         steps.push("write_repo_state".to_string());
 
-        let runtime_db = init_runtime_db()?;
-        steps.push("init_runtime_db".to_string());
+        let cached_starting_db = match load_cached_starting_db(&prepared) {
+            Ok(cached) => cached,
+            Err(err) => {
+                warn!(error = %err, "runner phase: starting db cache lookup failed; falling back to fresh indexing");
+                None
+            }
+        };
+        let mut using_cached_starting_db = false;
+        let runtime_db = if let Some(cache_paths) = cached_starting_db.as_ref() {
+            match Database::create_new_backup_default(&cache_paths.snapshot).await {
+                Ok(db) => {
+                    info!(
+                        snapshot = %cache_paths.snapshot.display(),
+                        "runner phase: restoring cached starting db snapshot"
+                    );
+                    using_cached_starting_db = true;
+                    steps.push("restore_cached_starting_db".to_string());
+                    Arc::new(db)
+                }
+                Err(err) => {
+                    warn!(
+                        snapshot = %cache_paths.snapshot.display(),
+                        error = %err,
+                        "runner phase: cached starting db restore failed; falling back to fresh indexing"
+                    );
+                    let db = init_runtime_db()?;
+                    steps.push("init_runtime_db".to_string());
+                    db
+                }
+            }
+        } else {
+            let db = init_runtime_db()?;
+            steps.push("init_runtime_db".to_string());
+            db
+        };
 
         let config_home = prepared.output_dir.join("config");
         fs::create_dir_all(&config_home).map_err(|source| PrepareError::CreateOutputDir {
@@ -382,6 +567,10 @@ impl RunMsbSingleRequest {
                 detail: "index receiver unexpectedly shared".to_string(),
             })?;
         let state = runtime.state_arc();
+        {
+            let mut cfg = state.config.write().await;
+            cfg.active_model = selected_model.clone();
+        }
         info!("runner phase: inspect active embedding set before activation");
         let currently_active_set: EmbeddingSet = runtime_db
             .with_active_set(|set| set.clone())
@@ -406,33 +595,68 @@ impl RunMsbSingleRequest {
             .await;
         steps.push("bootstrap_headless_runtime".to_string());
 
-        info!(task_id = %prepared.task_id, repo_root = %prepared.repo_root.display(), "runner phase: start indexing");
-        app.run_command_text("/index").await;
-        steps.push("run_index_command".to_string());
+        if using_cached_starting_db {
+            info!(
+                task_id = %prepared.task_id,
+                repo_root = %prepared.repo_root.display(),
+                "runner phase: cached starting db present, skipping indexing"
+            );
+            seed_loaded_workspace_from_repo(&state, &prepared).await?;
+            steps.push("seed_loaded_workspace_from_repo".to_string());
+            app.pump_pending_events().await;
+            steps.push("pump_post_cached_workspace_events".to_string());
+        } else {
+            info!(task_id = %prepared.task_id, repo_root = %prepared.repo_root.display(), "runner phase: start indexing");
+            app.run_command_text("/index").await;
+            steps.push("run_index_command".to_string());
 
-        info!("runner phase: waiting for indexing completion");
-        wait_for_indexing_completion(
-            &mut app,
-            &mut realtime_rx,
-            &mut background_rx,
-            &mut index_rx,
-            Arc::clone(&state.db),
-            indexing_checkpoint_db.clone(),
-            indexing_failure_db.clone(),
-            self.index_debug_snapshots,
-        )
-        .await?;
-        steps.push("indexing_completed".to_string());
-        info!("runner phase: indexing completed");
-        app.pump_pending_events().await;
-        steps.push("pump_post_index_events".to_string());
+            info!("runner phase: waiting for indexing completion");
+            wait_for_indexing_completion(
+                &mut app,
+                &mut realtime_rx,
+                &mut background_rx,
+                &mut index_rx,
+                Arc::clone(&state.db),
+                indexing_checkpoint_db.clone(),
+                indexing_failure_db.clone(),
+                self.index_debug_snapshots,
+            )
+            .await?;
+            steps.push("indexing_completed".to_string());
+            info!("runner phase: indexing completed");
+            app.pump_pending_events().await;
+            steps.push("pump_post_index_events".to_string());
+        }
 
         let indexing_status = IndexingStatusArtifact {
             status: "completed".to_string(),
-            detail: "Indexing completed through the full app command path.".to_string(),
+            detail: if using_cached_starting_db {
+                "Loaded cached starting db snapshot and skipped reindexing.".to_string()
+            } else {
+                "Indexing completed through the full app command path.".to_string()
+            },
         };
         write_json(&indexing_status_path, &indexing_status)?;
         steps.push("write_indexing_status".to_string());
+
+        persist_db_snapshot(
+            Arc::clone(&state.db),
+            indexing_checkpoint_db.clone(),
+            "starting snapshot checkpoint",
+        )
+        .await?;
+        steps.push("write_indexing_checkpoint".to_string());
+
+        if !using_cached_starting_db {
+            if let Err(err) = persist_starting_db_cache(&prepared, &indexing_checkpoint_db).await {
+                warn!(
+                    snapshot = %indexing_checkpoint_db.display(),
+                    error = %err,
+                    "runner phase: failed to refresh starting db cache"
+                );
+            }
+            steps.push("refresh_starting_db_cache".to_string());
+        }
 
         let snapshot_file = prepared.output_dir.join("final-snapshot.db");
         info!(
@@ -461,6 +685,7 @@ impl RunMsbSingleRequest {
             task_id: prepared.task_id,
             repo_root: prepared.repo_root,
             output_dir: prepared.output_dir,
+            selected_model,
             steps,
         };
         write_json(&execution_log_path, &execution_log)?;
@@ -489,6 +714,7 @@ impl RunMsbSingleRequest {
 impl RunMsbAgentSingleRequest {
     pub async fn run(self) -> Result<AgentRunArtifactPaths, PrepareError> {
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
+        let selected_model = resolve_model_for_run(self.use_default_model)?;
 
         fs::create_dir_all(&prepared.output_dir).map_err(|source| {
             PrepareError::CreateOutputDir {
@@ -529,8 +755,41 @@ impl RunMsbAgentSingleRequest {
         write_json(&repo_state_path, &repo_state)?;
         steps.push("write_repo_state".to_string());
 
-        let runtime_db = init_runtime_db()?;
-        steps.push("init_runtime_db".to_string());
+        let cached_starting_db = match load_cached_starting_db(&prepared) {
+            Ok(cached) => cached,
+            Err(err) => {
+                warn!(error = %err, "runner phase: starting db cache lookup failed; falling back to fresh indexing");
+                None
+            }
+        };
+        let mut using_cached_starting_db = false;
+        let runtime_db = if let Some(cache_paths) = cached_starting_db.as_ref() {
+            match Database::create_new_backup_default(&cache_paths.snapshot).await {
+                Ok(db) => {
+                    info!(
+                        snapshot = %cache_paths.snapshot.display(),
+                        "runner phase: restoring cached starting db snapshot"
+                    );
+                    using_cached_starting_db = true;
+                    steps.push("restore_cached_starting_db".to_string());
+                    Arc::new(db)
+                }
+                Err(err) => {
+                    warn!(
+                        snapshot = %cache_paths.snapshot.display(),
+                        error = %err,
+                        "runner phase: cached starting db restore failed; falling back to fresh indexing"
+                    );
+                    let db = init_runtime_db()?;
+                    steps.push("init_runtime_db".to_string());
+                    db
+                }
+            }
+        } else {
+            let db = init_runtime_db()?;
+            steps.push("init_runtime_db".to_string());
+            db
+        };
 
         let config_home = prepared.output_dir.join("config");
         fs::create_dir_all(&config_home).map_err(|source| PrepareError::CreateOutputDir {
@@ -570,6 +829,7 @@ impl RunMsbAgentSingleRequest {
         {
             let mut cfg = state.config.write().await;
             cfg.editing.auto_confirm_edits = true;
+            cfg.active_model = selected_model.clone();
         }
         info!("runner phase: inspect active embedding set before activation");
         let currently_active_set: EmbeddingSet = runtime_db
@@ -595,33 +855,68 @@ impl RunMsbAgentSingleRequest {
             .await;
         steps.push("bootstrap_headless_runtime".to_string());
 
-        info!(task_id = %prepared.task_id, repo_root = %prepared.repo_root.display(), "runner phase: start indexing");
-        app.run_command_text("/index").await;
-        steps.push("run_index_command".to_string());
+        if using_cached_starting_db {
+            info!(
+                task_id = %prepared.task_id,
+                repo_root = %prepared.repo_root.display(),
+                "runner phase: cached starting db present, skipping indexing"
+            );
+            seed_loaded_workspace_from_repo(&state, &prepared).await?;
+            steps.push("seed_loaded_workspace_from_repo".to_string());
+            app.pump_pending_events().await;
+            steps.push("pump_post_cached_workspace_events".to_string());
+        } else {
+            info!(task_id = %prepared.task_id, repo_root = %prepared.repo_root.display(), "runner phase: start indexing");
+            app.run_command_text("/index").await;
+            steps.push("run_index_command".to_string());
 
-        info!("runner phase: waiting for indexing completion");
-        wait_for_indexing_completion(
-            &mut app,
-            &mut realtime_rx,
-            &mut background_rx,
-            &mut index_rx,
-            Arc::clone(&state.db),
-            indexing_checkpoint_db.clone(),
-            indexing_failure_db.clone(),
-            self.index_debug_snapshots,
-        )
-        .await?;
-        steps.push("indexing_completed".to_string());
-        info!("runner phase: indexing completed");
-        app.pump_pending_events().await;
-        steps.push("pump_post_index_events".to_string());
+            info!("runner phase: waiting for indexing completion");
+            wait_for_indexing_completion(
+                &mut app,
+                &mut realtime_rx,
+                &mut background_rx,
+                &mut index_rx,
+                Arc::clone(&state.db),
+                indexing_checkpoint_db.clone(),
+                indexing_failure_db.clone(),
+                self.index_debug_snapshots,
+            )
+            .await?;
+            steps.push("indexing_completed".to_string());
+            info!("runner phase: indexing completed");
+            app.pump_pending_events().await;
+            steps.push("pump_post_index_events".to_string());
+        }
 
         let indexing_status = IndexingStatusArtifact {
             status: "completed".to_string(),
-            detail: "Indexing completed through the full app command path.".to_string(),
+            detail: if using_cached_starting_db {
+                "Loaded cached starting db snapshot and skipped reindexing.".to_string()
+            } else {
+                "Indexing completed through the full app command path.".to_string()
+            },
         };
         write_json(&indexing_status_path, &indexing_status)?;
         steps.push("write_indexing_status".to_string());
+
+        persist_db_snapshot(
+            Arc::clone(&state.db),
+            indexing_checkpoint_db.clone(),
+            "starting snapshot checkpoint",
+        )
+        .await?;
+        steps.push("write_indexing_checkpoint".to_string());
+
+        if !using_cached_starting_db {
+            if let Err(err) = persist_starting_db_cache(&prepared, &indexing_checkpoint_db).await {
+                warn!(
+                    snapshot = %indexing_checkpoint_db.display(),
+                    error = %err,
+                    "runner phase: failed to refresh starting db cache"
+                );
+            }
+            steps.push("refresh_starting_db_cache".to_string());
+        }
 
         let turn_artifact = run_benchmark_turn(
             &prepared,
@@ -631,6 +926,7 @@ impl RunMsbAgentSingleRequest {
             &mut realtime_rx,
             &mut background_rx,
             &turn_trace_path,
+            selected_model.clone(),
         )
         .await?;
         write_json(&turn_summary_path, &turn_artifact)?;
@@ -663,6 +959,7 @@ impl RunMsbAgentSingleRequest {
             task_id: prepared.task_id,
             repo_root: prepared.repo_root,
             output_dir: prepared.output_dir,
+            selected_model,
             steps,
         };
         write_json(&execution_log_path, &execution_log)?;
@@ -803,6 +1100,37 @@ async fn setup_replay_runtime(
         .await;
 
     Ok((app, state, config_guard))
+}
+
+async fn seed_loaded_workspace_from_repo(
+    state: &Arc<AppState>,
+    prepared: &PreparedSingleRun,
+) -> Result<(), PrepareError> {
+    let resolved = resolve_index_target(Some(prepared.repo_root.clone()), &prepared.repo_root)
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "seed_loaded_workspace_resolve_index_target",
+            detail: err.to_string(),
+        })?;
+
+    let policy = state
+        .with_system_txn(|txn| {
+            txn.set_loaded_workspace(
+                resolved.workspace_root.clone(),
+                resolved.member_roots.clone(),
+                Some(resolved.focused_root.clone()),
+            );
+            txn.derive_path_policy(&[])
+        })
+        .await;
+
+    if let Some(policy) = policy.result {
+        state
+            .io_handle
+            .update_roots(Some(policy.roots), Some(policy.symlink_policy))
+            .await;
+    }
+
+    Ok(())
 }
 
 async fn prepare_workspace_for_replay(
@@ -1164,12 +1492,14 @@ async fn run_benchmark_turn(
     realtime_rx: &mut broadcast::Receiver<AppEvent>,
     background_rx: &mut broadcast::Receiver<AppEvent>,
     trace_path: &Path,
+    selected_model: ModelId,
 ) -> Result<AgentTurnArtifact, PrepareError> {
     let deadline = Instant::now() + Duration::from_secs(prepared.budget.wall_clock_secs as u64);
     let issue_prompt = build_agent_issue_prompt(prepared);
     let user_message_id = submit_benchmark_prompt(app, &issue_prompt).await?;
     let mut artifact = AgentTurnArtifact {
         task_id: prepared.task_id.clone(),
+        selected_model,
         issue_prompt,
         user_message_id,
         events: Vec::new(),
@@ -1534,6 +1864,7 @@ mod tests {
     use ploke_tui::test_utils::mock::create_mock_app_state;
     use ploke_tui::tools::{FunctionMarker, ToolCall, ToolName};
     use std::path::PathBuf;
+    use tempfile::tempdir;
     use tracing_subscriber::fmt::SubscriberBuilder;
 
     fn init_tracing() {
@@ -1591,6 +1922,92 @@ mod tests {
 
         assert_ne!(before.hash_id(), after.hash_id());
         assert_eq!(after.hash_id(), codestral_embedding_set().hash_id());
+    }
+
+    #[tokio::test]
+    async fn starting_db_cache_round_trip_restores_snapshot() {
+        init_tracing();
+
+        let cache_root = tempdir().expect("cache root");
+        let prepared = PreparedSingleRun {
+            task_id: "case-123".to_string(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            output_dir: cache_root.path().join("out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some("abc123".to_string()),
+            head_sha: Some("def456".to_string()),
+            budget: EvalBudget::default(),
+            source: None,
+        };
+
+        let db = init_runtime_db().expect("init runtime db");
+        let snapshot_path = cache_root.path().join("starting.sqlite");
+        persist_db_snapshot(
+            Arc::clone(&db),
+            snapshot_path.clone(),
+            "test starting snapshot",
+        )
+        .await
+        .expect("persist snapshot");
+
+        let paths = persist_starting_db_cache_at(cache_root.path(), &prepared, &snapshot_path)
+            .await
+            .expect("persist cache");
+        assert!(paths.snapshot.exists());
+        assert!(paths.metadata.exists());
+
+        let loaded =
+            load_cached_starting_db_at(cache_root.path(), &prepared).expect("load cache hit");
+        let loaded = loaded.expect("cache should be reusable");
+        assert_eq!(loaded.snapshot, paths.snapshot);
+
+        let restored = Database::create_new_backup_default(&loaded.snapshot)
+            .await
+            .expect("restore cached snapshot");
+        assert!(
+            restored
+                .is_embedding_set_registered()
+                .expect("embedding set relation"),
+            "restored snapshot should contain embedding set relation"
+        );
+    }
+
+    #[test]
+    fn starting_db_cache_miss_when_metadata_changes() {
+        let cache_root = tempdir().expect("cache root");
+        let prepared_a = PreparedSingleRun {
+            task_id: "case-123".to_string(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            output_dir: cache_root.path().join("out-a"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some("abc123".to_string()),
+            head_sha: Some("def456".to_string()),
+            budget: EvalBudget::default(),
+            source: None,
+        };
+        let prepared_b = PreparedSingleRun {
+            base_sha: Some("different".to_string()),
+            ..prepared_a.clone()
+        };
+
+        let paths = starting_db_cache_paths_at(cache_root.path(), &prepared_a);
+        assert_ne!(
+            paths.snapshot,
+            starting_db_cache_paths_at(cache_root.path(), &prepared_b).snapshot
+        );
+        assert!(
+            load_cached_starting_db_at(cache_root.path(), &prepared_a)
+                .expect("empty cache should not error")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1691,6 +2108,7 @@ mod tests {
 
         let mut artifact = AgentTurnArtifact {
             task_id: "case-123".to_string(),
+            selected_model: ploke_llm::ModelId::from(ploke_llm::ModelKey::default()),
             issue_prompt: "prompt".to_string(),
             user_message_id: user_id.to_string(),
             events: Vec::new(),
