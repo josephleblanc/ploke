@@ -6,6 +6,7 @@ Current scope:
 - fetch a benchmark repo into a stable local cache
 - prepare one run manifest from a Multi-SWE-bench instance
 - execute one prepared run
+- inspect available OpenRouter providers for a model
 - reset the repo to the benchmark base commit
 - index the repo with `ploke`
 - save a DB snapshot after indexing
@@ -18,13 +19,38 @@ By default, `ploke-eval` uses:
 ~/.ploke-eval/
   datasets/   downloaded Multi-SWE-bench JSONL files
   repos/      benchmark repo checkouts
+  models/     model registry, active model, provider preferences
   runs/       per-instance run manifests and artifacts
 ```
+
+Provider preferences are stored in `~/.ploke-eval/models/provider-preferences.json`.
 
 Override the root with:
 
 ```bash
 PLOKE_EVAL_HOME=/some/path
+```
+
+## Assistant transcript
+
+Print only assistant messages from the most recent completed run:
+
+```bash
+cargo run -p ploke-eval -- transcript
+```
+
+The last completed run is recorded in `~/.ploke-eval/last-run.json`.
+
+List providers available for a model:
+
+```bash
+cargo run -p ploke-eval -- model providers
+```
+
+Pin a provider for a run:
+
+```bash
+cargo run -p ploke-eval -- run-msb-agent-single --instance BurntSushi__ripgrep-2209 --provider chutes
 ```
 
 ## Quick start

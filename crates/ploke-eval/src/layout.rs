@@ -39,8 +39,16 @@ pub fn active_model_file() -> Result<PathBuf, PrepareError> {
     Ok(models_dir()?.join("active-model.json"))
 }
 
+pub fn provider_prefs_file() -> Result<PathBuf, PrepareError> {
+    Ok(models_dir()?.join("provider-preferences.json"))
+}
+
 pub fn cache_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("cache"))
+}
+
+pub fn last_run_file() -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?.join("last-run.json"))
 }
 
 pub fn starting_db_cache_dir() -> Result<PathBuf, PrepareError> {

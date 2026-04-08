@@ -1371,6 +1371,14 @@ pub async fn execute_tools_via_event_bus(
     ploke_core::ArcStr,
     Result<ToolCallUiResult, ToolCallUiError>,
 )> {
+    if calls.is_empty() {
+        tracing::info!(
+            request_id = %step_request_id,
+            "execute_tools_via_event_bus received zero tool calls"
+        );
+        return Vec::new();
+    }
+
     // One receiver for the whole batch
     let mut rx = event_bus.realtime_tx.subscribe();
 
@@ -1579,6 +1587,7 @@ mod tests {
     use crate::event_bus::EventBusCaps;
     use crate::llm::router_only::openrouter::OpenRouter;
     use crate::tools::ToolName;
+    use tokio::time::timeout;
 
     #[test]
     fn parse_chat_outcome_content_message() {
@@ -1701,5 +1710,27 @@ mod tests {
         let mut retries = 0_u32;
         assert!(!should_retry_length(TuiLengthPolicy::Strict, &mut retries));
         assert_eq!(retries, 0);
+    }
+
+    #[tokio::test]
+    async fn execute_tools_via_event_bus_returns_immediately_for_empty_calls() {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let result = timeout(
+            Duration::from_millis(100),
+            execute_tools_via_event_bus(
+                event_bus,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Vec::new(),
+                Duration::from_secs(1),
+            ),
+        )
+        .await
+        .expect("empty tool call batch should not block");
+
+        assert!(
+            result.is_empty(),
+            "empty tool batch should produce no results"
+        );
     }
 }

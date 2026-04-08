@@ -54,6 +54,7 @@ pub enum Edit {
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
     Function,
+    Method,
     Const,
     Enum,
     Impl,
@@ -68,9 +69,30 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
+    pub const ALL: [Self; 13] = [
+        Self::Function,
+        Self::Method,
+        Self::Const,
+        Self::Enum,
+        Self::Impl,
+        Self::Import,
+        Self::Macro,
+        Self::Module,
+        Self::Static,
+        Self::Struct,
+        Self::Trait,
+        Self::TypeAlias,
+        Self::Union,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        self.as_relation()
+    }
+
     pub fn as_relation(&self) -> &'static str {
         match self {
             NodeKind::Function => "function",
+            NodeKind::Method => "method",
             NodeKind::Const => "const",
             NodeKind::Enum => "enum",
             NodeKind::Impl => "impl",
@@ -83,6 +105,80 @@ impl NodeKind {
             NodeKind::TypeAlias => "type_alias",
             NodeKind::Union => "union",
         }
+    }
+
+    pub fn allowed_values() -> [&'static str; 13] {
+        Self::ALL.map(|kind| kind.as_relation())
+    }
+
+    pub fn schema_description() -> String {
+        let values = Self::allowed_values().join(", ");
+        format!(
+            "The kind of code item this is. Use `method` for items defined inside `impl` or `trait` blocks and `function` for free functions. Must be one of: {values}"
+        )
+    }
+
+    pub fn schema_property() -> serde_json::Value {
+        serde_json::json!({
+            "type": "string",
+            "enum": Self::allowed_values(),
+            "description": Self::schema_description(),
+        })
+    }
+
+    pub fn lookup_hint(self) -> Option<&'static str> {
+        match self {
+            NodeKind::Function => Some(
+                "Hint: if this item is defined inside an `impl` or `trait`, retry with node_kind=method.",
+            ),
+            NodeKind::Method => {
+                Some("Hint: if this item is a free function, retry with node_kind=function.")
+            }
+            _ => None,
+        }
+    }
+}
+
+impl std::str::FromStr for NodeKind {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "function" => Ok(Self::Function),
+            "method" => Ok(Self::Method),
+            "const" => Ok(Self::Const),
+            "enum" => Ok(Self::Enum),
+            "impl" => Ok(Self::Impl),
+            "import" => Ok(Self::Import),
+            "macro" => Ok(Self::Macro),
+            "module" => Ok(Self::Module),
+            "static" => Ok(Self::Static),
+            "struct" => Ok(Self::Struct),
+            "trait" => Ok(Self::Trait),
+            "type_alias" => Ok(Self::TypeAlias),
+            "union" => Ok(Self::Union),
+            _ => Err("invalid node kind"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NodeKind;
+
+    #[test]
+    fn node_kind_includes_method() {
+        assert_eq!(NodeKind::Method.as_relation(), "method");
+        assert!(NodeKind::allowed_values().contains(&"method"));
+
+        let parsed = "method".parse::<NodeKind>().expect("parse method");
+        assert!(matches!(parsed, NodeKind::Method));
+    }
+
+    #[test]
+    fn node_kind_lookup_hint_mentions_method_for_function() {
+        let hint = NodeKind::Function.lookup_hint().expect("function hint");
+        assert!(hint.contains("node_kind=method"));
     }
 }
 

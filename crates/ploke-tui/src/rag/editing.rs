@@ -8,6 +8,13 @@ use crate::{
 };
 
 use super::*;
+
+pub fn spawn_auto_confirm_edits(state: Arc<AppState>, event_bus: Arc<EventBus>, request_id: Uuid) {
+    tokio::spawn(async move {
+        approve_edits(&state, &event_bus, request_id).await;
+    });
+}
+
 #[tracing::instrument(skip(state, event_bus))]
 pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
@@ -143,8 +150,13 @@ async fn apply_ns_edit(
             })
             .to_string();
 
-            // Update state: mark applied
-            proposal.status = EditProposalStatus::Applied;
+            let applied_ok = applied > 0;
+            if applied_ok {
+                proposal.status = EditProposalStatus::Applied;
+            } else {
+                proposal.status =
+                    EditProposalStatus::Failed("No non-semantic edits were applied".to_string());
+            }
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();
             let tool_name = if proposal.is_semantic {
@@ -158,11 +170,15 @@ async fn apply_ns_edit(
             let ui_payload = ToolUiPayload::new(
                 tool_name,
                 call_id_val.clone(),
-                format!("Applied {} edits across {} files", applied, file_count),
+                if applied_ok {
+                    format!("Applied {} edits across {} files", applied, file_count)
+                } else {
+                    format!("Failed to apply edits across {} files", file_count)
+                },
             )
             .with_request_id(request_id)
-            .with_field("status", "applied")
-            .with_field("ok", (applied > 0).to_string())
+            .with_field("status", if applied_ok { "applied" } else { "failed" })
+            .with_field("ok", applied_ok.to_string())
             .with_field("applied", applied.to_string())
             .with_field("files", file_count.to_string());
             let ui_payload_for_chat = ui_payload.clone();
@@ -184,16 +200,21 @@ async fn apply_ns_edit(
             )
             .await;
 
-            let msg = format!("Applied edits for request_id {}", request_id);
+            let msg = if applied_ok {
+                format!("Applied edits for request_id {}", request_id)
+            } else {
+                format!("No edits were applied for request_id {}", request_id)
+            };
             add_msg_imm(msg).await;
 
             // Persist proposals (best-effort)
             crate::app_state::handlers::proposals::save_proposals(state).await;
 
             // Surface a brief SysInfo so users see that a rescan has been scheduled
-
-            let msg = "Scheduled rescan of workspace after applying edits".to_string();
-            add_msg_imm(msg).await;
+            if applied_ok {
+                let msg = "Scheduled rescan of workspace after applying edits".to_string();
+                add_msg_imm(msg).await;
+            }
         }
         Err(e) => {
             tracing::debug!(

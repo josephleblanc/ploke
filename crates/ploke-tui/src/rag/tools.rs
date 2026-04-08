@@ -18,7 +18,7 @@ use similar::{ChangeTag, TextDiff};
 use tracing::debug;
 
 use crate::tools::create_file::CreateFileCtx;
-use crate::tools::{ToolName, ToolUiPayload};
+use crate::tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload};
 use crate::utils::path_scoping;
 use crate::{
     app_state::{
@@ -157,6 +157,173 @@ fn diff_chunk_with_context(
         out.push('\n');
     }
     out
+}
+
+#[derive(Debug, Clone)]
+enum SemanticCanonTarget {
+    Primary {
+        module_path: Vec<String>,
+        item_name: String,
+    },
+    Method {
+        module_path: Vec<String>,
+        owner_name: String,
+        item_name: String,
+    },
+}
+
+impl SemanticCanonTarget {
+    fn module_path(&self) -> &[String] {
+        match self {
+            Self::Primary { module_path, .. } | Self::Method { module_path, .. } => module_path,
+        }
+    }
+
+    fn item_name(&self) -> &str {
+        match self {
+            Self::Primary { item_name, .. } | Self::Method { item_name, .. } => item_name,
+        }
+    }
+
+    fn owner_name(&self) -> Option<&str> {
+        match self {
+            Self::Primary { .. } => None,
+            Self::Method { owner_name, .. } => Some(owner_name),
+        }
+    }
+}
+
+fn split_canon_for_semantic_target(
+    canon: &str,
+    node_type: NodeType,
+) -> Result<SemanticCanonTarget, String> {
+    let canon_trim = canon.trim();
+    if canon_trim.is_empty() {
+        return Err("Invalid 'canon': empty".to_string());
+    }
+
+    let mut segs = canon_trim
+        .split("::")
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    if segs.first().copied() != Some("crate") {
+        segs.insert(0, "crate");
+    }
+
+    match node_type {
+        NodeType::Method => {
+            if segs.len() < 4 {
+                return Err(
+                    "Invalid 'canon': method targets must look like crate::module::Type::method"
+                        .to_string(),
+                );
+            }
+            let item_name = segs.last().expect("checked len").to_string();
+            let owner_name = segs[segs.len() - 2].to_string();
+            let module_path = segs[..segs.len() - 2]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>();
+            if owner_name.is_empty() {
+                return Err("Invalid 'canon': missing method owner type".to_string());
+            }
+            if item_name.is_empty() {
+                return Err("Invalid 'canon': missing item name".to_string());
+            }
+            Ok(SemanticCanonTarget::Method {
+                module_path,
+                owner_name,
+                item_name,
+            })
+        }
+        _ => {
+            if segs.len() < 2 {
+                return Err("Invalid 'canon': missing item name".to_string());
+            }
+            let item_name = segs.last().expect("checked len").to_string();
+            let module_path = segs[..segs.len() - 1]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>();
+            if item_name.is_empty() {
+                return Err("Invalid 'canon': missing item name".to_string());
+            }
+            Ok(SemanticCanonTarget::Primary {
+                module_path,
+                item_name,
+            })
+        }
+    }
+}
+
+fn function_to_method_hint(
+    tool: ToolName,
+    canon: &str,
+    file_path: &PathBuf,
+    module_path: &[String],
+    owner_name: Option<&str>,
+    item_name: &str,
+) -> ToolError {
+    let retry_context = serde_json::json!({
+        "requested_node_type": "function",
+        "suggested_node_type": "method",
+        "file_path": file_path.display().to_string(),
+        "canon": canon,
+        "module_path": module_path,
+        "owner_name": owner_name,
+        "item_name": item_name,
+        "reason": "unique method target exists at the same coordinates",
+    });
+
+    ToolError::new(
+        tool,
+        ToolErrorCode::WrongType,
+        format!(
+            "No matching function target found for canon={} in file={}; the same coordinates resolve uniquely as a method target.",
+            canon,
+            file_path.display()
+        ),
+    )
+    .field("node_type")
+    .expected("method")
+    .received("function")
+    .retry_hint("Retry with node_type=method for this canonical path.")
+    .retry_context(retry_context)
+}
+
+fn ambiguous_method_target_error(
+    tool: ToolName,
+    canon: &str,
+    file_path: &PathBuf,
+    module_path: &[String],
+    owner_name: Option<&str>,
+    item_name: &str,
+    candidate_count: usize,
+) -> ToolError {
+    let retry_context = serde_json::json!({
+        "requested_node_type": "method",
+        "file_path": file_path.display().to_string(),
+        "canon": canon,
+        "module_path": module_path,
+        "owner_name": owner_name,
+        "item_name": item_name,
+        "candidate_count": candidate_count,
+        "reason": "multiple method targets matched after corrected method parsing",
+    });
+
+    ToolError::new(
+        tool,
+        ToolErrorCode::InvalidFormat,
+        format!(
+            "Ambiguous method target for canon={} in file={}; {} candidates matched after method parsing.",
+            canon,
+            file_path.display(),
+            candidate_count
+        ),
+    )
+    .field("canon")
+    .retry_hint("Disambiguate the owner type or use a more specific canonical path.")
+    .retry_context(retry_context)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -305,9 +472,9 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 node_type,
                 code,
             } => {
-                if !NodeType::primary_nodes().contains(node_type) {
+                if !NodeType::primary_and_assoc_nodes().contains(node_type) {
                     let err = format!(
-                        "Unsupported node type '{}': only primary_nodes() are supported for code editing",
+                        "Unsupported node type '{}': only primary_and_assoc_nodes() are supported for code editing",
                         node_type.relation_str()
                     );
                     tool_call_params.tool_call_failed(err);
@@ -338,36 +505,16 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     }
                 };
                 let canon_trim = canon.trim();
-                if canon_trim.is_empty() {
-                    tool_call_params.tool_call_failed("Invalid 'canon': empty".to_string());
-                    return;
-                }
-                let (mods_slice, item_name) = match canon_trim.rfind("::") {
-                    Some(idx) => (&canon_trim[..idx], &canon_trim[idx + 2..]),
-                    None => ("", canon_trim),
-                };
-                if item_name.is_empty() {
-                    tool_call_params
-                        .tool_call_failed("Invalid 'canon': missing item name".to_string());
-                    return;
-                }
-                let mod_path_owned: Vec<String> = if mods_slice.is_empty() {
-                    vec!["crate".to_string()]
-                } else {
-                    let segs = mods_slice
-                        .split("::")
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>();
-                    if segs.first().map(|s| s.as_str()) != Some("crate") {
-                        let mut with_crate = Vec::with_capacity(segs.len() + 1);
-                        with_crate.push("crate".to_string());
-                        with_crate.extend(segs.into_iter());
-                        with_crate
-                    } else {
-                        segs
+                let semantic_target = match split_canon_for_semantic_target(canon_trim, *node_type)
+                {
+                    Ok(target) => target,
+                    Err(msg) => {
+                        tool_call_params.tool_call_failed(msg);
+                        return;
                     }
                 };
+                let mod_path_owned = semantic_target.module_path().to_vec();
+                let item_name = semantic_target.item_name();
                 let mut nodes = match ploke_db::helpers::graph_resolve_exact(
                     &state.db,
                     node_type.relation_str(),
@@ -410,6 +557,55 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                         })
                         .collect();
                     if filtered.is_empty() {
+                        if matches!(node_type, NodeType::Function) {
+                            let method_target =
+                                match split_canon_for_semantic_target(canon_trim, NodeType::Method)
+                                {
+                                    Ok(target) => target,
+                                    Err(e) => {
+                                        tool_call_params.tool_call_failed(e);
+                                        return;
+                                    }
+                                };
+                            let method_nodes = match ploke_db::helpers::graph_resolve_exact(
+                                &state.db,
+                                NodeType::Method.relation_str(),
+                                &abs_path,
+                                method_target.module_path(),
+                                method_target.item_name(),
+                            ) {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    let err = format!("DB method probe failed: {}", e);
+                                    tool_call_params.tool_call_failed(err);
+                                    return;
+                                }
+                            };
+                            if method_nodes.len() == 1 {
+                                let err = function_to_method_hint(
+                                    name,
+                                    canon,
+                                    &abs_path,
+                                    method_target.module_path(),
+                                    method_target.owner_name(),
+                                    method_target.item_name(),
+                                );
+                                tool_call_params.tool_call_failed_error(err);
+                                return;
+                            } else if method_nodes.len() > 1 {
+                                let err = ambiguous_method_target_error(
+                                    name,
+                                    canon,
+                                    &abs_path,
+                                    method_target.module_path(),
+                                    method_target.owner_name(),
+                                    method_target.item_name(),
+                                    method_nodes.len(),
+                                );
+                                tool_call_params.tool_call_failed_error(err);
+                                return;
+                            }
+                        }
                         let cfiles: Vec<String> = filtered
                             .iter()
                             .map(|ed| ed.file_path.display().to_string())
@@ -441,13 +637,16 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     nodes = filtered;
                 }
                 if nodes.len() > 1 {
-                    let err = format!(
-                        "Ambiguous node resolution ({} candidates) for canon={} in file={}",
-                        nodes.len(),
+                    let err = ambiguous_method_target_error(
+                        name,
                         canon,
-                        abs_path.display()
+                        &abs_path,
+                        semantic_target.module_path(),
+                        semantic_target.owner_name(),
+                        semantic_target.item_name(),
+                        nodes.len(),
                     );
-                    tool_call_params.tool_call_failed(err);
+                    tool_call_params.tool_call_failed_error(err);
                     return;
                 }
                 let ed = nodes.remove(0);
@@ -834,8 +1033,20 @@ pub async fn apply_ns_code_edit_tool(
             },
         );
 
+        tracing::info!(
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            "ns_patch: before apply_patch_to_content"
+        );
         let apply_patch_result =
             mpatch::apply_patch_to_content(&patch, Some(&content), &apply_options);
+        tracing::info!(
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            "ns_patch: after apply_patch_to_content"
+        );
         let display_path = abs_path
             .strip_prefix(&primary_root)
             .unwrap_or(abs_path.as_path())
@@ -886,7 +1097,19 @@ pub async fn apply_ns_code_edit_tool(
             );
             truncate_lines(&chunk, max_lines)
         };
+        tracing::info!(
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            "ns_patch: before proposals.write"
+        );
         let mut reg = state.proposals.write().await;
+        tracing::info!(
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            "ns_patch: after proposals.write"
+        );
         reg.insert(
             request_id,
             EditProposal {
@@ -913,8 +1136,21 @@ pub async fn apply_ns_code_edit_tool(
                 is_semantic: false,
             },
         );
+        drop(reg);
 
+        tracing::info!(
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            "ns_patch: before save_proposals"
+        );
         crate::app_state::handlers::proposals::save_proposals(&state).await;
+        tracing::info!(
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            "ns_patch: after save_proposals"
+        );
 
         let summary = format!(
             r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
@@ -937,7 +1173,24 @@ Deny:     edit deny {request_id}{auto_confirm}"#,
                 ""
             },
         );
+        tracing::info!(
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            "ns_patch: before add_msg_immediate_sysinfo_unpinned"
+        );
         chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
+        tracing::info!(
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            "ns_patch: after add_msg_immediate_sysinfo_unpinned"
+        );
     }
+    tracing::info!(
+        request_id = %request_id,
+        call_id = %call_id,
+        "ns_patch: apply_ns_code_edit_tool returning"
+    );
     Ok(())
 }

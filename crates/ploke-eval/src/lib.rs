@@ -2,7 +2,9 @@ pub mod cli;
 pub mod layout;
 pub mod model_registry;
 pub mod msb;
+pub mod provider_prefs;
 pub mod registry;
+pub mod run_history;
 pub mod runner;
 pub mod spec;
 

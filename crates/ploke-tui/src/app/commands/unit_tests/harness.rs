@@ -41,26 +41,23 @@
 //! ## Usage Patterns
 //!
 //! ### 1. Minimal Setup (App handle only, no actors)
-//! ```rust,norun
-//! let rt = TestRuntime::new(&fixture_db);  // All params = NotSpawned
-//! let app = rt.into_app(pwd);              // Get App handle, no spawning needed
+//! ```rust,ignore
+//! let rt = TestRuntime::new(&fixture_db); // All params = NotSpawned
+//! let app = rt.into_app(pwd); // Get App handle, no spawning needed
 //! // Use app.state_cmd_tx() to send commands, but nothing processes them
 //! ```
 //!
 //! ### 2. With State Manager (most command tests)
-//! ```rust,norun
-//! let rt = TestRuntime::new(&fixture_db)
-//!     .spawn_state_manager();              // Returns TestRuntime<_, Spawned, _, _, _>
-//!
+//! ```rust,ignore
+//! let rt = TestRuntime::new(&fixture_db).spawn_state_manager();
 //! let events = rt.events_builder().build_app_only();
 //! let mut debug_rx = events.app_actor_events.debug_string_rx.unwrap();
-//!
 //! let app = rt.into_app(pwd);
 //! // Send command, assert on debug_rx.recv()
 //! ```
 //!
 //! ### 3. Full Stack (for integration tests)
-//! ```rust,norun
+//! ```rust,ignore
 //! let rt = TestRuntime::new(&fixture_db)
 //!     .spawn_file_manager()
 //!     .spawn_state_manager()
@@ -73,12 +70,12 @@
 //!
 //! After spawning, `rt.events_builder()` gives you a **type-state builder** for subscribing to channels:
 //!
-//! ```rust,norun
-//! let events = rt.events_builder()
-//!     .build_app_only();           // Just app actor events + debug_string_rx
-//!     .build_app_io();             // App + I/O manager
-//!     .build_app_event_bus();      // App + event bus subscriptions
-//!     .build_all();                 // Everything
+//! ```rust,ignore
+//! // Choose one of these depending on what you want to subscribe to:
+//! let events = rt.events_builder().build_app_only();
+//! let events = rt.events_builder().build_app_io();
+//! let events = rt.events_builder().build_app_event_bus();
+//! let events = rt.events_builder().build_all();
 //! ```
 // AI_DOC:written kimi-k2.5 2026-04-04
 // AI_DOC:checked JL        2026-04-04

@@ -6,10 +6,19 @@ use std::{
 };
 
 use ploke_db::{Database, NodeType};
-use ploke_tui::{AppEvent, EventBus, EventBusCaps, EventPriority, app::commands::harness::TestRuntime, app_state::{AppState, events::SystemEvent}, rag::{tools::apply_code_edit_tool, utils::{ApplyCodeEditRequest, Edit, ToolCallParams}}, tools::ToolName, user_config::{ChatPolicy, ChatTimeoutStrategy}};
+use ploke_tui::{
+    AppEvent, EventBus, EventBusCaps, EventPriority,
+    app::commands::harness::TestRuntime,
+    app_state::{AppState, events::SystemEvent},
+    rag::{
+        tools::apply_code_edit_tool,
+        utils::{ApplyCodeEditRequest, Edit, ToolCallParams},
+    },
+    tools::{ToolErrorCode, ToolErrorWire, ToolName},
+    user_config::{ChatPolicy, ChatTimeoutStrategy},
+};
 use serde::Deserialize;
 use uuid::Uuid;
-
 
 #[derive(Debug, Deserialize)]
 struct RecordedApplyCodeEditToolRequest {
@@ -18,16 +27,6 @@ struct RecordedApplyCodeEditToolRequest {
     call_id: String,
     tool: String,
     arguments: RecordedApplyCodeEditArguments,
-}
-
-#[derive(Debug, Deserialize)]
-struct RecordedToolFailedFixture {
-    request_id: Uuid,
-    parent_id: Uuid,
-    call_id: String,
-    tool: ToolName,
-    error: String,
-    ui_payload: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,11 +56,7 @@ fn benchmark_chat_policy() -> ChatPolicy {
 }
 
 impl RecordedApplyCodeEditToolRequest {
-    fn into_tool_params(
-        self,
-        state: Arc<AppState>,
-        event_bus: Arc<EventBus>,
-    ) -> ToolCallParams {
+    fn into_tool_params(self, state: Arc<AppState>, event_bus: Arc<EventBus>) -> ToolCallParams {
         let typed_req = ApplyCodeEditRequest {
             confidence: self.arguments.confidence,
             edits: self
@@ -96,13 +91,6 @@ fn load_recorded_apply_code_edit_request() -> RecordedApplyCodeEditToolRequest {
     .expect("recorded apply_code_edit tool request fixture must be valid json")
 }
 
-fn load_recorded_apply_code_edit_failure() -> RecordedToolFailedFixture {
-    serde_json::from_str(include_str!(
-        "fixtures/BurntSushi__ripgrep-2209_apply_code_edit_tool_failed.json"
-    ))
-    .expect("recorded apply_code_edit ToolFailed fixture must be valid json")
-}
-
 /// Debug aid for this replay: show the DB resolution behavior around `canon` parsing.
 ///
 /// This is intentionally print-based because it is diagnostic, not a stable contract.
@@ -131,17 +119,12 @@ fn diag_resolve_canon(db: &Database, node_type: NodeType, abs_path: &Path, canon
         relation, tool_mod_path, item_name
     );
 
-    let strict = ploke_db::helpers::graph_resolve_exact(
-        db,
-        relation,
-        abs_path,
-        &tool_mod_path,
-        item_name,
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("REPLAY_DIAG: graph_resolve_exact error: {}", e);
-        Vec::new()
-    });
+    let strict =
+        ploke_db::helpers::graph_resolve_exact(db, relation, abs_path, &tool_mod_path, item_name)
+            .unwrap_or_else(|e| {
+                eprintln!("REPLAY_DIAG: graph_resolve_exact error: {}", e);
+                Vec::new()
+            });
     eprintln!("REPLAY_DIAG: graph_resolve_exact hits={}", strict.len());
 
     // Show what the DB thinks exists in this file (for embedded primary nodes).
@@ -152,7 +135,10 @@ fn diag_resolve_canon(db: &Database, node_type: NodeType, abs_path: &Path, canon
                 .into_iter()
                 .filter(|row| row.file_path.as_path() == abs_path)
                 .collect::<Vec<_>>();
-            eprintln!("REPLAY_DIAG: list_primary_nodes file_rows={}", file_rows.len());
+            eprintln!(
+                "REPLAY_DIAG: list_primary_nodes file_rows={}",
+                file_rows.len()
+            );
 
             let mut by_rel: std::collections::BTreeMap<String, usize> =
                 std::collections::BTreeMap::new();
@@ -290,7 +276,10 @@ fn diag_resolve_canon(db: &Database, node_type: NodeType, abs_path: &Path, canon
 }
 
 fn diag_probe_primary_candidates(db: &Database, abs_path: &Path, item_name: &str) {
-    eprintln!("REPLAY_DIAG: probing primary candidates for {}", abs_path.display());
+    eprintln!(
+        "REPLAY_DIAG: probing primary candidates for {}",
+        abs_path.display()
+    );
 
     match ploke_db::helpers::list_primary_nodes(db) {
         Ok(rows) => {
@@ -300,7 +289,10 @@ fn diag_probe_primary_candidates(db: &Database, abs_path: &Path, item_name: &str
                 .collect::<Vec<_>>();
             file_rows.sort_by(|a, b| a.relation.cmp(&b.relation).then(a.name.cmp(&b.name)));
 
-            eprintln!("REPLAY_DIAG: primary_candidates file_rows={}", file_rows.len());
+            eprintln!(
+                "REPLAY_DIAG: primary_candidates file_rows={}",
+                file_rows.len()
+            );
 
             let mut by_rel: BTreeMap<String, usize> = BTreeMap::new();
             for row in &file_rows {
@@ -336,8 +328,8 @@ fn diag_probe_primary_candidates(db: &Database, abs_path: &Path, item_name: &str
 }
 
 fn diag_probe_name_anywhere(db: &Database, item_name: &str) {
-    let name_lit = serde_json::to_string(item_name)
-        .expect("stringifying replay probe name must succeed");
+    let name_lit =
+        serde_json::to_string(item_name).expect("stringifying replay probe name must succeed");
 
     let relations = NodeType::primary_and_assoc_nodes();
     eprintln!(
@@ -379,8 +371,8 @@ fn diag_probe_name_anywhere(db: &Database, item_name: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "diagnostic replay of eval-run artifact"]
-async fn test_apply_code_edit_failure_path() {
+#[ignore = "historical diagnostic replay of eval-run artifact"]
+async fn test_apply_code_edit_historical_failure_path() {
     const SNAPSHOT_DB: &str =
         "/home/brasides/.ploke-eval/runs/BurntSushi__ripgrep-2209/final-snapshot.db";
     const REPO_ROOT: &str = "/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep";
@@ -433,9 +425,10 @@ async fn test_apply_code_edit_failure_path() {
     let state = runtime.state_arc();
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
     let mut event_rx = event_bus.subscribe(EventPriority::Realtime);
-    let expected_failure = load_recorded_apply_code_edit_failure();
-    assert_eq!(expected_failure.tool, ToolName::ApplyCodeEdit);
-
+    let recorded_request_id = recorded.request_id;
+    let recorded_parent_id = recorded.parent_id;
+    let recorded_call_id = recorded.call_id.clone();
+    // Historical replay only: this fixture preserves the earlier failure mode for diagnosis.
     if let Some(edit) = recorded.arguments.edits.first() {
         let abs_path = PathBuf::from(&edit.file);
         diag_resolve_canon(
@@ -463,7 +456,7 @@ async fn test_apply_code_edit_failure_path() {
     let proposals = state.proposals.read().await;
     assert!(
         proposals.is_empty(),
-        "recorded failure path should not stage a proposal"
+        "historical replay should not stage a proposal; it reproduces the recorded failure mode"
     );
     drop(proposals);
 
@@ -484,30 +477,57 @@ async fn test_apply_code_edit_failure_path() {
             }
         })
         .await
-        .expect("expected ToolCallFailed for the recorded strict+fallback node miss within timeout");
+        .expect("expected ToolCallFailed for the recorded historical request within timeout");
 
-    assert_eq!(request_id, expected_failure.request_id);
-    assert_eq!(parent_id, expected_failure.parent_id);
-    assert_eq!(call_id.as_ref(), expected_failure.call_id);
-    assert_eq!(error, expected_failure.error);
+    assert_eq!(request_id, recorded_request_id);
+    assert_eq!(parent_id, recorded_parent_id);
+    assert_eq!(call_id.as_ref(), recorded_call_id);
+
+    let wire = ToolErrorWire::parse(&error).expect("parse ToolCallFailed wire payload");
+    assert_eq!(wire.llm["code"].as_str(), Some("WrongType"));
+    assert_eq!(wire.llm["field"].as_str(), Some("node_type"));
+    assert_eq!(wire.llm["expected"].as_str(), Some("method"));
+    assert_eq!(wire.llm["received"].as_str(), Some("function"));
+    assert!(
+        wire.llm["retry_hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("node_type=method")),
+        "expected method retry hint in wire payload"
+    );
+
+    let retry_context = wire.llm["retry_context"]
+        .as_object()
+        .expect("retry_context object");
+    assert_eq!(
+        retry_context
+            .get("requested_node_type")
+            .and_then(|v| v.as_str()),
+        Some("function")
+    );
+    assert_eq!(
+        retry_context
+            .get("suggested_node_type")
+            .and_then(|v| v.as_str()),
+        Some("method")
+    );
+    assert_eq!(
+        retry_context.get("owner_name").and_then(|v| v.as_str()),
+        Some("Replacer")
+    );
+    assert_eq!(
+        retry_context.get("canon").and_then(|v| v.as_str()),
+        Some("crate::util::Replacer::replace_all")
+    );
+    assert!(
+        retry_context
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .is_some_and(|reason| reason.contains("unique method target")),
+        "expected method retry reason in retry_context"
+    );
 
     let ui_payload = ui_payload.expect("expected ui_payload on ToolCallFailed");
-    let observed_ui_payload =
-        serde_json::to_value(&ui_payload).expect("serialize observed ui_payload");
-    assert_eq!(observed_ui_payload, expected_failure.ui_payload);
-    assert_eq!(ui_payload.tool, expected_failure.tool);
-    assert_eq!(ui_payload.call_id.as_ref(), expected_failure.call_id);
-    assert!(
-        ui_payload
-            .error
-            .as_ref()
-            .map(|err| err.system.contains("No matching node found (strict+fallback)"))
-            .unwrap_or(false),
-        "expected ToolCallFailed for the recorded strict+fallback node miss"
-    );
-
-    assert!(
-        ui_payload.error_code.is_some(),
-        "expected structured error code on ToolCallFailed"
-    );
+    assert_eq!(ui_payload.call_id.as_ref(), recorded_call_id);
+    assert_eq!(ui_payload.tool, ToolName::ApplyCodeEdit);
+    assert_eq!(ui_payload.error_code, Some(ToolErrorCode::WrongType));
 }

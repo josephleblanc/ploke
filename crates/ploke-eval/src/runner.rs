@@ -37,6 +37,8 @@ use tracing::{info, warn};
 
 use crate::layout;
 use crate::model_registry::resolve_model_for_run;
+use crate::provider_prefs::load_provider_for_model;
+use crate::run_history::record_last_run;
 use crate::spec::{PrepareError, PreparedSingleRun};
 
 const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
@@ -60,6 +62,8 @@ pub struct RunMsbAgentSingleRequest {
     pub index_debug_snapshots: bool,
     #[serde(default)]
     pub use_default_model: bool,
+    #[serde(default)]
+    pub provider: Option<ProviderKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +72,8 @@ pub struct RunMsbSingleRequest {
     pub index_debug_snapshots: bool,
     #[serde(default)]
     pub use_default_model: bool,
+    #[serde(default)]
+    pub provider: Option<ProviderKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -479,8 +485,9 @@ async fn persist_starting_db_cache(
     persist_starting_db_cache_at(layout::ploke_eval_home()?, prepared, snapshot_path).await
 }
 
-async fn resolve_provider_for_model(
+pub(crate) async fn resolve_provider_for_model(
     selected_model: &ResponseItem,
+    requested_provider: Option<&ProviderKey>,
 ) -> Result<ProviderKey, PrepareError> {
     if !selected_model.supports_tools() {
         return Err(PrepareError::DatabaseSetup {
@@ -501,6 +508,34 @@ async fn resolve_provider_for_model(
             detail: err.to_string(),
         })?;
 
+    if let Some(requested_provider) = requested_provider {
+        let requested_slug = requested_provider.slug.as_str();
+        let endpoint = endpoints
+            .data
+            .endpoints
+            .iter()
+            .find(|ep| ep.tag.provider_name.as_str() == requested_slug)
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "resolve_model_provider",
+                detail: format!(
+                    "requested provider '{requested_slug}' was not returned for model '{}'",
+                    selected_model.id
+                ),
+            })?;
+
+        if !endpoint.supports_tools() {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "resolve_model_provider",
+                detail: format!(
+                    "requested provider '{requested_slug}' for model '{}' does not support tool calls",
+                    selected_model.id
+                ),
+            });
+        }
+
+        return Ok(requested_provider.clone());
+    }
+
     tool_capable_provider_key(&endpoints.data.endpoints).ok_or_else(|| {
         PrepareError::DatabaseSetup {
             phase: "resolve_model_provider",
@@ -517,7 +552,12 @@ impl RunMsbSingleRequest {
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
         let selected_model = resolve_model_for_run(self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
-        let selected_provider = resolve_provider_for_model(&selected_model).await?;
+        let preferred_provider = load_provider_for_model(&selected_model_id)?;
+        let selected_provider = resolve_provider_for_model(
+            &selected_model,
+            self.provider.as_ref().or(preferred_provider.as_ref()),
+        )
+        .await?;
 
         fs::create_dir_all(&prepared.output_dir).map_err(|source| {
             PrepareError::CreateOutputDir {
@@ -753,6 +793,7 @@ impl RunMsbSingleRequest {
             snapshot_status = %snapshot_status_path.display(),
             "runner phase: wrote run artifacts"
         );
+        record_last_run(&execution_log.output_dir)?;
 
         Ok(RunArtifactPaths {
             run_manifest: manifest_path,
@@ -771,7 +812,12 @@ impl RunMsbAgentSingleRequest {
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
         let selected_model = resolve_model_for_run(self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
-        let selected_provider = resolve_provider_for_model(&selected_model).await?;
+        let preferred_provider = load_provider_for_model(&selected_model_id)?;
+        let selected_provider = resolve_provider_for_model(
+            &selected_model,
+            self.provider.as_ref().or(preferred_provider.as_ref()),
+        )
+        .await?;
 
         fs::create_dir_all(&prepared.output_dir).map_err(|source| {
             PrepareError::CreateOutputDir {
@@ -1035,6 +1081,7 @@ impl RunMsbAgentSingleRequest {
             turn_summary = %turn_summary_path.display(),
             "runner phase: wrote run artifacts"
         );
+        record_last_run(&execution_log.output_dir)?;
 
         Ok(AgentRunArtifactPaths {
             base: RunArtifactPaths {

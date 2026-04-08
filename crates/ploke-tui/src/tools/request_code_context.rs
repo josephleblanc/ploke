@@ -24,7 +24,7 @@ lazy_static::lazy_static! {
             "properties": {
                 "search_term": {
                     "type": "string",
-                    "description": "Search term guide which code guide hybrid semantic search and bm25."
+                    "description": "Search term guides which code guide hybrid semantic search and bm25."
                 },
                 "token_budget": {
                     "type": "integer",

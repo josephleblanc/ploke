@@ -167,6 +167,23 @@ pub enum PrepareError {
     },
     #[error("failed to serialize active model selection: {0}")]
     SerializeActiveModel(serde_json::Error),
+    #[error("failed to read provider preferences file '{path}': {source}")]
+    ReadProviderPrefs {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to parse provider preferences file '{path}': {source}")]
+    ParseProviderPrefs {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    #[error("failed to write provider preferences file '{path}': {source}")]
+    WriteProviderPrefs {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to serialize provider preferences: {0}")]
+    SerializeProviderPrefs(serde_json::Error),
     #[error("failed to read starting db cache metadata file '{path}': {source}")]
     ReadStartingDbCacheMetadata {
         path: PathBuf,
@@ -189,12 +206,31 @@ pub enum PrepareError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("failed to read last run record '{path}': {source}")]
+    ReadLastRunRecord {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to parse last run record '{path}': {source}")]
+    ParseLastRunRecord {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    #[error("failed to write last run record '{path}': {source}")]
+    WriteLastRunRecord {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("model '{model}' was not found in registry '{path}'")]
     UnknownModelInRegistry { model: String, path: PathBuf },
     #[error("model registry file '{0}' does not exist")]
     MissingModelRegistry(PathBuf),
     #[error("active model file '{0}' does not exist")]
     MissingActiveModel(PathBuf),
+    #[error("no completed eval run was found in '{0}'")]
+    MissingLastRun(PathBuf),
+    #[error("completed run '{0}' does not contain a final snapshot")]
+    MissingFinalSnapshot(PathBuf),
     #[error("failed to read dataset line {line} from '{path}': {source}")]
     ReadDatasetLine {
         path: PathBuf,

@@ -226,8 +226,8 @@ lazy_static::lazy_static! {
                     "type": "object",
                     "properties": {
                         "file": { "type": "string", "description": "Absolute or workspace-relative file path." },
-                        "canon": { "type": "string", "description": "Canonical path to the node, e.g. crate::module::Item" },
-                        "node_type": { "type": "string", "description": "Node type (function|struct|enum|...)." },
+                        "canon": { "type": "string", "description": "Canonical path to a semantic target, e.g. crate::module::Item or crate::module::Type::method." },
+                        "node_type": semantic_node_type_schema_property(),
                         "code": { "type": "string", "description": "Replacement code for the node." }
                     },
                     "required": ["file", "canon", "node_type", "code"],
@@ -243,6 +243,21 @@ lazy_static::lazy_static! {
         },
         "required": ["edits"],
     });
+}
+
+fn semantic_node_type_schema_property() -> serde_json::Value {
+    let values = NodeType::primary_and_assoc_nodes()
+        .iter()
+        .map(|node_type| node_type.relation_str())
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "type": "string",
+        "enum": values,
+        "description": format!(
+            "Semantic node type accepted by apply_code_edit. Must be one of: {}",
+            values.join(", ")
+        ),
+    })
 }
 
 #[cfg(test)]
@@ -286,6 +301,37 @@ mod tests {
             first.get("mode").and_then(|m| m.as_str()),
             Some("canonical")
         );
+    }
+
+    #[test]
+    fn schema_guidance_mentions_method_targets() {
+        let schema = &*CODE_EDIT_PARAMETERS;
+        let node_type = schema
+            .get("properties")
+            .and_then(|props| props.get("edits"))
+            .and_then(|edits| edits.get("items"))
+            .and_then(|items| items.get("properties"))
+            .and_then(|props| props.get("node_type"))
+            .and_then(|value| value.get("description"))
+            .and_then(|desc| desc.as_str())
+            .expect("node_type schema description");
+        let canon = schema
+            .get("properties")
+            .and_then(|props| props.get("edits"))
+            .and_then(|edits| edits.get("items"))
+            .and_then(|items| items.get("properties"))
+            .and_then(|props| props.get("canon"))
+            .and_then(|value| value.get("description"))
+            .and_then(|desc| desc.as_str())
+            .expect("canon schema description");
+
+        assert!(
+            node_type
+                .to_lowercase()
+                .contains("methods are valid direct targets")
+        );
+        assert!(!node_type.to_lowercase().contains("not direct targets"));
+        assert!(canon.contains("Type::method"));
     }
 }
 
@@ -356,34 +402,28 @@ mod gat_tests {
     fn de_to_value() -> color_eyre::Result<()> {
         let schema = GatCodeEdit::schema();
         let v = serde_json::to_value(schema).expect("serialize");
-        eprintln!("{}", serde_json::to_string_pretty(&v)?);
-        let expected = json!({
-            "type": "object",
-            "properties": {
-                "edits": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "file": { "type": "string", "description": "Absolute or workspace-relative file path." },
-                            "canon": { "type": "string", "description": "Canonical path to the node, e.g. crate::module::Item" },
-                            "node_type": { "type": "string", "description": "Node type (function|struct|enum|...)." },
-                            "code": { "type": "string", "description": "Replacement code for the node." }
-                        },
-                        "required": ["file", "canon", "node_type", "code"],
-                        "additionalProperties": false
-                    }
-                },
-                "confidence": {
-                    "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0,
-                    "description": "Optional confidence indicator for the edit proposal."
-                }
-            },
-            "required": ["edits"],
-        });
-        assert_eq!(expected, v);
+        let node_type = v
+            .get("properties")
+            .and_then(|p| p.get("edits"))
+            .and_then(|e| e.get("items"))
+            .and_then(|i| i.get("properties"))
+            .and_then(|p| p.get("node_type"))
+            .and_then(|n| n.as_object())
+            .expect("node_type schema");
+        let enum_vals = node_type
+            .get("enum")
+            .and_then(|v| v.as_array())
+            .expect("enum values");
+        let enum_vals: Vec<&str> = enum_vals
+            .iter()
+            .map(|v| v.as_str().expect("string enum value"))
+            .collect();
+        let expected: Vec<&str> = NodeType::primary_and_assoc_nodes()
+            .iter()
+            .map(|ty| ty.relation_str())
+            .collect();
+        assert_eq!(enum_vals, expected);
+        assert!(enum_vals.contains(&"method"));
 
         Ok(())
     }

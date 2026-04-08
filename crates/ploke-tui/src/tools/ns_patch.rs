@@ -3,6 +3,7 @@ use std::{borrow::Cow, ops::Deref as _, sync::Arc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    rag::editing::spawn_auto_confirm_edits,
     rag::tools::apply_ns_code_edit_tool,
     tools::ToolResult,
     tools::validators::{validate_file_path_basic, validate_unified_diff},
@@ -208,8 +209,41 @@ impl super::Tool for NsPatch {
             typed_req,
             call_id,
         };
+        tracing::info!(
+            request_id = %request_id,
+            call_id = %ctx.call_id,
+            "ns_patch: before apply_ns_code_edit_tool"
+        );
         apply_ns_code_edit_tool(params_env).await?;
-        crate::tools::code_edit::print_code_edit_results(&ctx, request_id, ToolName::NsPatch).await
+        tracing::info!(
+            request_id = %request_id,
+            call_id = %ctx.call_id,
+            "ns_patch: after apply_ns_code_edit_tool"
+        );
+        tracing::info!(
+            request_id = %request_id,
+            call_id = %ctx.call_id,
+            "ns_patch: before print_code_edit_results"
+        );
+        let result =
+            crate::tools::code_edit::print_code_edit_results(&ctx, request_id, ToolName::NsPatch)
+                .await;
+        if result.is_ok() {
+            let editing_cfg = { ctx.state.config.read().await.editing.clone() };
+            if editing_cfg.auto_confirm_edits {
+                spawn_auto_confirm_edits(
+                    Arc::clone(&ctx.state),
+                    Arc::clone(&ctx.event_bus),
+                    request_id,
+                );
+            }
+            tracing::info!(
+                request_id = %request_id,
+                call_id = %ctx.call_id,
+                "ns_patch: after print_code_edit_results"
+            );
+        }
+        result
     }
 }
 

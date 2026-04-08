@@ -8,24 +8,12 @@ use ploke_db::helpers::graph_resolve_exact;
 use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
 
+use crate::rag::utils::NodeKind;
 use crate::tools::{Tool, ValidatesAbolutePath};
 
 const FILE_DESC: &str = "Absolute or workspace-relative file path.";
 const MODULE_PATH: &str = r#"canonical module path, e.g. "crate::mod_one::nested_mod".
     Note that this does not include the target item's identifier."#;
-const NODE_KIND: &str = r#"The kind of code item this is. Must be one of:
-- function
-- const
-- enum
-- impl
-- import (e.g. `use` statement)
-- macro
-- module
-- static
-- struct
-- trait
-- type_alias
-- union"#;
 const ITEM_NAME: &str = r#"The name of the item being search for, e.g.
 if looking for
 
@@ -42,7 +30,7 @@ lazy_static::lazy_static! {
         "properties": {
             "item_name": { "type": "string", "description": ITEM_NAME },
             "file_path": { "type": "string", "description": FILE_DESC },
-            "node_kind": { "type": "string", "description": NODE_KIND },
+            "node_kind": NodeKind::schema_property(),
             "module_path": { "type": "string", "description": MODULE_PATH },
         },
         "required": ["item_name", "file_path", "node_kind", "module_path"],
@@ -138,29 +126,15 @@ impl Tool for CodeItemLookup {
             }));
         };
 
-        let allowed_kinds = [
-            "function",
-            "const",
-            "enum",
-            "impl",
-            "import",
-            "macro",
-            "module",
-            "static",
-            "struct",
-            "trait",
-            "type_alias",
-            "union",
-        ];
-        if !allowed_kinds.contains(&params.node_kind.as_ref()) {
-            return Err(ploke_error::Error::Domain(DomainError::Ui {
+        let node_kind = params.node_kind.as_ref().parse::<NodeKind>().map_err(|_| {
+            ploke_error::Error::Domain(DomainError::Ui {
                 message: format!(
                     "Invalid node_kind `{}`. Allowed: {}",
                     params.node_kind,
-                    allowed_kinds.join(", ")
+                    NodeKind::allowed_values().join(", ")
                 ),
-            }));
-        }
+            })
+        })?;
 
         let (primary_root, policy) = ctx
             .state
@@ -210,20 +184,25 @@ for a more fuzzy search."#
 
         let resolved_item = match graph_resolve_exact(
             &ctx.state.db,
-            params.node_kind.as_ref(),
+            node_kind.as_relation(),
             &abs_path,
             &mod_path,
             params.item_name.as_ref(),
         ) {
             Ok(t) if t.len() == 1 => t,
             Ok(t) if t.is_empty() => {
+                let hint = node_kind
+                    .lookup_hint()
+                    .map(|s| format!(" {s}"))
+                    .unwrap_or_default();
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "No code item named `{}` found in {} with module_path {} and node_kind {}",
+                        "No code item named `{}` found in {} with module_path {} and node_kind {}.{}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
-                        params.node_kind
+                        node_kind.as_str(),
+                        hint
                     ),
                 }));
             }
@@ -237,7 +216,7 @@ for a more fuzzy search."#
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
-                        params.node_kind,
+                        node_kind.as_str(),
                         err
                     ),
                 }));
@@ -338,4 +317,30 @@ fn check_empty(
         }));
     };
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::Tool;
+
+    #[test]
+    fn schema_includes_method_node_kind() {
+        let schema = <CodeItemLookup as Tool>::schema();
+        let node_kind = schema
+            .get("properties")
+            .and_then(|p| p.get("node_kind"))
+            .and_then(|nk| nk.as_object())
+            .expect("node_kind schema");
+        let enum_vals = node_kind
+            .get("enum")
+            .and_then(|v| v.as_array())
+            .expect("enum values");
+        let enum_vals: Vec<&str> = enum_vals
+            .iter()
+            .map(|v| v.as_str().expect("string enum value"))
+            .collect();
+        assert!(enum_vals.contains(&"method"));
+        assert_eq!(enum_vals.first().copied(), Some("function"));
+    }
 }

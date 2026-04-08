@@ -129,7 +129,7 @@ pub enum ToolDescr {
     #[serde(rename = "Request additional code context from the repository up to a token budget.")]
     RequestCodeContext,
     #[serde(
-        rename = "Apply canonical code edits to one or more nodes identified by canonical path."
+        rename = "Apply canonical code edits to one or more semantic targets identified by canonical path. Use `node_type=method` for associated items, and `node_type=function` for primary items. If you need help locating the target, use `code_item_lookup` or `code_item_edges`; use `non_semantic_patch` for direct text edits."
     )]
     ApplyCodeEdit,
     #[serde(
@@ -179,7 +179,7 @@ Pro tip: use it with parallel tool calls to look up as many code items as you wa
 
 #[cfg(test)]
 mod tests {
-    use super::ToolName;
+    use super::{ToolDescr, ToolName};
 
     #[test]
     fn tool_name_serializes_to_canonical_strings() {
@@ -197,5 +197,15 @@ mod tests {
 
         assert_eq!(read_alias, ToolName::NsRead);
         assert_eq!(patch_alias, ToolName::NsPatch);
+    }
+
+    #[test]
+    fn apply_code_edit_description_points_to_method_lookup() {
+        let description = serde_json::to_string(&ToolDescr::ApplyCodeEdit).expect("serialize");
+        let description = description.to_lowercase();
+        assert!(description.contains("node_type=method"));
+        assert!(description.contains("semantic targets"));
+        assert!(description.contains("code_item_lookup"));
+        assert!(description.contains("non_semantic_patch"));
     }
 }

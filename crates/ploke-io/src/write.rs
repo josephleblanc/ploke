@@ -194,8 +194,8 @@ async fn process_one_write_ns(
 
     let large_file_policy = req.large_file_policy;
     let hashed_result = read_and_compute_hash(&file_path, large_file_policy, max_bytes)?;
-    let new_hash = hashed_result?;
-    debug!("new_hash calculated: {:?}", new_hash);
+    let old_hash = hashed_result?;
+    debug!("new_hash calculated: {:?}", old_hash);
     debug!(
         target: "dbg_tools",
         request_id = %request_id,
@@ -213,7 +213,7 @@ async fn process_one_write_ns(
         options,
         ..
     } = req;
-    if expected_file_hash.is_some_and(|h| h != new_hash) {
+    if expected_file_hash.is_some_and(|h| h != old_hash) {
         return Err(PlokeError::from(IoError::NsContentMismatch {
             id,
             file_path: request_file_path,
@@ -249,11 +249,21 @@ async fn process_one_write_ns(
         fuzz_factor = patch_options.fuzz_factor,
         "process_one_write_ns applying patch"
     );
-    let patch_result: mpatch::PatchResult =
-        mpatch::apply_patch_to_file(&parsed_patch, &file_path, patch_options).map_err(|e| {
-            tracing::error!("Error in apply_patch_to_file: {}", e.to_string());
-            PlokeError::from(IoError::NsPatchError(e.to_string()))
-        })?;
+    let original_content =
+        tokio::fs::read_to_string(&file_path)
+            .await
+            .map_err(|e| IoError::FileOperation {
+                operation: "read",
+                path: file_path.clone(),
+                kind: e.kind(),
+                source: Arc::new(e),
+            })?;
+    let patch_result =
+        mpatch::try_apply_patch_to_content(&parsed_patch, Some(&original_content), &patch_options)
+            .map_err(|e| {
+                tracing::error!("Error in try_apply_patch_to_content: {}", e);
+                PlokeError::from(IoError::NsPatchError(e.to_string()))
+            })?;
     debug!(
         target: "dbg_tools",
         request_id = %request_id,
@@ -270,6 +280,90 @@ async fn process_one_write_ns(
         elapsed_ms = started_at.elapsed().as_millis(),
         "process_one_write_ns completed"
     );
+
+    if !patch_options.dry_run && patch_result.new_content == original_content {
+        return Err(PlokeError::from(IoError::NsPatchError(
+            "patch produced no file change".to_string(),
+        )));
+    }
+
+    if !patch_options.dry_run {
+        let parent = file_path
+            .parent()
+            .ok_or_else(|| IoError::FileOperation {
+                operation: "write",
+                path: request_file_path.clone(),
+                kind: std::io::ErrorKind::InvalidInput,
+                source: Arc::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "file has no parent directory",
+                )),
+            })?
+            .to_path_buf();
+
+        let tmp_path = parent.join(format!(".plokeio-{}.tmp", uuid::Uuid::new_v4()));
+        {
+            let mut f =
+                tokio::fs::File::create(&tmp_path)
+                    .await
+                    .map_err(|e| IoError::FileOperation {
+                        operation: "write",
+                        path: tmp_path.clone(),
+                        kind: e.kind(),
+                        source: Arc::new(e),
+                    })?;
+            f.write_all(patch_result.new_content.as_bytes())
+                .await
+                .map_err(|e| IoError::FileOperation {
+                    operation: "write",
+                    path: tmp_path.clone(),
+                    kind: e.kind(),
+                    source: Arc::new(e),
+                })?;
+            f.sync_all().await.map_err(|e| IoError::FileOperation {
+                operation: "sync",
+                path: tmp_path.clone(),
+                kind: e.kind(),
+                source: Arc::new(e),
+            })?;
+        }
+
+        tokio::fs::rename(&tmp_path, &file_path)
+            .await
+            .map_err(|e| IoError::FileOperation {
+                operation: "rename",
+                path: file_path.clone(),
+                kind: e.kind(),
+                source: Arc::new(e),
+            })?;
+
+        let parent_clone = parent.clone();
+        let file_path_clone = file_path.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Ok(dir) = std::fs::File::open(&parent_clone) {
+                match dir.sync_all() {
+                    Ok(()) => tracing::trace!(
+                        target: "file-edit",
+                        "Write successful for file: {}",
+                        file_path_clone.to_string_lossy()
+                    ),
+                    Err(e) => tracing::error!(
+                        target: "file-edit",
+                        "Write failed for file {file_error} with error: {err}",
+                        err = e.to_string(),
+                        file_error = file_path_clone.to_string_lossy(),
+                    ),
+                }
+            }
+        })
+        .await;
+    }
+
+    let new_hash = if patch_options.dry_run {
+        old_hash
+    } else {
+        ploke_core::file_hash::FileHash::from_bytes(patch_result.new_content.as_bytes())
+    };
 
     Ok(NsWriteResult::new(new_hash))
 }

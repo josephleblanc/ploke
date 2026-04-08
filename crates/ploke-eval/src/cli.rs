@@ -1,10 +1,14 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::str::FromStr;
 use std::sync::OnceLock;
 
 use clap::{ArgAction, Parser, Subcommand};
 use ploke_llm::Router;
-use ploke_llm::router_only::openrouter::OpenRouter;
+use ploke_llm::request::endpoint::Endpoint;
+use ploke_llm::router_only::HasEndpoint;
+use ploke_llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
+use ploke_llm::{ModelId, ProviderKey};
 use regex::Regex;
 
 use crate::layout::{
@@ -16,8 +20,15 @@ use crate::model_registry::{
     registry_has_model, save_active_model,
 };
 use crate::msb::PrepareMsbSingleRunRequest;
+use crate::provider_prefs::{
+    clear_provider_for_model, load_provider_for_model, set_provider_for_model,
+};
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
-use crate::runner::{ReplayMsbBatchRequest, RunMsbAgentSingleRequest, RunMsbSingleRequest};
+use crate::run_history::print_last_run_assistant_messages;
+use crate::runner::{
+    ReplayMsbBatchRequest, RunMsbAgentSingleRequest, RunMsbSingleRequest,
+    resolve_provider_for_model,
+};
 use crate::spec::{
     EvalBudget, IssueInput, OutputMode, PrepareError, PrepareSingleRunRequest, PrepareWrite,
 };
@@ -30,6 +41,7 @@ Defaults:
   datasets cache     ~/.ploke-eval/datasets
   model registry     ~/.ploke-eval/models/registry.json
   active model       ~/.ploke-eval/models/active-model.json
+  provider prefs     ~/.ploke-eval/models/provider-preferences.json
   repo cache         ~/.ploke-eval/repos
   run artifacts      ~/.ploke-eval/runs
 
@@ -51,6 +63,8 @@ Quick Start: ripgrep single-run example
   cargo run -p ploke-eval -- fetch-msb-repo --dataset-key ripgrep
   cargo run -p ploke-eval -- prepare-msb-single --dataset-key ripgrep --instance BurntSushi__ripgrep-2209
   cargo run -p ploke-eval -- run-msb-single --instance BurntSushi__ripgrep-2209
+  cargo run -p ploke-eval -- model providers moonshotai/kimi-k2
+  cargo run -p ploke-eval -- run-msb-agent-single --instance BurntSushi__ripgrep-2209 --provider chutes
 
 Health check
 
@@ -65,6 +79,22 @@ Replay notes:
   - the command writes `replay-batch-<nnn>.json` beside the run manifest
   - the JSON includes the full serialized `TypedEmbedData` batch
   - the command then runs only that batch through the normal embed path
+
+Print assistant messages from the most recent completed run
+
+  cargo run -p ploke-eval -- transcript
+
+Inspect providers for a model
+
+  cargo run -p ploke-eval -- model providers
+
+Set the default provider for the current model
+
+  cargo run -p ploke-eval -- model provider set chutes
+
+Pin a provider for one run only
+
+  cargo run -p ploke-eval -- run-msb-agent-single --instance BurntSushi__ripgrep-2209 --provider chutes
 
 Default read/write locations
 
@@ -124,6 +154,8 @@ pub enum Command {
     ListMsbDatasets,
     /// Inspect the current eval setup and report likely configuration issues.
     Doctor,
+    /// Print only assistant messages from the most recent completed run.
+    Transcript,
     /// Manage the cached OpenRouter model registry and active model selection.
     Model(ModelCommand),
 }
@@ -229,6 +261,13 @@ impl Cli {
                 ExitCode::SUCCESS
             }
             Command::Doctor => match run_doctor() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Command::Transcript => match print_last_run_assistant_messages().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
@@ -392,6 +431,8 @@ the run directory instead of your normal user config directory.
 Debug snapshots:
   `--no-index-debug-snapshots` disables the eval-only DB snapshots written
   during indexing progress and indexing failure events.
+
+Use `--provider <slug>` to pin a specific OpenRouter provider for the selected model.
 "
 )]
 pub struct RunMsbSingleCommand {
@@ -410,6 +451,10 @@ pub struct RunMsbSingleCommand {
     /// Use the default model instead of the persisted active model selection.
     #[arg(long)]
     pub use_default_model: bool,
+
+    /// Explicit provider slug to pin for the selected model.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -420,6 +465,8 @@ This extends the normal run with a single agentic turn that:
   - submits the prepared issue prompt through the real app/state path
   - records prompt construction, tool lifecycle, message updates, and turn completion
   - writes a turn trace and summary beside the run artifacts
+
+Use `--provider <slug>` to pin a specific OpenRouter provider for the selected model.
 "
 )]
 pub struct RunMsbAgentSingleCommand {
@@ -438,6 +485,10 @@ pub struct RunMsbAgentSingleCommand {
     /// Use the default model instead of the persisted active model selection.
     #[arg(long)]
     pub use_default_model: bool,
+
+    /// Explicit provider slug to pin for the selected model.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -449,6 +500,9 @@ Examples:
   cargo run -p ploke-eval -- model refresh
   cargo run -p ploke-eval -- model list
   cargo run -p ploke-eval -- model find qwen
+  cargo run -p ploke-eval -- model providers
+  cargo run -p ploke-eval -- model provider current
+  cargo run -p ploke-eval -- model provider set chutes
   cargo run -p ploke-eval -- model set moonshotai/kimi-k2
   cargo run -p ploke-eval -- model current
 "
@@ -456,6 +510,47 @@ Examples:
 pub struct ModelCommand {
     #[command(subcommand)]
     pub command: ModelSubcommand,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Manage the persisted default provider selection for a model",
+    after_help = "\
+Examples:
+
+  cargo run -p ploke-eval -- model provider current
+  cargo run -p ploke-eval -- model provider set chutes
+  cargo run -p ploke-eval -- model provider clear
+"
+)]
+pub struct ProviderCommand {
+    #[command(subcommand)]
+    pub command: ProviderSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProviderSubcommand {
+    /// Persist the default provider for the current or specified model.
+    Set {
+        /// Provider slug to remember for the model.
+        provider_slug: String,
+
+        /// Model id to update. Defaults to the current active model.
+        #[arg(long)]
+        model_id: Option<String>,
+    },
+    /// Show the persisted default provider for the current or specified model.
+    Current {
+        /// Model id to inspect. Defaults to the current active model.
+        #[arg(long)]
+        model_id: Option<String>,
+    },
+    /// Clear the persisted default provider for the current or specified model.
+    Clear {
+        /// Model id to update. Defaults to the current active model.
+        #[arg(long)]
+        model_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -469,6 +564,28 @@ pub enum ModelSubcommand {
         /// Stem or substring to search for.
         query: String,
     },
+    #[command(
+        about = "List provider endpoints available for a model",
+        long_about = "\
+Print the OpenRouter provider endpoints returned for a model.
+
+If no model id is passed, the current active eval model is used.
+",
+        after_help = "\
+Examples:
+
+  ploke-eval model providers
+  ploke-eval model providers moonshotai/kimi-k2
+
+The output shows provider slug, provider name, tool support, and context length.
+"
+    )]
+    Providers {
+        /// Exact model id to inspect. Defaults to the current active model.
+        model_id: Option<String>,
+    },
+    /// Persist or inspect the default provider for a model.
+    Provider(ProviderCommand),
     /// Persist the active model selection.
     Set {
         /// Exact model id to mark active.
@@ -532,6 +649,8 @@ impl ModelCommand {
                 }
                 Ok(())
             }
+            ModelSubcommand::Providers { model_id } => print_model_providers(model_id).await,
+            ModelSubcommand::Provider(cmd) => cmd.run().await,
             ModelSubcommand::Set { model_id } => {
                 let registry = load_model_registry()?;
                 let registry_path = crate::model_registry::model_registry_path()?;
@@ -566,6 +685,137 @@ impl ModelCommand {
             }
         }
     }
+}
+
+impl ProviderCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            ProviderSubcommand::Set {
+                provider_slug,
+                model_id,
+            } => set_persisted_provider(model_id, provider_slug).await,
+            ProviderSubcommand::Current { model_id } => {
+                let (model_id, provider) = current_provider_for_model(model_id)?;
+                match provider {
+                    Some(provider) => {
+                        println!("{}\t{}", model_id, provider.slug.as_str());
+                    }
+                    None => {
+                        println!("{}\tauto", model_id);
+                    }
+                }
+                Ok(())
+            }
+            ProviderSubcommand::Clear { model_id } => {
+                let model = resolve_provider_model_id(model_id)?;
+                clear_provider_for_model(&model)?;
+                println!("{}\tauto", model);
+                Ok(())
+            }
+        }
+    }
+}
+
+async fn print_model_providers(model_id: Option<String>) -> Result<(), PrepareError> {
+    let model_id = match model_id {
+        Some(model_id) => model_id,
+        None => load_active_model()?.model_id.to_string(),
+    };
+
+    let model = ModelId::from_str(&model_id).map_err(|err| PrepareError::DatabaseSetup {
+        phase: "parse_model_id",
+        detail: format!("invalid model id '{model_id}': {err}"),
+    })?;
+    let client = reqwest::Client::new();
+    let typed_model = OpenRouterModelId::from(model.clone());
+    let endpoints = OpenRouter::fetch_model_endpoints(&client, typed_model)
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "fetch_model_endpoints",
+            detail: err.to_string(),
+        })?;
+    let selected_provider = load_provider_for_model(&model)?;
+
+    println!("Available endpoints for model '{}':", model);
+    println!(
+        "  {:<14}  {:<14}  {:<5}  {:<8}  {}",
+        "provider_slug", "provider_name", "tools", "selected", "context"
+    );
+    for ep in endpoints.data.endpoints {
+        print_provider_row(&ep, selected_provider.as_ref());
+    }
+    Ok(())
+}
+
+fn print_provider_row(ep: &Endpoint, selected_provider: Option<&ProviderKey>) {
+    let provider_slug = ep.tag.provider_name.as_str();
+    let provider_name = ep.provider_name.as_str();
+    let tools = if ep.supports_tools() { "yes" } else { "no" };
+    let selected = if selected_provider.is_some_and(|p| p.slug.as_str() == provider_slug) {
+        "yes"
+    } else {
+        ""
+    };
+    println!(
+        "  {:<14}  {:<14}  {:<5}  {:<8}  {:.0}",
+        provider_slug, provider_name, tools, selected, ep.context_length
+    );
+}
+
+fn parse_provider_key(provider: Option<String>) -> Result<Option<ProviderKey>, PrepareError> {
+    provider
+        .map(|slug| {
+            ProviderKey::new(&slug).map_err(|err| PrepareError::DatabaseSetup {
+                phase: "parse_provider_key",
+                detail: format!("invalid provider slug '{slug}': {err}"),
+            })
+        })
+        .transpose()
+}
+
+fn resolve_provider_model_id(model_id: Option<String>) -> Result<ModelId, PrepareError> {
+    match model_id {
+        Some(model_id) => ModelId::from_str(&model_id).map_err(|err| PrepareError::DatabaseSetup {
+            phase: "parse_model_id",
+            detail: format!("invalid model id '{model_id}': {err}"),
+        }),
+        None => Ok(load_active_model()?.model_id),
+    }
+}
+
+fn current_provider_for_model(
+    model_id: Option<String>,
+) -> Result<(ModelId, Option<ProviderKey>), PrepareError> {
+    let model = resolve_provider_model_id(model_id)?;
+    let provider = load_provider_for_model(&model)?;
+    Ok((model, provider))
+}
+
+async fn set_persisted_provider(
+    model_id: Option<String>,
+    provider_slug: String,
+) -> Result<(), PrepareError> {
+    let model = resolve_provider_model_id(model_id)?;
+    let registry = load_model_registry()?;
+    let selected = registry
+        .data
+        .into_iter()
+        .find(|item| item.id == model)
+        .ok_or_else(|| PrepareError::UnknownModelInRegistry {
+            model: model.to_string(),
+            path: crate::model_registry::model_registry_path()
+                .unwrap_or_else(|_| PathBuf::from("<unknown>")),
+        })?;
+
+    let provider_key =
+        ProviderKey::new(&provider_slug).map_err(|err| PrepareError::DatabaseSetup {
+            phase: "parse_provider_key",
+            detail: format!("invalid provider slug '{provider_slug}': {err}"),
+        })?;
+    let validated = resolve_provider_for_model(&selected, Some(&provider_key)).await?;
+    set_provider_for_model(&selected.id, validated.clone())?;
+    println!("{}\t{}", selected.id, validated.slug.as_str());
+    Ok(())
 }
 
 #[derive(Debug, Parser)]
@@ -612,6 +862,7 @@ impl RunMsbSingleCommand {
             run_manifest,
             index_debug_snapshots: self.index_debug_snapshots,
             use_default_model: self.use_default_model,
+            provider: parse_provider_key(self.provider)?,
         }
         .run()
         .await?;
@@ -636,6 +887,7 @@ impl RunMsbAgentSingleCommand {
             run_manifest,
             index_debug_snapshots: self.index_debug_snapshots,
             use_default_model: self.use_default_model,
+            provider: parse_provider_key(self.provider)?,
         }
         .run()
         .await?;

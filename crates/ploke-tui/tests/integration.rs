@@ -70,6 +70,9 @@ mod load_db_crate_focus;
 #[path = "integration/no_workspace_fallback.rs"]
 mod no_workspace_fallback;
 
+#[path = "integration/method_semantic_edit_regression.rs"]
+mod method_semantic_edit_regression;
+
 #[path = "integration/observability_lifecycle.rs"]
 mod observability_lifecycle;
 
@@ -111,6 +114,12 @@ mod tool_ui_payload;
 
 #[path = "integration/tool_ui_payload_fixture.rs"]
 mod tool_ui_payload_fixture;
+
+#[path = "integration/tool_node_kind_schema.rs"]
+mod tool_node_kind_schema;
+
+#[path = "integration/ns_patch_completion_regression.rs"]
+mod ns_patch_completion_regression;
 
 #[path = "integration/tool_workspace_path_scoping.rs"]
 mod tool_workspace_path_scoping;
