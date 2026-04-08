@@ -60,6 +60,8 @@ pub struct MultiSweBenchSource {
     pub repo: String,
     pub number: u64,
     pub language: Option<String>,
+    #[serde(default)]
+    pub expected_patch_files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

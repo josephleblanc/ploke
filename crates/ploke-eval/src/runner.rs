@@ -39,7 +39,7 @@ use crate::layout;
 use crate::model_registry::resolve_model_for_run;
 use crate::provider_prefs::load_provider_for_model;
 use crate::run_history::record_last_run;
-use crate::spec::{PrepareError, PreparedSingleRun};
+use crate::spec::{PrepareError, PreparedSingleRun, RunSource};
 
 const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
@@ -92,6 +92,7 @@ pub struct RunArtifactPaths {
     pub indexing_checkpoint_db: PathBuf,
     pub indexing_failure_db: PathBuf,
     pub snapshot_status: PathBuf,
+    pub msb_submission: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,6 +235,20 @@ pub struct PatchArtifact {
     pub edit_proposals: Vec<ProposalSnapshotRecord>,
     pub create_proposals: Vec<ProposalSnapshotRecord>,
     pub applied: bool,
+    pub all_proposals_applied: bool,
+    pub expected_file_changes: Vec<ExpectedFileChangeRecord>,
+    pub any_expected_file_changed: bool,
+    pub all_expected_files_changed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExpectedFileChangeRecord {
+    pub path: String,
+    pub existed_before: bool,
+    pub exists_after: bool,
+    pub before_sha256: Option<String>,
+    pub after_sha256: Option<String>,
+    pub changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,6 +262,14 @@ pub struct AgentTurnArtifact {
     pub terminal_record: Option<TurnFinishedRecord>,
     pub final_assistant_message: Option<MessageSnapshotRecord>,
     pub patch_artifact: PatchArtifact,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MultiSweBenchSubmissionRecord {
+    pub org: String,
+    pub repo: String,
+    pub number: u64,
+    pub fix_patch: String,
 }
 
 fn truncate_preview(input: &str, max_chars: usize) -> String {
@@ -298,6 +321,31 @@ fn snapshot_message(
 }
 
 async fn collect_patch_artifact(state: &Arc<AppState>) -> PatchArtifact {
+    collect_patch_artifact_with_expected(state, &[])
+        .await
+        .unwrap_or_else(|_| PatchArtifact {
+            edit_proposals: Vec::new(),
+            create_proposals: Vec::new(),
+            applied: false,
+            all_proposals_applied: false,
+            expected_file_changes: Vec::new(),
+            any_expected_file_changed: false,
+            all_expected_files_changed: false,
+        })
+}
+
+#[derive(Debug, Clone)]
+struct ExpectedFileBaseline {
+    path: PathBuf,
+    absolute_path: PathBuf,
+    existed_before: bool,
+    before_sha256: Option<String>,
+}
+
+async fn collect_patch_artifact_with_expected(
+    state: &Arc<AppState>,
+    expected_file_baselines: &[ExpectedFileBaseline],
+) -> Result<PatchArtifact, PrepareError> {
     let edit_proposals = {
         let proposals = state.proposals.read().await;
         proposals
@@ -340,15 +388,26 @@ async fn collect_patch_artifact(state: &Arc<AppState>) -> PatchArtifact {
             .collect::<Vec<_>>()
     };
 
-    let applied = !edit_proposals.is_empty()
+    let has_any_proposals = !edit_proposals.is_empty() || !create_proposals.is_empty();
+    let applied = edit_proposals.iter().any(|p| p.status == "Applied")
+        || create_proposals.iter().any(|p| p.status == "Applied");
+    let all_proposals_applied = has_any_proposals
         && edit_proposals.iter().all(|p| p.status == "Applied")
         && create_proposals.iter().all(|p| p.status == "Applied");
+    let expected_file_changes = collect_expected_file_changes(expected_file_baselines)?;
+    let any_expected_file_changed = expected_file_changes.iter().any(|record| record.changed);
+    let all_expected_files_changed = !expected_file_changes.is_empty()
+        && expected_file_changes.iter().all(|record| record.changed);
 
-    PatchArtifact {
+    Ok(PatchArtifact {
         edit_proposals,
         create_proposals,
         applied,
-    }
+        all_proposals_applied,
+        expected_file_changes,
+        any_expected_file_changed,
+        all_expected_files_changed,
+    })
 }
 
 fn proposal_status_label(status: &EditProposalStatus) -> &'static str {
@@ -359,6 +418,97 @@ fn proposal_status_label(status: &EditProposalStatus) -> &'static str {
         EditProposalStatus::Applied => "Applied",
         EditProposalStatus::Failed(_) => "Failed",
         EditProposalStatus::Stale(_) => "Stale",
+    }
+}
+
+fn expected_patch_files(prepared: &PreparedSingleRun) -> Vec<PathBuf> {
+    match &prepared.source {
+        Some(RunSource::MultiSweBench(source)) => source.expected_patch_files.clone(),
+        None => Vec::new(),
+    }
+}
+
+fn build_msb_submission_record(
+    prepared: &PreparedSingleRun,
+    fix_patch: String,
+) -> Option<MultiSweBenchSubmissionRecord> {
+    match &prepared.source {
+        Some(RunSource::MultiSweBench(source)) => Some(MultiSweBenchSubmissionRecord {
+            org: source.org.clone(),
+            repo: source.repo.clone(),
+            number: source.number,
+            fix_patch,
+        }),
+        None => None,
+    }
+}
+
+fn collect_submission_fix_patch(prepared: &PreparedSingleRun) -> Result<String, PrepareError> {
+    let args = if let Some(base_sha) = prepared.base_sha.as_deref() {
+        vec!["diff", "--no-ext-diff", "--binary", base_sha, "--"]
+    } else {
+        vec!["diff", "--no-ext-diff", "--binary", "HEAD", "--"]
+    };
+    Ok(git_stdout(
+        &prepared.repo_root,
+        &args,
+        format!("git {}", args.join(" ")),
+    )?
+    .unwrap_or_default())
+}
+
+fn snapshot_expected_files(
+    repo_root: &Path,
+    expected_files: &[PathBuf],
+) -> Result<Vec<ExpectedFileBaseline>, PrepareError> {
+    expected_files
+        .iter()
+        .map(|relative_path| {
+            let absolute_path = repo_root.join(relative_path);
+            let existed_before = absolute_path.exists();
+            let before_sha256 = hash_file_contents(&absolute_path)?;
+            Ok(ExpectedFileBaseline {
+                path: relative_path.clone(),
+                absolute_path,
+                existed_before,
+                before_sha256,
+            })
+        })
+        .collect()
+}
+
+fn collect_expected_file_changes(
+    expected_file_baselines: &[ExpectedFileBaseline],
+) -> Result<Vec<ExpectedFileChangeRecord>, PrepareError> {
+    expected_file_baselines
+        .iter()
+        .map(|baseline| {
+            let after_sha256 = hash_file_contents(&baseline.absolute_path)?;
+            let exists_after = baseline.absolute_path.exists();
+            Ok(ExpectedFileChangeRecord {
+                path: baseline.path.display().to_string(),
+                existed_before: baseline.existed_before,
+                exists_after,
+                before_sha256: baseline.before_sha256.clone(),
+                after_sha256: after_sha256.clone(),
+                changed: baseline.before_sha256 != after_sha256,
+            })
+        })
+        .collect()
+}
+
+fn hash_file_contents(path: &Path) -> Result<Option<String>, PrepareError> {
+    match fs::read(path) {
+        Ok(bytes) => {
+            let mut digest = Sha256::new();
+            digest.update(bytes);
+            Ok(Some(format!("{:x}", digest.finalize())))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(PrepareError::DatabaseSetup {
+            phase: "hash_expected_file",
+            detail: format!("failed to hash '{}': {err}", path.display()),
+        }),
     }
 }
 
@@ -775,6 +925,17 @@ impl RunMsbSingleRequest {
         write_json(&snapshot_status_path, &snapshot_status)?;
         steps.push("write_snapshot_status".to_string());
 
+        let msb_submission_path = if let Some(record) =
+            build_msb_submission_record(&prepared, collect_submission_fix_patch(&prepared)?)
+        {
+            let path = prepared.output_dir.join("multi-swe-bench-submission.jsonl");
+            write_jsonl_line(&path, &record)?;
+            steps.push("write_msb_submission".to_string());
+            Some(path)
+        } else {
+            None
+        };
+
         let execution_log = ExecutionLog {
             task_id: prepared.task_id,
             repo_root: prepared.repo_root,
@@ -791,6 +952,7 @@ impl RunMsbSingleRequest {
             indexing_checkpoint_db = %indexing_checkpoint_db.display(),
             indexing_failure_db = %indexing_failure_db.display(),
             snapshot_status = %snapshot_status_path.display(),
+            msb_submission = msb_submission_path.as_ref().map(|p| p.display().to_string()),
             "runner phase: wrote run artifacts"
         );
         record_last_run(&execution_log.output_dir)?;
@@ -803,6 +965,7 @@ impl RunMsbSingleRequest {
             indexing_checkpoint_db,
             indexing_failure_db,
             snapshot_status: snapshot_status_path,
+            msb_submission: msb_submission_path,
         })
     }
 }
@@ -838,6 +1001,9 @@ impl RunMsbAgentSingleRequest {
         let mut steps = vec!["load_manifest".to_string()];
         checkout_repo_to_base(&prepared.repo_root, prepared.base_sha.as_deref())?;
         steps.push("checkout_base_sha".to_string());
+        let expected_file_baselines =
+            snapshot_expected_files(&prepared.repo_root, &expected_patch_files(&prepared))?;
+        steps.push("snapshot_expected_files_before_turn".to_string());
 
         let repo_state = RepoStateArtifact {
             repo_root: prepared.repo_root.clone(),
@@ -1033,6 +1199,7 @@ impl RunMsbAgentSingleRequest {
             &mut background_rx,
             &turn_trace_path,
             selected_model_id.clone(),
+            &expected_file_baselines,
         )
         .await?;
         write_json(&turn_summary_path, &turn_artifact)?;
@@ -1061,6 +1228,17 @@ impl RunMsbAgentSingleRequest {
         write_json(&snapshot_status_path, &snapshot_status)?;
         steps.push("write_snapshot_status".to_string());
 
+        let msb_submission_path = if let Some(record) =
+            build_msb_submission_record(&prepared, collect_submission_fix_patch(&prepared)?)
+        {
+            let path = prepared.output_dir.join("multi-swe-bench-submission.jsonl");
+            write_jsonl_line(&path, &record)?;
+            steps.push("write_msb_submission".to_string());
+            Some(path)
+        } else {
+            None
+        };
+
         let execution_log = ExecutionLog {
             task_id: prepared.task_id,
             repo_root: prepared.repo_root,
@@ -1079,6 +1257,7 @@ impl RunMsbAgentSingleRequest {
             snapshot_status = %snapshot_status_path.display(),
             turn_trace = %turn_trace_path.display(),
             turn_summary = %turn_summary_path.display(),
+            msb_submission = msb_submission_path.as_ref().map(|p| p.display().to_string()),
             "runner phase: wrote run artifacts"
         );
         record_last_run(&execution_log.output_dir)?;
@@ -1092,6 +1271,7 @@ impl RunMsbAgentSingleRequest {
                 indexing_checkpoint_db,
                 indexing_failure_db,
                 snapshot_status: snapshot_status_path,
+                msb_submission: msb_submission_path,
             },
             turn_trace: turn_trace_path,
             turn_summary: turn_summary_path,
@@ -1601,6 +1781,7 @@ async fn run_benchmark_turn(
     background_rx: &mut broadcast::Receiver<AppEvent>,
     trace_path: &Path,
     selected_model: ModelId,
+    expected_file_baselines: &[ExpectedFileBaseline],
 ) -> Result<AgentTurnArtifact, PrepareError> {
     let deadline = Instant::now() + Duration::from_secs(prepared.budget.wall_clock_secs as u64);
     let issue_prompt = build_agent_issue_prompt(prepared);
@@ -1618,6 +1799,10 @@ async fn run_benchmark_turn(
             edit_proposals: Vec::new(),
             create_proposals: Vec::new(),
             applied: false,
+            all_proposals_applied: false,
+            expected_file_changes: Vec::new(),
+            any_expected_file_changed: false,
+            all_expected_files_changed: false,
         },
     };
     write_json(trace_path, &artifact)?;
@@ -1631,7 +1816,8 @@ async fn run_benchmark_turn(
 
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            artifact.patch_artifact = collect_patch_artifact(state).await;
+            artifact.patch_artifact =
+                collect_patch_artifact_with_expected(state, expected_file_baselines).await?;
             write_json(trace_path, &artifact)?;
             return Err(PrepareError::Timeout {
                 phase: "benchmark_turn",
@@ -1684,7 +1870,8 @@ async fn run_benchmark_turn(
 
     app.pump_pending_events().await;
     artifact.final_assistant_message = None;
-    artifact.patch_artifact = collect_patch_artifact(state).await;
+    artifact.patch_artifact =
+        collect_patch_artifact_with_expected(state, expected_file_baselines).await?;
     write_json(trace_path, &artifact)?;
     Ok(artifact)
 }
@@ -1882,6 +2069,15 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), PrepareError> 
     })
 }
 
+fn write_jsonl_line<T: Serialize>(path: &Path, value: &T) -> Result<(), PrepareError> {
+    let mut json = serde_json::to_string(value).map_err(PrepareError::Serialize)?;
+    json.push('\n');
+    fs::write(path, json).map_err(|source| PrepareError::WriteManifest {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 fn load_prepared_run(run_manifest: PathBuf) -> Result<(PathBuf, PreparedSingleRun), PrepareError> {
     let manifest_path = canonicalize_file(&run_manifest)?;
     let manifest_text =
@@ -1981,6 +2177,15 @@ mod tests {
             .with_target(false)
             .with_test_writer()
             .try_init();
+    }
+
+    fn run_git_test(repo_root: &Path, args: &[&str], label: &str) {
+        let status = Command::new("git")
+            .current_dir(repo_root)
+            .args(args)
+            .status()
+            .unwrap_or_else(|err| panic!("{label} failed to start: {err}"));
+        assert!(status.success(), "{label} failed with status {status}");
     }
 
     #[tokio::test]
@@ -2149,6 +2354,113 @@ mod tests {
         assert!(prompt.contains("The body text."));
     }
 
+    #[test]
+    fn build_msb_submission_record_uses_benchmark_identity() {
+        let prepared = PreparedSingleRun {
+            task_id: "BurntSushi__ripgrep-2209".to_string(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            output_dir: PathBuf::from("/tmp/out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some("abc123".to_string()),
+            head_sha: None,
+            budget: EvalBudget::default(),
+            source: Some(RunSource::MultiSweBench(crate::spec::MultiSweBenchSource {
+                dataset_file: PathBuf::from("/tmp/dataset.jsonl"),
+                dataset_url: None,
+                instance_id: "BurntSushi__ripgrep-2209".to_string(),
+                org: "BurntSushi".to_string(),
+                repo: "ripgrep".to_string(),
+                number: 2209,
+                language: Some("rust".to_string()),
+                expected_patch_files: vec![PathBuf::from("crates/printer/src/util.rs")],
+            })),
+        };
+
+        let record = build_msb_submission_record(&prepared, "diff --git a/foo b/foo\n".to_string())
+            .expect("submission record");
+        assert_eq!(record.org, "BurntSushi");
+        assert_eq!(record.repo, "ripgrep");
+        assert_eq!(record.number, 2209);
+        assert!(record.fix_patch.starts_with("diff --git"));
+    }
+
+    #[test]
+    fn collect_submission_fix_patch_exports_git_diff_and_jsonl_shape() {
+        let tmp = tempdir().expect("tempdir");
+        let repo_root = tmp.path();
+        let src_dir = repo_root.join("src");
+        let file = src_dir.join("lib.rs");
+        fs::create_dir_all(&src_dir).expect("src dir");
+
+        run_git_test(repo_root, &["init"], "git init");
+        run_git_test(
+            repo_root,
+            &["config", "user.name", "Ploke Eval"],
+            "git config name",
+        );
+        run_git_test(
+            repo_root,
+            &["config", "user.email", "ploke-eval@example.com"],
+            "git config email",
+        );
+
+        fs::write(&file, "fn main() {}\n").expect("write initial file");
+        run_git_test(repo_root, &["add", "src/lib.rs"], "git add");
+        run_git_test(repo_root, &["commit", "-m", "base"], "git commit");
+
+        let base_sha = git_stdout(repo_root, &["rev-parse", "HEAD"], "git rev-parse HEAD")
+            .expect("base sha")
+            .expect("stdout")
+            .trim()
+            .to_string();
+
+        fs::write(&file, "fn main() {\n    println!(\"hi\");\n}\n").expect("write modified file");
+
+        let prepared = PreparedSingleRun {
+            task_id: "case-123".to_string(),
+            repo_root: repo_root.to_path_buf(),
+            output_dir: tmp.path().join("out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some(base_sha),
+            head_sha: None,
+            budget: EvalBudget::default(),
+            source: Some(RunSource::MultiSweBench(crate::spec::MultiSweBenchSource {
+                dataset_file: tmp.path().join("dataset.jsonl"),
+                dataset_url: None,
+                instance_id: "acme__repo-1".to_string(),
+                org: "acme".to_string(),
+                repo: "repo".to_string(),
+                number: 1,
+                language: Some("rust".to_string()),
+                expected_patch_files: vec![PathBuf::from("src/lib.rs")],
+            })),
+        };
+
+        let fix_patch = collect_submission_fix_patch(&prepared).expect("submission patch");
+        assert!(fix_patch.contains("diff --git a/src/lib.rs b/src/lib.rs"));
+        assert!(fix_patch.contains("+    println!(\"hi\");"));
+
+        let record = build_msb_submission_record(&prepared, fix_patch).expect("submission");
+        let jsonl_path = tmp.path().join("submission.jsonl");
+        write_jsonl_line(&jsonl_path, &record).expect("write jsonl");
+
+        let line = fs::read_to_string(&jsonl_path).expect("read jsonl");
+        let parsed: MultiSweBenchSubmissionRecord =
+            serde_json::from_str(line.trim()).expect("parse jsonl line");
+        assert_eq!(parsed.org, "acme");
+        assert_eq!(parsed.repo, "repo");
+        assert_eq!(parsed.number, 1);
+        assert!(parsed.fix_patch.contains("diff --git"));
+    }
+
     #[tokio::test]
     async fn collect_patch_artifact_snapshots_applied_proposals() {
         let state = create_mock_app_state();
@@ -2194,10 +2506,80 @@ mod tests {
 
         let patch = collect_patch_artifact(&state).await;
         assert!(patch.applied);
+        assert!(patch.all_proposals_applied);
         assert_eq!(patch.edit_proposals.len(), 1);
         assert_eq!(patch.create_proposals.len(), 1);
         assert_eq!(patch.edit_proposals[0].status, "Applied");
         assert_eq!(patch.create_proposals[0].files, vec!["src/new.rs"]);
+        assert!(patch.expected_file_changes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn collect_patch_artifact_marks_partial_apply_as_applied_but_not_all_applied() {
+        let state = create_mock_app_state();
+        let state = Arc::new(state);
+        {
+            let mut proposals = state.proposals.write().await;
+            proposals.insert(
+                ploke_core::PROJECT_NAMESPACE_UUID,
+                EditProposal {
+                    request_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                    parent_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                    call_id: ploke_core::ArcStr::from("edit-call"),
+                    proposed_at_ms: 1,
+                    edits: Vec::new(),
+                    files: vec![PathBuf::from("src/lib.rs")],
+                    edits_ns: Vec::new(),
+                    preview: DiffPreview::UnifiedDiff {
+                        text: "--- a/src/lib.rs\n+++ b/src/lib.rs\n".to_string(),
+                    },
+                    status: EditProposalStatus::Applied,
+                    is_semantic: true,
+                },
+            );
+            proposals.insert(
+                uuid::Uuid::new_v4(),
+                EditProposal {
+                    request_id: uuid::Uuid::new_v4(),
+                    parent_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                    call_id: ploke_core::ArcStr::from("edit-call-failed"),
+                    proposed_at_ms: 2,
+                    edits: Vec::new(),
+                    files: vec![PathBuf::from("src/lib.rs")],
+                    edits_ns: Vec::new(),
+                    preview: DiffPreview::UnifiedDiff {
+                        text: "--- a/src/lib.rs\n+++ b/src/lib.rs\n".to_string(),
+                    },
+                    status: EditProposalStatus::Failed("boom".to_string()),
+                    is_semantic: true,
+                },
+            );
+        }
+
+        let patch = collect_patch_artifact(&state).await;
+        assert!(patch.applied);
+        assert!(!patch.all_proposals_applied);
+    }
+
+    #[test]
+    fn expected_file_change_records_hash_transition() {
+        let tmp = tempdir().expect("tempdir");
+        let repo_root = tmp.path();
+        let file = repo_root.join("src/lib.rs");
+        fs::create_dir_all(file.parent().expect("parent")).expect("create dir");
+        fs::write(&file, "before\n").expect("write before");
+
+        let baselines =
+            snapshot_expected_files(repo_root, &[PathBuf::from("src/lib.rs")]).expect("baseline");
+        fs::write(&file, "after\n").expect("write after");
+
+        let changes = collect_expected_file_changes(&baselines).expect("changes");
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, "src/lib.rs");
+        assert!(changes[0].existed_before);
+        assert!(changes[0].exists_after);
+        assert!(changes[0].changed);
+        assert_ne!(changes[0].before_sha256, changes[0].after_sha256);
     }
 
     #[tokio::test]
@@ -2227,6 +2609,10 @@ mod tests {
                 edit_proposals: Vec::new(),
                 create_proposals: Vec::new(),
                 applied: false,
+                all_proposals_applied: false,
+                expected_file_changes: Vec::new(),
+                any_expected_file_changed: false,
+                all_expected_files_changed: false,
             },
         };
 

@@ -86,8 +86,16 @@ repo-state.json        repo state after checkout to base_sha
 execution-log.json     high-level run steps
 indexing-status.json   indexing result summary
 snapshot-status.json   saved DB snapshot summary
+multi-swe-bench-submission.jsonl
+                      benchmark-ready JSONL patch record with org/repo/number/fix_patch
 config/                per-run XDG config sandbox used by SaveDb
 ```
+
+`multi-swe-bench-submission.jsonl` is a candidate patch artifact for the
+official Multi-SWE-bench evaluator. Local `ploke-eval` artifacts such as
+`agent-turn-summary.json`, `execution-log.json`, and `patch_artifact` are run
+telemetry, not the benchmark source of truth. Official pass/fail comes from
+running the external Multi-SWE-bench evaluator on the exported submission.
 
 ## Current embedding preset
 

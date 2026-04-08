@@ -113,6 +113,14 @@ Default read/write locations
     execution-log.json
     indexing-status.json
     snapshot-status.json
+    multi-swe-bench-submission.jsonl
+
+  Benchmark boundary:
+    `multi-swe-bench-submission.jsonl` is a candidate patch artifact for the
+    official Multi-SWE-bench evaluator.
+    Local `ploke-eval` artifacts are run telemetry, not the benchmark verdict.
+    Official pass/fail comes from running the external evaluator on the
+    exported submission.
 
 Override the root with:
   PLOKE_EVAL_HOME=/some/path
@@ -867,6 +875,9 @@ impl RunMsbSingleCommand {
         .run()
         .await?;
         println!("{}", artifacts.execution_log.display());
+        if let Some(path) = artifacts.msb_submission {
+            println!("{}", path.display());
+        }
         Ok(())
     }
 }
@@ -893,6 +904,9 @@ impl RunMsbAgentSingleCommand {
         .await?;
         println!("{}", artifacts.base.execution_log.display());
         println!("{}", artifacts.turn_summary.display());
+        if let Some(path) = artifacts.base.msb_submission {
+            println!("{}", path.display());
+        }
         Ok(())
     }
 }

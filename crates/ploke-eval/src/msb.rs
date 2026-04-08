@@ -31,6 +31,8 @@ struct MultiSweBenchRecord {
     title: Option<String>,
     body: Option<String>,
     base: MultiSweBenchBase,
+    #[serde(default)]
+    fix_patch: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,10 +89,37 @@ impl PrepareMsbSingleRunRequest {
             repo: record.repo,
             number: record.number,
             language,
+            expected_patch_files: record
+                .fix_patch
+                .as_deref()
+                .map(extract_patch_files)
+                .unwrap_or_default(),
         }));
 
         Ok(prepared)
     }
+}
+
+fn extract_patch_files(patch: &str) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for line in patch.lines() {
+        let Some(path) = line.strip_prefix("+++ ") else {
+            continue;
+        };
+        if path == "/dev/null" {
+            continue;
+        }
+        let path = path.strip_prefix("b/").unwrap_or(path);
+        let path = path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        let candidate = PathBuf::from(path);
+        if !files.contains(&candidate) {
+            files.push(candidate);
+        }
+    }
+    files
 }
 
 fn load_instance(
@@ -222,7 +251,7 @@ mod tests {
         fs::write(repo_root.join(".git/HEAD"), "cafebabe\n").expect("head");
         fs::write(
             &dataset_file,
-            r#"{"instance_id":"clap-rs__clap-1234","org":"clap-rs","repo":"clap","number":1234,"title":"Fix clap regression","body":"repro body","base":{"sha":"abc123"}}"#,
+            r#"{"instance_id":"clap-rs__clap-1234","org":"clap-rs","repo":"clap","number":1234,"title":"Fix clap regression","body":"repro body","base":{"sha":"abc123"},"fix_patch":"diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n"}"#,
         )
         .expect("dataset");
 
@@ -249,8 +278,39 @@ mod tests {
                 assert_eq!(source.number, 1234);
                 assert!(source.dataset_url.is_none());
                 assert_eq!(source.language.as_deref(), Some("rust"));
+                assert_eq!(
+                    source.expected_patch_files,
+                    vec![PathBuf::from("src/lib.rs")]
+                );
             }
             other => panic!("unexpected source: {other:?}"),
         }
+    }
+
+    #[test]
+    fn extract_patch_files_dedupes_and_skips_dev_null() {
+        let patch = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1 @@
+-old
++new
+diff --git a/src/new.rs b/src/new.rs
+--- /dev/null
++++ b/src/new.rs
+@@ -0,0 +1 @@
++created
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1 @@
+-old
++newer
+";
+        assert_eq!(
+            extract_patch_files(patch),
+            vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/new.rs")]
+        );
     }
 }
