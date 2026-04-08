@@ -2,6 +2,7 @@ use crate::write::NsWriteResult;
 
 use super::*;
 use ploke_core::{CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData};
+use std::time::Instant;
 
 /**
 A handle to the IoManager actor.
@@ -345,6 +346,13 @@ impl IoManagerHandle {
         &self,
         requests: Vec<NsWriteSnippetData>,
     ) -> Result<Vec<Result<NsWriteResult, PlokeError>>, IoError> {
+        let request_count = requests.len();
+        let started_at = Instant::now();
+        tracing::debug!(
+            target: "dbg_tools",
+            request_count,
+            "IoManagerHandle::write_batch_ns sending request"
+        );
         let (responder, response_rx) = oneshot::channel();
         let request = IoRequest::NsWriteSnippetBatch {
             requests,
@@ -355,10 +363,27 @@ impl IoManagerHandle {
             .await
             .map_err(|_| RecvError::SendError)
             .map_err(IoError::from)?;
-        response_rx
+        let response = response_rx
             .await
             .map_err(|_| RecvError::RecvError)
-            .map_err(IoError::from)
+            .map_err(IoError::from);
+        match &response {
+            Ok(results) => tracing::debug!(
+                target: "dbg_tools",
+                request_count,
+                result_count = results.len(),
+                elapsed_ms = started_at.elapsed().as_millis(),
+                "IoManagerHandle::write_batch_ns received response"
+            ),
+            Err(err) => tracing::debug!(
+                target: "dbg_tools",
+                request_count,
+                elapsed_ms = started_at.elapsed().as_millis(),
+                error = %err,
+                "IoManagerHandle::write_batch_ns failed"
+            ),
+        }
+        response
     }
 
     /// Create (or overwrite) a Rust source file atomically, enforcing path policy.

@@ -98,6 +98,10 @@ Override the root with:
     propagate_version = true
 )]
 pub struct Cli {
+    /// Enable low-level dbg_tools tracing for tool dispatch and IO write debugging.
+    #[arg(long, global = true)]
+    pub debug_tools: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }

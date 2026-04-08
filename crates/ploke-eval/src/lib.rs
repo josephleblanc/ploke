@@ -17,3 +17,6 @@ pub use spec::{
     EvalBudget, IssueInput, MultiSweBenchSource, OutputMode, PrepareSingleRunRequest, PrepareWrite,
     PreparedSingleRun, RunSource,
 };
+
+#[cfg(test)]
+mod tests;

@@ -1,5 +1,5 @@
-use std::fs;
 use std::path::PathBuf;
+use std::{fs, str::FromStr};
 
 use chrono::Local;
 use ploke_eval::ploke_eval_home;
@@ -7,9 +7,14 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-pub fn init_tracing() -> Option<WorkerGuard> {
-    let filter = EnvFilter::try_from_default_env()
+pub fn init_tracing(debug_tools: bool) -> Option<WorkerGuard> {
+    let mut filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,embed-pipeline=trace"));
+    if debug_tools
+        && let Ok(directive) = tracing_subscriber::filter::Directive::from_str("dbg_tools=debug")
+    {
+        filter = filter.add_directive(directive);
+    }
 
     let mut log_dir = ploke_eval_home().unwrap_or_else(|_| PathBuf::from(".ploke-eval"));
     log_dir.push("logs");
@@ -57,7 +62,12 @@ pub fn init_tracing() -> Option<WorkerGuard> {
         .try_init()
         .is_ok()
     {
-        tracing::info!(target: "ploke_eval", log_file = %log_file.display(), "eval tracing initialized");
+        tracing::info!(
+            target: "ploke_eval",
+            debug_tools,
+            log_file = %log_file.display(),
+            "eval tracing initialized"
+        );
         Some(file_guard)
     } else {
         None

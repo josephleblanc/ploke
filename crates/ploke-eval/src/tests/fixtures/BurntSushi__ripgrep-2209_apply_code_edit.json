@@ -1,0 +1,17 @@
+{
+  "request_id": "8e391ff9-00ea-4e0b-bdba-0ddaedb4f102",
+  "parent_id": "f7f4a9a0-1b1a-4b0e-9c1a-1a1a1a1a1a1a",
+  "call_id": "call_193c3a3c9ce76000",
+  "tool": "apply_code_edit",
+  "arguments": {
+    "edits": [
+      {
+        "file": "/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/util.rs",
+        "canon": "crate::util::Replacer::replace_all",
+        "node_type": "function",
+        "code": "    /// Executes a replacement on the given subject string by replacing all\n    /// matches with the given replacement. To access the result of the\n    /// replacement, use the `replacement` method.\n    ///\n    /// This can fail if the underlying matcher reports an error.\n    pub fn replace_all<'a>(\n        &'a mut self,\n        searcher: &Searcher,\n        matcher: &M,\n        mut subject: &[u8],\n        range: std::ops::Range<usize>,\n        replacement: &[u8],\n    ) -> io::Result<()> {\n        // See the giant comment in 'find_iter_at_in_context' below for why we\n        // do this dance.\n        let is_multi_line = searcher.multi_line_with_matcher(&matcher);\n        if is_multi_line {\n            if subject[range.end..].len() >= MAX_LOOK_AHEAD {\n                subject = &subject[..range.end + MAX_LOOK_AHEAD];\n            }\n        } else {\n            // When searching a single line, we should remove the line\n            // terminator. Otherwise, it's possible for the regex (via\n            // look-around) to observe the line terminator and not match\n            // because of it.\n            let mut m = Match::new(0, range.end);\n            trim_line_terminator(searcher, subject, &mut m);\n            subject = &subject[..m.end()];\n        }\n        {\n            let &mut Space { ref mut dst, ref mut caps, ref mut matches } =\n                self.allocate(matcher)?;\n            dst.clear();\n            matches.clear();\n\n            matcher\n                .replace_with_captures_at(\n                    subject,\n                    range.start,\n                    caps,\n                    dst,\n                    |caps, dst| {\n                        let start = dst.len();\n                        caps.interpolate(\n                            |name| matcher.capture_index(name),\n                            subject,\n                            replacement,\n                            dst,\n                        );\n                        let end = dst.len();\n                        // This kludge is to prevent including matches that\n                        // extend beyond our desired range. This can happen in\n                        // multiline mode when we extend the search subject to\n                        // permit look-around to work correctly.\n                        if is_multi_line && start >= range.end {\n                            return false;\n                        }\n                        matches.push(Match::new(start, end));\n                        true\n                    },\n                )\n                .map_err(io::Error::error_message)?;\n        }\n        Ok(())\n    }"
+      }
+    ],
+    "confidence": 0.95
+  }
+}

@@ -15,7 +15,7 @@ use uuid::Uuid;
 // Bring AppEvent and SystemEvent into scope from the parent module tree
 use super::AppEvent;
 use super::utils::display_file_info;
-use crate::app::view::components::model_browser::ModelProviderRow;
+use crate::app::view::components::model_browser::{ModelProviderRow, preferred_provider_key};
 
 /// Handle AppEvent routing in a lightweight way. This keeps the UI loop lean.
 pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
@@ -483,14 +483,7 @@ fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event
 
         // If user pressed 's' while loading, choose a provider automatically now
         if browser_item.pending_select {
-            let tool_provider = browser_item
-                .providers
-                .iter()
-                .find(|p| p.supports_tools)
-                .or_else(|| browser_item.providers.first())
-                .map(|p| p.provider_key.clone());
-
-            if let Some(pk) = tool_provider {
+            if let Some(pk) = preferred_provider_key(&browser_item.providers) {
                 // Defer actual selection to after we release the borrow on model_browser
                 select_after = Some((model_id.clone(), pk));
             }

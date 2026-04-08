@@ -40,6 +40,7 @@ use crate::llm::manager::loop_error::{
 };
 use crate::tools::{ToolError, ToolErrorCode, ToolErrorWire, ToolUiPayload, allowed_tool_names};
 use ploke_llm::LlmError;
+use tokio::time::sleep;
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
@@ -306,20 +307,12 @@ enum FinishFailure {
 }
 
 /// Mutable counters for retry behavior within a chat session.
+#[derive(Default, Debug, Clone, Copy)]
 struct ChatLoopState {
     retried_errors: u32,
     retried_lengths: u32,
     timeout_attempts: usize,
-}
-
-impl Default for ChatLoopState {
-    fn default() -> Self {
-        Self {
-            retried_errors: 0,
-            retried_lengths: 0,
-            timeout_attempts: 0,
-        }
-    }
+    request_error_retries: u32,
 }
 
 /// Borrowed context required to evaluate finish reasons.
@@ -712,6 +705,64 @@ pub async fn run_chat_session<R: Router>(
                     assistant_message_id,
                 );
                 let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+                if matches!(&loop_error.retry, RetryAdvice::Yes { .. })
+                    && loop_state.request_error_retries < chat_policy.error_retry_limit
+                {
+                    loop_state.request_error_retries =
+                        loop_state.request_error_retries.saturating_add(1);
+                    report.record_error(loop_error.clone());
+
+                    let retry_delay = match &loop_error.retry {
+                        RetryAdvice::Yes {
+                            strategy: RetryStrategy::Fixed,
+                            ..
+                        } => finish_policy
+                            .timeout
+                            .duration
+                            .unwrap_or_else(|| Duration::from_secs(0)),
+                        RetryAdvice::Yes {
+                            strategy: RetryStrategy::Backoff,
+                            ..
+                        } => finish_policy
+                            .timeout
+                            .next_timout_dur(loop_state.request_error_retries as usize)
+                            .unwrap_or_else(|| {
+                                finish_policy
+                                    .timeout
+                                    .duration
+                                    .unwrap_or_else(|| Duration::from_secs(0))
+                            }),
+                        _ => Duration::from_secs(0),
+                    };
+
+                    tracing::warn!(
+                        target = "chat-loop",
+                        error = %err,
+                        retried_request_errors = loop_state.request_error_retries,
+                        retry_delay_secs = retry_delay.as_secs_f32(),
+                        ?model_key,
+                        "chat_step failed; retrying"
+                    );
+
+                    tokio::select! {
+                        _ = sleep(retry_delay) => {}
+                        _ = wait_for_cancel_signal(&mut cancel_rx) => {
+                            return abort_for_user_cancel(
+                                &mut report,
+                                &state_cmd_tx,
+                                assistant_message_id,
+                                &mut initial_message_updated,
+                                attempts,
+                                chain_index,
+                                &model_key,
+                                commit_phase,
+                            ).await;
+                        }
+                    }
+
+                    continue;
+                }
+
                 emit_loop_error(
                     &state_cmd_tx,
                     assistant_message_id,

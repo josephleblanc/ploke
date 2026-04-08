@@ -191,21 +191,30 @@ pub fn registry_has_model(registry: &ModelRegistry, model_id: &ModelId) -> bool 
     registry.data.iter().any(|item| item.id == *model_id)
 }
 
-pub fn resolve_model_for_run(use_default_model: bool) -> Result<ModelId, PrepareError> {
+pub fn resolve_model_for_run(use_default_model: bool) -> Result<ResponseItem, PrepareError> {
+    let path = model_registry_path()?;
     if use_default_model {
-        Ok(ModelId::from(ModelKey::default()))
+        let registry = load_model_registry()?;
+        let default_id = ModelId::from(ModelKey::default());
+        registry
+            .data
+            .into_iter()
+            .find(|item| item.id == default_id)
+            .ok_or_else(|| PrepareError::UnknownModelInRegistry {
+                model: default_id.to_string(),
+                path: path.clone(),
+            })
     } else {
         let registry = load_model_registry()?;
         let model_id = load_active_model()?.model_id;
-
-        if registry_has_model(&registry, &model_id) {
-            Ok(model_id)
-        } else {
-            Err(PrepareError::UnknownModelInRegistry {
+        registry
+            .data
+            .into_iter()
+            .find(|item| item.id == model_id)
+            .ok_or_else(|| PrepareError::UnknownModelInRegistry {
                 model: model_id.to_string(),
-                path: model_registry_path()?,
+                path,
             })
-        }
     }
 }
 

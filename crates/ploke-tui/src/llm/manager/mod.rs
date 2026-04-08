@@ -219,7 +219,7 @@ fn handle_event(
     ready_contexts: &mut HashMap<EvtKey, ChatEvt>,
     cancel_rx: watch::Receiver<CancelChatToken>,
 ) {
-    tracing::info!(?event);
+    tracing::trace!(?event);
     match event {
         AppEvent::Llm(LlmEvent::ChatCompletion(
             request @ ChatEvt::Request {
@@ -532,24 +532,32 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     };
 
     // Use the runtime-selected active model (includes optional variant)
-    let (model_id, chat_policy, llm_timeout_secs) = {
+    let (model_id, chat_policy, llm_timeout_secs, router_fields) = {
         let cfg = state.config.read().await;
+        let mut router_fields = <OpenRouter as ploke_llm::Router>::CompletionFields::default();
+        if let Some(provider) = cfg
+            .model_registry
+            .models
+            .get(&cfg.active_model.key)
+            .and_then(|mp| mp.selected_provider_preferences())
+        {
+            router_fields = router_fields.with_provider(provider);
+        }
+        router_fields = router_fields.preferences_union(&cfg.model_registry);
         (
             cfg.active_model.clone(),
             cfg.chat_policy.clone(),
             cfg.llm_timeout_secs,
+            router_fields,
         )
     };
 
-    // WARN: Using default fields here, should try to load from registry first and use default if
-    // the selected model is default or if the registry is not yet set up.
     let req = OpenRouter::default_chat_completion()
         .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
         .with_model(model_id)
         .with_messages(messages)
         .with_param_bundle(llm_params)
-        // TODO: This is where Registry will plug in, maybe?
-        // .with_params_union(_llm_params)
+        .with_router_bundle(router_fields)
         .with_tools(tools)
         .with_tool_choice(tool_choice);
 

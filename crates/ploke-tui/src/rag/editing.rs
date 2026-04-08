@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::{
     app_state::{core::EditProposalStatus, handlers::chat},
@@ -87,6 +88,14 @@ async fn apply_ns_edit(
         )
         .await;
     };
+    let started_at = Instant::now();
+    tracing::debug!(
+        target: "dbg_tools",
+        request_id = %request_id,
+        file_count = file_paths.len(),
+        edit_count = proposal.edits_ns.len(),
+        "starting ns edit apply"
+    );
 
     match state
         .io_handle
@@ -104,6 +113,14 @@ async fn apply_ns_edit(
                 .filter(|r| r.is_ok())
                 .count();
             let file_count = file_paths.len();
+            tracing::debug!(
+                target: "dbg_tools",
+                request_id = %request_id,
+                applied,
+                file_count,
+                elapsed_ms = started_at.elapsed().as_millis(),
+                "finished ns edit apply"
+            );
             let results_json: Vec<serde_json::Value> = results
                 .into_iter()
                 .zip(file_paths.into_iter())
@@ -179,6 +196,13 @@ async fn apply_ns_edit(
             add_msg_imm(msg).await;
         }
         Err(e) => {
+            tracing::debug!(
+                target: "dbg_tools",
+                request_id = %request_id,
+                elapsed_ms = started_at.elapsed().as_millis(),
+                error = %e,
+                "ns edit apply failed"
+            );
             proposal.status = EditProposalStatus::Failed(e.to_string());
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();

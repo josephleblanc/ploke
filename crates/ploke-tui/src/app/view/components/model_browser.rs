@@ -72,6 +72,52 @@ impl ModelProviderRow {
     }
 }
 
+pub trait ProviderSelectionCandidate {
+    fn provider_key(&self) -> ProviderKey;
+    fn supports_tools(&self) -> bool;
+}
+
+impl ProviderSelectionCandidate for ModelProviderRow {
+    fn provider_key(&self) -> ProviderKey {
+        self.provider_key.clone()
+    }
+
+    fn supports_tools(&self) -> bool {
+        self.supports_tools
+    }
+}
+
+impl ProviderSelectionCandidate for Endpoint {
+    fn provider_key(&self) -> ProviderKey {
+        ProviderKey {
+            slug: self.tag.provider_name.clone(),
+        }
+    }
+
+    fn supports_tools(&self) -> bool {
+        Endpoint::supports_tools(self)
+    }
+}
+
+pub fn preferred_provider_key<T: ProviderSelectionCandidate>(
+    providers: &[T],
+) -> Option<ProviderKey> {
+    providers
+        .iter()
+        .find(|p| p.supports_tools())
+        .or_else(|| providers.first())
+        .map(|p| p.provider_key())
+}
+
+pub fn tool_capable_provider_key<T: ProviderSelectionCandidate>(
+    providers: &[T],
+) -> Option<ProviderKey> {
+    providers
+        .iter()
+        .find(|p| p.supports_tools())
+        .map(|p| p.provider_key())
+}
+
 #[derive(Debug)]
 pub struct ModelBrowserState {
     pub visible: bool,

@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::overlay::{OverlayAction, OverlayKind};
-use crate::app::view::components::model_browser::ModelBrowserState;
+use crate::app::view::components::model_browser::{ModelBrowserState, preferred_provider_key};
 
 pub fn handle_model_browser_input(mb: &mut ModelBrowserState, key: KeyEvent) -> Vec<OverlayAction> {
     let mut actions = Vec::new();
@@ -111,15 +111,9 @@ pub fn handle_model_browser_input(mb: &mut ModelBrowserState, key: KeyEvent) -> 
                         item.pending_select = true;
                     }
                 } else {
-                    let tool_provider = item
-                        .providers
-                        .iter()
-                        .find(|p| p.supports_tools)
-                        .or_else(|| item.providers.first())
-                        .map(|p| p.provider_key.clone());
                     actions.push(OverlayAction::SelectModel {
                         model_id: item.id.clone(),
-                        provider: tool_provider,
+                        provider: preferred_provider_key(&item.providers),
                     });
                 }
             }

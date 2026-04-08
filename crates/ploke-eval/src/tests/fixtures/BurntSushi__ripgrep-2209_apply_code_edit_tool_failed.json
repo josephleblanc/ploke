@@ -1,0 +1,38 @@
+{
+  "request_id": "8e391ff9-00ea-4e0b-bdba-0ddaedb4f102",
+  "parent_id": "f7f4a9a0-1b1a-4b0e-9c1a-1a1a1a1a1a1a",
+  "call_id": "call_193c3a3c9ce76000",
+  "tool": "apply_code_edit",
+  "error": "{\"user\":\"apply_code_edit: No matching node found (strict+fallback) for canon=crate::util::Replacer::replace_all in file=/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/util.rs; candidates files=[]\",\"llm\":{\"code\":\"InvalidFormat\",\"expected\":null,\"field\":null,\"message\":\"No matching node found (strict+fallback) for canon=crate::util::Replacer::replace_all in file=/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/util.rs; candidates files=[]\",\"ok\":false,\"received\":null,\"retry_context\":null,\"retry_hint\":null,\"snippet\":null,\"tool\":\"apply_code_edit\"},\"system\":\"tool=ApplyCodeEdit code=InvalidFormat: No matching node found (strict+fallback) for canon=crate::util::Replacer::replace_all in file=/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/util.rs; candidates files=[]\"}",
+  "ui_payload": {
+    "tool": "apply_code_edit",
+    "call_id": "call_193c3a3c9ce76000",
+    "request_id": null,
+    "summary": "apply_code_edit: No matching node found (strict+fallback) for canon=crate::util::Replacer::replace_all in file=/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/util.rs; candidates files=[]",
+    "fields": [
+      {
+        "name": "code",
+        "value": "invalid_format"
+      }
+    ],
+    "details": null,
+    "verbosity": "normal",
+    "error": {
+      "user": "apply_code_edit: No matching node found (strict+fallback) for canon=crate::util::Replacer::replace_all in file=/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/util.rs; candidates files=[]",
+      "llm": {
+        "code": "InvalidFormat",
+        "expected": null,
+        "field": null,
+        "message": "No matching node found (strict+fallback) for canon=crate::util::Replacer::replace_all in file=/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/util.rs; candidates files=[]",
+        "ok": false,
+        "received": null,
+        "retry_context": null,
+        "retry_hint": null,
+        "snippet": null,
+        "tool": "apply_code_edit"
+      },
+      "system": "tool=ApplyCodeEdit code=InvalidFormat: No matching node found (strict+fallback) for canon=crate::util::Replacer::replace_all in file=/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/util.rs; candidates files=[]"
+    },
+    "error_code": "invalid_format"
+  }
+}

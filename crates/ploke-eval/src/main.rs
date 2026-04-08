@@ -18,6 +18,6 @@ async fn main() -> ExitCode {
         }
     };
 
-    let _log_guard = tracing_setup::init_tracing();
+    let _log_guard = tracing_setup::init_tracing(cli.debug_tools);
     cli.run().await
 }

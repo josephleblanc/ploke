@@ -12,15 +12,22 @@ use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
-use ploke_llm::ModelId;
+use ploke_llm::request::models::ResponseItem;
+use ploke_llm::router_only::{
+    HasEndpoint,
+    openrouter::{OpenRouter, OpenRouterModelId},
+};
+use ploke_llm::{ModelId, ProviderKey, SupportsTools};
 use ploke_tui::AppEvent;
 use ploke_tui::app::App;
 use ploke_tui::app::commands::harness::TestAppAccessor;
 use ploke_tui::app::commands::harness::TestRuntime;
+use ploke_tui::app::view::components::model_browser::tool_capable_provider_key;
 use ploke_tui::app_state::AppState;
 use ploke_tui::app_state::core::{DiffPreview, EditProposalStatus};
 use ploke_tui::app_state::events::SystemEvent;
 use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
+use ploke_tui::user_config::{ChatPolicy, ChatTimeoutStrategy};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
@@ -37,6 +44,15 @@ const WAIT_HEARTBEAT_SECS: u64 = 10;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
 const OPENROUTER_CODESTRAL_DIMS: usize = 1536;
 const STARTING_DB_CACHE_VERSION: u32 = 1;
+
+fn benchmark_chat_policy() -> ChatPolicy {
+    let mut policy = ChatPolicy::default();
+    policy.tool_call_timeout_secs = 60;
+    policy.timeout_strategy = ChatTimeoutStrategy::Backoff { attempts: Some(3) };
+    policy.timeout_base_secs = 5;
+    policy.error_retry_limit = 3;
+    policy.validated()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMsbAgentSingleRequest {
@@ -124,6 +140,7 @@ pub struct ExecutionLog {
     pub repo_root: PathBuf,
     pub output_dir: PathBuf,
     pub selected_model: ModelId,
+    pub selected_provider: Option<String>,
     pub steps: Vec<String>,
 }
 
@@ -462,10 +479,45 @@ async fn persist_starting_db_cache(
     persist_starting_db_cache_at(layout::ploke_eval_home()?, prepared, snapshot_path).await
 }
 
+async fn resolve_provider_for_model(
+    selected_model: &ResponseItem,
+) -> Result<ProviderKey, PrepareError> {
+    if !selected_model.supports_tools() {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "resolve_model_provider",
+            detail: format!(
+                "model '{}' does not advertise tool-call support",
+                selected_model.id
+            ),
+        });
+    }
+
+    let client = reqwest::Client::new();
+    let typed_model = OpenRouterModelId::from(selected_model.id.clone());
+    let endpoints = OpenRouter::fetch_model_endpoints(&client, typed_model)
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "fetch_model_endpoints",
+            detail: err.to_string(),
+        })?;
+
+    tool_capable_provider_key(&endpoints.data.endpoints).ok_or_else(|| {
+        PrepareError::DatabaseSetup {
+            phase: "resolve_model_provider",
+            detail: format!(
+                "no tool-capable provider endpoints returned for model '{}'",
+                selected_model.id
+            ),
+        }
+    })
+}
+
 impl RunMsbSingleRequest {
     pub async fn run(self) -> Result<RunArtifactPaths, PrepareError> {
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
         let selected_model = resolve_model_for_run(self.use_default_model)?;
+        let selected_model_id = selected_model.id.clone();
+        let selected_provider = resolve_provider_for_model(&selected_model).await?;
 
         fs::create_dir_all(&prepared.output_dir).map_err(|source| {
             PrepareError::CreateOutputDir {
@@ -569,7 +621,9 @@ impl RunMsbSingleRequest {
         let state = runtime.state_arc();
         {
             let mut cfg = state.config.write().await;
-            cfg.active_model = selected_model.clone();
+            cfg.active_model = selected_model_id.clone();
+            cfg.model_registry
+                .select_model_provider(&selected_model_id, Some(&selected_provider));
         }
         info!("runner phase: inspect active embedding set before activation");
         let currently_active_set: EmbeddingSet = runtime_db
@@ -685,7 +739,8 @@ impl RunMsbSingleRequest {
             task_id: prepared.task_id,
             repo_root: prepared.repo_root,
             output_dir: prepared.output_dir,
-            selected_model,
+            selected_model: selected_model_id,
+            selected_provider: Some(selected_provider.slug.as_str().to_string()),
             steps,
         };
         write_json(&execution_log_path, &execution_log)?;
@@ -715,6 +770,8 @@ impl RunMsbAgentSingleRequest {
     pub async fn run(self) -> Result<AgentRunArtifactPaths, PrepareError> {
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
         let selected_model = resolve_model_for_run(self.use_default_model)?;
+        let selected_model_id = selected_model.id.clone();
+        let selected_provider = resolve_provider_for_model(&selected_model).await?;
 
         fs::create_dir_all(&prepared.output_dir).map_err(|source| {
             PrepareError::CreateOutputDir {
@@ -829,7 +886,10 @@ impl RunMsbAgentSingleRequest {
         {
             let mut cfg = state.config.write().await;
             cfg.editing.auto_confirm_edits = true;
-            cfg.active_model = selected_model.clone();
+            cfg.chat_policy = benchmark_chat_policy();
+            cfg.active_model = selected_model_id.clone();
+            cfg.model_registry
+                .select_model_provider(&selected_model_id, Some(&selected_provider));
         }
         info!("runner phase: inspect active embedding set before activation");
         let currently_active_set: EmbeddingSet = runtime_db
@@ -926,7 +986,7 @@ impl RunMsbAgentSingleRequest {
             &mut realtime_rx,
             &mut background_rx,
             &turn_trace_path,
-            selected_model.clone(),
+            selected_model_id.clone(),
         )
         .await?;
         write_json(&turn_summary_path, &turn_artifact)?;
@@ -959,7 +1019,8 @@ impl RunMsbAgentSingleRequest {
             task_id: prepared.task_id,
             repo_root: prepared.repo_root,
             output_dir: prepared.output_dir,
-            selected_model,
+            selected_model: selected_model_id,
+            selected_provider: Some(selected_provider.slug.as_str().to_string()),
             steps,
         };
         write_json(&execution_log_path, &execution_log)?;

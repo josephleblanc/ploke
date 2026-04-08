@@ -2,10 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::error::ErrorExt;
-use crate::llm::ProviderSlug;
-use crate::llm::registry::user_prefs::{ModelPrefs, RegistryPrefs};
-use crate::llm::router_only::RouterVariants;
-use crate::llm::{EndpointKey, ModelId, ProviderKey};
+use crate::llm::{ModelId, ProviderKey};
 use crate::rag::context::process_with_rag;
 use crate::{EventBus, MessageUpdatedEvent, RagEvent, rag};
 use ploke_core::embeddings::{
@@ -417,40 +414,9 @@ pub async fn state_manager(
                     }
                 };
 
-                // Ensure a ModelPrefs entry exists for this model key
-                reg.models
-                    .entry(model_id.clone().key)
-                    .or_insert_with(|| ModelPrefs {
-                        model_key: model_id.clone().key,
-                        ..Default::default()
-                    });
-
-                // Ensure OpenRouter is allowed (for now we only support OpenRouter)
-                let mp = reg
-                    .models
-                    .get_mut(&model_id.clone().key)
-                    .expect("entry ensured above");
-                if !mp
-                    .allowed_routers
-                    .iter()
-                    .any(|r| matches!(r, RouterVariants::OpenRouter(_)))
-                {
-                    mp.allowed_routers.push(RouterVariants::OpenRouter(
-                        crate::llm::router_only::openrouter::OpenRouter,
-                    ));
-                }
+                reg.select_model_provider(&model_id, provider_key.as_ref());
 
                 let msg = if let Some(provider) = provider_key {
-                    // Add/update selected endpoint preference
-                    let ModelId { key, variant } = model_id.clone();
-                    let ek = EndpointKey {
-                        model: key,
-                        provider: provider.clone(),
-                        variant,
-                    };
-                    if !mp.selected_endpoints.iter().any(|e| e == &ek) {
-                        mp.selected_endpoints.push(ek);
-                    }
                     // otherwise selected model without provider, which is fine.
                     format!(
                         "Switched active model to {} via provider {}",
