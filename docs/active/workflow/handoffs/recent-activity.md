@@ -12,3 +12,4 @@
 - populated the living workflow artifacts for the programme charter, registry, evidence ledger, taxonomy, and active EDR area
 - converted the lab book into an `mdbook` and added an explicit archive-boundary chapter
 - added `owning_branch`, `review_cadence`, and `update_trigger` metadata to the active workflow artifacts
+- ran five independent doc-review passes and folded the highest-signal issues into the workflow docs; see [2026-04-09-doc-review-followups.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/2026-04-09-doc-review-followups.md)
