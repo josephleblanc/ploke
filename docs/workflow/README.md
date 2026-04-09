@@ -22,6 +22,6 @@ Common entry points:
 
 Use [docs/active/workflow/programme_charter.md](/home/brasides/code/ploke/docs/active/workflow/programme_charter.md), [docs/active/workflow/hypothesis-registry.md](/home/brasides/code/ploke/docs/active/workflow/hypothesis-registry.md), and the other files under [docs/active/workflow](/home/brasides/code/ploke/docs/active/workflow) for the living record.
 
-For bootstrap and handoff state, use [docs/active/workflow/handoffs](/home/brasides/code/ploke/docs/active/workflow/handoffs) and [docs/active/workflow/recent-activity](/home/brasides/code/ploke/docs/active/workflow/recent-activity).
+For bootstrap and handoff state, use [docs/active/workflow/handoffs](/home/brasides/code/ploke/docs/active/workflow/handoffs).
 
 Stable assets in this directory should change slowly. Active artifacts should change as experiments run.
