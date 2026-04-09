@@ -31,6 +31,8 @@ Use `EDR-XXXX-short-title.md`.
 2. Create the EDR before implementation when the work is a planned A/B test, ablation, or other materially diagnostic eval change.
 3. Update the same file after the run with manifest IDs, outcome, and decision.
 
+Routine implementation work does not require an EDR by default; use the lab book, handoffs, and evidence ledger unless the work is materially diagnostic.
+
 ## Archive Rule
 
 - Keep completed EDRs in place and move them from `Active` to `Complete`.

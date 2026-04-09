@@ -2,6 +2,9 @@
 
 - status: proposed
 - date:
+- owning_branch:
+- review_cadence:
+- update_trigger:
 - owners:
 - hypothesis ids:
 - related issues/prs:

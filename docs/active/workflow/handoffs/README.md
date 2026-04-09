@@ -12,6 +12,8 @@ Start from [recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/h
 
 - [recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/recent-activity.md)
   Rolling summary of the most recently touched workflow docs and why they changed.
+- [handoff-template.md](/home/brasides/code/ploke/docs/workflow/handoff-template.md)
+  Durable template for task-specific handoff notes.
 
 ## Rules
 

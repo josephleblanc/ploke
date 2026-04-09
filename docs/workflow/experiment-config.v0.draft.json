@@ -85,7 +85,11 @@
   },
   "artifact_targets": {
     "edr_id": "EDR-0024",
-    "results_dir": "docs/active/workflow/edr",
-    "summary_table_path": "docs/active/workflow/evidence-ledger.md"
+    "results_dir": "/home/brasides/.ploke-eval/experiments/exp-024-tool-recovery",
+    "summary_artifact_path": "/home/brasides/.ploke-eval/experiments/exp-024-tool-recovery/summary.json",
+    "doc_updates": [
+      "docs/active/workflow/edr/EDR-0024-follow-up-lookup-recovery.md",
+      "docs/active/workflow/evidence-ledger.md"
+    ]
   }
 }

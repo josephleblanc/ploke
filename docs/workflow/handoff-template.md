@@ -1,25 +1,24 @@
-# Workflow Handoff Template
+# Handoff Template
 
 - date:
 - owning_branch:
-- task or workstream:
+- task:
 - status:
-- last touched artifacts:
-- next recommended action:
-- blockers or open questions:
-- related EDRs:
-- related runs or manifests:
+- related artifacts:
 
-## Summary
+## What Changed
 
-State the highest-signal context needed for someone new to continue the work.
+- 
 
-## Recent Changes
+## Current State
 
-- change:
-- change:
+- 
 
-## Watchouts
+## Open Questions
 
-- risk:
-- risk:
+- 
+
+## Resume Here
+
+1. 
+2. 

@@ -7,6 +7,8 @@ description: Use when ranking eval work so lower-layer blockers, evidence value,
 
 Use this skill when choosing what to do next across multiple eval tasks.
 
+Update [docs/active/workflow/priority-queue.md](/home/brasides/code/ploke/docs/active/workflow/priority-queue.md) when the ranking should persist beyond the current conversation.
+
 ## Ranking Order
 
 1. Layer violation:

@@ -1,13 +1,15 @@
 # Phased Execution Plan
 
-If you are about to start real work, begin with [docs/active/workflow/README.md](/home/brasides/code/ploke/docs/active/workflow/README.md) and [handoffs/recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/recent-activity.md), then use this file to understand which phase and exit criteria the work belongs to.
+If you are about to start real work, begin with [docs/active/workflow/README.md](/home/brasides/code/ploke/docs/active/workflow/README.md), [docs/active/workflow/readiness-status.md](/home/brasides/code/ploke/docs/active/workflow/readiness-status.md), and [handoffs/recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/recent-activity.md), then use this file to understand which phase and exit criteria the work belongs to.
+
+This file is the canonical source for phase status and exit criteria. Keep supporting rationale in [eval-design.md](/home/brasides/code/ploke/docs/active/plans/evals/eval-design.md).
 
 Each phase (or iteration for Phase 3) gains its own doc once started, with each deliverable annotated with:
 - (not started)
 - ([in progress](links-tracking-doc))
 - ([complete](links-tracking-doc))
 
-When phase-specific tracking starts, keep those docs under `docs/active/plans/evals/` next to this file.
+When phase-specific tracking starts, keep those docs under `docs/active/plans/evals/` next to this file. Use [docs/workflow/phase-tracking-template.md](/home/brasides/code/ploke/docs/workflow/phase-tracking-template.md) as the starting point.
 
 ## Phase 1: Foundations — Make Results Trustworthy (Layers 0–1)
 
@@ -34,6 +36,7 @@ When phase-specific tracking starts, keep those docs under `docs/active/plans/ev
 - Create a **probe suite** for index validation: known symbol lookups, cross-reference traversals, rename/move/stale cases, ambiguous symbol cases, macro/generated-code edge cases, partial-name/fuzzy cases. This gives you a non-benchmark validation layer for the representation itself.
 - Run the shell-only baseline on a frozen benchmark subset. Record all H0 metrics. This is your control condition.
 - Run the structured-representation agent on the same subset. This is your first treatment measurement. **Do not optimize yet** — just measure. The gap and failure classifications tell you where to focus.
+- Treat these Phase 2 measurements as diagnostic baselines unless the lower-layer validity conditions are already within guardrails.
 
 **Exit criterion**: We have a baseline, a first treatment measurement, and a prioritized list of issues derived from the failure classification breakdown.
 
@@ -47,7 +50,7 @@ This is where we spend most of our time. Each cycle follows the experiment workf
 - Parsing fixes for specific failure cases (measured by query_recall and downstream solve_rate)
 - System prompt refinements (measured by overall solve_rate, token_cost)
 
-Every 1–2 weeks, re-run the full benchmark comparison to track aggregate H0 progress. Write EDRs for every meaningful change.
+Every 1–2 weeks, re-run the full benchmark comparison to track aggregate H0 progress. Write EDRs for planned A/B tests, ablations, or other materially diagnostic changes.
 
 **Exit criterion**: H0 metrics are stable (not improving with further changes), or we've exhausted current improvement ideas. Either way, we have a rich dataset.
 

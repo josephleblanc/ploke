@@ -11,6 +11,7 @@ Accuracy updates as of 2026-04-09:
 - Current eval provenance is still split across `run.json`, `execution-log.json`, `agent-turn-summary.json`, `agent-turn-trace.json`, `indexing-status.json`, `snapshot-status.json`, and `repo-state.json`; the "immutable run manifest" in `§VIII` is the target converged schema, not a claim about today's `run.json`.
 - Current provider selection may be present in `execution-log.json` even when it is absent from `run.json`.
 - For active work, start from [docs/active/workflow/README.md](/home/brasides/code/ploke/docs/active/workflow/README.md), then [handoffs/recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/recent-activity.md), then return here or to the relevant phase or living artifact.
+- The standalone [phased-exec-plan.md](/home/brasides/code/ploke/docs/active/plans/evals/phased-exec-plan.md) is the canonical source for phase status and exit criteria. This document remains the central design and rationale reference.
 
 ---
 
@@ -274,6 +275,8 @@ This manifest is committed and tagged. It is the anchor for all later analysis a
 
 The current converged draft config lives at [docs/workflow/experiment-config.v0.draft.json](/home/brasides/code/ploke/docs/workflow/experiment-config.v0.draft.json), with operating notes in [docs/workflow/ab-testing-ablation-framework.md](/home/brasides/code/ploke/docs/workflow/ab-testing-ablation-framework.md).
 
+Treat the TOML snippets below as illustrative shape only. The JSON draft above is the current converged schema target.
+
 Build this as a **configuration layer**, not a code-branching layer:
 
 ```toml
@@ -367,15 +370,17 @@ For day-to-day work, operate in tight feedback loops:
 
 1. **Select a failure cohort**: Identify 5–10 SWE-bench failures sharing an error bucket (e.g., "Agent failed to resolve Rust trait usages")
 2. **Formulate a diagnostic hypothesis**: *"If we change the `find_usages` tool to fall back to exact-string-match when AST query yields zero results, the agent will recover and succeed."*
-3. **Write an Experiment Decision Record (see §XI)**
+3. **Write an Experiment Decision Record (see §XI)** for planned A/B tests, ablations, or other materially diagnostic changes. Routine implementation work can stay in the lab book and handoffs.
 4. **Implement the change**
 5. **Replay on the failure cohort** using the replay API — this is fast and cheap
 6. **Run wider subset eval** to check for regressions
-7. **Merge and log**: link the PR to the EDR with updated telemetry data
+7. **Merge and log**: link the PR to the EDR with updated telemetry data when an EDR exists
 
 ### C. The Priority Queue
 
 At any given time, maintain a priority queue. Priority is determined by:
+
+The live priority queue belongs in [docs/active/workflow/priority-queue.md](/home/brasides/code/ploke/docs/active/workflow/priority-queue.md).
 
 1. **Layer violation**: Work at a lower layer always takes priority when the lower layer is blocking. If your eval harness produces false negatives, nothing else matters until that's fixed.
 2. **Evidence value**: Among items at the same layer, prefer the item producing the most informative result (confirms or denies a hypothesis definitively).
@@ -573,7 +578,7 @@ This is where you spend most of your time. Each cycle follows the experiment wor
 - Parsing fixes for specific failure cases (measured by query_recall and downstream solve_rate)
 - System prompt refinements (measured by overall solve_rate, token_cost)
 
-Every 1–2 weeks, re-run the full benchmark comparison to track aggregate H0 progress. Write EDRs for every meaningful change.
+Every 1–2 weeks, re-run the full benchmark comparison to track aggregate H0 progress. Write EDRs for planned A/B tests, ablations, or other materially diagnostic changes.
 
 **Exit criterion**: H0 metrics are stable (not improving with further changes), or you've exhausted current improvement ideas. Either way, you have a rich dataset.
 
@@ -671,13 +676,13 @@ The SWE-bench repos themselves need deterministic build environments:
 
 Tomorrow. Concretely.
 
-1. **Create the hypothesis registry** as an actual file in the repo. Use the templates from §III. This takes 30 minutes and immediately gives you a shared reference point.
+1. **Review and fill in the hypothesis registry** at [docs/active/workflow/hypothesis-registry.md](/home/brasides/code/ploke/docs/active/workflow/hypothesis-registry.md). Bring the live entry shapes and acceptance criteria up to the intended schema from §III.
 
 2. **Define the run data schema**. What fields does a run record contain? What fields does a turn record contain? Don't implement storage yet — just define the shape. This forces you to decide what you're capturing.
 
 3. **Implement `turn.db_state().lookup(name)`** — because you specifically mentioned wanting to answer "does this node exist at the time the agent queried for it?" Build the smallest possible thing that answers that one question. This gives you a concrete foothold for the introspection API.
 
-4. **Manually triage 10 failure cases** from your existing eval runs using the postmortem protocol from §X.E. Classify each one against the failure taxonomy. This will immediately tell you which layer of the protective belt is weakest and therefore where implementation effort should go next. This also solves the cold-start problem — you'll have data to prioritize with.
+4. **Manually triage 10 failure cases** from your existing eval runs using the postmortem protocol from §X.E and store durable writeups under [docs/active/workflow/postmortems](/home/brasides/code/ploke/docs/active/workflow/postmortems). Classify each one against the failure taxonomy. This will immediately tell you which layer of the protective belt is weakest and therefore where implementation effort should go next. This also solves the cold-start problem — you'll have data to prioritize with.
 
 Those four items bootstrap the entire system. Everything else follows from having a hypothesis registry to reference, a data schema to fill, an introspection API to grow, and a triage breakdown to prioritize against.
 

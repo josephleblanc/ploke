@@ -18,6 +18,8 @@ Common entry points:
 - [living-artifacts-checklist.md](/home/brasides/code/ploke/docs/workflow/living-artifacts-checklist.md)
 - [id-conventions.md](/home/brasides/code/ploke/docs/workflow/id-conventions.md)
 - [handoff-template.md](/home/brasides/code/ploke/docs/workflow/handoff-template.md)
+- [phase-tracking-template.md](/home/brasides/code/ploke/docs/workflow/phase-tracking-template.md)
+- [postmortem-template.md](/home/brasides/code/ploke/docs/workflow/postmortem-template.md)
 - [skills/README.md](/home/brasides/code/ploke/docs/workflow/skills/README.md)
 
 Use [docs/active/workflow/programme_charter.md](/home/brasides/code/ploke/docs/active/workflow/programme_charter.md), [docs/active/workflow/hypothesis-registry.md](/home/brasides/code/ploke/docs/active/workflow/hypothesis-registry.md), and the other files under [docs/active/workflow](/home/brasides/code/ploke/docs/active/workflow) for the living record.

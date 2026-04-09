@@ -89,7 +89,7 @@
     "recovery_turn_count": null
   },
   "failure_classification": {
-    "primary": "<SETUP_ENVIRONMENT|RUNTIME_INFRA|TOOL_SEMANTICS>",
+    "primary": "<one-of-failure-taxonomy-codes>",
     "secondary": [
       "<INDEX_FIDELITY>"
     ],

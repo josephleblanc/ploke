@@ -7,6 +7,8 @@ description: Use when a run is surprising or unclear and the team needs a consis
 
 Use this skill for surprising runs and ambiguous failures.
 
+Store durable records in [docs/active/workflow/postmortems](/home/brasides/code/ploke/docs/active/workflow/postmortems) using [docs/workflow/postmortem-template.md](/home/brasides/code/ploke/docs/workflow/postmortem-template.md).
+
 ## Walkthrough
 
 1. Identify the failing case and stable artifact paths.
