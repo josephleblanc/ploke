@@ -1,0 +1,113 @@
+{
+  "schema_version": "run-manifest.v0-draft",
+  "manifest_kind": "target-converged-run-manifest",
+  "manifest_id": "<run-2026-04-09-001>",
+  "experiment": {
+    "experiment_id": "<exp-001>",
+    "hypothesis_ids": [
+      "H0",
+      "A4"
+    ],
+    "arm_id": "<control|treatment-a|treatment-b>",
+    "arm_tag": "<shell-only|structured-all-tools>",
+    "planned_in_edr": "<EDR-0007>"
+  },
+  "benchmark": {
+    "dataset_kind": "multi_swe_bench",
+    "dataset_version": "<rust-v1>",
+    "instance_id": "<org__repo-1234>",
+    "org": "<org>",
+    "repo": "<repo>",
+    "issue_number": 1234,
+    "issue_title": "<issue title>",
+    "base_sha": "<git-sha>",
+    "head_sha": "<git-sha-or-null>",
+    "expected_patch_files": [
+      "<path/to/file.rs>"
+    ]
+  },
+  "agent": {
+    "model_id": "<provider/model>",
+    "provider": "<provider-id>",
+    "system_prompt_id": "<prompt-v3>",
+    "system_prompt_sha256": "<sha256>",
+    "tool_schema_version": "<tool-schema-v2>",
+    "tool_implementation_version": "<git-sha>",
+    "tool_allowlist": [
+      "<tool-name>"
+    ]
+  },
+  "runtime": {
+    "temperature": 0.0,
+    "max_turns": 40,
+    "max_tool_calls": 200,
+    "wall_clock_budget_secs": 1800,
+    "retry_policy_id": "<retry-policy-v1>",
+    "timeout_policy_id": "<timeout-policy-v1>",
+    "seed": null,
+    "container_image": "<image-ref-or-null>",
+    "rust_toolchain": "<stable-2026-04-01>",
+    "host_os": "<linux>"
+  },
+  "data_state": {
+    "index_snapshot_id": "<snapshot-id>",
+    "index_status": "completed",
+    "snapshot_status": "completed",
+    "repo_state_id": "<repo-state-id>"
+  },
+  "artifacts": {
+    "run_manifest_path": "<runs/.../run.json>",
+    "execution_log_path": "<runs/.../execution-log.json>",
+    "turn_summary_path": "<runs/.../agent-turn-summary.json>",
+    "turn_trace_path": "<runs/.../agent-turn-trace.json>",
+    "indexing_status_path": "<runs/.../indexing-status.json>",
+    "snapshot_status_path": "<runs/.../snapshot-status.json>",
+    "repo_state_path": "<runs/.../repo-state.json>",
+    "submission_path": "<runs/.../multi-swe-bench-submission.jsonl>",
+    "final_snapshot_path": "<runs/.../final-snapshot.db>"
+  },
+  "timing": {
+    "started_at": "<2026-04-09T18:30:00Z>",
+    "ended_at": "<2026-04-09T18:47:32Z>",
+    "wall_clock_secs": 1052.0
+  },
+  "outcome": {
+    "run_status": "<completed|aborted|setup_failed|provider_failed>",
+    "agent_outcome": "<solved|unsolved|no_patch|aborted>",
+    "benchmark_verdict": "<passed|failed|not-run|flaky>",
+    "patch_applied": false,
+    "any_expected_file_changed": false,
+    "final_assistant_message_present": false
+  },
+  "metrics": {
+    "solve_rate_contribution": 0.0,
+    "token_cost_input": null,
+    "token_cost_output": null,
+    "turn_count": 37,
+    "tool_call_count": null,
+    "provider_error_count": null,
+    "recovery_turn_count": null
+  },
+  "failure_classification": {
+    "primary": "<SETUP_ENVIRONMENT|RUNTIME_INFRA|TOOL_SEMANTICS>",
+    "secondary": [
+      "<INDEX_FIDELITY>"
+    ],
+    "confidence": "<high|medium|low>",
+    "notes": "<short free text>"
+  },
+  "provenance": {
+    "repo_git_sha": "<git-sha-of-ploke>",
+    "manifest_created_at": "<2026-04-09T18:47:40Z>",
+    "manifest_created_by": "<tool-or-command>",
+    "current_split_sources": [
+      "run.json",
+      "execution-log.json",
+      "agent-turn-summary.json",
+      "agent-turn-trace.json",
+      "indexing-status.json",
+      "snapshot-status.json",
+      "repo-state.json"
+    ]
+  }
+}

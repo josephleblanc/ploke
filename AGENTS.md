@@ -34,6 +34,10 @@ When the user asks you to "check the logs", "read the logs", "look into the logs
 - When running tests, use a sub-agent to execute the test command and report the output back to the main agent.
 - Use follow-up sub-agent test runs for retries or narrowed repros when needed, so the main thread keeps only the summarized result and next action.
 
+## Experiment Decision Records
+- For planned eval A/B tests, ablations, or other materially diagnostic workflow changes, create or update an EDR in [docs/active/workflow/edr](/home/brasides/code/ploke/docs/active/workflow/edr) using the template in [docs/workflow/edr/EDR_TEMPLATE.md](/home/brasides/code/ploke/docs/workflow/edr/EDR_TEMPLATE.md) before implementation when feasible.
+- After the run, update the same EDR with linked manifests, outcome, and decision; do not leave experimental changes undocumented.
+
 ### Fail-until-impl (strict tests)
 - Do not use tautological assertions (`is_ok() || is_err()`, match arms that accept both outcomes with no further checks).
 - For behavior tests that require real output, do not add `Err` branches that pass on placeholder or “not yet implemented” messages; assert success with `expect`/`unwrap` on `Ok` and real invariants, or use intentional negative tests with `assert!(result.is_err())` plus concrete error expectations.

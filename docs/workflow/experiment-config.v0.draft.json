@@ -1,0 +1,91 @@
+{
+  "schema_version": "experiment-config.v0-draft",
+  "experiment_id": "exp-024-tool-recovery",
+  "design_type": "ab_test",
+  "hypothesis_ids": [
+    "A1"
+  ],
+  "description": "Test whether recovery hints on lookup miss improve productive recovery.",
+  "benchmark": {
+    "dataset_kind": "multi_swe_bench",
+    "dataset_version": "rust-v1",
+    "subset_id": "rust-failure-cohort-lookup-miss",
+    "instance_ids": [
+      "BurntSushi__ripgrep-2295",
+      "BurntSushi__ripgrep-2626"
+    ],
+    "paired_by_instance": true
+  },
+  "frozen_controls": {
+    "model_id": "qwen/qwen3.6-plus",
+    "provider_policy": "pinned",
+    "provider": "alibaba",
+    "temperature": 0.0,
+    "system_prompt_id": "prompt-v3",
+    "system_prompt_sha256": "<sha256>",
+    "max_turns": 40,
+    "retry_policy_id": "retry-v1",
+    "timeout_policy_id": "timeout-v1"
+  },
+  "arms": [
+    {
+      "arm_id": "control",
+      "tag": "hard-failure",
+      "role": "control",
+      "tool_allowlist": [
+        "code_item_lookup",
+        "file_read",
+        "file_write"
+      ],
+      "tool_overrides": {
+        "code_item_lookup": {
+          "on_miss": "error"
+        }
+      }
+    },
+    {
+      "arm_id": "treatment-a",
+      "tag": "follow-up-recovery",
+      "role": "treatment",
+      "tool_allowlist": [
+        "code_item_lookup",
+        "file_read",
+        "file_write"
+      ],
+      "tool_overrides": {
+        "code_item_lookup": {
+          "on_miss": "suggest_follow_up",
+          "max_follow_up_candidates": 3
+        }
+      }
+    }
+  ],
+  "analysis_plan": {
+    "primary_metric": "solve_rate",
+    "secondary_metrics": [
+      "token_cost",
+      "wall_time",
+      "tool_misuse_rate",
+      "recovery_rate"
+    ],
+    "report_effect_sizes": true,
+    "report_confidence_intervals": true,
+    "minimum_attribution_coverage": 0.9
+  },
+  "validity_guards": {
+    "max_provider_failure_rate": 0.05,
+    "max_setup_failure_rate": 0.05,
+    "require_full_telemetry": true,
+    "require_frozen_subset": true
+  },
+  "stop_conditions": {
+    "abort_if_prompt_changes_mid_run": true,
+    "abort_if_provider_unpinned": true,
+    "abort_if_missing_artifacts": true
+  },
+  "artifact_targets": {
+    "edr_id": "EDR-0024",
+    "results_dir": "docs/active/workflow/edr",
+    "summary_table_path": "docs/active/workflow/evidence-ledger.md"
+  }
+}
