@@ -31,6 +31,543 @@ use crate::{
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
 
+#[cfg(feature = "convert_keyword_2015")]
+#[derive(Debug, Clone)]
+struct LegacyKeywordRewrite {
+    insertion_points: Vec<usize>,
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn try_parse_file_with_legacy_keyword_fallback(
+    file_content: &str,
+    crate_context: &crate::discovery::CrateContext,
+) -> Result<(syn::File, Option<LegacyKeywordRewrite>), syn::Error> {
+    // Historical motivation and before/after behavior are covered in
+    // `crates/ploke-eval/src/tests/replay.rs` via the feature-on/off ripgrep
+    // setup replay variants.
+    match syn::parse_file(file_content) {
+        Ok(file) => Ok((file, None)),
+        Err(original_err) => {
+            if !should_attempt_legacy_keyword_fallback(crate_context, &original_err, file_content) {
+                return Err(original_err);
+            }
+
+            tracing::warn!(
+                target: TRACE_TARGET_INVARIANTS,
+                file_path = %crate_context.root_path.display(),
+                error = %original_err,
+                "convert_keyword_2015: retrying parse with Rust 2015 keyword rewrite fallback"
+            );
+
+            let Some((rewritten, insertion_points)) =
+                rewrite_edition_2015_keywords(file_content, &["async"])
+            else {
+                tracing::warn!(
+                    target: TRACE_TARGET_INVARIANTS,
+                    file_path = %crate_context.root_path.display(),
+                    "convert_keyword_2015: fallback matched error shape but found no rewrite candidates"
+                );
+                return Err(original_err);
+            };
+
+            tracing::info!(
+                target: TRACE_TARGET_INVARIANTS,
+                file_path = %crate_context.root_path.display(),
+                rewrite_count = insertion_points.len(),
+                insertion_points = ?insertion_points,
+                "convert_keyword_2015: generated rewritten source for retry"
+            );
+
+            match syn::parse_file(&rewritten) {
+                Ok(file) => {
+                    tracing::info!(
+                        target: TRACE_TARGET_INVARIANTS,
+                        file_path = %crate_context.root_path.display(),
+                        "convert_keyword_2015: fallback parse succeeded"
+                    );
+                    Ok((file, Some(LegacyKeywordRewrite { insertion_points })))
+                }
+                Err(retry_err) => {
+                    tracing::warn!(
+                        target: TRACE_TARGET_INVARIANTS,
+                        file_path = %crate_context.root_path.display(),
+                        retry_error = %retry_err,
+                        "convert_keyword_2015: fallback parse failed; returning original parse error"
+                    );
+                    Err(original_err)
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "convert_keyword_2015"))]
+fn try_parse_file_with_legacy_keyword_fallback(
+    file_content: &str,
+    _crate_context: &crate::discovery::CrateContext,
+) -> Result<(syn::File, Option<()>), syn::Error> {
+    syn::parse_file(file_content).map(|file| (file, None))
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn should_attempt_legacy_keyword_fallback(
+    crate_context: &crate::discovery::CrateContext,
+    err: &syn::Error,
+    file_content: &str,
+) -> bool {
+    err.to_string()
+        .contains("expected identifier, found keyword")
+        && file_content.contains("async")
+        && crate_effective_edition(crate_context)
+            .is_some_and(|edition| edition == cargo_toml::Edition::E2015)
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn crate_effective_edition(
+    crate_context: &crate::discovery::CrateContext,
+) -> Option<cargo_toml::Edition> {
+    let manifest_path = crate_context.root_path.join("Cargo.toml");
+    let manifest = cargo_toml::Manifest::from_path(&manifest_path).ok()?;
+    manifest.package.as_ref().map(cargo_toml::Package::edition)
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn rewrite_edition_2015_keywords(source: &str, keywords: &[&str]) -> Option<(String, Vec<usize>)> {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut insertions = Vec::new();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if let Some(next) = consume_line_comment(source, i, &mut out) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = consume_block_comment(source, i, &mut out) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = consume_raw_string(source, i, &mut out) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = consume_quoted_literal(source, i, &mut out) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = consume_byte_quoted_literal(source, i, &mut out) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = consume_lifetime(source, i, &mut out) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = consume_raw_identifier(source, i, &mut out) {
+            i = next;
+            continue;
+        }
+
+        if is_ascii_ident_start(bytes[i]) {
+            let start = i;
+            i += 1;
+            while i < bytes.len() && is_ascii_ident_continue(bytes[i]) {
+                i += 1;
+            }
+            let ident = &source[start..i];
+            if keywords.contains(&ident) {
+                insertions.push(out.len());
+                out.push_str("r#");
+            }
+            out.push_str(ident);
+            continue;
+        }
+
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+
+    if insertions.is_empty() {
+        None
+    } else {
+        Some((out, insertions))
+    }
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn consume_line_comment(source: &str, i: usize, out: &mut String) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if !bytes[i..].starts_with(b"//") {
+        return None;
+    }
+    let mut end = i + 2;
+    while end < bytes.len() && bytes[end] != b'\n' {
+        end += 1;
+    }
+    out.push_str(&source[i..end]);
+    Some(end)
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn consume_block_comment(source: &str, i: usize, out: &mut String) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if !bytes[i..].starts_with(b"/*") {
+        return None;
+    }
+    let mut depth = 1usize;
+    let mut end = i + 2;
+    while end < bytes.len() && depth > 0 {
+        if bytes[end..].starts_with(b"/*") {
+            depth += 1;
+            end += 2;
+        } else if bytes[end..].starts_with(b"*/") {
+            depth -= 1;
+            end += 2;
+        } else {
+            end += 1;
+        }
+    }
+    out.push_str(&source[i..end.min(bytes.len())]);
+    Some(end.min(bytes.len()))
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn consume_raw_string(source: &str, i: usize, out: &mut String) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let prefix_len = if bytes[i..].starts_with(b"br") {
+        2
+    } else if bytes[i] == b'r' {
+        1
+    } else {
+        return None;
+    };
+
+    let mut cursor = i + prefix_len;
+    while cursor < bytes.len() && bytes[cursor] == b'#' {
+        cursor += 1;
+    }
+    if cursor >= bytes.len() || bytes[cursor] != b'"' {
+        return None;
+    }
+
+    let hash_count = cursor - (i + prefix_len);
+    cursor += 1;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'"' {
+            let mut matches = true;
+            for idx in 0..hash_count {
+                if cursor + 1 + idx >= bytes.len() || bytes[cursor + 1 + idx] != b'#' {
+                    matches = false;
+                    break;
+                }
+            }
+            if matches {
+                let end = (cursor + 1 + hash_count).min(bytes.len());
+                out.push_str(&source[i..end]);
+                return Some(end);
+            }
+        }
+        cursor += 1;
+    }
+
+    out.push_str(&source[i..bytes.len()]);
+    Some(bytes.len())
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn consume_quoted_literal(source: &str, i: usize, out: &mut String) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let quote = bytes[i];
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    if quote == b'\'' && i + 1 < bytes.len() && is_ascii_ident_start(bytes[i + 1]) {
+        return None;
+    }
+
+    let mut end = i + 1;
+    let mut escaped = false;
+    while end < bytes.len() {
+        let byte = bytes[end];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == quote {
+            end += 1;
+            out.push_str(&source[i..end]);
+            return Some(end);
+        }
+        end += 1;
+    }
+
+    out.push_str(&source[i..bytes.len()]);
+    Some(bytes.len())
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn consume_byte_quoted_literal(source: &str, i: usize, out: &mut String) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if i + 1 >= bytes.len() || bytes[i] != b'b' || (bytes[i + 1] != b'"' && bytes[i + 1] != b'\'') {
+        return None;
+    }
+    let mut cursor = i + 1;
+    let quote = bytes[cursor];
+    cursor += 1;
+    let mut escaped = false;
+    while cursor < bytes.len() {
+        let byte = bytes[cursor];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == quote {
+            cursor += 1;
+            out.push_str(&source[i..cursor]);
+            return Some(cursor);
+        }
+        cursor += 1;
+    }
+    out.push_str(&source[i..bytes.len()]);
+    Some(bytes.len())
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn consume_lifetime(source: &str, i: usize, out: &mut String) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if bytes[i] != b'\'' || i + 1 >= bytes.len() || !is_ascii_ident_start(bytes[i + 1]) {
+        return None;
+    }
+    let mut end = i + 2;
+    while end < bytes.len() && is_ascii_ident_continue(bytes[end]) {
+        end += 1;
+    }
+    out.push_str(&source[i..end]);
+    Some(end)
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn consume_raw_identifier(source: &str, i: usize, out: &mut String) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if i + 2 >= bytes.len()
+        || bytes[i] != b'r'
+        || bytes[i + 1] != b'#'
+        || !is_ascii_ident_start(bytes[i + 2])
+    {
+        return None;
+    }
+    let mut end = i + 3;
+    while end < bytes.len() && is_ascii_ident_continue(bytes[end]) {
+        end += 1;
+    }
+    out.push_str(&source[i..end]);
+    Some(end)
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+const fn is_ascii_ident_start(byte: u8) -> bool {
+    byte == b'_' || byte.is_ascii_alphabetic()
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+const fn is_ascii_ident_continue(byte: u8) -> bool {
+    is_ascii_ident_start(byte) || byte.is_ascii_digit()
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn remap_span_to_original(span: (usize, usize), insertion_points: &[usize]) -> (usize, usize) {
+    (
+        remap_offset_to_original(span.0, insertion_points),
+        remap_offset_to_original(span.1, insertion_points),
+    )
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn remap_offset_to_original(offset: usize, insertion_points: &[usize]) -> usize {
+    let inserted_before = insertion_points
+        .iter()
+        .take_while(|pos| **pos < offset)
+        .count();
+    offset.saturating_sub(inserted_before * 2)
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn normalize_rewritten_graph(graph: &mut crate::parser::CodeGraph, insertion_points: &[usize]) {
+    for function in &mut graph.functions {
+        function.span = remap_span_to_original(function.span, insertion_points);
+        normalize_rewritten_name(&mut function.name);
+        normalize_generic_params(&mut function.generic_params);
+    }
+
+    for type_def in &mut graph.defined_types {
+        match type_def {
+            crate::parser::nodes::TypeDefNode::Struct(node) => {
+                node.span = remap_span_to_original(node.span, insertion_points);
+                normalize_rewritten_name(&mut node.name);
+                normalize_generic_params(&mut node.generic_params);
+                for field in &mut node.fields {
+                    if let Some(name) = &mut field.name {
+                        normalize_rewritten_name(name);
+                    }
+                }
+            }
+            crate::parser::nodes::TypeDefNode::Enum(node) => {
+                node.span = remap_span_to_original(node.span, insertion_points);
+                normalize_rewritten_name(&mut node.name);
+                normalize_generic_params(&mut node.generic_params);
+                for variant in &mut node.variants {
+                    normalize_rewritten_name(&mut variant.name);
+                    for field in &mut variant.fields {
+                        if let Some(name) = &mut field.name {
+                            normalize_rewritten_name(name);
+                        }
+                    }
+                }
+            }
+            crate::parser::nodes::TypeDefNode::TypeAlias(node) => {
+                node.span = remap_span_to_original(node.span, insertion_points);
+                normalize_rewritten_name(&mut node.name);
+                normalize_generic_params(&mut node.generic_params);
+            }
+            crate::parser::nodes::TypeDefNode::Union(node) => {
+                node.span = remap_span_to_original(node.span, insertion_points);
+                normalize_rewritten_name(&mut node.name);
+                normalize_generic_params(&mut node.generic_params);
+                for field in &mut node.fields {
+                    if let Some(name) = &mut field.name {
+                        normalize_rewritten_name(name);
+                    }
+                }
+            }
+        }
+    }
+
+    for impl_node in &mut graph.impls {
+        impl_node.span = remap_span_to_original(impl_node.span, insertion_points);
+        normalize_generic_params(&mut impl_node.generic_params);
+        for method in &mut impl_node.methods {
+            method.span = remap_span_to_original(method.span, insertion_points);
+            normalize_rewritten_name(&mut method.name);
+            normalize_generic_params(&mut method.generic_params);
+        }
+    }
+
+    for trait_node in &mut graph.traits {
+        trait_node.span = remap_span_to_original(trait_node.span, insertion_points);
+        normalize_rewritten_name(&mut trait_node.name);
+        normalize_generic_params(&mut trait_node.generic_params);
+        for method in &mut trait_node.methods {
+            method.span = remap_span_to_original(method.span, insertion_points);
+            normalize_rewritten_name(&mut method.name);
+            normalize_generic_params(&mut method.generic_params);
+        }
+    }
+
+    for module in &mut graph.modules {
+        module.span = remap_span_to_original(module.span, insertion_points);
+        normalize_rewritten_name(&mut module.name);
+        for segment in &mut module.path {
+            normalize_rewritten_name(segment);
+        }
+        match &mut module.module_def {
+            crate::parser::nodes::ModuleKind::Inline { span, .. } => {
+                *span = remap_span_to_original(*span, insertion_points);
+            }
+            crate::parser::nodes::ModuleKind::Declaration {
+                declaration_span, ..
+            } => {
+                *declaration_span = remap_span_to_original(*declaration_span, insertion_points);
+            }
+            crate::parser::nodes::ModuleKind::FileBased { .. } => {}
+        }
+        for import in &mut module.imports {
+            normalize_import_node(import, insertion_points);
+        }
+    }
+
+    for const_node in &mut graph.consts {
+        const_node.span = remap_span_to_original(const_node.span, insertion_points);
+        normalize_rewritten_name(&mut const_node.name);
+    }
+
+    for static_node in &mut graph.statics {
+        static_node.span = remap_span_to_original(static_node.span, insertion_points);
+        normalize_rewritten_name(&mut static_node.name);
+    }
+
+    for macro_node in &mut graph.macros {
+        macro_node.span = remap_span_to_original(macro_node.span, insertion_points);
+        normalize_rewritten_name(&mut macro_node.name);
+    }
+
+    for import in &mut graph.use_statements {
+        normalize_import_node(import, insertion_points);
+    }
+
+    for unresolved in &mut graph.unresolved_nodes {
+        unresolved.span = remap_span_to_original(unresolved.span, insertion_points);
+        normalize_rewritten_name(&mut unresolved.name);
+    }
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn traced_normalize_rewritten_graph(
+    graph: &mut crate::parser::CodeGraph,
+    insertion_points: &[usize],
+    file_path: &Path,
+) {
+    tracing::info!(
+        target: TRACE_TARGET_INVARIANTS,
+        file_path = %file_path.display(),
+        rewrite_count = insertion_points.len(),
+        "convert_keyword_2015: normalizing graph spans and names back to original source"
+    );
+    normalize_rewritten_graph(graph, insertion_points);
+    tracing::debug!(
+        target: TRACE_TARGET_INVARIANTS,
+        file_path = %file_path.display(),
+        functions = graph.functions.len(),
+        impls = graph.impls.len(),
+        modules = graph.modules.len(),
+        "convert_keyword_2015: graph normalization complete"
+    );
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn normalize_import_node(
+    import: &mut crate::parser::nodes::ImportNode,
+    insertion_points: &[usize],
+) {
+    import.span = remap_span_to_original(import.span, insertion_points);
+    normalize_rewritten_name(&mut import.visible_name);
+    if let Some(original_name) = &mut import.original_name {
+        normalize_rewritten_name(original_name);
+    }
+    for segment in &mut import.source_path {
+        normalize_rewritten_name(segment);
+    }
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn normalize_generic_params(generic_params: &mut [crate::parser::types::GenericParamNode]) {
+    for param in generic_params {
+        match &mut param.kind {
+            crate::parser::types::GenericParamKind::Type { name, .. }
+            | crate::parser::types::GenericParamKind::Lifetime { name, .. }
+            | crate::parser::types::GenericParamKind::Const { name, .. } => {
+                normalize_rewritten_name(name);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "convert_keyword_2015")]
+fn normalize_rewritten_name(name: &mut String) {
+    if let Some(stripped) = name.strip_prefix("r#") {
+        *name = stripped.to_string();
+    }
+}
+
 /// Derives the logical module path for a source file the same way Phase 2 parallel parsing does.
 ///
 /// Must stay in sync with [`analyze_files_parallel`]. External tools (e.g. `xtask parse debug
@@ -124,7 +661,8 @@ pub fn analyze_file_phase2(
     // .expect("This is the primary problem? line 118 of visitor/mod.rs");
     // TODO: Add real error handling here.
     // let msg = format!("This is the primary problem? line 121 of visitor/mod.rs parsing: {}", file_path.display());
-    let file = syn::parse_file(&file_content)?;
+    let (file, legacy_rewrite) =
+        try_parse_file_with_legacy_keyword_fallback(&file_content, crate_context)?;
     // .inspect_err(|e| tracing::trace!("Getting closer to the source: {e}"))?;
     // .expect(&msg);
 
@@ -227,6 +765,14 @@ validate_unique_rels = <deferred>", file_path.display());
     // Release the mutable borrow on `state` held by `visitor` before any validation-time
     // graph normalization.
     drop(visitor);
+    #[cfg(feature = "convert_keyword_2015")]
+    if let Some(rewrite) = legacy_rewrite {
+        traced_normalize_rewritten_graph(
+            &mut state.code_graph,
+            &rewrite.insertion_points,
+            &file_path,
+        );
+    }
     #[cfg(feature = "validate")]
     {
         if !state.code_graph.validate_unique_rels() {

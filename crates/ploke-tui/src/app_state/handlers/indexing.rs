@@ -12,7 +12,7 @@ use crate::INDEXING_FAILURE_CONTAINMENT_NOTE;
 use crate::app_state::{AppState, IndexTargetDir, handlers};
 use crate::chat_history::MessageKind;
 use crate::parser::{resolve_index_target, run_parse_resolved};
-use crate::utils::parse_errors::format_parse_failure;
+use crate::utils::parse_errors::{extract_nested_parser_diagnostics, format_parse_failure};
 
 use super::chat::add_msg_immediate;
 
@@ -114,9 +114,14 @@ pub async fn index_workspace(
             }
             Err(e) => {
                 let msg = format_parse_failure(&resolved.focused_root, &e);
+                let diagnostics = extract_nested_parser_diagnostics(&e);
                 state
                     .with_system_txn(|txn| {
-                        txn.record_parse_failure(resolved.requested_path.clone(), msg.clone());
+                        txn.record_parse_failure_with_diagnostics(
+                            resolved.requested_path.clone(),
+                            msg.clone(),
+                            diagnostics.clone(),
+                        );
                     })
                     .await;
                 emit_indexing_failed_status(event_bus, msg, Some(resolved.focused_root.clone()));
@@ -313,6 +318,15 @@ mod tests {
             .await
             .expect("parse failure recorded");
         assert!(last_failure.message.contains("Parse failed for crate"));
+        assert!(
+            last_failure
+                .diagnostics
+                .iter()
+                .filter_map(|diag| diag.source_path.as_ref())
+                .any(|path| path.ends_with("src/lib.rs")),
+            "expected broken source path in diagnostics: {:?}",
+            last_failure.diagnostics
+        );
     }
 }
 

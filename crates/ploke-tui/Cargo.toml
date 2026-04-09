@@ -123,6 +123,7 @@ llm_refactor = []
 live_api_tests = []
 test_harness = []
 json_visitor = []
+convert_keyword_2015 = ["syn_parser/convert_keyword_2015"]
 xxx = []
 loom = []
 

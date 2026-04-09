@@ -27,6 +27,10 @@ uuid = { workspace = true, features = ["serde"] }
 sha2 = "0.10"
 regex = "1"
 
+[features]
+default = ["convert_keyword_2015"]
+convert_keyword_2015 = ["ploke-tui/convert_keyword_2015"]
+
 [[bin]]
 name = "ploke-eval"
 path = "src/main.rs"

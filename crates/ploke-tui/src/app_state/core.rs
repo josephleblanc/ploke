@@ -15,6 +15,7 @@ use crate::user_config::{
     ChatPolicy, CommandStyle, CtxPrefs, EmbeddingConfig, LocalEmbeddingTuning,
     MessageVerbosityProfile, MessageVerbosityProfiles, RagUserConfig, UserConfig,
 };
+use crate::utils::parse_errors::FlattenedParserDiagnostic;
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{IndexerCommand, IndexerTask, IndexingStatus};
@@ -584,6 +585,7 @@ pub struct ParseFailure {
     pub target_dir: PathBuf,
     pub message: String,
     pub occurred_at_ms: i64,
+    pub diagnostics: Vec<FlattenedParserDiagnostic>,
 }
 
 impl SystemStatus {
@@ -807,10 +809,20 @@ impl SystemStatus {
     }
 
     pub fn record_parse_failure(&mut self, target_dir: PathBuf, message: String) {
+        self.record_parse_failure_with_diagnostics(target_dir, message, Vec::new());
+    }
+
+    pub fn record_parse_failure_with_diagnostics(
+        &mut self,
+        target_dir: PathBuf,
+        message: String,
+        diagnostics: Vec<FlattenedParserDiagnostic>,
+    ) {
         self.last_parse_failure = Some(ParseFailure {
             target_dir,
             message,
             occurred_at_ms: Utc::now().timestamp_millis(),
+            diagnostics,
         });
     }
 
@@ -1023,6 +1035,17 @@ impl<'a> SystemTxn<'a> {
     /// Record a parse failure.
     pub fn record_parse_failure(&mut self, target_dir: PathBuf, message: String) {
         self.state.record_parse_failure(target_dir, message);
+    }
+
+    /// Record a parse failure with nested parser diagnostics preserved.
+    pub fn record_parse_failure_with_diagnostics(
+        &mut self,
+        target_dir: PathBuf,
+        message: String,
+        diagnostics: Vec<FlattenedParserDiagnostic>,
+    ) {
+        self.state
+            .record_parse_failure_with_diagnostics(target_dir, message, diagnostics);
     }
 
     /// Set workspace freshness for a crate.

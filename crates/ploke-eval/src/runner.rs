@@ -24,10 +24,12 @@ use ploke_tui::app::commands::harness::TestAppAccessor;
 use ploke_tui::app::commands::harness::TestRuntime;
 use ploke_tui::app::view::components::model_browser::tool_capable_provider_key;
 use ploke_tui::app_state::AppState;
+use ploke_tui::app_state::core::ParseFailure;
 use ploke_tui::app_state::core::{DiffPreview, EditProposalStatus};
 use ploke_tui::app_state::events::SystemEvent;
 use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
 use ploke_tui::user_config::{ChatPolicy, ChatTimeoutStrategy};
+use ploke_tui::utils::parse_errors::FlattenedParserDiagnostic;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
@@ -147,6 +149,14 @@ pub struct IndexingStatusArtifact {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParseFailureArtifact {
+    pub target_dir: PathBuf,
+    pub message: String,
+    pub occurred_at_ms: i64,
+    pub diagnostics: Vec<FlattenedParserDiagnostic>,
+}
+
 fn indexing_status_artifact_for_error(err: &PrepareError) -> Option<IndexingStatusArtifact> {
     match err {
         PrepareError::IndexingFailed { detail } => Some(IndexingStatusArtifact {
@@ -178,6 +188,32 @@ fn persist_indexing_failure_status(indexing_status_path: &Path, err: &PrepareErr
             path = %indexing_status_path.display(),
             error = %write_err,
             "runner phase: failed to persist indexing failure status artifact"
+        );
+    }
+}
+
+fn parse_failure_artifact_for_state(parse_failure: ParseFailure) -> ParseFailureArtifact {
+    ParseFailureArtifact {
+        target_dir: parse_failure.target_dir,
+        message: parse_failure.message,
+        occurred_at_ms: parse_failure.occurred_at_ms,
+        diagnostics: parse_failure.diagnostics,
+    }
+}
+
+async fn persist_parse_failure_artifact(state: &Arc<AppState>, parse_failure_path: &Path) {
+    let parse_failure = state
+        .with_system_read(|sys| sys.last_parse_failure().cloned())
+        .await;
+    let Some(parse_failure) = parse_failure else {
+        return;
+    };
+    let artifact = parse_failure_artifact_for_state(parse_failure);
+    if let Err(write_err) = write_json(parse_failure_path, &artifact) {
+        warn!(
+            path = %parse_failure_path.display(),
+            error = %write_err,
+            "runner phase: failed to persist parse failure artifact"
         );
     }
 }
@@ -815,6 +851,7 @@ impl RunMsbSingleRequest {
         let execution_log_path = prepared.output_dir.join("execution-log.json");
         let repo_state_path = prepared.output_dir.join("repo-state.json");
         let indexing_status_path = prepared.output_dir.join("indexing-status.json");
+        let parse_failure_path = prepared.output_dir.join("parse-failure.json");
         let snapshot_status_path = prepared.output_dir.join("snapshot-status.json");
         let indexing_checkpoint_db = prepared.output_dir.join("indexing-checkpoint.db");
         let indexing_failure_db = prepared.output_dir.join("indexing-failure.db");
@@ -964,6 +1001,7 @@ impl RunMsbSingleRequest {
             .await
             {
                 persist_indexing_failure_status(&indexing_status_path, &err);
+                persist_parse_failure_artifact(&state, &parse_failure_path).await;
                 return Err(err);
             }
             steps.push("indexing_completed".to_string());
@@ -1092,6 +1130,7 @@ impl RunMsbAgentSingleRequest {
         let execution_log_path = prepared.output_dir.join("execution-log.json");
         let repo_state_path = prepared.output_dir.join("repo-state.json");
         let indexing_status_path = prepared.output_dir.join("indexing-status.json");
+        let parse_failure_path = prepared.output_dir.join("parse-failure.json");
         let snapshot_status_path = prepared.output_dir.join("snapshot-status.json");
         let indexing_checkpoint_db = prepared.output_dir.join("indexing-checkpoint.db");
         let indexing_failure_db = prepared.output_dir.join("indexing-failure.db");
@@ -1256,6 +1295,7 @@ impl RunMsbAgentSingleRequest {
             .await
             {
                 persist_indexing_failure_status(&indexing_status_path, &err);
+                persist_parse_failure_artifact(&state, &parse_failure_path).await;
                 return Err(err);
             }
             steps.push("indexing_completed".to_string());
@@ -2695,6 +2735,41 @@ mod tests {
         let artifact = indexing_status_artifact_for_error(&err).expect("indexing artifact");
         assert_eq!(artifact.status, "failed");
         assert!(artifact.detail.contains("Parse failed for crate"));
+    }
+
+    #[test]
+    fn parse_failure_artifact_preserves_nested_diagnostics() {
+        let artifact = parse_failure_artifact_for_state(ParseFailure {
+            target_dir: PathBuf::from("/tmp/repo"),
+            message: "Parse failed for crate: /tmp/repo".to_string(),
+            occurred_at_ms: 123,
+            diagnostics: vec![FlattenedParserDiagnostic {
+                diagnostic_path: "root.errors[0]".to_string(),
+                depth: 1,
+                kind: "syn_parse".to_string(),
+                summary: "Syn parsing error: bad token".to_string(),
+                detail: Some("bad token".to_string()),
+                source_path: Some(PathBuf::from("/tmp/repo/src/lib.rs")),
+                line: Some(7),
+                column: Some(3),
+                end_line: None,
+                end_column: None,
+                start: None,
+                end: None,
+                context: Vec::new(),
+                emission_site_file: Some("src/error.rs".to_string()),
+                emission_site_line: Some(10),
+                emission_site_column: Some(20),
+                backtrace: Some("stack".to_string()),
+            }],
+        });
+
+        assert_eq!(artifact.target_dir, PathBuf::from("/tmp/repo"));
+        assert_eq!(artifact.diagnostics.len(), 1);
+        assert_eq!(
+            artifact.diagnostics[0].source_path,
+            Some(PathBuf::from("/tmp/repo/src/lib.rs"))
+        );
     }
 
     #[test]

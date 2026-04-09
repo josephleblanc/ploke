@@ -43,7 +43,7 @@ use crate::{
     parser::run_parse_no_transform,
     tracing_setup::SCAN_CHANGE,
     user_config::{WorkspaceRegistry, WorkspaceRegistryEntry},
-    utils::parse_errors::format_parse_failure,
+    utils::parse_errors::{extract_nested_parser_diagnostics, format_parse_failure},
 };
 
 use super::*;
@@ -1326,9 +1326,14 @@ async fn scan_for_change_target(
                 }
                 Err(err) => {
                     let msg = format_parse_failure(&crate_path, &err);
+                    let diagnostics = extract_nested_parser_diagnostics(&err);
                     state
                         .with_system_txn(|txn| {
-                            txn.record_parse_failure(crate_path.clone(), msg.clone());
+                            txn.record_parse_failure_with_diagnostics(
+                                crate_path.clone(),
+                                msg.clone(),
+                                diagnostics.clone(),
+                            );
                         })
                         .await;
                     event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
@@ -1345,9 +1350,14 @@ async fn scan_for_change_target(
             Ok(merged) => merged,
             Err(err) => {
                 let msg = format_parse_failure(&crate_path, &err);
+                let diagnostics = extract_nested_parser_diagnostics(&err);
                 state
                     .with_system_txn(|txn| {
-                        txn.record_parse_failure(crate_path.clone(), msg.clone());
+                        txn.record_parse_failure_with_diagnostics(
+                            crate_path.clone(),
+                            msg.clone(),
+                            diagnostics.clone(),
+                        );
                     })
                     .await;
                 event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
@@ -1368,9 +1378,14 @@ module tree process or run_parse_no_transform"
             Ok(tree) => tree,
             Err(err) => {
                 let msg = format_parse_failure(&crate_path, &err);
+                let diagnostics = extract_nested_parser_diagnostics(&err);
                 state
                     .with_system_txn(|txn| {
-                        txn.record_parse_failure(crate_path.clone(), msg.clone());
+                        txn.record_parse_failure_with_diagnostics(
+                            crate_path.clone(),
+                            msg.clone(),
+                            diagnostics.clone(),
+                        );
                     })
                     .await;
                 event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {

@@ -19,10 +19,13 @@ use ploke_tui::{
 };
 use serde::Deserialize;
 use tempfile::tempdir;
+use tracing_subscriber::fmt::SubscriberBuilder;
 use uuid::Uuid;
 
 use crate::{
-    PreparedSingleRun, RunMsbAgentSingleRequest, runner::IndexingStatusArtifact, spec::PrepareError,
+    PreparedSingleRun,
+    runner::{IndexingStatusArtifact, ParseFailureArtifact, RunMsbSingleRequest},
+    spec::PrepareError,
 };
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +61,14 @@ fn benchmark_chat_policy() -> ChatPolicy {
         ..Default::default()
     };
     policy.validated()
+}
+
+fn init_tracing() {
+    let _ = SubscriberBuilder::default()
+        .with_max_level(tracing::Level::INFO)
+        .with_target(true)
+        .with_test_writer()
+        .try_init();
 }
 
 impl RecordedApplyCodeEditToolRequest {
@@ -544,7 +555,10 @@ async fn test_apply_code_edit_historical_failure_path() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "historical diagnostic replay of ripgrep setup failure"]
-async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_status_artifact() {
+#[cfg(not(feature = "convert_keyword_2015"))]
+async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_status_artifact_without_convert_keyword_2015()
+ {
+    init_tracing();
     const SOURCE_MANIFEST: &str =
         "/home/brasides/.ploke-eval/runs/BurntSushi__ripgrep-1642/run.json";
 
@@ -555,6 +569,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
 
     let temp = tempdir().expect("tempdir");
     let mut prepared = load_prepared_single_run(Path::new(SOURCE_MANIFEST));
+    prepared.task_id = format!("{}-without-convert-keyword-2015", prepared.task_id);
     prepared.output_dir = temp.path().join("out");
     std::fs::create_dir_all(&prepared.output_dir).expect("create replay output dir");
 
@@ -565,7 +580,10 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
     )
     .expect("write replay manifest");
 
-    let err = RunMsbAgentSingleRequest {
+    // WARN: keep this negative-path replay while `convert_keyword_2015` remains
+    // feature-gated. It documents the original historical failure without the
+    // fallback enabled.
+    let err = RunMsbSingleRequest {
         run_manifest: replay_manifest,
         index_debug_snapshots: false,
         use_default_model: true,
@@ -597,4 +615,84 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
     .expect("parse indexing status artifact");
     assert_eq!(artifact.status, "failed");
     assert!(artifact.detail.contains("Parse failed for crate"));
+
+    let parse_failure_path = prepared.output_dir.join("parse-failure.json");
+    assert!(
+        parse_failure_path.exists(),
+        "expected parse failure artifact at {}",
+        parse_failure_path.display()
+    );
+    let parse_failure: ParseFailureArtifact = serde_json::from_str(
+        &std::fs::read_to_string(&parse_failure_path).expect("read parse failure artifact"),
+    )
+    .expect("parse parse failure artifact");
+    let concrete_source_path = parse_failure
+        .diagnostics
+        .iter()
+        .filter_map(|diag| diag.source_path.as_ref())
+        .find(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .cloned()
+        .expect("historical ripgrep replay should surface a concrete failing rust source path");
+    eprintln!(
+        "REPLAY_DIAG: ripgrep historical setup concrete failing source path={}",
+        concrete_source_path.display()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "historical diagnostic replay of ripgrep setup success with convert_keyword_2015"]
+#[cfg(feature = "convert_keyword_2015")]
+async fn test_historical_ripgrep_setup_replay_gets_past_indexing_with_convert_keyword_2015() {
+    init_tracing();
+    const SOURCE_MANIFEST: &str =
+        "/home/brasides/.ploke-eval/runs/BurntSushi__ripgrep-1642/run.json";
+
+    assert!(
+        PathBuf::from(SOURCE_MANIFEST).exists(),
+        "expected historical run manifest at {SOURCE_MANIFEST}"
+    );
+
+    let temp = tempdir().expect("tempdir");
+    let mut prepared = load_prepared_single_run(Path::new(SOURCE_MANIFEST));
+    prepared.task_id = format!("{}-with-convert-keyword-2015", prepared.task_id);
+    prepared.output_dir = temp.path().join("out");
+    std::fs::create_dir_all(&prepared.output_dir).expect("create replay output dir");
+
+    let replay_manifest = temp.path().join("run.json");
+    std::fs::write(
+        &replay_manifest,
+        serde_json::to_string_pretty(&prepared).expect("serialize replay manifest"),
+    )
+    .expect("write replay manifest");
+
+    // WARN: this replay exists to prove why `convert_keyword_2015` exists.
+    // The only stable contract here is that setup no longer stops at indexing.
+    let result = RunMsbSingleRequest {
+        run_manifest: replay_manifest,
+        index_debug_snapshots: false,
+        use_default_model: true,
+        provider: None,
+    }
+    .run()
+    .await;
+
+    assert!(
+        !matches!(result, Err(PrepareError::IndexingFailed { .. })),
+        "convert_keyword_2015 should get the historical replay past indexing, got: {result:?}"
+    );
+
+    let indexing_status_path = prepared.output_dir.join("indexing-status.json");
+    assert!(
+        indexing_status_path.exists(),
+        "expected indexing status artifact at {}",
+        indexing_status_path.display()
+    );
+    let artifact: IndexingStatusArtifact = serde_json::from_str(
+        &std::fs::read_to_string(&indexing_status_path).expect("read indexing status artifact"),
+    )
+    .expect("parse indexing status artifact");
+    assert_ne!(
+        artifact.status, "failed",
+        "historical replay should not stop at indexing failure with convert_keyword_2015"
+    );
 }
