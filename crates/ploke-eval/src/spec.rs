@@ -76,6 +76,18 @@ pub struct PreparedSingleRun {
     pub source: Option<RunSource>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreparedMsbBatch {
+    pub batch_id: String,
+    pub dataset_file: PathBuf,
+    pub dataset_url: Option<String>,
+    pub repo_cache: PathBuf,
+    pub runs_root: PathBuf,
+    pub output_dir: PathBuf,
+    pub budget: EvalBudget,
+    pub instances: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrepareWrite {
     Stdout,
@@ -113,6 +125,8 @@ pub enum PrepareError {
     DownloadDatasetStatus { url: String, status: u16 },
     #[error("run manifest '{0}' does not exist")]
     MissingRunManifest(PathBuf),
+    #[error("batch manifest '{0}' does not exist")]
+    MissingBatchManifest(PathBuf),
     #[error("failed to run git command '{command}': {source}")]
     GitCommand {
         command: String,
@@ -130,8 +144,18 @@ pub enum PrepareError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("failed to read batch manifest '{path}': {source}")]
+    ReadBatchManifest {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("failed to parse run manifest '{path}': {source}")]
     ParseManifest {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    #[error("failed to parse batch manifest '{path}': {source}")]
+    ParseBatchManifest {
         path: PathBuf,
         source: serde_json::Error,
     },
@@ -247,6 +271,8 @@ pub enum PrepareError {
     },
     #[error("instance '{instance_id}' was not found in dataset '{path}'")]
     MissingDatasetInstance { path: PathBuf, instance_id: String },
+    #[error("batch selection is invalid: {detail}")]
+    InvalidBatchSelection { detail: String },
     #[error("issue input must include at least a title or a body")]
     EmptyIssue,
     #[error("failed to canonicalize '{path}': {source}")]
@@ -357,6 +383,33 @@ impl PreparedSingleRun {
             PrepareWrite::File(path) => fs::write(&path, serialized)
                 .map_err(|source| PrepareError::WriteManifest { path, source }),
         }
+    }
+}
+
+impl PreparedMsbBatch {
+    pub fn manifest_path(&self) -> PathBuf {
+        self.output_dir.join("batch.json")
+    }
+
+    pub fn render_json(&self, mode: OutputMode) -> Result<String, PrepareError> {
+        match mode {
+            OutputMode::Json => serde_json::to_string(self).map_err(PrepareError::Serialize),
+            OutputMode::Pretty => {
+                serde_json::to_string_pretty(self).map_err(PrepareError::Serialize)
+            }
+        }
+    }
+
+    pub fn write_manifest(&self, mode: OutputMode) -> Result<(), PrepareError> {
+        let serialized = self.render_json(mode)?;
+        let path = self.manifest_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        fs::write(&path, serialized).map_err(|source| PrepareError::WriteManifest { path, source })
     }
 }
 

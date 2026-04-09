@@ -18,7 +18,12 @@ use ploke_tui::{
     user_config::{ChatPolicy, ChatTimeoutStrategy},
 };
 use serde::Deserialize;
+use tempfile::tempdir;
 use uuid::Uuid;
+
+use crate::{
+    PreparedSingleRun, RunMsbAgentSingleRequest, runner::IndexingStatusArtifact, spec::PrepareError,
+};
 
 #[derive(Debug, Deserialize)]
 struct RecordedApplyCodeEditToolRequest {
@@ -89,6 +94,11 @@ fn load_recorded_apply_code_edit_request() -> RecordedApplyCodeEditToolRequest {
         "fixtures/BurntSushi__ripgrep-2209_apply_code_edit.json"
     ))
     .expect("recorded apply_code_edit tool request fixture must be valid json")
+}
+
+fn load_prepared_single_run(path: &Path) -> PreparedSingleRun {
+    let text = std::fs::read_to_string(path).expect("read historical run manifest");
+    serde_json::from_str(&text).expect("historical run manifest must parse")
 }
 
 /// Debug aid for this replay: show the DB resolution behavior around `canon` parsing.
@@ -530,4 +540,61 @@ async fn test_apply_code_edit_historical_failure_path() {
     assert_eq!(ui_payload.call_id.as_ref(), recorded_call_id);
     assert_eq!(ui_payload.tool, ToolName::ApplyCodeEdit);
     assert_eq!(ui_payload.error_code, Some(ToolErrorCode::WrongType));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "historical diagnostic replay of ripgrep setup failure"]
+async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_status_artifact() {
+    const SOURCE_MANIFEST: &str =
+        "/home/brasides/.ploke-eval/runs/BurntSushi__ripgrep-1642/run.json";
+
+    assert!(
+        PathBuf::from(SOURCE_MANIFEST).exists(),
+        "expected historical run manifest at {SOURCE_MANIFEST}"
+    );
+
+    let temp = tempdir().expect("tempdir");
+    let mut prepared = load_prepared_single_run(Path::new(SOURCE_MANIFEST));
+    prepared.output_dir = temp.path().join("out");
+    std::fs::create_dir_all(&prepared.output_dir).expect("create replay output dir");
+
+    let replay_manifest = temp.path().join("run.json");
+    std::fs::write(
+        &replay_manifest,
+        serde_json::to_string_pretty(&prepared).expect("serialize replay manifest"),
+    )
+    .expect("write replay manifest");
+
+    let err = RunMsbAgentSingleRequest {
+        run_manifest: replay_manifest,
+        index_debug_snapshots: false,
+        use_default_model: true,
+        provider: None,
+    }
+    .run()
+    .await
+    .expect_err("historical ripgrep setup replay should fail during indexing");
+
+    match err {
+        PrepareError::IndexingFailed { detail } => {
+            assert!(
+                detail.contains("Parse failed for crate"),
+                "unexpected indexing failure detail: {detail}"
+            );
+        }
+        other => panic!("expected indexing failure, got {other}"),
+    }
+
+    let indexing_status_path = prepared.output_dir.join("indexing-status.json");
+    assert!(
+        indexing_status_path.exists(),
+        "expected indexing status artifact at {}",
+        indexing_status_path.display()
+    );
+    let artifact: IndexingStatusArtifact = serde_json::from_str(
+        &std::fs::read_to_string(&indexing_status_path).expect("read indexing status artifact"),
+    )
+    .expect("parse indexing status artifact");
+    assert_eq!(artifact.status, "failed");
+    assert!(artifact.detail.contains("Parse failed for crate"));
 }

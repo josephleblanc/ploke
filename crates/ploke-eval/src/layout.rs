@@ -23,6 +23,10 @@ pub fn runs_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("runs"))
 }
 
+pub fn batches_dir() -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?.join("batches"))
+}
+
 pub fn datasets_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("datasets"))
 }

@@ -1,8 +1,10 @@
 use super::App;
+use crate::INDEXING_FAILURE_CONTAINMENT_NOTE;
 use crate::SearchEvent;
 use crate::app::view::EventSubscriber;
 use crate::app_state::IndexTargetDir;
 use crate::app_state::events::SystemEvent;
+use crate::error::ErrorSeverity;
 use crate::llm::{LlmEvent, ProviderKey};
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use itertools::Itertools;
@@ -77,7 +79,12 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         AppEvent::EventBusStarted => {}
         AppEvent::Rag(_rag_event) => {}
         AppEvent::Error(error_event) => {
-            let msg = format!("Error: {}", error_event.message);
+            let severity_label = match error_event.severity {
+                ErrorSeverity::Warning => "Warning",
+                ErrorSeverity::Error => "Error",
+                ErrorSeverity::Fatal => "Fatal",
+            };
+            let msg = format!("{severity_label}: {}", error_event.message);
             app.send_cmd(StateCommand::AddMessageImmediate {
                 msg,
                 kind: MessageKind::SysInfo,
@@ -97,10 +104,12 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.send_cmd(StateCommand::UpdateDatabase)
         }
         AppEvent::IndexingFailed => {
-            error!("Indexing Failed");
+            warn!("Indexing failed. {}", INDEXING_FAILURE_CONTAINMENT_NOTE);
             app.indexing_state = None;
             app.send_cmd(StateCommand::AddMessageImmediate {
-                msg: String::from("Indexing Failed"),
+                msg: String::from(
+                    "Indexing failed. Runtime kept alive for inspection. Temporary stopgap; fix the underlying setup issue before the next release.",
+                ),
                 kind: MessageKind::SysInfo,
                 new_msg_id: Uuid::new_v4(),
             })

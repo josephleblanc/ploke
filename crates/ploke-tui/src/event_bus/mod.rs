@@ -7,7 +7,7 @@ use ploke_embed::indexer::{self, IndexStatus};
 use tokio::sync::broadcast;
 
 use crate::utils::consts::DBG_EVENTS;
-use crate::{AppEvent, error::ErrorSeverity};
+use crate::{AppEvent, INDEXING_FAILURE_CONTAINMENT_NOTE, error::ErrorSeverity};
 
 #[derive(Clone, Copy, Debug)]
 pub enum EventPriority {
@@ -103,10 +103,16 @@ pub async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
                             continue;
                         }
                         IndexStatus::Failed(err) => {
-                            // Send failure notification to background channel; realtime gets a single SSOT event
+                            let message = format!(
+                                "Indexing failed: {}. {}",
+                                err, INDEXING_FAILURE_CONTAINMENT_NOTE
+                            );
+                            tracing::warn!("{}", message);
+                            // Temporary containment path: surface the setup failure without
+                            // letting the runtime stall or silently time out.
                             event_bus.send(AppEvent::Error(ErrorEvent {
-                                message: format!("Indexing failed: {}", err),
-                                severity: ErrorSeverity::Error,
+                                message,
+                                severity: ErrorSeverity::Warning,
                             }));
                             let _ = event_bus.realtime_tx.send(AppEvent::IndexingFailed);
                             // reset for next run
@@ -273,6 +279,7 @@ mod tests {
     async fn ssot_forwards_indexing_failed_once() {
         let bus = Arc::new(EventBus::new(EventBusCaps::default()));
         let mut rx = bus.realtime_tx.subscribe();
+        let mut bg_rx = bus.background_tx.subscribe();
         let bus_clone = Arc::clone(&bus);
         tokio::spawn(async move {
             let _ = run_event_bus(bus_clone).await;
@@ -299,6 +306,20 @@ mod tests {
             current_file: None,
             errors: vec![],
         });
+
+        let error_event = timeout(Duration::from_secs(1), bg_rx.recv())
+            .await
+            .expect("timeout waiting for background event")
+            .expect("background channel closed");
+
+        match error_event {
+            AppEvent::Error(error) => {
+                assert!(matches!(error.severity, ErrorSeverity::Warning));
+                assert!(error.message.contains("Indexing failed: boom"));
+                assert!(error.message.contains("before the next release"));
+            }
+            other => panic!("expected AppEvent::Error, got {:?}", other),
+        }
 
         // Expect exactly one IndexingFailed event
         let ev = timeout(Duration::from_secs(1), rx.recv())

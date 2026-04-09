@@ -8,6 +8,8 @@
 
 ## Header
 
+- batch id:
+- batch manifest:
 - run id:
 - instance:
 - model:
@@ -15,6 +17,13 @@
 - repository:
 - base sha:
 - stable evidence source:
+- artifact paths:
+  - run manifest:
+  - execution log:
+  - turn summary:
+  - turn trace:
+  - submission jsonl:
+  - official benchmark logs/report:
 
 ## Outcome Snapshot
 
@@ -23,6 +32,8 @@
 - primary user-visible failure:
 - did the model produce a patch:
 - did the target file change:
+- official benchmark status:
+- official benchmark evidence:
 
 ## Failure Classification
 
@@ -69,6 +80,11 @@ Use one or more of:
 
 - Did the final artifacts tell the truth?
 - If not, which fields or summaries were misleading?
+
+### Benchmark Follow-Through
+
+- If the official Multi-SWE-bench evaluator was run, what did it conclude?
+- If not, what follow-up would be needed to get a benchmark verdict?
 
 ## Minimal Correct Fix
 

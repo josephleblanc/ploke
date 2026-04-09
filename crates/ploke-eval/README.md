@@ -5,7 +5,9 @@ Minimal benchmark/eval runner scaffolding for `ploke`.
 Current scope:
 - fetch a benchmark repo into a stable local cache
 - prepare one run manifest from a Multi-SWE-bench instance
+- prepare one batch manifest plus many per-instance manifests from Multi-SWE-bench
 - execute one prepared run
+- execute one prepared batch
 - inspect available OpenRouter providers for a model
 - reset the repo to the benchmark base commit
 - index the repo with `ploke`
@@ -21,6 +23,7 @@ By default, `ploke-eval` uses:
   repos/      benchmark repo checkouts
   models/     model registry, active model, provider preferences
   runs/       per-instance run manifests and artifacts
+  batches/    batch manifests, summaries, aggregate JSONL exports
 ```
 
 Provider preferences are stored in `~/.ploke-eval/models/provider-preferences.json`.
@@ -63,6 +66,13 @@ cargo run -p ploke-eval -- prepare-msb-single --dataset-key ripgrep --instance B
 cargo run -p ploke-eval -- run-msb-single --instance BurntSushi__ripgrep-2209
 ```
 
+Batch example for `ripgrep`:
+
+```bash
+cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --specific 2209
+cargo run -p ploke-eval -- run-msb-agent-batch --batch-id ripgrep-2209
+```
+
 ## What gets read and written
 
 For the example above, the defaults are:
@@ -76,6 +86,9 @@ repo checkout:
 
 run directory:
   ~/.ploke-eval/runs/BurntSushi__ripgrep-2209
+
+batch directory:
+  ~/.ploke-eval/batches/ripgrep-2209
 ```
 
 The run directory contains:
@@ -89,6 +102,15 @@ snapshot-status.json   saved DB snapshot summary
 multi-swe-bench-submission.jsonl
                       benchmark-ready JSONL patch record with org/repo/number/fix_patch
 config/                per-run XDG config sandbox used by SaveDb
+```
+
+The batch directory contains:
+
+```text
+batch.json                      prepared batch manifest
+batch-run-summary.json         per-instance success/failure summary
+multi-swe-bench-submission.jsonl
+                               aggregate JSONL patch records for the batch
 ```
 
 `multi-swe-bench-submission.jsonl` is a candidate patch artifact for the

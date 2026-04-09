@@ -12,22 +12,22 @@ use ploke_llm::{ModelId, ProviderKey};
 use regex::Regex;
 
 use crate::layout::{
-    active_model_file, cache_dir, datasets_dir, model_registry_file, models_dir, repos_dir,
-    runs_dir, starting_db_cache_dir, workspace_root_for_key,
+    active_model_file, batches_dir, cache_dir, datasets_dir, model_registry_file, models_dir,
+    repos_dir, runs_dir, starting_db_cache_dir, workspace_root_for_key,
 };
 use crate::model_registry::{
     find_models, load_active_model, load_model_registry, refresh_model_registry,
     registry_has_model, save_active_model,
 };
-use crate::msb::PrepareMsbSingleRunRequest;
+use crate::msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 use crate::provider_prefs::{
     clear_provider_for_model, load_provider_for_model, set_provider_for_model,
 };
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
 use crate::run_history::print_last_run_assistant_messages;
 use crate::runner::{
-    ReplayMsbBatchRequest, RunMsbAgentSingleRequest, RunMsbSingleRequest,
-    resolve_provider_for_model,
+    ReplayMsbBatchRequest, RunMsbAgentBatchRequest, RunMsbAgentSingleRequest, RunMsbBatchRequest,
+    RunMsbSingleRequest, resolve_provider_for_model,
 };
 use crate::spec::{
     EvalBudget, IssueInput, OutputMode, PrepareError, PrepareSingleRunRequest, PrepareWrite,
@@ -44,6 +44,7 @@ Defaults:
   provider prefs     ~/.ploke-eval/models/provider-preferences.json
   repo cache         ~/.ploke-eval/repos
   run artifacts      ~/.ploke-eval/runs
+  batch artifacts    ~/.ploke-eval/batches
 
 The current end-to-end path is:
   1. fetch a benchmark repo
@@ -65,6 +66,11 @@ Quick Start: ripgrep single-run example
   cargo run -p ploke-eval -- run-msb-single --instance BurntSushi__ripgrep-2209
   cargo run -p ploke-eval -- model providers moonshotai/kimi-k2
   cargo run -p ploke-eval -- run-msb-agent-single --instance BurntSushi__ripgrep-2209 --provider chutes
+
+Batch example
+
+  cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --specific 2209
+  cargo run -p ploke-eval -- run-msb-agent-batch --batch-id ripgrep-2209
 
 Health check
 
@@ -106,6 +112,9 @@ Default read/write locations
 
   Run directory:
     ~/.ploke-eval/runs/BurntSushi__ripgrep-2209
+
+  Batch directory:
+    ~/.ploke-eval/batches/ripgrep-2209
 
   Key run artifacts:
     run.json
@@ -150,10 +159,16 @@ pub enum Command {
     PrepareSingle(PrepareSingleCommand),
     /// Normalize one Multi-SWE-bench instance into a run manifest.
     PrepareMsbSingle(PrepareMsbSingleCommand),
+    /// Normalize many Multi-SWE-bench instances into a batch manifest and per-instance run manifests.
+    PrepareMsbBatch(PrepareMsbBatchCommand),
     /// Execute one prepared run through repo reset and initial artifact generation.
     RunMsbSingle(RunMsbSingleCommand),
+    /// Execute many prepared Multi-SWE-bench runs from one batch manifest.
+    RunMsbBatch(RunMsbBatchCommand),
     /// Execute one prepared run and then run a single agentic benchmark turn.
     RunMsbAgentSingle(RunMsbAgentSingleCommand),
+    /// Execute many prepared runs and agentic benchmark turns from one batch manifest.
+    RunMsbAgentBatch(RunMsbAgentBatchCommand),
     /// Replay one specific batch from a prepared run and print the exact snippets for it.
     ReplayMsbBatch(ReplayMsbBatchCommand),
     /// Clone or refresh a benchmark repo into ~/.ploke-eval/repos.
@@ -234,6 +249,13 @@ impl Cli {
                     ExitCode::FAILURE
                 }
             },
+            Command::PrepareMsbBatch(cmd) => match cmd.run() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
             Command::RunMsbSingle(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
@@ -241,7 +263,21 @@ impl Cli {
                     ExitCode::FAILURE
                 }
             },
+            Command::RunMsbBatch(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
             Command::RunMsbAgentSingle(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Command::RunMsbAgentBatch(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
@@ -413,6 +449,121 @@ impl PrepareMsbSingleCommand {
 
 #[derive(Debug, Parser)]
 #[command(
+    about = "Build one batch manifest and per-instance run manifests from Multi-SWE-bench JSONL",
+    after_help = "\
+Examples:
+
+  cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --all
+  cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --specific 2209
+  cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --instance BurntSushi__ripgrep-2209
+
+Defaults:
+  dataset cache: ~/.ploke-eval/datasets
+  repo cache:    ~/.ploke-eval/repos
+  runs root:     ~/.ploke-eval/runs
+  batches root:  ~/.ploke-eval/batches
+
+Writes:
+  ~/.ploke-eval/runs/<instance>/run.json for each selected instance
+  ~/.ploke-eval/batches/<batch-id>/batch.json
+"
+)]
+pub struct PrepareMsbBatchCommand {
+    /// Multi-SWE-bench dataset JSONL file.
+    #[arg(long, value_name = "PATH", conflicts_with = "dataset_key")]
+    pub dataset: Option<PathBuf>,
+
+    /// Built-in dataset registry key, for example ripgrep.
+    #[arg(long, conflicts_with = "dataset")]
+    pub dataset_key: Option<String>,
+
+    /// Prepare every instance in the dataset.
+    #[arg(long, conflicts_with_all = ["instance", "specific"])]
+    pub all: bool,
+
+    /// Exact benchmark instance id to include. Repeat for multiple instances.
+    #[arg(long)]
+    pub instance: Vec<String>,
+
+    /// Substring selector matched against task id, benchmark id, org, repo, and title.
+    #[arg(long)]
+    pub specific: Vec<String>,
+
+    /// Stop selecting after this many matched instances.
+    #[arg(long)]
+    pub limit: Option<usize>,
+
+    /// Stable identifier for the batch manifest directory.
+    #[arg(long)]
+    pub batch_id: Option<String>,
+
+    /// Root directory containing repo checkouts at <repo-cache>/<org>/<repo>.
+    #[arg(long, value_name = "PATH")]
+    pub repo_cache: Option<PathBuf>,
+
+    /// Root directory where ploke-eval should create per-run directories.
+    #[arg(long, value_name = "PATH")]
+    pub runs_root: Option<PathBuf>,
+
+    /// Root directory where ploke-eval should create batch manifests and summaries.
+    #[arg(long, value_name = "PATH")]
+    pub batches_root: Option<PathBuf>,
+
+    /// Print compact or pretty JSON.
+    #[arg(long, value_enum, default_value_t = OutputMode::Pretty)]
+    pub output_mode: OutputMode,
+
+    #[arg(long, default_value_t = 40)]
+    pub max_turns: u32,
+
+    #[arg(long, default_value_t = 200)]
+    pub max_tool_calls: u32,
+
+    #[arg(long, default_value_t = 1800)]
+    pub wall_clock_secs: u32,
+}
+
+impl PrepareMsbBatchCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let batch_id = self.batch_id.unwrap_or_else(|| {
+            default_batch_id(
+                self.dataset_key.as_deref(),
+                self.dataset.as_ref(),
+                self.all,
+                &self.instance,
+                &self.specific,
+            )
+        });
+        let prepared = PrepareMsbBatchRequest {
+            dataset_file: self.dataset,
+            dataset_key: self.dataset_key,
+            batch_id,
+            select_all: self.all,
+            instance_ids: self.instance,
+            specifics: self.specific,
+            limit: self.limit,
+            repo_cache: self.repo_cache.unwrap_or(repos_dir()?),
+            runs_root: self.runs_root.unwrap_or(runs_dir()?),
+            batches_root: self.batches_root.unwrap_or(batches_dir()?),
+            budget: EvalBudget {
+                max_turns: self.max_turns,
+                max_tool_calls: self.max_tool_calls,
+                wall_clock_secs: self.wall_clock_secs,
+            },
+        }
+        .prepare()?;
+
+        for run in &prepared.runs {
+            run.write_manifest(self.output_mode, PrepareWrite::File(run.manifest_path()))?;
+        }
+        prepared.batch.write_manifest(self.output_mode)?;
+        println!("{}", prepared.batch.manifest_path().display());
+        Ok(())
+    }
+}
+
+#[derive(Debug, Parser)]
+#[command(
     about = "Execute one prepared Multi-SWE-bench run",
     after_help = "\
 Example:
@@ -467,6 +618,47 @@ pub struct RunMsbSingleCommand {
 
 #[derive(Debug, Parser)]
 #[command(
+    about = "Execute many prepared Multi-SWE-bench runs",
+    after_help = "\
+Examples:
+
+  cargo run -p ploke-eval -- run-msb-batch --batch-id ripgrep-all
+  cargo run -p ploke-eval -- run-msb-batch --batch ~/.ploke-eval/batches/ripgrep-all/batch.json
+
+The command reuses the per-instance run manifests listed by the batch manifest,
+executes them sequentially, and writes:
+  batch-run-summary.json
+  multi-swe-bench-submission.jsonl
+"
+)]
+pub struct RunMsbBatchCommand {
+    /// Path to a prepared batch manifest. Defaults to ~/.ploke-eval/batches/<batch-id>/batch.json.
+    #[arg(long, value_name = "PATH", conflicts_with = "batch_id")]
+    pub batch: Option<PathBuf>,
+
+    /// Batch id, used to resolve ~/.ploke-eval/batches/<batch-id>/batch.json.
+    #[arg(long, conflicts_with = "batch")]
+    pub batch_id: Option<String>,
+
+    /// Disable eval-only DB checkpoint/failure snapshots during indexing.
+    #[arg(long = "no-index-debug-snapshots", action = ArgAction::SetFalse, default_value_t = true)]
+    pub index_debug_snapshots: bool,
+
+    /// Use the default model instead of the persisted active model selection.
+    #[arg(long)]
+    pub use_default_model: bool,
+
+    /// Explicit provider slug to pin for the selected model.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Stop the batch after the first per-instance runner failure.
+    #[arg(long)]
+    pub stop_on_error: bool,
+}
+
+#[derive(Debug, Parser)]
+#[command(
     about = "Execute one prepared Multi-SWE-bench run and one benchmark issue turn",
     after_help = "\
 This extends the normal run with a single agentic turn that:
@@ -497,6 +689,47 @@ pub struct RunMsbAgentSingleCommand {
     /// Explicit provider slug to pin for the selected model.
     #[arg(long, value_name = "PROVIDER")]
     pub provider: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Execute many prepared Multi-SWE-bench runs and one benchmark issue turn for each",
+    after_help = "\
+Examples:
+
+  cargo run -p ploke-eval -- run-msb-agent-batch --batch-id ripgrep-all
+  cargo run -p ploke-eval -- run-msb-agent-batch --batch ~/.ploke-eval/batches/ripgrep-all/batch.json
+
+This reuses the per-instance run manifests listed by the batch manifest,
+executes one benchmark issue turn per instance, and writes:
+  batch-run-summary.json
+  multi-swe-bench-submission.jsonl
+"
+)]
+pub struct RunMsbAgentBatchCommand {
+    /// Path to a prepared batch manifest. Defaults to ~/.ploke-eval/batches/<batch-id>/batch.json.
+    #[arg(long, value_name = "PATH", conflicts_with = "batch_id")]
+    pub batch: Option<PathBuf>,
+
+    /// Batch id, used to resolve ~/.ploke-eval/batches/<batch-id>/batch.json.
+    #[arg(long, conflicts_with = "batch")]
+    pub batch_id: Option<String>,
+
+    /// Disable eval-only DB checkpoint/failure snapshots during indexing.
+    #[arg(long = "no-index-debug-snapshots", action = ArgAction::SetFalse, default_value_t = true)]
+    pub index_debug_snapshots: bool,
+
+    /// Use the default model instead of the persisted active model selection.
+    #[arg(long)]
+    pub use_default_model: bool,
+
+    /// Explicit provider slug to pin for the selected model.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Stop the batch after the first per-instance runner failure.
+    #[arg(long)]
+    pub stop_on_error: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -882,6 +1115,26 @@ impl RunMsbSingleCommand {
     }
 }
 
+impl RunMsbBatchCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let batch_manifest = resolve_batch_manifest(self.batch, self.batch_id)?;
+        let artifacts = RunMsbBatchRequest {
+            batch_manifest,
+            index_debug_snapshots: self.index_debug_snapshots,
+            use_default_model: self.use_default_model,
+            provider: parse_provider_key(self.provider)?,
+            stop_on_error: self.stop_on_error,
+        }
+        .run()
+        .await?;
+        println!("{}", artifacts.summary.display());
+        if let Some(path) = artifacts.msb_submission {
+            println!("{}", path.display());
+        }
+        Ok(())
+    }
+}
+
 impl RunMsbAgentSingleCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         let run_manifest = match (self.run, self.instance) {
@@ -911,6 +1164,26 @@ impl RunMsbAgentSingleCommand {
     }
 }
 
+impl RunMsbAgentBatchCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let batch_manifest = resolve_batch_manifest(self.batch, self.batch_id)?;
+        let artifacts = RunMsbAgentBatchRequest {
+            batch_manifest,
+            index_debug_snapshots: self.index_debug_snapshots,
+            use_default_model: self.use_default_model,
+            provider: parse_provider_key(self.provider)?,
+            stop_on_error: self.stop_on_error,
+        }
+        .run()
+        .await?;
+        println!("{}", artifacts.summary.display());
+        if let Some(path) = artifacts.msb_submission {
+            println!("{}", path.display());
+        }
+        Ok(())
+    }
+}
+
 impl ReplayMsbBatchCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         let run_manifest = match (self.run, self.instance) {
@@ -932,6 +1205,70 @@ impl ReplayMsbBatchCommand {
         .map(|batch_file| {
             println!("{}", batch_file.display());
         })
+    }
+}
+
+fn resolve_batch_manifest(
+    batch: Option<PathBuf>,
+    batch_id: Option<String>,
+) -> Result<PathBuf, PrepareError> {
+    match (batch, batch_id) {
+        (Some(path), None) => Ok(path),
+        (None, Some(batch_id)) => Ok(batches_dir()?.join(batch_id).join("batch.json")),
+        _ => Err(PrepareError::MissingBatchManifest(
+            batches_dir()?.join("<batch-id>/batch.json"),
+        )),
+    }
+}
+
+fn default_batch_id(
+    dataset_key: Option<&str>,
+    dataset: Option<&PathBuf>,
+    select_all: bool,
+    instances: &[String],
+    specifics: &[String],
+) -> String {
+    let dataset_stem = dataset_key
+        .map(str::to_string)
+        .or_else(|| {
+            dataset
+                .and_then(|path| path.file_stem())
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "msb".to_string());
+    let selector = if select_all {
+        "all".to_string()
+    } else if instances.len() == 1 && specifics.is_empty() {
+        sanitize_batch_component(&instances[0])
+    } else if specifics.len() == 1 && instances.is_empty() {
+        sanitize_batch_component(&specifics[0])
+    } else {
+        format!("selection-{}", instances.len() + specifics.len())
+    };
+    format!("{}-{}", sanitize_batch_component(&dataset_stem), selector)
+}
+
+fn sanitize_batch_component(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut last_was_dash = false;
+    for ch in input.chars() {
+        let normalized = if ch.is_ascii_alphanumeric() { ch } else { '-' };
+        if normalized == '-' {
+            if last_was_dash {
+                continue;
+            }
+            last_was_dash = true;
+            out.push('-');
+        } else {
+            last_was_dash = false;
+            out.push(normalized.to_ascii_lowercase());
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        "batch".to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -995,6 +1332,14 @@ fn run_doctor() -> Result<(), PrepareError> {
         &mut warn,
         &mut note,
         MissingDirStatus::Warn,
+    );
+    check_dir(
+        "batch artifacts dir",
+        batches_dir()?,
+        &mut ok,
+        &mut warn,
+        &mut note,
+        MissingDirStatus::Note,
     );
     check_dir(
         "starting-db cache dir",
@@ -1319,5 +1664,19 @@ mod tests {
     fn formats_pricing_per_million_tokens() {
         assert_eq!(display_price_per_million(0.00000018), "$0.18/M");
         assert_eq!(display_price_per_million(0.00000059), "$0.59/M");
+    }
+
+    #[test]
+    fn default_batch_id_uses_dataset_key_and_specific() {
+        let batch_id = default_batch_id(Some("ripgrep"), None, false, &[], &["2209".to_string()]);
+        assert_eq!(batch_id, "ripgrep-2209");
+    }
+
+    #[test]
+    fn sanitize_batch_component_collapses_non_alnum_runs() {
+        assert_eq!(
+            sanitize_batch_component("BurntSushi/ripgrep:pr-2209"),
+            "burntsushi-ripgrep-pr-2209"
+        );
     }
 }

@@ -39,7 +39,7 @@ use crate::layout;
 use crate::model_registry::resolve_model_for_run;
 use crate::provider_prefs::load_provider_for_model;
 use crate::run_history::record_last_run;
-use crate::spec::{PrepareError, PreparedSingleRun, RunSource};
+use crate::spec::{PrepareError, PreparedMsbBatch, PreparedSingleRun, RunSource};
 
 const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
@@ -77,6 +77,30 @@ pub struct RunMsbSingleRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunMsbBatchRequest {
+    pub batch_manifest: PathBuf,
+    pub index_debug_snapshots: bool,
+    #[serde(default)]
+    pub use_default_model: bool,
+    #[serde(default)]
+    pub provider: Option<ProviderKey>,
+    #[serde(default)]
+    pub stop_on_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunMsbAgentBatchRequest {
+    pub batch_manifest: PathBuf,
+    pub index_debug_snapshots: bool,
+    #[serde(default)]
+    pub use_default_model: bool,
+    #[serde(default)]
+    pub provider: Option<ProviderKey>,
+    #[serde(default)]
+    pub stop_on_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayMsbBatchRequest {
     pub run_manifest: PathBuf,
     /// 1-based batch index to replay.
@@ -103,6 +127,13 @@ pub struct AgentRunArtifactPaths {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchRunArtifactPaths {
+    pub batch_manifest: PathBuf,
+    pub summary: PathBuf,
+    pub msb_submission: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoStateArtifact {
     pub repo_root: PathBuf,
     pub requested_base_sha: Option<String>,
@@ -114,6 +145,41 @@ pub struct RepoStateArtifact {
 pub struct IndexingStatusArtifact {
     pub status: String,
     pub detail: String,
+}
+
+fn indexing_status_artifact_for_error(err: &PrepareError) -> Option<IndexingStatusArtifact> {
+    match err {
+        PrepareError::IndexingFailed { detail } => Some(IndexingStatusArtifact {
+            status: "failed".to_string(),
+            detail: detail.clone(),
+        }),
+        PrepareError::Timeout { phase, secs } if phase.starts_with("indexing_completed") => {
+            Some(IndexingStatusArtifact {
+                status: "timed_out".to_string(),
+                detail: format!("timed out waiting for '{phase}' after {secs} seconds"),
+            })
+        }
+        PrepareError::EventStreamClosed { phase } if phase.starts_with("indexing_completed") => {
+            Some(IndexingStatusArtifact {
+                status: "event_stream_closed".to_string(),
+                detail: format!("event stream closed while waiting for '{phase}'"),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn persist_indexing_failure_status(indexing_status_path: &Path, err: &PrepareError) {
+    let Some(artifact) = indexing_status_artifact_for_error(err) else {
+        return;
+    };
+    if let Err(write_err) = write_json(indexing_status_path, &artifact) {
+        warn!(
+            path = %indexing_status_path.display(),
+            error = %write_err,
+            "runner phase: failed to persist indexing failure status artifact"
+        );
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +215,36 @@ pub struct ExecutionLog {
     pub selected_model: ModelId,
     pub selected_provider: Option<String>,
     pub steps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchInstanceResult {
+    pub task_id: String,
+    pub run_manifest: PathBuf,
+    pub execution_log: Option<PathBuf>,
+    pub turn_summary: Option<PathBuf>,
+    pub msb_submission: Option<PathBuf>,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchRunSummary {
+    pub batch_id: String,
+    pub mode: String,
+    pub batch_manifest: PathBuf,
+    pub output_dir: PathBuf,
+    pub dataset_file: PathBuf,
+    pub repo_cache: PathBuf,
+    pub runs_root: PathBuf,
+    pub selected_model: Option<ModelId>,
+    pub selected_provider: Option<String>,
+    pub instances_total: usize,
+    pub instances_attempted: usize,
+    pub instances_succeeded: usize,
+    pub instances_failed: usize,
+    pub stopped_early: bool,
+    pub instance_results: Vec<BatchInstanceResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -855,7 +951,7 @@ impl RunMsbSingleRequest {
             steps.push("run_index_command".to_string());
 
             info!("runner phase: waiting for indexing completion");
-            wait_for_indexing_completion(
+            if let Err(err) = wait_for_indexing_completion(
                 &mut app,
                 &mut realtime_rx,
                 &mut background_rx,
@@ -865,7 +961,11 @@ impl RunMsbSingleRequest {
                 indexing_failure_db.clone(),
                 self.index_debug_snapshots,
             )
-            .await?;
+            .await
+            {
+                persist_indexing_failure_status(&indexing_status_path, &err);
+                return Err(err);
+            }
             steps.push("indexing_completed".to_string());
             info!("runner phase: indexing completed");
             app.pump_pending_events().await;
@@ -1143,7 +1243,7 @@ impl RunMsbAgentSingleRequest {
             steps.push("run_index_command".to_string());
 
             info!("runner phase: waiting for indexing completion");
-            wait_for_indexing_completion(
+            if let Err(err) = wait_for_indexing_completion(
                 &mut app,
                 &mut realtime_rx,
                 &mut background_rx,
@@ -1153,7 +1253,11 @@ impl RunMsbAgentSingleRequest {
                 indexing_failure_db.clone(),
                 self.index_debug_snapshots,
             )
-            .await?;
+            .await
+            {
+                persist_indexing_failure_status(&indexing_status_path, &err);
+                return Err(err);
+            }
             steps.push("indexing_completed".to_string());
             info!("runner phase: indexing completed");
             app.pump_pending_events().await;
@@ -1277,6 +1381,212 @@ impl RunMsbAgentSingleRequest {
             turn_summary: turn_summary_path,
         })
     }
+}
+
+impl RunMsbBatchRequest {
+    pub async fn run(self) -> Result<BatchRunArtifactPaths, PrepareError> {
+        run_batch(
+            self.batch_manifest,
+            self.index_debug_snapshots,
+            self.use_default_model,
+            self.provider,
+            self.stop_on_error,
+            false,
+        )
+        .await
+    }
+}
+
+impl RunMsbAgentBatchRequest {
+    pub async fn run(self) -> Result<BatchRunArtifactPaths, PrepareError> {
+        run_batch(
+            self.batch_manifest,
+            self.index_debug_snapshots,
+            self.use_default_model,
+            self.provider,
+            self.stop_on_error,
+            true,
+        )
+        .await
+    }
+}
+
+async fn run_batch(
+    batch_manifest: PathBuf,
+    index_debug_snapshots: bool,
+    use_default_model: bool,
+    provider: Option<ProviderKey>,
+    stop_on_error: bool,
+    agent_mode: bool,
+) -> Result<BatchRunArtifactPaths, PrepareError> {
+    let (manifest_path, prepared) = load_prepared_batch(batch_manifest)?;
+    fs::create_dir_all(&prepared.output_dir).map_err(|source| PrepareError::CreateOutputDir {
+        path: prepared.output_dir.clone(),
+        source,
+    })?;
+
+    let selected_model = resolve_model_for_run(use_default_model)?;
+    let selected_model_id = selected_model.id.clone();
+    let preferred_provider = load_provider_for_model(&selected_model_id)?;
+    let selected_provider = resolve_provider_for_model(
+        &selected_model,
+        provider.as_ref().or(preferred_provider.as_ref()),
+    )
+    .await?;
+
+    let summary_path = prepared.output_dir.join("batch-run-summary.json");
+    let submission_path = prepared.output_dir.join("multi-swe-bench-submission.jsonl");
+    fs::write(&submission_path, "").map_err(|source| PrepareError::WriteManifest {
+        path: submission_path.clone(),
+        source,
+    })?;
+
+    let mut stopped_early = false;
+    let mut instance_results = Vec::with_capacity(prepared.instances.len());
+
+    for task_id in &prepared.instances {
+        let run_manifest = prepared.runs_root.join(task_id).join("run.json");
+        if agent_mode {
+            match (RunMsbAgentSingleRequest {
+                run_manifest: run_manifest.clone(),
+                index_debug_snapshots,
+                use_default_model,
+                provider: provider.clone(),
+            })
+            .run()
+            .await
+            {
+                Ok(artifacts) => {
+                    if let Some(path) = artifacts.base.msb_submission.as_ref() {
+                        let blob = fs::read_to_string(path).map_err(|source| {
+                            PrepareError::ReadManifest {
+                                path: path.clone(),
+                                source,
+                            }
+                        })?;
+                        if !blob.trim().is_empty() {
+                            append_jsonl_blob(&submission_path, &blob)?;
+                        }
+                    }
+                    instance_results.push(BatchInstanceResult {
+                        task_id: task_id.clone(),
+                        run_manifest,
+                        execution_log: Some(artifacts.base.execution_log),
+                        turn_summary: Some(artifacts.turn_summary),
+                        msb_submission: artifacts.base.msb_submission,
+                        status: "completed".to_string(),
+                        error: None,
+                    });
+                }
+                Err(err) => {
+                    instance_results.push(BatchInstanceResult {
+                        task_id: task_id.clone(),
+                        run_manifest,
+                        execution_log: None,
+                        turn_summary: None,
+                        msb_submission: None,
+                        status: "failed".to_string(),
+                        error: Some(err.to_string()),
+                    });
+                    if stop_on_error {
+                        stopped_early = true;
+                        break;
+                    }
+                }
+            }
+        } else {
+            match (RunMsbSingleRequest {
+                run_manifest: run_manifest.clone(),
+                index_debug_snapshots,
+                use_default_model,
+                provider: provider.clone(),
+            })
+            .run()
+            .await
+            {
+                Ok(artifacts) => {
+                    if let Some(path) = artifacts.msb_submission.as_ref() {
+                        let blob = fs::read_to_string(path).map_err(|source| {
+                            PrepareError::ReadManifest {
+                                path: path.clone(),
+                                source,
+                            }
+                        })?;
+                        if !blob.trim().is_empty() {
+                            append_jsonl_blob(&submission_path, &blob)?;
+                        }
+                    }
+                    instance_results.push(BatchInstanceResult {
+                        task_id: task_id.clone(),
+                        run_manifest,
+                        execution_log: Some(artifacts.execution_log),
+                        turn_summary: None,
+                        msb_submission: artifacts.msb_submission,
+                        status: "completed".to_string(),
+                        error: None,
+                    });
+                }
+                Err(err) => {
+                    instance_results.push(BatchInstanceResult {
+                        task_id: task_id.clone(),
+                        run_manifest,
+                        execution_log: None,
+                        turn_summary: None,
+                        msb_submission: None,
+                        status: "failed".to_string(),
+                        error: Some(err.to_string()),
+                    });
+                    if stop_on_error {
+                        stopped_early = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let instances_succeeded = instance_results
+        .iter()
+        .filter(|result| result.status == "completed")
+        .count();
+    let instances_failed = instance_results
+        .iter()
+        .filter(|result| result.status == "failed")
+        .count();
+    let msb_submission = match fs::metadata(&submission_path) {
+        Ok(metadata) if metadata.len() > 0 => Some(submission_path.clone()),
+        Ok(_) => None,
+        Err(_) => None,
+    };
+
+    let summary = BatchRunSummary {
+        batch_id: prepared.batch_id,
+        mode: if agent_mode {
+            "msb_agent_batch".to_string()
+        } else {
+            "msb_batch".to_string()
+        },
+        batch_manifest: manifest_path.clone(),
+        output_dir: prepared.output_dir,
+        dataset_file: prepared.dataset_file,
+        repo_cache: prepared.repo_cache,
+        runs_root: prepared.runs_root,
+        selected_model: Some(selected_model_id),
+        selected_provider: Some(selected_provider.slug.as_str().to_string()),
+        instances_total: prepared.instances.len(),
+        instances_attempted: instance_results.len(),
+        instances_succeeded,
+        instances_failed,
+        stopped_early,
+        instance_results,
+    };
+    write_json(&summary_path, &summary)?;
+
+    Ok(BatchRunArtifactPaths {
+        batch_manifest: manifest_path,
+        summary: summary_path,
+        msb_submission,
+    })
 }
 
 impl ReplayMsbBatchRequest {
@@ -2078,6 +2388,42 @@ fn write_jsonl_line<T: Serialize>(path: &Path, value: &T) -> Result<(), PrepareE
     })
 }
 
+fn append_jsonl_blob(path: &Path, blob: &str) -> Result<(), PrepareError> {
+    let mut existing = if path.exists() {
+        fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+            path: path.to_path_buf(),
+            source,
+        })?
+    } else {
+        String::new()
+    };
+    existing.push_str(blob.trim_end());
+    existing.push('\n');
+    fs::write(path, existing).map_err(|source| PrepareError::WriteManifest {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn load_prepared_batch(
+    batch_manifest: PathBuf,
+) -> Result<(PathBuf, PreparedMsbBatch), PrepareError> {
+    let manifest_path = canonicalize_batch_file(&batch_manifest)?;
+    let manifest_text =
+        fs::read_to_string(&manifest_path).map_err(|source| PrepareError::ReadBatchManifest {
+            path: manifest_path.clone(),
+            source,
+        })?;
+    let prepared: PreparedMsbBatch = serde_json::from_str(&manifest_text).map_err(|source| {
+        PrepareError::ParseBatchManifest {
+            path: manifest_path.clone(),
+            source,
+        }
+    })?;
+
+    Ok((manifest_path, prepared))
+}
+
 fn load_prepared_run(run_manifest: PathBuf) -> Result<(PathBuf, PreparedSingleRun), PrepareError> {
     let manifest_path = canonicalize_file(&run_manifest)?;
     let manifest_text =
@@ -2092,6 +2438,17 @@ fn load_prepared_run(run_manifest: PathBuf) -> Result<(PathBuf, PreparedSingleRu
         })?;
 
     Ok((manifest_path, prepared))
+}
+
+fn canonicalize_batch_file(path: &Path) -> Result<PathBuf, PrepareError> {
+    if !path.exists() {
+        return Err(PrepareError::MissingBatchManifest(path.to_path_buf()));
+    }
+    path.canonicalize()
+        .map_err(|source| PrepareError::Canonicalize {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 fn log_replay_batch_context(batch_number: usize, batch: &[ploke_db::TypedEmbedData]) {
@@ -2327,6 +2684,39 @@ mod tests {
     fn truncate_preview_limits_length() {
         let preview = truncate_preview("abcdef", 4);
         assert_eq!(preview, "abcd...<truncated 2 chars>");
+    }
+
+    #[test]
+    fn indexing_status_artifact_for_parse_failure_uses_failed_status() {
+        let err = PrepareError::IndexingFailed {
+            detail: "Parse failed for crate: /tmp/ripgrep/crates/cli".to_string(),
+        };
+
+        let artifact = indexing_status_artifact_for_error(&err).expect("indexing artifact");
+        assert_eq!(artifact.status, "failed");
+        assert!(artifact.detail.contains("Parse failed for crate"));
+    }
+
+    #[test]
+    fn indexing_status_artifact_for_timeout_uses_timed_out_status() {
+        let err = PrepareError::Timeout {
+            phase: "indexing_completed",
+            secs: 300,
+        };
+
+        let artifact = indexing_status_artifact_for_error(&err).expect("timeout artifact");
+        assert_eq!(artifact.status, "timed_out");
+        assert!(artifact.detail.contains("300 seconds"));
+    }
+
+    #[test]
+    fn indexing_status_artifact_ignores_non_indexing_errors() {
+        let err = PrepareError::Timeout {
+            phase: "benchmark_turn",
+            secs: 10,
+        };
+
+        assert!(indexing_status_artifact_for_error(&err).is_none());
     }
 
     #[test]
