@@ -9,7 +9,7 @@ Store durable postmortem records here.
 ## Start Point
 
 - template:
-  [docs/workflow/postmortem-template.md](/home/brasides/code/ploke/docs/workflow/postmortem-template.md)
+  [postmortem-template.md](../../../workflow/postmortem-template.md)
 
 ## Naming
 

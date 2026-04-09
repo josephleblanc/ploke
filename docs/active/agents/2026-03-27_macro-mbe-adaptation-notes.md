@@ -52,11 +52,11 @@ The strongest portable idea is the three-stage shape:
 ## Where `syn_parser` is different
 
 Relevant local references:
-- [`crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs)
-- [`crates/ingest/syn_parser/src/parser/nodes/macros.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/nodes/macros.rs)
-- [`crates/ingest/syn_parser/src/parser/visitor/mod.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/visitor/mod.rs)
-- [`crates/ingest/syn_parser/src/parser/graph/code_graph.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/graph/code_graph.rs)
-- [`docs/active/todo/2026-03-24_macro_parsing.md`](/home/brasides/code/ploke/docs/active/todo/2026-03-24_macro_parsing.md)
+- [`crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs`](../../../crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs)
+- [`crates/ingest/syn_parser/src/parser/nodes/macros.rs`](../../../crates/ingest/syn_parser/src/parser/nodes/macros.rs)
+- [`crates/ingest/syn_parser/src/parser/visitor/mod.rs`](../../../crates/ingest/syn_parser/src/parser/visitor/mod.rs)
+- [`crates/ingest/syn_parser/src/parser/graph/code_graph.rs`](../../../crates/ingest/syn_parser/src/parser/graph/code_graph.rs)
+- [`docs/active/todo/2026-03-24_macro_parsing.md`](../todo/2026-03-24_macro_parsing.md)
 
 Current `syn_parser` behavior is AST-first and file-oriented:
 
@@ -107,7 +107,7 @@ Use rust-analyzer's shape, but replace the surrounding ecosystem with ploke-loca
 
 ## Recommended integration point in `syn_parser`
 
-Do not run expansion inside [`code_visitor.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs) while visiting a single file.
+Do not run expansion inside [`code_visitor.rs`](../../../crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs) while visiting a single file.
 
 That is too early for cases like:
 - `#[macro_use] mod crate_root;`

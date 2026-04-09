@@ -1,10 +1,10 @@
 # C5 Retrieval Scope Design Notes 2026-03-21
 
 Backlinks:
-- [2026-03-20_workspaces_implementation_plan.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_implementation_plan.md)
-- [2026-03-20_workspaces_acceptance_criteria.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_acceptance_criteria.md)
-- [2026-03-20_workspaces_progress_tracker.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-20_workspaces_progress_tracker.md)
-- [ADR-023-refactor-crate-focus.md](/home/brasides/code/ploke/docs/design/adrs/proposed/ADR-023-refactor-crate-focus.md)
+- [2026-03-20_workspaces_implementation_plan.md](../../reports/2026-03-20_workspaces_implementation_plan.md)
+- [2026-03-20_workspaces_acceptance_criteria.md](../../reports/2026-03-20_workspaces_acceptance_criteria.md)
+- [2026-03-20_workspaces_progress_tracker.md](2026-03-20_workspaces_progress_tracker.md)
+- [ADR-023-refactor-crate-focus.md](../../../design/adrs/proposed/ADR-023-refactor-crate-focus.md)
 
 This note captures the Phase 6 `C5` discovery pass so retrieval-scope work can be resumed without re-reading the entire `ploke-db`/`ploke-rag` stack.
 
@@ -22,24 +22,24 @@ The current retrieval stack is still unscoped.
 
 ### `ploke-rag`
 
-- `RagService` retrieval entrypoints live in [core/mod.rs](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs):
+- `RagService` retrieval entrypoints live in [core/mod.rs](../../../../crates/ploke-rag/src/core/mod.rs):
   - `search_bm25(...)`
   - `search_bm25_strict(...)`
   - `search(...)`
   - `hybrid_search(...)`
   - `get_context(...)`
-- `assemble_context(...)` in [context/mod.rs](/home/brasides/code/ploke/crates/ploke-rag/src/context/mod.rs) only materializes the IDs it is given. It preserves scope if retrieval is already scoped, but it cannot establish scope on its own.
+- `assemble_context(...)` in [context/mod.rs](../../../../crates/ploke-rag/src/context/mod.rs) only materializes the IDs it is given. It preserves scope if retrieval is already scoped, but it cannot establish scope on its own.
 - `ploke-tui` callers currently do not pass any explicit retrieval scope. Relevant call paths include:
-  - [rag/context.rs](/home/brasides/code/ploke/crates/ploke-tui/src/rag/context.rs)
-  - [rag/search.rs](/home/brasides/code/ploke/crates/ploke-tui/src/rag/search.rs)
-  - [tools/request_code_context.rs](/home/brasides/code/ploke/crates/ploke-tui/src/tools/request_code_context.rs)
-  - [app/commands/exec.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec.rs)
+  - [rag/context.rs](../../../../crates/ploke-tui/src/rag/context.rs)
+  - [rag/search.rs](../../../../crates/ploke-tui/src/rag/search.rs)
+  - [tools/request_code_context.rs](../../../../crates/ploke-tui/src/tools/request_code_context.rs)
+  - [app/commands/exec.rs](../../../../crates/ploke-tui/src/app/commands/exec.rs)
 
 ### `ploke-db`
 
-- Dense search flows through [index/hnsw.rs](/home/brasides/code/ploke/crates/ploke-db/src/index/hnsw.rs) into `HnswExt::search_similar_for_set(...)` in [multi_embedding/hnsw_ext.rs](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs).
+- Dense search flows through [index/hnsw.rs](../../../../crates/ploke-db/src/index/hnsw.rs) into `HnswExt::search_similar_for_set(...)` in [multi_embedding/hnsw_ext.rs](../../../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs).
 - The dense Cozo query already joins through `module` and `file_mod` and projects `namespace` before `:limit $limit`.
-- BM25 flows through `Bm25Cmd::Search` in [bm25_service.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/bm25_service.rs) into `Bm25Indexer::search(...)` in [bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs).
+- BM25 flows through `Bm25Cmd::Search` in [bm25_service.rs](../../../../crates/ploke-db/src/bm25_index/bm25_service.rs) into `Bm25Indexer::search(...)` in [bm25_index/mod.rs](../../../../crates/ploke-db/src/bm25_index/mod.rs).
 - BM25 currently has no namespace-aware metadata in its search path and truncates immediately after scoring.
 
 ## Constraints from the acceptance docs

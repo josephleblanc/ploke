@@ -1,7 +1,7 @@
 # Recreate Backup DB Fixtures
 
 Use the shared registry in
-[crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs)
+[crates/test-utils/src/fixture_dbs.rs](../../crates/test-utils/src/fixture_dbs.rs)
 as the source of truth for fixture ids, paths, validation rules, and
 recreation mode.
 
@@ -66,8 +66,8 @@ tests/backup_dbs/<stem>_2026-03-20.sqlite
 
 After generating a new dated backup, update:
 
-- [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs)
-- [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md)
+- [crates/test-utils/src/fixture_dbs.rs](../../crates/test-utils/src/fixture_dbs.rs)
+- [docs/testing/BACKUP_DB_FIXTURES.md](../testing/BACKUP_DB_FIXTURES.md)
 
 ## Repair a stale legacy backup in place
 
@@ -149,7 +149,7 @@ Current behavior:
 ## Review rule
 
 Before changing fixture consumers or adding a new backup, update the inventory
-in [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md)
+in [docs/testing/BACKUP_DB_FIXTURES.md](../testing/BACKUP_DB_FIXTURES.md)
 and keep the registry in sync.
 
 ## After Deleting Backups

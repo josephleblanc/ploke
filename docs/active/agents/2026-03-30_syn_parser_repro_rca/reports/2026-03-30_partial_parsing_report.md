@@ -16,18 +16,18 @@ This matches the corpus triage case it was modeled on (`linera-io/linera-protoco
 ### Evidence
 
 - Repro injects intentionally invalid syntax (`...` / `..`) into a `.rs` file and expects `SynParserError::PartialParsing`.
-  - [/home/brasides/code/ploke/crates/ingest/syn_parser/tests/repro/fail/partial_parsing.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/tests/repro/fail/partial_parsing.rs)
+  - [/home/brasides/code/ploke/crates/ingest/syn_parser/tests/repro/fail/partial_parsing.rs](../../../../../crates/ingest/syn_parser/tests/repro/fail/partial_parsing.rs)
 - Discovery collects all `.rs` files under `src/` (no module-reachability filtering).
   - `collect_rs_files_under` inserts any file with extension `.rs` found by `WalkDir`.
-  - [/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/mod.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/mod.rs#L485)
+  - [/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/mod.rs](../../../../../crates/ingest/syn_parser/src/discovery/mod.rs#L485)
 - Parse phase maps any `syn` parse error to `SynParserError::Syn` for that `source_path`.
   - `analyze_files_parallel` calls `analyze_file_phase2(..)` and maps error via `SynParserError::syn_parse_in_file`.
-  - [/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/visitor/mod.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/visitor/mod.rs#L511)
+  - [/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/visitor/mod.rs](../../../../../crates/ingest/syn_parser/src/parser/visitor/mod.rs#L511)
 - Aggregation turns “some ok + some err” into `SynParserError::PartialParsing`.
   - [`try_run_phases_and_resolve_with_target`] returns `PartialParsing` when `successes` is non-empty and `error_list` is non-empty.
-  - [/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs#L213)
+  - [/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs](../../../../../crates/ingest/syn_parser/src/lib.rs#L213)
 - The error variant is explicitly modeled as an error outcome (not a warning).
-  - [/home/brasides/code/ploke/crates/ingest/syn_parser/src/error.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/error.rs#L65)
+  - [/home/brasides/code/ploke/crates/ingest/syn_parser/src/error.rs](../../../../../crates/ingest/syn_parser/src/error.rs#L65)
 
 ### Suggested Fix / Mitigation (No Edits Made)
 

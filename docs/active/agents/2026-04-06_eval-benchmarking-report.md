@@ -53,9 +53,9 @@ It also incorporates parallel sub-agent surveys of:
 
 ### 1. What `ploke-eval` does today
 
-The current prepared-run schema is centered on `PreparedSingleRun` and `EvalBudget` in [`spec.rs`](/home/brasides/code/ploke/crates/ploke-eval/src/spec.rs), with Multi-SWE-bench instance normalization in [`msb.rs`](/home/brasides/code/ploke/crates/ploke-eval/src/msb.rs).
+The current prepared-run schema is centered on `PreparedSingleRun` and `EvalBudget` in [`spec.rs`](../../../crates/ploke-eval/src/spec.rs), with Multi-SWE-bench instance normalization in [`msb.rs`](../../../crates/ploke-eval/src/msb.rs).
 
-The main runner in [`runner.rs`](/home/brasides/code/ploke/crates/ploke-eval/src/runner.rs):
+The main runner in [`runner.rs`](../../../crates/ploke-eval/src/runner.rs):
 
 - loads a run manifest
 - resets the repo and checks out `base_sha`
@@ -84,13 +84,13 @@ That is enough to validate that the indexing path runs and to preserve the produ
 
 The application stack is considerably richer than the current eval driver:
 
-- Prompt construction and context planning happen in [`rag/context.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/rag/context.rs), including `ContextPlanSnapshot` and token estimates.
-- The LLM manager pairs `ChatEvt::Request` and `PromptConstructed`, then executes a multi-turn session loop in [`llm/manager/mod.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs) and [`llm/manager/session.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/session.rs).
-- Session-level error and outcome reporting already exists in [`llm/manager/loop_error.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/loop_error.rs) via `ChatSessionReport`, `SessionOutcome`, and typed loop errors.
-- Tool dispatch and result routing exist in [`tools/mod.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/tools/mod.rs), [`rag/tools.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/rag/tools.rs), and [`app_state/events.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/events.rs).
-- Tool and conversation observability is already persisted in [`ploke-tui/src/observability.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/observability.rs) using DB types in [`ploke-db/src/observability.rs`](/home/brasides/code/ploke/crates/ploke-db/src/observability.rs).
-- Retrieval strategies and context assembly are already configurable in [`ploke-rag/src/core/mod.rs`](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs) and surfaced to users in [`ploke-tui/src/user_config.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/user_config.rs).
-- Context-level stats already exist in [`ploke-core/src/rag_types.rs`](/home/brasides/code/ploke/crates/ploke-core/src/rag_types.rs) as `ContextStats`.
+- Prompt construction and context planning happen in [`rag/context.rs`](../../../crates/ploke-tui/src/rag/context.rs), including `ContextPlanSnapshot` and token estimates.
+- The LLM manager pairs `ChatEvt::Request` and `PromptConstructed`, then executes a multi-turn session loop in [`llm/manager/mod.rs`](../../../crates/ploke-tui/src/llm/manager/mod.rs) and [`llm/manager/session.rs`](../../../crates/ploke-tui/src/llm/manager/session.rs).
+- Session-level error and outcome reporting already exists in [`llm/manager/loop_error.rs`](../../../crates/ploke-tui/src/llm/manager/loop_error.rs) via `ChatSessionReport`, `SessionOutcome`, and typed loop errors.
+- Tool dispatch and result routing exist in [`tools/mod.rs`](../../../crates/ploke-tui/src/tools/mod.rs), [`rag/tools.rs`](../../../crates/ploke-tui/src/rag/tools.rs), and [`app_state/events.rs`](../../../crates/ploke-tui/src/app_state/events.rs).
+- Tool and conversation observability is already persisted in [`ploke-tui/src/observability.rs`](../../../crates/ploke-tui/src/observability.rs) using DB types in [`ploke-db/src/observability.rs`](../../../crates/ploke-db/src/observability.rs).
+- Retrieval strategies and context assembly are already configurable in [`ploke-rag/src/core/mod.rs`](../../../crates/ploke-rag/src/core/mod.rs) and surfaced to users in [`ploke-tui/src/user_config.rs`](../../../crates/ploke-tui/src/user_config.rs).
+- Context-level stats already exist in [`ploke-core/src/rag_types.rs`](../../../crates/ploke-core/src/rag_types.rs) as `ContextStats`.
 
 ### 3. The major gap
 
@@ -684,18 +684,18 @@ The first extension of `ploke-eval` should prefer reuse over building duplicate 
 
 ### Strong existing hooks
 
-- `PreparedSingleRun` and run directories in [`ploke-eval/src/spec.rs`](/home/brasides/code/ploke/crates/ploke-eval/src/spec.rs)
-- run-scoped logs in [`ploke-eval/src/tracing_setup.rs`](/home/brasides/code/ploke/crates/ploke-eval/src/tracing_setup.rs)
-- indexing events in [`ploke-embed/src/indexer/mod.rs`](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/indexer/mod.rs)
-- `ContextPlanSnapshot` and prompt construction events in [`ploke-tui/src/rag/context.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/rag/context.rs)
-- `ChatSessionReport` and loop errors in [`ploke-tui/src/llm/manager/loop_error.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/loop_error.rs)
-- tool lifecycle events in [`ploke-tui/src/app_state/events.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/events.rs)
-- persisted conversation/tool observability in [`ploke-tui/src/observability.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/observability.rs) and [`ploke-db/src/observability.rs`](/home/brasides/code/ploke/crates/ploke-db/src/observability.rs)
-- retrieval/config surfaces in [`ploke-rag/src/core/mod.rs`](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs) and [`ploke-tui/src/user_config.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/user_config.rs)
+- `PreparedSingleRun` and run directories in [`ploke-eval/src/spec.rs`](../../../crates/ploke-eval/src/spec.rs)
+- run-scoped logs in [`ploke-eval/src/tracing_setup.rs`](../../../crates/ploke-eval/src/tracing_setup.rs)
+- indexing events in [`ploke-embed/src/indexer/mod.rs`](../../../crates/ingest/ploke-embed/src/indexer/mod.rs)
+- `ContextPlanSnapshot` and prompt construction events in [`ploke-tui/src/rag/context.rs`](../../../crates/ploke-tui/src/rag/context.rs)
+- `ChatSessionReport` and loop errors in [`ploke-tui/src/llm/manager/loop_error.rs`](../../../crates/ploke-tui/src/llm/manager/loop_error.rs)
+- tool lifecycle events in [`ploke-tui/src/app_state/events.rs`](../../../crates/ploke-tui/src/app_state/events.rs)
+- persisted conversation/tool observability in [`ploke-tui/src/observability.rs`](../../../crates/ploke-tui/src/observability.rs) and [`ploke-db/src/observability.rs`](../../../crates/ploke-db/src/observability.rs)
+- retrieval/config surfaces in [`ploke-rag/src/core/mod.rs`](../../../crates/ploke-rag/src/core/mod.rs) and [`ploke-tui/src/user_config.rs`](../../../crates/ploke-tui/src/user_config.rs)
 
 ### Important current limitations
 
-- eval currently hardcodes the embedding preset in [`ploke-eval/src/runner.rs`](/home/brasides/code/ploke/crates/ploke-eval/src/runner.rs)
+- eval currently hardcodes the embedding preset in [`ploke-eval/src/runner.rs`](../../../crates/ploke-eval/src/runner.rs)
 - `execution-log.json` is currently a simple step list, not a timed phase report
 - eval budgets are present in manifests but not yet acting as a benchmark-side enforcement and reporting layer
 - the current runner does not drive retrieval, tool, or session paths

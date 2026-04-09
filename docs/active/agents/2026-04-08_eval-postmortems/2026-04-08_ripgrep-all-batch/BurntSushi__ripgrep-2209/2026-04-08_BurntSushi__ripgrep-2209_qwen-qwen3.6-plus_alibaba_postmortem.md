@@ -4,9 +4,9 @@
 - task title: BurntSushi__ripgrep-2209 qwen/alibaba Postmortem
 - task description: Batch-specific postmortem for the `qwen/qwen3.6-plus` + `alibaba` ripgrep-all run on instance `BurntSushi__ripgrep-2209`, with emphasis on tool friction, artifact trust, and comparison against earlier model reports.
 - related planning files:
-  - [2026-04-08_postmortem-template.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_postmortem-template.md)
-  - [2026-04-08_batch-postmortem-index.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_batch-postmortem-index.md)
-  - [2026-04-08_batch-postmortem-meta-notes.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_batch-postmortem-meta-notes.md)
+  - [2026-04-08_postmortem-template.md](../../2026-04-08_postmortem-template.md)
+  - [2026-04-08_batch-postmortem-index.md](../2026-04-08_batch-postmortem-index.md)
+  - [2026-04-08_batch-postmortem-meta-notes.md](../2026-04-08_batch-postmortem-meta-notes.md)
 
 ## Header
 

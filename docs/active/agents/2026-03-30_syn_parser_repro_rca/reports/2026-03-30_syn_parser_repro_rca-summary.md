@@ -17,7 +17,7 @@
 - Cases:
   - `repro_workspace_package_missing_version_manifest_parse_error`
   - `repro_bin_target_missing_path_manifest_parse_error`
-- Report: [manifest_errors_report.md](/home/brasides/code/ploke/docs/active/agents/2026-03-30_syn_parser_repro_rca/reports/2026-03-30_manifest_errors_report.md)
+- Report: [manifest_errors_report.md](2026-03-30_manifest_errors_report.md)
 - Summary:
   - The manifest schema requires fields that Cargo normally defaults or inherits.
   - Discovery fails early with `toml::from_str` instead of applying Cargo-compatible defaults.
@@ -29,7 +29,7 @@
 
 - Case:
   - `repro_duplicate_item_placeholder_trait_signatures`
-- Report: [proc_macro_parsing_report.md](/home/brasides/code/ploke/docs/active/agents/2026-03-30_syn_parser_repro_rca/reports/2026-03-30_proc_macro_parsing_report.md)
+- Report: [proc_macro_parsing_report.md](2026-03-30_proc_macro_parsing_report.md)
 - Summary:
   - The parser is operating on raw source before expansion.
   - Placeholder-oriented syntax is not valid `syn::File` input, so parse failure is expected.
@@ -41,7 +41,7 @@
 
 - Case:
   - `repro_partial_parsing_with_template_placeholders`
-- Report: [partial_parsing_report.md](/home/brasides/code/ploke/docs/active/agents/2026-03-30_syn_parser_repro_rca/reports/2026-03-30_partial_parsing_report.md)
+- Report: [partial_parsing_report.md](2026-03-30_partial_parsing_report.md)
 - Summary:
   - Every `.rs` file under `src/` is parsed, including template-like files that are not compilation-relevant.
   - One invalid discovered file turns the run into `SynParserError::PartialParsing`.
@@ -54,7 +54,7 @@
 - Cases:
   - `repro_duplicate_quantized_metal_mod_merge_error`
   - `repro_duplicate_cfg_gated_module_merge_error`
-- Report: [cfg_gates_report.md](/home/brasides/code/ploke/docs/active/agents/2026-03-30_syn_parser_repro_rca/reports/2026-03-30_cfg_gates_report.md)
+- Report: [cfg_gates_report.md](2026-03-30_cfg_gates_report.md)
 - Summary:
   - File-based modules are indexed even when unreachable because inline modules exist.
   - Duplicate detection runs before pruning.
@@ -71,7 +71,7 @@
   - `repro_duplicate_scheduler_queue_mod_merge_error`
   - `repro_duplicate_logging_inline_file_mod_merge_error`
   - `repro_duplicate_image_inline_file_mod_merge_error`
-- Report: [file_links_report.md](/home/brasides/code/ploke/docs/active/agents/2026-03-30_syn_parser_repro_rca/reports/2026-03-30_file_links_report.md)
+- Report: [file_links_report.md](2026-03-30_file_links_report.md)
 - Summary:
   - `logical_module_path_for_file` is normalizing `main.rs` too broadly.
   - File-based modules are inserted before pruning, so they collide with inline definitions that should shadow them.

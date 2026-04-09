@@ -1,13 +1,13 @@
 # ploke-rag Backup Loading Survey 2026-03-20
 
 Scope: `crates/ploke-rag` only, compared against
-[docs/active/todo/2026-03-19_backup-dbs.md](/home/brasides/code/ploke/docs/active/todo/2026-03-19_backup-dbs.md)
+[docs/active/todo/2026-03-19_backup-dbs.md](../../todo/2026-03-19_backup-dbs.md)
 and the shared registry/helper model in
-[crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs).
+[crates/test-utils/src/fixture_dbs.rs](../../../../crates/test-utils/src/fixture_dbs.rs).
 
 ## Backup DB Consumers
 
-- [crates/ploke-rag/src/core/unit_tests.rs](/home/brasides/code/ploke/crates/ploke-rag/src/core/unit_tests.rs)
+- [crates/ploke-rag/src/core/unit_tests.rs](../../../../crates/ploke-rag/src/core/unit_tests.rs)
   - `load_local_fixture_db()` -> `shared_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)`
   - `db_test_setup()` -> `load_local_fixture_db()`
   - `default_test_db_setup()` -> `load_local_fixture_db()`
@@ -15,7 +15,7 @@ and the shared registry/helper model in
   - `test_fixture_embeddings_loaded_into_active_set()` uses `TEST_DB_NODES`
   - `dense_context_uses_multi_embedding_relations()` uses `fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)`
   - `test_db_nodes_setup()` uses `default_test_db_setup()`
-- [crates/ploke-rag/tests/integration_tests.rs](/home/brasides/code/ploke/crates/ploke-rag/tests/integration_tests.rs)
+- [crates/ploke-rag/tests/integration_tests.rs](../../../../crates/ploke-rag/tests/integration_tests.rs)
   - `TEST_DB_NODES` -> `shared_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)`
   - `setup_rag()` reads from that shared DB
 

@@ -3,7 +3,7 @@
 Date: 2026-03-21
 Status: active
 Related phase: Phase 3 `C2` in
-[2026-03-20_workspaces_progress_tracker.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-20_workspaces_progress_tracker.md)
+[2026-03-20_workspaces_progress_tracker.md](../agents/2026-03-workspaces/2026-03-20_workspaces_progress_tracker.md)
 
 ## Summary
 
@@ -51,7 +51,7 @@ with:
 - `resolve_index_target(Some(PathBuf::from(&workspace)))`
 
 inside
-[indexing.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs).
+[indexing.rs](../../../crates/ploke-tui/src/app_state/handlers/indexing.rs).
 
 That delegated relative-path interpretation to cwd-based resolution even when
 `SystemStatus` already carried authoritative loaded state.
@@ -71,8 +71,8 @@ This is a `G1` / `G2` class problem, not just a test nuisance:
 
 The narrow regression witnesses are in:
 
-- [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs)
-- [indexing.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs)
+- [index_workspace_targets.rs](../../../crates/ploke-tui/tests/index_workspace_targets.rs)
+- [indexing.rs](../../../crates/ploke-tui/src/app_state/handlers/indexing.rs)
 
 Relevant tests:
 

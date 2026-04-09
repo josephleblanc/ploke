@@ -4,9 +4,9 @@
 - task title: BurntSushi__ripgrep-2626 Batch Postmortem
 - task description: Document the qwen/qwen3.6-plus + alibaba batch run for `BurntSushi__ripgrep-2626`, emphasizing why it aborted before producing a patch and what tool-contract issues surfaced.
 - related planning files:
-  - [2026-04-08_postmortem-template.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_postmortem-template.md)
-  - [2026-04-08_batch-postmortem-index.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_batch-postmortem-index.md)
-  - [2026-04-08_postmortem-template-review.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_postmortem-template-review.md)
+  - [2026-04-08_postmortem-template.md](../../2026-04-08_postmortem-template.md)
+  - [2026-04-08_batch-postmortem-index.md](../2026-04-08_batch-postmortem-index.md)
+  - [2026-04-08_postmortem-template-review.md](../2026-04-08_postmortem-template-review.md)
 
 ## Header
 

@@ -2,7 +2,7 @@
 
 Complete this before implementation work starts depending on the new workflow.
 
-This file is the durable gate definition, not the live status board. See [docs/active/workflow/readiness-status.md](/home/brasides/code/ploke/docs/active/workflow/readiness-status.md) for the current operating interpretation.
+This file is the durable gate definition, not the live status board. See [readiness-status.md](../active/workflow/readiness-status.md) for the current operating interpretation.
 
 ## Design
 

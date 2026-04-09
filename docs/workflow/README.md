@@ -13,17 +13,17 @@ This directory holds durable workflow assets for eval-driven development:
 
 Common entry points:
 
-- [ab-testing-ablation-framework.md](/home/brasides/code/ploke/docs/workflow/ab-testing-ablation-framework.md)
-- [documentation-readiness-checklist.md](/home/brasides/code/ploke/docs/workflow/documentation-readiness-checklist.md)
-- [living-artifacts-checklist.md](/home/brasides/code/ploke/docs/workflow/living-artifacts-checklist.md)
-- [id-conventions.md](/home/brasides/code/ploke/docs/workflow/id-conventions.md)
-- [handoff-template.md](/home/brasides/code/ploke/docs/workflow/handoff-template.md)
-- [phase-tracking-template.md](/home/brasides/code/ploke/docs/workflow/phase-tracking-template.md)
-- [postmortem-template.md](/home/brasides/code/ploke/docs/workflow/postmortem-template.md)
-- [skills/README.md](/home/brasides/code/ploke/docs/workflow/skills/README.md)
+- [ab-testing-ablation-framework.md](ab-testing-ablation-framework.md)
+- [documentation-readiness-checklist.md](documentation-readiness-checklist.md)
+- [living-artifacts-checklist.md](living-artifacts-checklist.md)
+- [id-conventions.md](id-conventions.md)
+- [handoff-template.md](handoff-template.md)
+- [phase-tracking-template.md](phase-tracking-template.md)
+- [postmortem-template.md](postmortem-template.md)
+- [skills/README.md](skills/README.md)
 
-Use [docs/active/workflow/programme_charter.md](/home/brasides/code/ploke/docs/active/workflow/programme_charter.md), [docs/active/workflow/hypothesis-registry.md](/home/brasides/code/ploke/docs/active/workflow/hypothesis-registry.md), and the other files under [docs/active/workflow](/home/brasides/code/ploke/docs/active/workflow) for the living record.
+Use [programme_charter.md](../active/workflow/programme_charter.md), [hypothesis-registry.md](../active/workflow/hypothesis-registry.md), and the other files under [active/workflow](../active/workflow) for the living record.
 
-For bootstrap and handoff state, use [docs/active/workflow/handoffs](/home/brasides/code/ploke/docs/active/workflow/handoffs).
+For bootstrap and handoff state, use [handoffs](../active/workflow/handoffs).
 
 Stable assets in this directory should change slowly. Active artifacts should change as experiments run.

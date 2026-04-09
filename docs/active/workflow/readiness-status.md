@@ -12,7 +12,7 @@ The workflow is ready for active documentation, planning, and controlled adoptio
 ## Current Rule
 
 - use the workflow now for documentation, coordination, and structuring new work
-- before relying on a specific workflow feature as mandatory process, check [docs/workflow/documentation-readiness-checklist.md](/home/brasides/code/ploke/docs/workflow/documentation-readiness-checklist.md) and record any waiver or unresolved gap in an EDR, handoff note, or recent-activity update
+- before relying on a specific workflow feature as mandatory process, check [documentation-readiness-checklist.md](../../workflow/documentation-readiness-checklist.md) and record any waiver or unresolved gap in an EDR, handoff note, or recent-activity update
 
 ## Notes
 

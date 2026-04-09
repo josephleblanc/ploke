@@ -6,13 +6,13 @@
 
 Use this directory for short-lived handoff and bootstrap documents that help another person or agent resume work quickly.
 
-Start from [recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/recent-activity.md) for the rolling current-state board, then use this directory for task-specific handoff notes when needed.
+Start from [recent-activity.md](recent-activity.md) for the rolling current-state board, then use this directory for task-specific handoff notes when needed.
 
 ## Files
 
-- [recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/recent-activity.md)
+- [recent-activity.md](recent-activity.md)
   Rolling summary of the most recently touched workflow docs and why they changed.
-- [handoff-template.md](/home/brasides/code/ploke/docs/workflow/handoff-template.md)
+- [handoff-template.md](../../../workflow/handoff-template.md)
   Durable template for task-specific handoff notes.
 
 ## Rules

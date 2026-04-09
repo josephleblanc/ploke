@@ -58,7 +58,7 @@
 - `non_semantic_patch` rejected malformed diffs and required strict unified-diff syntax.
 - `apply_code_edit` rejected an invalid canonical target shape for method edits.
 - The manifest rewrite produced a `cargo metadata` failure at [Cargo.toml:58](/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/Cargo.toml#L58), which blocked ordinary tool flows.
-- The log also contains runner warnings at [crates/ploke-tui/src/file_man.rs:141](/home/brasides/code/ploke/crates/ploke-tui/src/file_man.rs#L141), [crates/ploke-llm/src/router_only/openrouter/providers.rs:58](/home/brasides/code/ploke/crates/ploke-llm/src/router_only/openrouter/providers.rs#L58), and [crates/ploke-llm/src/types/enums.rs:14](/home/brasides/code/ploke/crates/ploke-llm/src/types/enums.rs#L14).
+- The log also contains runner warnings at [crates/ploke-tui/src/file_man.rs:141](../../../../../../crates/ploke-tui/src/file_man.rs#L141), [crates/ploke-llm/src/router_only/openrouter/providers.rs:58](../../../../../../crates/ploke-llm/src/router_only/openrouter/providers.rs#L58), and [crates/ploke-llm/src/types/enums.rs:14](../../../../../../crates/ploke-llm/src/types/enums.rs#L14).
 
 ### Model Mistake
 

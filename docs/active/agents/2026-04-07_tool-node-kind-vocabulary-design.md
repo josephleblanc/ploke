@@ -23,8 +23,8 @@ The DB probe showed:
 
 The immediate cause appears to be model-facing tool vocabulary drift:
 
-- [`code_item_lookup.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/tools/code_item_lookup.rs) lists allowed `node_kind` values in a hand-written description string and a separate hand-written runtime validator
-- [`get_code_edges.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/tools/get_code_edges.rs) duplicates the same list
+- [`code_item_lookup.rs`](../../../crates/ploke-tui/src/tools/code_item_lookup.rs) lists allowed `node_kind` values in a hand-written description string and a separate hand-written runtime validator
+- [`get_code_edges.rs`](../../../crates/ploke-tui/src/tools/get_code_edges.rs) duplicates the same list
 - the recorded API request fixture shows the model was not offered `method` as a valid value
 
 This is not only a missing-value bug. It is a design issue: the tool layer currently represents a closed vocabulary as unconstrained strings plus prose.
@@ -33,9 +33,9 @@ This is not only a missing-value bug. It is a design issue: the tool layer curre
 
 There are already multiple vocabularies in the codebase:
 
-- [`ploke_core::ItemKind`](/home/brasides/code/ploke/crates/ploke-core/src/lib.rs#L845)
+- [`ploke_core::ItemKind`](../../../crates/ploke-core/src/lib.rs#L845)
   - includes `Function`, `Method`, `Struct`, `Enum`, `Impl`, `Import`, `TypeAlias`, etc.
-- [`ploke_db::NodeType`](/home/brasides/code/ploke/crates/ploke-db/src/query/builder.rs#L78)
+- [`ploke_db::NodeType`](../../../crates/ploke-db/src/query/builder.rs#L78)
   - includes `Method` and maps to DB relation names via `relation_str()`
 - tool-layer request schemas
   - currently use raw JSON `"type": "string"` with free-form descriptions
@@ -48,7 +48,7 @@ Introduce one canonical tool-facing node-kind type and generate all model-facing
 
 That type should:
 
-- be backed by existing domain vocabulary, preferably [`NodeType`](/home/brasides/code/ploke/crates/ploke-db/src/query/builder.rs#L78) or a narrow wrapper around it
+- be backed by existing domain vocabulary, preferably [`NodeType`](../../../crates/ploke-db/src/query/builder.rs#L78) or a narrow wrapper around it
 - explicitly include the queryable kinds the tools support:
   - `function`
   - `method`
@@ -111,7 +111,7 @@ This type should provide:
 - `TryFrom<&str>` or `Deserialize` for validation
 - `to_relation() -> &'static str` or `to_node_type() -> NodeType`
 
-If the codebase can cleanly use [`NodeType`](/home/brasides/code/ploke/crates/ploke-db/src/query/builder.rs#L78) directly, that is better than adding another enum. But the tool-facing subset must still be explicit.
+If the codebase can cleanly use [`NodeType`](../../../crates/ploke-db/src/query/builder.rs#L78) directly, that is better than adding another enum. But the tool-facing subset must still be explicit.
 
 ### 2. Emit JSON Schema `enum`
 
@@ -155,9 +155,9 @@ The following should all derive from the same type:
 
 That includes:
 
-- [`code_item_lookup.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/tools/code_item_lookup.rs)
-- [`get_code_edges.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/tools/get_code_edges.rs)
-- [`code_edit.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/tools/code_edit.rs#L230), which currently uses a vague `"function|struct|enum|..."` description
+- [`code_item_lookup.rs`](../../../crates/ploke-tui/src/tools/code_item_lookup.rs)
+- [`get_code_edges.rs`](../../../crates/ploke-tui/src/tools/get_code_edges.rs)
+- [`code_edit.rs`](../../../crates/ploke-tui/src/tools/code_edit.rs#L230), which currently uses a vague `"function|struct|enum|..."` description
 - any tool-list/help rendering that reproduces tool signatures
 
 ## Guardrails
@@ -176,7 +176,7 @@ This should be a unit test, not a manual check.
 
 Use the existing replay fixture:
 
-- [BurntSushi__ripgrep-2209_code_item_lookup_context.json](/home/brasides/code/ploke/crates/ploke-eval/src/tests/fixtures/BurntSushi__ripgrep-2209_code_item_lookup_context.json)
+- [BurntSushi__ripgrep-2209_code_item_lookup_context.json](../../../crates/ploke-eval/src/tests/fixtures/BurntSushi__ripgrep-2209_code_item_lookup_context.json)
 
 Deserialize its `api_request` payload and assert that the `code_item_lookup` tool definition includes `method` in the schema enum once the fix is in place.
 
@@ -203,8 +203,8 @@ One subtle point: tool-queryable kinds are not identical to `NodeType::primary_n
 For example:
 
 - the lookup tools currently advertise `impl` and `import`
-- [`NodeType::primary_nodes()`](/home/brasides/code/ploke/crates/ploke-db/src/query/builder.rs#L158) does not include them
-- [`NodeType::primary_and_assoc_nodes()`](/home/brasides/code/ploke/crates/ploke-db/src/query/builder.rs#L176) includes `Method` but still excludes `Impl` and `Import`
+- [`NodeType::primary_nodes()`](../../../crates/ploke-db/src/query/builder.rs#L158) does not include them
+- [`NodeType::primary_and_assoc_nodes()`](../../../crates/ploke-db/src/query/builder.rs#L176) includes `Method` but still excludes `Impl` and `Import`
 
 So the correct source of truth is not "all primary nodes". It is "all kinds the tool contract promises are queryable".
 

@@ -4,7 +4,7 @@
 - owning_branch: `refactor/tool-calls`
 - review_cadence: daily at 3:00 p.m. America/Los_Angeles local time
 - update_trigger: update after any formal run, reviewed postmortem, or belief change
-- id_conventions: [docs/workflow/id-conventions.md](/home/brasides/code/ploke/docs/workflow/id-conventions.md)
+- id_conventions: [id-conventions.md](../../workflow/id-conventions.md)
 
 ## Update Policy
 
@@ -22,7 +22,7 @@
 - evidence:
   current runs store provider selection in `execution-log.json`, turn outcome details in `agent-turn-summary.json`, and repo/snapshot status in separate JSON files.
 - consequence:
-  the workflow should treat [docs/workflow/run-manifest.v0.draft.json](/home/brasides/code/ploke/docs/workflow/run-manifest.v0.draft.json) as the target schema, not a claim about current state.
+  the workflow should treat [run-manifest.v0.draft.json](../../workflow/run-manifest.v0.draft.json) as the target schema, not a claim about current state.
 
 ### BEL-002: Setup and provider failures need their own visibility before H0 claims are credible
 

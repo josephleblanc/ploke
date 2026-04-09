@@ -4,9 +4,9 @@
 - task title: Ripgrep Batch Postmortem Template Review
 - task description: Review the batch postmortem template and current artifact structure after reading the completed `ripgrep-all` instance reports.
 - related planning files:
-  - [2026-04-08_postmortem-template.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_postmortem-template.md)
-  - [2026-04-08_batch-postmortem-index.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_batch-postmortem-index.md)
-  - [2026-04-08_batch-postmortem-meta-notes.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_batch-postmortem-meta-notes.md)
+  - [2026-04-08_postmortem-template.md](../2026-04-08_postmortem-template.md)
+  - [2026-04-08_batch-postmortem-index.md](2026-04-08_batch-postmortem-index.md)
+  - [2026-04-08_batch-postmortem-meta-notes.md](2026-04-08_batch-postmortem-meta-notes.md)
 
 ## Review
 

@@ -1,7 +1,7 @@
 # Workspace Acceptance Criteria 2026-03-20
 
 Backlink:
-[2026-03-20_workspaces_implementation_plan.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_implementation_plan.md)
+[2026-03-20_workspaces_implementation_plan.md](2026-03-20_workspaces_implementation_plan.md)
 
 This document is the exhaustive acceptance-criteria companion for the workspace
 implementation plan. It records:
@@ -31,17 +31,17 @@ Two important corrections to example properties from the todo:
 1. The current schema does not create explicit edges from crate nodes to a
    workspace node. `workspace_metadata` stores a `members` list field instead;
    see
-   [crates/ingest/ploke-transform/src/schema/crate_node.rs#L17](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/schema/crate_node.rs#L17)
+   [crates/ingest/ploke-transform/src/schema/crate_node.rs#L17](../../../crates/ingest/ploke-transform/src/schema/crate_node.rs#L17)
    and
-   [crates/ingest/ploke-transform/src/transform/workspace.rs#L60](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L60).
+   [crates/ingest/ploke-transform/src/transform/workspace.rs#L60](../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L60).
    The direct evidence target for the current plan is therefore
    membership-list consistency, not graph-edge existence.
 2. Exact global cross-crate ranking is not fully provable in general for the
    workspace search rollout because dense retrieval uses embeddings plus
    approximate HNSW search; see
-   [crates/ploke-rag/src/core/mod.rs#L489](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs#L489)
+   [crates/ploke-rag/src/core/mod.rs#L489](../../../crates/ploke-rag/src/core/mod.rs#L489)
    and
-   [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L337](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L337).
+   [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L337](../../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L337).
    The correct acceptance target is scope correctness plus expected hits on
    controlled fixtures, not universal ranking proofs.
 
@@ -54,17 +54,17 @@ the precise senses below.
   canonicalized workspace root path. `WorkspaceId::from_root_path(...)` and
   `WorkspaceInfo::from_root_path(...)` both derive identity from
   `canonicalize_best_effort(path)`; see
-  [crates/ploke-core/src/workspace.rs#L28](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs#L28),
-  [crates/ploke-core/src/workspace.rs#L39](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs#L39),
+  [crates/ploke-core/src/workspace.rs#L28](../../../crates/ploke-core/src/workspace.rs#L28),
+  [crates/ploke-core/src/workspace.rs#L39](../../../crates/ploke-core/src/workspace.rs#L39),
   and
-  [crates/ploke-core/src/workspace.rs#L80](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs#L80).
+  [crates/ploke-core/src/workspace.rs#L80](../../../crates/ploke-core/src/workspace.rs#L80).
 - `runtime member set`: the canonical runtime projection of loaded membership.
   In current code the only runtime carrier is `SystemStatus.workspace_roots` and
   its `crates` vector, while `crate_focus` selects one member from that set; see
-  [crates/ploke-tui/src/app_state/core.rs#L383](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L383),
-  [crates/ploke-tui/src/app_state/core.rs#L425](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L425),
+  [crates/ploke-tui/src/app_state/core.rs#L383](../../../crates/ploke-tui/src/app_state/core.rs#L383),
+  [crates/ploke-tui/src/app_state/core.rs#L425](../../../crates/ploke-tui/src/app_state/core.rs#L425),
   and
-  [crates/ploke-core/src/workspace.rs#L97](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs#L97).
+  [crates/ploke-core/src/workspace.rs#L97](../../../crates/ploke-core/src/workspace.rs#L97).
   Phase 2 may replace the carrier with `LoadedWorkspaceState.crates`, but the
   canonical projection remains the set of loaded crate root paths in runtime
   state, not `crate_focus` alone.
@@ -73,44 +73,44 @@ the precise senses below.
   for the loaded snapshot. `try_parse_manifest(...)` converts manifest members
   to workspace-root-joined paths, and `transform_workspace_metadata(...)`
   persists those paths verbatim; see
-  [crates/ingest/syn_parser/src/discovery/workspace.rs#L203](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/workspace.rs#L203),
-  [crates/ingest/ploke-transform/src/transform/workspace.rs#L60](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L60),
+  [crates/ingest/syn_parser/src/discovery/workspace.rs#L203](../../../crates/ingest/syn_parser/src/discovery/workspace.rs#L203),
+  [crates/ingest/ploke-transform/src/transform/workspace.rs#L60](../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L60),
   and
-  [docs/active/agents/2026-03-workspaces/save-load-update-correctness-survey.md#L12](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/save-load-update-correctness-survey.md#L12).
+  [docs/active/agents/2026-03-workspaces/save-load-update-correctness-survey.md#L12](../agents/2026-03-workspaces/save-load-update-correctness-survey.md#L12).
 - `member list canonicalized`: for this document, canonicalization means the
   workspace-root-joined member paths produced by parser discovery and persisted
   by transform. Membership-equality checks compare those canonical root paths as
   a set; order-sensitive persistence checks may additionally assert that the
   manifest order is preserved because the transform layer iterates parser output
   directly. It does not mean caller-side sorting or deduplication; see
-  [crates/ingest/syn_parser/src/discovery/workspace.rs#L210](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/workspace.rs#L210),
-  [crates/ingest/ploke-transform/src/transform/workspace.rs#L66](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L66),
+  [crates/ingest/syn_parser/src/discovery/workspace.rs#L210](../../../crates/ingest/syn_parser/src/discovery/workspace.rs#L210),
+  [crates/ingest/ploke-transform/src/transform/workspace.rs#L66](../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L66),
   and
-  [crates/ingest/syn_parser/src/discovery/workspace.rs#L395](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/workspace.rs#L395).
+  [crates/ingest/syn_parser/src/discovery/workspace.rs#L395](../../../crates/ingest/syn_parser/src/discovery/workspace.rs#L395).
 - `authoritative membership`: a phase-relative rule.
   - during `/index`, parsed target output is authoritative for loaded
     membership: crate-target indexing may authoritatively load one crate, while
     workspace-target indexing uses parsed workspace membership from
     `parse_workspace(...)`; see
-    [crates/ingest/syn_parser/src/lib.rs#L66](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs#L66)
+    [crates/ingest/syn_parser/src/lib.rs#L66](../../../crates/ingest/syn_parser/src/lib.rs#L66)
     and
-    [docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L88](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L88)
+    [docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L88](2026-03-20_workspaces_implementation_plan.md#L88)
   - during `/load`, restored snapshot/DB metadata is authoritative and the
     registry is only a locator for the snapshot; see
-    [docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L298](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L298)
+    [docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L298](2026-03-20_workspaces_implementation_plan.md#L298)
     and
-    [docs/active/agents/2026-03-workspaces/save-load-update-correctness-survey.md#L24](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/save-load-update-correctness-survey.md#L24)
+    [docs/active/agents/2026-03-workspaces/save-load-update-correctness-survey.md#L24](../agents/2026-03-workspaces/save-load-update-correctness-survey.md#L24)
   - during `/workspace status`, `/workspace update`, and subset commands, the
     loaded snapshot member set remains authoritative while live manifest
     inspection is used only to detect drift; see
-    [docs/active/agents/2026-03-workspaces/save-load-update-correctness-survey.md#L25](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/save-load-update-correctness-survey.md#L25)
+    [docs/active/agents/2026-03-workspaces/save-load-update-correctness-survey.md#L25](../agents/2026-03-workspaces/save-load-update-correctness-survey.md#L25)
     and
-    [docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L347](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L347)
+    [docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L347](2026-03-20_workspaces_implementation_plan.md#L347)
   - neither `current_dir()` nor `crate_focus` is authoritative for membership;
     see
-    [crates/ploke-tui/src/app_state/handlers/indexing.rs#L52](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs#L52)
+    [crates/ploke-tui/src/app_state/handlers/indexing.rs#L52](../../../crates/ploke-tui/src/app_state/handlers/indexing.rs#L52)
     and
-    [crates/ploke-tui/src/app_state/core.rs#L425](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L425)
+    [crates/ploke-tui/src/app_state/core.rs#L425](../../../crates/ploke-tui/src/app_state/core.rs#L425)
 - `coherent session state` / `same loaded dataset`: the tuple
   `(workspace_id, workspace_root, member_roots, active_embedding_set,
   hnsw_registration(active_embedding_set), bm25_status, focused_crate,
@@ -120,56 +120,56 @@ the precise senses below.
   registration is checked by `is_hnsw_index_registered(...)`; BM25 readiness is
   exposed by `Bm25Status`; focus and IO roots come from `SystemStatus` and
   `derive_path_policy(...)`; see
-  [crates/ploke-db/src/database.rs#L974](/home/brasides/code/ploke/crates/ploke-db/src/database.rs#L974),
-  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448),
-  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/bm25_service.rs#L9),
-  [crates/ploke-tui/src/app_state/core.rs#L500](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L500),
+  [crates/ploke-db/src/database.rs#L974](../../../crates/ploke-db/src/database.rs#L974),
+  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448](../../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448),
+  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](../../../crates/ploke-db/src/bm25_index/bm25_service.rs#L9),
+  [crates/ploke-tui/src/app_state/core.rs#L500](../../../crates/ploke-tui/src/app_state/core.rs#L500),
   and
-  [crates/ploke-tui/src/app_state/database.rs#L234](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L234).
+  [crates/ploke-tui/src/app_state/database.rs#L234](../../../crates/ploke-tui/src/app_state/database.rs#L234).
 - `registered HNSW state`: the active embedding set's HNSW relation exists in
   Cozo and passes `::indices`, as implemented by
   `is_hnsw_index_registered(...)`; see
-  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448).
+  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448](../../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448).
 - `ready BM25 state`: `Bm25Status::Ready { docs }` with `docs > 0`; see
-  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/bm25_service.rs#L9).
+  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](../../../crates/ploke-db/src/bm25_index/bm25_service.rs#L9).
 - `explicitly reported unavailable`: a user-visible or runtime-visible state in
   which search readiness is not claimed. In current code this includes BM25
   non-ready states (`Uninitialized`, `Building`, `Empty`, `Error(...)`),
   strict-BM25 errors such as `"bm25 index not ready"` and `"bm25 index empty"`,
   and `/load` surfacing `"embedding searches will be unavailable"` when no
   populated embedding set can be restored; see
-  [crates/ploke-rag/src/core/mod.rs#L421](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs#L421),
-  [crates/ploke-rag/src/core/mod.rs#L471](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs#L471),
-  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/bm25_service.rs#L9),
+  [crates/ploke-rag/src/core/mod.rs#L421](../../../crates/ploke-rag/src/core/mod.rs#L421),
+  [crates/ploke-rag/src/core/mod.rs#L471](../../../crates/ploke-rag/src/core/mod.rs#L471),
+  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](../../../crates/ploke-db/src/bm25_index/bm25_service.rs#L9),
   and
-  [crates/ploke-tui/src/app_state/database.rs#L392](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L392).
+  [crates/ploke-tui/src/app_state/database.rs#L392](../../../crates/ploke-tui/src/app_state/database.rs#L392).
   For HNSW, the acceptance meaning is the same: missing registration or
   search-path errors must surface as unavailable rather than being reported as
   ready; see
-  [crates/ploke-db/src/index/hnsw.rs#L35](/home/brasides/code/ploke/crates/ploke-db/src/index/hnsw.rs#L35),
-  [crates/ploke-db/src/index/hnsw.rs#L291](/home/brasides/code/ploke/crates/ploke-db/src/index/hnsw.rs#L291),
+  [crates/ploke-db/src/index/hnsw.rs#L35](../../../crates/ploke-db/src/index/hnsw.rs#L35),
+  [crates/ploke-db/src/index/hnsw.rs#L291](../../../crates/ploke-db/src/index/hnsw.rs#L291),
   and
-  [docs/active/agents/2026-03-workspaces/db-rag-acceptance-survey.md#L25](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/db-rag-acceptance-survey.md#L25).
+  [docs/active/agents/2026-03-workspaces/db-rag-acceptance-survey.md#L25](../agents/2026-03-workspaces/db-rag-acceptance-survey.md#L25).
 - `canonical plain workspace backup fixture`: for this acceptance document, this
   means the same fixture class as the current plain backup fixtures: plain
   backup import, no embedding-model contract assumed, and primary HNSW index
   created after import by the caller. This is an explicit acceptance definition
   inferred from the current fixture taxonomy; see
-  [docs/testing/BACKUP_DB_FIXTURES.md#L73](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md#L73)
+  [docs/testing/BACKUP_DB_FIXTURES.md#L73](../../testing/BACKUP_DB_FIXTURES.md#L73)
   and
-  [docs/testing/BACKUP_DB_FIXTURES.md#L133](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md#L133).
+  [docs/testing/BACKUP_DB_FIXTURES.md#L133](../../testing/BACKUP_DB_FIXTURES.md#L133).
 - `current BM25 fallback semantics are preserved`: lenient BM25 search retries
   on `Uninitialized`/`Building`, falls back to dense search when BM25 is not
   ready or empty, and does not fall back when `Ready { docs > 0 }` returns zero
   hits. Strict BM25 search returns explicit errors for `Uninitialized`,
   `Building`, `Empty`, or `Error`, and returns an empty result only when BM25 is
   `Ready`; see
-  [crates/ploke-rag/src/core/mod.rs#L229](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs#L229),
-  [crates/ploke-rag/src/core/mod.rs#L296](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs#L296),
-  [crates/ploke-rag/src/core/mod.rs#L310](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs#L310),
-  [crates/ploke-rag/src/core/mod.rs#L421](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs#L421),
+  [crates/ploke-rag/src/core/mod.rs#L229](../../../crates/ploke-rag/src/core/mod.rs#L229),
+  [crates/ploke-rag/src/core/mod.rs#L296](../../../crates/ploke-rag/src/core/mod.rs#L296),
+  [crates/ploke-rag/src/core/mod.rs#L310](../../../crates/ploke-rag/src/core/mod.rs#L310),
+  [crates/ploke-rag/src/core/mod.rs#L421](../../../crates/ploke-rag/src/core/mod.rs#L421),
   and
-  [crates/ploke-rag/src/core/mod.rs#L471](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs#L471).
+  [crates/ploke-rag/src/core/mod.rs#L471](../../../crates/ploke-rag/src/core/mod.rs#L471).
 
 ## Global G1: successful workspace commands preserve one coherent session state
 
@@ -220,31 +220,31 @@ Failure states:
 Existing relevant code/tests:
 
 - current `/index` flow mutates focus and roots before parse success; see
-  [crates/ploke-tui/src/app_state/handlers/indexing.rs#L52](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs#L52)
+  [crates/ploke-tui/src/app_state/handlers/indexing.rs#L52](../../../crates/ploke-tui/src/app_state/handlers/indexing.rs#L52)
   and
-  [crates/ploke-tui/src/app_state/handlers/indexing.rs#L70](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs#L70)
+  [crates/ploke-tui/src/app_state/handlers/indexing.rs#L70](../../../crates/ploke-tui/src/app_state/handlers/indexing.rs#L70)
 - current path policy is still focus-derived; see
-  [crates/ploke-tui/src/app_state/core.rs#L500](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L500)
+  [crates/ploke-tui/src/app_state/core.rs#L500](../../../crates/ploke-tui/src/app_state/core.rs#L500)
 - current runtime membership is represented only by `workspace_roots` plus one
   `crate_focus`; see
-  [crates/ploke-tui/src/app_state/core.rs#L383](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L383)
+  [crates/ploke-tui/src/app_state/core.rs#L383](../../../crates/ploke-tui/src/app_state/core.rs#L383)
   and
-  [crates/ploke-tui/src/app_state/core.rs#L438](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L438)
+  [crates/ploke-tui/src/app_state/core.rs#L438](../../../crates/ploke-tui/src/app_state/core.rs#L438)
 - current `/load` restores one active embedding set, recreates HNSW for that
   set, and then resets focus and IO roots from one `crate_context` row; see
-  [crates/ploke-tui/src/app_state/database.rs#L290](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L290),
-  [crates/ploke-tui/src/app_state/database.rs#L392](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L392),
+  [crates/ploke-tui/src/app_state/database.rs#L290](../../../crates/ploke-tui/src/app_state/database.rs#L290),
+  [crates/ploke-tui/src/app_state/database.rs#L392](../../../crates/ploke-tui/src/app_state/database.rs#L392),
   and
-  [crates/ploke-tui/src/app_state/database.rs#L411](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L411)
+  [crates/ploke-tui/src/app_state/database.rs#L411](../../../crates/ploke-tui/src/app_state/database.rs#L411)
 - HNSW registration is currently relation-level, not workspace-state-level; see
-  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448)
+  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448](../../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L448)
 - BM25 readiness is currently exposed through `Bm25Status`; see
-  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/bm25_service.rs#L9)
+  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](../../../crates/ploke-db/src/bm25_index/bm25_service.rs#L9)
 - BM25 seeding/finalization is not obviously atomic with DB embedding commit in
   the current indexer path; see
-  [crates/ingest/ploke-embed/src/indexer/mod.rs#L550](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/indexer/mod.rs#L550)
+  [crates/ingest/ploke-embed/src/indexer/mod.rs#L550](../../../crates/ingest/ploke-embed/src/indexer/mod.rs#L550)
   and
-  [crates/ingest/ploke-embed/src/indexer/mod.rs#L770](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/indexer/mod.rs#L770)
+  [crates/ingest/ploke-embed/src/indexer/mod.rs#L770](../../../crates/ingest/ploke-embed/src/indexer/mod.rs#L770)
 
 Untestable or not yet provable:
 
@@ -304,12 +304,12 @@ Failure states:
 Existing relevant code/tests:
 
 - the persisted membership record today is `workspace_metadata.members`; see
-  [crates/ingest/ploke-transform/src/transform/workspace.rs#L60](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L60)
+  [crates/ingest/ploke-transform/src/transform/workspace.rs#L60](../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L60)
 - current `scan_for_change(...)` and focused-crate restore paths still derive
   behavior from one crate at a time; see
-  [crates/ploke-tui/src/app_state/database.rs#L499](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L499)
+  [crates/ploke-tui/src/app_state/database.rs#L499](../../../crates/ploke-tui/src/app_state/database.rs#L499)
   and
-  [crates/ploke-tui/src/app_state/database.rs#L407](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L407)
+  [crates/ploke-tui/src/app_state/database.rs#L407](../../../crates/ploke-tui/src/app_state/database.rs#L407)
 
 Untestable or not yet provable:
 
@@ -360,18 +360,18 @@ Existing relevant code/tests:
 
 - `parse_workspace(...)` already validates member selection and aggregates
   parsing across members; see
-  [crates/ingest/syn_parser/src/lib.rs#L66](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs#L66)
+  [crates/ingest/syn_parser/src/lib.rs#L66](../../../crates/ingest/syn_parser/src/lib.rs#L66)
 - parser tests currently cover multi-member behavior only through tempdirs; see
-  [crates/ingest/syn_parser/src/lib.rs#L392](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs#L392)
+  [crates/ingest/syn_parser/src/lib.rs#L392](../../../crates/ingest/syn_parser/src/lib.rs#L392)
 - manifest discovery already normalizes workspace members and nested paths; see
-  [crates/ingest/syn_parser/src/discovery/workspace.rs#L186](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/workspace.rs#L186)
+  [crates/ingest/syn_parser/src/discovery/workspace.rs#L186](../../../crates/ingest/syn_parser/src/discovery/workspace.rs#L186)
   and
-  [crates/ingest/syn_parser/src/discovery/workspace.rs#L395](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/workspace.rs#L395)
+  [crates/ingest/syn_parser/src/discovery/workspace.rs#L395](../../../crates/ingest/syn_parser/src/discovery/workspace.rs#L395)
 - the only committed workspace fixture with assertions today is single-member
   `ws_fixture_00`; see
-  [tests/fixture_workspace/ws_fixture_00/Cargo.toml#L1](/home/brasides/code/ploke/tests/fixture_workspace/ws_fixture_00/Cargo.toml#L1)
+  [tests/fixture_workspace/ws_fixture_00/Cargo.toml#L1](../../../tests/fixture_workspace/ws_fixture_00/Cargo.toml#L1)
   and
-  [crates/ingest/syn_parser/src/discovery/mod.rs#L447](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/mod.rs#L447)
+  [crates/ingest/syn_parser/src/discovery/mod.rs#L447](../../../crates/ingest/syn_parser/src/discovery/mod.rs#L447)
 
 Untestable or not yet provable:
 
@@ -393,9 +393,9 @@ Why this exists:
 New or changed structures:
 
 - new `FixtureDb` registry entry or entries for workspace backups in
-  [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs)
+  [crates/test-utils/src/fixture_dbs.rs](../../../crates/test-utils/src/fixture_dbs.rs)
 - corresponding inventory entry in
-  [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md)
+  [docs/testing/BACKUP_DB_FIXTURES.md](../../testing/BACKUP_DB_FIXTURES.md)
 
 Required invariants:
 
@@ -423,11 +423,11 @@ Required fixtures:
 Existing relevant code/tests:
 
 - current registry entries are crate-centric only; see
-  [crates/test-utils/src/fixture_dbs.rs#L145](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs#L145)
+  [crates/test-utils/src/fixture_dbs.rs#L145](../../../crates/test-utils/src/fixture_dbs.rs#L145)
 - current fixture inventory is crate-centric only; see
-  [docs/testing/BACKUP_DB_FIXTURES.md#L63](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md#L63)
+  [docs/testing/BACKUP_DB_FIXTURES.md#L63](../../testing/BACKUP_DB_FIXTURES.md#L63)
 - update instructions already require registry and doc updates together; see
-  [docs/testing/BACKUP_DB_FIXTURES.md#L162](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md#L162)
+  [docs/testing/BACKUP_DB_FIXTURES.md#L162](../../testing/BACKUP_DB_FIXTURES.md#L162)
 
 Untestable or not yet provable:
 
@@ -478,14 +478,14 @@ Existing relevant code/tests:
 
 - `transform_parsed_workspace(...)` inserts workspace metadata before crate
   graphs; see
-  [crates/ingest/ploke-transform/src/transform/workspace.rs#L14](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L14)
+  [crates/ingest/ploke-transform/src/transform/workspace.rs#L14](../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L14)
 - `process_workspace_metadata(...)` shows the exact relation fields that should
   be asserted; see
-  [crates/ingest/ploke-transform/src/transform/workspace.rs#L60](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L60)
+  [crates/ingest/ploke-transform/src/transform/workspace.rs#L60](../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L60)
 - current tests only prove transform success; see
-  [crates/ingest/ploke-transform/src/transform/workspace.rs#L140](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L140)
+  [crates/ingest/ploke-transform/src/transform/workspace.rs#L140](../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L140)
 - deterministic `WorkspaceId` derivation already exists; see
-  [crates/ploke-core/src/workspace.rs#L28](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs#L28)
+  [crates/ploke-core/src/workspace.rs#L28](../../../crates/ploke-core/src/workspace.rs#L28)
 
 Untestable or not yet provable:
 
@@ -522,9 +522,9 @@ Required fixtures:
 Existing relevant code/tests:
 
 - backup-fixture policy explicitly requires strictness; see
-  [docs/testing/BACKUP_DB_FIXTURES.md#L162](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md#L162)
+  [docs/testing/BACKUP_DB_FIXTURES.md#L162](../../testing/BACKUP_DB_FIXTURES.md#L162)
 - repo guardrails say not to weaken import semantics without approval; see
-  [AGENTS.md](/home/brasides/code/ploke/AGENTS.md)
+  [AGENTS.md](../../../AGENTS.md)
 
 Untestable or not yet provable:
 
@@ -580,12 +580,12 @@ Required fixtures:
 Existing relevant code/tests:
 
 - workspace metadata is inserted before crate graphs; see
-  [crates/ingest/ploke-transform/src/transform/workspace.rs#L14](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L14)
+  [crates/ingest/ploke-transform/src/transform/workspace.rs#L14](../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L14)
 - current transform tests still stop at smoke coverage; see
-  [crates/ingest/ploke-transform/src/transform/workspace.rs#L140](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L140)
+  [crates/ingest/ploke-transform/src/transform/workspace.rs#L140](../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L140)
 - backup verification already provides the strict path on which the fixture must
   travel; see
-  [docs/testing/BACKUP_DB_FIXTURES.md#L162](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md#L162)
+  [docs/testing/BACKUP_DB_FIXTURES.md#L162](../../testing/BACKUP_DB_FIXTURES.md#L162)
 
 Untestable or not yet provable:
 
@@ -633,9 +633,9 @@ Cross-crate contracts:
 
 - `ploke-core` identity helpers remain the source of truth for crate/workspace
   IDs; see
-  [crates/ploke-core/src/workspace.rs#L7](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs#L7)
+  [crates/ploke-core/src/workspace.rs#L7](../../../crates/ploke-core/src/workspace.rs#L7)
 - `ploke-tui` IO policy must stay synchronized with loaded workspace state; see
-  [crates/ploke-tui/src/app_state/core.rs#L500](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L500)
+  [crates/ploke-tui/src/app_state/core.rs#L500](../../../crates/ploke-tui/src/app_state/core.rs#L500)
 
 Failure states:
 
@@ -653,15 +653,15 @@ Existing relevant code/tests:
 
 - current `SystemStatus` only stores `workspace_roots` plus one `crate_focus`;
   see
-  [crates/ploke-tui/src/app_state/core.rs#L383](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L383)
+  [crates/ploke-tui/src/app_state/core.rs#L383](../../../crates/ploke-tui/src/app_state/core.rs#L383)
 - `derive_path_policy(...)` currently uses only `focused_crate_root()`; see
-  [crates/ploke-tui/src/app_state/core.rs#L500](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L500)
+  [crates/ploke-tui/src/app_state/core.rs#L500](../../../crates/ploke-tui/src/app_state/core.rs#L500)
 - `load_db_crate_focus` proves absolute root paths from DB are used directly;
   see
-  [crates/ploke-tui/tests/load_db_crate_focus.rs#L10](/home/brasides/code/ploke/crates/ploke-tui/tests/load_db_crate_focus.rs#L10)
+  [crates/ploke-tui/tests/load_db_crate_focus.rs#L10](../../../crates/ploke-tui/tests/load_db_crate_focus.rs#L10)
 - `no_workspace_fallback` proves current no-workspace behavior is a fallback tip,
   not true workspace state; see
-  [crates/ploke-tui/tests/no_workspace_fallback.rs#L28](/home/brasides/code/ploke/crates/ploke-tui/tests/no_workspace_fallback.rs#L28)
+  [crates/ploke-tui/tests/no_workspace_fallback.rs#L28](../../../crates/ploke-tui/tests/no_workspace_fallback.rs#L28)
 
 Untestable or not yet provable:
 
@@ -730,17 +730,17 @@ Existing relevant code/tests:
 
 - `resolve_index_target(...)` already distinguishes crate-root, ancestor-
   workspace, and no-target cases; see
-  [crates/ploke-tui/src/parser.rs#L43](/home/brasides/code/ploke/crates/ploke-tui/src/parser.rs#L43)
+  [crates/ploke-tui/src/parser.rs#L43](../../../crates/ploke-tui/src/parser.rs#L43)
 - current `index_workspace(...)` resolves a target, parses it, and publishes
   loaded state only after parse success; see
-  [crates/ploke-tui/src/app_state/handlers/indexing.rs#L36](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs#L36)
+  [crates/ploke-tui/src/app_state/handlers/indexing.rs#L36](../../../crates/ploke-tui/src/app_state/handlers/indexing.rs#L36)
 - current command surface still exposes legacy `index start [directory]`; see
-  [crates/ploke-tui/src/app/commands/mod.rs#L18](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/mod.rs#L18)
+  [crates/ploke-tui/src/app/commands/mod.rs#L18](../../../crates/ploke-tui/src/app/commands/mod.rs#L18)
   and
-  [crates/ploke-tui/src/app/commands/exec.rs#L852](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec.rs#L852)
+  [crates/ploke-tui/src/app/commands/exec.rs#L852](../../../crates/ploke-tui/src/app/commands/exec.rs#L852)
 - parser/discovery behavior already supports workspace manifests and selection
   mismatch failure; see
-  [crates/ingest/syn_parser/src/lib.rs#L94](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs#L94)
+  [crates/ingest/syn_parser/src/lib.rs#L94](../../../crates/ingest/syn_parser/src/lib.rs#L94)
 
 Untestable or not yet provable:
 
@@ -781,7 +781,7 @@ Required invariants:
 Cross-crate contracts:
 
 - `ploke-tui` change detection depends on `ploke-db::get_crate_files(...)`; see
-  [crates/ploke-db/src/database.rs#L390](/home/brasides/code/ploke/crates/ploke-db/src/database.rs#L390)
+  [crates/ploke-db/src/database.rs#L390](../../../crates/ploke-db/src/database.rs#L390)
 
 Failure states:
 
@@ -801,10 +801,10 @@ Existing relevant code/tests:
 
 - `scan_for_change(...)` currently errors without focus and scans only one
   crate; see
-  [crates/ploke-tui/src/app_state/database.rs#L499](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L499)
+  [crates/ploke-tui/src/app_state/database.rs#L499](../../../crates/ploke-tui/src/app_state/database.rs#L499)
 - `test_update_embed` already proves the single-crate path can detect changes,
   retract changed embeddings, and reindex them; see
-  [crates/ploke-tui/src/app_state/database.rs#L1476](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1476)
+  [crates/ploke-tui/src/app_state/database.rs#L1476](../../../crates/ploke-tui/src/app_state/database.rs#L1476)
 
 Untestable or not yet provable:
 
@@ -854,15 +854,15 @@ Cross-crate contracts:
 
 - DB backup/import remains whole-DB in this phase
 - active embedding set metadata survives backup/restore; see
-  [crates/ploke-db/src/database.rs#L2383](/home/brasides/code/ploke/crates/ploke-db/src/database.rs#L2383)
+  [crates/ploke-db/src/database.rs#L2383](../../../crates/ploke-db/src/database.rs#L2383)
   and
-  [crates/ploke-db/src/database.rs#L2438](/home/brasides/code/ploke/crates/ploke-db/src/database.rs#L2438)
+  [crates/ploke-db/src/database.rs#L2438](../../../crates/ploke-db/src/database.rs#L2438)
 - HNSW registration after restore is currently recreated per active embedding
   set; see
-  [crates/ploke-tui/src/app_state/database.rs#L392](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L392)
+  [crates/ploke-tui/src/app_state/database.rs#L392](../../../crates/ploke-tui/src/app_state/database.rs#L392)
 - BM25 readiness is separate actor state and must therefore be restored or
   marked unavailable explicitly; see
-  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/bm25_service.rs#L9)
+  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](../../../crates/ploke-db/src/bm25_index/bm25_service.rs#L9)
 
 Failure states:
 
@@ -888,32 +888,32 @@ Existing relevant code/tests:
 - `save_db(...)` now writes a registry-backed workspace snapshot keyed by
   `WorkspaceInfo::from_root_path(...)` identity rather than by focused crate
   name; see
-  [crates/ploke-tui/src/app_state/database.rs#L513](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L513)
+  [crates/ploke-tui/src/app_state/database.rs#L513](../../../crates/ploke-tui/src/app_state/database.rs#L513)
 - `load_db(...)` now resolves exact workspace registry entries, validates the
   restored snapshot against registry metadata, and rejects legacy
   `FirstPopulated` fallback for workspace restore; see
-  [crates/ploke-tui/src/app_state/database.rs#L723](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L723)
+  [crates/ploke-tui/src/app_state/database.rs#L723](../../../crates/ploke-tui/src/app_state/database.rs#L723)
 - restore currently recreates HNSW for the restored active set, reports
   embedding-search unavailability when no active set is restored, reports BM25
   unavailability explicitly, and hydrates loaded workspace membership from the
   restored snapshot metadata; see
-  [crates/ploke-tui/src/app_state/database.rs#L809](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L809),
-  [crates/ploke-tui/src/app_state/database.rs#L915](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L915),
+  [crates/ploke-tui/src/app_state/database.rs#L809](../../../crates/ploke-tui/src/app_state/database.rs#L809),
+  [crates/ploke-tui/src/app_state/database.rs#L915](../../../crates/ploke-tui/src/app_state/database.rs#L915),
   and
-  [crates/ploke-tui/src/app_state/database.rs#L939](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L939)
+  [crates/ploke-tui/src/app_state/database.rs#L939](../../../crates/ploke-tui/src/app_state/database.rs#L939)
 - `restore_embedding_set(...)` still permits legacy `FirstPopulated` fallback;
   see
-  [crates/ploke-db/src/database.rs#L974](/home/brasides/code/ploke/crates/ploke-db/src/database.rs#L974)
+  [crates/ploke-db/src/database.rs#L974](../../../crates/ploke-db/src/database.rs#L974)
 - `load_db_restores_saved_embedding_set_and_index`,
   `load_db_requires_workspace_registry_entry_instead_of_prefix_lookup`,
   `load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads`,
   and `load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot`
   now provide direct witness coverage for the core `C4` restore invariants; see
-  [crates/ploke-tui/src/app_state/database.rs#L1649](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1649)
+  [crates/ploke-tui/src/app_state/database.rs#L1649](../../../crates/ploke-tui/src/app_state/database.rs#L1649)
 - BM25 status is actor state and is not restored by `load_db(...)` today; see
-  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/bm25_service.rs#L9)
+  [crates/ploke-db/src/bm25_index/bm25_service.rs#L9](../../../crates/ploke-db/src/bm25_index/bm25_service.rs#L9)
   and
-  [docs/active/agents/2026-03-workspaces/db-rag-acceptance-survey.md#L27](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/db-rag-acceptance-survey.md#L27)
+  [docs/active/agents/2026-03-workspaces/db-rag-acceptance-survey.md#L27](../agents/2026-03-workspaces/db-rag-acceptance-survey.md#L27)
 
 Untestable or not yet provable:
 
@@ -960,7 +960,7 @@ Cross-crate contracts:
   the acceptance claim
 - DB search results must continue projecting `namespace` so tests can assert
   scope correctness; see
-  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L390](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L390)
+  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L390](../../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L390)
 
 Failure states:
 
@@ -980,29 +980,29 @@ Required fixtures:
 Existing relevant code/tests:
 
 - current BM25 search has retry/fallback semantics and no scope argument; see
-  [crates/ploke-rag/src/core/mod.rs#L234](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs#L234)
+  [crates/ploke-rag/src/core/mod.rs#L234](../../../crates/ploke-rag/src/core/mod.rs#L234)
 - current dense search has no scope parameter and fans out across all primary
   node types; see
-  [crates/ploke-rag/src/core/mod.rs#L489](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs#L489)
+  [crates/ploke-rag/src/core/mod.rs#L489](../../../crates/ploke-rag/src/core/mod.rs#L489)
 - current `get_context(...)` assumes retrieval already selected the right IDs;
   see
-  [crates/ploke-rag/src/core/mod.rs#L547](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs#L547)
+  [crates/ploke-rag/src/core/mod.rs#L547](../../../crates/ploke-rag/src/core/mod.rs#L547)
   and
-  [crates/ploke-rag/src/context/mod.rs#L164](/home/brasides/code/ploke/crates/ploke-rag/src/context/mod.rs#L164)
+  [crates/ploke-rag/src/context/mod.rs#L164](../../../crates/ploke-rag/src/context/mod.rs#L164)
 - dense DB search is embedding-set scoped, not workspace scoped; see
-  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L337](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L337)
+  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L337](../../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L337)
 - BM25 actor commands currently carry only `query` and `top_k`; see
-  [crates/ploke-db/src/bm25_index/bm25_service.rs#L19](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/bm25_service.rs#L19)
+  [crates/ploke-db/src/bm25_index/bm25_service.rs#L19](../../../crates/ploke-db/src/bm25_index/bm25_service.rs#L19)
 - existing search tests already cover dense, BM25, fallback, and hybrid search
   behavior on crate fixtures; see
-  [crates/ploke-rag/src/core/unit_tests.rs#L237](/home/brasides/code/ploke/crates/ploke-rag/src/core/unit_tests.rs#L237)
+  [crates/ploke-rag/src/core/unit_tests.rs#L237](../../../crates/ploke-rag/src/core/unit_tests.rs#L237)
   and
-  [crates/ploke-rag/src/core/unit_tests.rs#L324](/home/brasides/code/ploke/crates/ploke-rag/src/core/unit_tests.rs#L324)
+  [crates/ploke-rag/src/core/unit_tests.rs#L324](../../../crates/ploke-rag/src/core/unit_tests.rs#L324)
 - existing DB tests already assert dense neighbor behavior and namespace-bearing
   file data; see
-  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L926](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L926)
+  [crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L926](../../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L926)
   and
-  [crates/ploke-db/src/database.rs#L1795](/home/brasides/code/ploke/crates/ploke-db/src/database.rs#L1795)
+  [crates/ploke-db/src/database.rs#L1795](../../../crates/ploke-db/src/database.rs#L1795)
 
 Untestable or not yet provable:
 
@@ -1074,20 +1074,20 @@ Required fixtures:
 Existing relevant code/tests:
 
 - current load path is whole-DB import only; see
-  [crates/ploke-db/src/multi_embedding/db_ext.rs#L1169](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/db_ext.rs#L1169)
+  [crates/ploke-db/src/multi_embedding/db_ext.rs#L1169](../../../crates/ploke-db/src/multi_embedding/db_ext.rs#L1169)
 - existing retract tests prove some index cleanup behavior but not namespace
   export/import/remove semantics; see
-  [crates/ploke-db/src/database.rs#L2285](/home/brasides/code/ploke/crates/ploke-db/src/database.rs#L2285)
+  [crates/ploke-db/src/database.rs#L2285](../../../crates/ploke-db/src/database.rs#L2285)
 - current TUI command/state surveys already identify `/load crates ...` and
   `/workspace rm <crate>` as the motivating surface, and they call out the need
   to avoid dangling focus and IO roots; see
-  [docs/active/agents/2026-03-workspaces/tui-phase-plan-survey.md#L29](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/tui-phase-plan-survey.md#L29)
+  [docs/active/agents/2026-03-workspaces/tui-phase-plan-survey.md#L29](../agents/2026-03-workspaces/tui-phase-plan-survey.md#L29)
   and
-  [docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L347](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L347)
+  [docs/active/reports/2026-03-20_workspaces_implementation_plan.md#L347](2026-03-20_workspaces_implementation_plan.md#L347)
 - current `/load` already demonstrates that successful workspace mutation must
   update focus plus IO roots together, even though it does so for only one crate
   today; see
-  [crates/ploke-tui/src/app_state/database.rs#L411](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L411)
+  [crates/ploke-tui/src/app_state/database.rs#L411](../../../crates/ploke-tui/src/app_state/database.rs#L411)
 
 Untestable or not yet provable:
 
@@ -1124,7 +1124,7 @@ Cross-crate contracts:
 
 - tool calls depend on retrieval returning namespace/file-aware results
 - exact item resolution continues to use canonical file/module path helpers; see
-  [crates/ploke-db/src/helpers.rs#L13](/home/brasides/code/ploke/crates/ploke-db/src/helpers.rs#L13)
+  [crates/ploke-db/src/helpers.rs#L13](../../../crates/ploke-db/src/helpers.rs#L13)
 
 Failure states:
 
@@ -1140,13 +1140,13 @@ Required fixtures:
 Existing relevant code/tests:
 
 - current prompt and tools are focused-crate-centric; see
-  [crates/ploke-tui/src/llm/manager/mod.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs),
-  [crates/ploke-tui/src/rag/context.rs](/home/brasides/code/ploke/crates/ploke-tui/src/rag/context.rs),
-  [crates/ploke-tui/src/tools/ns_read.rs](/home/brasides/code/ploke/crates/ploke-tui/src/tools/ns_read.rs),
+  [crates/ploke-tui/src/llm/manager/mod.rs](../../../crates/ploke-tui/src/llm/manager/mod.rs),
+  [crates/ploke-tui/src/rag/context.rs](../../../crates/ploke-tui/src/rag/context.rs),
+  [crates/ploke-tui/src/tools/ns_read.rs](../../../crates/ploke-tui/src/tools/ns_read.rs),
   and
-  [crates/ploke-tui/src/tools/code_edit.rs](/home/brasides/code/ploke/crates/ploke-tui/src/tools/code_edit.rs)
+  [crates/ploke-tui/src/tools/code_edit.rs](../../../crates/ploke-tui/src/tools/code_edit.rs)
 - exact path/module resolution helpers already exist in `ploke-db`; see
-  [crates/ploke-db/src/helpers.rs#L13](/home/brasides/code/ploke/crates/ploke-db/src/helpers.rs#L13)
+  [crates/ploke-db/src/helpers.rs#L13](../../../crates/ploke-db/src/helpers.rs#L13)
 
 Untestable or not yet provable:
 
@@ -1165,12 +1165,12 @@ Provable now:
 
 - crate and workspace IDs are deterministic functions of canonical root paths;
   see
-  [crates/ploke-core/src/workspace.rs#L19](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs#L19)
+  [crates/ploke-core/src/workspace.rs#L19](../../../crates/ploke-core/src/workspace.rs#L19)
   and
-  [crates/ploke-core/src/workspace.rs#L39](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs#L39)
+  [crates/ploke-core/src/workspace.rs#L39](../../../crates/ploke-core/src/workspace.rs#L39)
 - current tests prove unique tracking hashes for surveyed common-node sets, not
   universal node IDs; see
-  [crates/ploke-db/src/database.rs#L1893](/home/brasides/code/ploke/crates/ploke-db/src/database.rs#L1893)
+  [crates/ploke-db/src/database.rs#L1893](../../../crates/ploke-db/src/database.rs#L1893)
 
 Not yet provable from the current survey:
 

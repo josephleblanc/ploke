@@ -4,7 +4,7 @@
 - task title: Eval Postmortems Workspace
 - task description: Create a shared workspace for investigating eval failures, separating model mistakes from tool-design failures, and collecting open questions that should inform future tool and runner changes.
 - related planning files:
-  - [2026-04-08_postmortem-plan.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_postmortem-plan.md)
+  - [2026-04-08_postmortem-plan.md](2026-04-08_postmortem-plan.md)
 
 ## Purpose
 

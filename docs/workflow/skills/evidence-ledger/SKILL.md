@@ -5,7 +5,7 @@ description: Use when updating the living evidence ledger so each belief change 
 
 # Evidence Ledger
 
-Update [docs/active/workflow/evidence-ledger.md](/home/brasides/code/ploke/docs/active/workflow/evidence-ledger.md).
+Update [evidence-ledger.md](../../../active/workflow/evidence-ledger.md).
 
 ## Entry Format
 

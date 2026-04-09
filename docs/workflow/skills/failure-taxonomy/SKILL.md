@@ -5,7 +5,7 @@ description: Use when classifying runs or refining the failure taxonomy so categ
 
 # Failure Taxonomy
 
-Update [docs/active/workflow/failure-taxonomy.md](/home/brasides/code/ploke/docs/active/workflow/failure-taxonomy.md).
+Update [failure-taxonomy.md](../../../active/workflow/failure-taxonomy.md).
 
 ## Rules
 

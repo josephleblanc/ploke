@@ -5,7 +5,7 @@
 - review_cadence: review daily at 3:00 p.m. America/Los_Angeles local time
 - update_trigger: update when blocking layers change or a higher-value next task becomes clear
 
-Use the ranking rules from [docs/workflow/skills/priority-queue/SKILL.md](/home/brasides/code/ploke/docs/workflow/skills/priority-queue/SKILL.md).
+Use the ranking rules from [priority-queue/SKILL.md](../../workflow/skills/priority-queue/SKILL.md).
 
 ## Current Queue
 

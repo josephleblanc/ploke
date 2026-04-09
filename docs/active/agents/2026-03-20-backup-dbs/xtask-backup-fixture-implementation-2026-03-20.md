@@ -10,4 +10,4 @@
   - `fixture_nodes_canonical` is automated as a current-schema snapshot
   - non-hermetic or repro fixtures print exact manual recreation steps
 - Added the operator guide in
-  [docs/how-to/recreate-backup-db-fixtures.md](/home/brasides/code/ploke/docs/how-to/recreate-backup-db-fixtures.md).
+  [docs/how-to/recreate-backup-db-fixtures.md](../../../how-to/recreate-backup-db-fixtures.md).

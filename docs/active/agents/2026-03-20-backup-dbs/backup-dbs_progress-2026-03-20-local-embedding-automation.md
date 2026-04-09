@@ -1,16 +1,16 @@
 # Backup DBs Progress 2026-03-20: Local Embedding Automation
 
 - Switched `fixture_nodes_local_embeddings` in
-  [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs)
+  [crates/test-utils/src/fixture_dbs.rs](../../../../crates/test-utils/src/fixture_dbs.rs)
   from manual recreation metadata to an automated fixture strategy.
 - Added a bounded `xtask` automation path in
-  [xtask/src/main.rs](/home/brasides/code/ploke/xtask/src/main.rs) that:
+  [xtask/src/main.rs](../../../../xtask/src/main.rs) that:
   - seeds the `fixture_nodes` database via `setup_db_full_multi_embedding(...)`
   - runs the local embedder/indexer on forced CPU to populate vectors
   - rejects the output if any non-file nodes remain unembedded
   - writes the dated backup and validates it through the existing fixture contract
 - Updated `setup-rag-fixtures` in
-  [xtask/src/main.rs](/home/brasides/code/ploke/xtask/src/main.rs)
+  [xtask/src/main.rs](../../../../xtask/src/main.rs)
   to source the local-embedding backup from the fixture registry instead of a stale hard-coded path.
 - The regenerated dated backup was adopted as the active registered local fixture:
   - `tests/backup_dbs/fixture_nodes_local_embeddings_2026-03-20.sqlite`

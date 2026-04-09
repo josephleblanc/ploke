@@ -1,7 +1,7 @@
 # Failure Taxonomy
 
 - last_updated: 2026-04-09
-- source section: `§VI` of [eval-design.md](/home/brasides/code/ploke/docs/active/plans/evals/eval-design.md)
+- source section: `§VI` of [eval-design.md](../plans/evals/eval-design.md)
 - owning_branch: `refactor/tool-calls`
 - review_cadence: every 2 days at 3:00 p.m. America/Los_Angeles local time
 - update_trigger: update after repeated misclassification, a new canonical example, or a confirmed missing category

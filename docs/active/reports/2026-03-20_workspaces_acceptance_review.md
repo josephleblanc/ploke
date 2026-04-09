@@ -2,17 +2,17 @@
 
 Backlinks:
 
-- [2026-03-20_workspaces_implementation_plan.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_implementation_plan.md)
-- [2026-03-20_workspaces_acceptance_criteria.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_acceptance_criteria.md)
+- [2026-03-20_workspaces_implementation_plan.md](2026-03-20_workspaces_implementation_plan.md)
+- [2026-03-20_workspaces_acceptance_criteria.md](2026-03-20_workspaces_acceptance_criteria.md)
 
 This review responds to `(2026-03-20/4)` in
-[docs/active/todo/2026-03-20_workspaces.md](/home/brasides/code/ploke/docs/active/todo/2026-03-20_workspaces.md).
+[docs/active/todo/2026-03-20_workspaces.md](../todo/2026-03-20_workspaces.md).
 
 It also uses the following targeted code surveys:
 
-- [indexing-state-coherence-survey.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/indexing-state-coherence-survey.md)
-- [retrieval-scope-proof-survey.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/retrieval-scope-proof-survey.md)
-- [save-load-update-correctness-survey.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/save-load-update-correctness-survey.md)
+- [indexing-state-coherence-survey.md](../agents/2026-03-workspaces/indexing-state-coherence-survey.md)
+- [retrieval-scope-proof-survey.md](../agents/2026-03-workspaces/retrieval-scope-proof-survey.md)
+- [save-load-update-correctness-survey.md](../agents/2026-03-workspaces/save-load-update-correctness-survey.md)
 
 ## Judgment
 

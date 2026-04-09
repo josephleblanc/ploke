@@ -6,26 +6,26 @@ This directory holds the living artifacts for eval-driven development.
 
 Key live entry points:
 
-- [readiness-status.md](/home/brasides/code/ploke/docs/active/workflow/readiness-status.md)
-- [programme_charter.md](/home/brasides/code/ploke/docs/active/workflow/programme_charter.md)
-- [hypothesis-registry.md](/home/brasides/code/ploke/docs/active/workflow/hypothesis-registry.md)
-- [evidence-ledger.md](/home/brasides/code/ploke/docs/active/workflow/evidence-ledger.md)
-- [failure-taxonomy.md](/home/brasides/code/ploke/docs/active/workflow/failure-taxonomy.md)
-- [priority-queue.md](/home/brasides/code/ploke/docs/active/workflow/priority-queue.md)
-- [edr/README.md](/home/brasides/code/ploke/docs/active/workflow/edr/README.md)
-- [postmortems/README.md](/home/brasides/code/ploke/docs/active/workflow/postmortems/README.md)
-- [handoffs/recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/recent-activity.md)
-- [handoffs/README.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/README.md)
-- [lab-book/README.md](/home/brasides/code/ploke/docs/active/workflow/lab-book/README.md)
-- [docs/active/plans/evals/phased-exec-plan.md](/home/brasides/code/ploke/docs/active/plans/evals/phased-exec-plan.md)
+- [readiness-status.md](readiness-status.md)
+- [programme_charter.md](programme_charter.md)
+- [hypothesis-registry.md](hypothesis-registry.md)
+- [evidence-ledger.md](evidence-ledger.md)
+- [failure-taxonomy.md](failure-taxonomy.md)
+- [priority-queue.md](priority-queue.md)
+- [edr/README.md](edr/README.md)
+- [postmortems/README.md](postmortems/README.md)
+- [handoffs/recent-activity.md](handoffs/recent-activity.md)
+- [handoffs/README.md](handoffs/README.md)
+- [lab-book/README.md](lab-book/README.md)
+- [phased-exec-plan.md](../plans/evals/phased-exec-plan.md)
 
-Use [handoffs/recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/recent-activity.md) for the rolling current-state board and [docs/active/workflow/handoffs](/home/brasides/code/ploke/docs/active/workflow/handoffs) for short-lived task-specific handoff notes.
+Use [handoffs/recent-activity.md](handoffs/recent-activity.md) for the rolling current-state board and [handoffs](handoffs) for short-lived task-specific handoff notes.
 
 Authority rule:
 
 - use `docs/active/workflow/*` for current operational truth
-- use [docs/active/plans/evals/phased-exec-plan.md](/home/brasides/code/ploke/docs/active/plans/evals/phased-exec-plan.md) as the canonical phase and exit-criteria guide
-- use [docs/active/plans/evals/eval-design.md](/home/brasides/code/ploke/docs/active/plans/evals/eval-design.md) as the central design and rationale document; if it diverges from a living artifact, the living artifact wins unless explicitly noted otherwise
+- use [phased-exec-plan.md](../plans/evals/phased-exec-plan.md) as the canonical phase and exit-criteria guide
+- use [eval-design.md](../plans/evals/eval-design.md) as the central design and rationale document; if it diverges from a living artifact, the living artifact wins unless explicitly noted otherwise
 
 Metadata rule for living artifacts:
 
@@ -34,7 +34,7 @@ Metadata rule for living artifacts:
 
 Start-here rule for active work:
 
-- if you are about to start real work, begin here, then read [readiness-status.md](/home/brasides/code/ploke/docs/active/workflow/readiness-status.md), [handoffs/recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/recent-activity.md), and [docs/active/plans/evals/phased-exec-plan.md](/home/brasides/code/ploke/docs/active/plans/evals/phased-exec-plan.md), then the relevant handoff note if one exists, then the specific living artifact or plan your task depends on
+- if you are about to start real work, begin here, then read [readiness-status.md](readiness-status.md), [handoffs/recent-activity.md](handoffs/recent-activity.md), and [phased-exec-plan.md](../plans/evals/phased-exec-plan.md), then the relevant handoff note if one exists, then the specific living artifact or plan your task depends on
 
 Minimum record by work type:
 

@@ -1,28 +1,28 @@
 # Workspaces Implementation Plan 2026-03-20
 
 This plan supersedes the earlier draft in response to `(2026-03-20/3)` in
-[docs/active/todo/2026-03-20_workspaces.md](/home/brasides/code/ploke/docs/active/todo/2026-03-20_workspaces.md).
+[docs/active/todo/2026-03-20_workspaces.md](../todo/2026-03-20_workspaces.md).
 
 It follows:
 
-- [2026-03-20_workspaces_report.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_report.md)
-- [ingestion-pipeline-survey.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/ingestion-pipeline-survey.md)
-- [2026-03-20_db-rag-workspace-survey.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_db-rag-workspace-survey.md)
-- [tui-workspace-survey.md](/home/brasides/code/ploke/docs/active/reports/tui-workspace-survey.md)
-- [phase1-readiness-ingest-fixtures.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/phase1-readiness-ingest-fixtures.md)
-- [db-rag-acceptance-survey.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/db-rag-acceptance-survey.md)
-- [tui-phase-plan-survey.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/tui-phase-plan-survey.md)
-- [indexing-state-coherence-survey.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/indexing-state-coherence-survey.md)
-- [retrieval-scope-proof-survey.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/retrieval-scope-proof-survey.md)
-- [save-load-update-correctness-survey.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/save-load-update-correctness-survey.md)
+- [2026-03-20_workspaces_report.md](2026-03-20_workspaces_report.md)
+- [ingestion-pipeline-survey.md](../agents/2026-03-workspaces/ingestion-pipeline-survey.md)
+- [2026-03-20_db-rag-workspace-survey.md](2026-03-20_db-rag-workspace-survey.md)
+- [tui-workspace-survey.md](tui-workspace-survey.md)
+- [phase1-readiness-ingest-fixtures.md](../agents/2026-03-workspaces/phase1-readiness-ingest-fixtures.md)
+- [db-rag-acceptance-survey.md](../agents/2026-03-workspaces/db-rag-acceptance-survey.md)
+- [tui-phase-plan-survey.md](../agents/2026-03-workspaces/tui-phase-plan-survey.md)
+- [indexing-state-coherence-survey.md](../agents/2026-03-workspaces/indexing-state-coherence-survey.md)
+- [retrieval-scope-proof-survey.md](../agents/2026-03-workspaces/retrieval-scope-proof-survey.md)
+- [save-load-update-correctness-survey.md](../agents/2026-03-workspaces/save-load-update-correctness-survey.md)
 
 The exhaustive companion acceptance document is:
 
-- [2026-03-20_workspaces_acceptance_criteria.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_acceptance_criteria.md)
+- [2026-03-20_workspaces_acceptance_criteria.md](2026-03-20_workspaces_acceptance_criteria.md)
 
 Current implementation status should be tracked in:
 
-- [2026-03-20_workspaces_progress_tracker.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-20_workspaces_progress_tracker.md)
+- [2026-03-20_workspaces_progress_tracker.md](../agents/2026-03-workspaces/2026-03-20_workspaces_progress_tracker.md)
 
 Update that tracker whenever a readiness item or phase changes status. Keep it
 as the current source of truth for implementation progress, evidence, and next
@@ -63,16 +63,16 @@ The ingestion primitives already exist:
 
 - `syn_parser::parse_workspace(...)` validates selected members and returns a
   `ParsedWorkspace`; see
-  [crates/ingest/syn_parser/src/lib.rs#L66](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs#L66).
+  [crates/ingest/syn_parser/src/lib.rs#L66](../../../crates/ingest/syn_parser/src/lib.rs#L66).
 - workspace manifest discovery already normalizes member and exclude paths; see
-  [crates/ingest/syn_parser/src/discovery/workspace.rs#L144](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/workspace.rs#L144).
+  [crates/ingest/syn_parser/src/discovery/workspace.rs#L144](../../../crates/ingest/syn_parser/src/discovery/workspace.rs#L144).
 - `transform_parsed_workspace(...)` already writes `workspace_metadata` and then
   transforms each crate graph; see
-  [crates/ingest/ploke-transform/src/transform/workspace.rs#L14](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L14).
+  [crates/ingest/ploke-transform/src/transform/workspace.rs#L14](../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L14).
 - full schema creation already includes `WorkspaceMetadataSchema`; see
-  [crates/ingest/ploke-transform/src/schema/mod.rs#L84](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/schema/mod.rs#L84)
+  [crates/ingest/ploke-transform/src/schema/mod.rs#L84](../../../crates/ingest/ploke-transform/src/schema/mod.rs#L84)
   and
-  [crates/ingest/ploke-transform/src/schema/crate_node.rs#L17](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/schema/crate_node.rs#L17).
+  [crates/ingest/ploke-transform/src/schema/crate_node.rs#L17](../../../crates/ingest/ploke-transform/src/schema/crate_node.rs#L17).
 
 The main gaps are:
 
@@ -105,7 +105,7 @@ Every phase below now assumes the following global properties.
   truncation/fusion, not by late caller-side filtering after `top_k`.
 
 These obligations are spelled out formally in
-[2026-03-20_workspaces_acceptance_criteria.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_acceptance_criteria.md).
+[2026-03-20_workspaces_acceptance_criteria.md](2026-03-20_workspaces_acceptance_criteria.md).
 
 ## Phase 1 readiness
 
@@ -120,15 +120,15 @@ complete.
 2. Keep `ws_fixture_00` as the minimal inherited-metadata fixture, but do not
    treat it as sufficient coverage for multi-member workspace behavior; it has
    only one member today; see
-   [tests/fixture_workspace/ws_fixture_00/Cargo.toml#L1](/home/brasides/code/ploke/tests/fixture_workspace/ws_fixture_00/Cargo.toml#L1).
+   [tests/fixture_workspace/ws_fixture_00/Cargo.toml#L1](../../../tests/fixture_workspace/ws_fixture_00/Cargo.toml#L1).
 3. Do not count `ws_fixture_01` as coverage until it is populated; it is empty
    today; see
-   [tests/fixture_workspace/ws_fixture_01/Cargo.toml](/home/brasides/code/ploke/tests/fixture_workspace/ws_fixture_01/Cargo.toml).
+   [tests/fixture_workspace/ws_fixture_01/Cargo.toml](../../../tests/fixture_workspace/ws_fixture_01/Cargo.toml).
 4. Add a canonical workspace backup fixture to `tests/backup_dbs/` and register
    it in
-   [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs)
+   [crates/test-utils/src/fixture_dbs.rs](../../../crates/test-utils/src/fixture_dbs.rs)
    and
-   [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md).
+   [docs/testing/BACKUP_DB_FIXTURES.md](../../testing/BACKUP_DB_FIXTURES.md).
 5. Add a local-embeddings workspace backup fixture if the first workspace
    retrieval phase is expected to run on fixtures rather than on ad hoc local
    indexing.
@@ -137,17 +137,17 @@ complete.
 
 1. Add an assertion-level transform test for `workspace_metadata`; the existing
    transform test only proves the call returns `Ok(())`; see
-   [crates/ingest/ploke-transform/src/transform/workspace.rs#L158](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L158).
+   [crates/ingest/ploke-transform/src/transform/workspace.rs#L158](../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L158).
 2. Preserve strict backup import semantics. Do not weaken fixture loading to
    tolerate missing relations or schema drift; see
-   [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md)
+   [docs/testing/BACKUP_DB_FIXTURES.md](../../testing/BACKUP_DB_FIXTURES.md)
    and
-   [AGENTS.md](/home/brasides/code/ploke/AGENTS.md).
+   [AGENTS.md](../../../AGENTS.md).
 3. `cargo xtask verify-backup-dbs` must pass with the new workspace fixtures
    before workspace indexing work begins.
 
 The detailed readiness criteria are in
-[2026-03-20_workspaces_acceptance_criteria.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_acceptance_criteria.md).
+[2026-03-20_workspaces_acceptance_criteria.md](2026-03-20_workspaces_acceptance_criteria.md).
 
 ## Phase 1: Fixture and ingestion baseline
 
@@ -156,11 +156,11 @@ committed fixtures before changing TUI runtime behavior.
 
 Primary files:
 
-- [crates/ingest/syn_parser/src/lib.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs)
-- [crates/ingest/syn_parser/src/discovery/workspace.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/workspace.rs)
-- [crates/ingest/ploke-transform/src/transform/workspace.rs](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs)
-- [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs)
-- [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md)
+- [crates/ingest/syn_parser/src/lib.rs](../../../crates/ingest/syn_parser/src/lib.rs)
+- [crates/ingest/syn_parser/src/discovery/workspace.rs](../../../crates/ingest/syn_parser/src/discovery/workspace.rs)
+- [crates/ingest/ploke-transform/src/transform/workspace.rs](../../../crates/ingest/ploke-transform/src/transform/workspace.rs)
+- [crates/test-utils/src/fixture_dbs.rs](../../../crates/test-utils/src/fixture_dbs.rs)
+- [docs/testing/BACKUP_DB_FIXTURES.md](../../testing/BACKUP_DB_FIXTURES.md)
 
 Deliverables:
 
@@ -188,8 +188,8 @@ Goal: stop treating focused crate and loaded workspace as the same thing.
 
 Primary files:
 
-- [crates/ploke-tui/src/app_state/core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs)
-- [crates/ploke-core/src/workspace.rs](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs)
+- [crates/ploke-tui/src/app_state/core.rs](../../../crates/ploke-tui/src/app_state/core.rs)
+- [crates/ploke-core/src/workspace.rs](../../../crates/ploke-core/src/workspace.rs)
 
 Recommended new structures:
 
@@ -200,7 +200,7 @@ Required invariants:
 
 - loaded workspace identity is derived from canonical root path using
   `WorkspaceId::from_root_path(...)`; see
-  [crates/ploke-core/src/workspace.rs#L28](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs#L28).
+  [crates/ploke-core/src/workspace.rs#L28](../../../crates/ploke-core/src/workspace.rs#L28).
 - focused crate is either `None` or a member of the loaded workspace.
 - read roots may cover the loaded workspace, but edit/write resolution still
   requires explicit crate/file targeting.
@@ -222,10 +222,10 @@ orchestration.
 
 Primary files:
 
-- [crates/ploke-tui/src/app_state/handlers/indexing.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs)
-- [crates/ploke-tui/src/app/commands/parser.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/parser.rs)
-- [crates/ploke-tui/src/app/commands/mod.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/mod.rs)
-- [crates/ploke-tui/src/app/commands/exec.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec.rs)
+- [crates/ploke-tui/src/app_state/handlers/indexing.rs](../../../crates/ploke-tui/src/app_state/handlers/indexing.rs)
+- [crates/ploke-tui/src/app/commands/parser.rs](../../../crates/ploke-tui/src/app/commands/parser.rs)
+- [crates/ploke-tui/src/app/commands/mod.rs](../../../crates/ploke-tui/src/app/commands/mod.rs)
+- [crates/ploke-tui/src/app/commands/exec.rs](../../../crates/ploke-tui/src/app/commands/exec.rs)
 
 Changes:
 
@@ -259,8 +259,8 @@ Goal: make freshness tracking and change detection operate per loaded crate.
 
 Primary files:
 
-- [crates/ploke-tui/src/app_state/database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs)
-- [crates/ploke-tui/src/app_state/core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs)
+- [crates/ploke-tui/src/app_state/database.rs](../../../crates/ploke-tui/src/app_state/database.rs)
+- [crates/ploke-tui/src/app_state/core.rs](../../../crates/ploke-tui/src/app_state/core.rs)
 
 Changes:
 
@@ -294,8 +294,8 @@ Goal: make one loaded workspace restorable from user config.
 
 Primary files:
 
-- [crates/ploke-tui/src/app_state/database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs)
-- [crates/ploke-tui/src/user_config.rs](/home/brasides/code/ploke/crates/ploke-tui/src/user_config.rs)
+- [crates/ploke-tui/src/app_state/database.rs](../../../crates/ploke-tui/src/app_state/database.rs)
+- [crates/ploke-tui/src/user_config.rs](../../../crates/ploke-tui/src/user_config.rs)
 
 Recommended storage layout:
 
@@ -329,10 +329,10 @@ search.
 
 Primary files:
 
-- [crates/ploke-rag/src/core/mod.rs](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs)
-- [crates/ploke-db/src/multi_embedding/hnsw_ext.rs](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs)
-- [crates/ploke-db/src/bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs)
-- [crates/ploke-db/src/bm25_index/bm25_service.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/bm25_service.rs)
+- [crates/ploke-rag/src/core/mod.rs](../../../crates/ploke-rag/src/core/mod.rs)
+- [crates/ploke-db/src/multi_embedding/hnsw_ext.rs](../../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs)
+- [crates/ploke-db/src/bm25_index/mod.rs](../../../crates/ploke-db/src/bm25_index/mod.rs)
+- [crates/ploke-db/src/bm25_index/bm25_service.rs](../../../crates/ploke-db/src/bm25_index/bm25_service.rs)
 
 Changes:
 
@@ -361,8 +361,8 @@ Goal: support `/load crates ...` and `/workspace rm <crate>` safely.
 
 Primary files:
 
-- [crates/ploke-db/src/database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
-- [crates/ploke-db/src/multi_embedding/db_ext.rs](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/db_ext.rs)
+- [crates/ploke-db/src/database.rs](../../../crates/ploke-db/src/database.rs)
+- [crates/ploke-db/src/multi_embedding/db_ext.rs](../../../crates/ploke-db/src/multi_embedding/db_ext.rs)
 
 Missing primitives today:
 
@@ -384,10 +384,10 @@ Goal: allow workspace-wide read/retrieval while preserving strict edit safety.
 
 Primary files:
 
-- [crates/ploke-tui/src/rag/context.rs](/home/brasides/code/ploke/crates/ploke-tui/src/rag/context.rs)
-- [crates/ploke-tui/src/llm/manager/mod.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs)
-- [crates/ploke-tui/src/tools/ns_read.rs](/home/brasides/code/ploke/crates/ploke-tui/src/tools/ns_read.rs)
-- [crates/ploke-tui/src/tools/code_edit.rs](/home/brasides/code/ploke/crates/ploke-tui/src/tools/code_edit.rs)
+- [crates/ploke-tui/src/rag/context.rs](../../../crates/ploke-tui/src/rag/context.rs)
+- [crates/ploke-tui/src/llm/manager/mod.rs](../../../crates/ploke-tui/src/llm/manager/mod.rs)
+- [crates/ploke-tui/src/tools/ns_read.rs](../../../crates/ploke-tui/src/tools/ns_read.rs)
+- [crates/ploke-tui/src/tools/code_edit.rs](../../../crates/ploke-tui/src/tools/code_edit.rs)
 
 Acceptance summary:
 
@@ -429,7 +429,7 @@ By phase:
   cross-crate symbol-name collisions
 
 The exhaustive acceptance/test matrix is in
-[2026-03-20_workspaces_acceptance_criteria.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_acceptance_criteria.md).
+[2026-03-20_workspaces_acceptance_criteria.md](2026-03-20_workspaces_acceptance_criteria.md).
 
 ## Guardrails to preserve
 

@@ -1,15 +1,15 @@
 # Phased Execution Plan
 
-If you are about to start real work, begin with [docs/active/workflow/README.md](/home/brasides/code/ploke/docs/active/workflow/README.md), [docs/active/workflow/readiness-status.md](/home/brasides/code/ploke/docs/active/workflow/readiness-status.md), and [handoffs/recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/recent-activity.md), then use this file to understand which phase and exit criteria the work belongs to.
+If you are about to start real work, begin with [README.md](../../workflow/README.md), [readiness-status.md](../../workflow/readiness-status.md), and [recent-activity.md](../../workflow/handoffs/recent-activity.md), then use this file to understand which phase and exit criteria the work belongs to.
 
-This file is the canonical source for phase status and exit criteria. Keep supporting rationale in [eval-design.md](/home/brasides/code/ploke/docs/active/plans/evals/eval-design.md).
+This file is the canonical source for phase status and exit criteria. Keep supporting rationale in [eval-design.md](./eval-design.md).
 
 Each phase (or iteration for Phase 3) gains its own doc once started, with each deliverable annotated with:
 - (not started)
 - ([in progress](links-tracking-doc))
 - ([complete](links-tracking-doc))
 
-When phase-specific tracking starts, keep those docs under `docs/active/plans/evals/` next to this file. Use [docs/workflow/phase-tracking-template.md](/home/brasides/code/ploke/docs/workflow/phase-tracking-template.md) as the starting point.
+When phase-specific tracking starts, keep those docs under `docs/active/plans/evals/` next to this file. Use [phase-tracking-template.md](../../../workflow/phase-tracking-template.md) as the starting point.
 
 ## Phase 1: Foundations — Make Results Trustworthy (Layers 0–1)
 
@@ -44,7 +44,7 @@ When phase-specific tracking starts, keep those docs under `docs/active/plans/ev
 
 **Goal**: Systematically improve the treatment condition by addressing failures in priority order.
 
-This is where we spend most of our time. Each cycle follows the experiment workflow from §X.A and the micro-sprint eval loop from §X.B of [eval-design.md](/home/brasides/code/ploke/docs/active/plans/evals/eval-design.md). Typical early work:
+This is where we spend most of our time. Each cycle follows the experiment workflow from §X.A and the micro-sprint eval loop from §X.B of [eval-design.md](./eval-design.md). Typical early work:
 - Tool description rewrites (measured by tool_misuse_rate change)
 - Error recovery improvements (measured by recovery_rate change)
 - Parsing fixes for specific failure cases (measured by query_recall and downstream solve_rate)

@@ -7,7 +7,7 @@
 
 **Root Cause**
 
-- `syn_parser` builds a `ModuleTree` by inserting every parsed `ModuleNode` into a canonical-path index that requires uniqueness for module *definitions* (inline + file-based). See `ModuleTree::add_module` in [module_tree.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/resolve/module_tree.rs).
+- `syn_parser` builds a `ModuleTree` by inserting every parsed `ModuleNode` into a canonical-path index that requires uniqueness for module *definitions* (inline + file-based). See `ModuleTree::add_module` in [module_tree.rs](../../../../../crates/ingest/syn_parser/src/resolve/module_tree.rs).
 - In this repro, there are *two distinct module definitions* for `crate::quantized::metal`:
   - an inline `mod metal {}` in `quantized/mod.rs` under `#[cfg(not(feature = "metal"))]`
   - a file-based module definition created from parsing `quantized/metal.rs` (because discovery/parsing treats every discovered `.rs` file as a file-based module root, even if it is unreachable from the crate root)
@@ -16,10 +16,10 @@
 **Evidence**
 
 - Fixture shape:
-  - `quantized/mod.rs` defines `metal` both as a cfg-gated file module decl and an inline fallback: [mod.rs](/home/brasides/code/ploke/tests/fixture_workspace/ws_fixture_02_assoc_local_enum_ids/member_quantized_metal_repro/src/quantized/mod.rs)
-  - The corresponding file module exists and is parsed as a module definition: [metal.rs](/home/brasides/code/ploke/tests/fixture_workspace/ws_fixture_02_assoc_local_enum_ids/member_quantized_metal_repro/src/quantized/metal.rs)
-- The duplicate-path error is thrown during `ModuleTree::add_module` when inserting into `path_index` for non-declaration modules. See [module_tree.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/resolve/module_tree.rs) around the `self.path_index.entry(node_path.clone())` occupied-branch.
-- `parse_workspace` ultimately surfaces this as `SynParserError::InternalState("Failed to build module tree: ...")` after `build_tree_and_prune_for_root_path` fails. See [lib.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs).
+  - `quantized/mod.rs` defines `metal` both as a cfg-gated file module decl and an inline fallback: [mod.rs](../../../../../tests/fixture_workspace/ws_fixture_02_assoc_local_enum_ids/member_quantized_metal_repro/src/quantized/mod.rs)
+  - The corresponding file module exists and is parsed as a module definition: [metal.rs](../../../../../tests/fixture_workspace/ws_fixture_02_assoc_local_enum_ids/member_quantized_metal_repro/src/quantized/metal.rs)
+- The duplicate-path error is thrown during `ModuleTree::add_module` when inserting into `path_index` for non-declaration modules. See [module_tree.rs](../../../../../crates/ingest/syn_parser/src/resolve/module_tree.rs) around the `self.path_index.entry(node_path.clone())` occupied-branch.
+- `parse_workspace` ultimately surfaces this as `SynParserError::InternalState("Failed to build module tree: ...")` after `build_tree_and_prune_for_root_path` fails. See [lib.rs](../../../../../crates/ingest/syn_parser/src/lib.rs).
 
 **Suggested Fix (No Edits Made)**
 
@@ -36,17 +36,17 @@ Even with the existing `cfg_eval` hooks in the visitor, `quantized/metal.rs` is 
 
 **Root Cause**
 
-- The repro declares two sibling modules with the same name (`readwrite_pv64v2`) under mutually exclusive `#[cfg(...)]` guards in a single source file. See [c.rs](/home/brasides/code/ploke/tests/fixture_workspace/ws_fixture_02_assoc_local_enum_ids/member_cfg_duplicate_mods_repro/src/backend/libc/c.rs).
+- The repro declares two sibling modules with the same name (`readwrite_pv64v2`) under mutually exclusive `#[cfg(...)]` guards in a single source file. See [c.rs](../../../../../tests/fixture_workspace/ws_fixture_02_assoc_local_enum_ids/member_cfg_duplicate_mods_repro/src/backend/libc/c.rs).
 - `syn_parser` currently builds a single unconditional module tree from the parsed syntax and enforces canonical-path uniqueness for module declarations/definitions, but it does not model cfg-disjoint alternatives. As a result, both `mod readwrite_pv64v2 { ... }` blocks are treated as active, producing two module definitions at the same `NodePath`.
-- `ModuleTree::add_module` then fails with `ModuleTreeError::DuplicatePath` because the `path_index` (for definitions) already contains `crate::backend::libc::c::readwrite_pv64v2` when the second module is inserted. See [module_tree.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/resolve/module_tree.rs).
+- `ModuleTree::add_module` then fails with `ModuleTreeError::DuplicatePath` because the `path_index` (for definitions) already contains `crate::backend::libc::c::readwrite_pv64v2` when the second module is inserted. See [module_tree.rs](../../../../../crates/ingest/syn_parser/src/resolve/module_tree.rs).
 
 **Evidence**
 
-- Fixture uses `target_os` and `target_env` atoms (and `all/any/not`): [c.rs](/home/brasides/code/ploke/tests/fixture_workspace/ws_fixture_02_assoc_local_enum_ids/member_cfg_duplicate_mods_repro/src/backend/libc/c.rs)
-- Duplicate-path detection is unconditional and does not consider `ModuleNode.cfgs` at all during indexing. `ModuleNode` does store `cfgs`, but `ModuleTree::add_module` keys solely on `NodePath`. See [module.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/nodes/module.rs) and [module_tree.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/resolve/module_tree.rs).
+- Fixture uses `target_os` and `target_env` atoms (and `all/any/not`): [c.rs](../../../../../tests/fixture_workspace/ws_fixture_02_assoc_local_enum_ids/member_cfg_duplicate_mods_repro/src/backend/libc/c.rs)
+- Duplicate-path detection is unconditional and does not consider `ModuleNode.cfgs` at all during indexing. `ModuleNode` does store `cfgs`, but `ModuleTree::add_module` keys solely on `NodePath`. See [module.rs](../../../../../crates/ingest/syn_parser/src/parser/nodes/module.rs) and [module_tree.rs](../../../../../crates/ingest/syn_parser/src/resolve/module_tree.rs).
 - There is a `cfg_eval` feature-gated attempt to skip items in the visitor (`visit_item_mod` checks `should_include_item`), but:
   - it is feature-gated and likely off in normal builds
-  - the evaluator is explicitly work-in-progress and currently does not support important atoms like `target_env` (used by this repro), so it cannot reliably disambiguate these modules even when enabled. See [cfg_evaluator.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/visitor/cfg_evaluator.rs) and [attribute_processing.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/visitor/attribute_processing.rs).
+  - the evaluator is explicitly work-in-progress and currently does not support important atoms like `target_env` (used by this repro), so it cannot reliably disambiguate these modules even when enabled. See [cfg_evaluator.rs](../../../../../crates/ingest/syn_parser/src/parser/visitor/cfg_evaluator.rs) and [attribute_processing.rs](../../../../../crates/ingest/syn_parser/src/parser/visitor/attribute_processing.rs).
 
 **Suggested Fix (No Edits Made)**
 

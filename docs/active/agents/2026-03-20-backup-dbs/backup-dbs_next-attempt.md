@@ -1,12 +1,12 @@
 # Backup DBs Next Attempt
 
 Use this note before resuming work on
-[2026-03-19_backup-dbs.md](/home/brasides/code/ploke/docs/active/todo/2026-03-19_backup-dbs.md).
+[2026-03-19_backup-dbs.md](../../todo/2026-03-19_backup-dbs.md).
 
 ## What To Preserve
 
 - Keep the shared fixture registry in
-  [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs)
+  [crates/test-utils/src/fixture_dbs.rs](../../../../crates/test-utils/src/fixture_dbs.rs)
   as the single source of truth for backup fixture metadata.
 - Keep immutable fixture consumers on the shared helper path:
   - `shared_backup_fixture_db(...)`

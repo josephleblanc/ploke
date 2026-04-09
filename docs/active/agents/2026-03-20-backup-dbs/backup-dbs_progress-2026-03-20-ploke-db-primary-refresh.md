@@ -7,15 +7,15 @@
 - `cargo xtask verify-backup-dbs --fixture ploke_db_primary` now passes for the
   regenerated backup.
 - Updated the active fixture registry entry in
-  [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs)
+  [crates/test-utils/src/fixture_dbs.rs](../../../../crates/test-utils/src/fixture_dbs.rs)
   to point at the new dated file and mark its default access as shared
   immutable.
 - Updated
-  [crates/ploke-tui/tests/get_code_edges_regression.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/get_code_edges_regression.rs)
+  [crates/ploke-tui/tests/get_code_edges_regression.rs](../../../../crates/ploke-tui/tests/get_code_edges_regression.rs)
   to load `ploke_db_primary` via `shared_backup_fixture_db(&PLOKE_DB_PRIMARY)`
   instead of hand-importing a hard-coded backup path per test.
 - Updated
-  [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md)
+  [docs/testing/BACKUP_DB_FIXTURES.md](../../../testing/BACKUP_DB_FIXTURES.md)
   to reflect the new active filename, source-backed recreation path, and shared
   immutable access pattern.
 

@@ -8,9 +8,9 @@ Live Corpus Download and Triage Runbook V2
 Provide an operator handoff for running a long `parse debug corpus` sweep while triaging failures in parallel from persisted artifacts, with explicit downstream support for creating minimal repro tests from observed failures.
 
 # Related Planning Files
-- [2026-03-28_corpus-triage-workflow.md](/home/brasides/code/ploke/docs/active/agents/2026-03-29_corpus-triage/2026-03-28_corpus-triage-workflow.md)
-- [2026-03-28_error-diagnostic-rollout-plan.md](/home/brasides/code/ploke/docs/active/agents/2026-03-28_error-diagnostic-rollout-plan.md)
-- [2026-03-30_corpus-repro-report-template.json](/home/brasides/code/ploke/docs/active/agents/2026-03-29_corpus-triage/2026-03-30_corpus-repro-report-template.json)
+- [2026-03-28_corpus-triage-workflow.md](2026-03-28_corpus-triage-workflow.md)
+- [2026-03-28_error-diagnostic-rollout-plan.md](../2026-03-28_error-diagnostic-rollout-plan.md)
+- [2026-03-30_corpus-repro-report-template.json](2026-03-30_corpus-repro-report-template.json)
 
 ## Intent
 
@@ -105,7 +105,7 @@ Under `<run-dir>/triage/`:
 - `reports/pending/*.json`
 
 Required sub-agent handoff template:
-- [2026-03-30_corpus-repro-report-template.json](/home/brasides/code/ploke/docs/active/agents/2026-03-29_corpus-triage/2026-03-30_corpus-repro-report-template.json)
+- [2026-03-30_corpus-repro-report-template.json](2026-03-30_corpus-repro-report-template.json)
 
 From `cargo xtask --format json parse debug corpus-repro ...`:
 - `schema_version`
@@ -159,7 +159,7 @@ Each sub-agent should update the relevant pending report with:
 - relevant code paths
 
 Each structured sub-agent report should conform to:
-- [2026-03-30_corpus-repro-report-template.json](/home/brasides/code/ploke/docs/active/agents/2026-03-29_corpus-triage/2026-03-30_corpus-repro-report-template.json)
+- [2026-03-30_corpus-repro-report-template.json](2026-03-30_corpus-repro-report-template.json)
 
 Each sub-agent should also capture enough concrete evidence for later repro work:
 
@@ -191,7 +191,7 @@ When structured report writes are used:
 Each pending report should contain a canonical example block copied or derived from one `selected_examples[]` entry from `cargo xtask --format json parse debug corpus-repro ...`.
 
 The preferred shape is the `canonical_example` object from:
-- [2026-03-30_corpus-repro-report-template.json](/home/brasides/code/ploke/docs/active/agents/2026-03-29_corpus-triage/2026-03-30_corpus-repro-report-template.json)
+- [2026-03-30_corpus-repro-report-template.json](2026-03-30_corpus-repro-report-template.json)
 
 Required fields:
 

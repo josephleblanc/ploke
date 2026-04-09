@@ -1,11 +1,11 @@
 # Hypothesis Registry
 
 - last_updated: 2026-04-09
-- source: [eval-design.md](/home/brasides/code/ploke/docs/active/plans/evals/eval-design.md)
+- source: [eval-design.md](../plans/evals/eval-design.md)
 - owning_branch: `refactor/tool-calls`
 - review_cadence: daily at 3:00 p.m. America/Los_Angeles local time
 - update_trigger: update after formal runs, hypothesis status changes, or new blocking assumptions
-- id_conventions: [docs/workflow/id-conventions.md](/home/brasides/code/ploke/docs/workflow/id-conventions.md)
+- id_conventions: [id-conventions.md](../../workflow/id-conventions.md)
 
 | id | type | statement | rationale | metrics | acceptance_criteria | falsification | status | linked_runs | linked_postmortems | next action |
 |---|---|---|---|---|---|---|---|---|---|---|

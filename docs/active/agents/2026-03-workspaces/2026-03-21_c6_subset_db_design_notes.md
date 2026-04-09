@@ -1,9 +1,9 @@
 # C6 Subset DB Design Notes 2026-03-21
 
 Backlinks:
-- [2026-03-20_workspaces_implementation_plan.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_implementation_plan.md)
-- [2026-03-20_workspaces_acceptance_criteria.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_acceptance_criteria.md)
-- [2026-03-20_workspaces_progress_tracker.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-20_workspaces_progress_tracker.md)
+- [2026-03-20_workspaces_implementation_plan.md](../../reports/2026-03-20_workspaces_implementation_plan.md)
+- [2026-03-20_workspaces_acceptance_criteria.md](../../reports/2026-03-20_workspaces_acceptance_criteria.md)
+- [2026-03-20_workspaces_progress_tracker.md](2026-03-20_workspaces_progress_tracker.md)
 
 ## Current finding
 
@@ -12,11 +12,11 @@ Phase 7 `C6` must begin in `ploke-db`, not in `ploke-tui`.
 The current code has:
 
 - whole-backup import through `Database::import_backup_with_embeddings(...)` in
-  [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+  [database.rs](../../../../crates/ploke-db/src/database.rs)
 - global relation removal through `Database::clear_relations(...)` in
-  [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+  [database.rs](../../../../crates/ploke-db/src/database.rs)
 - embedding-only partial removal through `Database::retract_embedded_files(...)`
-  in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+  in [database.rs](../../../../crates/ploke-db/src/database.rs)
 
 It does not yet have a namespace-scoped graph export/import/remove primitive.
 
@@ -32,7 +32,7 @@ subset operations with:
 - search-state reconciliation after mutation
 
 See
-[2026-03-20_workspaces_acceptance_criteria.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_acceptance_criteria.md)
+[2026-03-20_workspaces_acceptance_criteria.md](../../reports/2026-03-20_workspaces_acceptance_criteria.md)
 Phase 7 `C6`.
 
 ## Existing seam to build from
@@ -43,7 +43,7 @@ The strongest current namespace seam is:
 - `file_mod.namespace`
 
 The most useful current helper in this area is `Database::get_crate_files(...)`
-in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs),
+in [database.rs](../../../../crates/ploke-db/src/database.rs),
 which already joins `crate_context.namespace -> file_mod.namespace`.
 
 This is a better starting point than:
@@ -55,7 +55,7 @@ This is a better starting point than:
 ## Immediate implementation direction
 
 Start with a DB-level namespace inventory/query layer in
-[database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs).
+[database.rs](../../../../crates/ploke-db/src/database.rs).
 
 That layer should:
 
@@ -99,7 +99,7 @@ whole-DB assumptions.
 Update 2026-03-21:
 
 - `Database::remove_namespace(...)` now exists in
-  [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) as
+  [database.rs](../../../../crates/ploke-db/src/database.rs) as
   the first real namespace-scoped subset mutation primitive.
 - The fixture-backed witness
   `remove_namespace_removes_only_target_namespace_and_invalidates_search_state`
@@ -113,10 +113,10 @@ Update 2026-03-21:
 Update 2026-03-21 (later):
 
 - `Database::export_namespace(...)` now exists in
-  [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) as
+  [database.rs](../../../../crates/ploke-db/src/database.rs) as
   the first real namespace-scoped subset export primitive.
 - `Database::import_namespace(...)` now exists in
-  [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) as
+  [database.rs](../../../../crates/ploke-db/src/database.rs) as
   the first real namespace-scoped subset import primitive, with explicit
   duplicate namespace/name/root conflict reporting.
 - The fixture-backed witness

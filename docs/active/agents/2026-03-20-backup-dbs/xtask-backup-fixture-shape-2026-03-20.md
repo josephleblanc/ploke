@@ -17,22 +17,22 @@ directly from Rust code, not through the interactive TUI `/index start` + `/save
 
 ### What exists today
 
-- [xtask/src/main.rs](/home/brasides/code/ploke/xtask/src/main.rs)
+- [xtask/src/main.rs](../../../../xtask/src/main.rs)
   - `verify-fixtures`
   - `setup-rag-fixtures`
   - no backup regeneration command
-- [crates/ploke-tui/src/app_state/database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs)
+- [crates/ploke-tui/src/app_state/database.rs](../../../../crates/ploke-tui/src/app_state/database.rs)
   - `save_db(...)` writes to the config dir and derives the filename from `system.crate_focus`
   - `load_db(...)` restores from the config dir using filename-prefix search
-- [crates/ploke-db/src/multi_embedding/db_ext.rs](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/db_ext.rs)
+- [crates/ploke-db/src/multi_embedding/db_ext.rs](../../../../crates/ploke-db/src/multi_embedding/db_ext.rs)
   - `load_db(...)` has the same config-dir + prefix-discovery behavior
-- [crates/test-utils/src/lib.rs](/home/brasides/code/ploke/crates/test-utils/src/lib.rs)
+- [crates/test-utils/src/lib.rs](../../../../crates/test-utils/src/lib.rs)
   - `setup_db_full(...)`
   - `setup_db_full_multi_embedding(...)`
   - these already create fresh in-memory DBs directly from source fixtures
-- [crates/ingest/syn_parser/src/lib.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs)
+- [crates/ingest/syn_parser/src/lib.rs](../../../../crates/ingest/syn_parser/src/lib.rs)
   - `parse_workspace(...)`
-- [crates/ingest/ploke-transform/src/transform/workspace.rs](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs)
+- [crates/ingest/ploke-transform/src/transform/workspace.rs](../../../../crates/ingest/ploke-transform/src/transform/workspace.rs)
   - `transform_parsed_workspace(...)`
 
 ### Why the TUI route is a poor primary regeneration path
@@ -121,7 +121,7 @@ Not every backup should be recreated the same way.
 
 - `fixture_nodes_*` is a canonical fixture target and should be recreated from repo source.
 - `ploke-db_642a4b75-...` looks like a user-repro snapshot used by
-  [crates/ploke-tui/tests/get_code_edges_regression.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/get_code_edges_regression.rs).
+  [crates/ploke-tui/tests/get_code_edges_regression.rs](../../../../crates/ploke-tui/tests/get_code_edges_regression.rs).
   That may need a documented manual path unless you explicitly want to redefine it as a
   canonical “current `crates/ploke-db` parse” fixture.
 

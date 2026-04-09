@@ -1,6 +1,6 @@
 # Decision Registry
 
-This file is a legacy planning copy. The active hypothesis registry for workflow use lives at [docs/active/workflow/hypothesis-registry.md](/home/brasides/code/ploke/docs/active/workflow/hypothesis-registry.md).
+This file is a legacy planning copy. The active hypothesis registry for workflow use lives at [hypothesis-registry.md](../../workflow/hypothesis-registry.md).
 
 Explicit decision rule:
 

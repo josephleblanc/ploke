@@ -1,7 +1,7 @@
 # Programme Charter
 
 - last_updated: 2026-04-09
-- source: [eval-design.md](/home/brasides/code/ploke/docs/active/plans/evals/eval-design.md)
+- source: [eval-design.md](../plans/evals/eval-design.md)
 - owning_branch: `refactor/tool-calls`
 - review_cadence: as-needed when the programme definition changes materially
 - update_trigger: update when endpoints, decision rules, or workstream boundaries change

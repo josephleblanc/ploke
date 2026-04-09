@@ -104,8 +104,8 @@ This is likely an **edition-awareness bug** in our parser pipeline, not a schedu
 
 ### Discovery currently does not preserve edition in `CrateContext`
 
-- [`discovery/mod.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/mod.rs)
-- [`single_crate.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/single_crate.rs)
+- [`discovery/mod.rs`](../../../crates/ingest/syn_parser/src/discovery/mod.rs)
+- [`single_crate.rs`](../../../crates/ingest/syn_parser/src/discovery/single_crate.rs)
 
 Key detail:
 
@@ -114,7 +114,7 @@ Key detail:
 
 ### Parsing still uses plain `syn::parse_file`
 
-- [`visitor/mod.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/visitor/mod.rs#L127)
+- [`visitor/mod.rs`](../../../crates/ingest/syn_parser/src/parser/visitor/mod.rs#L127)
 
 Current parse entry:
 
@@ -212,17 +212,17 @@ If no:
 
 ### Parser / discovery
 
-- [`discovery/mod.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/mod.rs)
-- [`single_crate.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/single_crate.rs)
-- [`visitor/mod.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/visitor/mod.rs)
+- [`discovery/mod.rs`](../../../crates/ingest/syn_parser/src/discovery/mod.rs)
+- [`single_crate.rs`](../../../crates/ingest/syn_parser/src/discovery/single_crate.rs)
+- [`visitor/mod.rs`](../../../crates/ingest/syn_parser/src/parser/visitor/mod.rs)
 
 ### Harness / diagnostics
 
-- [`parse_errors.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/utils/parse_errors.rs)
-- [`core.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs)
-- [`indexing.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs)
-- [`runner.rs`](/home/brasides/code/ploke/crates/ploke-eval/src/runner.rs)
-- [`replay.rs`](/home/brasides/code/ploke/crates/ploke-eval/src/tests/replay.rs)
+- [`parse_errors.rs`](../../../crates/ploke-tui/src/utils/parse_errors.rs)
+- [`core.rs`](../../../crates/ploke-tui/src/app_state/core.rs)
+- [`indexing.rs`](../../../crates/ploke-tui/src/app_state/handlers/indexing.rs)
+- [`runner.rs`](../../../crates/ploke-eval/src/runner.rs)
+- [`replay.rs`](../../../crates/ploke-eval/src/tests/replay.rs)
 
 ## Resume Prompt
 

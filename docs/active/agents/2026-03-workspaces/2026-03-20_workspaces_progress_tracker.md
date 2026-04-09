@@ -1,10 +1,10 @@
 # Workspace Progress Tracker 2026-03-20
 
 Backlinks:
-- [2026-03-20_workspaces_implementation_plan.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_implementation_plan.md)
-- [2026-03-20_workspaces_acceptance_criteria.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_acceptance_criteria.md)
-- [2026-03-20_workspaces_test_witnesses.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-20_workspaces_test_witnesses.md)
-- [2026-03-21_workspaces_implementation_review.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-21_workspaces_implementation_review.md)
+- [2026-03-20_workspaces_implementation_plan.md](../../reports/2026-03-20_workspaces_implementation_plan.md)
+- [2026-03-20_workspaces_acceptance_criteria.md](../../reports/2026-03-20_workspaces_acceptance_criteria.md)
+- [2026-03-20_workspaces_test_witnesses.md](2026-03-20_workspaces_test_witnesses.md)
+- [2026-03-21_workspaces_implementation_review.md](2026-03-21_workspaces_implementation_review.md)
 
 Use this as the current implementation status document for workspace rollout.
 Update it whenever a readiness item or phase changes state. Keep entries short:
@@ -73,10 +73,10 @@ updated.
 - Current implementation state: readiness and Phases 1-7 are complete; the
   next gate is Phase 8 `C7`.
 - Compact review doc for restarting later:
-  [2026-03-21_workspaces_implementation_review.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-21_workspaces_implementation_review.md).
+  [2026-03-21_workspaces_implementation_review.md](2026-03-21_workspaces_implementation_review.md).
 - `C6` now has DB-side groundwork plus real subset remove/export/import
   primitives in
-  [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs):
+  [database.rs](../../../../crates/ploke-db/src/database.rs):
   `list_crate_context_rows(...)`, `collect_namespace_inventory(...)`,
   `remove_namespace(...)`, `export_namespace(...)`, and
   `import_namespace(...)`.
@@ -89,9 +89,9 @@ updated.
   prove that `ploke-db` can derive two distinct per-crate namespace inventories
   and distinct descendant graph-id sets from persisted DB authority.
 - New `C6` discovery notes are in
-  [2026-03-21_c6_subset_db_design_notes.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-21_c6_subset_db_design_notes.md).
+  [2026-03-21_c6_subset_db_design_notes.md](2026-03-21_c6_subset_db_design_notes.md).
 - New `C6` witnesses are recorded in
-  [2026-03-20_workspaces_test_witnesses.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-20_workspaces_test_witnesses.md):
+  [2026-03-20_workspaces_test_witnesses.md](2026-03-20_workspaces_test_witnesses.md):
   `workspace_fixture_namespace_inventory_matches_crate_context_membership` and
   `workspace_fixture_namespaces_remain_distinct_in_subset_inventory`, plus
   `remove_namespace_removes_only_target_namespace_and_invalidates_search_state`
@@ -112,7 +112,7 @@ updated.
   and `cargo test -p ploke-tui --tests -- --nocapture`.
 - Full `cargo test -- --nocapture` was already green before this `C6` pass
   after the `Bm25Cmd::Search.scope` compile fix in
-  [unit_tests.rs](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/indexer/unit_tests.rs).
+  [unit_tests.rs](../../../../crates/ingest/ploke-embed/src/indexer/unit_tests.rs).
 - Next target after compaction: start `C7` and make workspace-aware
   read/context/tool behavior use the completed loaded-workspace model without
   widening edit permissions.

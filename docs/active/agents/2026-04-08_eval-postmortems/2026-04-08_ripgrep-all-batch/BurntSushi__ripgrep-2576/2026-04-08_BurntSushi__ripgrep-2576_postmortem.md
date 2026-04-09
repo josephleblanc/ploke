@@ -4,10 +4,10 @@
 - task title: BurntSushi__ripgrep-2576 Eval Postmortem
 - task description: Document the completed eval run for instance `BurntSushi__ripgrep-2576`, with emphasis on model coherence, tool friction, artifact trust, and benchmark follow-through.
 - related planning files:
-  - [2026-04-08_postmortem-template.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_postmortem-template.md)
-  - [2026-04-08_batch-postmortem-index.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_batch-postmortem-index.md)
-  - [2026-04-08_batch-postmortem-meta-notes.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_batch-postmortem-meta-notes.md)
-  - [2026-04-08_postmortem-template-review.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_postmortem-template-review.md)
+  - [2026-04-08_postmortem-template.md](../../2026-04-08_postmortem-template.md)
+  - [2026-04-08_batch-postmortem-index.md](../2026-04-08_batch-postmortem-index.md)
+  - [2026-04-08_batch-postmortem-meta-notes.md](../2026-04-08_batch-postmortem-meta-notes.md)
+  - [2026-04-08_postmortem-template-review.md](../2026-04-08_postmortem-template-review.md)
 
 ## Header
 

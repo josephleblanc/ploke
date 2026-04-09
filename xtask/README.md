@@ -7,7 +7,7 @@ developer/agent runs the same commands via `cargo xtask <command>`.
 
 The original multi-command `xtask` expansion spec is currently **paused** after a partial implementation and a detour into real-world parser debugging. The canonical wrap-up/status document is:
 
-- [`docs/active/agents/2026-03-26-xtask-wrapup-paused-work.md`](/home/brasides/code/ploke/docs/active/agents/2026-03-26-xtask-wrapup-paused-work.md)
+- [`docs/active/agents/2026-03-26-xtask-wrapup-paused-work.md`](../docs/active/agents/2026-03-26-xtask-wrapup-paused-work.md)
 
 ## Available commands
 
@@ -22,7 +22,7 @@ The original multi-command `xtask` expansion spec is currently **paused** after 
       `./scripts/openrouter_pricing_sync.py`.
 - `cargo xtask verify-backup-dbs`
   - Validates the registered backup DB fixtures tracked in
-    [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md).
+    [docs/testing/BACKUP_DB_FIXTURES.md](../docs/testing/BACKUP_DB_FIXTURES.md).
   - By default checks the active fixtures used by tests.
   - Supports `--fixture <id>` to validate a single fixture.
   - Validation goes beyond file presence:
@@ -60,7 +60,7 @@ making it safe to gate test runs or CI hooks on this helper.
 ## Backup fixture registry
 
 Backup DB lifecycle commands use the shared registry in
-[crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs).
+[crates/test-utils/src/fixture_dbs.rs](../crates/test-utils/src/fixture_dbs.rs).
 That registry is the source of truth for:
 
 - fixture ids
@@ -71,11 +71,11 @@ That registry is the source of truth for:
 - the strict repair path for stale backups missing `workspace_metadata`
 
 When a backup fixture changes, update the registry and
-[docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md)
+[docs/testing/BACKUP_DB_FIXTURES.md](../docs/testing/BACKUP_DB_FIXTURES.md)
 together.
 
 For the operator-facing workflow, see
-[docs/how-to/recreate-backup-db-fixtures.md](/home/brasides/code/ploke/docs/how-to/recreate-backup-db-fixtures.md).
+[docs/how-to/recreate-backup-db-fixtures.md](../docs/how-to/recreate-backup-db-fixtures.md).
 
 ## Extending `verify-fixtures`
 

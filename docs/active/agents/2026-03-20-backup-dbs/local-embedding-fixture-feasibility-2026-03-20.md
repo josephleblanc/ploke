@@ -22,7 +22,7 @@ revision and forcing a deterministic execution mode.
 
 ### Fresh DB creation from source
 
-- [crates/test-utils/src/lib.rs](/home/brasides/code/ploke/crates/test-utils/src/lib.rs)
+- [crates/test-utils/src/lib.rs](../../../../crates/test-utils/src/lib.rs)
   - `setup_db_full_multi_embedding("fixture_nodes")`
   - This builds the parsed graph into a fresh DB and creates the
     multi-embedding relations / default embedding-set metadata.
@@ -30,7 +30,7 @@ revision and forcing a deterministic execution mode.
 
 ### Local embedding generation path
 
-- [crates/ingest/ploke-embed/src/local/mod.rs](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/local/mod.rs)
+- [crates/ingest/ploke-embed/src/local/mod.rs](../../../../crates/ingest/ploke-embed/src/local/mod.rs)
   - `LocalEmbedder::new`
   - Uses `hf_hub::api::sync::Api` and fetches:
     - `config.json`
@@ -41,7 +41,7 @@ revision and forcing a deterministic execution mode.
     - `revision: None`
     - `DevicePreference::Auto`
 
-- [crates/ingest/ploke-embed/src/indexer/mod.rs](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/indexer/mod.rs)
+- [crates/ingest/ploke-embed/src/indexer/mod.rs](../../../../crates/ingest/ploke-embed/src/indexer/mod.rs)
   - `EmbeddingProcessor`
   - `EmbeddingSource::Local`
   - `IndexerTask::new(...).run(...)`
@@ -50,7 +50,7 @@ revision and forcing a deterministic execution mode.
 
 ### Existing tests that prove the path works
 
-- [crates/ingest/ploke-embed/src/indexer/unit_tests.rs](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/indexer/unit_tests.rs)
+- [crates/ingest/ploke-embed/src/indexer/unit_tests.rs](../../../../crates/ingest/ploke-embed/src/indexer/unit_tests.rs)
   - `test_local_model_config`
   - `test_local_model_embedding_processor`
   - `test_next_batch("fixture_nodes")`
@@ -79,10 +79,10 @@ the narrowest existing API path is:
    - `db.backup_db(path)`
 
 Code references:
-- [crates/test-utils/src/lib.rs](/home/brasides/code/ploke/crates/test-utils/src/lib.rs)
-- [crates/ingest/ploke-embed/src/indexer/unit_tests.rs](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/indexer/unit_tests.rs)
-- [crates/ingest/ploke-embed/src/indexer/mod.rs](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/indexer/mod.rs)
-- [crates/ploke-db/src/database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+- [crates/test-utils/src/lib.rs](../../../../crates/test-utils/src/lib.rs)
+- [crates/ingest/ploke-embed/src/indexer/unit_tests.rs](../../../../crates/ingest/ploke-embed/src/indexer/unit_tests.rs)
+- [crates/ingest/ploke-embed/src/indexer/mod.rs](../../../../crates/ingest/ploke-embed/src/indexer/mod.rs)
+- [crates/ploke-db/src/database.rs](../../../../crates/ploke-db/src/database.rs)
 
 ## Why I would not automate it yet
 
@@ -90,7 +90,7 @@ The current local-embedding generation path is not stable enough for fixture
 regeneration because:
 
 - Model revision is not pinned:
-  - [crates/ingest/ploke-embed/src/local/mod.rs](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/local/mod.rs)
+  - [crates/ingest/ploke-embed/src/local/mod.rs](../../../../crates/ingest/ploke-embed/src/local/mod.rs)
 - Model artifacts are not vendored in-repo:
   - the code fetches via `hf_hub`
 - Device choice is not fixed:

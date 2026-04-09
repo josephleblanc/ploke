@@ -5,16 +5,16 @@ description: Use when adding a chronological eval-work entry so what changed, wh
 
 # Lab Book
 
-Update the `mdbook` under [docs/active/workflow/lab-book](/home/brasides/code/ploke/docs/active/workflow/lab-book).
+Update the `mdbook` under [lab-book](../../../active/workflow/lab-book).
 
 ## Book Structure
 
 - book config:
-  [book.toml](/home/brasides/code/ploke/docs/active/workflow/lab-book/book.toml)
+  [book.toml](../../../active/workflow/lab-book/book.toml)
 - navigation:
-  [src/SUMMARY.md](/home/brasides/code/ploke/docs/active/workflow/lab-book/src/SUMMARY.md)
+  [src/SUMMARY.md](../../../active/workflow/lab-book/src/SUMMARY.md)
 - archive rule:
-  [src/archive-boundary.md](/home/brasides/code/ploke/docs/active/workflow/lab-book/src/archive-boundary.md)
+  [src/archive-boundary.md](../../../active/workflow/lab-book/src/archive-boundary.md)
 
 ## Entry Contents
 

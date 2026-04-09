@@ -5,22 +5,22 @@ Use this checklist to keep `§XI` concrete and small.
 ## Required Artifacts
 
 - [x] Programme Charter
-  Active file: [docs/active/workflow/programme_charter.md](/home/brasides/code/ploke/docs/active/workflow/programme_charter.md)
+  Active file: [programme_charter.md](../active/workflow/programme_charter.md)
 - [x] Hypothesis Registry
-  Active file: [docs/active/workflow/hypothesis-registry.md](/home/brasides/code/ploke/docs/active/workflow/hypothesis-registry.md)
+  Active file: [hypothesis-registry.md](../active/workflow/hypothesis-registry.md)
 - [x] Experiment Decision Records
-  Durable template/example: [docs/workflow/edr](/home/brasides/code/ploke/docs/workflow/edr)
-  Active records: [docs/active/workflow/edr](/home/brasides/code/ploke/docs/active/workflow/edr)
+  Durable template/example: [edr](edr)
+  Active records: [edr](../active/workflow/edr)
 - [x] Evidence Ledger
-  Active file: [docs/active/workflow/evidence-ledger.md](/home/brasides/code/ploke/docs/active/workflow/evidence-ledger.md)
-  Maintenance skill: [docs/workflow/skills/evidence-ledger/SKILL.md](/home/brasides/code/ploke/docs/workflow/skills/evidence-ledger/SKILL.md)
+  Active file: [evidence-ledger.md](../active/workflow/evidence-ledger.md)
+  Maintenance skill: [evidence-ledger/SKILL.md](skills/evidence-ledger/SKILL.md)
 - [x] Failure Taxonomy
-  Active file: [docs/active/workflow/failure-taxonomy.md](/home/brasides/code/ploke/docs/active/workflow/failure-taxonomy.md)
-  Maintenance skill: [docs/workflow/skills/failure-taxonomy/SKILL.md](/home/brasides/code/ploke/docs/workflow/skills/failure-taxonomy/SKILL.md)
+  Active file: [failure-taxonomy.md](../active/workflow/failure-taxonomy.md)
+  Maintenance skill: [failure-taxonomy/SKILL.md](skills/failure-taxonomy/SKILL.md)
 - [x] Lab Book
-  Active directory: [docs/active/workflow/lab-book](/home/brasides/code/ploke/docs/active/workflow/lab-book)
-  Maintenance skill: [docs/workflow/skills/lab-book/SKILL.md](/home/brasides/code/ploke/docs/workflow/skills/lab-book/SKILL.md)
-  Book summary: [docs/active/workflow/lab-book/src/SUMMARY.md](/home/brasides/code/ploke/docs/active/workflow/lab-book/src/SUMMARY.md)
+  Active directory: [lab-book](../active/workflow/lab-book)
+  Maintenance skill: [lab-book/SKILL.md](skills/lab-book/SKILL.md)
+  Book summary: [SUMMARY.md](../active/workflow/lab-book/src/SUMMARY.md)
 
 ## Tightness Rules
 

@@ -4,8 +4,8 @@
 - task title: BurntSushi__ripgrep-2209 Eval Postmortem
 - task description: Postmortem for the `BurntSushi__ripgrep-2209` ripgrep-all batch run, with emphasis on model error, tool friction, and artifact ambiguity.
 - related planning files:
-  - [2026-04-08_postmortem-plan.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_postmortem-plan.md)
-  - [2026-04-08_batch-postmortem-index.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_batch-postmortem-index.md)
+  - [2026-04-08_postmortem-plan.md](../../2026-04-08_postmortem-plan.md)
+  - [2026-04-08_batch-postmortem-index.md](../2026-04-08_batch-postmortem-index.md)
 
 ## Header
 

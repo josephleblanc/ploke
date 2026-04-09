@@ -14,14 +14,14 @@ Concretely, the fixture contains placeholder “call-like” syntax in positions
 **Evidence**
 
 - The repro itself documents this as a gap between toolchain acceptance (with proc-macro expansion) and `syn::parse_file` strictness, and asserts that the error is a `SynParserError::Syn` wrapped into `SynParserError::MultipleErrors`.  
-  See [`proc_macro_parsing.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/tests/repro/fail/proc_macro_parsing.rs).
+  See [`proc_macro_parsing.rs`](../../../../../crates/ingest/syn_parser/tests/repro/fail/proc_macro_parsing.rs).
 - The parsing pipeline calls `syn::parse_file(&file_content)?;` as the first structured step for each file.  
-  See [`visitor/mod.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/parser/visitor/mod.rs).
+  See [`visitor/mod.rs`](../../../../../crates/ingest/syn_parser/src/parser/visitor/mod.rs).
 - This exact case is already documented as a known limitation: `KL-002 Proc-macro pre-expansion syntax`, with `#[duplicate_item(...)]` called out and example failures like `expected ','`.  
-  See [`KL-002-proc-macro-pre-expansion-syntax.md`](/home/brasides/code/ploke/docs/design/known_limitations/KL-002-proc-macro-pre-expansion-syntax.md).
+  See [`KL-002-proc-macro-pre-expansion-syntax.md`](../../../../design/known_limitations/KL-002-proc-macro-pre-expansion-syntax.md).
 
 Notes:
-- `KL-002` currently links to an older repro path (`crates/ingest/syn_parser/tests/repro/duplicate_item.rs`), but the live repro appears to be [`proc_macro_parsing.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/tests/repro/fail/proc_macro_parsing.rs).
+- `KL-002` currently links to an older repro path (`crates/ingest/syn_parser/tests/repro/duplicate_item.rs`), but the live repro appears to be [`proc_macro_parsing.rs`](../../../../../crates/ingest/syn_parser/tests/repro/fail/proc_macro_parsing.rs).
 
 **Suggested fix / mitigation (no implementation here)**
 

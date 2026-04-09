@@ -10,13 +10,13 @@ Grounded design for running multi-SWE-bench style prompts through the current ag
 - [2026-04-06-multi-swe-bench-harness-plan.md](./2026-04-06-multi-swe-bench-harness-plan.md)
 
 ## Current Ground Truth
-- The user-message entry path already exists and is the correct benchmark entrypoint: `AddUserMessage` -> `ScanForChange` -> `EmbedMessage`, as driven from [`app/mod.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app/mod.rs#L1296) and wrapped in the older headless harness by [`new_test_harness.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/test_utils/new_test_harness.rs#L186).
-- The prompt/context boundary already exists as `ChatEvt::PromptConstructed`, and `llm_manager` waits for a matching `Request` + `PromptConstructed` pair before starting the LLM turn, in [`llm/manager/events.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/events.rs#L122) and [`llm/manager/mod.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs#L191).
-- Tool execution is already event-driven: the chat loop emits `SystemEvent::ToolCallRequested`, the tool layer emits `ToolCallCompleted` or `ToolCallFailed`, and the session waits on those events by `step_request_id`, in [`llm/manager/session.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/session.rs#L745), [`llm/manager/session.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/session.rs#L1371), and [`tools/mod.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/tools/mod.rs#L486).
-- Patch-style edits already flow through model-facing tools. `NsPatch` is the closest fit for SWE-bench patch output, but it currently supports one file patch per call, in [`tools/ns_patch.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/tools/ns_patch.rs#L216).
-- Patch application is not synonymous with tool completion. The edit tools stage proposals first and only write files during approval/apply, in [`rag/tools.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/rag/tools.rs#L689) and [`rag/editing.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/rag/editing.rs#L73).
-- Auto-application already exists and is controlled by `editing.auto_confirm_edits`, in [`user_config.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/user_config.rs#L544), [`rag/tools.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/rag/tools.rs#L680), and [`app_state/dispatcher.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/dispatcher.rs#L283).
-- There is no first-class event for turn completion today. The only authoritative completion object is `ChatSessionReport`, which is logged after the session returns, in [`llm/manager/mod.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs#L433).
+- The user-message entry path already exists and is the correct benchmark entrypoint: `AddUserMessage` -> `ScanForChange` -> `EmbedMessage`, as driven from [`app/mod.rs`](../../../crates/ploke-tui/src/app/mod.rs#L1296) and wrapped in the older headless harness by [`new_test_harness.rs`](../../../crates/ploke-tui/src/test_utils/new_test_harness.rs#L186).
+- The prompt/context boundary already exists as `ChatEvt::PromptConstructed`, and `llm_manager` waits for a matching `Request` + `PromptConstructed` pair before starting the LLM turn, in [`llm/manager/events.rs`](../../../crates/ploke-tui/src/llm/manager/events.rs#L122) and [`llm/manager/mod.rs`](../../../crates/ploke-tui/src/llm/manager/mod.rs#L191).
+- Tool execution is already event-driven: the chat loop emits `SystemEvent::ToolCallRequested`, the tool layer emits `ToolCallCompleted` or `ToolCallFailed`, and the session waits on those events by `step_request_id`, in [`llm/manager/session.rs`](../../../crates/ploke-tui/src/llm/manager/session.rs#L745), [`llm/manager/session.rs`](../../../crates/ploke-tui/src/llm/manager/session.rs#L1371), and [`tools/mod.rs`](../../../crates/ploke-tui/src/tools/mod.rs#L486).
+- Patch-style edits already flow through model-facing tools. `NsPatch` is the closest fit for SWE-bench patch output, but it currently supports one file patch per call, in [`tools/ns_patch.rs`](../../../crates/ploke-tui/src/tools/ns_patch.rs#L216).
+- Patch application is not synonymous with tool completion. The edit tools stage proposals first and only write files during approval/apply, in [`rag/tools.rs`](../../../crates/ploke-tui/src/rag/tools.rs#L689) and [`rag/editing.rs`](../../../crates/ploke-tui/src/rag/editing.rs#L73).
+- Auto-application already exists and is controlled by `editing.auto_confirm_edits`, in [`user_config.rs`](../../../crates/ploke-tui/src/user_config.rs#L544), [`rag/tools.rs`](../../../crates/ploke-tui/src/rag/tools.rs#L680), and [`app_state/dispatcher.rs`](../../../crates/ploke-tui/src/app_state/dispatcher.rs#L283).
+- There is no first-class event for turn completion today. The only authoritative completion object is `ChatSessionReport`, which is logged after the session returns, in [`llm/manager/mod.rs`](../../../crates/ploke-tui/src/llm/manager/mod.rs#L433).
 
 ## Requirements For The First Pass
 1. Use the existing loaded-workspace runtime and live OpenRouter-backed model loop.
@@ -32,7 +32,7 @@ Grounded design for running multi-SWE-bench style prompts through the current ag
 ## Required Runtime Settings
 ### Workspace and tool exposure
 - The benchmark runtime must load a workspace or standalone crate before sending the prompt.
-- This is mandatory because tool definitions are only attached when `has_loaded_crates()` is true in [`llm/manager/mod.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs#L500).
+- This is mandatory because tool definitions are only attached when `has_loaded_crates()` is true in [`llm/manager/mod.rs`](../../../crates/ploke-tui/src/llm/manager/mod.rs#L500).
 
 ### Autonomous edit application
 - Set `editing.auto_confirm_edits = true` before the turn starts.
@@ -53,7 +53,7 @@ Grounded design for running multi-SWE-bench style prompts through the current ag
 - This matters for offline analysis more than for the turn logic itself.
 
 ## Recommended Harness Shape
-Introduce a benchmark-specific runtime layer on top of [`TestRuntime`](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/unit_tests/harness.rs).
+Introduce a benchmark-specific runtime layer on top of [`TestRuntime`](../../../crates/ploke-tui/src/app/commands/unit_tests/harness.rs).
 
 ### Proposed types
 ```rust
@@ -212,7 +212,7 @@ pub struct PatchArtifact {
 - multiple `ns_patch` tool calls in one turn, or
 - continued reliance on `apply_code_edit`/`create_file` for some file changes.
 
-Do not weaken this validation in the first pass. The current restriction is explicit in [`tools/ns_patch.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/tools/ns_patch.rs#L216).
+Do not weaken this validation in the first pass. The current restriction is explicit in [`tools/ns_patch.rs`](../../../crates/ploke-tui/src/tools/ns_patch.rs#L216).
 
 ## Turn Completion
 ### Current state
@@ -242,7 +242,7 @@ pub enum SystemEvent {
 }
 ```
 
-Emit it in [`llm/manager/mod.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs#L433), where the report already exists.
+Emit it in [`llm/manager/mod.rs`](../../../crates/ploke-tui/src/llm/manager/mod.rs#L433), where the report already exists.
 
 ### Why this is the right seam
 - The chat session is already fully resolved there.

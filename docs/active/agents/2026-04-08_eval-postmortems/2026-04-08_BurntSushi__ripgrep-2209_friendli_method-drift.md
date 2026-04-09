@@ -4,7 +4,7 @@
 - task title: BurntSushi__ripgrep-2209 Failed Eval Postmortem
 - task description: Document the failed `run-msb-agent-single` investigation where the model correctly diagnosed the multiline replacement issue but drifted into a compile-breaking refactor after tool friction.
 - related planning files:
-  - [2026-04-08_postmortem-plan.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_postmortem-plan.md)
+  - [2026-04-08_postmortem-plan.md](2026-04-08_postmortem-plan.md)
 
 ## Header
 

@@ -8,7 +8,7 @@ Corpus Triage Workflow Setup
 Define a repeatable workflow for surveying `parse debug corpus` failures with sub-agents, using persisted run artifacts, machine-queryable JSON reports, and clustered failure signatures for dedupe.
 
 # Related Planning Files
-- [2026-03-28_error-diagnostic-rollout-plan.md](/home/brasides/code/ploke/docs/active/agents/2026-03-28_error-diagnostic-rollout-plan.md)
+- [2026-03-28_error-diagnostic-rollout-plan.md](../2026-03-28_error-diagnostic-rollout-plan.md)
 
 ## Workflow
 

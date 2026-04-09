@@ -1,8 +1,8 @@
 # Workspace Test Witnesses 2026-03-20
 
 Backlinks:
-- [2026-03-20_workspaces_progress_tracker.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-20_workspaces_progress_tracker.md)
-- [2026-03-20_workspaces_acceptance_criteria.md](/home/brasides/code/ploke/docs/active/reports/2026-03-20_workspaces_acceptance_criteria.md)
+- [2026-03-20_workspaces_progress_tracker.md](2026-03-20_workspaces_progress_tracker.md)
+- [2026-03-20_workspaces_acceptance_criteria.md](../../reports/2026-03-20_workspaces_acceptance_criteria.md)
 
 Use this document to record why specific tests count as witness evidence for a
 readiness item or phase acceptance criterion. Keep entries short and tied to
@@ -12,33 +12,33 @@ the criterion language, not just to the implementation details.
 
 | Acceptance item | Test | Why this counts as witness evidence |
 | --- | --- | --- |
-| `R1` | `parse_workspace_committed_fixture_uses_multi_member_workspace` in [lib.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs#L745) | Uses the committed on-disk fixture `ws_fixture_01`, calls `parse_workspace(...)` directly, and asserts the normalized two-member workspace set including nested `nested/member_nested`, which matches the R1 invariant that the fixture is a real Cargo workspace consumable directly by parser code |
-| `R1` | `committed_workspace_fixture_locates_nested_members` in [workspace.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/workspace.rs#L516) | Uses the same committed fixture without tempdir generation, calls `locate_workspace_manifest(...)` from the nested member path, and asserts the discovered workspace root plus normalized member paths, which matches the R1 invariant and the parser/discovery shared-fixture contract |
-| `R2` | `backup_db_fixture_lookup_returns_registered_workspace_fixture` in [fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs#L406) | Resolves the workspace fixture through the shared registry by ID and asserts the active filename, parsed target, and plain-backup mode, which matches the R2 requirement that the workspace backup exist as a registry-backed fixture rather than an ad hoc file on disk |
-| `R2` | `workspace_backup_fixture_loads_via_registry_and_has_workspace_metadata` in [fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs#L423) | Loads the registered workspace fixture through the strict registry-backed helper and asserts that the restored DB contains both `workspace_metadata` and two `crate_context` rows, which matches the R2 requirement that the fixture load through the same strict paths used by shared consumers |
-| `R3` | `transform_parsed_workspace_persists_workspace_metadata_fields_from_committed_fixture` in [workspace.rs](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L170) | Parses the committed multi-member fixture `ws_fixture_01`, transforms it into a fresh DB, queries `workspace_metadata`, and asserts the exact persisted identity and manifest-derived fields required by R3 |
-| Phase 3 `C2` | `resolve_index_target_prefers_crate_root_when_pwd_is_crate_root` in [parser.rs](/home/brasides/code/ploke/crates/ploke-tui/src/parser.rs#L257) | Proves the revised `/index` target semantics choose crate mode when the supplied path is itself a crate root, instead of silently escalating that exact path to workspace mode |
-| Phase 3 `C2` | `resolve_index_target_finds_workspace_when_pwd_is_not_crate_root` in [parser.rs](/home/brasides/code/ploke/crates/ploke-tui/src/parser.rs#L269) | Proves the revised target resolution falls back to the nearest ancestor workspace when the supplied path is not a crate root, which is the documented replacement for the earlier bare-workspace-only behavior |
-| Phase 3 `C2` | `resolve_index_target_reports_missing_crate_or_workspace` in [parser.rs](/home/brasides/code/ploke/crates/ploke-tui/src/parser.rs#L287) | Proves non-Cargo targets fail as recoverable errors with explicit user guidance rather than being silently accepted as valid indexing roots |
-| Phase 3 `C2` | `index_workspace_resolves_ancestor_workspace_from_nested_path` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L40) | Drives the real `ploke-tui` indexing handler from a nested path inside `ws_fixture_01` and proves successful parse/transform commits multi-member loaded-workspace state and member-scoped path policy roots |
-| Phase 3 `C2` | `index_workspace_failure_keeps_previous_loaded_workspace_state` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L84) | Proves an invalid target records failure but preserves the previously loaded workspace root and member set instead of publishing partial state |
-| Phase 3 `C2` | `index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_differs` in [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L154) | Proves the real indexing handler does not silently reinterpret a repo-relative target from process cwd when loaded app state already identifies the absolute crate root, which is the regression that previously surfaced through `test_update_embed` |
-| Phase 4 `C3` | `workspace_status_and_update_operate_per_loaded_crate` in [workspace_status_update.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_status_update.rs#L103) | Drives the real workspace status/update path on the committed multi-member fixture, proves one changed member is marked stale while the untouched member stays fresh, then proves `/workspace update` returns both to fresh without dropping a seeded unchanged-member embedding |
-| Phase 4 `C3` | `workspace_status_reports_workspace_member_drift` in [workspace_status_update.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_status_update.rs#L178) | Mutates the committed workspace manifest after load and proves `/workspace status` reports removed-member drift explicitly instead of silently absorbing the changed member set |
-| Phase 5 `C4` | `load_db_restores_saved_embedding_set_and_index` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1649) | Saves a crate-backed singleton workspace snapshot through `/save db`, asserts a workspace-registry entry was written, then reloads through the registry-backed `/load` path and proves active embedding-set metadata plus HNSW restore still roundtrip |
-| Phase 5 `C4` | `load_db_requires_workspace_registry_entry_instead_of_prefix_lookup` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1752) | Proves `/load` no longer scans backup filenames by prefix: a stray prefix-matching backup file is insufficient without a registry entry |
-| Phase 5 `C4` | `load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1778) | Proves workspace restore rejects the legacy `FirstPopulated` embedding-set fallback when snapshot metadata is missing, which is a required `C4` failure mode |
-| Phase 5 `C4` | `load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot` in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1868) | Proves registry/snapshot disagreement fails explicitly instead of silently preferring stale registry metadata over restored snapshot metadata |
-| Phase 6 `C5` | `bm25_specific_crate_scope_filters_before_top_k_truncation` in [bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs#L1006) | Builds a two-namespace in-memory BM25 corpus where the stronger out-of-scope document wins unscoped `top_k=1`, then proves `SpecificCrate(CrateId)` still returns the weaker in-scope document at `top_k=1`, which is direct evidence that scope is applied before BM25 truncation |
-| Phase 7 `C6` | `workspace_fixture_namespace_inventory_matches_crate_context_membership` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Loads `ws_fixture_01_canonical`, enumerates `crate_context` rows, builds a per-namespace inventory from `crate_context.namespace -> file_mod.namespace -> syntax_edge` descendant closure, and proves each loaded crate has a non-empty graph inventory rooted inside the committed workspace fixture |
-| Phase 7 `C6` | `workspace_fixture_namespaces_remain_distinct_in_subset_inventory` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Proves the two workspace members in `ws_fixture_01_canonical` produce distinct namespace inventories with disjoint root file modules and disjoint descendant graph ids, which is the first direct evidence that later subset operations can key off explicit namespace authority rather than crate-name or whole-DB assumptions |
-| Phase 7 `C6` | `remove_namespace_removes_only_target_namespace_and_invalidates_search_state` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Seeds dense/BM25 state for one crate namespace inside `ws_fixture_01_canonical`, removes that namespace through `Database::remove_namespace(...)`, and proves the sibling namespace survives while target `crate_context`, `workspace_metadata.members`, graph rows, vectors, BM25 rows, and HNSW registration are all reconciled to the post-mutation dataset |
-| Phase 7 `C6` | `export_namespace_artifact_contains_only_target_namespace_rows` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Seeds dense/BM25 plus active embedding metadata for one crate namespace inside `ws_fixture_01_canonical`, exports that namespace through `Database::export_namespace(...)`, and proves the artifact contains only the target namespace’s `crate_context`, `file_mod`, rooted graph rows, vector rows, BM25 rows, embedding-set metadata, and pruned `workspace_metadata.members` |
-| Phase 7 `C6` | `import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Exports one namespace from `ws_fixture_01_canonical`, removes it from a second loaded copy of that workspace, recreates HNSW on the surviving namespace, then imports the artifact back through `Database::import_namespace(...)` and proves the namespace returns without whole-DB replacement while `workspace_metadata.members`, vectors, BM25 rows, and HNSW availability are reconciled to the post-import dataset |
-| Phase 7 `C6` | `import_namespace_reports_duplicate_namespace_name_and_root_conflicts` in [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs) | Attempts to import an exported namespace artifact back into the unchanged source workspace DB and proves `Database::import_namespace(...)` rejects it with an explicit conflict report naming the duplicate namespace, crate name, and root path instead of silently replacing or merging conflicting data |
-| Phase 7 `C6` | `workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata` in [workspace_subset_remove.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_subset_remove.rs) | Indexes the committed two-member workspace fixture in `ploke-tui`, removes one loaded member through the new `/workspace rm` runtime helper, and proves the surviving loaded membership, focus, path roots, rewritten registry/snapshot metadata, and explicit search invalidation message all converge to the same post-mutation member set |
-| Phase 7 `C6` | `workspace_load_crates_restores_removed_member_and_snapshot_metadata` in [workspace_subset_remove.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_subset_remove.rs) | Starts from the same committed two-member workspace fixture, removes one loaded member, then reloads that member from a registered workspace snapshot through `load crates <workspace> <crate>` and proves restored membership, preserved valid focus, widened path roots, rewritten registry/snapshot metadata, and explicit search invalidation all converge to the same post-import member set |
-| Phase 7 `C6` | `workspace_load_crates_conflict_preserves_runtime_state` in [workspace_subset_remove.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_subset_remove.rs) | Attempts to load an already loaded crate subset from a registered workspace snapshot and proves the conflict is explicit while loaded membership, focus, path roots, and active HNSW registration remain unchanged |
+| `R1` | `parse_workspace_committed_fixture_uses_multi_member_workspace` in [lib.rs](../../../../crates/ingest/syn_parser/src/lib.rs#L745) | Uses the committed on-disk fixture `ws_fixture_01`, calls `parse_workspace(...)` directly, and asserts the normalized two-member workspace set including nested `nested/member_nested`, which matches the R1 invariant that the fixture is a real Cargo workspace consumable directly by parser code |
+| `R1` | `committed_workspace_fixture_locates_nested_members` in [workspace.rs](../../../../crates/ingest/syn_parser/src/discovery/workspace.rs#L516) | Uses the same committed fixture without tempdir generation, calls `locate_workspace_manifest(...)` from the nested member path, and asserts the discovered workspace root plus normalized member paths, which matches the R1 invariant and the parser/discovery shared-fixture contract |
+| `R2` | `backup_db_fixture_lookup_returns_registered_workspace_fixture` in [fixture_dbs.rs](../../../../crates/test-utils/src/fixture_dbs.rs#L406) | Resolves the workspace fixture through the shared registry by ID and asserts the active filename, parsed target, and plain-backup mode, which matches the R2 requirement that the workspace backup exist as a registry-backed fixture rather than an ad hoc file on disk |
+| `R2` | `workspace_backup_fixture_loads_via_registry_and_has_workspace_metadata` in [fixture_dbs.rs](../../../../crates/test-utils/src/fixture_dbs.rs#L423) | Loads the registered workspace fixture through the strict registry-backed helper and asserts that the restored DB contains both `workspace_metadata` and two `crate_context` rows, which matches the R2 requirement that the fixture load through the same strict paths used by shared consumers |
+| `R3` | `transform_parsed_workspace_persists_workspace_metadata_fields_from_committed_fixture` in [workspace.rs](../../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L170) | Parses the committed multi-member fixture `ws_fixture_01`, transforms it into a fresh DB, queries `workspace_metadata`, and asserts the exact persisted identity and manifest-derived fields required by R3 |
+| Phase 3 `C2` | `resolve_index_target_prefers_crate_root_when_pwd_is_crate_root` in [parser.rs](../../../../crates/ploke-tui/src/parser.rs#L257) | Proves the revised `/index` target semantics choose crate mode when the supplied path is itself a crate root, instead of silently escalating that exact path to workspace mode |
+| Phase 3 `C2` | `resolve_index_target_finds_workspace_when_pwd_is_not_crate_root` in [parser.rs](../../../../crates/ploke-tui/src/parser.rs#L269) | Proves the revised target resolution falls back to the nearest ancestor workspace when the supplied path is not a crate root, which is the documented replacement for the earlier bare-workspace-only behavior |
+| Phase 3 `C2` | `resolve_index_target_reports_missing_crate_or_workspace` in [parser.rs](../../../../crates/ploke-tui/src/parser.rs#L287) | Proves non-Cargo targets fail as recoverable errors with explicit user guidance rather than being silently accepted as valid indexing roots |
+| Phase 3 `C2` | `index_workspace_resolves_ancestor_workspace_from_nested_path` in [index_workspace_targets.rs](../../../../crates/ploke-tui/tests/index_workspace_targets.rs#L40) | Drives the real `ploke-tui` indexing handler from a nested path inside `ws_fixture_01` and proves successful parse/transform commits multi-member loaded-workspace state and member-scoped path policy roots |
+| Phase 3 `C2` | `index_workspace_failure_keeps_previous_loaded_workspace_state` in [index_workspace_targets.rs](../../../../crates/ploke-tui/tests/index_workspace_targets.rs#L84) | Proves an invalid target records failure but preserves the previously loaded workspace root and member set instead of publishing partial state |
+| Phase 3 `C2` | `index_workspace_anchors_repo_relative_target_to_loaded_state_when_cwd_differs` in [index_workspace_targets.rs](../../../../crates/ploke-tui/tests/index_workspace_targets.rs#L154) | Proves the real indexing handler does not silently reinterpret a repo-relative target from process cwd when loaded app state already identifies the absolute crate root, which is the regression that previously surfaced through `test_update_embed` |
+| Phase 4 `C3` | `workspace_status_and_update_operate_per_loaded_crate` in [workspace_status_update.rs](../../../../crates/ploke-tui/tests/workspace_status_update.rs#L103) | Drives the real workspace status/update path on the committed multi-member fixture, proves one changed member is marked stale while the untouched member stays fresh, then proves `/workspace update` returns both to fresh without dropping a seeded unchanged-member embedding |
+| Phase 4 `C3` | `workspace_status_reports_workspace_member_drift` in [workspace_status_update.rs](../../../../crates/ploke-tui/tests/workspace_status_update.rs#L178) | Mutates the committed workspace manifest after load and proves `/workspace status` reports removed-member drift explicitly instead of silently absorbing the changed member set |
+| Phase 5 `C4` | `load_db_restores_saved_embedding_set_and_index` in [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs#L1649) | Saves a crate-backed singleton workspace snapshot through `/save db`, asserts a workspace-registry entry was written, then reloads through the registry-backed `/load` path and proves active embedding-set metadata plus HNSW restore still roundtrip |
+| Phase 5 `C4` | `load_db_requires_workspace_registry_entry_instead_of_prefix_lookup` in [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs#L1752) | Proves `/load` no longer scans backup filenames by prefix: a stray prefix-matching backup file is insufficient without a registry entry |
+| Phase 5 `C4` | `load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads` in [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs#L1778) | Proves workspace restore rejects the legacy `FirstPopulated` embedding-set fallback when snapshot metadata is missing, which is a required `C4` failure mode |
+| Phase 5 `C4` | `load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot` in [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs#L1868) | Proves registry/snapshot disagreement fails explicitly instead of silently preferring stale registry metadata over restored snapshot metadata |
+| Phase 6 `C5` | `bm25_specific_crate_scope_filters_before_top_k_truncation` in [bm25_index/mod.rs](../../../../crates/ploke-db/src/bm25_index/mod.rs#L1006) | Builds a two-namespace in-memory BM25 corpus where the stronger out-of-scope document wins unscoped `top_k=1`, then proves `SpecificCrate(CrateId)` still returns the weaker in-scope document at `top_k=1`, which is direct evidence that scope is applied before BM25 truncation |
+| Phase 7 `C6` | `workspace_fixture_namespace_inventory_matches_crate_context_membership` in [database.rs](../../../../crates/ploke-db/src/database.rs) | Loads `ws_fixture_01_canonical`, enumerates `crate_context` rows, builds a per-namespace inventory from `crate_context.namespace -> file_mod.namespace -> syntax_edge` descendant closure, and proves each loaded crate has a non-empty graph inventory rooted inside the committed workspace fixture |
+| Phase 7 `C6` | `workspace_fixture_namespaces_remain_distinct_in_subset_inventory` in [database.rs](../../../../crates/ploke-db/src/database.rs) | Proves the two workspace members in `ws_fixture_01_canonical` produce distinct namespace inventories with disjoint root file modules and disjoint descendant graph ids, which is the first direct evidence that later subset operations can key off explicit namespace authority rather than crate-name or whole-DB assumptions |
+| Phase 7 `C6` | `remove_namespace_removes_only_target_namespace_and_invalidates_search_state` in [database.rs](../../../../crates/ploke-db/src/database.rs) | Seeds dense/BM25 state for one crate namespace inside `ws_fixture_01_canonical`, removes that namespace through `Database::remove_namespace(...)`, and proves the sibling namespace survives while target `crate_context`, `workspace_metadata.members`, graph rows, vectors, BM25 rows, and HNSW registration are all reconciled to the post-mutation dataset |
+| Phase 7 `C6` | `export_namespace_artifact_contains_only_target_namespace_rows` in [database.rs](../../../../crates/ploke-db/src/database.rs) | Seeds dense/BM25 plus active embedding metadata for one crate namespace inside `ws_fixture_01_canonical`, exports that namespace through `Database::export_namespace(...)`, and proves the artifact contains only the target namespace’s `crate_context`, `file_mod`, rooted graph rows, vector rows, BM25 rows, embedding-set metadata, and pruned `workspace_metadata.members` |
+| Phase 7 `C6` | `import_namespace_restores_exported_namespace_into_populated_db_and_invalidates_search_state` in [database.rs](../../../../crates/ploke-db/src/database.rs) | Exports one namespace from `ws_fixture_01_canonical`, removes it from a second loaded copy of that workspace, recreates HNSW on the surviving namespace, then imports the artifact back through `Database::import_namespace(...)` and proves the namespace returns without whole-DB replacement while `workspace_metadata.members`, vectors, BM25 rows, and HNSW availability are reconciled to the post-import dataset |
+| Phase 7 `C6` | `import_namespace_reports_duplicate_namespace_name_and_root_conflicts` in [database.rs](../../../../crates/ploke-db/src/database.rs) | Attempts to import an exported namespace artifact back into the unchanged source workspace DB and proves `Database::import_namespace(...)` rejects it with an explicit conflict report naming the duplicate namespace, crate name, and root path instead of silently replacing or merging conflicting data |
+| Phase 7 `C6` | `workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata` in [workspace_subset_remove.rs](../../../../crates/ploke-tui/tests/workspace_subset_remove.rs) | Indexes the committed two-member workspace fixture in `ploke-tui`, removes one loaded member through the new `/workspace rm` runtime helper, and proves the surviving loaded membership, focus, path roots, rewritten registry/snapshot metadata, and explicit search invalidation message all converge to the same post-mutation member set |
+| Phase 7 `C6` | `workspace_load_crates_restores_removed_member_and_snapshot_metadata` in [workspace_subset_remove.rs](../../../../crates/ploke-tui/tests/workspace_subset_remove.rs) | Starts from the same committed two-member workspace fixture, removes one loaded member, then reloads that member from a registered workspace snapshot through `load crates <workspace> <crate>` and proves restored membership, preserved valid focus, widened path roots, rewritten registry/snapshot metadata, and explicit search invalidation all converge to the same post-import member set |
+| Phase 7 `C6` | `workspace_load_crates_conflict_preserves_runtime_state` in [workspace_subset_remove.rs](../../../../crates/ploke-tui/tests/workspace_subset_remove.rs) | Attempts to load an already loaded crate subset from a registered workspace snapshot and proves the conflict is explicit while loaded membership, focus, path roots, and active HNSW registration remain unchanged |
 
 ## Reasoning by acceptance item
 
@@ -54,12 +54,12 @@ Criterion text:
   hoc tempdir generation
 
 Current witness reasoning:
-- [ws_fixture_01/Cargo.toml](/home/brasides/code/ploke/tests/fixture_workspace/ws_fixture_01/Cargo.toml#L1)
+- [ws_fixture_01/Cargo.toml](../../../../tests/fixture_workspace/ws_fixture_01/Cargo.toml#L1)
   defines the committed fixture with members `member_root` and
   `nested/member_nested`
-- [lib.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs#L745)
+- [lib.rs](../../../../crates/ingest/syn_parser/src/lib.rs#L745)
   proves parser-side direct consumption on the committed fixture
-- [workspace.rs](/home/brasides/code/ploke/crates/ingest/syn_parser/src/discovery/workspace.rs#L516)
+- [workspace.rs](../../../../crates/ingest/syn_parser/src/discovery/workspace.rs#L516)
   proves discovery-side direct consumption on the same committed fixture
 
 What a passing witness proves:
@@ -91,12 +91,12 @@ Criterion text:
 - forbids permissive import behavior as a workaround for schema drift
 
 Current witness reasoning:
-- [fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs#L231)
+- [fixture_dbs.rs](../../../../crates/test-utils/src/fixture_dbs.rs#L231)
   defines `WS_FIXTURE_01_CANONICAL` as an active registry-backed fixture with
   a concrete backup path and parsed target
-- [BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md)
+- [BACKUP_DB_FIXTURES.md](../../../testing/BACKUP_DB_FIXTURES.md)
   documents the same registered fixture in the backup fixture inventory
-- [fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs#L423)
+- [fixture_dbs.rs](../../../../crates/test-utils/src/fixture_dbs.rs#L423)
   proves the fixture loads through `fresh_backup_fixture_db(...)`, which is the
   strict shared registry-backed import path
 
@@ -128,7 +128,7 @@ Criterion text:
   `package_version` to match the parsed manifest
 
 Current witness reasoning:
-- [workspace.rs](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs#L170)
+- [workspace.rs](../../../../crates/ingest/ploke-transform/src/transform/workspace.rs#L170)
   parses the committed fixture `ws_fixture_01`, transforms it into a fresh DB,
   queries the persisted `workspace_metadata` row, and asserts every field named
   by the acceptance criterion
@@ -185,7 +185,7 @@ Criterion text:
 - requires backup/restore not to change the represented workspace member set
 
 Current witness reasoning:
-- [fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs#L441)
+- [fixture_dbs.rs](../../../../crates/test-utils/src/fixture_dbs.rs#L441)
   loads the registered backup fixture `ws_fixture_01_canonical` through the
   strict registry-backed restore path, queries both `workspace_metadata` and
   `crate_context`, and compares the restored membership sets directly
@@ -218,13 +218,13 @@ Criterion text:
   workspace state rather than ad hoc focus inference
 
 Current witness reasoning:
-- [core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L388)
+- [core.rs](../../../../crates/ploke-tui/src/app_state/core.rs#L388)
   introduces `LoadedWorkspaceState` and stores it explicitly on
   `SystemStatus`
-- [core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs#L569)
+- [core.rs](../../../../crates/ploke-tui/src/app_state/core.rs#L569)
   proves that loaded membership controls both focus validity and derived path
   policy roots
-- [load_db_crate_focus.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/load_db_crate_focus.rs#L73)
+- [load_db_crate_focus.rs](../../../../crates/ploke-tui/tests/load_db_crate_focus.rs#L73)
   proves that restored `workspace_metadata` and `crate_context` hydrate loaded
   workspace state from the DB-backed restore path rather than from focus alone
 
@@ -260,14 +260,14 @@ Criterion text:
 - requires failure to preserve the previously coherent loaded workspace state
 
 Current witness reasoning:
-- [parser.rs](/home/brasides/code/ploke/crates/ploke-tui/src/parser.rs#L30)
+- [parser.rs](../../../../crates/ploke-tui/src/parser.rs#L30)
   introduces explicit index-target resolution that distinguishes crate-root,
   ancestor-workspace, and recoverable no-target cases
-- [indexing.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs#L33)
+- [indexing.rs](../../../../crates/ploke-tui/src/app_state/handlers/indexing.rs#L33)
   resolves the target before parsing, anchors relative targets to loaded
   app-state authority when possible, and only publishes `set_loaded_workspace`
   plus derived IO roots after `run_parse_resolved(...)` succeeds
-- [index_workspace_targets.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/index_workspace_targets.rs#L40)
+- [index_workspace_targets.rs](../../../../crates/ploke-tui/tests/index_workspace_targets.rs#L40)
   drives the real handler and asserts both successful workspace publication and
   failure-path state preservation
 
@@ -304,7 +304,7 @@ Scope note:
   which is intentionally narrower than the original plan text that treated bare
   `/index` as always workspace-oriented
 - helper-level regression tests in
-  [indexing.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs)
+  [indexing.rs](../../../../crates/ploke-tui/src/app_state/handlers/indexing.rs)
   additionally isolate the loaded-state anchoring bug, but they are supporting
   repro coverage rather than the primary acceptance witness
 - later phases still need stronger whole-session `G1` witnesses covering
@@ -322,13 +322,13 @@ Criterion text:
   ignored
 
 Current witness reasoning:
-- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1200)
+- [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs#L1200)
   adds per-loaded-crate freshness collection plus explicit workspace drift
   comparison against the current manifest
-- [workspace_status_update.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_status_update.rs#L103)
+- [workspace_status_update.rs](../../../../crates/ploke-tui/tests/workspace_status_update.rs#L103)
   drives the real status/update path against committed fixture `ws_fixture_01`
   with one changed member and one unchanged member
-- [workspace_status_update.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/workspace_status_update.rs#L178)
+- [workspace_status_update.rs](../../../../crates/ploke-tui/tests/workspace_status_update.rs#L178)
   mutates the loaded workspace manifest and proves drift is surfaced in
   user-visible status output
 
@@ -368,19 +368,19 @@ Criterion text:
 - requires registry/snapshot disagreement to fail explicitly
 
 Current witness reasoning:
-- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L398)
+- [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs#L398)
   now writes a `WorkspaceRegistryEntry` on save and resolves exact
   workspace-name or workspace-id entries on load
-- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1649)
+- [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs#L1649)
   proves registry creation plus active embedding-set/HNSW restore on the
   registry-backed load path
-- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1752)
+- [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs#L1752)
   proves legacy prefix-based filename discovery is no longer accepted as a
   load mechanism
-- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1778)
+- [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs#L1778)
   proves the workspace restore path refuses `FirstPopulated` fallback when
   authoritative active embedding metadata is missing
-- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs#L1868)
+- [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs#L1868)
   proves stale registry metadata is not silently preferred over the restored
   snapshot metadata
 
@@ -420,21 +420,21 @@ Criterion text:
 - rejects late caller-side filtering as sufficient proof
 
 Current witness reasoning:
-- [workspace.rs](/home/brasides/code/ploke/crates/ploke-core/src/workspace.rs#L43)
+- [workspace.rs](../../../../crates/ploke-core/src/workspace.rs#L43)
   now defines shared `RetrievalScope`
-- [bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs#L672)
+- [bm25_index/mod.rs](../../../../crates/ploke-db/src/bm25_index/mod.rs#L672)
   now applies scope filtering inside `Bm25Indexer::search(...)` before
   truncating to `top_k`
-- [bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs#L1006)
+- [bm25_index/mod.rs](../../../../crates/ploke-db/src/bm25_index/mod.rs#L1006)
   proves the pre-`top_k` filter on a two-namespace corpus where the stronger
   out-of-scope document would otherwise win
-- [hnsw_ext.rs](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L1096)
+- [hnsw_ext.rs](../../../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs#L1096)
   proves the dense pre-`:limit` filter on a workspace-backed graph where the
   stronger out-of-scope vector would otherwise win
-- [unit_tests.rs](/home/brasides/code/ploke/crates/ploke-rag/src/core/unit_tests.rs#L410)
+- [unit_tests.rs](../../../../crates/ploke-rag/src/core/unit_tests.rs#L410)
   proves hybrid search does not fuse an out-of-scope dense/BM25 winner into the
   final scoped result set
-- [unit_tests.rs](/home/brasides/code/ploke/crates/ploke-rag/src/core/unit_tests.rs#L676)
+- [unit_tests.rs](../../../../crates/ploke-rag/src/core/unit_tests.rs#L676)
   proves `get_context(...)` only materializes IDs and file paths from the
   allowed crate scope, even when the out-of-scope candidate is the stronger
   unscoped semantic match
@@ -490,42 +490,42 @@ Criterion text:
   reconciliation
 
 Current witness reasoning:
-- [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+- [database.rs](../../../../crates/ploke-db/src/database.rs)
   now exposes `list_crate_context_rows(...)` and
   `collect_namespace_inventory(...)`, which build a DB-side inventory from
   `crate_context.namespace`, `file_mod.namespace`, and `syntax_edge`
   descendant closure
-- [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+- [database.rs](../../../../crates/ploke-db/src/database.rs)
   now also exposes `remove_namespace(...)`, which retracts one namespace's
   descendant graph rows, removes its `crate_context` and `file_mod` roots,
   prunes `workspace_metadata.members`, retracts vector/BM25 rows for removed
   node ids, and explicitly invalidates active HNSW registration
-- [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+- [database.rs](../../../../crates/ploke-db/src/database.rs)
   now also exposes `export_namespace(...)`, which builds a structured
   namespace-scoped artifact from explicit `crate_context`/`file_mod` authority
   and carries only the target crate's graph rows, search rows, embedding-set
   metadata, and pruned `workspace_metadata`
-- [database.rs](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+- [database.rs](../../../../crates/ploke-db/src/database.rs)
   now also exposes `import_namespace(...)`, `NamespaceImportConflictReport`,
   and `NamespaceImportError`, which import one exported namespace artifact into
   a populated DB only after explicit duplicate namespace/name/root validation
-- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs)
+- [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs)
   now also exposes `workspace_remove(...)`, which resolves one loaded crate by
   exact crate name or exact root path, removes its namespace through
   `ploke-db`, republishes loaded membership/focus/IO roots from the live DB,
   rewrites the current workspace registry/snapshot metadata, and reports search
   invalidation explicitly
-- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs)
+- [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs)
   now also exposes `load_workspace_crates(...)`, which resolves an exact
   workspace registry entry plus an exact crate name/root from the source
   snapshot, imports that namespace through `ploke-db`, republishes loaded
   membership/focus/IO roots from the live DB, rewrites the current workspace
   registry/snapshot metadata, and reports search invalidation explicitly
-- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs)
+- [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs)
   now reads restored `workspace_metadata` and `crate_context` rows with
   `@ 'NOW'`, which is required for subset mutation correctness because
   post-retraction runtime restore must ignore historical rows
-- [2026-03-21_c6_subset_db_design_notes.md](/home/brasides/code/ploke/docs/active/agents/2026-03-workspaces/2026-03-21_c6_subset_db_design_notes.md)
+- [2026-03-21_c6_subset_db_design_notes.md](2026-03-21_c6_subset_db_design_notes.md)
   records why this is the first safe seam for `C6` and why current whole-backup
   APIs are insufficient
 

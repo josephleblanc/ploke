@@ -7,8 +7,8 @@
 - related issues/prs: none
 - linked manifest ids: run-2026-04-09-example-control, run-2026-04-09-example-treatment
 - linked artifacts:
-  - [run-manifest.v0.draft.json](/home/brasides/code/ploke/docs/workflow/run-manifest.v0.draft.json)
-  - [experiment-config.v0.draft.json](/home/brasides/code/ploke/docs/workflow/experiment-config.v0.draft.json)
+  - [run-manifest.v0.draft.json](../run-manifest.v0.draft.json)
+  - [experiment-config.v0.draft.json](../experiment-config.v0.draft.json)
 
 ## Decision
 

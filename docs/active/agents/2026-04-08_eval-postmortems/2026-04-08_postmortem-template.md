@@ -4,7 +4,7 @@
 - task title: Eval Postmortem Template
 - task description: Reusable template for documenting eval-run failures with an emphasis on separating model mistakes from tool-design and runner-design issues.
 - related planning files:
-  - [2026-04-08_postmortem-plan.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_postmortem-plan.md)
+  - [2026-04-08_postmortem-plan.md](2026-04-08_postmortem-plan.md)
 
 ## Header
 

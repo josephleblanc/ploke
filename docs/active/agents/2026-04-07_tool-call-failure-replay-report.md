@@ -36,7 +36,7 @@ Replay test:
 
 Run-request fixture:
 
-- [crates/ploke-eval/src/tests/fixtures/BurntSushi__ripgrep-2209_code_item_lookup_context.json](/home/brasides/code/ploke/crates/ploke-eval/src/tests/fixtures/BurntSushi__ripgrep-2209_code_item_lookup_context.json)
+- [crates/ploke-eval/src/tests/fixtures/BurntSushi__ripgrep-2209_code_item_lookup_context.json](../../../crates/ploke-eval/src/tests/fixtures/BurntSushi__ripgrep-2209_code_item_lookup_context.json)
 - sourced from [ploke_eval_20260407_164834_34623.log](/home/brasides/.ploke-eval/logs/ploke_eval_20260407_164834_34623.log)
 - `api_request` is stored as parsed JSON and includes the full model-facing request, including the `code_item_lookup` tool definition and its `node_kind` vocabulary
 
@@ -49,10 +49,10 @@ Observed replay output:
 
 Source references:
 
-- replay test: [crates/ploke-eval/src/tests/replay.rs](/home/brasides/code/ploke/crates/ploke-eval/src/tests/replay.rs)
-- tool kind docs: [crates/ploke-tui/src/tools/code_item_lookup.rs](/home/brasides/code/ploke/crates/ploke-tui/src/tools/code_item_lookup.rs)
-- matching tool docs: [crates/ploke-tui/src/tools/get_code_edges.rs](/home/brasides/code/ploke/crates/ploke-tui/src/tools/get_code_edges.rs)
-- tool list shown to the model: [crates/ploke-tui/src/app/view/rendering/highlight.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/view/rendering/highlight.rs)
+- replay test: [crates/ploke-eval/src/tests/replay.rs](../../../crates/ploke-eval/src/tests/replay.rs)
+- tool kind docs: [crates/ploke-tui/src/tools/code_item_lookup.rs](../../../crates/ploke-tui/src/tools/code_item_lookup.rs)
+- matching tool docs: [crates/ploke-tui/src/tools/get_code_edges.rs](../../../crates/ploke-tui/src/tools/get_code_edges.rs)
+- tool list shown to the model: [crates/ploke-tui/src/app/view/rendering/highlight.rs](../../../crates/ploke-tui/src/app/view/rendering/highlight.rs)
 
 ## Interpretation
 

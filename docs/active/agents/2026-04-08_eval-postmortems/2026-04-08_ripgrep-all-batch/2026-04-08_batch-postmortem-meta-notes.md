@@ -4,9 +4,9 @@
 - task title: Batch Postmortem Meta Notes
 - task description: Record improvements to the eval post-mortem template and identify missing or low-salience run information encountered while reviewing `ripgrep-all` batch runs.
 - related planning files:
-  - [2026-04-08_postmortem-plan.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_postmortem-plan.md)
-  - [2026-04-08_batch-postmortem-index.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_batch-postmortem-index.md)
-  - [2026-04-08_postmortem-template-review.md](/home/brasides/code/ploke/docs/active/agents/2026-04-08_eval-postmortems/2026-04-08_ripgrep-all-batch/2026-04-08_postmortem-template-review.md)
+  - [2026-04-08_postmortem-plan.md](../2026-04-08_postmortem-plan.md)
+  - [2026-04-08_batch-postmortem-index.md](2026-04-08_batch-postmortem-index.md)
+  - [2026-04-08_postmortem-template-review.md](2026-04-08_postmortem-template-review.md)
 
 ## Template Improvements
 

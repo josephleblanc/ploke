@@ -32,10 +32,10 @@ Run controlled comparisons by changing configuration, not code paths. The experi
 Every formal comparison should produce:
 
 - one committed experiment config
-- one EDR in [docs/active/workflow/edr](/home/brasides/code/ploke/docs/active/workflow/edr)
+- one EDR in [edr](../active/workflow/edr)
 - one run manifest per executed arm/run
 - an evidence-ledger update summarizing what changed in belief
 
 ## Current Accuracy Note
 
-The repo does not yet have a single converged manifest or fully implemented comparison runner. The draft config in [experiment-config.v0.draft.json](/home/brasides/code/ploke/docs/workflow/experiment-config.v0.draft.json) is the target contract to converge on, not a claim that the harness already supports every field.
+The repo does not yet have a single converged manifest or fully implemented comparison runner. The draft config in [experiment-config.v0.draft.json](experiment-config.v0.draft.json) is the target contract to converge on, not a claim that the harness already supports every field.

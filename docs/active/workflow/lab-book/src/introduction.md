@@ -15,4 +15,4 @@ Use it for:
 - what we believe now
 - what should happen next
 
-Do not use it for durable decisions or stable rules. Those belong in the EDRs, evidence ledger, and other living artifacts under [docs/active/workflow](/home/brasides/code/ploke/docs/active/workflow).
+Do not use it for durable decisions or stable rules. Those belong in the EDRs, evidence ledger, and other living artifacts under [workflow](../..).

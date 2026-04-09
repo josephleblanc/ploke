@@ -3,20 +3,20 @@
 ## Completed
 
 - Added fixture inventory and usage tracking in
-  [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md).
+  [docs/testing/BACKUP_DB_FIXTURES.md](../../../testing/BACKUP_DB_FIXTURES.md).
 - Added AGENTS guidance for backup fixture review cadence in
-  [AGENTS.md](/home/brasides/code/ploke/AGENTS.md).
+  [AGENTS.md](../../../../AGENTS.md).
 - Added helper review findings in
-  [docs/active/reports/test-helper-review.md](/home/brasides/code/ploke/docs/active/reports/test-helper-review.md).
+  [docs/active/reports/test-helper-review.md](../../reports/test-helper-review.md).
 - Added the shared fixture registry and helper API in
-  [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs).
+  [crates/test-utils/src/fixture_dbs.rs](../../../../crates/test-utils/src/fixture_dbs.rs).
 - Migrated several immutable test consumers to the shared registry/helper path.
 - Added `xtask` commands for:
   - `verify-backup-dbs`
   - `recreate-backup-db --fixture <id>`
   - `repair-backup-db-schema --fixture <id>`
 - Added the operator guide in
-  [docs/how-to/recreate-backup-db-fixtures.md](/home/brasides/code/ploke/docs/how-to/recreate-backup-db-fixtures.md).
+  [docs/how-to/recreate-backup-db-fixtures.md](../../../how-to/recreate-backup-db-fixtures.md).
 
 ## Verified
 
