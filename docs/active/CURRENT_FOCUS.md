@@ -1,6 +1,6 @@
 # Current Focus
 
-**Last Updated:** 2026-04-09 (Phase 1B complete, ready for 1C)  
+**Last Updated:** 2026-04-09 (Phase 1C complete, ready for 1D)  
 **Active Planning Doc:** [Phase 1 RunRecord Tracking](plans/evals/phase-1-runrecord-tracking.md)
 
 ---
@@ -13,14 +13,15 @@ We are implementing the **RunRecord** system for the ploke-eval harness—buildi
 
 ## Immediate Next Step
 
-**Phase 1C:** Capture conversation history at turn end:
-- Read from `state.chat.0.read().messages`
-- Convert to `Vec<ConversationMessage>`
-- Store in `TurnRecord.conversation`
+**Phase 1D:** Structured LLM event capture:
+- Modify `handle_benchmark_event()` to capture `ChatEvt::Response` fields structurally
+- Create `LlmResponseRecord` from response events instead of debug strings
+- Store in `TurnRecord.llm_response`
 
 **Recently completed:** 
 - Phase 1A — Foundation types created in `crates/ploke-eval/src/record.rs`
-- Phase 1B — Added `current_validity_micros()` to `ploke-db::Database` with unit test `current_validity_micros_returns_monotonic_timestamp`
+- Phase 1B — Added `current_validity_micros()` to `ploke-db::Database` with tests
+- Phase 1C — Conversation history capture via `capture_conversation()` with tests
 
 ---
 
