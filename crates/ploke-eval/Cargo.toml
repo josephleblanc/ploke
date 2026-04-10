@@ -31,6 +31,7 @@ flate2 = "1.0"
 [features]
 default = ["convert_keyword_2015"]
 convert_keyword_2015 = ["ploke-tui/convert_keyword_2015"]
+qwen_reasoning_fix = ["ploke-llm/qwen_reasoning_fix"]
 
 [[bin]]
 name = "ploke-eval"
