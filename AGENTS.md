@@ -1,5 +1,46 @@
 # Repository Guidelines
 
+## Current Focus (Start Here)
+
+**→ [docs/active/CURRENT_FOCUS.md](docs/active/CURRENT_FOCUS.md)** — What we're working on now, immediate next step, and quick recovery info.
+
+**When the user says:** "What were we up to?", "Remind me of next steps", "Let's pick up where we left off", or similar — **check CURRENT_FOCUS.md first**, then follow the link to the active planning doc for details.
+
+**Update frequency:** Whenever the active planning doc changes, update CURRENT_FOCUS.md immediately to point to it.
+
+---
+
+## Eval Workflow and Research Operations
+
+When working on evaluation-driven development, benchmarking, or research-related tasks:
+
+1. **Current focus**: [docs/active/CURRENT_FOCUS.md](docs/active/CURRENT_FOCUS.md) — what we're doing now
+2. **Workflow overview**: [docs/active/workflow/README.md](docs/active/workflow/README.md) — live workflow overview
+3. **Readiness status**: [docs/active/workflow/readiness-status.md](docs/active/workflow/readiness-status.md) — current workflow readiness
+4. **Recent activity**: [docs/active/workflow/handoffs/recent-activity.md](docs/active/workflow/handoffs/recent-activity.md) — state board
+5. **Phase status**: [docs/active/plans/evals/phased-exec-plan.md](docs/active/plans/evals/phased-exec-plan.md) — exit criteria
+6. **Design reference**: [docs/active/plans/evals/eval-design.md](docs/active/plans/evals/eval-design.md) — central design and rationale
+
+Key living artifacts (updated in real-time):
+- [Hypothesis Registry](docs/active/workflow/hypothesis-registry.md) — claims and test status
+- [Evidence Ledger](docs/active/workflow/evidence-ledger.md) — beliefs backed by artifacts
+- [Priority Queue](docs/active/workflow/priority-queue.md) — what to work on next
+- [Failure Taxonomy](docs/active/workflow/failure-taxonomy.md) — classification of failure modes
+
+Key durable templates:
+- EDR template: [docs/workflow/edr/EDR_TEMPLATE.md](docs/workflow/edr/EDR_TEMPLATE.md)
+- Run manifest draft: [docs/workflow/run-manifest.v0.draft.json](docs/workflow/run-manifest.v0.draft.json)
+- Skills: [docs/workflow/skills/](docs/workflow/skills/)
+
+Working norms for eval work:
+- Every substantial task gets a handoff doc or is appended to an existing one
+- Every task states which workstream and gate it belongs to (A1-A5, H0)
+- Every test or replay should say what proposition it proves
+- Setup-only, replay, and live-model paths stay conceptually separate
+- Do not silently weaken correctness to make evals look better
+
+See also: [2026-04-09 Eval Workflow And Research Operations Plan](docs/active/agents/2026-04-09_eval-research-program/2026-04-09_eval-workflow-and-research-operations-plan.md)
+
 ## Rust version
 We are using rust version 2024 in all crates.
 

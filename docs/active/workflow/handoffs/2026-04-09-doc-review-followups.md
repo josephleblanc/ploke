@@ -15,9 +15,12 @@
 
 ## Still Intentionally Open
 
-- exact numeric validity-guard thresholds for formal runs
-- whether `A5` is a hard interpretation gate for `H0` or a strong enabling tool
-- how fine-grained diagnostic hypotheses should be represented beyond the current `H0` and `A*` layer
+- exact numeric validity-guard thresholds for formal runs (deferred until next formal run)
+
+## Resolved
+
+- `A5` is a **hard gate** for H0 interpretation — recorded in hypothesis registry
+- Diagnostic hypotheses use `D-{DOMAIN}-{NNN}` format (e.g., `D-TOOL-001`) — added to registry as `status: proposed`
 
 ## Suggested Next Follow-Up
 
