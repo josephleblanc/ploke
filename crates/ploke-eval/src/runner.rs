@@ -18,7 +18,9 @@ use ploke_llm::router_only::{
     openrouter::{OpenRouter, OpenRouterModelId},
 };
 use ploke_llm::{ModelId, ProviderKey, SupportsTools};
+use ploke_llm::manager::RequestMessage;
 use ploke_tui::AppEvent;
+use ploke_tui::llm::{ChatEvt, LlmEvent};
 use ploke_tui::app::App;
 use ploke_tui::app::commands::harness::TestAppAccessor;
 use ploke_tui::app::commands::harness::TestRuntime;
@@ -40,8 +42,10 @@ use tracing::{info, warn};
 use crate::layout;
 use crate::model_registry::resolve_model_for_run;
 use crate::provider_prefs::load_provider_for_model;
+use crate::record::{write_compressed_record, RunRecord, RunRecordBuilder};
 use crate::run_history::record_last_run;
 use crate::spec::{PrepareError, PreparedMsbBatch, PreparedSingleRun, RunSource};
+use crate::LlmResponseRecord;
 
 const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
@@ -349,6 +353,8 @@ pub struct TurnFinishedRecord {
 pub enum ObservedTurnEvent {
     DebugCommand(String),
     LlmEvent(String),
+    /// Structured LLM response capture (Phase 1D).
+    LlmResponse(LlmResponseRecord),
     ToolRequested(ToolRequestRecord),
     ToolCompleted(ToolCompletedRecord),
     ToolFailed(ToolFailedRecord),
@@ -397,6 +403,13 @@ pub struct AgentTurnArtifact {
     pub terminal_record: Option<TurnFinishedRecord>,
     pub final_assistant_message: Option<MessageSnapshotRecord>,
     pub patch_artifact: PatchArtifact,
+    /// The prompt sent to the LLM (captured from PromptConstructed event).
+    /// This is what the LLM actually sees, including conversation history and context.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub llm_prompt: Vec<RequestMessage>,
+    /// The LLM's response content (captured from Response event).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub llm_response: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1140,6 +1153,10 @@ impl RunMsbAgentSingleRequest {
         let indexing_failure_db = prepared.output_dir.join("indexing-failure.db");
         let turn_trace_path = prepared.output_dir.join("agent-turn-trace.json");
         let turn_summary_path = prepared.output_dir.join("agent-turn-summary.json");
+        let record_path = prepared.output_dir.join("record.json.gz");
+
+        // Initialize RunRecord for comprehensive run persistence (Phase 1E)
+        let mut run_record = RunRecord::new(&prepared);
 
         let mut steps = vec!["load_manifest".to_string()];
         checkout_repo_to_base(&prepared.repo_root, prepared.base_sha.as_deref())?;
@@ -1353,6 +1370,17 @@ impl RunMsbAgentSingleRequest {
         write_json(&turn_summary_path, &turn_artifact)?;
         steps.push("benchmark_turn_completed".to_string());
 
+        // Capture Cozo timestamp for time-travel queries and add turn to RunRecord
+        let db_timestamp = state
+            .db
+            .current_validity_micros()
+            .map_err(|e| PrepareError::DatabaseSetup {
+                phase: "get_db_timestamp",
+                detail: format!("Failed to get Cozo timestamp: {}", e),
+            })?;
+        run_record.mark_time_travel(1, db_timestamp, "turn_complete");
+        run_record.add_turn_from_artifact(turn_artifact, db_timestamp);
+
         let snapshot_file = prepared.output_dir.join("final-snapshot.db");
         info!(
             snapshot = %snapshot_file.display(),
@@ -1410,6 +1438,17 @@ impl RunMsbAgentSingleRequest {
         );
         record_last_run(&execution_log.output_dir)?;
 
+        // Emit compressed RunRecord (Phase 1E)
+        if let Err(e) = write_compressed_record(&record_path, &run_record) {
+            warn!(
+                path = %record_path.display(),
+                error = %e,
+                "runner phase: failed to write compressed run record"
+            );
+        } else {
+            info!(path = %record_path.display(), "runner phase: wrote compressed run record");
+        }
+
         Ok(AgentRunArtifactPaths {
             base: RunArtifactPaths {
                 run_manifest: manifest_path,
@@ -1420,7 +1459,7 @@ impl RunMsbAgentSingleRequest {
                 indexing_failure_db,
                 snapshot_status: snapshot_status_path,
                 msb_submission: msb_submission_path,
-                record_path: None, // Will be populated when RunRecord emission is implemented
+                record_path: Some(record_path),
             },
             turn_trace: turn_trace_path,
             turn_summary: turn_summary_path,
@@ -2159,6 +2198,8 @@ async fn run_benchmark_turn(
             any_expected_file_changed: false,
             all_expected_files_changed: false,
         },
+        llm_prompt: Vec::new(),
+        llm_response: None,
     };
     write_json(trace_path, &artifact)?;
 
@@ -2227,6 +2268,10 @@ async fn run_benchmark_turn(
     artifact.final_assistant_message = None;
     artifact.patch_artifact =
         collect_patch_artifact_with_expected(state, expected_file_baselines).await?;
+    
+    // Note: llm_prompt and llm_response are now captured via events in handle_benchmark_event
+    // This avoids the need for mutable state access and TTL mutation side effects
+    
     write_json(trace_path, &artifact)?;
     Ok(artifact)
 }
@@ -2237,12 +2282,47 @@ async fn handle_benchmark_event(
     event: AppEvent,
 ) {
     match event {
-        AppEvent::Llm(event) => {
-            let rendered = format!("{event:?}");
-            if rendered.contains("PromptConstructed") {
-                artifact.prompt_debug = Some(rendered.clone());
+        AppEvent::Llm(llm_event) => {
+            // Capture structured LLM events for RunRecord (Phase 1C/1D)
+            match &llm_event {
+                LlmEvent::ChatCompletion(ChatEvt::PromptConstructed { formatted_prompt, .. }) => {
+                    // Capture the exact prompt sent to the LLM (what LLM sees)
+                    artifact.llm_prompt = formatted_prompt.clone();
+                    artifact.prompt_debug = Some(format!("{:?}", llm_event));
+                    // Still log as debug string for other events
+                    let rendered = format!("{:?}", llm_event);
+                    artifact.events.push(ObservedTurnEvent::LlmEvent(rendered));
+                }
+                LlmEvent::ChatCompletion(ChatEvt::Response { 
+                    content, 
+                    model, 
+                    metadata, 
+                    usage,
+                    ..
+                }) => {
+                    // Capture the LLM's response content (for backward compat)
+                    artifact.llm_response = Some(content.clone());
+                    
+                    // Phase 1D: Structured LLM response capture
+                    let record = LlmResponseRecord {
+                        content: content.clone(),
+                        model: model.clone(),
+                        usage: Some(ploke_llm::response::TokenUsage {
+                            prompt_tokens: usage.prompt_tokens,
+                            completion_tokens: usage.completion_tokens,
+                            total_tokens: usage.total_tokens,
+                        }),
+                        finish_reason: Some(metadata.finish_reason.clone()),
+                        metadata: Some(metadata.clone()),
+                    };
+                    artifact.events.push(ObservedTurnEvent::LlmResponse(record));
+                }
+                _ => {
+                    // Other LLM events: log as debug string
+                    let rendered = format!("{:?}", llm_event);
+                    artifact.events.push(ObservedTurnEvent::LlmEvent(rendered));
+                }
             }
-            artifact.events.push(ObservedTurnEvent::LlmEvent(rendered));
         }
         AppEvent::System(SystemEvent::ToolCallRequested {
             request_id,
@@ -2572,6 +2652,7 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::tempdir;
     use tracing_subscriber::fmt::SubscriberBuilder;
+    use uuid::Uuid;
 
     fn init_tracing() {
         let _ = SubscriberBuilder::default()
@@ -3084,6 +3165,8 @@ mod tests {
                 any_expected_file_changed: false,
                 all_expected_files_changed: false,
             },
+            llm_prompt: Vec::new(),
+            llm_response: None,
         };
 
         handle_benchmark_event(
@@ -3165,5 +3248,235 @@ mod tests {
             "success"
         );
         assert_eq!(artifact.terminal_record.as_ref().unwrap().summary, "done");
+    }
+
+    #[tokio::test]
+    async fn handle_benchmark_event_captures_prompt_constructed() {
+        use ploke_llm::manager::Role;
+        use ploke_tui::llm::{ChatEvt, LlmEvent};
+
+        let state = Arc::new(create_mock_app_state());
+        let mut artifact = AgentTurnArtifact {
+            task_id: "test".to_string(),
+            selected_model: ploke_llm::ModelId::from(ploke_llm::ModelKey::default()),
+            issue_prompt: "test".to_string(),
+            user_message_id: Uuid::new_v4().to_string(),
+            events: Vec::new(),
+            prompt_debug: None,
+            terminal_record: None,
+            final_assistant_message: None,
+            patch_artifact: PatchArtifact {
+                edit_proposals: Vec::new(),
+                create_proposals: Vec::new(),
+                applied: false,
+                all_proposals_applied: false,
+                expected_file_changes: Vec::new(),
+                any_expected_file_changed: false,
+                all_expected_files_changed: false,
+            },
+            llm_prompt: Vec::new(),
+            llm_response: None,
+        };
+
+        // Create a PromptConstructed event with sample messages
+        let parent_id = Uuid::new_v4();
+        let formatted_prompt = vec![
+            RequestMessage {
+                role: Role::User,
+                content: "Hello, fix this bug".to_string(),
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            RequestMessage {
+                role: Role::Assistant,
+                content: "I'll help you fix it".to_string(),
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+
+        let context_plan = ploke_tui::llm::ContextPlan {
+            plan_id: Uuid::new_v4(),
+            parent_id,
+            estimated_total_tokens: 100,
+            included_messages: Vec::new(),
+            excluded_messages: Vec::new(),
+            included_rag_parts: Vec::new(),
+            rag_stats: None,
+        };
+
+        let event = AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::PromptConstructed {
+            parent_id,
+            formatted_prompt: formatted_prompt.clone(),
+            context_plan,
+        }));
+
+        // Handle the event
+        handle_benchmark_event(&mut artifact, &state, event).await;
+
+        // Verify the prompt was captured
+        assert_eq!(artifact.llm_prompt.len(), 2, "expected 2 messages in llm_prompt");
+        assert_eq!(artifact.llm_prompt[0].role, Role::User);
+        assert_eq!(artifact.llm_prompt[0].content, "Hello, fix this bug");
+        assert_eq!(artifact.llm_prompt[1].role, Role::Assistant);
+        assert_eq!(artifact.llm_prompt[1].content, "I'll help you fix it");
+        assert!(artifact.prompt_debug.is_some(), "prompt_debug should be set");
+    }
+
+    #[tokio::test]
+    async fn handle_benchmark_event_captures_llm_response() {
+        use ploke_tui::llm::{ChatEvt, LlmEvent};
+
+        let state = Arc::new(create_mock_app_state());
+        let mut artifact = AgentTurnArtifact {
+            task_id: "test".to_string(),
+            selected_model: ploke_llm::ModelId::from(ploke_llm::ModelKey::default()),
+            issue_prompt: "test".to_string(),
+            user_message_id: Uuid::new_v4().to_string(),
+            events: Vec::new(),
+            prompt_debug: None,
+            terminal_record: None,
+            final_assistant_message: None,
+            patch_artifact: PatchArtifact {
+                edit_proposals: Vec::new(),
+                create_proposals: Vec::new(),
+                applied: false,
+                all_proposals_applied: false,
+                expected_file_changes: Vec::new(),
+                any_expected_file_changed: false,
+                all_expected_files_changed: false,
+            },
+            llm_prompt: Vec::new(),
+            llm_response: None,
+        };
+
+        // Create a Response event
+        let event = AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::Response {
+            request_id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            content: "Here is the fix you requested".to_string(),
+            model: "test-model".to_string(),
+            metadata: ploke_llm::types::meta::LLMMetadata {
+                model: "test-model".to_string(),
+                usage: ploke_llm::response::TokenUsage {
+                    prompt_tokens: 100,
+                    completion_tokens: 50,
+                    total_tokens: 150,
+                },
+                finish_reason: ploke_llm::response::FinishReason::Stop,
+                processing_time: std::time::Duration::from_millis(500),
+                cost: 0.001,
+                performance: ploke_llm::types::meta::PerformanceMetrics {
+                    tokens_per_second: 100.0,
+                    time_to_first_token: std::time::Duration::from_millis(100),
+                    queue_time: std::time::Duration::from_millis(50),
+                },
+            },
+            usage: ploke_llm::manager::events::UsageMetrics {
+                prompt_tokens: 100,
+                completion_tokens: 50,
+                total_tokens: 150,
+                latency_ms: 500,
+            },
+        }));
+
+        // Handle the event
+        handle_benchmark_event(&mut artifact, &state, event).await;
+
+        // Verify the response was captured
+        assert_eq!(artifact.llm_response, Some("Here is the fix you requested".to_string()));
+    }
+
+    #[tokio::test]
+    async fn handle_benchmark_event_captures_structured_llm_response() {
+        use ploke_llm::response::{FinishReason, TokenUsage};
+        use ploke_tui::llm::{ChatEvt, LlmEvent};
+
+        let state = Arc::new(create_mock_app_state());
+        let mut artifact = AgentTurnArtifact {
+            task_id: "test".to_string(),
+            selected_model: ploke_llm::ModelId::from(ploke_llm::ModelKey::default()),
+            issue_prompt: "test".to_string(),
+            user_message_id: Uuid::new_v4().to_string(),
+            events: Vec::new(),
+            prompt_debug: None,
+            terminal_record: None,
+            final_assistant_message: None,
+            patch_artifact: PatchArtifact {
+                edit_proposals: Vec::new(),
+                create_proposals: Vec::new(),
+                applied: false,
+                all_proposals_applied: false,
+                expected_file_changes: Vec::new(),
+                any_expected_file_changed: false,
+                all_expected_files_changed: false,
+            },
+            llm_prompt: Vec::new(),
+            llm_response: None,
+        };
+
+        // Create a Response event with full metadata
+        let event = AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::Response {
+            request_id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            content: "The fix is to add a null check".to_string(),
+            model: "anthropic/claude-3-sonnet".to_string(),
+            metadata: ploke_llm::types::meta::LLMMetadata {
+                model: "anthropic/claude-3-sonnet".to_string(),
+                usage: TokenUsage {
+                    prompt_tokens: 250,
+                    completion_tokens: 75,
+                    total_tokens: 325,
+                },
+                finish_reason: FinishReason::Stop,
+                processing_time: std::time::Duration::from_millis(1200),
+                cost: 0.0024,
+                performance: ploke_llm::types::meta::PerformanceMetrics {
+                    tokens_per_second: 62.5,
+                    time_to_first_token: std::time::Duration::from_millis(300),
+                    queue_time: std::time::Duration::from_millis(50),
+                },
+            },
+            usage: ploke_llm::manager::events::UsageMetrics {
+                prompt_tokens: 250,
+                completion_tokens: 75,
+                total_tokens: 325,
+                latency_ms: 1200,
+            },
+        }));
+
+        // Handle the event
+        handle_benchmark_event(&mut artifact, &state, event).await;
+
+        // Verify a structured LlmResponse event was captured (Phase 1D)
+        let llm_response_events: Vec<_> = artifact
+            .events
+            .iter()
+            .filter_map(|ev| match ev {
+                ObservedTurnEvent::LlmResponse(record) => Some(record),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(llm_response_events.len(), 1, "expected exactly one LlmResponse event");
+        
+        let record = &llm_response_events[0];
+        assert_eq!(record.content, "The fix is to add a null check");
+        assert_eq!(record.model, "anthropic/claude-3-sonnet");
+        
+        // Verify token usage was captured structurally
+        let usage = record.usage.as_ref().expect("usage should be present");
+        assert_eq!(usage.prompt_tokens, 250);
+        assert_eq!(usage.completion_tokens, 75);
+        assert_eq!(usage.total_tokens, 325);
+        
+        // Verify finish reason was captured
+        assert_eq!(record.finish_reason, Some(FinishReason::Stop));
+        
+        // Verify full metadata was captured
+        assert!(record.metadata.is_some());
+        let metadata = record.metadata.as_ref().unwrap();
+        assert_eq!(metadata.model, "anthropic/claude-3-sonnet");
+        assert_eq!(metadata.cost, 0.0024);
     }
 }

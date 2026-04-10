@@ -26,6 +26,7 @@ tempfile = "3.8"
 uuid = { workspace = true, features = ["serde"] }
 sha2 = "0.10"
 regex = "1"
+flate2 = "1.0"
 
 [features]
 default = ["convert_keyword_2015"]

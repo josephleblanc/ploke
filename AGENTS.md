@@ -21,6 +21,11 @@ When working on evaluation-driven development, benchmarking, or research-related
 5. **Phase status**: [docs/active/plans/evals/phased-exec-plan.md](docs/active/plans/evals/phased-exec-plan.md) — exit criteria
 6. **Design reference**: [docs/active/plans/evals/eval-design.md](docs/active/plans/evals/eval-design.md) — central design and rationale
 
+**⚠️ CRITICAL: Test Harness Reference**
+- **Test harness location**: `crates/ploke-tui/src/app/commands/unit_tests/harness.rs`
+- **ALWAYS read this file in full** before doing anything with evals — it contains the type-state builder pattern, relay system, event channel architecture, and how the test runtime provides access to AppState
+- This is the canonical reference for how the eval harness works and should be consulted first for any eval-related changes
+
 Key living artifacts (updated in real-time):
 - [Hypothesis Registry](docs/active/workflow/hypothesis-registry.md) — claims and test status
 - [Evidence Ledger](docs/active/workflow/evidence-ledger.md) — beliefs backed by artifacts
