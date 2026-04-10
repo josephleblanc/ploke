@@ -64,10 +64,11 @@ use uuid::Uuid;
 pub type BranchId = Uuid;
 
 /// Represents the possible states of a message during its lifecycle.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageStatus {
     /// The message is waiting to be processed by the LLM.
+    #[default]
     Pending,
     /// The LLM is actively generating a response for this message.
     Generating,
@@ -192,22 +193,32 @@ impl UpdateFailedEvent {
 /// - Links to its parent message (if any)
 /// - List of child messages forming conversation branches
 /// - Unique identifier and content storage
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     /// Unique identifier for the message
     pub id: Uuid,
     /// Branch identifier for this message's conversation path.
+    /// (Internal TUI state, not serialized)
+    #[serde(skip)]
     pub branch_id: BranchId,
+    /// Message status (Internal TUI state, not serialized)
+    #[serde(skip)]
     pub status: MessageStatus,
     // TODO: Maybe change Message to be LLM/human, or create a wrapper to differentiate.
     /// Metadata on LLM message
     pub metadata: Option<LLMMetadata>,
     /// Parent message UUID (None for root messages)
+    /// (Internal tree structure, not serialized)
+    #[serde(skip)]
     pub parent: Option<Uuid>,
     /// Child message UUIDs forming conversation branches
+    /// (Internal tree structure, not serialized)
+    #[serde(skip)]
     pub children: Vec<Uuid>,
     /// Selected Child is the default selection for the next navigation down
     /// Useful for `move_selection_down`
+    /// (Internal navigation state, not serialized)
+    #[serde(skip)]
     pub selected_child: Option<Uuid>,
     /// Text content of the message
     pub content: String,
@@ -217,12 +228,19 @@ pub struct Message {
     /// Optional to preserve backward compatibility and allow SysInfo-style tool logs.
     pub tool_call_id: Option<ArcStr>,
     /// Optional structured payload for rendering tool messages in the UI.
+    #[serde(skip)]
     pub tool_payload: Option<crate::tools::ToolUiPayload>,
     /// The status of the message in the current LLM context window.
+    /// (Internal context management state, not serialized)
+    #[serde(skip)]
     pub context_status: ContextStatus,
     /// Last turn counter in which this message was included (leased only).
+    /// (Internal leasing state, not serialized)
+    #[serde(skip)]
     pub last_included_turn: Option<u64>,
     /// Count of times this message was included (leased only).
+    /// (Internal leasing state, not serialized)
+    #[serde(skip)]
     pub include_count: u32,
 }
 
@@ -287,7 +305,8 @@ impl BranchState {
 }
 
 /// The retention class for a pinned message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RetentionClass {
     /// Always keep in context; TTL never decrements.
     Sticky,
@@ -307,7 +326,8 @@ impl Default for RetentionClass {
 /// Pinned messages must have a reason for the pin, which will be evaluated when they run out of
 /// `turns_to_live`.
 /// A "turn to live" is decremented each time the conversation history is retrieved.
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ContextStatus {
     /// The information on why an item is pinned, and how long until it will either be automatically
     /// be removed from the context or reviewed and potentially re-pinned.
@@ -337,7 +357,8 @@ impl Default for ContextStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TurnsToLive {
     Limited(u16),
     NoneRemaining,
@@ -352,7 +373,8 @@ impl Default for TurnsToLive {
 }
 
 /// Defines the author of a message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MessageKind {
     /// A message from the end-user.
     User,
@@ -519,7 +541,14 @@ impl ChatHistory {
     /// - Skips System messages with empty content (root sentinel).
     /// - Skips SysInfo (UI/diagnostic) messages.
     /// - Groups tool calls + tool results as atoms (tool call synthesized from tool metadata).
-    pub(crate) fn current_path_as_llm_request_messages(
+    /// Returns the current conversation path as LLM request messages.
+    ///
+    /// This is what gets sent to the LLM — the canonical "what the agent saw".
+    /// 
+    /// Note: This method may mutate internal leasing state (TTL decrements for
+    /// leased messages). For observability captures, use `capture_conversation()`
+    /// in the test harness which provides a read-only snapshot.
+    pub fn current_path_as_llm_request_messages(
         &mut self,
     ) -> Vec<crate::llm::manager::RequestMessage> {
         self.current_path_as_llm_request_messages_with_plan(None).0

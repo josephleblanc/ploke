@@ -325,12 +325,16 @@ mod tests {
             .and_then(|desc| desc.as_str())
             .expect("canon schema description");
 
+        // Verify node_type description mentions method as a valid node type
         assert!(
+            node_type.to_lowercase().contains("method"),
+            "node_type description should mention 'method' as a valid node type, got: {}",
             node_type
-                .to_lowercase()
-                .contains("methods are valid direct targets")
         );
-        assert!(!node_type.to_lowercase().contains("not direct targets"));
+        assert!(
+            !node_type.to_lowercase().contains("not direct targets"),
+            "node_type description should not contain negative guidance"
+        );
         assert!(canon.contains("Type::method"));
     }
 }
