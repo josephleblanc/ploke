@@ -360,6 +360,21 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
                 return builder.outcome(outcome).full_response(parsed).build();
             }
 
+            // Coalesce reasoning to content when content is missing but reasoning is present.
+            // This handles models like qwen/qwen3.6-plus that return reasoning without content.
+            #[cfg(feature = "qwen_reasoning_fix")]
+            if let Some(reasoning_text) = reasoning_opt {
+                tracing::warn!(
+                    target: "chat-loop",
+                    "Model returned reasoning without content; coalescing reasoning to content"
+                );
+                let outcome = ChatStepOutcome::Content {
+                    reasoning: None, // Already coalesced to content
+                    content: Some(ArcStr::from(reasoning_text.as_str())),
+                };
+                return builder.outcome(outcome).full_response(parsed).build();
+            }
+
             // If message exists but is empty, fall through to try other forms / choices.
             continue;
         }
