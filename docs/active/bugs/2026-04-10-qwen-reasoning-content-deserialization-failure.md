@@ -1,9 +1,10 @@
 # Bug: qwen/qwen3.6-plus returns reasoning without content causing deserialization failure
 
 **Date Discovered:** 2026-04-10  
+**Date Fixed:** 2026-04-10  
 **Crate Affected:** `ploke-llm` / `ploke-tui`  
 **Severity:** Medium - Affects specific models  
-**Status:** Open
+**Status:** Fixed (under stability verification)
 
 ## Summary
 
@@ -72,37 +73,46 @@ The model is outputting chain-of-thought reasoning but then not providing an act
 - **Broader:** Any reasoning-capable model that returns reasoning-only responses will fail similarly
 - **Data Loss:** Run records show `llm_response: None` for failed turns (see RunRecord capture)
 
-## Proposed Fix Options
+## Fix Applied
 
-### Option A: Make content optional in deserialization
+**Selected Option:** B - Coalesce reasoning to content
 
-Change the `content` field in the message struct to `Option<String>` and handle `None` gracefully.
+**Implementation:**
+- Feature flag: `qwen_reasoning_fix` in `crates/ploke-llm/Cargo.toml`
+- Location: `crates/ploke-llm/src/manager/session.rs` (lines 354-369)
+- Behavior: When `content` is `None` but `reasoning` is `Some`, the reasoning text is used as content with a warning log
 
 ```rust
-// In ploke-llm OpenRouter response types
-struct ResponseMessage {
-    role: String,
-    content: Option<String>,  // Was: String
-    reasoning: Option<String>,
+// Coalesce reasoning to content when content is missing but reasoning is present.
+#[cfg(feature = "qwen_reasoning_fix")]
+if let Some(reasoning_text) = reasoning_opt {
+    tracing::warn!(
+        target: "chat-loop",
+        "Model returned reasoning without content; coalescing reasoning to content"
+    );
+    let outcome = ChatStepOutcome::Content {
+        reasoning: None,
+        content: Some(ArcStr::from(reasoning_text.as_str())),
+    };
+    return builder.outcome(outcome).full_response(parsed).build();
 }
 ```
 
-### Option B: Coalesce reasoning to content
+## Test Coverage
 
-When content is missing but reasoning is present, use reasoning as content (with appropriate logging).
+Two tests added in `crates/ploke-eval/src/tests/llm_deserialization.rs`:
 
-```rust
-let content = message.content
-    .or_else(|| {
-        tracing::warn!("Model returned reasoning without content, using reasoning as content");
-        message.reasoning.clone()
-    })
-    .ok_or_else(|| DeserializationError::MissingContent)?;
-```
+1. **Diagnostic test** (`test_qwen_reasoning_only_fails_deserialization`)
+   - `#[cfg(not(feature = "qwen_reasoning_fix"))]`
+   - Documents the exact failure mode pre-fix
+   - Passes before fix, fails after fix
+   - Will be removed after stability period
 
-### Option C: Reject with specific error
-
-Keep current behavior but add a more descriptive error message indicating this is a model behavior issue, not a protocol violation.
+2. **Regression test** (`test_qwen_reasoning_only_coalesces_to_content`)
+   - `#[cfg(feature = "qwen_reasoning_fix")]`
+   - Verifies correct handling post-fix
+   - Fails before fix, passes after fix
+   - Kept permanently
 
 ## Related Code
 
