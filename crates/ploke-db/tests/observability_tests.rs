@@ -2,6 +2,102 @@
 
 use ploke_core::ArcStr;
 use ploke_db::{Database, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus, Validity};
+use ploke_test_utils::fixture_dbs::{FIXTURE_NODES_CANONICAL, shared_backup_fixture_db};
+
+#[test]
+fn current_validity_micros_returns_monotonic_timestamp() {
+    // Initialize a fresh database
+    let db = Database::init_with_schema().expect("init db");
+
+    // Get initial timestamp
+    let ts1 = db.current_validity_micros().expect("get first timestamp");
+
+    // Timestamp should be positive (microseconds since epoch)
+    assert!(
+        ts1 > 0,
+        "expected positive timestamp, got {}",
+        ts1
+    );
+
+    // Get second timestamp - should be >= first (monotonic)
+    let ts2 = db.current_validity_micros().expect("get second timestamp");
+    assert!(
+        ts2 >= ts1,
+        "expected monotonic timestamps, got ts1={}, ts2={}",
+        ts1,
+        ts2
+    );
+
+    // Verify timestamps are reasonable (within last hour, not in future)
+    // Cozo validity timestamps are in microseconds since epoch
+    let now_micros = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as i64;
+    
+    let one_hour_micros = 60 * 60 * 1_000_000i64;
+    assert!(
+        ts1 > now_micros - one_hour_micros,
+        "timestamp should be within last hour: ts1={}, now={}",
+        ts1,
+        now_micros
+    );
+    assert!(
+        ts1 <= now_micros,
+        "timestamp should not be in future: ts1={}, now={}",
+        ts1,
+        now_micros
+    );
+}
+
+/// Test current_validity_micros against a fixture database with real data.
+/// 
+/// This validates that the timestamp helper works correctly on a database
+/// that contains actual fixture data (fixture_nodes), not just an empty schema.
+/// 
+/// Uses shared_backup_fixture_db for fast, read-only access to cached fixture.
+#[test]
+fn current_validity_micros_works_with_fixture_database() {
+    // Load the canonical fixture database (cached, read-only)
+    let db = shared_backup_fixture_db(&FIXTURE_NODES_CANONICAL)
+        .expect("should load fixture_nodes_canonical backup");
+
+    // Get timestamp from fixture database
+    let ts1 = db.current_validity_micros().expect("get timestamp from fixture db");
+
+    // Timestamp should be positive
+    assert!(ts1 > 0, "expected positive timestamp from fixture db, got {}", ts1);
+
+    // Get second timestamp - should be >= first (monotonic)
+    let ts2 = db.current_validity_micros().expect("get second timestamp from fixture db");
+    assert!(
+        ts2 >= ts1,
+        "expected monotonic timestamps on fixture db, got ts1={}, ts2={}",
+        ts1,
+        ts2
+    );
+
+    // Verify timestamps are reasonable (not ancient, not future)
+    let now_micros = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as i64;
+    
+    // Allow 24 hours slack since fixture might be older
+    let day_micros = 24 * 60 * 60 * 1_000_000i64;
+    assert!(
+        ts1 > now_micros - day_micros,
+        "fixture db timestamp should be recent: ts1={}, now={}",
+        ts1,
+        now_micros
+    );
+    assert!(
+        ts1 <= now_micros,
+        "fixture db timestamp should not be in future: ts1={}, now={}",
+        ts1,
+        now_micros
+    );
+}
 
 #[test]
 #[ignore = "temporary ignore: test uses todo! placeholders; focusing on feature work"]
