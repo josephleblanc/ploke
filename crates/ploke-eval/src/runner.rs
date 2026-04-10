@@ -119,6 +119,9 @@ pub struct RunArtifactPaths {
     pub indexing_failure_db: PathBuf,
     pub snapshot_status: PathBuf,
     pub msb_submission: Option<PathBuf>,
+    /// Path to the compressed RunRecord (`record.json.gz`).
+    /// Added in Phase 1 for comprehensive run persistence and replay.
+    pub record_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1104,6 +1107,7 @@ impl RunMsbSingleRequest {
             indexing_failure_db,
             snapshot_status: snapshot_status_path,
             msb_submission: msb_submission_path,
+            record_path: None, // Will be populated when RunRecord emission is implemented
         })
     }
 }
@@ -1416,6 +1420,7 @@ impl RunMsbAgentSingleRequest {
                 indexing_failure_db,
                 snapshot_status: snapshot_status_path,
                 msb_submission: msb_submission_path,
+                record_path: None, // Will be populated when RunRecord emission is implemented
             },
             turn_trace: turn_trace_path,
             turn_summary: turn_summary_path,

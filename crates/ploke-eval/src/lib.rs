@@ -3,6 +3,7 @@ pub mod layout;
 pub mod model_registry;
 pub mod msb;
 pub mod provider_prefs;
+pub mod record;
 pub mod registry;
 pub mod run_history;
 pub mod runner;
@@ -19,6 +20,11 @@ pub use registry::{
 pub use runner::{
     AgentRunArtifactPaths, AgentTurnArtifact, BatchRunArtifactPaths, RunMsbAgentBatchRequest,
     RunMsbAgentSingleRequest, RunMsbBatchRequest,
+};
+pub use record::{
+    BuildResult, ConversationMessage, LlmResponseRecord, RunMetadata, RunOutcomeSummary, RunPhases,
+    RunRecord, RunRecordBuilder, TimeTravelMarker, ToolExecutionRecord, ToolResult, TurnOutcome,
+    TurnRecord, ValidationPhase, RUN_RECORD_SCHEMA_VERSION,
 };
 pub use spec::{
     EvalBudget, IssueInput, MultiSweBenchSource, OutputMode, PrepareSingleRunRequest, PrepareWrite,
