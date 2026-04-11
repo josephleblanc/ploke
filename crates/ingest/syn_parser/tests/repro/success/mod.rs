@@ -1,5 +1,6 @@
 mod cfg_gates_quantized_metal;
 mod edition_2015_async_keyword_fallback;
+mod edition_2015_bare_trait_object_fallback;
 mod file_links_staged_merge;
 mod kl005_manifest_cargo_alignment;
 mod path_attr_stem_collision;

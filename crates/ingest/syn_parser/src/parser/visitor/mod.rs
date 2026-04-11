@@ -6,14 +6,17 @@ use std::{collections::HashMap, hash::Hasher};
 use syn::visit::Visit;
 use tracing::instrument;
 mod attribute_processing;
+mod attribute_processing_syn1;
 mod cfg_evaluator;
 #[cfg(feature = "cfg_eval")]
 pub use attribute_processing::parse_cfg_expr_from_inner_tokens;
 #[cfg(feature = "cfg_eval")]
 pub use cfg_evaluator::ActiveCfg;
 mod code_visitor;
+mod code_visitor_syn1;
 mod state;
 mod type_processing;
+mod type_processing_syn1;
 
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
@@ -124,6 +127,13 @@ fn should_attempt_legacy_keyword_fallback(
 
 #[cfg(feature = "convert_keyword_2015")]
 fn crate_effective_edition(
+    crate_context: &crate::discovery::CrateContext,
+) -> Option<cargo_toml::Edition> {
+    crate_effective_edition_inner(crate_context)
+}
+
+// Unconditional version for dual-syn dispatch
+fn crate_effective_edition_inner(
     crate_context: &crate::discovery::CrateContext,
 ) -> Option<cargo_toml::Edition> {
     let manifest_path = crate_context.root_path.join("Cargo.toml");
@@ -632,6 +642,99 @@ use {
     uuid::Uuid,
 };
 
+/// Analyze a file using syn1 (for Rust 2015 edition)
+fn analyze_file_phase2_syn1(
+    file_content: String,
+    file_path: PathBuf,
+    crate_namespace: Uuid,
+    logical_module_path: Vec<String>,
+    crate_context: &crate::discovery::CrateContext,
+) -> Result<ParsedCodeGraph, syn::Error> {
+    use super::nodes::ModuleKind;
+    
+    // Parse with syn1
+    let file = syn1::parse_file(&file_content).map_err(|e| {
+        syn::Error::new(proc_macro2::Span::call_site(), format!("syn1 parse error: {}", e))
+    })?;
+
+    // Create VisitorState
+    let mut state =
+        state::VisitorState::new(crate_namespace, file_path.to_path_buf(), crate_context);
+    state.current_module_path = logical_module_path.clone();
+
+    // Extract CFG strings using syn1
+    let file_cfgs = attribute_processing_syn1::extract_cfg_strings(&file.attrs);
+    state.current_scope_cfgs = file_cfgs.clone();
+    let root_cfg_bytes = calculate_cfg_hash_bytes(&file_cfgs);
+
+    // Generate root module ID
+    let root_module_name = logical_module_path
+        .last()
+        .cloned()
+        .unwrap_or_else(|| "crate".to_string());
+    let root_module_parent_path: Vec<String> = logical_module_path
+        .iter()
+        .take(logical_module_path.len().saturating_sub(1))
+        .cloned()
+        .collect();
+
+    let root_module_node_id = NodeId::generate_synthetic(
+        crate_namespace,
+        &file_path,
+        &root_module_parent_path,
+        &root_module_name,
+        ItemKind::Module,
+        None,
+        root_cfg_bytes.as_deref(),
+    );
+
+    // Determine visibility
+    let root_visibility = if logical_module_path == ["crate"] {
+        crate::parser::types::VisibilityKind::Public
+    } else {
+        crate::parser::types::VisibilityKind::Inherited
+    };
+
+    // Create root module info
+    let root_module_info = ModuleNodeInfo {
+        id: root_module_node_id,
+        name: root_module_name,
+        visibility: root_visibility,
+        attributes: Vec::new(),
+        docstring: None,
+        imports: Vec::new(),
+        exports: Vec::new(),
+        path: logical_module_path.clone(),
+        span: (0, file_content.len()),
+        tracking_hash: Some(state.generate_tracking_hash(&file.to_token_stream())),
+        module_def: ModuleKind::FileBased {
+            items: Vec::new(),
+            file_path: file_path.clone(),
+            file_attrs: attribute_processing_syn1::extract_file_level_attributes(&file.attrs),
+            file_docs: attribute_processing_syn1::extract_file_level_docstring(&file.attrs),
+        },
+        cfgs: file_cfgs,
+    };
+
+    state.code_graph.modules.push(ModuleNode::new(root_module_info));
+
+    let root_module_pid: PrimaryNodeId = state.code_graph.modules[0].id.into();
+    state.current_primary_defn_scope.push(root_module_pid);
+
+    // Create and run syn1 visitor
+    let mut visitor = code_visitor_syn1::CodeVisitor::new(&mut state);
+    syn1::visit::Visit::visit_file(&mut visitor, &file);
+
+    drop(visitor);
+
+    Ok(ParsedCodeGraph {
+        file_path,
+        graph: state.code_graph,
+        crate_namespace,
+        crate_context: Some(crate_context.clone()),
+    })
+}
+
 /// Analyze a single file for Phase 2 (UUID Path) - The Worker Function
 /// Receives context from analyze_files_parallel.
 #[cfg(feature = "cfg_eval")]
@@ -658,13 +761,23 @@ pub fn analyze_file_phase2(
             format!("Failed to read file {}: {}", file_path.display(), e),
         )
     })?;
-    // .expect("This is the primary problem? line 118 of visitor/mod.rs");
-    // TODO: Add real error handling here.
-    // let msg = format!("This is the primary problem? line 121 of visitor/mod.rs parsing: {}", file_path.display());
+
+    // Check edition for dual-syn dispatch
+    let edition = crate_effective_edition_inner(crate_context);
+    if edition == Some(cargo_toml::Edition::E2015) {
+        // Use syn1 for Rust 2015 edition (handles bare trait objects)
+        return analyze_file_phase2_syn1(
+            file_content,
+            file_path,
+            crate_namespace,
+            logical_module_path,
+            crate_context,
+        );
+    }
+
+    // Use syn2 for Rust 2018+ editions
     let (file, legacy_rewrite) =
         try_parse_file_with_legacy_keyword_fallback(&file_content, crate_context)?;
-    // .inspect_err(|e| tracing::trace!("Getting closer to the source: {e}"))?;
-    // .expect(&msg);
 
     // 1. Create VisitorState with the provided context
     let mut state =

@@ -17,6 +17,7 @@ use std::fs;
 
 use syn_parser::error::SynParserError;
 use syn_parser::try_run_phases_and_resolve;
+use syn_parser::GraphAccess;
 use tempfile::tempdir;
 
 const ASYNC_IDENT_LIB_RS: &str = r#"
@@ -66,39 +67,23 @@ fn repro_syn_parse_file_rejects_async_identifier_without_edition_context() {
 }
 
 #[test]
-#[cfg(not(feature = "convert_keyword_2015"))]
-fn repro_try_run_phases_and_resolve_fails_on_valid_2015_async_identifier_crate() {
+fn repro_try_run_phases_and_resolve_parses_2015_async_identifier_crate() {
     let td = create_edition_2015_async_ident_crate();
-    let err = try_run_phases_and_resolve(td.path())
-        .expect_err("current parser should fail on edition-2015 async identifier fixture");
-
-    match err {
-        SynParserError::MultipleErrors(errors) => {
-            assert_eq!(
-                errors.len(),
-                1,
-                "expected one parse failure, got {errors:?}"
-            );
-
-            match &errors[0] {
-                SynParserError::Syn {
-                    message,
-                    source_path,
-                    ..
-                } => {
-                    assert!(
-                        message.contains("expected identifier, found keyword `async`"),
-                        "unexpected syn parse message: {message}"
-                    );
-                    assert!(
-                        source_path.ends_with("src/lib.rs"),
-                        "error should point at src/lib.rs, got: {}",
-                        source_path.display()
-                    );
-                }
-                other => panic!("unexpected child error kind: {other:?}"),
-            }
-        }
-        other => panic!("unexpected error for edition-2015 async-ident repro: {other:?}"),
-    }
+    let result = try_run_phases_and_resolve(td.path());
+    
+    // With dual-syn support, edition 2015 crates should now parse successfully
+    // using syn1 (which accepts `async` as an identifier)
+    let graphs = result.expect("parser should succeed on edition-2015 async identifier crate");
+    
+    assert_eq!(graphs.len(), 1, "expected one parsed file");
+    let graph = &graphs[0].graph;
+    
+    // Verify the struct and impl were parsed
+    let struct_count = graph.defined_types.iter()
+        .filter(|t| matches!(t, syn_parser::parser::nodes::TypeDefNode::Struct(_)))
+        .count();
+    assert_eq!(struct_count, 1, "expected one struct (Worker)");
+    
+    // Verify the impl block was parsed
+    assert_eq!(graph.impls().len(), 1, "expected one impl block");
 }

@@ -8,6 +8,7 @@ authors = ["Joseph LeBlanc <joseph.t.leblanc@protonmail.com>"]
 [dependencies]
 # Parsing and code generation
 syn = { workspace = true }
+syn1 = { package = "syn", version = "1.0", features = ["full", "visit"] }
 quote = { workspace = true }
 proc-macro2 = { workspace = true }
 

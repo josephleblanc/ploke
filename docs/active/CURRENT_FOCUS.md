@@ -1,27 +1,30 @@
 # Current Focus
 
-**Last Updated:** 2026-04-09 (Phase 1C complete, ready for 1D)  
-**Active Planning Doc:** [Phase 1 RunRecord Tracking](plans/evals/phase-1-runrecord-tracking.md)
+**Last Updated:** 2026-04-10 (Solution selected for A2 parser issue, awaiting implementation)
+**Active Planning Doc:** [Bug Report: syn 2.x Rust 2015 trait objects](../bugs/2026-04-10-syn-2-fails-on-rust-2015-bare-trait-objects.md)
 
 ---
 
 ## What We're Doing Now
 
-We are implementing the **RunRecord** system for the ploke-eval harness—building Layer 0 (Observability & Data Capture) infrastructure that enables both A4 (comprehensive result schema) and A5 (replay/introspection without re-running). The RunRecord will aggregate all run data into a single compressed `record.json.gz` file with Cozo time-travel timestamps, conversation history, and structured LLM event capture. This unblocks A5, which is a **hard gate** for H0 interpretation.
+We have **validated A4 (comprehensive result schema) and A5 (replay/introspection)** — the RunRecord system is working and the hard gate for H0 interpretation is unblocked. We discovered and **diagnosed an A2 (data fidelity) issue**: syn 2.x fails on Rust 2015 bare trait objects (e.g., `Arc<Fn(...)>`). **Solution selected:** Dual syn versions — syn 1.x for Rust 2015 crates, syn 2.x for modern Rust. Implementation is documented and ready to begin post-compaction.
 
 ---
 
 ## Immediate Next Step
 
-**Phase 1D:** Structured LLM event capture:
-- Modify `handle_benchmark_event()` to capture `ChatEvt::Response` fields structurally
-- Create `LlmResponseRecord` from response events instead of debug strings
-- Store in `TurnRecord.llm_response`
+**Implement dual syn version support:**
+- Solution documented in [bug report](../bugs/2026-04-10-syn-2-fails-on-rust-2015-bare-trait-objects.md)
+- Add syn 1.x as dependency alongside syn 2.x
+- Create `code_visitor_syn1.rs` adapted for syn 1.x AST
+- Add dispatch logic to route by edition
+- Estimated effort: 3-4 weeks
 
-**Recently completed:** 
-- Phase 1A — Foundation types created in `crates/ploke-eval/src/record.rs`
-- Phase 1B — Added `current_validity_micros()` to `ploke-db::Database` with tests
-- Phase 1C — Conversation history capture via `capture_conversation()` with tests
+**Recently completed:**
+- Phase 1 COMPLETE — RunRecord implementation with emission, compression, and introspection API
+- A4/A5 VALIDATED — Real `record.json.gz` verified, all 16 tests pass
+- A2 issue DIAGNOSED and SOLUTION SELECTED — Dual syn approach chosen after evaluating 6 alternatives
+- Qwen deserialization bug fixed — Feature flag `qwen_reasoning_fix` implemented
 
 ---
 
@@ -31,7 +34,7 @@ We are implementing the **RunRecord** system for the ploke-eval harness—buildi
 |-----------------|---------------|
 | "What were we up to?" | This doc ↑ |
 | "Remind me of next steps" | [Phase 1 RunRecord Tracking](plans/evals/phase-1-runrecord-tracking.md) |
-| "Let's pick up where we left off" | [Phase 1 RunRecord Tracking](plans/evals/phase-1-runrecord-tracking.md) |
+| "Let's pick up where we left off" | Fix globset parsing in syn_parser |
 | Overall eval workflow | [workflow/README.md](workflow/README.md) |
 | Recent activity log | [workflow/handoffs/recent-activity.md](workflow/handoffs/recent-activity.md) |
 | Hypothesis status | [workflow/hypothesis-registry.md](workflow/hypothesis-registry.md) |
