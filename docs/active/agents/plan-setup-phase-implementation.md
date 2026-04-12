@@ -1,8 +1,37 @@
 # SetupPhase Implementation Plan
 
-**Status:** Draft - Ready for Review  
+**Status:** In Progress - Type Refactoring Complete  
 **Created:** 2026-04-11  
+**Updated:** 2026-04-12  
 **Related:** [AUDIT_SYNTHESIS.md](./phase-1-audit/AUDIT_SYNTHESIS.md), [eval-design.md](../plans/evals/eval-design.md)
+
+---
+
+## Recent Changes (2026-04-12)
+
+### Completed: CrateContext Enhancement
+
+**Changes Made:**
+1. **Added `id: CrateId` to `CrateContext`** (`syn_parser/src/discovery/single_crate.rs`)
+   - `CrateContext` now has both:
+     - `id: CrateId` (path-based UUID for AppState maps)
+     - `namespace: Uuid` (name-based UUID for DB)
+   - This subsumes `CrateInfo` - `CrateContext` is now the canonical crate representation
+
+2. **Updated `LoadedCrateState`** (`ploke-tui/src/app_state/core.rs`)
+   - Changed from `info: CrateInfo` to `context: CrateContext`
+   - Updated all usages (`.info.` → `.context.`)
+
+3. **Kept `CrateInfo` for `WorkspaceRoots`**
+   - `ploke-core` can't depend on `syn_parser`
+   - `CrateInfo` remains for workspace-level tracking
+   - `CrateContext` is used for loaded crate state
+
+**Test Results:** All workspace tests pass (verified via `cargo test --workspace`)
+
+---
+
+## Executive Summary
 
 ---
 
@@ -453,3 +482,40 @@ impl SetupPhase {
   }
 }
 ```
+
+---
+
+## Next Steps (Post-Compaction)
+
+With the `CrateContext` refactoring complete, we can now proceed with the remaining implementation:
+
+### Phase 2: DB Queries (Ready to Start)
+
+**Files to modify:**
+- `crates/ploke-db/src/database.rs`
+
+**Add methods:**
+```rust
+/// Count all nodes for a crate namespace
+pub fn count_nodes_for_namespace(&self, namespace: Uuid) -> Result<usize, DbError>
+
+/// Count embedded nodes for a crate namespace  
+pub fn count_embedded_for_namespace(&self, namespace: Uuid) -> Result<usize, DbError>
+```
+
+### Phase 3: Runner Integration (Ready to Start)
+
+**Files to modify:**
+- `crates/ploke-eval/src/record.rs` - Add `IndexedCrateSummary` type
+- `crates/ploke-eval/src/runner.rs` - Populate `SetupPhase` after indexing
+
+**Key location:** After `wait_for_indexing_completion()` (~line 1327), before `run_benchmark_turn()`
+
+### Simplified Approach
+
+Since `CrateContext` now has all the data we need:
+1. Get crate contexts from `AppState.loaded_crates`
+2. Query DB for node counts per namespace
+3. Build `SetupPhase` with enriched crate data
+
+No need to query `crate_context` table - we already have the contexts in memory!
