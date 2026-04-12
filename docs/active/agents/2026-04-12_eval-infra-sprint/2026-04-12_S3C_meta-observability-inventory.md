@@ -20,7 +20,7 @@
   - explicit hypothesis list
   - recommended next packet or experiment
 - Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
-- Status: ready
+- Status: accepted
 
 ## Permission Gate
 

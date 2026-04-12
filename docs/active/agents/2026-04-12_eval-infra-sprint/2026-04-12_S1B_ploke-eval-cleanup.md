@@ -19,7 +19,7 @@
   - explicit note on test-strength implications
   - recommended follow-up packet(s) if more than one cleanup slice remains
 - Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
-- Status: ready
+- Status: accepted
 
 ## Permission Gate
 

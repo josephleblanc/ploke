@@ -20,7 +20,7 @@
   - note on automation assumptions and operational prerequisites
   - recommended follow-up packet for implementation or backfill
 - Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
-- Status: ready
+- Status: accepted
 
 ## Permission Gate
 

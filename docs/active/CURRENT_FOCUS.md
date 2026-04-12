@@ -1,32 +1,31 @@
 # Current Focus
 
-**Last Updated:** 2026-04-12 (Eval Infra Sprint Multi-Lane Control Plane Activated)
+**Last Updated:** 2026-04-12 (Post-P0 sidecar audit/design packets accepted)
 **Active Planning Doc:** [Eval Infra Sprint Control Plane](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
 
 ---
 
 ## What We're Doing Now
 
-We are now running an **eval-infra sprint under an explicit multi-lane orchestration protocol**. The blocking primary lane is still the Phase 1 P0 replay/inspection work identified by the audit, but active sidecar lanes now also cover `ploke-eval` API/code-quality audit, longitudinal metrics/change-over-time reporting, and workflow/skills adherence. This keeps the measurement layer in front of parser/tool optimization work without letting the broader programme concerns disappear from the active plan.
+We are now running an **eval-infra sprint under an explicit multi-lane orchestration protocol** with the blocking Phase 1 P0 replay/inspection lane closed. The active work has shifted to post-P0 sidecars: `ploke-eval` coherence cleanup, inspect CLI UX, longitudinal metrics ingestion/bootstrap, and meta-process observability. This keeps the measurement layer intact while turning the accepted P0 substrate into a usable day-to-day eval workflow.
 
 ---
 
 ## Immediate Next Step
 
-**The Phase 1 P0 replay/inspection lane is now accepted; choose the next active lane deliberately**:
+**The Phase 1 P0 replay/inspection lane is accepted; the next step is a deliberate post-P0 lane choice**:
 
 1. **`P0A` and `P0B` are accepted with a strict boundary** - setup schema/capture work in `ploke-eval` is accepted, while `DbState`/lookup/query/replay surfaces remain outside that acceptance slice
 2. **`P0C0` is accepted** - the pre-implementation survey recommends using the existing `raw_query_at_timestamp()` / `DbState` path rather than pulling `QueryBuilder` into the sprint
 3. **`P0C` is accepted with a strict boundary** - the explicit historical-query helper contract now lives in `ploke-db`, and before/after workspace baselines showed no new failures beyond the same two pre-existing `ploke-tui` integration failures
 4. **`P0D` and `P0E` are accepted** - `turn.db_state().lookup()` and `replay_query(turn, query)` meet their packet criteria on top of accepted `P0C`
 5. **`P0F` is accepted** - turn-record fidelity and replay-state reconstruction inside `ploke-eval` no longer block the primary lane
-6. **Next step is a program decision, not a hidden blocker** - promote one or more ready sidecars (`S1B` cleanup, `S1C` inspect CLI UX audit, `S2C` metrics ingestion bootstrap, `S3C` meta-observability inventory) or advance to the next eval-design phase with the new inspection/replay surface in place
-
-**Critical findings from audit:**
-- `turn.db_state().lookup()` - **NOT IMPLEMENTED** (claimed complete in Phase 1F)
-- `replay_query(turn, query)` - **NOT IMPLEMENTED**  
-- SetupPhase - **NEVER POPULATED** (verified `null` in `record.json.gz`)
-- Historical DB queries - **NOT POSSIBLE** (all queries hardcode `@ 'NOW'`)
+6. **Accepted sidecar outputs now shape the next move**:
+   - `S1B` accepted a narrow `ploke-eval` cleanup slice by removing a redundant introspection smoke test and keeping `introspection_integration.rs` as the canonical stronger suite
+   - `S1C` accepted the inspect CLI audit and landed small help-text improvements; the main remaining UX hole is the empty `inspect turn --show messages` placeholder
+   - `S2C` accepted the longitudinal metrics ingestion/bootstrap design, centered on an append-only JSONL companion plus regenerated markdown ledger
+   - `S3C` accepted the meta-observability inventory and recommends a narrow observational follow-up rather than a broad process rewrite
+7. **Current program decision** - the cleanest next packets are now explicit in the control plane: [S1D inspect CLI polish](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1D_inspect-cli-polish.md), [S2D metrics backfill/regeneration prototype](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_metrics-backfill-prototype.md), and [S3D restart-rubric sampling](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3D_restart-rubric-sample.md). Choose one of those or advance to the next eval-design phase with the accepted sidecar findings in hand
 
 **Control plane:** [2026-04-12_eval-infra-sprint-control-plane.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
 **Evidence base:** [AUDIT_SYNTHESIS.md](agents/phase-1-audit/AUDIT_SYNTHESIS.md)
@@ -36,7 +35,7 @@ We are now running an **eval-infra sprint under an explicit multi-lane orchestra
 **Current accepted historical-query packet:** [2026-04-12_P0C_report.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0C_report.md)
 **Current accepted lookup/replay packet:** [2026-04-12_P0DE_verification_report.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0DE_verification_report.md)
 **Current accepted fidelity packet:** [2026-04-12_P0F_retry-report.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0F_retry-report.md)
-**Accepted sidecar findings:** [S1A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1A_ploke-eval-coherence-audit-report.md), [S2A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md), [S2B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2B_longitudinal-metrics-ledger-report.md), [S3A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3A_workflow-adherence-audit-report.md), [S3B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3B_control-plane-and-handoff-template-tightening-report.md)
+**Accepted sidecar findings:** [S1A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1A_ploke-eval-coherence-audit-report.md), [S1B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1B_report.md), [S1C report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1C_inspect-cli-ux-audit-report.md), [S2A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md), [S2B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2B_longitudinal-metrics-ledger-report.md), [S2C report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2C_report.md), [S3A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3A_workflow-adherence-audit-report.md), [S3B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3B_control-plane-and-handoff-template-tightening-report.md), [S3C report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3C_report.md)
 
 **Recently completed:**
 - **Phase 1 Audit** - 4 sub-agents parallel investigation

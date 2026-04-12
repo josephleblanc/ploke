@@ -40,3 +40,27 @@ This is the central roll-up surface for longitudinal eval metrics. Numeric truth
 - Derivable now: `solve_rate`, `token_cost`, `wall_time`, `provider_failure_rate`, `setup_failure_rate`, `attribution_coverage`.
 - Blocked: `tool_misuse_rate`, `recovery_rate`.
 - Next capture need: explicit turn-level misuse and recovery markers, or a small aggregation layer that derives them from recorded turn events.
+
+## Ingestion And Refresh Path
+
+Lightest-weight bootstrap path:
+
+1. Discover newly completed formal runs from the experiment workspace.
+2. Read the immutable run manifest as the canonical row source, falling back to the experiment summary artifact only for discovery or file location hints.
+3. Materialize one append-only machine-readable row per formal run in [longitudinal-metrics.rows.jsonl](longitudinal-metrics.rows.jsonl), keyed by `experiment_id` + `manifest_id`.
+4. Regenerate this markdown ledger from the JSONL companion so the human-readable surface stays synchronized with the machine-readable source.
+5. Preserve blocked or missing fields explicitly instead of inferring them.
+
+## Operational Assumptions
+
+- Formal runs are immutable once recorded.
+- Each formal run has stable `experiment_id` and `manifest_id` values.
+- Discovery can start from the existing experiment directory layout without requiring CI/CD.
+- The machine-readable companion is the durable source for roll-ups; the markdown ledger is the rendered view.
+- If a metric or provenance field is missing, the row stays incomplete and the gap is recorded rather than guessed.
+
+## Automation Boundaries
+
+- Automatable now: detect new formal runs, append new JSONL rows, regenerate the markdown ledger, and emit a compact delta summary.
+- Later: scheduled or event-driven refresh, automatic discovery across new workspaces, and direct publication of aggregate charts or dashboards.
+- Still blocked: metrics that depend on turn-level misuse or recovery capture until that telemetry exists.

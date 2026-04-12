@@ -20,7 +20,7 @@
   - explicit note on what still requires dropping to code or raw artifacts
   - recommended follow-up packet(s) for CLI tightening or docs/help improvements
 - Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
-- Status: ready
+- Status: accepted
 
 ## Permission Gate
 

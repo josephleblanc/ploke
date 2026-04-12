@@ -104,14 +104,17 @@ Pre-implementation survey addition from restart review:
 | `P0E` | `PRIMARY-P0` | `accepted` | Fermat | `A5` | [P0E](./2026-04-12_P0E_replay-query.md) | [verification report](./2026-04-12_P0DE_verification_report.md) | keep future replay-hardening scoped to differential evidence and error taxonomy cleanup, not this acceptance slice |
 | `P0F` | `PRIMARY-P0` | `accepted` | worktree | `A5` | [P0F](./2026-04-12_P0F_turn-record-fidelity.md) | [retry report](./2026-04-12_P0F_retry-report.md) | keep future replay-fidelity follow-up scoped to real turn timestamps rather than reopening this packet |
 | `S1A` | `S1-COHERENCE` | `accepted` | Galileo | `A5` | [S1A](./2026-04-12_S1A_ploke-eval-coherence-audit.md) | [report](./2026-04-12_S1A_ploke-eval-coherence-audit-report.md) | use findings to drive `P0F` and later `ploke-eval` cleanup packets |
-| `S1B` | `S1-COHERENCE` | `ready` | unassigned | `A5` | [S1B](./2026-04-12_S1B_ploke-eval-cleanup.md) | none | promote the accepted coherence audit into a bounded cleanup implementation track inside `ploke-eval` |
-| `S1C` | `S1-COHERENCE` | `ready` | unassigned | `A5` | [S1C](./2026-04-12_S1C_inspect-cli-ux-audit.md) | none | audit the inspect CLI as a quick-touch internal UX/bootstrap surface and frame concrete follow-up work |
+| `S1B` | `S1-COHERENCE` | `accepted` | Euclid | `A5` | [S1B](./2026-04-12_S1B_ploke-eval-cleanup.md) | [report](./2026-04-12_S1B_report.md) | if more cleanup is desired, open a narrow follow-up for duplicated setup-helper logic rather than reopening runtime behavior |
+| `S1C` | `S1-COHERENCE` | `accepted` | Erdos | `A5` | [S1C](./2026-04-12_S1C_inspect-cli-ux-audit.md) | [report](./2026-04-12_S1C_inspect-cli-ux-audit-report.md) | open a small inspect-CLI polish packet for the empty `messages` placeholder and one or two more bootstrap-path examples |
 | `S2A` | `S2-LONGITUDINAL` | `accepted` | Goodall | `H0` | [S2A](./2026-04-12_S2A_longitudinal-metrics-design.md) | [report](./2026-04-12_S2A_longitudinal-metrics-report.md) | create the central metrics ledger packet and define formulas/denominators |
 | `S3A` | `S3-META-PROCESS` | `accepted` | Dewey | `A4` | [S3A](./2026-04-12_S3A_workflow-adherence-audit.md) | [report](./2026-04-12_S3A_workflow-adherence-audit-report.md) | create follow-up packet(s) for control-plane template and handoff/report template tightening |
 | `S2B` | `S2-LONGITUDINAL` | `accepted` | Peirce | `H0` | [S2B](./2026-04-12_S2B_longitudinal-metrics-ledger.md) | [report](./2026-04-12_S2B_longitudinal-metrics-ledger-report.md) | backfill a small sample of formal runs and then open capture/aggregation follow-up work |
+| `S2D` | `S2-LONGITUDINAL` | `ready` | unassigned | `H0` | [S2D](./2026-04-12_S2D_metrics-backfill-prototype.md) | none | validate the JSONL-companion/regenerated-ledger flow on a small real sample |
 | `S3B` | `S3-META-PROCESS` | `accepted` | Franklin | `A4` | [S3B](./2026-04-12_S3B_control-plane-and-handoff-template-tightening.md) | [report](./2026-04-12_S3B_control-plane-and-handoff-template-tightening-report.md) | decide whether a short orchestration skill note is still needed after one more sprint |
-| `S2C` | `S2-LONGITUDINAL` | `ready` | unassigned | `H0` | [S2C](./2026-04-12_S2C_metrics-ingestion-bootstrap.md) | none | define the lightest-weight discovery, storage, and roll-up path from formal runs into the central metrics ledger |
-| `S3C` | `S3-META-PROCESS` | `ready` | unassigned | `A4` | [S3C](./2026-04-12_S3C_meta-observability-inventory.md) | none | inventory available workflow/process evidence sources and propose a small exploratory hypothesis set |
+| `S2C` | `S2-LONGITUDINAL` | `accepted` | Gauss | `H0` | [S2C](./2026-04-12_S2C_metrics-ingestion-bootstrap.md) | [report](./2026-04-12_S2C_report.md) | prototype a tiny JSONL backfill/regeneration path on a small formal-run sample |
+| `S3C` | `S3-META-PROCESS` | `accepted` | McClintock | `A4` | [S3C](./2026-04-12_S3C_meta-observability-inventory.md) | [report](./2026-04-12_S3C_report.md) | open the narrow `S3D` observational follow-up if meta-process validation is the next priority |
+| `S1D` | `S1-COHERENCE` | `ready` | unassigned | `A5` | [S1D](./2026-04-12_S1D_inspect-cli-polish.md) | none | polish the inspect CLI around the empty `messages` placeholder and bootstrap-path discoverability |
+| `S3D` | `S3-META-PROCESS` | `ready` | unassigned | `A4` | [S3D](./2026-04-12_S3D_restart-rubric-sample.md) | none | run a tiny restart-rubric sample over recent handoffs/control-plane artifacts |
 
 ## Dependency Notes
 
@@ -135,8 +138,8 @@ Pre-implementation survey addition from restart review:
 1. The blocking primary P0 lane is accepted end-to-end: `P0A`, `P0B`, `P0C0`, `P0C`, `P0D`, `P0E`, and `P0F` all have explicit reports and acceptance boundaries.
 2. Keep the pre/post workspace baseline as the regression reference for the `P0C` slice: no timeout, no new failures, same two pre-existing `ploke-tui` integration failures before and after.
 3. Do not reopen the accepted P0 packets casually; create a narrow hardening packet if lookup ambiguity, replay differential evidence, or error-taxonomy cleanup is desired.
-4. Promote the next active work deliberately from the sidecar queue: `S1B`, `S1C`, `S2C`, and `S3C` are all now explicit ready packets.
-5. Move to the next eval-design phase only after choosing whether any of those sidecar packets should run first.
+4. The first post-P0 sidecar audit/design wave is now accepted: `S1B`, `S1C`, `S2C`, and `S3C` all have explicit reports and bounded follow-up recommendations.
+5. Promote the next active work deliberately from the follow-up queue: `S1D` inspect-CLI polish, `S2D` metrics backfill/regeneration, or `S3D` restart-rubric sampling are the cleanest next packets.
 6. Treat `S2B` and `S3B` as accepted and keep their artifacts in the restart path.
 
 ## Resume Path

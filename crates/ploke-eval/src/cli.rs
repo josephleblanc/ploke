@@ -1153,6 +1153,12 @@ Run-level inspection (matches eval-design.md API):
 Turn-level inspection:
 
   cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 --turn 1
+
+Bootstrap questions:
+
+  cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 --turn 1 --show db-state
+  cargo run -p ploke-eval -- inspect query --instance BurntSushi__ripgrep-2209 --turn 1 --lookup GlobSet
+  cargo run -p ploke-eval -- inspect conversations --instance BurntSushi__ripgrep-2209
 "
 )]
 pub struct InspectCommand {
@@ -1267,7 +1273,7 @@ pub struct InspectTurnCommand {
     #[arg(long)]
     pub turn: u32,
 
-    /// What to show for this turn: all, messages, tool-calls, tool-call, db-state.
+    /// What to show for this turn: all, messages, tool-calls, tool-call, tool-result, db-state.
     #[arg(long, value_enum, default_value_t = TurnShowOption::All)]
     pub show: TurnShowOption,
 

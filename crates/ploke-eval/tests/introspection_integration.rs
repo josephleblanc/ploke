@@ -1,4 +1,4 @@
-//! Integration tests for the introspection API
+//! Canonical integration tests for the introspection API
 //!
 //! These tests verify that the RunRecord introspection API works correctly against
 //! real eval run data from the BurntSushi/ripgrep benchmark.
@@ -349,8 +349,6 @@ fn tool_calls_returns_all_calls() {
         expected_count,
         "tool_calls() should return all tool calls from all turns"
     );
-
-    println!("Total tool calls in run: {}", aggregated.len());
 
     // Verify all returned items are tool execution records
     for call in &aggregated {

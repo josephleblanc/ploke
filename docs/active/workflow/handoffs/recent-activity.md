@@ -85,6 +85,11 @@
   - Added `S3C` to inventory available workflow/process evidence sources and frame exploratory hypotheses for protocol adherence and drift
   - These are active sidecar packets, not deferred backlog, but they remain non-blocking relative to the primary P0 lane
 
+- **S3C INVENTORY REPORT COMPLETED**
+  - Produced [S3C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3C_report.md) with a signal inventory, noisy/unavailable split, exploratory hypotheses, and a narrow `S3D` recommendation
+  - The report treats current-focus, control-plane, recent-activity, evidence-ledger, hypothesis-registry, longitudinal-metrics, EDR, and handoff artifacts as the highest-signal workflow sources
+  - The next meta-process experiment should be observational and small rather than a process rewrite
+
 - **PRE-`P0C` QUERY-SURFACE SURVEY ADDED**
   - Added `P0C0` to survey the existing `ploke-db` query-builder and raw-query surface before committing to the historical-query implementation path
   - Rationale: current evidence suggests the builder is real but partial, while many active call sites still bypass it with raw Cozo scripts; the sprint should choose whether to extend, wrap, or deliberately bypass that surface before landing `P0C`
@@ -117,6 +122,23 @@
   - Added `S1C` to audit the inspect-oriented `ploke-eval` CLI as a frequent internal UX/bootstrap surface for quick eval checks
   - `S2C` and `S3C` remain ready as the longitudinal ingestion/bootstrap and meta-observability follow-ups
   - Intended post-compaction resume point: choose from `S1B`, `S1C`, `S2C`, and `S3C` rather than treating the next step as implicit
+
+- **S1B CLEANUP SLICE REPORTED**
+  - Removed the redundant standalone `crates/ploke-eval/tests/test_introspection.rs` smoke test because `introspection_integration.rs` already carries the canonical, stronger introspection assertions
+  - Trimmed one stray diagnostic `println!` from the canonical introspection suite so the test output is quieter and easier to scan
+  - Test signal remains in `crates/ploke-eval/tests/introspection_integration.rs`; the cleanup did not touch accepted P0 runtime behavior
+
+- **FIRST POST-P0 SIDECAR WAVE ACCEPTED**
+  - Accepted [S1B report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1B_report.md) as a narrow `ploke-eval` cleanup slice: the redundant standalone introspection smoke test is gone, and `introspection_integration.rs` remains the canonical stronger suite
+  - Accepted [S1C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1C_inspect-cli-ux-audit-report.md): the inspect CLI is usable as a bootstrap surface, but `inspect turn --show messages` still exposes a placeholder gap and is the cleanest polish follow-up
+  - Accepted [S2C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2C_report.md): the longitudinal metrics path now specifies an append-only JSONL companion plus regenerated markdown ledger as the lightest-weight ingestion/bootstrap design
+  - Accepted [S3C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3C_report.md): the highest-signal workflow sources are now explicit, and the recommended next step is a narrow observational `S3D` packet rather than a broad process rewrite
+  - Operational consequence: the next decision is between bounded follow-up packets, not rediscovery of the primary lane or the first sidecar wave
+
+- **POST-SIDECAR FOLLOW-UP PACKETS SEEDED**
+  - Added [S1D](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1D_inspect-cli-polish.md) for the smallest inspect-CLI polish work exposed by `S1C`
+  - Added [S2D](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_metrics-backfill-prototype.md) to validate the proposed JSONL-companion/regenerated-ledger path against a small real sample
+  - Added [S3D](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3D_restart-rubric-sample.md) for a narrow restart-rubric observational pass over recent workflow artifacts
 
 ## 2026-04-11 (Late Evening)
 
