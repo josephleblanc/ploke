@@ -3,8 +3,8 @@
 **Date:** 2026-04-11 (Updated 2026-04-12)  
 **Workstream:** A2 Data Fidelity / Parser  
 **Gate:** H0 Interpretation (enables A2 validation)  
-**Status:** IN PROGRESS - syn1→syn2 type conversion ongoing  
-**Branch:** Main (ready for commit)  
+**Status:** READY FOR RIPGREP TESTING - Conversion layer complete, DRY refactoring done  
+**Branch:** Main (commits: `83b97568`, `f5ee41ed`)  
 
 ---
 
@@ -14,133 +14,125 @@
 `syn` 2.x hard-rejects Rust 2015 bare trait objects (e.g., `Arc<Fn(...)>`), blocking evaluation on ripgrep and other Rust 2015 crates.
 
 ### Solution Implemented
-Dual syn version support:
+Dual syn version support with unified processing via conversion layer:
 - **syn 1.x** for Rust 2015 edition crates (accepts bare trait objects)
 - **syn 2.x** for Rust 2018+ edition crates (default behavior)
+- **Conversion layer** syn1→syn2 enables code reuse
 
 ### Files Created
 
 | File | Purpose |
 |------|---------|
-| `crates/ingest/syn_parser/src/parser/visitor/code_visitor_syn1.rs` | Syn1 visitor (copied from code_visitor.rs, adapted) |
-| `crates/ingest/syn_parser/src/parser/visitor/attribute_processing_syn1.rs` | Syn1 attribute helpers |
-| `crates/ingest/syn_parser/src/parser/visitor/type_processing_syn1.rs` | Syn1 type processing |
+| `code_visitor_syn1.rs` | Syn1 visitor (copied from code_visitor.rs, adapted) |
+| `attribute_processing_syn1.rs` | **NEW:** Thin adapter - converts and delegates to attribute_processing.rs |
+| `type_processing_syn1.rs` | **NEW:** Thin adapter - converts and delegates to type_processing.rs |
 
 ### Files Modified
 
 | File | Changes |
 |------|---------|
-| `Cargo.toml` | Added `syn1 = { package = "syn", version = "1.0", features = ["full", "visit"] }` |
-| `mod.rs` | Added module declarations, edition check, dispatch logic, `analyze_file_phase2_syn1()` function |
-| `tests/repro/fail/edition_2015_bare_trait_object.rs` | Converted from fail test to success test |
-| `tests/repro/fail/edition_2015_async_identifier.rs` | Converted from fail test to success test |
-| `src/parser/utils.rs` | **IN PROGRESS:** Adding syn1→syn2 type conversion functions |
-| `src/error.rs` | Added `Syn1ToSyn2AttributeConversion` error variant |
+| `Cargo.toml` | Added `syn1` dependency |
+| `mod.rs` | Edition-based dispatch logic, `analyze_file_phase2_syn1()` |
+| `utils.rs` | **COMPLETE:** syn1→syn2 conversion functions for types, attributes |
+| `error.rs` | Added `Syn1ToSyn2AttributeConversion` error variant |
+| `type_processing_syn1.rs` | **REFACTORED:** 173 lines → 21 lines (convert + delegate) |
+| `attribute_processing_syn1.rs` | **REFACTORED:** 279 lines → 75 lines (convert + delegate) |
 
-### Key Implementation Details
+### Architecture
 
-**Dispatch logic** in `analyze_file_phase2()`:
-```rust
-let edition = crate_effective_edition_inner(crate_context);
-if edition == Some(cargo_toml::Edition::E2015) {
-    return analyze_file_phase2_syn1(...);
-}
-// Continue with syn2 path
+```
+Rust 2015: syn1::Type → convert_type_syn1_to_syn2() → syn::Type → type_processing::get_or_create_type()
+Rust 2018+: syn::Type → type_processing::get_or_create_type()
+
+Rust 2015: syn1::Attribute → convert_attribute_syn1_to_syn2() → syn::Attribute → attribute_processing::*
+Rust 2018+: syn::Attribute → attribute_processing::*
 ```
 
-**Syn1 adaptations made:**
-- `attr.path()` → `attr.path` (field not method)
-- `attr.meta` → `attr.parse_meta()` (method call)
-- `MetaList.tokens` → `MetaList.nested` (pre-parsed in syn1)
-- `MetaNameValue.value` → `MetaNameValue.lit` (literal only in syn1)
-- `StaticMutability::Mut(_)` → direct `Option<Mut>` check
-- `ImplItem::Fn` → `ImplItem::Method`
-- `TraitItem::Fn` → `TraitItem::Method`
+### DRY Refactoring Results
 
----
+| Component | Before | After | Saved |
+|-----------|--------|-------|-------|
+| `type_processing_syn1.rs` | 173 lines | 21 lines | ~150 lines |
+| `attribute_processing_syn1.rs` | 279 lines | 75 lines | ~200 lines |
+| **Total** | **452 lines** | **96 lines** | **~350 lines** |
 
-## What's In Progress: Syn1→Syn2 Type Conversion
+### Completed Conversions (utils.rs)
 
-**Goal:** Create conversion functions in `parser/utils.rs` to convert syn1 types to syn2 types, enabling code reuse between syn1 and syn2 visitors.
-
-**Approach:**
-- Implement `convert_type_syn1_to_syn2()` and related conversion functions
-- Skip types containing `Expr` (too complex to convert)
-- Add proper error handling with `CodeVisitorError::Syn1ToSyn2AttributeConversion`
-
-**Completed conversions:**
-- ✅ `Type` variants (Path, Reference, Slice, etc.)
+- ✅ `Type` variants (Path, Reference, Slice, Array, etc.)
 - ✅ `Path`, `PathSegment`, `PathArguments`
-- ✅ `GenericArgument` (partial - `Expr` skipped)
+- ✅ `GenericArgument` (including `Const(Expr)` via token roundtrip)
 - ✅ `TypeParamBound`, `TraitBound`
-- ✅ `ReturnType`
-- ✅ `BoundLifetimes`
-- ✅ `Abi`
-- ✅ `Macro`, `MacroDelimiter`
-- ✅ `AttrStyle`
-- ✅ `Attribute` (with Result-returning conversion)
+- ✅ `ReturnType`, `BoundLifetimes`
+- ✅ `Abi`, `Macro`, `MacroDelimiter`
+- ✅ `AttrStyle`, `Attribute`
 
-**Remaining issues:**
-- 🔄 `Expr` in `GenericArgument::Const` - skipped
-- 🔄 `Pat` in `BareVariadic` - using placeholder
-- 🔄 `Attribute` clones in various places - need conversion or skipping
-- 🔄 `AssocType` and `Constraint` struct field mismatches
+### Expr Handling
 
-**Known compilation errors:**
-```
-error[E0308]: GenericArgument::Const(expr) - expected syn::Expr, found syn1::Expr
-error[E0560]: AssocType has no field named `gen_args` (syn2 uses `generics`)
-error[E0063]: missing field `generics` in Constraint
-error[E0308]: expected syn::Attribute, found syn1::Attribute
-```
+Both `Type::Array` and `GenericArgument::Const` use token stream roundtrip:
+- syn1 → TokenStream (preserves text) → parse as syn2
+- Handles array lengths `[T; N]` and const generics `<T, N>`
 
 ---
 
 ## Test Results
 
-- **All 378 original tests pass** (before conversion work)
-- **Edition 2015 bare trait objects now parse successfully**
-- **Edition 2015 async identifiers now parse successfully**
+- **All 378 tests pass** ✅
+- **Edition 2015 bare trait objects parse successfully** ✅ (unit tests)
+- **Edition 2015 async identifiers parse successfully** ✅ (unit tests)
 
-**New test coverage:**
-- `edition_2015_bare_trait_object` - validates parsing of `Arc<Fn(...)>``
-- `edition_2015_async_identifier` - validates parsing of `fn async(&self)`
+**Commits:**
+- `83b97568` - wip: dual syn version support
+- `f5ee41ed` - wip: refactor attribute_processing_syn1 to convert and delegate
+
+### Ripgrep Dataset Test - INCONCLUSIVE
+
+Ran `BurntSushi__ripgrep-1294` with fresh indexing:
+- Indexing status: "completed" (per `indexing-status.json`)
+- `globset` code appears in RAG context (log shows snippets from `globset/src/lib.rs`)
+- **BUT**: Cannot verify all 9 crates indexed without introspection capability
+- **BLOCKED**: `turn.db_state().lookup()` / `replay_query()` not implemented (Phase 1 gap)
+- **BLOCKED**: No method to query `*crate_context` from RunRecord or validate parse coverage
+
+**Parse failure artifact exists** at `~/.ploke-eval/runs/BurntSushi__ripgrep-1294/parse-failure.json` but may be from cached/previous run.
 
 ---
 
-## Next Steps
+## Next Step: Validation Capability
 
-1. **Complete syn1→syn2 conversion** - Fix remaining compilation errors in `parser/utils.rs`
-   - Handle `AssocType` vs `Binding` field differences
-   - Handle `Constraint` generics field
-   - Skip or convert remaining Attribute references
-2. **Integrate conversion** - Use `convert_type_syn1_to_syn2()` in `process_fn_arg_syn1`
-3. **Verify on ripgrep dataset** - Test the full ripgrep dataset to ensure no regressions
+**Problem:** Cannot validate dual-syn parsing on ripgrep because introspection API is incomplete.
+
+**Missing:** `turn.db_state().lookup()` and `replay_query()` were Phase 1 deliverables but not implemented.
+
+**What we need:**
+1. Method to query indexed crates from a run (via RunRecord or direct DB query)
+2. Way to verify `globset` (Rust 2015) parsed successfully vs failed silently
+3. Parse error diagnostics that are capture-time fresh, not cached
+
+**Options:**
+- A: Add `indexed_crates()` method to RunRecord (captures at indexing time)
+- B: Implement `replay_query(turn, query)` with DB path (queries at introspection time)
+- C: Quick CLI tool to query `*crate_context` from Cozo DB directly
+
+**Current state:** Implementation done, validation blocked on introspection gap.
 
 ---
 
 ## Recovery Info
 
-**To continue work:**
+**Commits to revert if issues:**
 ```bash
-# Check current compilation errors
-cargo test -p syn_parser 2>&1 | grep "^error"
-
-# View conversion code
-cat crates/ingest/syn_parser/src/parser/utils.rs | head -300
+git revert f5ee41ed  # attribute_processing refactor
+git revert 83b97568  # dual syn support
 ```
 
 **Key files:**
-- `crates/ingest/syn_parser/src/parser/utils.rs` - Type conversion functions
-- `crates/ingest/syn_parser/src/error.rs` - Error types
-
-**Key constraint from AGENTS.md:**
-> Do not relax internal correctness, consistency, validation, schema, or import semantics without explicit user approval first.
+- `utils.rs` - Type/attribute conversion functions
+- `type_processing_syn1.rs` - Thin adapter (21 lines)
+- `attribute_processing_syn1.rs` - Thin adapter (75 lines)
 
 ---
 
 ## Related Documents
 
 - [Bug Report: syn 2.x fails on Rust 2015 bare trait objects](../../bugs/2026-04-10-syn-2-fails-on-rust-2015-bare-trait-objects.md)
-- [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md) - Will need update after compaction
-- [Phase 1 RunRecord Tracking](../../plans/evals/phase-1-runrecord-tracking.md)
+- [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md)

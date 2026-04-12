@@ -32,3 +32,5 @@
   the active eval design and postmortem materials emphasize setup reliability, provider reliability, and artifact ambiguity as blocking concerns.
 - consequence:
   readiness gates and the failure taxonomy must keep these classes visible instead of collapsing them into generic task failure.
+
+

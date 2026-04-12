@@ -332,3 +332,41 @@ Also added `ReplayState` struct containing:
 - **Type Inventory:** docs/active/agents/2026-04-09_run-record-type-inventory.md
 - **Design Handoff:** docs/active/workflow/handoffs/2026-04-09_run-record-design-handoff.md
 - **Original Plan:** docs/active/agents/2026-04-09_runrecord-implementation-plan.md (deprecated)
+
+
+## 2026-04-11: AUDIT REVEALS CRITICAL GAPS
+
+An independent audit discovered that while basic types and methods exist, **core Phase 1 deliverables from eval-design.md are missing**:
+
+| Gap | Status | Impact |
+|-----|--------|--------|
+| `turn.db_state().lookup()` | **NOT IMPLEMENTED** | Blocks A5 - minimum deliverable per eval-design.md §VII |
+| `replay_query(turn, query)` | **NOT IMPLEMENTED** | Blocks A5 - minimum deliverable per eval-design.md §VII |
+| SetupPhase population | **NOT IMPLEMENTED** | Blocks validation - always `null` in output |
+| Historical DB queries | **NOT POSSIBLE** | Blocks replay - all queries hardcode `@ 'NOW'` |
+
+**See:** [Phase 1 Audit Synthesis](../../../agents/phase-1-audit/AUDIT_SYNTHESIS.md)
+
+### Revised Status
+
+**Phase 1: INCOMPLETE** — Requires P0 items from audit synthesis before exit criteria are met.
+
+### Remaining Work (P0)
+
+1. Populate SetupPhase in runner.rs after indexing completes
+2. Add `indexed_crates` field to SetupPhase  
+3. Implement DB query at historical timestamp (`raw_query_at_timestamp`)
+4. Implement `turn.db_state().lookup(name)`
+5. Implement `replay_query(turn, query)`
+
+**Estimated effort:** 3-4 days
+
+---
+
+## Linked Artifacts
+
+- **Hypothesis:** A5 (docs/active/workflow/hypothesis-registry.md)
+- **Type Inventory:** docs/active/agents/2026-04-09_run-record-type-inventory.md
+- **Design Handoff:** docs/active/workflow/handoffs/2026-04-09_run-record-design-handoff.md
+- **Original Plan:** docs/active/agents/2026-04-09_runrecord-implementation-plan.md (deprecated)
+- **Phase 1 Audit:** docs/active/agents/phase-1-audit/AUDIT_SYNTHESIS.md (NEW)
