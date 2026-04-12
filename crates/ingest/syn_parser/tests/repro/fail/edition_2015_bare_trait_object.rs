@@ -15,9 +15,9 @@
 
 use std::fs;
 
+use syn_parser::GraphAccess;
 use syn_parser::error::SynParserError;
 use syn_parser::try_run_phases_and_resolve;
-use syn_parser::GraphAccess;
 use tempfile::tempdir;
 
 const BARE_TRAIT_OBJECT_LIB_RS: &str = r#"
@@ -82,16 +82,18 @@ fn repro_syn_parse_file_rejects_bare_trait_object_without_dyn() {
 fn repro_try_run_phases_and_resolve_parses_2015_bare_trait_object_crate() {
     let td = create_edition_2015_bare_trait_object_crate();
     let result = try_run_phases_and_resolve(td.path());
-    
+
     // With dual-syn support, edition 2015 crates should now parse successfully
     // using syn1 (which accepts bare trait objects)
     let graphs = result.expect("parser should succeed on edition-2015 bare trait object crate");
-    
+
     assert_eq!(graphs.len(), 1, "expected one parsed file");
     let graph = &graphs[0].graph;
-    
+
     // Verify the enum was parsed
-    let enum_count = graph.defined_types.iter()
+    let enum_count = graph
+        .defined_types
+        .iter()
         .filter(|t| matches!(t, syn_parser::parser::nodes::TypeDefNode::Enum(_)))
         .count();
     assert_eq!(enum_count, 1, "expected one enum (Sorter)");

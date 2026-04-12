@@ -4,7 +4,7 @@ use crate::parser::utils::convert_type_syn1_to_syn2;
 use ploke_core::TypeId;
 
 /// Gets or creates a TypeId for a given syn1::Type.
-/// 
+///
 /// This function converts the syn1::Type to syn::Type and delegates to the
 /// shared type processing logic in type_processing.rs.
 ///

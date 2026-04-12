@@ -544,7 +544,7 @@ impl ChatHistory {
     /// Returns the current conversation path as LLM request messages.
     ///
     /// This is what gets sent to the LLM — the canonical "what the agent saw".
-    /// 
+    ///
     /// Note: This method may mutate internal leasing state (TTL decrements for
     /// leased messages). For observability captures, use `capture_conversation()`
     /// in the test harness which provides a read-only snapshot.

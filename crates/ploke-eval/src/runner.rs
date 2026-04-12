@@ -12,15 +12,14 @@ use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
+use ploke_llm::manager::RequestMessage;
 use ploke_llm::request::models::ResponseItem;
 use ploke_llm::router_only::{
     HasEndpoint,
     openrouter::{OpenRouter, OpenRouterModelId},
 };
 use ploke_llm::{ModelId, ProviderKey, SupportsTools};
-use ploke_llm::manager::RequestMessage;
 use ploke_tui::AppEvent;
-use ploke_tui::llm::{ChatEvt, LlmEvent};
 use ploke_tui::app::App;
 use ploke_tui::app::commands::harness::TestAppAccessor;
 use ploke_tui::app::commands::harness::TestRuntime;
@@ -29,6 +28,7 @@ use ploke_tui::app_state::AppState;
 use ploke_tui::app_state::core::ParseFailure;
 use ploke_tui::app_state::core::{DiffPreview, EditProposalStatus};
 use ploke_tui::app_state::events::SystemEvent;
+use ploke_tui::llm::{ChatEvt, LlmEvent};
 use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
 use ploke_tui::user_config::{ChatPolicy, ChatTimeoutStrategy};
 use ploke_tui::utils::parse_errors::FlattenedParserDiagnostic;
@@ -39,13 +39,16 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, sleep};
 use tracing::{info, warn};
 
+use crate::LlmResponseRecord;
 use crate::layout;
 use crate::model_registry::resolve_model_for_run;
 use crate::provider_prefs::load_provider_for_model;
-use crate::record::{write_compressed_record, RunRecord, RunRecordBuilder};
+use crate::record::{
+    CrateIndexStatus, IndexedCrateSummary, ParseErrorSummary, ParseFailureRecord, RunRecord,
+    RunRecordBuilder, SetupPhase, write_compressed_record,
+};
 use crate::run_history::record_last_run;
 use crate::spec::{PrepareError, PreparedMsbBatch, PreparedSingleRun, RunSource};
-use crate::LlmResponseRecord;
 
 const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
@@ -223,6 +226,134 @@ async fn persist_parse_failure_artifact(state: &Arc<AppState>, parse_failure_pat
             "runner phase: failed to persist parse failure artifact"
         );
     }
+}
+
+/// Build SetupPhase with indexed crate information from the database.
+async fn build_setup_phase(
+    db: &Database,
+    repo_state: &RepoStateArtifact,
+    indexing_status: &IndexingStatusArtifact,
+    setup_start_time: chrono::DateTime<chrono::Utc>,
+    using_cached_db: bool,
+    parse_failure_path: &Path,
+) -> Result<SetupPhase, PrepareError> {
+    // 1. Get crate list from DB
+    let crate_rows = db
+        .list_crate_context_rows()
+        .map_err(|e| PrepareError::DatabaseSetup {
+            phase: "list_crate_context_rows",
+            detail: format!("Failed to list crate contexts: {e}"),
+        })?;
+
+    // 2. Read parse failures from file if it exists (for determining crate status)
+    let parse_failure_artifact: Option<ParseFailureArtifact> = if parse_failure_path.exists() {
+        match fs::read_to_string(parse_failure_path) {
+            Ok(text) => serde_json::from_str(&text).ok(),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    // 3. For each crate, build IndexedCrateSummary
+    let mut indexed_crates: Vec<IndexedCrateSummary> = Vec::new();
+    for row in crate_rows {
+        let node_count = db.count_nodes_for_namespace(row.namespace).map_err(|e| {
+            PrepareError::DatabaseSetup {
+                phase: "count_nodes_for_namespace",
+                detail: format!("Failed to count nodes for namespace {}: {e}", row.namespace),
+            }
+        })?;
+
+        let embedded_count = db
+            .count_embedded_for_namespace(row.namespace)
+            .map_err(|e| PrepareError::DatabaseSetup {
+                phase: "count_embedded_for_namespace",
+                detail: format!(
+                    "Failed to count embedded nodes for namespace {}: {e}",
+                    row.namespace
+                ),
+            })?;
+
+        // Determine status based on whether we used cached DB and parse failures
+        let status = if using_cached_db {
+            CrateIndexStatus::Skipped
+        } else if let Some(ref failure) = parse_failure_artifact {
+            // Check if this crate's root_path matches the failed target_dir
+            let failure_target = &failure.target_dir;
+            let crate_root = PathBuf::from(&row.root_path);
+            if crate_root == *failure_target || failure_target.to_string_lossy().contains(&row.name)
+            {
+                CrateIndexStatus::Failed
+            } else {
+                CrateIndexStatus::Success
+            }
+        } else {
+            CrateIndexStatus::Success
+        };
+
+        // Check for parse error specific to this crate
+        let parse_error = if using_cached_db {
+            None
+        } else if let Some(ref failure) = parse_failure_artifact {
+            let failure_target = &failure.target_dir;
+            let crate_root = PathBuf::from(&row.root_path);
+            if crate_root == *failure_target || failure_target.to_string_lossy().contains(&row.name)
+            {
+                Some(ParseErrorSummary {
+                    message: failure.message.clone(),
+                    target_dir: failure.target_dir.clone(),
+                    occurred_at_ms: failure.occurred_at_ms,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        indexed_crates.push(IndexedCrateSummary {
+            name: row.name,
+            version: String::new(), // Version not stored in DB currently
+            namespace: row.namespace,
+            root_path: PathBuf::from(row.root_path),
+            file_count: 0, // Can be queried from DB if needed
+            node_count,
+            embedded_count,
+            status,
+            parse_error,
+        });
+    }
+
+    // 4. Build parse_failures list from artifact
+    let parse_failures: Vec<ParseFailureRecord> = if let Some(failure) = parse_failure_artifact {
+        vec![ParseFailureRecord {
+            target_dir: failure.target_dir,
+            message: failure.message,
+            occurred_at_ms: failure.occurred_at_ms,
+        }]
+    } else {
+        vec![]
+    };
+
+    // 5. Get DB timestamp
+    let db_timestamp_micros =
+        db.current_validity_micros()
+            .map_err(|e| PrepareError::DatabaseSetup {
+                phase: "current_validity_micros",
+                detail: format!("Failed to get DB timestamp: {e}"),
+            })?;
+
+    Ok(SetupPhase {
+        started_at: setup_start_time.to_rfc3339(),
+        ended_at: chrono::Utc::now().to_rfc3339(),
+        repo_state: repo_state.clone(),
+        indexing_status: indexing_status.clone(),
+        indexed_crates,
+        parse_failures,
+        db_timestamp_micros,
+        tool_schema_version: None, // Can be populated from state.config if needed
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1127,6 +1258,7 @@ impl RunMsbSingleRequest {
 
 impl RunMsbAgentSingleRequest {
     pub async fn run(self) -> Result<AgentRunArtifactPaths, PrepareError> {
+        let setup_start_time = chrono::Utc::now();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
         let selected_model = resolve_model_for_run(self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
@@ -1355,6 +1487,19 @@ impl RunMsbAgentSingleRequest {
             steps.push("refresh_starting_db_cache".to_string());
         }
 
+        // Build SetupPhase with indexed crate information
+        let setup_phase = build_setup_phase(
+            &state.db,
+            &repo_state,
+            &indexing_status,
+            setup_start_time,
+            using_cached_starting_db,
+            &parse_failure_path,
+        )
+        .await?;
+        run_record.phases.setup = Some(setup_phase);
+        steps.push("populate_setup_phase".to_string());
+
         let turn_artifact = run_benchmark_turn(
             &prepared,
             &state,
@@ -1371,13 +1516,14 @@ impl RunMsbAgentSingleRequest {
         steps.push("benchmark_turn_completed".to_string());
 
         // Capture Cozo timestamp for time-travel queries and add turn to RunRecord
-        let db_timestamp = state
-            .db
-            .current_validity_micros()
-            .map_err(|e| PrepareError::DatabaseSetup {
-                phase: "get_db_timestamp",
-                detail: format!("Failed to get Cozo timestamp: {}", e),
-            })?;
+        let db_timestamp =
+            state
+                .db
+                .current_validity_micros()
+                .map_err(|e| PrepareError::DatabaseSetup {
+                    phase: "get_db_timestamp",
+                    detail: format!("Failed to get Cozo timestamp: {}", e),
+                })?;
         run_record.mark_time_travel(1, db_timestamp, "turn_complete");
         run_record.add_turn_from_artifact(turn_artifact, db_timestamp);
 
@@ -2268,10 +2414,10 @@ async fn run_benchmark_turn(
     artifact.final_assistant_message = None;
     artifact.patch_artifact =
         collect_patch_artifact_with_expected(state, expected_file_baselines).await?;
-    
+
     // Note: llm_prompt and llm_response are now captured via events in handle_benchmark_event
     // This avoids the need for mutable state access and TTL mutation side effects
-    
+
     write_json(trace_path, &artifact)?;
     Ok(artifact)
 }
@@ -2285,7 +2431,9 @@ async fn handle_benchmark_event(
         AppEvent::Llm(llm_event) => {
             // Capture structured LLM events for RunRecord (Phase 1C/1D)
             match &llm_event {
-                LlmEvent::ChatCompletion(ChatEvt::PromptConstructed { formatted_prompt, .. }) => {
+                LlmEvent::ChatCompletion(ChatEvt::PromptConstructed {
+                    formatted_prompt, ..
+                }) => {
                     // Capture the exact prompt sent to the LLM (what LLM sees)
                     artifact.llm_prompt = formatted_prompt.clone();
                     artifact.prompt_debug = Some(format!("{:?}", llm_event));
@@ -2293,16 +2441,16 @@ async fn handle_benchmark_event(
                     let rendered = format!("{:?}", llm_event);
                     artifact.events.push(ObservedTurnEvent::LlmEvent(rendered));
                 }
-                LlmEvent::ChatCompletion(ChatEvt::Response { 
-                    content, 
-                    model, 
-                    metadata, 
+                LlmEvent::ChatCompletion(ChatEvt::Response {
+                    content,
+                    model,
+                    metadata,
                     usage,
                     ..
                 }) => {
                     // Capture the LLM's response content (for backward compat)
                     artifact.llm_response = Some(content.clone());
-                    
+
                     // Phase 1D: Structured LLM response capture
                     let record = LlmResponseRecord {
                         content: content.clone(),
@@ -3315,12 +3463,19 @@ mod tests {
         handle_benchmark_event(&mut artifact, &state, event).await;
 
         // Verify the prompt was captured
-        assert_eq!(artifact.llm_prompt.len(), 2, "expected 2 messages in llm_prompt");
+        assert_eq!(
+            artifact.llm_prompt.len(),
+            2,
+            "expected 2 messages in llm_prompt"
+        );
         assert_eq!(artifact.llm_prompt[0].role, Role::User);
         assert_eq!(artifact.llm_prompt[0].content, "Hello, fix this bug");
         assert_eq!(artifact.llm_prompt[1].role, Role::Assistant);
         assert_eq!(artifact.llm_prompt[1].content, "I'll help you fix it");
-        assert!(artifact.prompt_debug.is_some(), "prompt_debug should be set");
+        assert!(
+            artifact.prompt_debug.is_some(),
+            "prompt_debug should be set"
+        );
     }
 
     #[tokio::test]
@@ -3384,7 +3539,10 @@ mod tests {
         handle_benchmark_event(&mut artifact, &state, event).await;
 
         // Verify the response was captured
-        assert_eq!(artifact.llm_response, Some("Here is the fix you requested".to_string()));
+        assert_eq!(
+            artifact.llm_response,
+            Some("Here is the fix you requested".to_string())
+        );
     }
 
     #[tokio::test]
@@ -3458,21 +3616,25 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(llm_response_events.len(), 1, "expected exactly one LlmResponse event");
-        
+        assert_eq!(
+            llm_response_events.len(),
+            1,
+            "expected exactly one LlmResponse event"
+        );
+
         let record = &llm_response_events[0];
         assert_eq!(record.content, "The fix is to add a null check");
         assert_eq!(record.model, "anthropic/claude-3-sonnet");
-        
+
         // Verify token usage was captured structurally
         let usage = record.usage.as_ref().expect("usage should be present");
         assert_eq!(usage.prompt_tokens, 250);
         assert_eq!(usage.completion_tokens, 75);
         assert_eq!(usage.total_tokens, 325);
-        
+
         // Verify finish reason was captured
         assert_eq!(record.finish_reason, Some(FinishReason::Stop));
-        
+
         // Verify full metadata was captured
         assert!(record.metadata.is_some());
         let metadata = record.metadata.as_ref().unwrap();

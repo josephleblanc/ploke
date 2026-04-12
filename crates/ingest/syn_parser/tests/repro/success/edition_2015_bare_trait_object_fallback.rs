@@ -8,8 +8,8 @@
 
 use std::fs;
 
-use syn_parser::try_run_phases_and_resolve;
 use syn_parser::GraphAccess;
+use syn_parser::try_run_phases_and_resolve;
 use tempfile::tempdir;
 
 const EDITION_2015_BARE_TRAIT_OBJECTS: &str = r#"
@@ -63,13 +63,15 @@ fn repro_try_run_phases_and_resolve_accepts_bare_trait_object_crate_under_featur
 
     assert_eq!(graphs.len(), 1, "expected one parsed file graph");
     let graph = &graphs[0].graph;
-    
+
     // Verify the enum was parsed (enums are in defined_types as TypeDefNode::Enum)
-    let enum_count = graph.defined_types().iter()
+    let enum_count = graph
+        .defined_types()
+        .iter()
         .filter(|t| matches!(t, syn_parser::parser::nodes::TypeDefNode::Enum(_)))
         .count();
     assert_eq!(enum_count, 1, "expected one enum (Sorter)");
-    
+
     // Verify the impl block was parsed
     assert_eq!(graph.impls().len(), 1, "expected one impl block");
     let methods = &graph.impls()[0].methods;

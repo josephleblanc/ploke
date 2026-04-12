@@ -1,5 +1,7 @@
 # Phase 1 Implementation Audit - Synthesis
 
+**Active planning status:** Superseded as the active planning doc on 2026-04-12 by [Eval Infra Sprint Control Plane](../2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md). This audit remains the evidence base and gap inventory for that sprint.
+
 **Audit completed:** 2026-04-11  
 **Status:** CRITICAL GAPS IDENTIFIED  
 **Recommendation:** Phase 1 should NOT be marked complete

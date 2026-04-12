@@ -93,15 +93,17 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use uuid::Uuid;
 
 // Re-export types from ploke-llm that we need for structured capture
+pub use ploke_llm::manager::{RequestMessage, Role as LlmRole};
 pub use ploke_llm::request::ChatCompReqCore;
 pub use ploke_llm::response::{FinishReason, OpenAiResponse, TokenUsage};
 pub use ploke_llm::types::meta::{LLMMetadata, PerformanceMetrics};
 pub use ploke_llm::types::model_types::ModelId;
 
 use crate::runner::{
-    AgentTurnArtifact, IndexingStatusArtifact, PatchArtifact, RepoStateArtifact,
+    AgentTurnArtifact, IndexingStatusArtifact, ObservedTurnEvent, PatchArtifact, RepoStateArtifact,
     ToolCompletedRecord, ToolFailedRecord, ToolRequestRecord,
 };
 use crate::spec::{EvalBudget, IssueInput, PreparedSingleRun};
@@ -217,12 +219,12 @@ impl RunRecord {
     ///
     /// Returns an empty vector if the turn doesn't exist or had no tool calls.
     /// Turn numbers are 1-indexed (first turn is 1).
-    pub fn tool_calls_in_turn(&self, turn: u32) -> Vec<&ToolExecutionRecord> {
+    pub fn tool_calls_in_turn(&self, turn: u32) -> Vec<ToolExecutionRecord> {
         self.phases
             .agent_turns
             .iter()
             .find(|t| t.turn_number == turn)
-            .map(|t| t.tool_calls.iter().collect())
+            .map(TurnRecord::tool_calls)
             .unwrap_or_default()
     }
 
@@ -230,7 +232,10 @@ impl RunRecord {
     ///
     /// Turn numbers are 1-indexed (first turn is 1).
     pub fn turn_record(&self, turn: u32) -> Option<&TurnRecord> {
-        self.phases.agent_turns.iter().find(|t| t.turn_number == turn)
+        self.phases
+            .agent_turns
+            .iter()
+            .find(|t| t.turn_number == turn)
     }
 
     /// Get the LLM response for a specific turn, if any.
@@ -300,10 +305,74 @@ impl RunRecord {
         }
     }
 
+    /// Iterate over all turns in order.
+    ///
+    /// Returns an iterator that yields each `TurnRecord` in chronological order,
+    /// from turn 1 to the final turn.
+    pub fn conversations(&self) -> impl Iterator<Item = &TurnRecord> {
+        self.phases.agent_turns.iter()
+    }
+
+    /// Aggregate ALL tool calls from all turns.
+    ///
+    /// Returns a vector of every `ToolExecutionRecord` executed across all turns
+    /// in the run, in chronological order.
+    ///
+    /// This method extracts tool calls from `agent_turn_artifact.events` to work
+    /// with existing records where the `tool_calls` field may not be populated.
+    pub fn tool_calls(&self) -> Vec<ToolExecutionRecord> {
+        self.phases
+            .agent_turns
+            .iter()
+            .flat_map(|t| {
+                // First try the direct field (for new records)
+                if !t.tool_calls.is_empty() {
+                    t.tool_calls.clone()
+                } else if let Some(artifact) = &t.agent_turn_artifact {
+                    // Extract from artifact events (for existing records)
+                    extract_tool_calls_from_events(&artifact.events)
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect()
+    }
+
+    /// Get DbState for each turn from db_time_travel_index.
+    ///
+    /// Returns a vector of `DbState` objects representing the database state
+    /// at each time-travel marker in the index.
+    pub fn db_snapshots(&self) -> Vec<DbState> {
+        self.db_time_travel_index
+            .iter()
+            .map(|m| DbState::new(m.timestamp_micros))
+            .collect()
+    }
+
+    /// Filter turns with error outcomes.
+    ///
+    /// Returns a vector of references to `TurnRecord`s where the outcome
+    /// was `TurnOutcome::Error`.
+    pub fn failures(&self) -> Vec<&TurnRecord> {
+        self.phases
+            .agent_turns
+            .iter()
+            .filter(|t| matches!(t.outcome, TurnOutcome::Error { .. }))
+            .collect()
+    }
+
+    /// Get the frozen run configuration.
+    ///
+    /// Returns a reference to the `RunMetadata` containing benchmark, agent,
+    /// and runtime configuration for this run.
+    pub fn config(&self) -> &RunMetadata {
+        &self.metadata
+    }
+
     /// Check if a specific tool was called in any turn.
     pub fn was_tool_used(&self, tool_name: &str) -> bool {
         self.phases.agent_turns.iter().any(|turn| {
-            turn.tool_calls
+            turn.tool_calls()
                 .iter()
                 .any(|call| call.request.tool == tool_name)
         })
@@ -315,7 +384,7 @@ impl RunRecord {
             .agent_turns
             .iter()
             .filter(|turn| {
-                turn.tool_calls
+                turn.tool_calls()
                     .iter()
                     .any(|call| call.request.tool == tool_name)
             })
@@ -342,21 +411,15 @@ impl RunRecord {
     pub fn replay_state_at_turn(&self, turn: u32) -> Option<ReplayState> {
         let turn_record = self.turn_record(turn)?;
         let timestamp = self.timestamp_for_turn(turn)?;
-
-        // Build conversation up to this turn from turn records
-        let conversation_up_to_turn: Vec<ConversationMessage> = self
-            .phases
-            .agent_turns
-            .iter()
-            .filter(|t| t.turn_number <= turn)
-            .filter_map(|t| t.agent_turn_artifact.as_ref())
-            .flat_map(|artifact| {
-                // Convert artifact events to conversation messages
-                // This is a simplified version - full implementation would
-                // reconstruct from llm_prompt and llm_response
-                Vec::new()
-            })
-            .collect();
+        let conversation_up_to_turn = turn_record.messages();
+        let conversation_up_to_turn = if conversation_up_to_turn.is_empty()
+            && turn == self.turn_count()
+            && !self.conversation.is_empty()
+        {
+            self.conversation.clone()
+        } else {
+            conversation_up_to_turn
+        };
 
         Some(ReplayState {
             turn,
@@ -364,15 +427,129 @@ impl RunRecord {
             issue_prompt: turn_record.issue_prompt.clone(),
             llm_request: turn_record.llm_request.clone(),
             llm_response: turn_record.llm_response.clone(),
-            tool_calls: turn_record.tool_calls.clone(),
+            tool_calls: turn_record.tool_calls(),
             conversation_up_to_turn,
             repo_root: self.metadata.benchmark.repo_root.clone(),
             base_sha: self.metadata.benchmark.base_sha.clone(),
         })
     }
+
+    /// Execute a query against the DB as it existed at a specific turn.
+    ///
+    /// This method enables replay introspection by querying the database state
+    /// at the timestamp recorded for a given turn.
+    ///
+    /// # Arguments
+    ///
+    /// * `turn` - The turn number (1-indexed) to query at
+    /// * `db` - A reference to the Database to query against
+    /// * `query` - The CozoScript query to execute. Use `@ 'NOW'` for the historical timestamp.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(QueryResult)` on success, or `Err(ReplayError)` if:
+    /// - The turn doesn't exist in the run record
+    /// - No timestamp is recorded for the turn
+    /// - The database query fails
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let result = run_record.replay_query(1, &db, "?[name] := *nodes{name @ 'NOW'}")?;
+    /// for row in result.rows {
+    ///     println!("{:?}", row);
+    /// }
+    /// ```
+    pub fn replay_query(
+        &self,
+        turn: u32,
+        db: &ploke_db::Database,
+        query: &str,
+    ) -> Result<ploke_db::QueryResult, ReplayError> {
+        // 1. Get timestamp for turn from db_time_travel_index
+        let timestamp = self
+            .timestamp_for_turn(turn)
+            .ok_or(ReplayError::TimestampNotFound(turn))?;
+
+        // 2. Use db.raw_query_at_timestamp(query, timestamp)
+        let result = db.raw_query_at_timestamp(query, timestamp)?;
+
+        // 3. Return result
+        Ok(result)
+    }
 }
 
 /// Metadata extracted from the run manifest.
+/// Extract tool execution records from observed turn events.
+///
+/// Matches ToolRequested events with ToolCompleted/ToolFailed events by call_id
+/// to reconstruct complete tool execution records.
+fn extract_tool_calls_from_events(events: &[ObservedTurnEvent]) -> Vec<ToolExecutionRecord> {
+    use std::collections::HashMap;
+
+    let mut pending_requests: HashMap<String, ToolRequestRecord> = HashMap::new();
+    let mut tool_calls = Vec::new();
+
+    for event in events {
+        match event {
+            ObservedTurnEvent::ToolRequested(req) => {
+                pending_requests.insert(req.call_id.clone(), req.clone());
+            }
+            ObservedTurnEvent::ToolCompleted(completed) => {
+                if let Some(request) = pending_requests.remove(&completed.call_id) {
+                    tool_calls.push(ToolExecutionRecord {
+                        request,
+                        result: ToolResult::Completed(completed.clone()),
+                        latency_ms: 0, // Latency not captured in current events
+                    });
+                }
+            }
+            ObservedTurnEvent::ToolFailed(failed) => {
+                if let Some(request) = pending_requests.remove(&failed.call_id) {
+                    tool_calls.push(ToolExecutionRecord {
+                        request,
+                        result: ToolResult::Failed(failed.clone()),
+                        latency_ms: 0,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    tool_calls
+}
+
+fn extract_llm_response_from_events(events: &[ObservedTurnEvent]) -> Option<LlmResponseRecord> {
+    events.iter().rev().find_map(|event| match event {
+        ObservedTurnEvent::LlmResponse(record) => Some(record.clone()),
+        _ => None,
+    })
+}
+
+fn turn_outcome_from_artifact(artifact: &AgentTurnArtifact, tool_call_count: usize) -> TurnOutcome {
+    if let Some(terminal) = artifact.terminal_record.as_ref() {
+        match terminal.outcome.as_str() {
+            "completed" if tool_call_count > 0 => TurnOutcome::ToolCalls {
+                count: tool_call_count,
+            },
+            "completed" => TurnOutcome::Content,
+            "aborted" | "exhausted" => TurnOutcome::Error {
+                message: terminal.summary.clone(),
+            },
+            other => TurnOutcome::Error {
+                message: format!("Unexpected turn outcome: {other}"),
+            },
+        }
+    } else if tool_call_count > 0 {
+        TurnOutcome::ToolCalls {
+            count: tool_call_count,
+        }
+    } else {
+        TurnOutcome::Content
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMetadata {
     /// The benchmark instance being evaluated.
@@ -482,6 +659,35 @@ pub struct RunPhases {
     pub validation: Option<ValidationPhase>,
 }
 
+/// Per-crate summary for SetupPhase
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexedCrateSummary {
+    pub name: String,
+    pub version: String,
+    pub namespace: Uuid,
+    pub root_path: PathBuf,
+    pub file_count: usize,
+    pub node_count: usize,
+    pub embedded_count: usize,
+    pub status: CrateIndexStatus,
+    pub parse_error: Option<ParseErrorSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CrateIndexStatus {
+    Success,
+    Partial,
+    Failed,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParseErrorSummary {
+    pub message: String,
+    pub target_dir: PathBuf,
+    pub occurred_at_ms: i64,
+}
+
 /// Setup phase data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupPhase {
@@ -497,12 +703,20 @@ pub struct SetupPhase {
     /// Indexing status result.
     pub indexing_status: IndexingStatusArtifact,
 
+    /// Indexed crate summaries.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub indexed_crates: Vec<IndexedCrateSummary>,
+
     /// Any parse failures during indexing.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parse_failure: Option<ParseFailureRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub parse_failures: Vec<ParseFailureRecord>,
 
     /// Cozo timestamp at setup completion.
     pub db_timestamp_micros: i64,
+
+    /// Tool schema version used during setup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_schema_version: Option<String>,
 }
 
 /// Parse failure record (simplified from FlattenedParserDiagnostic).
@@ -576,6 +790,344 @@ pub struct TurnRecord {
     /// Events observed during this turn (from AgentTurnArtifact).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_turn_artifact: Option<AgentTurnArtifact>,
+}
+
+impl TurnRecord {
+    /// Get a queryable DB snapshot for this turn's timestamp.
+    ///
+    /// Returns a `DbState` that can be used to query the database as it existed
+    /// at the time this turn was recorded. Use this for introspection and replay.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let db_state = turn.db_state();
+    /// if let Some(node) = db_state.lookup(&db, "my_function")? {
+    ///     println!("Found node: {} (type: {})", node.name, node.node_type);
+    /// }
+    /// ```
+    pub fn db_state(&self) -> DbState {
+        DbState::new(self.db_timestamp_micros)
+    }
+
+    /// Reconstruct conversation history up to this turn.
+    ///
+    /// Returns a vector of `ConversationMessage` representing the conversation
+    /// history up to and including this turn. This is reconstructed from
+    /// the `agent_turn_artifact.llm_prompt` and `agent_turn_artifact.llm_response`.
+    ///
+    /// # Implementation
+    ///
+    /// Converts `RequestMessage` items from `llm_prompt` to `ConversationMessage`,
+    /// mapping roles appropriately. If `llm_response` is present, appends it as
+    /// an assistant message.
+    pub fn messages(&self) -> Vec<ConversationMessage> {
+        use ploke_tui::chat_history::MessageKind;
+
+        let Some(artifact) = &self.agent_turn_artifact else {
+            return Vec::new();
+        };
+
+        let mut messages: Vec<ConversationMessage> = artifact
+            .llm_prompt
+            .iter()
+            .filter_map(|req_msg| {
+                // Map RequestMessage role to MessageKind
+                let kind = match req_msg.role {
+                    LlmRole::System => MessageKind::System,
+                    LlmRole::User => MessageKind::User,
+                    LlmRole::Assistant => MessageKind::Assistant,
+                    LlmRole::Tool => MessageKind::Tool,
+                };
+
+                Some(ConversationMessage {
+                    id: Uuid::new_v4(),
+                    branch_id: Uuid::nil(),
+                    status: ploke_tui::chat_history::MessageStatus::Completed,
+                    metadata: None,
+                    parent: None,
+                    children: Vec::new(),
+                    selected_child: None,
+                    content: req_msg.content.clone(),
+                    kind,
+                    tool_call_id: req_msg.tool_call_id.clone(),
+                    tool_payload: None,
+                    context_status: ploke_tui::chat_history::ContextStatus::default(),
+                    last_included_turn: None,
+                    include_count: 0,
+                })
+            })
+            .collect();
+
+        // Append the LLM response if present
+        if let Some(response_content) = &artifact.llm_response {
+            messages.push(ConversationMessage {
+                id: Uuid::new_v4(),
+                branch_id: Uuid::nil(),
+                status: ploke_tui::chat_history::MessageStatus::Completed,
+                metadata: None,
+                parent: None,
+                children: Vec::new(),
+                selected_child: None,
+                content: response_content.clone(),
+                kind: MessageKind::Assistant,
+                tool_call_id: None,
+                tool_payload: None,
+                context_status: ploke_tui::chat_history::ContextStatus::default(),
+                last_included_turn: None,
+                include_count: 0,
+            });
+        }
+
+        messages
+    }
+
+    /// Get all tool calls for this turn.
+    ///
+    /// Returns tool calls from `self.tool_calls` if populated, otherwise
+    /// extracts from `agent_turn_artifact.events` for compatibility with
+    /// existing records.
+    pub fn tool_calls(&self) -> Vec<ToolExecutionRecord> {
+        if !self.tool_calls.is_empty() {
+            self.tool_calls.clone()
+        } else if let Some(artifact) = &self.agent_turn_artifact {
+            extract_tool_calls_from_events(&artifact.events)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get single tool call if this turn had exactly one.
+    ///
+    /// Returns `Some(ToolExecutionRecord)` if this turn executed exactly
+    /// one tool call, otherwise returns `None`.
+    pub fn tool_call(&self) -> Option<ToolExecutionRecord> {
+        let calls = self.tool_calls();
+        if calls.len() == 1 {
+            calls.into_iter().next()
+        } else {
+            None
+        }
+    }
+
+    /// Get result from single tool call.
+    ///
+    /// Returns `Some(ToolResult)` if this turn had exactly one tool call,
+    /// returning its result. Returns `None` if there were zero or multiple
+    /// tool calls.
+    pub fn tool_result(&self) -> Option<ToolResult> {
+        self.tool_call().map(|tc| tc.result)
+    }
+}
+
+/// Wrapper for querying DB at a specific historical timestamp.
+///
+/// `DbState` provides a lightweight handle for querying the database as it existed
+/// at a specific point in time. It does not hold a reference to the database itself;
+/// instead, you pass a `&Database` to its query methods.
+///
+/// This design avoids lifetime issues while still enabling convenient introspection
+/// of historical database states during replay.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// let db_state = turn.db_state();
+///
+/// // Look up a specific node by name
+/// if let Some(info) = db_state.lookup(&db, "my_function")? {
+///     println!("Found: {:?}", info);
+/// }
+///
+/// // Execute arbitrary queries
+/// let results = db_state.query(&db, "?[name] := *nodes{name @ 'NOW'}")?;
+/// ```
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct DbState {
+    timestamp_micros: i64,
+}
+
+impl DbState {
+    /// Create a new `DbState` for the given timestamp.
+    pub fn new(timestamp_micros: i64) -> Self {
+        Self { timestamp_micros }
+    }
+
+    /// Get the timestamp for this DB state.
+    pub fn timestamp_micros(&self) -> i64 {
+        self.timestamp_micros
+    }
+
+    /// Query for a node by name at this timestamp.
+    ///
+    /// Looks up a node in the database by its name, returning `NodeInfo` if found.
+    /// Returns `Ok(None)` if no node with the given name exists at this timestamp.
+    ///
+    /// # Arguments
+    ///
+    /// * `db` - A reference to the Database to query against
+    /// * `name` - The name of the node to look up
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(Some(NodeInfo))` if a node is found, `Ok(None)` if not found,
+    /// or `Err(DbError)` if the query fails.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let db_state = turn.db_state();
+    /// match db_state.lookup(&db, "handle_request")? {
+    ///     Some(info) => println!("Found {} (type: {})", info.name, info.node_type),
+    ///     None => println!("Node not found at this timestamp"),
+    /// }
+    /// ```
+    pub fn lookup(
+        &self,
+        db: &ploke_db::Database,
+        name: &str,
+    ) -> Result<Option<NodeInfo>, ploke_db::DbError> {
+        use cozo::DataValue;
+
+        // Escape quotes in name to prevent injection
+        let escaped_name = name.replace('"', "\\\"");
+
+        // Primary node relations to query, in order of priority
+        const NODE_RELATIONS: &[&str] = &[
+            "function",
+            "struct",
+            "enum",
+            "trait",
+            "method",
+            "const",
+            "static",
+            "macro",
+            "type_alias",
+        ];
+
+        // Try each relation in order, return first match
+        for relation in NODE_RELATIONS {
+            let query = format!(
+                r#"?[id, name] := *{relation}{{id, name @ 'NOW'}}, name = "{}""#,
+                escaped_name
+            );
+
+            let result = db.raw_query_at_timestamp(&query, self.timestamp_micros)?;
+
+            // If we got a result, extract the first row
+            if !result.rows.is_empty() {
+                let row = &result.rows[0];
+
+                // Get column indices from headers
+                let id_idx = result.headers.iter().position(|h| h == "id");
+                let name_idx = result.headers.iter().position(|h| h == "name");
+
+                // Extract UUID from id column
+                let id = id_idx
+                    .and_then(|idx| row.get(idx))
+                    .and_then(|val| match val {
+                        DataValue::Uuid(uuid_wrapper) => Some(uuid_wrapper.0),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        ploke_db::DbError::Cozo(format!(
+                            "Expected UUID for id column in {}",
+                            relation
+                        ))
+                    })?;
+
+                // Extract name from name column
+                let node_name = name_idx
+                    .and_then(|idx| row.get(idx))
+                    .and_then(|val| match val {
+                        DataValue::Str(s) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        ploke_db::DbError::Cozo(format!(
+                            "Expected string for name column in {}",
+                            relation
+                        ))
+                    })?;
+
+                return Ok(Some(NodeInfo {
+                    id,
+                    name: node_name,
+                    node_type: relation.to_string(),
+                }));
+            }
+        }
+
+        // No match found in any relation
+        Ok(None)
+    }
+
+    /// Execute an arbitrary query at this timestamp.
+    ///
+    /// This method allows executing any CozoScript query against the database
+    /// as it existed at the timestamp stored in this `DbState`. Use `@ 'NOW'`
+    /// in your query to reference the historical timestamp.
+    ///
+    /// # Arguments
+    ///
+    /// * `db` - A reference to the Database to query against
+    /// * `query` - The CozoScript query to execute. Use `@ 'NOW'` for the historical timestamp.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(QueryResult)` on success, or `Err(DbError)` if the query fails.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let db_state = turn.db_state();
+    /// let result = db_state.query(&db, "?[name] := *nodes{name @ 'NOW'}")?;
+    /// for row in result.rows {
+    ///     println!("{:?}", row);
+    /// }
+    /// ```
+    pub fn query(
+        &self,
+        db: &ploke_db::Database,
+        query: &str,
+    ) -> Result<ploke_db::QueryResult, ploke_db::DbError> {
+        db.raw_query_at_timestamp(query, self.timestamp_micros)
+    }
+}
+
+/// Information about a node found in the DB.
+///
+/// This struct contains the essential information about a code graph node
+/// returned by `DbState::lookup()`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeInfo {
+    /// The unique identifier of the node.
+    pub id: Uuid,
+
+    /// The name of the node.
+    pub name: String,
+
+    /// The type of the node (e.g., "Function", "Struct", "Module").
+    pub node_type: String,
+}
+
+/// Error type for replay operations.
+///
+/// This enum represents the various errors that can occur when replaying
+/// or introspecting historical run data.
+#[derive(Debug, thiserror::Error)]
+pub enum ReplayError {
+    /// The requested turn was not found in the run record.
+    #[error("Turn {0} not found in run record")]
+    TurnNotFound(u32),
+
+    /// A database error occurred during the replay operation.
+    #[error("Database error: {0}")]
+    DbError(#[from] ploke_db::DbError),
+
+    /// The timestamp for the requested turn was not found.
+    #[error("Timestamp not found for turn {0}")]
+    TimestampNotFound(u32),
 }
 
 /// Structured LLM response capture.
@@ -707,8 +1259,14 @@ pub enum BuildResult {
 #[serde(tag = "status")]
 pub enum TestResult {
     Passed,
-    Failed { exit_code: i32, stdout: String, stderr: String },
-    Skipped { reason: String },
+    Failed {
+        exit_code: i32,
+        stdout: String,
+        stderr: String,
+    },
+    Skipped {
+        reason: String,
+    },
 }
 
 /// Time-travel marker for Cozo DB `@` queries.
@@ -837,23 +1395,19 @@ pub trait RunRecordBuilder {
     fn add_turn_from_artifact(&mut self, artifact: AgentTurnArtifact, db_timestamp_micros: i64);
 
     /// Finalize the run record with validation results.
-    fn finalize(
-        &mut self,
-        validation: ValidationPhase,
-        outcome: RunOutcomeSummary,
-    ) -> &RunRecord;
+    fn finalize(&mut self, validation: ValidationPhase, outcome: RunOutcomeSummary) -> &RunRecord;
 }
 
 impl RunRecordBuilder for RunRecord {
     fn add_turn_from_artifact(&mut self, artifact: AgentTurnArtifact, db_timestamp_micros: i64) {
-        // Extract tool calls from artifact events
-        let tool_calls = Vec::new();
-
-        for event in &artifact.events {
-            // This will be implemented when we wire up the runner
-            // to populate structured tool execution records
-            let _ = event; // Placeholder
-        }
+        let tool_calls = extract_tool_calls_from_events(&artifact.events);
+        let llm_request = (!artifact.llm_prompt.is_empty()).then(|| {
+            ChatCompReqCore::default()
+                .with_messages(artifact.llm_prompt.clone())
+                .with_model(artifact.selected_model.clone())
+        });
+        let llm_response = extract_llm_response_from_events(&artifact.events);
+        let outcome = turn_outcome_from_artifact(&artifact, tool_calls.len());
 
         let turn = TurnRecord {
             turn_number: self.phases.agent_turns.len() as u32 + 1,
@@ -861,21 +1415,17 @@ impl RunRecordBuilder for RunRecord {
             ended_at: chrono::Utc::now().to_rfc3339(),   // Will be captured properly in runner
             db_timestamp_micros,
             issue_prompt: artifact.issue_prompt.clone(),
-            llm_request: None, // Populated from ChatEvt::Response handling
-            llm_response: None, // Populated from ChatEvt::Response handling
+            llm_request,
+            llm_response,
             tool_calls,
-            outcome: TurnOutcome::Content, // Determined from artifact
+            outcome,
             agent_turn_artifact: Some(artifact),
         };
 
         self.phases.agent_turns.push(turn);
     }
 
-    fn finalize(
-        &mut self,
-        validation: ValidationPhase,
-        _outcome: RunOutcomeSummary,
-    ) -> &RunRecord {
+    fn finalize(&mut self, validation: ValidationPhase, _outcome: RunOutcomeSummary) -> &RunRecord {
         self.phases.validation = Some(validation);
         self
     }
@@ -896,8 +1446,8 @@ pub fn write_compressed_record(
     path: &std::path::Path,
     record: &RunRecord,
 ) -> Result<(), std::io::Error> {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::fs::File;
 
     let file = File::create(path)?;
@@ -927,6 +1477,7 @@ pub fn read_compressed_record(path: &std::path::Path) -> Result<RunRecord, std::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     /// Creates a minimal RunRecord for testing without needing a full PreparedSingleRun.
     fn create_test_record() -> RunRecord {
@@ -954,6 +1505,79 @@ mod tests {
         }
     }
 
+    fn create_test_turn_artifact() -> AgentTurnArtifact {
+        AgentTurnArtifact {
+            task_id: "test-instance-001".to_string(),
+            selected_model: ModelId::from_str("anthropic/claude-sonnet-4").unwrap(),
+            issue_prompt: "Fix the bug in src/lib.rs".to_string(),
+            user_message_id: "user-001".to_string(),
+            events: vec![
+                ObservedTurnEvent::LlmResponse(LlmResponseRecord {
+                    content: "I found the issue and will inspect the code.".to_string(),
+                    model: "anthropic/claude-sonnet-4".to_string(),
+                    usage: Some(TokenUsage {
+                        prompt_tokens: 42,
+                        completion_tokens: 7,
+                        total_tokens: 49,
+                    }),
+                    finish_reason: Some(FinishReason::ToolCalls),
+                    metadata: None,
+                }),
+                ObservedTurnEvent::ToolRequested(ToolRequestRecord {
+                    request_id: "req-001".to_string(),
+                    parent_id: "parent-001".to_string(),
+                    call_id: "call-001".to_string(),
+                    tool: "search_code".to_string(),
+                    arguments: r#"{"query":"handle_request"}"#.to_string(),
+                }),
+                ObservedTurnEvent::ToolCompleted(ToolCompletedRecord {
+                    request_id: "req-001".to_string(),
+                    parent_id: "parent-001".to_string(),
+                    call_id: "call-001".to_string(),
+                    tool: "search_code".to_string(),
+                    content: "Found function in src/lib.rs".to_string(),
+                    ui_payload: None,
+                }),
+                ObservedTurnEvent::TurnFinished(crate::runner::TurnFinishedRecord {
+                    session_id: "session-001".to_string(),
+                    request_id: "req-001".to_string(),
+                    parent_id: "parent-001".to_string(),
+                    assistant_message_id: "assistant-001".to_string(),
+                    outcome: "completed".to_string(),
+                    error_id: None,
+                    summary: "Request summary: [success]".to_string(),
+                    attempts: 1,
+                }),
+            ],
+            prompt_debug: None,
+            terminal_record: Some(crate::runner::TurnFinishedRecord {
+                session_id: "session-001".to_string(),
+                request_id: "req-001".to_string(),
+                parent_id: "parent-001".to_string(),
+                assistant_message_id: "assistant-001".to_string(),
+                outcome: "completed".to_string(),
+                error_id: None,
+                summary: "Request summary: [success]".to_string(),
+                attempts: 1,
+            }),
+            final_assistant_message: None,
+            patch_artifact: crate::runner::PatchArtifact {
+                edit_proposals: Vec::new(),
+                create_proposals: Vec::new(),
+                applied: false,
+                all_proposals_applied: false,
+                expected_file_changes: Vec::new(),
+                any_expected_file_changed: false,
+                all_expected_files_changed: false,
+            },
+            llm_prompt: vec![
+                RequestMessage::new_system("You are a coding assistant.".to_string()),
+                RequestMessage::new_user("Fix the bug in src/lib.rs".to_string()),
+            ],
+            llm_response: Some("I found the issue and will inspect the code.".to_string()),
+        }
+    }
+
     #[test]
     fn write_and_read_compressed_record_roundtrip() {
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -962,23 +1586,33 @@ mod tests {
         let original = create_test_record();
 
         // Write compressed record
-        write_compressed_record(&record_path, &original).expect("Failed to write compressed record");
+        write_compressed_record(&record_path, &original)
+            .expect("Failed to write compressed record");
 
         // Verify file exists and has content
         assert!(record_path.exists());
-        let file_size = std::fs::metadata(&record_path).expect("Failed to read metadata").len();
+        let file_size = std::fs::metadata(&record_path)
+            .expect("Failed to read metadata")
+            .len();
         assert!(file_size > 0, "Compressed file should have content");
 
         // Read back and verify
-        let loaded = read_compressed_record(&record_path).expect("Failed to read compressed record");
+        let loaded =
+            read_compressed_record(&record_path).expect("Failed to read compressed record");
 
         // Verify key fields match
         assert_eq!(loaded.schema_version, original.schema_version);
         assert_eq!(loaded.manifest_id, original.manifest_id);
-        assert_eq!(loaded.metadata.benchmark.instance_id, original.metadata.benchmark.instance_id);
+        assert_eq!(
+            loaded.metadata.benchmark.instance_id,
+            original.metadata.benchmark.instance_id
+        );
         assert_eq!(loaded.db_time_travel_index.len(), 1);
         assert_eq!(loaded.db_time_travel_index[0].turn, 1);
-        assert_eq!(loaded.db_time_travel_index[0].timestamp_micros, 1744223415500000);
+        assert_eq!(
+            loaded.db_time_travel_index[0].timestamp_micros,
+            1744223415500000
+        );
     }
 
     #[test]
@@ -994,10 +1628,13 @@ mod tests {
             started_at: "2026-04-09T18:30:15Z".to_string(),
             ended_at: "2026-04-09T18:30:45Z".to_string(),
             db_timestamp_micros: 1744223415500000,
-            issue_prompt: "Fix the bug in src/lib.rs where the function does not handle edge cases properly.".to_string(),
+            issue_prompt:
+                "Fix the bug in src/lib.rs where the function does not handle edge cases properly."
+                    .to_string(),
             llm_request: None,
             llm_response: Some(LlmResponseRecord {
-                content: "I'll help you fix the bug. Let me start by examining the code.".to_string(),
+                content: "I'll help you fix the bug. Let me start by examining the code."
+                    .to_string(),
                 model: "anthropic/claude-sonnet-4".to_string(),
                 usage: Some(TokenUsage {
                     prompt_tokens: 100,
@@ -1019,8 +1656,12 @@ mod tests {
         // Write compressed record
         write_compressed_record(&record_path, &record).expect("Failed to write compressed record");
 
-        let json_size = std::fs::metadata(&json_path).expect("Failed to read JSON metadata").len();
-        let compressed_size = std::fs::metadata(&record_path).expect("Failed to read compressed metadata").len();
+        let json_size = std::fs::metadata(&json_path)
+            .expect("Failed to read JSON metadata")
+            .len();
+        let compressed_size = std::fs::metadata(&record_path)
+            .expect("Failed to read compressed metadata")
+            .len();
 
         // Verify compression achieved (compressed should be smaller)
         assert!(
@@ -1142,26 +1783,24 @@ mod tests {
                 finish_reason: Some(FinishReason::ToolCalls),
                 metadata: None,
             }),
-            tool_calls: vec![
-                ToolExecutionRecord {
-                    request: ToolRequestRecord {
-                        request_id: "req-002".to_string(),
-                        parent_id: "parent-002".to_string(),
-                        call_id: "call-002".to_string(),
-                        tool: "apply_code_edit".to_string(),
-                        arguments: r#"{"path": "src/lib.rs", "line": 42}"#.to_string(),
-                    },
-                    result: ToolResult::Completed(ToolCompletedRecord {
-                        request_id: "req-002".to_string(),
-                        parent_id: "parent-002".to_string(),
-                        call_id: "call-002".to_string(),
-                        tool: "apply_code_edit".to_string(),
-                        content: "Edit applied successfully".to_string(),
-                        ui_payload: None,
-                    }),
-                    latency_ms: 200,
+            tool_calls: vec![ToolExecutionRecord {
+                request: ToolRequestRecord {
+                    request_id: "req-002".to_string(),
+                    parent_id: "parent-002".to_string(),
+                    call_id: "call-002".to_string(),
+                    tool: "apply_code_edit".to_string(),
+                    arguments: r#"{"path": "src/lib.rs", "line": 42}"#.to_string(),
                 },
-            ],
+                result: ToolResult::Completed(ToolCompletedRecord {
+                    request_id: "req-002".to_string(),
+                    parent_id: "parent-002".to_string(),
+                    call_id: "call-002".to_string(),
+                    tool: "apply_code_edit".to_string(),
+                    content: "Edit applied successfully".to_string(),
+                    ui_payload: None,
+                }),
+                latency_ms: 200,
+            }],
             outcome: TurnOutcome::ToolCalls { count: 1 },
             agent_turn_artifact: None,
         });
@@ -1185,7 +1824,14 @@ mod tests {
 
         let turn1 = record.turn_record(1).expect("Should find turn 1");
         assert_eq!(turn1.turn_number, 1);
-        assert!(turn1.llm_response.as_ref().unwrap().content.contains("analyze"));
+        assert!(
+            turn1
+                .llm_response
+                .as_ref()
+                .unwrap()
+                .content
+                .contains("analyze")
+        );
 
         let turn3 = record.turn_record(3).expect("Should find turn 3");
         assert_eq!(turn3.turn_number, 3);
@@ -1221,10 +1867,14 @@ mod tests {
     fn llm_response_at_turn_returns_correct_response() {
         let record = create_test_record_with_turns();
 
-        let response1 = record.llm_response_at_turn(1).expect("Should have response");
+        let response1 = record
+            .llm_response_at_turn(1)
+            .expect("Should have response");
         assert!(response1.content.contains("analyze"));
 
-        let response2 = record.llm_response_at_turn(2).expect("Should have response");
+        let response2 = record
+            .llm_response_at_turn(2)
+            .expect("Should have response");
         assert!(response2.content.contains("search"));
 
         assert!(record.llm_response_at_turn(99).is_none());
@@ -1294,6 +1944,62 @@ mod tests {
     }
 
     #[test]
+    fn add_turn_from_artifact_persists_real_turn_fields() {
+        let mut record = create_test_record();
+        let artifact = create_test_turn_artifact();
+
+        record.add_turn_from_artifact(artifact, 1744223415600000);
+
+        let turn = record.turn_record(1).expect("Should persist turn");
+        let llm_request = turn
+            .llm_request
+            .as_ref()
+            .expect("Should persist llm request");
+        assert_eq!(llm_request.messages.len(), 2);
+        assert_eq!(llm_request.messages[1].content, "Fix the bug in src/lib.rs");
+        assert_eq!(
+            llm_request.model,
+            ModelId::from_str("anthropic/claude-sonnet-4").unwrap()
+        );
+
+        let llm_response = turn
+            .llm_response
+            .as_ref()
+            .expect("Should persist structured llm response");
+        assert_eq!(
+            llm_response.content,
+            "I found the issue and will inspect the code."
+        );
+        assert_eq!(turn.tool_calls.len(), 1);
+        assert_eq!(turn.tool_calls[0].request.tool, "search_code");
+        assert!(matches!(turn.outcome, TurnOutcome::ToolCalls { count: 1 }));
+    }
+
+    #[test]
+    fn replay_state_at_turn_uses_persisted_turn_messages() {
+        let mut record = create_test_record();
+        record.add_turn_from_artifact(create_test_turn_artifact(), 1744223415600000);
+
+        let state = record
+            .replay_state_at_turn(1)
+            .expect("Should reconstruct state");
+
+        assert_eq!(state.conversation_up_to_turn.len(), 3);
+        assert_eq!(
+            state.conversation_up_to_turn[0].content,
+            "You are a coding assistant."
+        );
+        assert_eq!(
+            state.conversation_up_to_turn[1].content,
+            "Fix the bug in src/lib.rs"
+        );
+        assert_eq!(
+            state.conversation_up_to_turn[2].content,
+            "I found the issue and will inspect the code."
+        );
+    }
+
+    #[test]
     fn outcome_summary_returns_correct_stats() {
         let record = create_test_record_with_turns();
 
@@ -1302,5 +2008,262 @@ mod tests {
         assert_eq!(summary.total_tool_calls, 2); // 1 in turn 2, 1 in turn 3
         assert_eq!(summary.total_token_usage.total_tokens, 460);
         assert_eq!(summary.status, "incomplete"); // No validation phase
+    }
+
+    // ========================================================================
+    // DbState and Introspection API Tests (Task 5)
+    // ========================================================================
+
+    #[test]
+    fn db_state_creates_with_correct_timestamp() {
+        let record = create_test_record_with_turns();
+        let turn = record.turn_record(1).expect("Should find turn 1");
+
+        let db_state = turn.db_state();
+        assert_eq!(db_state.timestamp_micros(), 1744223415500000);
+    }
+
+    #[test]
+    fn db_state_new_creates_correctly() {
+        let db_state = DbState::new(1234567890);
+        assert_eq!(db_state.timestamp_micros(), 1234567890);
+    }
+
+    #[test]
+    fn node_info_serializes_correctly() {
+        let node_info = NodeInfo {
+            id: Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap(),
+            name: "my_function".to_string(),
+            node_type: "Function".to_string(),
+        };
+
+        let json = serde_json::to_string(&node_info).expect("Should serialize");
+        assert!(json.contains("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(json.contains("my_function"));
+        assert!(json.contains("Function"));
+
+        let deserialized: NodeInfo = serde_json::from_str(&json).expect("Should deserialize");
+        assert_eq!(deserialized.id, node_info.id);
+        assert_eq!(deserialized.name, node_info.name);
+        assert_eq!(deserialized.node_type, node_info.node_type);
+    }
+
+    #[test]
+    fn replay_error_turn_not_found() {
+        let err = ReplayError::TurnNotFound(42);
+        assert_eq!(err.to_string(), "Turn 42 not found in run record");
+    }
+
+    #[test]
+    fn replay_error_timestamp_not_found() {
+        let err = ReplayError::TimestampNotFound(42);
+        assert_eq!(err.to_string(), "Timestamp not found for turn 42");
+    }
+
+    #[test]
+    fn replay_error_db_error_conversion() {
+        let db_err = ploke_db::DbError::NotFound;
+        let replay_err: ReplayError = db_err.into();
+
+        match replay_err {
+            ReplayError::DbError(_) => (), // Expected
+            _ => panic!("Expected DbError variant"),
+        }
+
+        assert!(replay_err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn replay_query_returns_error_for_missing_turn() {
+        let mut record = create_test_record();
+
+        // Clear the time travel index so there's no timestamp for turn 1
+        record.db_time_travel_index.clear();
+
+        // Verify timestamp_for_turn returns None for missing turn
+        assert!(record.timestamp_for_turn(1).is_none());
+
+        // Verify that replay_query would return TimestampNotFound error
+        // (We can't test the full replay_query without a real DB, but we test the error path)
+    }
+
+    #[test]
+    fn replay_query_returns_error_for_missing_timestamp() {
+        let mut record = create_test_record();
+
+        // Clear any existing time travel markers
+        record.db_time_travel_index.clear();
+
+        // Add a turn but no time travel marker
+        record.phases.agent_turns.push(TurnRecord {
+            turn_number: 1,
+            started_at: "2026-04-09T18:30:15Z".to_string(),
+            ended_at: "2026-04-09T18:30:20Z".to_string(),
+            db_timestamp_micros: 1744223415500000,
+            issue_prompt: "Test".to_string(),
+            llm_request: None,
+            llm_response: None,
+            tool_calls: Vec::new(),
+            outcome: TurnOutcome::Content,
+            agent_turn_artifact: None,
+        });
+
+        // No time travel markers, so timestamp_for_turn should return None
+        assert!(record.timestamp_for_turn(1).is_none());
+    }
+
+    // ========================================================================
+    // SetupPhase Type Enhancement Tests (Task 2)
+    // ========================================================================
+
+    #[test]
+    fn setup_phase_with_indexed_crates_serializes_to_json() {
+        use crate::runner::{IndexingStatusArtifact, RepoStateArtifact};
+
+        let setup_phase = SetupPhase {
+            started_at: "2026-04-11T10:00:00Z".to_string(),
+            ended_at: "2026-04-11T10:05:00Z".to_string(),
+            repo_state: RepoStateArtifact {
+                repo_root: std::path::PathBuf::from("/test/repo"),
+                requested_base_sha: Some("abc123".to_string()),
+                checked_out_head_sha: Some("def456".to_string()),
+                git_status_porcelain: " M src/lib.rs".to_string(),
+            },
+            indexing_status: IndexingStatusArtifact {
+                status: "completed".to_string(),
+                detail: "Successfully indexed 2 crates".to_string(),
+            },
+            indexed_crates: vec![
+                IndexedCrateSummary {
+                    name: "main-crate".to_string(),
+                    version: "1.0.0".to_string(),
+                    namespace: Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap(),
+                    root_path: std::path::PathBuf::from("/test/repo"),
+                    file_count: 10,
+                    node_count: 500,
+                    embedded_count: 450,
+                    status: CrateIndexStatus::Success,
+                    parse_error: None,
+                },
+                IndexedCrateSummary {
+                    name: "test-utils".to_string(),
+                    version: "0.1.0".to_string(),
+                    namespace: Uuid::parse_str("550e8400-e29b-41d4-a716-446655440001").unwrap(),
+                    root_path: std::path::PathBuf::from("/test/repo/test-utils"),
+                    file_count: 3,
+                    node_count: 100,
+                    embedded_count: 95,
+                    status: CrateIndexStatus::Partial,
+                    parse_error: Some(ParseErrorSummary {
+                        message: "Failed to parse one file".to_string(),
+                        target_dir: std::path::PathBuf::from("/test/repo/test-utils/src/lib.rs"),
+                        occurred_at_ms: 1712833200000,
+                    }),
+                },
+            ],
+            parse_failures: vec![ParseFailureRecord {
+                target_dir: std::path::PathBuf::from("/test/repo/old-crate"),
+                message: "Syntax error in main.rs".to_string(),
+                occurred_at_ms: 1712833200000,
+            }],
+            db_timestamp_micros: 1712833200000000,
+            tool_schema_version: Some("v1.2.3".to_string()),
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string_pretty(&setup_phase)
+            .expect("Should serialize SetupPhase to JSON");
+
+        // Verify JSON contains expected fields
+        assert!(
+            json.contains("indexed_crates"),
+            "JSON should contain indexed_crates field"
+        );
+        assert!(
+            json.contains("main-crate"),
+            "JSON should contain crate name"
+        );
+        assert!(
+            json.contains("550e8400-e29b-41d4-a716-446655440000"),
+            "JSON should contain namespace UUID"
+        );
+        assert!(
+            json.contains("Success"),
+            "JSON should contain Success status"
+        );
+        assert!(
+            json.contains("Partial"),
+            "JSON should contain Partial status"
+        );
+        assert!(
+            json.contains("parse_failures"),
+            "JSON should contain parse_failures field"
+        );
+        assert!(
+            json.contains("Syntax error in main.rs"),
+            "JSON should contain parse failure message"
+        );
+        assert!(
+            json.contains("tool_schema_version"),
+            "JSON should contain tool_schema_version field"
+        );
+        assert!(
+            json.contains("v1.2.3"),
+            "JSON should contain tool schema version"
+        );
+
+        // Deserialize and verify
+        let deserialized: SetupPhase =
+            serde_json::from_str(&json).expect("Should deserialize JSON back to SetupPhase");
+        assert_eq!(deserialized.indexed_crates.len(), 2);
+        assert_eq!(deserialized.indexed_crates[0].name, "main-crate");
+        assert_eq!(
+            deserialized.indexed_crates[1].status,
+            CrateIndexStatus::Partial
+        );
+        assert_eq!(deserialized.parse_failures.len(), 1);
+        assert_eq!(deserialized.tool_schema_version, Some("v1.2.3".to_string()));
+    }
+
+    #[test]
+    fn setup_phase_with_empty_indexed_crates_serializes_correctly() {
+        use crate::runner::{IndexingStatusArtifact, RepoStateArtifact};
+
+        let setup_phase = SetupPhase {
+            started_at: "2026-04-11T10:00:00Z".to_string(),
+            ended_at: "2026-04-11T10:05:00Z".to_string(),
+            repo_state: RepoStateArtifact {
+                repo_root: std::path::PathBuf::from("/test/repo"),
+                requested_base_sha: Some("abc123".to_string()),
+                checked_out_head_sha: Some("def456".to_string()),
+                git_status_porcelain: "".to_string(),
+            },
+            indexing_status: IndexingStatusArtifact {
+                status: "completed".to_string(),
+                detail: "No crates to index".to_string(),
+            },
+            indexed_crates: vec![], // Empty
+            parse_failures: vec![], // Empty
+            db_timestamp_micros: 1712833200000000,
+            tool_schema_version: None,
+        };
+
+        // Serialize to JSON
+        let json =
+            serde_json::to_string(&setup_phase).expect("Should serialize SetupPhase to JSON");
+
+        // Verify JSON does not contain empty collections (they're skipped)
+        assert!(
+            !json.contains("indexed_crates"),
+            "Empty indexed_crates should be skipped"
+        );
+        assert!(
+            !json.contains("parse_failures"),
+            "Empty parse_failures should be skipped"
+        );
+        assert!(
+            !json.contains("tool_schema_version"),
+            "None tool_schema_version should be skipped"
+        );
     }
 }

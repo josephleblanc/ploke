@@ -15,9 +15,9 @@
 
 use std::fs;
 
+use syn_parser::GraphAccess;
 use syn_parser::error::SynParserError;
 use syn_parser::try_run_phases_and_resolve;
-use syn_parser::GraphAccess;
 use tempfile::tempdir;
 
 const ASYNC_IDENT_LIB_RS: &str = r#"
@@ -70,20 +70,22 @@ fn repro_syn_parse_file_rejects_async_identifier_without_edition_context() {
 fn repro_try_run_phases_and_resolve_parses_2015_async_identifier_crate() {
     let td = create_edition_2015_async_ident_crate();
     let result = try_run_phases_and_resolve(td.path());
-    
+
     // With dual-syn support, edition 2015 crates should now parse successfully
     // using syn1 (which accepts `async` as an identifier)
     let graphs = result.expect("parser should succeed on edition-2015 async identifier crate");
-    
+
     assert_eq!(graphs.len(), 1, "expected one parsed file");
     let graph = &graphs[0].graph;
-    
+
     // Verify the struct and impl were parsed
-    let struct_count = graph.defined_types.iter()
+    let struct_count = graph
+        .defined_types
+        .iter()
         .filter(|t| matches!(t, syn_parser::parser::nodes::TypeDefNode::Struct(_)))
         .count();
     assert_eq!(struct_count, 1, "expected one struct (Worker)");
-    
+
     // Verify the impl block was parsed
     assert_eq!(graph.impls().len(), 1, "expected one impl block");
 }

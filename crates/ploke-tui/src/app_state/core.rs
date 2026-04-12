@@ -1,12 +1,12 @@
 use chrono::Utc;
 use ploke_core::file_hash::LargeFilePolicy;
 use ploke_core::{ArcStr, CrateId, CrateInfo, TrackingHash, WorkspaceInfo, WorkspaceRoots};
-use syn_parser::discovery::CrateContext;
 use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use syn_parser::discovery::CrateContext;
 use uuid::Uuid;
 
 use crate::llm::LLMParameters;
@@ -693,20 +693,24 @@ impl SystemStatus {
             self.crate_versions.entry(info.id).or_insert(0);
             self.workspace_freshness
                 .insert(info.id, WorkspaceFreshness::Fresh);
-            self.loaded_crates
-                .insert(info.id, LoadedCrateState { context: CrateContext {
-                    id: info.id,
-                    name: info.name.clone(),
-                    version: String::new(),
-                    namespace: info.namespace,
-                    root_path: info.root_path.clone(),
-                    files: Vec::new(),
-                    targets: Vec::new(),
-                    features: syn_parser::discovery::Features::default(),
-                    dependencies: syn_parser::discovery::Dependencies::default(),
-                    dev_dependencies: syn_parser::discovery::DevDependencies::default(),
-                    workspace_path: None,
-                }});
+            self.loaded_crates.insert(
+                info.id,
+                LoadedCrateState {
+                    context: CrateContext {
+                        id: info.id,
+                        name: info.name.clone(),
+                        version: String::new(),
+                        namespace: info.namespace,
+                        root_path: info.root_path.clone(),
+                        files: Vec::new(),
+                        targets: Vec::new(),
+                        features: syn_parser::discovery::Features::default(),
+                        dependencies: syn_parser::discovery::Dependencies::default(),
+                        dev_dependencies: syn_parser::discovery::DevDependencies::default(),
+                        workspace_path: None,
+                    },
+                },
+            );
         }
 
         self.loaded_workspace = Some(loaded_workspace);
@@ -722,20 +726,24 @@ impl SystemStatus {
         {
             let id = info.id;
             self.crate_versions.entry(id).or_insert(0);
-            self.loaded_crates
-                .insert(id, LoadedCrateState { context: CrateContext {
-                    id: info.id,
-                    name: info.name.clone(),
-                    version: String::new(),
-                    namespace: info.namespace,
-                    root_path: info.root_path.clone(),
-                    files: Vec::new(),
-                    targets: Vec::new(),
-                    features: syn_parser::discovery::Features::default(),
-                    dependencies: syn_parser::discovery::Dependencies::default(),
-                    dev_dependencies: syn_parser::discovery::DevDependencies::default(),
-                    workspace_path: None,
-                }});
+            self.loaded_crates.insert(
+                id,
+                LoadedCrateState {
+                    context: CrateContext {
+                        id: info.id,
+                        name: info.name.clone(),
+                        version: String::new(),
+                        namespace: info.namespace,
+                        root_path: info.root_path.clone(),
+                        files: Vec::new(),
+                        targets: Vec::new(),
+                        features: syn_parser::discovery::Features::default(),
+                        dependencies: syn_parser::discovery::Dependencies::default(),
+                        dev_dependencies: syn_parser::discovery::DevDependencies::default(),
+                        workspace_path: None,
+                    },
+                },
+            );
             return id;
         }
 
@@ -747,7 +755,8 @@ impl SystemStatus {
     fn load_standalone_crate(&mut self, root: PathBuf) -> CrateId {
         let context = CrateContext {
             id: CrateId::from_root_path(&root),
-            name: root.file_name()
+            name: root
+                .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "unknown".to_string()),
             version: String::new(),

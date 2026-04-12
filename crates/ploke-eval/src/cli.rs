@@ -23,6 +23,7 @@ use crate::msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 use crate::provider_prefs::{
     clear_provider_for_model, load_provider_for_model, set_provider_for_model,
 };
+use crate::record::read_compressed_record;
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
 use crate::run_history::print_last_run_assistant_messages;
 use crate::runner::{
@@ -179,6 +180,10 @@ pub enum Command {
     Doctor,
     /// Print only assistant messages from the most recent completed run.
     Transcript,
+    /// List all agent conversation turns from a run.
+    Conversations(ConversationsCommand),
+    /// Inspect run and turn data (conversations, tool calls, db snapshots, etc.)
+    Inspect(InspectCommand),
     /// Manage the cached OpenRouter model registry and active model selection.
     Model(ModelCommand),
 }
@@ -312,6 +317,20 @@ impl Cli {
                 }
             },
             Command::Transcript => match print_last_run_assistant_messages().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Command::Conversations(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Command::Inspect(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
@@ -1087,6 +1106,238 @@ pub struct ReplayMsbBatchCommand {
     pub batch: usize,
 }
 
+#[derive(Debug, Parser)]
+#[command(
+    about = "List all agent conversation turns from a run record",
+    after_help = "\
+Example:
+
+  cargo run -p ploke-eval -- conversations --instance BurntSushi__ripgrep-2209
+  cargo run -p ploke-eval -- conversations --record ~/.ploke-eval/runs/BurntSushi__ripgrep-2209/record.json.gz
+
+Output includes turn number, timestamps, tool call count, and outcome for each turn.
+"
+)]
+pub struct ConversationsCommand {
+    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = ConversationsOutputFormat::Table)]
+    pub format: ConversationsOutputFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ConversationsOutputFormat {
+    Table,
+    Json,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Inspect run and turn data (conversations, tool calls, db snapshots)",
+    after_help = "\
+Run-level inspection (matches eval-design.md API):
+
+  cargo run -p ploke-eval -- inspect conversations --instance BurntSushi__ripgrep-2209
+  cargo run -p ploke-eval -- inspect tool-calls --instance BurntSushi__ripgrep-2209
+  cargo run -p ploke-eval -- inspect db-snapshots --instance BurntSushi__ripgrep-2209
+  cargo run -p ploke-eval -- inspect failures --instance BurntSushi__ripgrep-2209
+  cargo run -p ploke-eval -- inspect config --instance BurntSushi__ripgrep-2209
+
+Turn-level inspection:
+
+  cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 --turn 1
+"
+)]
+pub struct InspectCommand {
+    #[command(subcommand)]
+    pub command: InspectSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InspectSubcommand {
+    /// List all agent conversation turns (run.conversations())
+    Conversations(InspectConversationsCommand),
+    /// List all tool calls from all turns (run.tool_calls())
+    ToolCalls(InspectToolCallsCommand),
+    /// List DB snapshots at each turn boundary (run.db_snapshots())
+    DbSnapshots(InspectDbSnapshotsCommand),
+    /// List turns with error outcomes (run.failures())
+    Failures(InspectFailuresCommand),
+    /// Show run configuration (run.config())
+    Config(InspectConfigCommand),
+    /// Inspect a specific turn (turn-level inspection)
+    Turn(InspectTurnCommand),
+    /// Run Cozo queries against historical DB snapshots at turn timestamps
+    Query(InspectQueryCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectConversationsCommand {
+    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectToolCallsCommand {
+    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectDbSnapshotsCommand {
+    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectFailuresCommand {
+    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectConfigCommand {
+    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectTurnCommand {
+    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Turn number (1-indexed) to inspect.
+    #[arg(long)]
+    pub turn: u32,
+
+    /// What to show for this turn: all, messages, tool-calls, tool-call, db-state.
+    #[arg(long, value_enum, default_value_t = TurnShowOption::All)]
+    pub show: TurnShowOption,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Tool call index (0-based) when showing specific tool-call or tool-result.
+    #[arg(long)]
+    pub index: Option<usize>,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Run Cozo queries against historical DB snapshots at turn timestamps",
+    after_help = "\
+Examples:
+
+  # Query using turn number (gets timestamp from turn)
+  cargo run -p ploke-eval -- inspect query --instance BurntSushi__ripgrep-2209 --turn 1 '?[name] := *function{name}'
+
+  # Query using explicit timestamp
+  cargo run -p ploke-eval -- inspect query --instance BurntSushi__ripgrep-2209 --timestamp 1775963199624424 '?[name] := *function{name}'
+
+  # Convenience: lookup by name (uses db_state.lookup())
+  cargo run -p ploke-eval -- inspect query --instance BurntSushi__ripgrep-2209 --turn 1 --lookup GlobSet
+"
+)]
+pub struct InspectQueryCommand {
+    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Turn number (1-indexed) to get timestamp from. Conflicts with --timestamp.
+    #[arg(long, conflicts_with = "timestamp")]
+    pub turn: Option<u32>,
+
+    /// Explicit timestamp in microseconds. Conflicts with --turn.
+    #[arg(long, conflicts_with = "turn")]
+    pub timestamp: Option<i64>,
+
+    /// Convenience: lookup a symbol by name using db_state.lookup().
+    #[arg(long, conflicts_with = "query")]
+    pub lookup: Option<String>,
+
+    /// Cozo query string. Optional if --lookup is provided.
+    #[arg(conflicts_with = "lookup")]
+    pub query: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum InspectOutputFormat {
+    Table,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum TurnShowOption {
+    All,
+    Messages,
+    ToolCalls,
+    ToolCall,
+    ToolResult,
+    DbState,
+}
+
 impl RunMsbSingleCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         let run_manifest = match (self.run, self.instance) {
@@ -1205,6 +1456,694 @@ impl ReplayMsbBatchCommand {
         .map(|batch_file| {
             println!("{}", batch_file.display());
         })
+    }
+}
+
+impl ConversationsCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let record_path = match (self.record, self.instance) {
+            (Some(path), None) => path,
+            (None, Some(instance)) => runs_dir()?.join(instance).join("record.json.gz"),
+            _ => {
+                return Err(PrepareError::MissingRunManifest(
+                    runs_dir()?.join("<instance>/record.json.gz"),
+                ));
+            }
+        };
+
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        match self.format {
+            ConversationsOutputFormat::Table => {
+                println!(
+                    "{:<6} {:<24} {:<24} {:<12} {}",
+                    "Turn", "Started", "Ended", "Tools", "Outcome"
+                );
+                println!("{}", "-".repeat(80));
+                for turn in record.conversations() {
+                    let tool_count = turn.tool_calls().len();
+                    let outcome_str = match &turn.outcome {
+                        crate::record::TurnOutcome::ToolCalls { count } => {
+                            format!("tool_calls({})", count)
+                        }
+                        crate::record::TurnOutcome::Content => "content".to_string(),
+                        crate::record::TurnOutcome::Error { message } => {
+                            format!("error: {}", message.chars().take(40).collect::<String>())
+                        }
+                        crate::record::TurnOutcome::Timeout { elapsed_secs } => {
+                            format!("timeout({}s)", elapsed_secs)
+                        }
+                    };
+                    println!(
+                        "{:<6} {:<24} {:<24} {:<12} {}",
+                        turn.turn_number,
+                        turn.started_at.chars().take(23).collect::<String>(),
+                        turn.ended_at.chars().take(23).collect::<String>(),
+                        tool_count,
+                        outcome_str
+                    );
+                }
+                println!("\nTotal turns: {}", record.conversations().count());
+            }
+            ConversationsOutputFormat::Json => {
+                let turns: Vec<_> = record.conversations().collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&turns).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl InspectCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            InspectSubcommand::Conversations(cmd) => cmd.run().await,
+            InspectSubcommand::ToolCalls(cmd) => cmd.run().await,
+            InspectSubcommand::DbSnapshots(cmd) => cmd.run().await,
+            InspectSubcommand::Failures(cmd) => cmd.run().await,
+            InspectSubcommand::Config(cmd) => cmd.run().await,
+            InspectSubcommand::Turn(cmd) => cmd.run().await,
+            InspectSubcommand::Query(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl InspectConversationsCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let record_path = resolve_record_path(self.record, self.instance)?;
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!(
+                    "{:<6} {:<24} {:<24} {:<12} {}",
+                    "Turn", "Started", "Ended", "Tools", "Outcome"
+                );
+                println!("{}", "-".repeat(80));
+                for turn in record.conversations() {
+                    let tool_count = turn.tool_calls().len();
+                    let outcome_str = match &turn.outcome {
+                        crate::record::TurnOutcome::ToolCalls { count } => {
+                            format!("tool_calls({})", count)
+                        }
+                        crate::record::TurnOutcome::Content => "content".to_string(),
+                        crate::record::TurnOutcome::Error { message } => {
+                            format!("error: {}", message.chars().take(40).collect::<String>())
+                        }
+                        crate::record::TurnOutcome::Timeout { elapsed_secs } => {
+                            format!("timeout({}s)", elapsed_secs)
+                        }
+                    };
+                    println!(
+                        "{:<6} {:<24} {:<24} {:<12} {}",
+                        turn.turn_number,
+                        turn.started_at.chars().take(23).collect::<String>(),
+                        turn.ended_at.chars().take(23).collect::<String>(),
+                        tool_count,
+                        outcome_str
+                    );
+                }
+                println!("\nTotal turns: {}", record.conversations().count());
+            }
+            InspectOutputFormat::Json => {
+                let turns: Vec<_> = record.conversations().collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&turns).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl InspectToolCallsCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let record_path = resolve_record_path(self.record, self.instance)?;
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        let tool_calls = record.tool_calls();
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!(
+                    "{:<6} {:<20} {:<40} {}",
+                    "Turn", "Tool", "Arguments", "Result"
+                );
+                println!("{}", "-".repeat(100));
+                for (turn, call) in record
+                    .conversations()
+                    .flat_map(|t| t.tool_calls().into_iter().map(move |c| (t.turn_number, c)))
+                {
+                    let args_preview = call.request.arguments.chars().take(37).collect::<String>();
+                    let result_str = match &call.result {
+                        crate::record::ToolResult::Completed(_) => "completed".to_string(),
+                        crate::record::ToolResult::Failed(f) => {
+                            format!("failed: {}", f.error.chars().take(30).collect::<String>())
+                        }
+                    };
+                    println!(
+                        "{:<6} {:<20} {:<40} {}",
+                        turn,
+                        call.request.tool.chars().take(18).collect::<String>(),
+                        if args_preview.len() >= 37 {
+                            format!("{}...", args_preview)
+                        } else {
+                            args_preview
+                        },
+                        result_str
+                    );
+                }
+                println!("\nTotal tool calls: {}", tool_calls.len());
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&tool_calls).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl InspectDbSnapshotsCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let record_path = resolve_record_path(self.record, self.instance)?;
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        let snapshots = record.db_snapshots();
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("{:<6} {}", "Turn", "DB Timestamp (micros)");
+                println!("{}", "-".repeat(40));
+                for (i, snapshot) in snapshots.iter().enumerate() {
+                    println!("{:<6} {}", i + 1, snapshot.timestamp_micros());
+                }
+                println!("\nTotal snapshots: {}", snapshots.len());
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&snapshots).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl InspectFailuresCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let record_path = resolve_record_path(self.record, self.instance)?;
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        let failures = record.failures();
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                if failures.is_empty() {
+                    println!("No failures found.");
+                } else {
+                    println!("{:<6} {:<24} {}", "Turn", "Started", "Error");
+                    println!("{}", "-".repeat(80));
+                    for turn in &failures {
+                        let error_str = match &turn.outcome {
+                            crate::record::TurnOutcome::Error { message } => {
+                                message.chars().take(50).collect::<String>()
+                            }
+                            _ => "unknown".to_string(),
+                        };
+                        println!(
+                            "{:<6} {:<24} {}",
+                            turn.turn_number,
+                            turn.started_at.chars().take(23).collect::<String>(),
+                            error_str
+                        );
+                    }
+                    println!("\nTotal failures: {}", failures.len());
+                }
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&failures).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl InspectConfigCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let record_path = resolve_record_path(self.record, self.instance)?;
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        let config = record.config();
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("Run Configuration");
+                println!("{}", "-".repeat(40));
+                println!("Instance ID: {}", config.benchmark.instance_id);
+                println!("Repository: {}", config.benchmark.repo_root.display());
+                if let Some(sha) = &config.benchmark.base_sha {
+                    println!("Base SHA: {}", sha);
+                }
+                println!("Max Turns: {}", config.budget.max_turns);
+                println!("Max Tool Calls: {}", config.budget.max_tool_calls);
+                println!("Wall Clock (secs): {}", config.budget.wall_clock_secs);
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(config).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl InspectTurnCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let record_path = resolve_record_path(self.record, self.instance)?;
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        let turn = record
+            .turn_record(self.turn)
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "inspect_turn",
+                detail: format!("Turn {} not found", self.turn),
+            })?;
+
+        match self.show {
+            TurnShowOption::All => {
+                // Show comprehensive turn info
+                println!("Turn {}", turn.turn_number);
+                println!("{}", "-".repeat(40));
+                println!("Started: {}", turn.started_at);
+                println!("Ended: {}", turn.ended_at);
+                println!("DB Timestamp: {}", turn.db_timestamp_micros);
+                println!("Messages: {}", turn.messages().len());
+                println!("Tool Calls: {}", turn.tool_calls().len());
+                println!("Outcome: {:?}", turn.outcome);
+            }
+            TurnShowOption::Messages => {
+                let messages = turn.messages();
+                if messages.is_empty() {
+                    println!("No messages available (placeholder implementation).");
+                } else {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&messages).map_err(PrepareError::Serialize)?
+                    );
+                }
+            }
+            TurnShowOption::ToolCalls => {
+                let tool_calls = turn.tool_calls();
+                if tool_calls.is_empty() {
+                    println!("No tool calls in this turn.");
+                } else {
+                    match self.format {
+                        InspectOutputFormat::Table => {
+                            println!("{:<20} {:<40} {}", "Tool", "Arguments", "Result");
+                            println!("{}", "-".repeat(80));
+                            for call in &tool_calls {
+                                let args_preview =
+                                    call.request.arguments.chars().take(37).collect::<String>();
+                                let result_str = match &call.result {
+                                    crate::record::ToolResult::Completed(_) => {
+                                        "completed".to_string()
+                                    }
+                                    crate::record::ToolResult::Failed(f) => format!(
+                                        "failed: {}",
+                                        f.error.chars().take(20).collect::<String>()
+                                    ),
+                                };
+                                println!(
+                                    "{:<20} {:<40} {}",
+                                    call.request.tool.chars().take(18).collect::<String>(),
+                                    if args_preview.len() >= 37 {
+                                        format!("{}...", args_preview)
+                                    } else {
+                                        args_preview
+                                    },
+                                    result_str
+                                );
+                            }
+                        }
+                        InspectOutputFormat::Json => {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&tool_calls)
+                                    .map_err(PrepareError::Serialize)?
+                            );
+                        }
+                    }
+                }
+            }
+            TurnShowOption::ToolCall => {
+                let tool_calls = turn.tool_calls();
+                match (self.index, tool_calls.len()) {
+                    (Some(idx), len) if idx < len => {
+                        let tool_call = &tool_calls[idx];
+                        match self.format {
+                            InspectOutputFormat::Table => {
+                                println!("Tool: {}", tool_call.request.tool);
+                                println!("Arguments: {}", tool_call.request.arguments);
+                                println!("Result: {:?}", tool_call.result);
+                            }
+                            InspectOutputFormat::Json => {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&tool_call)
+                                        .map_err(PrepareError::Serialize)?
+                                );
+                            }
+                        }
+                    }
+                    (Some(idx), len) => {
+                        println!(
+                            "Error: Index {} out of range. Turn has {} tool call{} (valid indices: 0..{}).",
+                            idx,
+                            len,
+                            if len == 1 { "" } else { "s" },
+                            len.saturating_sub(1)
+                        );
+                    }
+                    (None, 1) => {
+                        let tool_call = &tool_calls[0];
+                        match self.format {
+                            InspectOutputFormat::Table => {
+                                println!("Tool: {}", tool_call.request.tool);
+                                println!("Arguments: {}", tool_call.request.arguments);
+                                println!("Result: {:?}", tool_call.result);
+                            }
+                            InspectOutputFormat::Json => {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&tool_call)
+                                        .map_err(PrepareError::Serialize)?
+                                );
+                            }
+                        }
+                    }
+                    (None, len) => {
+                        println!(
+                            "Turn has {} tool call{}. Use --index 0..{} to select one.",
+                            len,
+                            if len == 1 { "" } else { "s" },
+                            len.saturating_sub(1)
+                        );
+                    }
+                }
+            }
+            TurnShowOption::ToolResult => {
+                let tool_calls = turn.tool_calls();
+                match (self.index, tool_calls.len()) {
+                    (Some(idx), len) if idx < len => {
+                        let result = &tool_calls[idx].result;
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&result)
+                                .map_err(PrepareError::Serialize)?
+                        );
+                    }
+                    (Some(idx), len) => {
+                        println!(
+                            "Error: Index {} out of range. Turn has {} tool call{} (valid indices: 0..{}).",
+                            idx,
+                            len,
+                            if len == 1 { "" } else { "s" },
+                            len.saturating_sub(1)
+                        );
+                    }
+                    (None, 1) => {
+                        let result = &tool_calls[0].result;
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&result)
+                                .map_err(PrepareError::Serialize)?
+                        );
+                    }
+                    (None, len) => {
+                        println!(
+                            "Turn has {} tool call{}. Use --index 0..{} to select one.",
+                            len,
+                            if len == 1 { "" } else { "s" },
+                            len.saturating_sub(1)
+                        );
+                    }
+                }
+            }
+            TurnShowOption::DbState => {
+                let db_state = turn.db_state();
+                println!("DB State for Turn {}", turn.turn_number);
+                println!("Timestamp (micros): {}", db_state.timestamp_micros());
+                println!(
+                    "\nUse this timestamp with 'inspect query' to run queries against this state."
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl InspectQueryCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        // Validate that we have either --turn or --timestamp
+        if self.turn.is_none() && self.timestamp.is_none() {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "inspect_query",
+                detail: "Either --turn or --timestamp must be provided".to_string(),
+            });
+        }
+
+        // Validate that we have either --lookup or query string
+        if self.lookup.is_none() && self.query.is_none() {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "inspect_query",
+                detail: "Either --lookup <name> or a query string must be provided".to_string(),
+            });
+        }
+
+        // Load the record
+        let record_path = resolve_record_path(self.record, self.instance)?;
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        // Resolve timestamp
+        let timestamp_micros = if let Some(turn) = self.turn {
+            record
+                .timestamp_for_turn(turn)
+                .ok_or_else(|| PrepareError::DatabaseSetup {
+                    phase: "inspect_query",
+                    detail: format!("Turn {} not found in record", turn),
+                })?
+        } else {
+            self.timestamp.unwrap() // Safe because we validated above
+        };
+
+        // Find DB path: look in run directory for final-snapshot.db first, fallback to indexing-checkpoint.db
+        let run_dir = record_path
+            .parent()
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "inspect_query",
+                detail: "Could not determine run directory from record path".to_string(),
+            })?;
+
+        let final_snapshot = run_dir.join("final-snapshot.db");
+        let checkpoint_db = run_dir.join("indexing-checkpoint.db");
+
+        let db_path = if final_snapshot.exists() {
+            final_snapshot
+        } else if checkpoint_db.exists() {
+            checkpoint_db
+        } else {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "inspect_query",
+                detail: format!(
+                    "No DB snapshot found in {}. Looked for final-snapshot.db and indexing-checkpoint.db",
+                    run_dir.display()
+                ),
+            });
+        };
+
+        // Open the database (async method)
+        let db = ploke_db::Database::create_new_backup_default(&db_path)
+            .await
+            .map_err(|e| PrepareError::DatabaseSetup {
+                phase: "inspect_query",
+                detail: format!("Failed to open database at {}: {}", db_path.display(), e),
+            })?;
+
+        // Create DbState with the timestamp
+        let db_state = crate::record::DbState::new(timestamp_micros);
+
+        // Execute query or lookup
+        if let Some(name) = self.lookup {
+            // Use db_state.lookup() for name-based lookup
+            match db_state.lookup(&db, &name) {
+                Ok(Some(node_info)) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&node_info)
+                            .map_err(PrepareError::Serialize)?
+                    );
+                }
+                Ok(None) => {
+                    println!(
+                        "Symbol '{}' not found at timestamp {}",
+                        name, timestamp_micros
+                    );
+                }
+                Err(e) => {
+                    return Err(PrepareError::DatabaseSetup {
+                        phase: "inspect_query",
+                        detail: format!("Lookup failed: {}", e),
+                    });
+                }
+            }
+        } else if let Some(query) = self.query {
+            // Use db_state.query() for raw Cozo queries
+            match db_state.query(&db, &query) {
+                Ok(result) => {
+                    // Convert QueryResult to JSON-serializable format
+                    let rows: Vec<Vec<serde_json::Value>> = result
+                        .rows
+                        .iter()
+                        .map(|row| row.iter().map(|val| cozo_data_to_json(val)).collect())
+                        .collect();
+
+                    let output = serde_json::json!({
+                        "headers": result.headers,
+                        "rows": rows,
+                    });
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&output).map_err(PrepareError::Serialize)?
+                    );
+                }
+                Err(e) => {
+                    return Err(PrepareError::DatabaseSetup {
+                        phase: "inspect_query",
+                        detail: format!("Query failed: {}", e),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Convert a Cozo DataValue to a JSON Value
+fn cozo_data_to_json(val: &cozo::DataValue) -> serde_json::Value {
+    use cozo::DataValue;
+
+    match val {
+        DataValue::Null => serde_json::Value::Null,
+        DataValue::Str(s) => serde_json::Value::String(s.to_string()),
+        DataValue::Bytes(b) => serde_json::Value::String(format!("{:?}", b)),
+        DataValue::Uuid(u) => serde_json::Value::String(u.0.to_string()),
+        DataValue::Num(n) => match n {
+            cozo::Num::Int(i) => serde_json::Value::Number((*i).into()),
+            cozo::Num::Float(f) => serde_json::Value::Number(
+                serde_json::Number::from_f64(*f).unwrap_or(serde_json::Number::from(0)),
+            ),
+        },
+        DataValue::Bool(b) => serde_json::Value::Bool(*b),
+        DataValue::List(l) => serde_json::Value::Array(l.iter().map(cozo_data_to_json).collect()),
+        DataValue::Set(s) => serde_json::Value::Array(s.iter().map(cozo_data_to_json).collect()),
+        DataValue::Vec(v) => {
+            // Vec is an embedding vector - convert to array of floats
+            let vec_values: Vec<serde_json::Value> = match v {
+                cozo::Vector::F32(f32_vec) => f32_vec
+                    .iter()
+                    .map(|f| {
+                        serde_json::Value::Number(
+                            serde_json::Number::from_f64(*f as f64)
+                                .unwrap_or(serde_json::Number::from(0)),
+                        )
+                    })
+                    .collect(),
+                cozo::Vector::F64(f64_vec) => f64_vec
+                    .iter()
+                    .map(|f| {
+                        serde_json::Value::Number(
+                            serde_json::Number::from_f64(*f).unwrap_or(serde_json::Number::from(0)),
+                        )
+                    })
+                    .collect(),
+            };
+            serde_json::Value::Array(vec_values)
+        }
+        DataValue::Validity(v) => serde_json::json!({
+            "type": "validity",
+            "timestamp": v.timestamp,
+        }),
+        // Handle remaining variants with a catch-all
+        other => serde_json::json!({
+            "type": "unsupported",
+            "debug": format!("{:?}", other),
+        }),
+    }
+}
+
+fn resolve_record_path(
+    record: Option<PathBuf>,
+    instance: Option<String>,
+) -> Result<PathBuf, PrepareError> {
+    match (record, instance) {
+        (Some(path), None) => Ok(path),
+        (None, Some(instance)) => Ok(runs_dir()?.join(instance).join("record.json.gz")),
+        _ => Err(PrepareError::MissingRunManifest(
+            runs_dir()?.join("<instance>/record.json.gz"),
+        )),
     }
 }
 

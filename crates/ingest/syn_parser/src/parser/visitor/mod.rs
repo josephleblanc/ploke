@@ -651,10 +651,13 @@ fn analyze_file_phase2_syn1(
     crate_context: &crate::discovery::CrateContext,
 ) -> Result<ParsedCodeGraph, syn::Error> {
     use super::nodes::ModuleKind;
-    
+
     // Parse with syn1
     let file = syn1::parse_file(&file_content).map_err(|e| {
-        syn::Error::new(proc_macro2::Span::call_site(), format!("syn1 parse error: {}", e))
+        syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!("syn1 parse error: {}", e),
+        )
     })?;
 
     // Create VisitorState
@@ -716,7 +719,10 @@ fn analyze_file_phase2_syn1(
         cfgs: file_cfgs,
     };
 
-    state.code_graph.modules.push(ModuleNode::new(root_module_info));
+    state
+        .code_graph
+        .modules
+        .push(ModuleNode::new(root_module_info));
 
     let root_module_pid: PrimaryNodeId = state.code_graph.modules[0].id.into();
     state.current_primary_defn_scope.push(root_module_pid);

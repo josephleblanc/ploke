@@ -1,24 +1,26 @@
 # Current Focus
 
-**Last Updated:** 2026-04-12 (Phase 1 Audit Complete - Critical Gaps Identified)
-**Active Planning Doc:** [Phase 1 Audit Synthesis](agents/phase-1-audit/AUDIT_SYNTHESIS.md)
+**Last Updated:** 2026-04-12 (Eval Infra Sprint Multi-Lane Control Plane Activated)
+**Active Planning Doc:** [Eval Infra Sprint Control Plane](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
 
 ---
 
 ## What We're Doing Now
 
-We **completed a comprehensive Phase 1 audit** that revealed critical gaps between claimed and actual implementation. While RunRecord types exist and basic introspection works, core deliverables from `eval-design.md` §VII are **missing**: `turn.db_state().lookup()`, `replay_query(turn, query)`, and **SetupPhase is never populated** (always `null` in output). This blocks validating dual-syn parsing results and prevents A5 (replay/introspection) from being achieved.
+We are now running an **eval-infra sprint under an explicit multi-lane orchestration protocol**. The blocking primary lane is still the Phase 1 P0 replay/inspection work identified by the audit, but active sidecar lanes now also cover `ploke-eval` API/code-quality audit, longitudinal metrics/change-over-time reporting, and workflow/skills adherence. This keeps the measurement layer in front of parser/tool optimization work without letting the broader programme concerns disappear from the active plan.
 
 ---
 
 ## Immediate Next Step
 
-**Implement missing Phase 1 deliverables** (P0 items from audit):
+**The Phase 1 P0 replay/inspection lane is now accepted; choose the next active lane deliberately**:
 
-1. **Populate SetupPhase** - Capture indexing results in RunRecord (currently always null)
-2. **Add `indexed_crates` field** - Enable validation of which crates were parsed
-3. **Implement historical DB queries** - Support Cozo `@ timestamp` syntax
-4. **Implement `turn.db_state().lookup()`** - Minimum deliverable per eval-design.md
+1. **`P0A` and `P0B` are accepted with a strict boundary** - setup schema/capture work in `ploke-eval` is accepted, while `DbState`/lookup/query/replay surfaces remain outside that acceptance slice
+2. **`P0C0` is accepted** - the pre-implementation survey recommends using the existing `raw_query_at_timestamp()` / `DbState` path rather than pulling `QueryBuilder` into the sprint
+3. **`P0C` is accepted with a strict boundary** - the explicit historical-query helper contract now lives in `ploke-db`, and before/after workspace baselines showed no new failures beyond the same two pre-existing `ploke-tui` integration failures
+4. **`P0D` and `P0E` are accepted** - `turn.db_state().lookup()` and `replay_query(turn, query)` meet their packet criteria on top of accepted `P0C`
+5. **`P0F` is accepted** - turn-record fidelity and replay-state reconstruction inside `ploke-eval` no longer block the primary lane
+6. **Next step is a program decision, not a hidden blocker** - promote one or more ready sidecars (`S1B` cleanup, `S1C` inspect CLI UX audit, `S2C` metrics ingestion bootstrap, `S3C` meta-observability inventory) or advance to the next eval-design phase with the new inspection/replay surface in place
 
 **Critical findings from audit:**
 - `turn.db_state().lookup()` - **NOT IMPLEMENTED** (claimed complete in Phase 1F)
@@ -26,12 +28,20 @@ We **completed a comprehensive Phase 1 audit** that revealed critical gaps betwe
 - SetupPhase - **NEVER POPULATED** (verified `null` in `record.json.gz`)
 - Historical DB queries - **NOT POSSIBLE** (all queries hardcode `@ 'NOW'`)
 
-**See full audit:** [AUDIT_SYNTHESIS.md](agents/phase-1-audit/AUDIT_SYNTHESIS.md)
+**Control plane:** [2026-04-12_eval-infra-sprint-control-plane.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
+**Evidence base:** [AUDIT_SYNTHESIS.md](agents/phase-1-audit/AUDIT_SYNTHESIS.md)
+**Current verification note:** [2026-04-12_P0AB_initial-verification-note.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0AB_initial-verification-note.md)
+**Current setup-boundary review:** [2026-04-12_P0AB_scope-separation-review.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0AB_scope-separation-review.md)
+**Current query-surface survey:** [2026-04-12_P0C0_query-builder-survey-report.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0C0_query-builder-survey-report.md)
+**Current accepted historical-query packet:** [2026-04-12_P0C_report.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0C_report.md)
+**Current accepted lookup/replay packet:** [2026-04-12_P0DE_verification_report.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0DE_verification_report.md)
+**Current accepted fidelity packet:** [2026-04-12_P0F_retry-report.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0F_retry-report.md)
+**Accepted sidecar findings:** [S1A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1A_ploke-eval-coherence-audit-report.md), [S2A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md), [S2B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2B_longitudinal-metrics-ledger-report.md), [S3A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3A_workflow-adherence-audit-report.md), [S3B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3B_control-plane-and-handoff-template-tightening-report.md)
 
 **Recently completed:**
 - **Phase 1 Audit** - 4 sub-agents parallel investigation
 - Gap priority matrix and revised exit criteria defined
-- Dual syn implementation (blocked on validation until P0 items done)
+- Eval orchestration protocol, packet templates, and multi-lane control plane
 
 ---
 
@@ -40,8 +50,8 @@ We **completed a comprehensive Phase 1 audit** that revealed critical gaps betwe
 | Ask me about... | Check this... |
 |-----------------|---------------|
 | "What were we up to?" | This doc ↑ |
-| "Remind me of next steps" | [Handoff Doc](workflow/handoffs/2026-04-11_dual-syn-implementation-handoff.md) |
-| "Let's pick up where we left off" | Run ripgrep test |
+| "Remind me of next steps" | [Eval Infra Sprint Control Plane](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) |
+| "Let's pick up where we left off" | Open the highest-priority non-accepted packet in the control plane |
 | Overall eval workflow | [workflow/README.md](workflow/README.md) |
 | Recent activity log | [workflow/handoffs/recent-activity.md](workflow/handoffs/recent-activity.md) |
 | Hypothesis status | [workflow/hypothesis-registry.md](workflow/hypothesis-registry.md) |

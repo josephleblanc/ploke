@@ -8,8 +8,8 @@ use std::{
 };
 
 use cargo_toml::Manifest;
-use ploke_core::CrateId;
 pub use error::*;
+use ploke_core::CrateId;
 use serde::Serialize;
 pub use single_crate::*;
 use single_crate::{

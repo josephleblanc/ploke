@@ -1,8 +1,8 @@
 # Recent Activity
 
-- last_updated: 2026-04-11
-- ready_for: Context compaction, next: fill stub implementations
-- owning_branch: main
+- last_updated: 2026-04-12
+- ready_for: P0 eval-infra packet execution under active control plane
+- owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
 
@@ -14,6 +14,109 @@
     2. Wait for explicit permission before proceeding
   - This applies to: `syn_parser`, `ploke-tui`, `ploke-db`, `ploke-llm`, etc.
   - Rationale: Prevent unintended side effects on core infrastructure during eval work
+
+## 2026-04-12
+
+- **EVAL ORCHESTRATION PROTOCOL ADOPTED** — active control plane created for Phase 1 P0 gaps
+  - Created [Eval Orchestration Protocol](../../agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md) and compact [templates](../../agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-templates.md)
+  - Workers now report claims plus evidence, not self-certified "verified/done" status
+  - Verifier passes are bounded; orchestrator is sole acceptance authority
+  - [AGENTS.md](../../../../AGENTS.md) now mirrors the cold-start sequence and points directly at the protocol for eval execution
+
+- **EVAL INFRA SPRINT CONTROL PLANE ACTIVE**
+  - Active planning doc moved from audit synthesis to [2026-04-12_eval-infra-sprint-control-plane.md](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
+  - Seeded initial P0 packets:
+    - `P0A` SetupPhase schema extension
+    - `P0B` SetupPhase capture wiring
+    - `P0C` historical DB query support
+    - `P0D` turn DB-state lookup
+    - `P0E` replay query surface
+  - **Permission gate:** `P0C` is blocked pending explicit approval because it touches `crates/ploke-db/`
+  - This entry supersedes older implied "Phase 1 complete" claims as current operational truth
+
+- **CONTROL PLANE EXPANDED TO MULTI-LANE PROGRAM**
+  - Added active non-blocking sidecar lanes so broader concerns do not fall out of scope:
+    - `S1-COHERENCE` for `ploke-eval` API/code-quality audit
+    - `S2-LONGITUDINAL` for change-over-time metrics/reporting design
+    - `S3-META-PROCESS` for workflow/skills adherence audit
+  - Seeded sidecar packets:
+    - `S1A` ploke-eval coherence audit
+    - `S2A` longitudinal metrics design
+    - `S3A` workflow and skills adherence audit
+  - Primary lane remains the blocking path; sidecars are active parallel work, not deferred backlog
+
+- **PRIMARY PATCH DISPOSITION STARTED**
+  - Reviewed current in-worktree `ploke-eval` changes against `P0A/P0B`
+  - Added [P0A/P0B initial verification note](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0AB_initial-verification-note.md)
+  - Current state:
+    - setup schema/capture look independently checked inside `ploke-eval`
+    - the same patch also includes replay/query additions that should remain unaccepted pending `P0C` permission and stronger evidence
+  - Accepted sidecar reports:
+    - [S2A report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md)
+    - [S3A report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3A_workflow-adherence-audit-report.md)
+
+- **S1A ACCEPTED; NEW FOLLOW-UP PACKETS SEEDED**
+  - Accepted [S1A coherence audit report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1A_ploke-eval-coherence-audit-report.md)
+  - New primary-lane packet added:
+    - `P0F` turn-record fidelity and replay-state reconstruction
+  - New sidecar follow-up packets added:
+    - `S2B` longitudinal metrics ledger and formula definition
+    - `S3B` control-plane and handoff template tightening
+  - Operational implication:
+    - replay/inspection risk is not only historical-query support; current turn persistence inside `ploke-eval` is itself a blocking fidelity issue
+
+- **S2B/S3B ACCEPTED; P0F ACCEPTED AFTER INDEPENDENT CHECK**
+  - Accepted [S2B ledger report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2B_longitudinal-metrics-ledger-report.md) and created [longitudinal-metrics.md](../longitudinal-metrics.md) as the central metrics roll-up artifact
+  - Accepted [S3B template report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3B_control-plane-and-handoff-template-tightening-report.md) and tightened:
+    - [handoff-template.md](../../../../docs/workflow/handoff-template.md)
+    - [eval orchestration templates](../../agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-templates.md)
+  - Current primary-lane state:
+    - `P0F` retry changes landed in `crates/ploke-eval/src/record.rs` and related tests
+    - independent verification completed against targeted `ploke-eval` tests, so `P0F` is accepted on the strength of [P0F retry report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0F_retry-report.md)
+    - remaining ambiguity is now concentrated in the mixed-scope `P0A/P0B/P0D/P0E` patch and the `P0C` permission gate
+
+- **S2B LEDGER CREATED**
+  - Added [longitudinal metrics ledger](../longitudinal-metrics.md) as the central roll-up surface for formal eval runs
+  - Defined explicit formulas, denominators, source expectations, and derivable-now versus blocked metrics
+  - Current blocker remains turn-level misuse and recovery capture/aggregation; the ledger now names that gap directly
+
+- **SIDECAR FOLLOW-UP PACKETS ADDED FROM RESTART REVIEW**
+  - Added `S2C` to explore lightweight discovery, durable storage, and auto-rollup for new formal runs feeding [longitudinal-metrics.md](../longitudinal-metrics.md)
+  - Added `S3C` to inventory available workflow/process evidence sources and frame exploratory hypotheses for protocol adherence and drift
+  - These are active sidecar packets, not deferred backlog, but they remain non-blocking relative to the primary P0 lane
+
+- **PRE-`P0C` QUERY-SURFACE SURVEY ADDED**
+  - Added `P0C0` to survey the existing `ploke-db` query-builder and raw-query surface before committing to the historical-query implementation path
+  - Rationale: current evidence suggests the builder is real but partial, while many active call sites still bypass it with raw Cozo scripts; the sprint should choose whether to extend, wrap, or deliberately bypass that surface before landing `P0C`
+  - `P0C` remains permission-gated for implementation because it touches `crates/ploke-db/`
+
+- **`P0A` / `P0B` / `P0C0` ACCEPTANCE BOUNDARIES CLARIFIED**
+  - Accepted `P0A` and `P0B` as setup-only slices on the strength of [P0A/P0B scope separation review](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0AB_scope-separation-review.md)
+  - Explicitly kept `DbState`, `lookup`, `query`, `replay_query`, and the mixed replay tests outside that acceptance boundary
+  - Accepted `P0C0` on the strength of [query-builder survey report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0C0_query-builder-survey-report.md)
+  - Chosen direction for `P0C`: use the existing `raw_query_at_timestamp()` / `DbState` helper path rather than extending `QueryBuilder` during the primary P0 lane
+
+- **`P0C` ACCEPTED WITH BASELINE COMPARISON**
+  - Accepted the narrow historical-query helper slice on the strength of [P0C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0C_report.md)
+  - Acceptance boundary is explicit: `Database::raw_query_at_timestamp()` now requires at least one `@ 'NOW'` marker, rewrites all such markers to the supplied timestamp, and has targeted tests for historical behavior, missing-marker rejection, and multi-marker rewriting
+  - Did not accept the whole dirty `crates/ploke-db/src/database.rs` diff by implication; only the helper-contract/test slice is in scope for this packet
+  - Pre/post full-workspace regression runs used the same environment overrides and showed no new failures: both runs remained red only on `ploke-tui` integration tests `post_apply_rescan::approve_emits_rescan_sysinfo_under_default_profile` and `post_apply_rescan::approve_emits_rescan_sysinfo_under_verbose_profile`
+
+- **`P0D` / `P0E` ACCEPTED; PRIMARY P0 LANE CLOSED**
+  - Accepted `P0D` and `P0E` on the strength of [P0D/P0E verification report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0DE_verification_report.md)
+  - `TurnRecord::db_state()` / `DbState::lookup()` and `RunRecord::replay_query()` now meet their packet criteria on top of accepted `P0C`
+  - No code changes were needed in the verification pass; acceptance is based on targeted `ploke-eval` tests over the existing implementation
+  - Residual risks were explicitly bounded rather than treated as blockers:
+    - `lookup()` is exact-name, fixed-relation, first-hit behavior only
+    - `replay_query()` is a thin raw-query wrapper over `P0C`
+    - nonexistent-turn handling currently collapses to `TimestampNotFound`
+  - Operational consequence: the Phase 1 P0 replay/inspection lane is no longer the blocking item for the eval programme
+
+- **POST-P0 SIDECAR PROMOTION QUEUED**
+  - Added `S1B` to promote the accepted `ploke-eval` coherence audit into a bounded cleanup track
+  - Added `S1C` to audit the inspect-oriented `ploke-eval` CLI as a frequent internal UX/bootstrap surface for quick eval checks
+  - `S2C` and `S3C` remain ready as the longitudinal ingestion/bootstrap and meta-observability follow-ups
+  - Intended post-compaction resume point: choose from `S1B`, `S1C`, `S2C`, and `S3C` rather than treating the next step as implicit
 
 ## 2026-04-11 (Late Evening)
 

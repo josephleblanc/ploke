@@ -1768,6 +1768,54 @@ target[id] := input[id_str], id = to_uuid(id_str)
         Ok(QueryResult::from(result))
     }
 
+    /// Execute a raw CozoScript query at a specific historical timestamp.
+    ///
+    /// Historical queries must opt in by using `@ 'NOW'` validity markers in the
+    /// same places a present-time query would. This helper rewrites those markers
+    /// to `@ <timestamp_micros>` and rejects scripts that do not contain any such
+    /// marker, so callers do not silently fall back to present-time semantics.
+    ///
+    /// The timestamp should be in microseconds since the UNIX epoch.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let ts = db.current_validity_micros()?;
+    /// // ... insert more data ...
+    /// // Query state at the original timestamp
+    /// let result = db.raw_query_at_timestamp(
+    ///     "?[name] := *nodes{ name, id @ 'NOW' }",
+    ///     ts
+    /// )?;
+    /// ```
+    pub fn raw_query_at_timestamp(
+        &self,
+        script: &str,
+        timestamp_micros: i64,
+    ) -> Result<QueryResult, DbError> {
+        const VALIDITY_NOW_MARKER: &str = "@ 'NOW'";
+
+        if !script.contains(VALIDITY_NOW_MARKER) {
+            return Err(DbError::QueryConstruction(
+                "historical query requires at least one `@ 'NOW'` validity marker".into(),
+            ));
+        }
+
+        // Cozo requires the validity timestamp to be a compile-time constant,
+        // so the explicit historical path rewrites the standard NOW markers.
+        let modified_script =
+            script.replace(VALIDITY_NOW_MARKER, &format!("@ {}", timestamp_micros));
+
+        let result = self
+            .db
+            .run_script(
+                &modified_script,
+                std::collections::BTreeMap::new(),
+                cozo::ScriptMutability::Immutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        Ok(QueryResult::from(result))
+    }
+
     /// Execute a CozoScript query and preserve the Rust callsite + logical query name on errors.
     #[track_caller]
     pub fn raw_query_with_context(&self, ctx: QueryContext) -> Result<QueryResult, DbError> {
@@ -2293,6 +2341,65 @@ target[id] := input[id_str], id = to_uuid(id_str)
                 })
             })
             .collect()
+    }
+
+    /// Count all nodes belonging to a crate namespace.
+    ///
+    /// This counts all descendant nodes (via syntax_edge containment) starting from
+    /// the file_mod roots for the given namespace.
+    pub fn count_nodes_for_namespace(&self, namespace: Uuid) -> Result<usize, DbError> {
+        let namespace_lit = namespace.to_string();
+        let count_rows = self.raw_query(&format!(
+            r#"
+root[id] := *file_mod {{ owner_id: id, namespace @ 'NOW' }}, namespace = to_uuid("{namespace_lit}")
+parent_of[child, parent] := *syntax_edge {{ source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+desc[id] := root[id]
+desc[id] := parent_of[id, parent], desc[parent]
+?[count(id)] := desc[id]
+"#
+        ))?;
+
+        if count_rows.rows.is_empty() {
+            return Ok(0);
+        }
+
+        let count = count_rows.rows[0]
+            .first()
+            .and_then(|v| v.get_int())
+            .ok_or_else(|| DbError::QueryExecution("failed to get node count".into()))?;
+
+        Ok(count as usize)
+    }
+
+    /// Count nodes that have embeddings for the given namespace.
+    ///
+    /// This uses the active embedding set to count how many nodes in the namespace
+    /// have embeddings stored in the current active embedding relation.
+    pub fn count_embedded_for_namespace(&self, namespace: Uuid) -> Result<usize, DbError> {
+        let namespace_lit = namespace.to_string();
+        let embedding_rel = self.with_active_set(|set| set.rel_name().to_string())?;
+
+        let count_rows = self.raw_query(&format!(
+            r#"
+root[id] := *file_mod {{ owner_id: id, namespace @ 'NOW' }}, namespace = to_uuid("{namespace_lit}")
+parent_of[child, parent] := *syntax_edge {{ source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+desc[id] := root[id]
+desc[id] := parent_of[id, parent], desc[parent]
+embedded_node[id] := desc[id], *{embedding_rel} {{ node_id: id @ 'NOW' }}
+?[count(id)] := embedded_node[id]
+"#
+        ))?;
+
+        if count_rows.rows.is_empty() {
+            return Ok(0);
+        }
+
+        let count = count_rows.rows[0]
+            .first()
+            .and_then(|v| v.get_int())
+            .ok_or_else(|| DbError::QueryExecution("failed to get embedded node count".into()))?;
+
+        Ok(count as usize)
     }
 
     pub fn collect_namespace_inventory(
@@ -4072,6 +4179,142 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn count_nodes_for_namespace_returns_accurate_counts() -> Result<(), PlokeError> {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let crate_contexts = db
+            .list_crate_context_rows()
+            .expect("workspace fixture should expose crate_context rows");
+        assert_eq!(
+            crate_contexts.len(),
+            2,
+            "expected two crate contexts for ws_fixture_01"
+        );
+
+        for context in &crate_contexts {
+            let node_count = db
+                .count_nodes_for_namespace(context.namespace)
+                .expect("should count nodes for namespace");
+            let inventory = db
+                .collect_namespace_inventory(context.namespace)
+                .expect("namespace inventory should build");
+
+            assert_eq!(
+                node_count,
+                inventory.descendant_ids.len(),
+                "count_nodes_for_namespace should match descendant_ids count for {}",
+                context.name
+            );
+            assert!(
+                node_count > 0,
+                "namespace {} should have at least one node",
+                context.name
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn count_embedded_for_namespace_returns_zero_without_embeddings() -> Result<(), PlokeError> {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let crate_contexts = db
+            .list_crate_context_rows()
+            .expect("workspace fixture should expose crate_context rows");
+
+        // Without setting up embeddings, count should be 0
+        for context in &crate_contexts {
+            let embedded_count = db
+                .count_embedded_for_namespace(context.namespace)
+                .expect("should count embedded nodes for namespace");
+            assert_eq!(
+                embedded_count, 0,
+                "namespace {} should have 0 embedded nodes before setup",
+                context.name
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn count_embedded_for_namespace_returns_accurate_counts_with_embeddings()
+    -> Result<(), PlokeError> {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        db.setup_multi_embedding()?;
+
+        let crate_contexts = db
+            .list_crate_context_rows()
+            .expect("workspace fixture should expose crate_context rows");
+        assert_eq!(
+            crate_contexts.len(),
+            2,
+            "expected two crate contexts for ws_fixture_01"
+        );
+
+        let active_set = db.with_active_set(|set| set.clone())?;
+
+        // Seed some embeddings for each namespace
+        for context in &crate_contexts {
+            let inventory = db
+                .collect_namespace_inventory(context.namespace)
+                .expect("namespace inventory should build");
+
+            // Get a few nodes from the namespace to embed
+            let nodes_to_embed: Vec<Uuid> =
+                inventory.descendant_ids.iter().take(3).copied().collect();
+
+            if !nodes_to_embed.is_empty() {
+                let embeddings: Vec<(Uuid, Vec<f32>)> = nodes_to_embed
+                    .iter()
+                    .map(|&id| (id, vec![0.0_f32; active_set.dims() as usize]))
+                    .collect();
+                db.update_embeddings_batch(embeddings)?;
+            }
+        }
+
+        // Now verify counts
+        for context in &crate_contexts {
+            let embedded_count = db
+                .count_embedded_for_namespace(context.namespace)
+                .expect("should count embedded nodes for namespace");
+            let node_count = db
+                .count_nodes_for_namespace(context.namespace)
+                .expect("should count nodes for namespace");
+
+            assert!(
+                embedded_count <= node_count,
+                "embedded count ({}) should not exceed total node count ({}) for {}",
+                embedded_count,
+                node_count,
+                context.name
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn count_nodes_for_namespace_returns_zero_for_unknown_namespace() -> Result<(), PlokeError> {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let unknown_namespace = Uuid::new_v4();
+
+        let count = db
+            .count_nodes_for_namespace(unknown_namespace)
+            .expect("should return count without error");
+        assert_eq!(count, 0, "unknown namespace should have 0 nodes");
+
+        let embedded_count = db
+            .count_embedded_for_namespace(unknown_namespace)
+            .expect("should return embedded count without error");
+        assert_eq!(
+            embedded_count, 0,
+            "unknown namespace should have 0 embedded nodes"
+        );
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn remove_namespace_removes_only_target_namespace_and_invalidates_search_state()
     -> Result<(), PlokeError> {
@@ -4636,6 +4879,142 @@ id = to_uuid("{exported_seeded_node}")"#
             }
             other => panic!("expected conflict report, got {other:?}"),
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn raw_query_at_timestamp_returns_historical_state() -> Result<(), DbError> {
+        // Set up a fresh database
+        let db = setup_db();
+
+        // Create a simple test relation with Validity for time travel
+        db.raw_query_mut(
+            r#":create test_items {
+                id: Int,
+                at: Validity,
+                =>
+                name: String
+            }"#,
+        )?;
+
+        // Insert first item
+        db.raw_query_mut(
+            r#"?[id, name, at] <- [[1, "first", "ASSERT"]]
+            :put test_items { id => name, at }"#,
+        )?;
+
+        // Get the current validity timestamp after first insert
+        let ts_after_first = db.current_validity_micros()?;
+
+        // Small delay to ensure timestamp advances (Cozo timestamps are microsecond-precision)
+        std::thread::sleep(std::time::Duration::from_millis(1));
+
+        // Insert second item
+        db.raw_query_mut(
+            r#"?[id, name, at] <- [[2, "second", "ASSERT"]]
+            :put test_items { id => name, at }"#,
+        )?;
+
+        // Query at NOW - should see both items
+        let current_result =
+            db.raw_query(r#"?[id, name] := *test_items{ id, name, at @ 'NOW' }"#)?;
+        assert_eq!(
+            current_result.rows.len(),
+            2,
+            "Should see both items at NOW, got: {:?}",
+            current_result.rows
+        );
+
+        // Query at the historical timestamp - should only see the first item
+        let historical_result = db.raw_query_at_timestamp(
+            r#"?[id, name] := *test_items{ id, name, at @ 'NOW' }"#,
+            ts_after_first,
+        )?;
+        assert_eq!(
+            historical_result.rows.len(),
+            1,
+            "Should see only first item at historical timestamp, got: {:?}",
+            historical_result.rows
+        );
+
+        // Verify the content of the historical result
+        let first_id = historical_result.rows[0][0]
+            .get_int()
+            .ok_or_else(|| DbError::QueryExecution("Expected int id".into()))?;
+        let first_name = historical_result.rows[0][1]
+            .get_str()
+            .ok_or_else(|| DbError::QueryExecution("Expected string name".into()))?;
+        assert_eq!(first_id, 1);
+        assert_eq!(first_name, "first");
+
+        Ok(())
+    }
+
+    #[test]
+    fn raw_query_at_timestamp_requires_validity_marker() {
+        let db = setup_db();
+
+        let err = db
+            .raw_query_at_timestamp("?[id] := [[1]]", 123)
+            .expect_err("historical helper should reject scripts without @ 'NOW'");
+
+        assert!(
+            matches!(err, DbError::QueryConstruction(_)),
+            "expected query-construction error, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("@ 'NOW'"),
+            "error should mention the required validity marker: {err}"
+        );
+    }
+
+    #[test]
+    fn raw_query_at_timestamp_rewrites_all_validity_markers() -> Result<(), DbError> {
+        let db = setup_db();
+
+        db.raw_query_mut(
+            r#":create left_items {
+                id: Int,
+                at: Validity,
+            }"#,
+        )?;
+        db.raw_query_mut(
+            r#":create right_items {
+                id: Int,
+                at: Validity,
+            }"#,
+        )?;
+
+        db.raw_query_mut(
+            r#"?[id, at] <- [[1, "ASSERT"]]
+            :put left_items { id, at }"#,
+        )?;
+        let left_only_timestamp = db.current_validity_micros()?;
+
+        std::thread::sleep(std::time::Duration::from_millis(1));
+
+        db.raw_query_mut(
+            r#"?[id, at] <- [[1, "ASSERT"]]
+            :put right_items { id, at }"#,
+        )?;
+
+        let join_query = r#"
+?[id] := *left_items{ id, at: left_at @ 'NOW' }, *right_items{ id, at: right_at @ 'NOW' }
+"#;
+
+        let current_result = db.raw_query(join_query)?;
+        assert_eq!(
+            current_result.rows.len(),
+            1,
+            "current query should see the later right_items insert"
+        );
+
+        let historical_result = db.raw_query_at_timestamp(join_query, left_only_timestamp)?;
+        assert!(
+            historical_result.rows.is_empty(),
+            "historical query should replace both NOW markers and hide right_items"
+        );
 
         Ok(())
     }

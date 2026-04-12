@@ -8,11 +8,13 @@
 // fn visit_impl_item_fn(&mut self, i: &'ast syn1::ImplItemFn)
 // fn visit_impl_item_const(&mut self, i: &'ast syn1::ImplItemConst)
 
-use super::attribute_processing_syn1::{extract_attributes, extract_cfg_strings, extract_docstring};
+use super::attribute_processing_syn1::{
+    extract_attributes, extract_cfg_strings, extract_docstring,
+};
 use super::state::VisitorState;
 use super::type_processing_syn1::get_or_create_type;
 use crate::parser::graph::GraphAccess;
-use crate::parser::nodes::{FunctionNodeId, GeneratesAnyNodeId, GenerateTypeId as _};
+use crate::parser::nodes::{FunctionNodeId, GenerateTypeId as _, GeneratesAnyNodeId};
 // NodeId wrapper types for individual node types
 use crate::parser::nodes::{
     EnumNodeId, FieldNodeId, ImplNodeId, ImportNodeId, MethodNodeId, ModuleNodeId, StaticNodeId,
@@ -72,7 +74,7 @@ fn convert_visibility_syn1(vis: &syn1::Visibility) -> VisibilityKind {
 }
 
 use crate::parser::relations::*;
-use crate::parser::types::{*, GenericParamNode};
+use crate::parser::types::{GenericParamNode, *};
 use crate::parser::visitor::calculate_cfg_hash_bytes;
 
 use crate::error::CodeVisitorError; // Import the new error type
@@ -109,9 +111,12 @@ impl<'a> CodeVisitor<'a> {
     }
 
     // Process function arguments for syn1 compatibility
-    fn process_fn_arg_syn1(&mut self, arg: &syn1::FnArg) -> Option<crate::parser::nodes::ParamData> {
+    fn process_fn_arg_syn1(
+        &mut self,
+        arg: &syn1::FnArg,
+    ) -> Option<crate::parser::nodes::ParamData> {
         use syn1::{FnArg, Pat, PatIdent, PatType};
-        
+
         match arg {
             FnArg::Typed(PatType { pat, ty, .. }) => {
                 // Get the TypeId for the parameter's type
@@ -135,16 +140,22 @@ impl<'a> CodeVisitor<'a> {
             FnArg::Receiver(receiver) => {
                 // Syn1 Receiver doesn't have a pre-computed `ty` field like syn2.
                 // We need to construct the type based on `reference` and `mutability`.
-                
+
                 // First, create/get the base `Self` type
                 let self_type_kind = TypeKind::Named {
                     path: vec!["Self".to_string()],
                     is_fully_qualified: false,
                 };
                 let self_type_id = self.state.generate_type_id(&self_type_kind, &[]);
-                
+
                 // Ensure the Self type is in the type graph
-                if !self.state.code_graph.type_graph.iter().any(|tn| tn.id == self_type_id) {
+                if !self
+                    .state
+                    .code_graph
+                    .type_graph
+                    .iter()
+                    .any(|tn| tn.id == self_type_id)
+                {
                     let self_type_node = crate::parser::types::TypeNode {
                         id: self_type_id,
                         kind: self_type_kind,
@@ -152,7 +163,7 @@ impl<'a> CodeVisitor<'a> {
                     };
                     self.state.code_graph.type_graph.push(self_type_node);
                 }
-                
+
                 // Determine the final type_id based on whether it's a reference
                 let type_id = if receiver.reference.is_some() {
                     // It's `&self` or `&mut self` - create a Reference type
@@ -161,9 +172,15 @@ impl<'a> CodeVisitor<'a> {
                         is_mutable: receiver.mutability.is_some(),
                     };
                     let ref_type_id = self.state.generate_type_id(&ref_type_kind, &[self_type_id]);
-                    
+
                     // Ensure the Reference type is in the type graph
-                    if !self.state.code_graph.type_graph.iter().any(|tn| tn.id == ref_type_id) {
+                    if !self
+                        .state
+                        .code_graph
+                        .type_graph
+                        .iter()
+                        .any(|tn| tn.id == ref_type_id)
+                    {
                         let ref_type_node = crate::parser::types::TypeNode {
                             id: ref_type_id,
                             kind: ref_type_kind,
@@ -171,7 +188,7 @@ impl<'a> CodeVisitor<'a> {
                         };
                         self.state.code_graph.type_graph.push(ref_type_node);
                     }
-                    
+
                     ref_type_id
                 } else {
                     // It's just `self` or `mut self` - use Self type directly
@@ -914,7 +931,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // --- CFG Handling for Field (Raw Strings) ---
             let field_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
-            let field_item_cfgs = super::attribute_processing_syn1::extract_cfg_strings(&field.attrs);
+            let field_item_cfgs =
+                super::attribute_processing_syn1::extract_cfg_strings(&field.attrs);
             let field_provisional_effective_cfgs: Vec<String> = field_scope_cfgs
                 .iter()
                 .cloned()
@@ -1061,7 +1079,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // --- CFG Handling for Field (Raw Strings) ---
             let field_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
-            let field_item_cfgs = super::attribute_processing_syn1::extract_cfg_strings(&field.attrs);
+            let field_item_cfgs =
+                super::attribute_processing_syn1::extract_cfg_strings(&field.attrs);
             let field_provisional_effective_cfgs: Vec<String> = field_scope_cfgs
                 .iter()
                 .cloned()
@@ -1302,7 +1321,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // --- CFG Handling for Field (Raw Strings) ---
             let field_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
-            let field_item_cfgs = super::attribute_processing_syn1::extract_cfg_strings(&field.attrs);
+            let field_item_cfgs =
+                super::attribute_processing_syn1::extract_cfg_strings(&field.attrs);
             let field_provisional_effective_cfgs: Vec<String> = field_scope_cfgs
                 .iter()
                 .cloned()
@@ -2504,14 +2524,15 @@ use statement ident: {:?}
         let _type_id = {
             // 1. Construct a representative syn1::Type for the external crate.
             //    Using just the crate name as the path is simplest.
-            let syn_type_path = syn1::parse_str::<syn1::TypePath>(&crate_name).unwrap_or_else(|_| {
-                // Fallback if crate_name isn't a valid path segment (highly unlikely)
-                eprintln!(
-                    "Warning: Could not parse extern crate name '{}' as a TypePath.",
-                    crate_name
-                );
-                syn1::parse_str::<syn1::TypePath>("__invalid_extern_crate_name__").unwrap()
-            });
+            let syn_type_path =
+                syn1::parse_str::<syn1::TypePath>(&crate_name).unwrap_or_else(|_| {
+                    // Fallback if crate_name isn't a valid path segment (highly unlikely)
+                    eprintln!(
+                        "Warning: Could not parse extern crate name '{}' as a TypePath.",
+                        crate_name
+                    );
+                    syn1::parse_str::<syn1::TypePath>("__invalid_extern_crate_name__").unwrap()
+                });
             let syn_type = syn1::Type::Path(syn_type_path);
 
             // 2. Use the standard function to get/create the TypeId and register the TypeNode.

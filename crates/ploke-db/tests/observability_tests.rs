@@ -13,11 +13,7 @@ fn current_validity_micros_returns_monotonic_timestamp() {
     let ts1 = db.current_validity_micros().expect("get first timestamp");
 
     // Timestamp should be positive (microseconds since epoch)
-    assert!(
-        ts1 > 0,
-        "expected positive timestamp, got {}",
-        ts1
-    );
+    assert!(ts1 > 0, "expected positive timestamp, got {}", ts1);
 
     // Get second timestamp - should be >= first (monotonic)
     let ts2 = db.current_validity_micros().expect("get second timestamp");
@@ -34,7 +30,7 @@ fn current_validity_micros_returns_monotonic_timestamp() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_micros() as i64;
-    
+
     let one_hour_micros = 60 * 60 * 1_000_000i64;
     assert!(
         ts1 > now_micros - one_hour_micros,
@@ -51,10 +47,10 @@ fn current_validity_micros_returns_monotonic_timestamp() {
 }
 
 /// Test current_validity_micros against a fixture database with real data.
-/// 
+///
 /// This validates that the timestamp helper works correctly on a database
 /// that contains actual fixture data (fixture_nodes), not just an empty schema.
-/// 
+///
 /// Uses shared_backup_fixture_db for fast, read-only access to cached fixture.
 #[test]
 fn current_validity_micros_works_with_fixture_database() {
@@ -63,13 +59,21 @@ fn current_validity_micros_works_with_fixture_database() {
         .expect("should load fixture_nodes_canonical backup");
 
     // Get timestamp from fixture database
-    let ts1 = db.current_validity_micros().expect("get timestamp from fixture db");
+    let ts1 = db
+        .current_validity_micros()
+        .expect("get timestamp from fixture db");
 
     // Timestamp should be positive
-    assert!(ts1 > 0, "expected positive timestamp from fixture db, got {}", ts1);
+    assert!(
+        ts1 > 0,
+        "expected positive timestamp from fixture db, got {}",
+        ts1
+    );
 
     // Get second timestamp - should be >= first (monotonic)
-    let ts2 = db.current_validity_micros().expect("get second timestamp from fixture db");
+    let ts2 = db
+        .current_validity_micros()
+        .expect("get second timestamp from fixture db");
     assert!(
         ts2 >= ts1,
         "expected monotonic timestamps on fixture db, got ts1={}, ts2={}",
@@ -82,7 +86,7 @@ fn current_validity_micros_works_with_fixture_database() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_micros() as i64;
-    
+
     // Allow 24 hours slack since fixture might be older
     let day_micros = 24 * 60 * 60 * 1_000_000i64;
     assert!(

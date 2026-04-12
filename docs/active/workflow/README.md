@@ -12,6 +12,7 @@ Key live entry points:
 - [evidence-ledger.md](evidence-ledger.md)
 - [failure-taxonomy.md](failure-taxonomy.md)
 - [priority-queue.md](priority-queue.md)
+- [longitudinal-metrics.md](longitudinal-metrics.md)
 - [edr/README.md](edr/README.md)
 - [postmortems/README.md](postmortems/README.md)
 - [handoffs/recent-activity.md](handoffs/recent-activity.md)

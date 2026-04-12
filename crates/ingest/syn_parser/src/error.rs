@@ -37,15 +37,16 @@ pub enum CodeVisitorError {
         expected_type: &'static str, // e.g., "ImportNodeId"
         source_error: crate::parser::nodes::AnyNodeIdConversionError, // Keep original error info
     },
-    
+
     /// Failed to convert a syn1 attribute to syn2 format.
-    #[error("syn1→syn2 attribute conversion failed: path={path}, tokens={tokens}, error={parse_error}")]
+    #[error(
+        "syn1→syn2 attribute conversion failed: path={path}, tokens={tokens}, error={parse_error}"
+    )]
     Syn1ToSyn2AttributeConversion {
         path: String,
         tokens: String,
         parse_error: String,
     },
-    
     // Add other visitor-specific errors here if needed
 }
 

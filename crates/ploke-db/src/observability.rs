@@ -158,13 +158,13 @@ impl Database {
     pub fn current_validity_micros(&self) -> Result<i64, DbError> {
         // Use the conversation_turn relation from the observability schema to capture timestamp.
         // This avoids creating temporary relations that may have transaction visibility issues.
-        
+
         // Ensure the observability schema exists
         self.ensure_observability_schema()?;
-        
+
         // Generate a unique ID for this timestamp capture
         let capture_id = uuid::Uuid::new_v4();
-        
+
         // Store a conversation turn to generate a validity timestamp
         let turn = ConversationTurn {
             id: capture_id,
@@ -172,12 +172,15 @@ impl Database {
             message_id: capture_id, // Use same ID for message
             kind: "_timestamp_capture".to_string(),
             content: "timestamp".to_string(),
-            created_at: Validity { at: 0, is_valid: true }, // Will be overridden by Cozo
+            created_at: Validity {
+                at: 0,
+                is_valid: true,
+            }, // Will be overridden by Cozo
             thread_id: None,
         };
-        
+
         self.upsert_conversation_turn(turn)?;
-        
+
         // Query for the validity timestamp of the fact we just stored
         let query_script = r#"
 ?[at_ms] :=
@@ -187,7 +190,7 @@ impl Database {
 :sort -at_ms
 :limit 1
 "#;
-        
+
         let rows = self
             .run_script(query_script, BTreeMap::new(), ScriptMutability::Immutable)
             .map_err(|e| DbError::Cozo(format!("Failed to query timestamp: {}", e)))?;
@@ -198,10 +201,10 @@ impl Database {
             ));
         }
 
-        let timestamp = rows.rows[0][0]
-            .get_int()
-            .ok_or_else(|| DbError::Cozo("Failed to get current validity timestamp: not an int".into()))?;
-        
+        let timestamp = rows.rows[0][0].get_int().ok_or_else(|| {
+            DbError::Cozo("Failed to get current validity timestamp: not an int".into())
+        })?;
+
         Ok(timestamp)
     }
 
