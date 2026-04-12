@@ -115,6 +115,7 @@ Pre-implementation survey addition from restart review:
 | `S3C` | `S3-META-PROCESS` | `accepted` | McClintock | `A4` | [S3C](./2026-04-12_S3C_meta-observability-inventory.md) | [report](./2026-04-12_S3C_report.md) | open the narrow `S3D` observational follow-up if meta-process validation is the next priority |
 | `S1D` | `S1-COHERENCE` | `accepted` | Hubble | `A5` | [S1D](./2026-04-12_S1D_inspect-cli-polish.md) | [report](./2026-04-12_S1D_report.md) | if more inspect UX hardening is desired, keep it narrow and avoid broad CLI redesign |
 | `S3D` | `S3-META-PROCESS` | `accepted` | Heisenberg | `A4` | [S3D](./2026-04-12_S3D_restart-rubric-sample.md) | [report](./2026-04-12_S3D_report.md) | keep the current recovery chain unchanged unless a later sample shows scan friction again |
+| `S1E` | `S1-COHERENCE` | `accepted` | Kierkegaard | `A5` | [S1E](./2026-04-12_S1E_setup-phase-test-cleanup.md) | [report](./2026-04-12_S1E_report.md) | no-change outcome: keep the shared test-only fixture builder in `setup_phase_integration.rs` and avoid coupling the test to broader runner-private setup logic |
 
 ## Dependency Notes
 
@@ -139,7 +140,7 @@ Pre-implementation survey addition from restart review:
 2. Keep the pre/post workspace baseline as the regression reference for the `P0C` slice: no timeout, no new failures, same two pre-existing `ploke-tui` integration failures before and after.
 3. Do not reopen the accepted P0 packets casually; create a narrow hardening packet if lookup ambiguity, replay differential evidence, or error-taxonomy cleanup is desired.
 4. The first post-P0 sidecar wave plus its immediate narrow follow-ups are now accepted: `S1B`, `S1C`, `S1D`, `S2C`, `S2D`, `S3C`, and `S3D` all have explicit reports and bounded outcomes.
-5. The next deliberate move is a program choice rather than an obvious missing packet: either advance to the next eval-design phase or open one more tightly scoped `ploke-eval` cleanup/polish packet.
+5. The next deliberate move is a program choice rather than an obvious missing packet: either advance to the next eval-design phase or formalize target/task run-policy decisions through the new target capability registry proposal.
 6. Treat `S2B` and `S3B` as accepted and keep their artifacts in the restart path.
 
 ## Resume Path

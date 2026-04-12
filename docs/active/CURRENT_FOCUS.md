@@ -1,6 +1,6 @@
 # Current Focus
 
-**Last Updated:** 2026-04-12 (S1D, S2D, and S3D follow-up packets accepted)
+**Last Updated:** 2026-04-12 (S1E no-change review plus target capability registry proposal)
 **Active Planning Doc:** [Eval Infra Sprint Control Plane](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
 
 ---
@@ -26,7 +26,9 @@ We are now running an **eval-infra sprint under an explicit multi-lane orchestra
    - `S2C` accepted the longitudinal metrics ingestion/bootstrap design, centered on an append-only JSONL companion plus regenerated markdown ledger
    - `S2D` accepted a tiny real-sample prototype that validates the JSONL-companion/regenerated-markdown shape while keeping canonical manifest keys and some telemetry fields explicitly hypothetical
    - `S3C` accepted the meta-observability inventory, and `S3D` now validates that the current recovery chain is working well enough that no new process change is supported yet
-7. **Current program decision** - the cleanest next move is either to advance to the next eval-design phase with the accepted sidecar findings in hand, or to open one more narrow `ploke-eval` cleanup/polish packet if you want to keep hardening the local eval UX before moving up-phase
+7. **Current program decision** - `S1E` now comes back as a no-change result, which means the suspected setup-phase test duplication is not a high-value cleanup target. The cleanest next move is either to advance to the next eval-design phase with the accepted sidecar findings in hand, or to formalize the new [target capability registry proposal](agents/2026-04-12_eval-infra-sprint/2026-04-12_target-capability-registry-proposal.md) into the active workflow for target/task run-policy decisions
+
+**Current planning proposal:** [Target Capability Registry Proposal](agents/2026-04-12_eval-infra-sprint/2026-04-12_target-capability-registry-proposal.md)
 
 **Control plane:** [2026-04-12_eval-infra-sprint-control-plane.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
 **Evidence base:** [AUDIT_SYNTHESIS.md](agents/phase-1-audit/AUDIT_SYNTHESIS.md)

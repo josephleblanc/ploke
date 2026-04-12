@@ -153,6 +153,22 @@
   - Added [S3D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3D_report.md) after sampling `CURRENT_FOCUS.md`, the control plane, and `recent-activity.md` against a restart rubric
   - The sample supports keeping the current recovery chain unchanged for now; no additional process change is justified yet
 
+- **S1E SEEDED**
+  - Added [S1E](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1E_setup-phase-test-cleanup.md) as the next narrow `ploke-eval` cleanup packet
+  - Scope is limited to the duplicated setup/helper path inside `crates/ploke-eval/tests/setup_phase_integration.rs`
+
+- **S1E ACCEPTED WITH NO-CHANGE OUTCOME**
+  - Added [S1E report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1E_report.md)
+  - The suspected duplication in `setup_phase_integration.rs` is a single shared test-only fixture builder, not shallow redundancy worth removing
+  - Operational consequence: this is not the next high-value `ploke-eval` cleanup target
+
+- **TARGET CAPABILITY REGISTRY PROPOSAL ADDED**
+  - Added durable schema/rules doc at [docs/workflow/target-capability-registry.md](../../../../docs/workflow/target-capability-registry.md)
+  - Added living registry at [target-capability-registry.md](../target-capability-registry.md)
+  - Added proposal note at [2026-04-12_target-capability-registry-proposal.md](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_target-capability-registry-proposal.md)
+  - Purpose: record parser blockers, modeling coverage gaps, and scaling constraints as target/task run-policy annotations so unfair targets can be skipped by default and revisited deliberately when new features bring them into scope
+  - Ripgrep is recorded as the example resolved-blocker case: the mixed-edition parser issue is no longer active, but the target remains useful as a regression/sentinel recheck
+
 ## 2026-04-11 (Late Evening)
 
 - **PHASE 1 AUDIT COMPLETE** — Critical gaps identified

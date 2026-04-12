@@ -13,6 +13,7 @@ Key live entry points:
 - [failure-taxonomy.md](failure-taxonomy.md)
 - [priority-queue.md](priority-queue.md)
 - [longitudinal-metrics.md](longitudinal-metrics.md)
+- [target-capability-registry.md](target-capability-registry.md)
 - [edr/README.md](edr/README.md)
 - [postmortems/README.md](postmortems/README.md)
 - [handoffs/recent-activity.md](handoffs/recent-activity.md)
