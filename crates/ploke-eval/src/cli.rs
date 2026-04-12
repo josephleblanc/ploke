@@ -1153,6 +1153,7 @@ Run-level inspection (matches eval-design.md API):
 Turn-level inspection:
 
   cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 --turn 1
+  cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 --turn 1 --show messages
 
 Bootstrap questions:
 
@@ -1795,15 +1796,7 @@ impl InspectTurnCommand {
                 println!("Outcome: {:?}", turn.outcome);
             }
             TurnShowOption::Messages => {
-                let messages = turn.messages();
-                if messages.is_empty() {
-                    println!("No messages available (placeholder implementation).");
-                } else {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&messages).map_err(PrepareError::Serialize)?
-                    );
-                }
+                println!("{}", render_messages_json(&turn.messages())?);
             }
             TurnShowOption::ToolCalls => {
                 let tool_calls = turn.tool_calls();
@@ -2138,6 +2131,12 @@ fn cozo_data_to_json(val: &cozo::DataValue) -> serde_json::Value {
             "debug": format!("{:?}", other),
         }),
     }
+}
+
+fn render_messages_json(
+    messages: &[crate::record::ConversationMessage],
+) -> Result<String, PrepareError> {
+    serde_json::to_string_pretty(messages).map_err(PrepareError::Serialize)
 }
 
 fn resolve_record_path(
@@ -2623,5 +2622,11 @@ mod tests {
             sanitize_batch_component("BurntSushi/ripgrep:pr-2209"),
             "burntsushi-ripgrep-pr-2209"
         );
+    }
+
+    #[test]
+    fn render_messages_json_renders_empty_lists_as_json_array() {
+        let messages: &[crate::record::ConversationMessage] = &[];
+        assert_eq!(render_messages_json(messages).expect("render should succeed"), "[]");
     }
 }

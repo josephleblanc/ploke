@@ -109,12 +109,12 @@ Pre-implementation survey addition from restart review:
 | `S2A` | `S2-LONGITUDINAL` | `accepted` | Goodall | `H0` | [S2A](./2026-04-12_S2A_longitudinal-metrics-design.md) | [report](./2026-04-12_S2A_longitudinal-metrics-report.md) | create the central metrics ledger packet and define formulas/denominators |
 | `S3A` | `S3-META-PROCESS` | `accepted` | Dewey | `A4` | [S3A](./2026-04-12_S3A_workflow-adherence-audit.md) | [report](./2026-04-12_S3A_workflow-adherence-audit-report.md) | create follow-up packet(s) for control-plane template and handoff/report template tightening |
 | `S2B` | `S2-LONGITUDINAL` | `accepted` | Peirce | `H0` | [S2B](./2026-04-12_S2B_longitudinal-metrics-ledger.md) | [report](./2026-04-12_S2B_longitudinal-metrics-ledger-report.md) | backfill a small sample of formal runs and then open capture/aggregation follow-up work |
-| `S2D` | `S2-LONGITUDINAL` | `ready` | unassigned | `H0` | [S2D](./2026-04-12_S2D_metrics-backfill-prototype.md) | none | validate the JSONL-companion/regenerated-ledger flow on a small real sample |
+| `S2D` | `S2-LONGITUDINAL` | `accepted` | Lovelace | `H0` | [S2D](./2026-04-12_S2D_metrics-backfill-prototype.md) | [report](./2026-04-12_S2D_report.md) | keep the prototype as the lightweight proof path until target-converged formal manifests exist |
 | `S3B` | `S3-META-PROCESS` | `accepted` | Franklin | `A4` | [S3B](./2026-04-12_S3B_control-plane-and-handoff-template-tightening.md) | [report](./2026-04-12_S3B_control-plane-and-handoff-template-tightening-report.md) | decide whether a short orchestration skill note is still needed after one more sprint |
 | `S2C` | `S2-LONGITUDINAL` | `accepted` | Gauss | `H0` | [S2C](./2026-04-12_S2C_metrics-ingestion-bootstrap.md) | [report](./2026-04-12_S2C_report.md) | prototype a tiny JSONL backfill/regeneration path on a small formal-run sample |
 | `S3C` | `S3-META-PROCESS` | `accepted` | McClintock | `A4` | [S3C](./2026-04-12_S3C_meta-observability-inventory.md) | [report](./2026-04-12_S3C_report.md) | open the narrow `S3D` observational follow-up if meta-process validation is the next priority |
-| `S1D` | `S1-COHERENCE` | `ready` | unassigned | `A5` | [S1D](./2026-04-12_S1D_inspect-cli-polish.md) | none | polish the inspect CLI around the empty `messages` placeholder and bootstrap-path discoverability |
-| `S3D` | `S3-META-PROCESS` | `ready` | unassigned | `A4` | [S3D](./2026-04-12_S3D_restart-rubric-sample.md) | none | run a tiny restart-rubric sample over recent handoffs/control-plane artifacts |
+| `S1D` | `S1-COHERENCE` | `accepted` | Hubble | `A5` | [S1D](./2026-04-12_S1D_inspect-cli-polish.md) | [report](./2026-04-12_S1D_report.md) | if more inspect UX hardening is desired, keep it narrow and avoid broad CLI redesign |
+| `S3D` | `S3-META-PROCESS` | `accepted` | Heisenberg | `A4` | [S3D](./2026-04-12_S3D_restart-rubric-sample.md) | [report](./2026-04-12_S3D_report.md) | keep the current recovery chain unchanged unless a later sample shows scan friction again |
 
 ## Dependency Notes
 
@@ -138,8 +138,8 @@ Pre-implementation survey addition from restart review:
 1. The blocking primary P0 lane is accepted end-to-end: `P0A`, `P0B`, `P0C0`, `P0C`, `P0D`, `P0E`, and `P0F` all have explicit reports and acceptance boundaries.
 2. Keep the pre/post workspace baseline as the regression reference for the `P0C` slice: no timeout, no new failures, same two pre-existing `ploke-tui` integration failures before and after.
 3. Do not reopen the accepted P0 packets casually; create a narrow hardening packet if lookup ambiguity, replay differential evidence, or error-taxonomy cleanup is desired.
-4. The first post-P0 sidecar audit/design wave is now accepted: `S1B`, `S1C`, `S2C`, and `S3C` all have explicit reports and bounded follow-up recommendations.
-5. Promote the next active work deliberately from the follow-up queue: `S1D` inspect-CLI polish, `S2D` metrics backfill/regeneration, or `S3D` restart-rubric sampling are the cleanest next packets.
+4. The first post-P0 sidecar wave plus its immediate narrow follow-ups are now accepted: `S1B`, `S1C`, `S1D`, `S2C`, `S2D`, `S3C`, and `S3D` all have explicit reports and bounded outcomes.
+5. The next deliberate move is a program choice rather than an obvious missing packet: either advance to the next eval-design phase or open one more tightly scoped `ploke-eval` cleanup/polish packet.
 6. Treat `S2B` and `S3B` as accepted and keep their artifacts in the restart path.
 
 ## Resume Path

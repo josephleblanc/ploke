@@ -18,7 +18,7 @@
   - explicit rubric dimensions and findings
   - concise recommendation tied to the sample rather than general preference
 - Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
-- Status: ready
+- Status: accepted
 
 ## Permission Gate
 

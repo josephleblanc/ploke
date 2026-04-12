@@ -1,7 +1,7 @@
 # Recent Activity
 
 - last_updated: 2026-04-12
-- ready_for: P0 eval-infra packet execution under active control plane
+- ready_for: post-P0 sidecar follow-up packets under active control plane
 - owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
@@ -132,6 +132,7 @@
   - Accepted [S1B report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1B_report.md) as a narrow `ploke-eval` cleanup slice: the redundant standalone introspection smoke test is gone, and `introspection_integration.rs` remains the canonical stronger suite
   - Accepted [S1C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1C_inspect-cli-ux-audit-report.md): the inspect CLI is usable as a bootstrap surface, but `inspect turn --show messages` still exposes a placeholder gap and is the cleanest polish follow-up
   - Accepted [S2C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2C_report.md): the longitudinal metrics path now specifies an append-only JSONL companion plus regenerated markdown ledger as the lightest-weight ingestion/bootstrap design
+  - Accepted [S2D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_report.md): a tiny real sample now proves the companion-row + regenerated-markdown shape, while canonical manifest keys and a few telemetry fields remain intentionally hypothetical
   - Accepted [S3C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3C_report.md): the highest-signal workflow sources are now explicit, and the recommended next step is a narrow observational `S3D` packet rather than a broad process rewrite
   - Operational consequence: the next decision is between bounded follow-up packets, not rediscovery of the primary lane or the first sidecar wave
 
@@ -139,6 +140,18 @@
   - Added [S1D](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1D_inspect-cli-polish.md) for the smallest inspect-CLI polish work exposed by `S1C`
   - Added [S2D](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_metrics-backfill-prototype.md) to validate the proposed JSONL-companion/regenerated-ledger path against a small real sample
   - Added [S3D](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3D_restart-rubric-sample.md) for a narrow restart-rubric observational pass over recent workflow artifacts
+
+- **S1D ACCEPTED**
+  - Replaced the misleading `inspect turn --show messages` placeholder with structured JSON output and kept bootstrap discoverability explicit in help text
+  - Accepted [S1D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1D_report.md) on targeted test and live-command evidence
+
+- **S2D ACCEPTED**
+  - Added [S2D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_report.md) plus a tiny sample companion row and regenerated markdown excerpt
+  - The sample shows that the backfill/render loop is viable on the current run-directory artifact set, but canonical manifest keys and some telemetry fields stay hypothetical until the formal manifest path lands
+
+- **S3D ACCEPTED**
+  - Added [S3D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3D_report.md) after sampling `CURRENT_FOCUS.md`, the control plane, and `recent-activity.md` against a restart rubric
+  - The sample supports keeping the current recovery chain unchanged for now; no additional process change is justified yet
 
 ## 2026-04-11 (Late Evening)
 

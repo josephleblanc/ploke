@@ -1,6 +1,6 @@
 # Current Focus
 
-**Last Updated:** 2026-04-12 (Post-P0 sidecar audit/design packets accepted)
+**Last Updated:** 2026-04-12 (S1D, S2D, and S3D follow-up packets accepted)
 **Active Planning Doc:** [Eval Infra Sprint Control Plane](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
 
 ---
@@ -22,10 +22,11 @@ We are now running an **eval-infra sprint under an explicit multi-lane orchestra
 5. **`P0F` is accepted** - turn-record fidelity and replay-state reconstruction inside `ploke-eval` no longer block the primary lane
 6. **Accepted sidecar outputs now shape the next move**:
    - `S1B` accepted a narrow `ploke-eval` cleanup slice by removing a redundant introspection smoke test and keeping `introspection_integration.rs` as the canonical stronger suite
-   - `S1C` accepted the inspect CLI audit and landed small help-text improvements; the main remaining UX hole is the empty `inspect turn --show messages` placeholder
+   - `S1C` accepted the inspect CLI audit and `S1D` now removes the empty `inspect turn --show messages` placeholder in favor of structured JSON output plus a direct bootstrap example
    - `S2C` accepted the longitudinal metrics ingestion/bootstrap design, centered on an append-only JSONL companion plus regenerated markdown ledger
-   - `S3C` accepted the meta-observability inventory and recommends a narrow observational follow-up rather than a broad process rewrite
-7. **Current program decision** - the cleanest next packets are now explicit in the control plane: [S1D inspect CLI polish](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1D_inspect-cli-polish.md), [S2D metrics backfill/regeneration prototype](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_metrics-backfill-prototype.md), and [S3D restart-rubric sampling](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3D_restart-rubric-sample.md). Choose one of those or advance to the next eval-design phase with the accepted sidecar findings in hand
+   - `S2D` accepted a tiny real-sample prototype that validates the JSONL-companion/regenerated-markdown shape while keeping canonical manifest keys and some telemetry fields explicitly hypothetical
+   - `S3C` accepted the meta-observability inventory, and `S3D` now validates that the current recovery chain is working well enough that no new process change is supported yet
+7. **Current program decision** - the cleanest next move is either to advance to the next eval-design phase with the accepted sidecar findings in hand, or to open one more narrow `ploke-eval` cleanup/polish packet if you want to keep hardening the local eval UX before moving up-phase
 
 **Control plane:** [2026-04-12_eval-infra-sprint-control-plane.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
 **Evidence base:** [AUDIT_SYNTHESIS.md](agents/phase-1-audit/AUDIT_SYNTHESIS.md)
@@ -35,7 +36,7 @@ We are now running an **eval-infra sprint under an explicit multi-lane orchestra
 **Current accepted historical-query packet:** [2026-04-12_P0C_report.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0C_report.md)
 **Current accepted lookup/replay packet:** [2026-04-12_P0DE_verification_report.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0DE_verification_report.md)
 **Current accepted fidelity packet:** [2026-04-12_P0F_retry-report.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_P0F_retry-report.md)
-**Accepted sidecar findings:** [S1A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1A_ploke-eval-coherence-audit-report.md), [S1B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1B_report.md), [S1C report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1C_inspect-cli-ux-audit-report.md), [S2A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md), [S2B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2B_longitudinal-metrics-ledger-report.md), [S2C report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2C_report.md), [S3A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3A_workflow-adherence-audit-report.md), [S3B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3B_control-plane-and-handoff-template-tightening-report.md), [S3C report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3C_report.md)
+**Accepted sidecar findings:** [S1A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1A_ploke-eval-coherence-audit-report.md), [S1B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1B_report.md), [S1C report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1C_inspect-cli-ux-audit-report.md), [S1D report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S1D_report.md), [S2A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md), [S2B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2B_longitudinal-metrics-ledger-report.md), [S2C report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2C_report.md), [S2D report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_report.md), [S3A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3A_workflow-adherence-audit-report.md), [S3B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3B_control-plane-and-handoff-template-tightening-report.md), [S3C report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3C_report.md), [S3D report](agents/2026-04-12_eval-infra-sprint/2026-04-12_S3D_report.md)
 
 **Recently completed:**
 - **Phase 1 Audit** - 4 sub-agents parallel investigation

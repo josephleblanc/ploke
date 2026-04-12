@@ -18,7 +18,7 @@
   - concise diff summary tied to concrete file references
   - explicit note on residual discoverability or coverage gaps
 - Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
-- Status: ready
+- Status: accepted
 
 ## Permission Gate
 

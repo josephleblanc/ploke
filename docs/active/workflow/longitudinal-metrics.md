@@ -64,3 +64,9 @@ Lightest-weight bootstrap path:
 - Automatable now: detect new formal runs, append new JSONL rows, regenerate the markdown ledger, and emit a compact delta summary.
 - Later: scheduled or event-driven refresh, automatic discovery across new workspaces, and direct publication of aggregate charts or dashboards.
 - Still blocked: metrics that depend on turn-level misuse or recovery capture until that telemetry exists.
+
+## Prototype Validation
+
+- Sample run: [S2D sample JSONL row](../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_sample.rows.jsonl) and [S2D sample render](../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_sample.rendered.md)
+- Proven now: a small real run sample can seed a companion row and regenerate a markdown view from the current run-directory artifacts.
+- Still hypothetical: target-converged `experiment_id` / `manifest_id`, timing, token-cost, and turn-level misuse/recovery capture.
