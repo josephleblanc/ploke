@@ -1,6 +1,7 @@
 use chrono::Utc;
 use ploke_core::file_hash::LargeFilePolicy;
 use ploke_core::{ArcStr, CrateId, CrateInfo, TrackingHash, WorkspaceInfo, WorkspaceRoots};
+use syn_parser::discovery::CrateContext;
 use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -557,7 +558,7 @@ impl LoadedWorkspaceState {
 
 #[derive(Debug, Clone)]
 pub struct LoadedCrateState {
-    pub info: CrateInfo,
+    pub context: CrateContext,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -622,7 +623,7 @@ impl SystemStatus {
     pub fn loaded_crate_roots(&self) -> Vec<PathBuf> {
         self.loaded_crates
             .values()
-            .map(|lc| lc.info.root_path.clone())
+            .map(|lc| lc.context.root_path.clone())
             .collect()
     }
 
@@ -630,21 +631,21 @@ impl SystemStatus {
         !self.loaded_crates.is_empty()
     }
 
-    /// Backward-compatible accessor: returns the first loaded crate's info.
+    /// Backward-compatible accessor: returns the first loaded crate's context.
     /// Callers that need a specific crate should use `loaded_crate(id)`.
-    pub fn focused_crate(&self) -> Option<&CrateInfo> {
-        self.loaded_crates.values().next().map(|lc| &lc.info)
+    pub fn focused_crate(&self) -> Option<&CrateContext> {
+        self.loaded_crates.values().next().map(|lc| &lc.context)
     }
 
     /// Backward-compatible accessor: returns the first loaded crate's root path.
     /// Callers that need a specific crate root should use `loaded_crate(id)`.
     pub fn focused_crate_root(&self) -> Option<PathBuf> {
-        self.focused_crate().map(|info| info.root_path.clone())
+        self.focused_crate().map(|ctx| ctx.root_path.clone())
     }
 
     /// Backward-compatible accessor: returns the first loaded crate's name.
     pub fn focused_crate_name(&self) -> Option<&str> {
-        self.focused_crate().map(|info| info.name.as_str())
+        self.focused_crate().map(|ctx| ctx.name.as_str())
     }
 
     /// Set initial pwd at application start
@@ -693,7 +694,19 @@ impl SystemStatus {
             self.workspace_freshness
                 .insert(info.id, WorkspaceFreshness::Fresh);
             self.loaded_crates
-                .insert(info.id, LoadedCrateState { info: info.clone() });
+                .insert(info.id, LoadedCrateState { context: CrateContext {
+                    id: info.id,
+                    name: info.name.clone(),
+                    version: String::new(),
+                    namespace: info.namespace,
+                    root_path: info.root_path.clone(),
+                    files: Vec::new(),
+                    targets: Vec::new(),
+                    features: syn_parser::discovery::Features::default(),
+                    dependencies: syn_parser::discovery::Dependencies::default(),
+                    dev_dependencies: syn_parser::discovery::DevDependencies::default(),
+                    workspace_path: None,
+                }});
         }
 
         self.loaded_workspace = Some(loaded_workspace);
@@ -710,7 +723,19 @@ impl SystemStatus {
             let id = info.id;
             self.crate_versions.entry(id).or_insert(0);
             self.loaded_crates
-                .insert(id, LoadedCrateState { info: info.clone() });
+                .insert(id, LoadedCrateState { context: CrateContext {
+                    id: info.id,
+                    name: info.name.clone(),
+                    version: String::new(),
+                    namespace: info.namespace,
+                    root_path: info.root_path.clone(),
+                    files: Vec::new(),
+                    targets: Vec::new(),
+                    features: syn_parser::discovery::Features::default(),
+                    dependencies: syn_parser::discovery::Dependencies::default(),
+                    dev_dependencies: syn_parser::discovery::DevDependencies::default(),
+                    workspace_path: None,
+                }});
             return id;
         }
 
@@ -720,14 +745,28 @@ impl SystemStatus {
     /// Loads a single crate as a standalone (no workspace) environment.
     /// Clears any previous loaded workspace and crate state.
     fn load_standalone_crate(&mut self, root: PathBuf) -> CrateId {
-        let info = CrateInfo::from_root_path(root.clone());
-        let id = info.id;
+        let context = CrateContext {
+            id: CrateId::from_root_path(&root),
+            name: root.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "unknown".to_string()),
+            version: String::new(),
+            namespace: CrateId::from_root_path(&root).uuid(),
+            root_path: root.clone(),
+            files: Vec::new(),
+            targets: Vec::new(),
+            features: syn_parser::discovery::Features::default(),
+            dependencies: syn_parser::discovery::Dependencies::default(),
+            dev_dependencies: syn_parser::discovery::DevDependencies::default(),
+            workspace_path: None,
+        };
+        let id = context.id;
         self.loaded_workspace = Some(LoadedWorkspaceState::from_member_roots(
             root,
-            vec![info.root_path.clone()],
+            vec![context.root_path.clone()],
         ));
         self.loaded_crates.clear();
-        self.loaded_crates.insert(id, LoadedCrateState { info });
+        self.loaded_crates.insert(id, LoadedCrateState { context });
         self.crate_versions.entry(id).or_insert(0);
         self.workspace_freshness
             .insert(id, WorkspaceFreshness::Fresh);

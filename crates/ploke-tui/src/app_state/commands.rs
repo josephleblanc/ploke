@@ -418,8 +418,8 @@ impl LoadCmd {
                     .values()
                     .map(|loaded| {
                         (
-                            loaded.info.name.clone(),
-                            loaded.info.root_path.display().to_string(),
+                            loaded.context.name.clone(),
+                            loaded.context.root_path.display().to_string(),
                         )
                     })
                     .collect::<Vec<_>>();

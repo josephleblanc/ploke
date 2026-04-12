@@ -8,6 +8,7 @@ use std::{
 };
 
 use cargo_toml::Manifest;
+use ploke_core::CrateId;
 pub use error::*;
 use serde::Serialize;
 pub use single_crate::*;
@@ -221,6 +222,7 @@ pub fn run_discovery_phase_with_target(
 
         // --- Combine into CrateContext (Always created, might have empty files) ---
         let context = CrateContext {
+            id: CrateId::from_root_path(&crate_root_path),
             name: crate_name.clone(),
             version: crate_version,
             namespace,
