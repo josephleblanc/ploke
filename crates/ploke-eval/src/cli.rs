@@ -2627,6 +2627,9 @@ mod tests {
     #[test]
     fn render_messages_json_renders_empty_lists_as_json_array() {
         let messages: &[crate::record::ConversationMessage] = &[];
-        assert_eq!(render_messages_json(messages).expect("render should succeed"), "[]");
+        assert_eq!(
+            render_messages_json(messages).expect("render should succeed"),
+            "[]"
+        );
     }
 }
