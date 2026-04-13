@@ -1,7 +1,7 @@
 # Recent Activity
 
 - last_updated: 2026-04-12
-- ready_for: post-P0 sidecar follow-up packets under active control plane
+- ready_for: bounded Phase 2 diagnostic follow-up under active control plane
 - owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
@@ -16,6 +16,36 @@
   - Rationale: Prevent unintended side effects on core infrastructure during eval work
 
 ## 2026-04-12
+
+- **`P2G` ACCEPTED; FIRST FORMAL PHASE 2 RUNS EXECUTED**
+  - Added [P2G report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2G_report.md)
+  - Accepted the narrow `ploke-eval` runner-surface follow-up:
+    - explicit arm provenance now distinguishes shell-only control vs structured treatment in runner artifacts
+    - selected endpoint provenance now persists in `execution-log.json` and `record.json.gz`
+    - provider/model metadata in `record.json.gz` now serializes under `selected_model` / `selected_provider` consistently with `execution-log.json`
+  - Executed the first bounded formal ripgrep packet against isolated output roots and observed:
+    - `moonshotai/kimi-k2.5` / `friendli` blocked immediately because the pinned provider was unavailable for the model in the refreshed registry
+    - `moonshotai/kimi-k2.5` / `baseten` reached real treatment traffic but hit upstream `429` throttling
+    - `moonshotai/kimi-k2.5` / `modelrun` captured endpoint provenance with `quantization = "fp4"` but then hit an OpenRouter `402` budget/credit ceiling
+    - `x-ai/grok-4-fast` / `xai` produced one aborted attempt with a transient `502`, then later completed treatment retries
+  - Operational consequence:
+    - the blocking uncertainty is no longer runner-surface ambiguity
+    - the next bounded move is CLI-first diagnostic introspection over the completed `BurntSushi__ripgrep-1294` `grok-4-fast` / `xai` retries
+
+- **CLI-FIRST PHASE 2 INTROSPECTION METHOD CONFIRMED**
+  - Surveyed `ploke-eval inspect` from `--help` and confirmed the main high-signal surfaces for this case are:
+    - `inspect tool-calls`
+    - `inspect turn --show messages`
+    - `conversations`
+  - Used the planning/design docs to tighten the method:
+    - treat the next packet as a diagnostic hypothesis, not a broad postmortem
+    - identify the earliest blocking layer first
+    - use one primary failure code and at most two secondary codes
+    - separate outcome metrics from validity/health metrics
+  - CLI-first classification on completed `grok-4-fast` / `xai` retries currently supports:
+    - primary code `MODEL_STRATEGY`
+    - secondary code `TOOL_SEMANTICS`
+    - no current evidence that `EVAL_HARNESS` or `RUNTIME_INFRA` explains the retry discrepancy
 
 - **EVAL ORCHESTRATION PROTOCOL ADOPTED** — active control plane created for Phase 1 P0 gaps
   - Created [Eval Orchestration Protocol](../../agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md) and compact [templates](../../agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-templates.md)
@@ -168,6 +198,95 @@
   - Added proposal note at [2026-04-12_target-capability-registry-proposal.md](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_target-capability-registry-proposal.md)
   - Purpose: record parser blockers, modeling coverage gaps, and scaling constraints as target/task run-policy annotations so unfair targets can be skipped by default and revisited deliberately when new features bring them into scope
   - Ripgrep is recorded as the example resolved-blocker case: the mixed-edition parser issue is no longer active, but the target remains useful as a regression/sentinel recheck
+
+- **TARGET CAPABILITY REGISTRY INTEGRATED INTO RESTART PATH**
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md) so the registry is treated as a live workflow artifact, not only a proposal
+  - Updated [workflow/README.md](../README.md) so target selection, run-policy decisions, and fairness interpretation explicitly consult [target-capability-registry.md](../target-capability-registry.md)
+  - Updated the active [eval infra sprint control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) resume path to read the registry before target-sensitive planning
+  - Operational consequence: cold starts and run-planning passes now have an explicit place to check known parser/modeling/scaling constraints before scheduling formal work
+
+- **PHASE 2 ENTRY PACKET SEEDED**
+  - Added [P2A - Phase 2 Entry Run Planning](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2A_phase-2-entry-run-planning.md)
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md) and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so `P2A` is the default resume point
+  - Purpose: convert the accepted Phase 1 substrate plus the live target capability registry into a bounded recommendation for the first Phase 2 baseline/control planning slice
+  - Expected output: candidate targets or subsets, explicit run-policy notes, remaining blockers, and one clear next packet recommendation
+
+- **P2A ACCEPTED; P2B SEEDED**
+  - Added [P2A report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2A_report.md)
+  - `P2A` recommends a conservative ripgrep-first Phase 2 entry path:
+    - `BurntSushi__ripgrep-1294` stays the documented mixed-edition `A2` sentinel
+    - `BurntSushi__ripgrep-2209` remains the replay/introspection reference artifact
+    - broader formal baseline/control scheduling stays blocked until `A2`, validity-guard policy, and manifest convergence are clearer
+  - Added [P2B - Ripgrep A2 Validation](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2B_ripgrep-a2-validation.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) to reflect the new blocker order
+
+- **P2B ACCEPTED; P2C SEEDED**
+  - Added [P2B report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2B_report.md)
+  - Ran the ripgrep sentinel re-entry check through the current code path instead of relying on the ambiguous older `BurntSushi__ripgrep-1294` run directory:
+    - targeted `syn_parser` edition-2015 repro tests passed
+    - a fresh temp-root `BurntSushi__ripgrep-1294` `run-msb-single` completed indexing and snapshotting
+    - no fresh `parse-failure.json` was emitted for the old `globset` failure path
+  - Operational consequence:
+    - the old ripgrep mixed-edition parser blocker is no longer the active Phase 2 gate
+    - ripgrep remains a useful regression sentinel, but it can also stay in the bounded baseline-candidate set
+    - formal baseline/control work is still blocked on validity-guard policy and manifest convergence
+  - Added [P2C - Validity-Guard Policy](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2C_validity-guard-policy.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [target-capability-registry.md](../target-capability-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) to reflect the new blocker order
+
+- **P2C ACCEPTED; P2D SEEDED**
+  - Added [P2C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2C_report.md)
+  - Reviewed the live workflow/design/config artifacts and made the validity-guard policy explicit:
+    - the draft experiment config already contains example numeric guards for provider and setup failures
+    - those numbers are not yet globally binding because [readiness-status.md](../readiness-status.md) still says current numeric validity guards remain draft unless adopted in an EDR or experiment config used for a formal run
+    - operational consequence: formal baseline/control work remains blocked, but now for a narrower reason than before; the ambiguity is no longer "what is the policy?" but "which concrete manifest/config surface will adopt it first?"
+  - Added [P2D - Manifest And Config Convergence](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2D_manifest-config-convergence.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so manifest/config convergence is now the leading Phase 2 gate
+
+- **P2D ACCEPTED; P2E SEEDED**
+  - Added [P2D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2D_report.md)
+  - Compared the draft run-manifest/config schemas against representative current `ploke-eval` runs and the current CLI/runner surfaces
+  - Accepted one bounded formal-run entry surface for the first formal Phase 2 packet:
+    - `run.json` as identity/budget anchor
+    - `execution-log.json` as model/provider execution source
+    - `repo-state.json`, `indexing-status.json`, and `snapshot-status.json` as provenance/validity sidecars
+    - `multi-swe-bench-submission.jsonl` as benchmark-facing output
+    - `record.json.gz` as optional replay-grade support when present
+  - Operational consequence:
+    - the programme no longer needs to rediscover where formal provenance and validity evidence live before opening the first real Phase 2 packet
+    - validity guards should be adopted in the first formal-run experiment config plus EDR, with explicit waivers for draft-only fields that are not yet harness-frozen
+  - Added [P2E - Phase 2 Formal Entry Planning](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2E_phase-2-formal-entry-planning.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so formal-entry planning is now the leading Phase 2 gate
+
+- **P2E ACCEPTED; P2F SEEDED**
+  - Added [P2E report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2E_report.md)
+  - Accepted the first narrow formal-entry plan:
+    - `BurntSushi__ripgrep-1294` is the single live anchor target for the first formal packet
+    - `BurntSushi__ripgrep-2209` remains reference-only for replay/introspection support
+    - one concrete experiment config is the binding runtime contract
+    - one paired EDR is the durable decision and waiver record
+  - Accepted the minimum first-packet validity guards:
+    - `max_provider_failure_rate`
+    - `max_setup_failure_rate`
+    - `require_full_telemetry`
+    - `require_frozen_subset`
+  - Accepted the first-packet waiver boundary for draft-only fields not frozen by current harness artifacts, including prompt provenance, tool-schema/policy fields, retry/timeout IDs, and observed wall time
+  - Added [P2F - Ripgrep First Formal Phase 2 Packet](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2F_ripgrep-formal-packet.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so the next move is authoring the first real formal packet rather than more pre-planning
+
+- **P2F ACCEPTED; P2G SEEDED**
+  - Added [2026-04-12_exp-001-ripgrep-1294-phase2-entry.config.json](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_exp-001-ripgrep-1294-phase2-entry.config.json) as the first concrete formal Phase 2 config artifact
+  - Added active [EDR-0001-ripgrep-1294-phase2-entry.md](../edr/EDR-0001-ripgrep-1294-phase2-entry.md) and updated the active EDR index
+  - Added [P2F report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2F_report.md)
+  - Accepted the first real formal packet at the workflow level:
+    - one config
+    - one EDR
+    - explicit adopted validity guards
+    - explicit waiver list
+  - Operational consequence:
+    - the remaining blocker is now a narrow `ploke-eval` execution-surface issue
+    - the current runner still hardcodes benchmark chat policy and does not yet expose a concrete per-arm shell-only versus structured control surface
+  - Added [P2G - Runner Arm Surface](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2G_runner-arm-surface.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so the next move is the `ploke-eval` runner prerequisite rather than more workflow planning
 
 ## 2026-04-11 (Late Evening)
 

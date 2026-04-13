@@ -336,6 +336,7 @@ async fn replay_query_works_with_run_record() {
     use ploke_eval::record::{
         AgentMetadata, BenchmarkMetadata, RunMetadata, RunRecord, RuntimeMetadata,
     };
+    use ploke_eval::runner::RunArm;
     use ploke_eval::spec::EvalBudget;
 
     // 1. Setup and index fixture
@@ -349,6 +350,7 @@ async fn replay_query_works_with_run_record() {
         schema_version: "run-record.v1".to_string(),
         manifest_id: "test-instance".to_string(),
         metadata: RunMetadata {
+            run_arm: RunArm::shell_only_control(),
             benchmark: BenchmarkMetadata {
                 instance_id: "test-instance".to_string(),
                 repo_root: fixture_path,

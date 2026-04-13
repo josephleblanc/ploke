@@ -13,7 +13,7 @@ use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
 use ploke_llm::manager::RequestMessage;
-use ploke_llm::request::models::ResponseItem;
+use ploke_llm::request::{endpoint::Endpoint, models::ResponseItem};
 use ploke_llm::router_only::{
     HasEndpoint,
     openrouter::{OpenRouter, OpenRouterModelId},
@@ -114,6 +114,49 @@ pub struct ReplayMsbBatchRequest {
     pub run_manifest: PathBuf,
     /// 1-based batch index to replay.
     pub batch_number: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunArmRole {
+    Control,
+    Treatment,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunArm {
+    pub id: String,
+    pub role: RunArmRole,
+    pub command: String,
+    pub execution: String,
+}
+
+impl RunArm {
+    pub fn shell_only_control() -> Self {
+        Self {
+            id: "shell-only".to_string(),
+            role: RunArmRole::Control,
+            command: "run-msb-single".to_string(),
+            execution: "setup-only".to_string(),
+        }
+    }
+
+    pub fn structured_current_policy_treatment() -> Self {
+        Self {
+            id: "structured-current-policy".to_string(),
+            role: RunArmRole::Treatment,
+            command: "run-msb-agent-single".to_string(),
+            execution: "agent-single-turn".to_string(),
+        }
+    }
+
+    pub fn for_agent_mode(agent_mode: bool) -> Self {
+        if agent_mode {
+            Self::structured_current_policy_treatment()
+        } else {
+            Self::shell_only_control()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,18 +427,51 @@ struct StartingDbCachePaths {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionLog {
     pub task_id: String,
+    pub run_arm: RunArm,
     pub repo_root: PathBuf,
     pub output_dir: PathBuf,
     pub selected_model: ModelId,
     pub selected_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_endpoint: Option<SelectedEndpointProvenance>,
     pub steps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SelectedEndpointProvenance {
+    pub provider_name: String,
+    pub provider_slug: String,
+    pub endpoint_name: String,
+    pub endpoint_model_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quantization: Option<String>,
+}
+
+impl SelectedEndpointProvenance {
+    fn from_endpoint(endpoint: &Endpoint) -> Self {
+        Self {
+            provider_name: endpoint.provider_name.as_str().to_string(),
+            provider_slug: endpoint.tag.provider_name.as_str().to_string(),
+            endpoint_name: endpoint.name.as_ref().to_string(),
+            endpoint_model_name: endpoint.model_name.as_str().to_string(),
+            quantization: endpoint.quantization.map(|q| q.as_str().to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedProviderSelection {
+    pub provider: ProviderKey,
+    pub endpoint: SelectedEndpointProvenance,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchInstanceResult {
     pub task_id: String,
+    pub run_arm: RunArm,
     pub run_manifest: PathBuf,
     pub execution_log: Option<PathBuf>,
+    pub record_path: Option<PathBuf>,
     pub turn_summary: Option<PathBuf>,
     pub msb_submission: Option<PathBuf>,
     pub status: String,
@@ -406,6 +482,7 @@ pub struct BatchInstanceResult {
 pub struct BatchRunSummary {
     pub batch_id: String,
     pub mode: String,
+    pub run_arm: RunArm,
     pub batch_manifest: PathBuf,
     pub output_dir: PathBuf,
     pub dataset_file: PathBuf,
@@ -917,7 +994,7 @@ async fn persist_starting_db_cache(
 pub(crate) async fn resolve_provider_for_model(
     selected_model: &ResponseItem,
     requested_provider: Option<&ProviderKey>,
-) -> Result<ProviderKey, PrepareError> {
+) -> Result<ResolvedProviderSelection, PrepareError> {
     if !selected_model.supports_tools() {
         return Err(PrepareError::DatabaseSetup {
             phase: "resolve_model_provider",
@@ -962,10 +1039,13 @@ pub(crate) async fn resolve_provider_for_model(
             });
         }
 
-        return Ok(requested_provider.clone());
+        return Ok(ResolvedProviderSelection {
+            provider: requested_provider.clone(),
+            endpoint: SelectedEndpointProvenance::from_endpoint(endpoint),
+        });
     }
 
-    tool_capable_provider_key(&endpoints.data.endpoints).ok_or_else(|| {
+    let provider = tool_capable_provider_key(&endpoints.data.endpoints).ok_or_else(|| {
         PrepareError::DatabaseSetup {
             phase: "resolve_model_provider",
             detail: format!(
@@ -973,20 +1053,43 @@ pub(crate) async fn resolve_provider_for_model(
                 selected_model.id
             ),
         }
+    })?;
+
+    let endpoint = endpoints
+        .data
+        .endpoints
+        .iter()
+        .find(|ep| ep.tag.provider_name.as_str() == provider.slug.as_str())
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "resolve_model_provider",
+            detail: format!(
+                "selected provider '{}' was chosen but its endpoint metadata was unavailable for model '{}'",
+                provider.slug.as_str(),
+                selected_model.id
+            ),
+        })?;
+
+    Ok(ResolvedProviderSelection {
+        provider,
+        endpoint: SelectedEndpointProvenance::from_endpoint(endpoint),
     })
 }
 
 impl RunMsbSingleRequest {
     pub async fn run(self) -> Result<RunArtifactPaths, PrepareError> {
+        let run_arm = RunArm::shell_only_control();
+        let setup_start_time = chrono::Utc::now();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
         let selected_model = resolve_model_for_run(self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
         let preferred_provider = load_provider_for_model(&selected_model_id)?;
-        let selected_provider = resolve_provider_for_model(
+        let resolved_provider = resolve_provider_for_model(
             &selected_model,
             self.provider.as_ref().or(preferred_provider.as_ref()),
         )
         .await?;
+        let selected_provider = resolved_provider.provider.clone();
+        let selected_endpoint = resolved_provider.endpoint.clone();
 
         fs::create_dir_all(&prepared.output_dir).map_err(|source| {
             PrepareError::CreateOutputDir {
@@ -1002,6 +1105,12 @@ impl RunMsbSingleRequest {
         let snapshot_status_path = prepared.output_dir.join("snapshot-status.json");
         let indexing_checkpoint_db = prepared.output_dir.join("indexing-checkpoint.db");
         let indexing_failure_db = prepared.output_dir.join("indexing-failure.db");
+        let record_path = prepared.output_dir.join("record.json.gz");
+
+        let mut run_record = RunRecord::new(&prepared, run_arm.clone());
+        run_record.metadata.agent.model_id = Some(selected_model_id.clone());
+        run_record.metadata.agent.provider = Some(selected_provider.slug.as_str().to_string());
+        run_record.metadata.agent.selected_endpoint = Some(selected_endpoint.clone());
 
         let mut steps = vec!["load_manifest".to_string()];
         checkout_repo_to_base(&prepared.repo_root, prepared.base_sha.as_deref())?;
@@ -1168,6 +1277,18 @@ impl RunMsbSingleRequest {
         write_json(&indexing_status_path, &indexing_status)?;
         steps.push("write_indexing_status".to_string());
 
+        let setup_phase = build_setup_phase(
+            &state.db,
+            &repo_state,
+            &indexing_status,
+            setup_start_time,
+            using_cached_starting_db,
+            &parse_failure_path,
+        )
+        .await?;
+        run_record.phases.setup = Some(setup_phase);
+        steps.push("populate_setup_phase".to_string());
+
         persist_db_snapshot(
             Arc::clone(&state.db),
             indexing_checkpoint_db.clone(),
@@ -1223,10 +1344,12 @@ impl RunMsbSingleRequest {
 
         let execution_log = ExecutionLog {
             task_id: prepared.task_id,
+            run_arm: run_arm.clone(),
             repo_root: prepared.repo_root,
             output_dir: prepared.output_dir,
             selected_model: selected_model_id,
             selected_provider: Some(selected_provider.slug.as_str().to_string()),
+            selected_endpoint: Some(selected_endpoint),
             steps,
         };
         write_json(&execution_log_path, &execution_log)?;
@@ -1242,6 +1365,16 @@ impl RunMsbSingleRequest {
         );
         record_last_run(&execution_log.output_dir)?;
 
+        if let Err(e) = write_compressed_record(&record_path, &run_record) {
+            warn!(
+                path = %record_path.display(),
+                error = %e,
+                "runner phase: failed to write compressed run record"
+            );
+        } else {
+            info!(path = %record_path.display(), "runner phase: wrote compressed run record");
+        }
+
         Ok(RunArtifactPaths {
             run_manifest: manifest_path,
             execution_log: execution_log_path,
@@ -1251,7 +1384,7 @@ impl RunMsbSingleRequest {
             indexing_failure_db,
             snapshot_status: snapshot_status_path,
             msb_submission: msb_submission_path,
-            record_path: None, // Will be populated when RunRecord emission is implemented
+            record_path: Some(record_path),
         })
     }
 }
@@ -1259,15 +1392,18 @@ impl RunMsbSingleRequest {
 impl RunMsbAgentSingleRequest {
     pub async fn run(self) -> Result<AgentRunArtifactPaths, PrepareError> {
         let setup_start_time = chrono::Utc::now();
+        let run_arm = RunArm::structured_current_policy_treatment();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
         let selected_model = resolve_model_for_run(self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
         let preferred_provider = load_provider_for_model(&selected_model_id)?;
-        let selected_provider = resolve_provider_for_model(
+        let resolved_provider = resolve_provider_for_model(
             &selected_model,
             self.provider.as_ref().or(preferred_provider.as_ref()),
         )
         .await?;
+        let selected_provider = resolved_provider.provider.clone();
+        let selected_endpoint = resolved_provider.endpoint.clone();
 
         fs::create_dir_all(&prepared.output_dir).map_err(|source| {
             PrepareError::CreateOutputDir {
@@ -1288,7 +1424,10 @@ impl RunMsbAgentSingleRequest {
         let record_path = prepared.output_dir.join("record.json.gz");
 
         // Initialize RunRecord for comprehensive run persistence (Phase 1E)
-        let mut run_record = RunRecord::new(&prepared);
+        let mut run_record = RunRecord::new(&prepared, run_arm.clone());
+        run_record.metadata.agent.model_id = Some(selected_model_id.clone());
+        run_record.metadata.agent.provider = Some(selected_provider.slug.as_str().to_string());
+        run_record.metadata.agent.selected_endpoint = Some(selected_endpoint.clone());
 
         let mut steps = vec!["load_manifest".to_string()];
         checkout_repo_to_base(&prepared.repo_root, prepared.base_sha.as_deref())?;
@@ -1563,10 +1702,12 @@ impl RunMsbAgentSingleRequest {
 
         let execution_log = ExecutionLog {
             task_id: prepared.task_id,
+            run_arm: run_arm.clone(),
             repo_root: prepared.repo_root,
             output_dir: prepared.output_dir,
             selected_model: selected_model_id,
             selected_provider: Some(selected_provider.slug.as_str().to_string()),
+            selected_endpoint: Some(selected_endpoint),
             steps,
         };
         write_json(&execution_log_path, &execution_log)?;
@@ -1649,6 +1790,7 @@ async fn run_batch(
     stop_on_error: bool,
     agent_mode: bool,
 ) -> Result<BatchRunArtifactPaths, PrepareError> {
+    let run_arm = RunArm::for_agent_mode(agent_mode);
     let (manifest_path, prepared) = load_prepared_batch(batch_manifest)?;
     fs::create_dir_all(&prepared.output_dir).map_err(|source| PrepareError::CreateOutputDir {
         path: prepared.output_dir.clone(),
@@ -1658,11 +1800,12 @@ async fn run_batch(
     let selected_model = resolve_model_for_run(use_default_model)?;
     let selected_model_id = selected_model.id.clone();
     let preferred_provider = load_provider_for_model(&selected_model_id)?;
-    let selected_provider = resolve_provider_for_model(
+    let resolved_provider = resolve_provider_for_model(
         &selected_model,
         provider.as_ref().or(preferred_provider.as_ref()),
     )
     .await?;
+    let selected_provider = resolved_provider.provider;
 
     let summary_path = prepared.output_dir.join("batch-run-summary.json");
     let submission_path = prepared.output_dir.join("multi-swe-bench-submission.jsonl");
@@ -1700,8 +1843,10 @@ async fn run_batch(
                     }
                     instance_results.push(BatchInstanceResult {
                         task_id: task_id.clone(),
+                        run_arm: run_arm.clone(),
                         run_manifest,
                         execution_log: Some(artifacts.base.execution_log),
+                        record_path: artifacts.base.record_path,
                         turn_summary: Some(artifacts.turn_summary),
                         msb_submission: artifacts.base.msb_submission,
                         status: "completed".to_string(),
@@ -1711,8 +1856,10 @@ async fn run_batch(
                 Err(err) => {
                     instance_results.push(BatchInstanceResult {
                         task_id: task_id.clone(),
+                        run_arm: run_arm.clone(),
                         run_manifest,
                         execution_log: None,
+                        record_path: None,
                         turn_summary: None,
                         msb_submission: None,
                         status: "failed".to_string(),
@@ -1748,8 +1895,10 @@ async fn run_batch(
                     }
                     instance_results.push(BatchInstanceResult {
                         task_id: task_id.clone(),
+                        run_arm: run_arm.clone(),
                         run_manifest,
                         execution_log: Some(artifacts.execution_log),
+                        record_path: artifacts.record_path,
                         turn_summary: None,
                         msb_submission: artifacts.msb_submission,
                         status: "completed".to_string(),
@@ -1759,8 +1908,10 @@ async fn run_batch(
                 Err(err) => {
                     instance_results.push(BatchInstanceResult {
                         task_id: task_id.clone(),
+                        run_arm: run_arm.clone(),
                         run_manifest,
                         execution_log: None,
+                        record_path: None,
                         turn_summary: None,
                         msb_submission: None,
                         status: "failed".to_string(),
@@ -1796,6 +1947,7 @@ async fn run_batch(
         } else {
             "msb_batch".to_string()
         },
+        run_arm: run_arm.clone(),
         batch_manifest: manifest_path.clone(),
         output_dir: prepared.output_dir,
         dataset_file: prepared.dataset_file,
@@ -3026,6 +3178,46 @@ mod tests {
         };
 
         assert!(indexing_status_artifact_for_error(&err).is_none());
+    }
+
+    #[test]
+    fn run_arm_constants_match_phase_two_surface() {
+        let control = RunArm::shell_only_control();
+        let treatment = RunArm::structured_current_policy_treatment();
+
+        assert_eq!(control.role, RunArmRole::Control);
+        assert_eq!(control.command, "run-msb-single");
+        assert_eq!(treatment.role, RunArmRole::Treatment);
+        assert_eq!(treatment.command, "run-msb-agent-single");
+        assert_eq!(RunArm::for_agent_mode(false), control);
+        assert_eq!(RunArm::for_agent_mode(true), treatment);
+    }
+
+    #[test]
+    fn execution_log_serializes_explicit_run_arm() {
+        let log = ExecutionLog {
+            task_id: "case-123".to_string(),
+            run_arm: RunArm::shell_only_control(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            output_dir: PathBuf::from("/tmp/out"),
+            selected_model: ploke_llm::ModelId::from(ploke_llm::ModelKey::default()),
+            selected_provider: Some("friendli".to_string()),
+            selected_endpoint: Some(SelectedEndpointProvenance {
+                provider_name: "Friendli".to_string(),
+                provider_slug: "friendli".to_string(),
+                endpoint_name: "Friendli | moonshotai/kimi-k2.5".to_string(),
+                endpoint_model_name: "Kimi K2.5".to_string(),
+                quantization: Some("fp4".to_string()),
+            }),
+            steps: vec!["load_manifest".to_string()],
+        };
+
+        let value = serde_json::to_value(&log).expect("serialize execution log");
+        assert_eq!(value["run_arm"]["id"], "shell-only");
+        assert_eq!(value["run_arm"]["role"], "control");
+        assert_eq!(value["run_arm"]["command"], "run-msb-single");
+        assert_eq!(value["selected_endpoint"]["provider_slug"], "friendli");
+        assert_eq!(value["selected_endpoint"]["quantization"], "fp4");
     }
 
     #[test]

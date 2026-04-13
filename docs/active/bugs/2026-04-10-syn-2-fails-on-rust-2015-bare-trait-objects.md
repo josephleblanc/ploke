@@ -1,10 +1,10 @@
 # Bug: syn 2.x fails to parse Rust 2015 bare trait objects
 
 **Date Discovered:** 2026-04-10  
-**Date Fixed:** (Not yet implemented - planned for Phase 1 follow-up)  
+**Date Fixed:** 2026-04-11 (implementation), 2026-04-12 (`P2B` sentinel re-entry validated)  
 **Crate Affected:** `syn_parser`  
 **Severity:** High - Blocks evaluation on common Rust 2015 crates  
-**Status:** Accepted - Solution selected, awaiting implementation
+**Status:** Fixed and revalidated on ripgrep sentinel
 
 ## Summary
 

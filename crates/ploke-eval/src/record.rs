@@ -104,7 +104,7 @@ pub use ploke_llm::types::model_types::ModelId;
 
 use crate::runner::{
     AgentTurnArtifact, IndexingStatusArtifact, ObservedTurnEvent, PatchArtifact, RepoStateArtifact,
-    ToolCompletedRecord, ToolFailedRecord, ToolRequestRecord,
+    RunArm, SelectedEndpointProvenance, ToolCompletedRecord, ToolFailedRecord, ToolRequestRecord,
 };
 use crate::spec::{EvalBudget, IssueInput, PreparedSingleRun};
 
@@ -167,11 +167,11 @@ pub struct RunRecord {
 
 impl RunRecord {
     /// Create a new RunRecord with the given manifest.
-    pub fn new(manifest: &PreparedSingleRun) -> Self {
+    pub fn new(manifest: &PreparedSingleRun, run_arm: RunArm) -> Self {
         Self {
             schema_version: RUN_RECORD_SCHEMA_VERSION.to_string(),
             manifest_id: manifest.task_id.clone(),
-            metadata: RunMetadata::from_manifest(manifest),
+            metadata: RunMetadata::from_manifest(manifest, run_arm),
             phases: RunPhases::default(),
             db_time_travel_index: Vec::new(),
             conversation: Vec::new(),
@@ -552,6 +552,9 @@ fn turn_outcome_from_artifact(artifact: &AgentTurnArtifact, tool_call_count: usi
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMetadata {
+    /// Explicit arm provenance for control vs treatment recovery.
+    pub run_arm: RunArm,
+
     /// The benchmark instance being evaluated.
     pub benchmark: BenchmarkMetadata,
 
@@ -567,8 +570,9 @@ pub struct RunMetadata {
 
 impl RunMetadata {
     /// Extract metadata from a PreparedSingleRun.
-    pub fn from_manifest(manifest: &PreparedSingleRun) -> Self {
+    pub fn from_manifest(manifest: &PreparedSingleRun, run_arm: RunArm) -> Self {
         Self {
+            run_arm,
             benchmark: BenchmarkMetadata {
                 instance_id: manifest.task_id.clone(),
                 repo_root: manifest.repo_root.clone(),
@@ -603,12 +607,24 @@ pub struct BenchmarkMetadata {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentMetadata {
     /// Selected model ID (e.g., "anthropic/claude-sonnet-4").
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "selected_model",
+        alias = "model_id",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub model_id: Option<ModelId>,
 
     /// Provider used (e.g., "openrouter", "anthropic").
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "selected_provider",
+        alias = "provider",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub provider: Option<String>,
+
+    /// Selected endpoint provenance from provider resolution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_endpoint: Option<SelectedEndpointProvenance>,
 
     /// System prompt identifier (hash or version).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1485,6 +1501,7 @@ mod tests {
             schema_version: RUN_RECORD_SCHEMA_VERSION.to_string(),
             manifest_id: "test-instance-001".to_string(),
             metadata: RunMetadata {
+                run_arm: RunArm::shell_only_control(),
                 benchmark: BenchmarkMetadata {
                     instance_id: "test-instance-001".to_string(),
                     repo_root: std::path::PathBuf::from("/test/repo"),
@@ -1603,6 +1620,7 @@ mod tests {
         // Verify key fields match
         assert_eq!(loaded.schema_version, original.schema_version);
         assert_eq!(loaded.manifest_id, original.manifest_id);
+        assert_eq!(loaded.metadata.run_arm, original.metadata.run_arm);
         assert_eq!(
             loaded.metadata.benchmark.instance_id,
             original.metadata.benchmark.instance_id
@@ -1669,6 +1687,101 @@ mod tests {
             "Compression should reduce file size: JSON={}, compressed={}",
             json_size,
             compressed_size
+        );
+    }
+
+    #[test]
+    fn run_record_new_captures_explicit_run_arm() {
+        let manifest = PreparedSingleRun {
+            task_id: "case-123".to_string(),
+            repo_root: std::path::PathBuf::from("/tmp/repo"),
+            output_dir: std::path::PathBuf::from("/tmp/out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("Body".to_string()),
+                body_path: None,
+            },
+            base_sha: Some("abc123".to_string()),
+            head_sha: None,
+            budget: crate::spec::EvalBudget::default(),
+            source: None,
+        };
+
+        let record = RunRecord::new(&manifest, RunArm::structured_current_policy_treatment());
+        assert_eq!(
+            record.metadata.run_arm,
+            RunArm::structured_current_policy_treatment()
+        );
+        assert_eq!(record.metadata.benchmark.instance_id, "case-123");
+    }
+
+    #[test]
+    fn agent_metadata_roundtrips_selected_endpoint_provenance() {
+        let metadata = AgentMetadata {
+            model_id: Some(ModelId::from_str("moonshotai/kimi-k2.5").expect("model id")),
+            provider: Some("modelrun".to_string()),
+            selected_endpoint: Some(SelectedEndpointProvenance {
+                provider_name: "ModelRun".to_string(),
+                provider_slug: "modelrun".to_string(),
+                endpoint_name: "ModelRun | moonshotai/kimi-k2.5".to_string(),
+                endpoint_model_name: "Kimi K2.5".to_string(),
+                quantization: Some("fp4".to_string()),
+            }),
+            system_prompt_version: None,
+            tool_schema_version: None,
+        };
+
+        let json = serde_json::to_string(&metadata).expect("serialize agent metadata");
+        assert!(json.contains("\"selected_endpoint\""));
+        assert!(json.contains("\"selected_model\":\"moonshotai/kimi-k2.5\""));
+        assert!(json.contains("\"selected_provider\":\"modelrun\""));
+        assert!(json.contains("\"quantization\":\"fp4\""));
+
+        let roundtrip: AgentMetadata =
+            serde_json::from_str(&json).expect("deserialize agent metadata");
+        assert_eq!(
+            roundtrip.model_id,
+            Some(ModelId::from_str("moonshotai/kimi-k2.5").expect("model id"))
+        );
+        assert_eq!(roundtrip.provider.as_deref(), Some("modelrun"));
+        assert_eq!(
+            roundtrip
+                .selected_endpoint
+                .expect("selected endpoint")
+                .quantization
+                .as_deref(),
+            Some("fp4")
+        );
+    }
+
+    #[test]
+    fn agent_metadata_accepts_legacy_model_and_provider_keys() {
+        let legacy_json = r#"{
+            "model_id": "moonshotai/kimi-k2.5",
+            "provider": "modelrun",
+            "selected_endpoint": {
+                "provider_name": "ModelRun",
+                "provider_slug": "modelrun",
+                "endpoint_name": "ModelRun | moonshotai/kimi-k2.5",
+                "endpoint_model_name": "Kimi K2.5",
+                "quantization": "fp4"
+            }
+        }"#;
+
+        let roundtrip: AgentMetadata =
+            serde_json::from_str(legacy_json).expect("deserialize legacy agent metadata");
+        assert_eq!(
+            roundtrip.model_id,
+            Some(ModelId::from_str("moonshotai/kimi-k2.5").expect("model id"))
+        );
+        assert_eq!(roundtrip.provider.as_deref(), Some("modelrun"));
+        assert_eq!(
+            roundtrip
+                .selected_endpoint
+                .expect("selected endpoint")
+                .quantization
+                .as_deref(),
+            Some("fp4")
         );
     }
 

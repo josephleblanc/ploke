@@ -15,7 +15,7 @@ Use `EDR-XXXX-short-title.md`.
 
 ### Active
 
-- none yet
+- [EDR-0001-ripgrep-1294-phase2-entry.md](EDR-0001-ripgrep-1294-phase2-entry.md)
 
 ### Complete
 

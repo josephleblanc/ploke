@@ -53,6 +53,13 @@ that should continue when they do not interfere with the primary lane.
   - blocking: no, but active
   - review cadence: weekly plus a spot-check after each major packet batch
 
+### Phase 2 Entry Lane
+
+- lane_id: `PHASE2-ENTRY`
+  - purpose: convert the accepted Phase 1 substrate and live workflow artifacts into the first bounded Phase 2 run-planning and baseline-entry decisions
+  - blocking: yes for advancing into formal baseline/control work
+  - review cadence: after each planning packet disposition until the first Phase 2 execution packet is accepted
+
 ## Primary Lane Acceptance Boundary
 
 The blocking lane is complete only when all of the following are true:
@@ -116,6 +123,13 @@ Pre-implementation survey addition from restart review:
 | `S1D` | `S1-COHERENCE` | `accepted` | Hubble | `A5` | [S1D](./2026-04-12_S1D_inspect-cli-polish.md) | [report](./2026-04-12_S1D_report.md) | if more inspect UX hardening is desired, keep it narrow and avoid broad CLI redesign |
 | `S3D` | `S3-META-PROCESS` | `accepted` | Heisenberg | `A4` | [S3D](./2026-04-12_S3D_restart-rubric-sample.md) | [report](./2026-04-12_S3D_report.md) | keep the current recovery chain unchanged unless a later sample shows scan friction again |
 | `S1E` | `S1-COHERENCE` | `accepted` | Kierkegaard | `A5` | [S1E](./2026-04-12_S1E_setup-phase-test-cleanup.md) | [report](./2026-04-12_S1E_report.md) | no-change outcome: keep the shared test-only fixture builder in `setup_phase_integration.rs` and avoid coupling the test to broader runner-private setup logic |
+| `P2A` | `PHASE2-ENTRY` | `accepted` | orchestrator | `A2` / `A3` / `H0` | [P2A](./2026-04-12_P2A_phase-2-entry-run-planning.md) | [report](./2026-04-12_P2A_report.md) | treat `P2B` as the default next packet: validate ripgrep `A2` readiness before any formal baseline/control batch |
+| `P2B` | `PHASE2-ENTRY` | `accepted` | orchestrator | `A2` | [P2B](./2026-04-12_P2B_ripgrep-a2-validation.md) | [report](./2026-04-12_P2B_report.md) | keep ripgrep in the baseline-candidate set, but move the blocking lane to `P2C` validity-guard policy |
+| `P2C` | `PHASE2-ENTRY` | `accepted` | orchestrator | `A3` / `H0` | [P2C](./2026-04-12_P2C_validity-guard-policy.md) | [report](./2026-04-12_P2C_report.md) | keep formal baseline/control scheduling blocked until explicit guard adoption happens through a concrete formal-run config or EDR |
+| `P2D` | `PHASE2-ENTRY` | `accepted` | orchestrator | `A3` / `A4` / `H0` | [P2D](./2026-04-12_P2D_manifest-config-convergence.md) | [report](./2026-04-12_P2D_report.md) | use the bounded formal-run entry surface instead of assuming the target-converged manifest already exists |
+| `P2E` | `PHASE2-ENTRY` | `accepted` | orchestrator | `A3` / `A4` / `H0` | [P2E](./2026-04-12_P2E_phase-2-formal-entry-planning.md) | [report](./2026-04-12_P2E_report.md) | keep the first formal packet narrow around `BurntSushi__ripgrep-1294`, one config/EDR pair, and explicit waivers |
+| `P2F` | `PHASE2-ENTRY` | `accepted` | orchestrator | `A3` / `A4` / `H0` | [P2F](./2026-04-12_P2F_ripgrep-formal-packet.md) | [report](./2026-04-12_P2F_report.md) | use the authored config/EDR pair and explicit waiver list instead of reopening formal-packet scope |
+| `P2G` | `PHASE2-ENTRY` | `accepted` | orchestrator | `A3` / `A4` / `H0` | [P2G](./2026-04-12_P2G_runner-arm-surface.md) | [report](./2026-04-12_P2G_report.md) | use the accepted runner-arm and endpoint-provenance surface, then open a bounded CLI-first diagnostic packet for the completed `grok-4-fast` / `xai` treatment retries |
 
 ## Dependency Notes
 
@@ -140,8 +154,16 @@ Pre-implementation survey addition from restart review:
 2. Keep the pre/post workspace baseline as the regression reference for the `P0C` slice: no timeout, no new failures, same two pre-existing `ploke-tui` integration failures before and after.
 3. Do not reopen the accepted P0 packets casually; create a narrow hardening packet if lookup ambiguity, replay differential evidence, or error-taxonomy cleanup is desired.
 4. The first post-P0 sidecar wave plus its immediate narrow follow-ups are now accepted: `S1B`, `S1C`, `S1D`, `S2C`, `S2D`, `S3C`, and `S3D` all have explicit reports and bounded outcomes.
-5. The next deliberate move is a program choice rather than an obvious missing packet: either advance to the next eval-design phase or formalize target/task run-policy decisions through the new target capability registry proposal.
-6. Treat `S2B` and `S3B` as accepted and keep their artifacts in the restart path.
+5. The target capability registry is now a live workflow artifact and part of the restart path for target/task run-policy decisions; use it before scheduling or interpreting fairness-sensitive runs.
+6. `P2A` is accepted and recommends a conservative ripgrep-first Phase 2 entry path: treat `BurntSushi__ripgrep-1294` as the `A2` sentinel, `BurntSushi__ripgrep-2209` as the replay/introspection reference artifact, and defer formal baseline/control scheduling until `A2` is revalidated.
+7. `P2B` is now accepted: the ripgrep mixed-edition sentinel no longer supports the old parser-blocker claim, so ripgrep can stay in the candidate set rather than sentinel-only quarantine.
+8. `P2C` is now accepted: current numeric validity guards exist only as draft examples until adopted in an EDR or concrete formal-run experiment config, so formal baseline/control work remains blocked.
+9. `P2D` is now accepted: the first formal Phase 2 packet should use an explicit bounded entry surface built from current run artifacts instead of assuming the target-converged manifest already exists.
+10. `P2E` is now accepted: the first formal Phase 2 packet should stay narrow around `BurntSushi__ripgrep-1294`, one concrete config/EDR pair, explicit adopted guards, and an explicit waiver list.
+11. `P2F` is now accepted: the first real formal packet is authored at the workflow level as one config plus one EDR, with explicit adopted guards and explicit waivers.
+12. `P2G` is now accepted: the runner surface preserves explicit arm and endpoint provenance, and the first formal packet is executable at the `ploke-eval` layer.
+13. The active next move is a bounded CLI-first diagnostic packet over the completed `BurntSushi__ripgrep-1294` `x-ai/grok-4-fast` / `xai` treatment retries so behavioral variance can be classified without collapsing it into harness or infra noise.
+14. Treat `S2B` and `S3B` as accepted and keep their artifacts in the restart path.
 
 ## Resume Path
 
@@ -152,5 +174,6 @@ If replacing the orchestrator:
 3. read `docs/active/workflow/readiness-status.md`
 4. read `docs/active/workflow/handoffs/recent-activity.md`
 5. read `docs/active/plans/evals/phased-exec-plan.md`
-6. read this file
-7. open the highest-priority non-accepted packet in the current-state table
+6. read `docs/active/workflow/target-capability-registry.md` when the next step involves target choice, run policy, or fairness interpretation
+7. read this file
+8. open the highest-priority non-accepted packet in the current-state table; if no new packet has been authored yet, resume from [P2G report](./2026-04-12_P2G_report.md) and continue with the bounded CLI-first diagnostic follow-up it recommends

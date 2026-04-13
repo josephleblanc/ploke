@@ -37,6 +37,7 @@ Metadata rule for living artifacts:
 Start-here rule for active work:
 
 - if you are about to start real work, begin here, then read [readiness-status.md](readiness-status.md), [handoffs/recent-activity.md](handoffs/recent-activity.md), and [phased-exec-plan.md](../plans/evals/phased-exec-plan.md), then the relevant handoff note if one exists, then the specific living artifact or plan your task depends on
+- if the work involves target selection, benchmark scheduling, fairness interpretation, parser/modeling readiness, or deciding whether a run should happen by default, read [target-capability-registry.md](target-capability-registry.md) before choosing targets or interpreting results
 
 Minimum record by work type:
 

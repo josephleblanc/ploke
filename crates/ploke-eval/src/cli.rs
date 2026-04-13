@@ -1073,8 +1073,8 @@ async fn set_persisted_provider(
             detail: format!("invalid provider slug '{provider_slug}': {err}"),
         })?;
     let validated = resolve_provider_for_model(&selected, Some(&provider_key)).await?;
-    set_provider_for_model(&selected.id, validated.clone())?;
-    println!("{}\t{}", selected.id, validated.slug.as_str());
+    set_provider_for_model(&selected.id, validated.provider.clone())?;
+    println!("{}\t{}", selected.id, validated.provider.slug.as_str());
     Ok(())
 }
 

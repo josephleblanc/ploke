@@ -1,13 +1,13 @@
 # Current Focus
 
-**Last Updated:** 2026-04-12 (S1E no-change review plus target capability registry proposal)
+**Last Updated:** 2026-04-12 (`P2G` accepted; runner arm surface and endpoint provenance landed; next move is CLI-first Phase 2 treatment introspection)
 **Active Planning Doc:** [Eval Infra Sprint Control Plane](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
 
 ---
 
 ## What We're Doing Now
 
-We are now running an **eval-infra sprint under an explicit multi-lane orchestration protocol** with the blocking Phase 1 P0 replay/inspection lane closed. The active work has shifted to post-P0 sidecars: `ploke-eval` coherence cleanup, inspect CLI UX, longitudinal metrics ingestion/bootstrap, and meta-process observability. This keeps the measurement layer intact while turning the accepted P0 substrate into a usable day-to-day eval workflow.
+We are now running an **eval-infra sprint under an explicit multi-lane orchestration protocol** with the blocking Phase 1 P0 replay/inspection lane closed. The active work has shifted from planning the first formal Phase 2 packet to executing and interpreting it honestly. `P2G` is now accepted: `ploke-eval` exposes explicit arm provenance, selected endpoint provenance, and consistent record/log serialization, and the first bounded treatment runs have been executed under multiple provider/model choices. The active blocker is no longer runner-surface ambiguity; it is a CLI-first diagnostic pass on completed `x-ai/grok-4-fast` / `xai` treatment retries to classify the observed behavioral variance without over-interpreting it.
 
 ---
 
@@ -26,9 +26,12 @@ We are now running an **eval-infra sprint under an explicit multi-lane orchestra
    - `S2C` accepted the longitudinal metrics ingestion/bootstrap design, centered on an append-only JSONL companion plus regenerated markdown ledger
    - `S2D` accepted a tiny real-sample prototype that validates the JSONL-companion/regenerated-markdown shape while keeping canonical manifest keys and some telemetry fields explicitly hypothetical
    - `S3C` accepted the meta-observability inventory, and `S3D` now validates that the current recovery chain is working well enough that no new process change is supported yet
-7. **Current program decision** - `S1E` now comes back as a no-change result, which means the suspected setup-phase test duplication is not a high-value cleanup target. The cleanest next move is either to advance to the next eval-design phase with the accepted sidecar findings in hand, or to formalize the new [target capability registry proposal](agents/2026-04-12_eval-infra-sprint/2026-04-12_target-capability-registry-proposal.md) into the active workflow for target/task run-policy decisions
+7. **Current program state** - `S1E` came back as a no-change result, which means the suspected setup-phase test duplication is not a high-value cleanup target. [P2A](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2A_phase-2-entry-run-planning.md), [P2B](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2B_report.md), [P2C](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2C_report.md), [P2D](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2D_report.md), [P2E](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2E_report.md), [P2F](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2F_report.md), and [P2G](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2G_report.md) are now accepted: ripgrep has moved from mixed-edition sentinel uncertainty to baseline candidacy, the validity-guard ambiguity is resolved into an explicit adoption policy, the first formal packet has a bounded provenance/config entry surface, the runner now persists explicit arm and endpoint provenance, and completed `grok-4-fast` / `xai` treatment retries show that the next uncertainty is model-strategy variance rather than artifact inconsistency. The active next move is a bounded CLI-first diagnostic packet over the completed `BurntSushi__ripgrep-1294` treatment retries.
 
 **Current planning proposal:** [Target Capability Registry Proposal](agents/2026-04-12_eval-infra-sprint/2026-04-12_target-capability-registry-proposal.md)
+**Live run-policy artifact:** [workflow/target-capability-registry.md](workflow/target-capability-registry.md)
+**Current phase-entry reports:** [P2A report](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2A_report.md), [P2B report](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2B_report.md), [P2C report](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2C_report.md), [P2D report](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2D_report.md), [P2E report](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2E_report.md), [P2F report](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2F_report.md), [P2G report](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2G_report.md)
+**Current active packet:** CLI-first diagnostic follow-up over completed `BurntSushi__ripgrep-1294` `grok-4-fast` / `xai` treatment retries (not yet packetized)
 
 **Control plane:** [2026-04-12_eval-infra-sprint-control-plane.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
 **Evidence base:** [AUDIT_SYNTHESIS.md](agents/phase-1-audit/AUDIT_SYNTHESIS.md)
@@ -53,10 +56,11 @@ We are now running an **eval-infra sprint under an explicit multi-lane orchestra
 |-----------------|---------------|
 | "What were we up to?" | This doc ↑ |
 | "Remind me of next steps" | [Eval Infra Sprint Control Plane](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) |
-| "Let's pick up where we left off" | Open the highest-priority non-accepted packet in the control plane |
+| "Let's pick up where we left off" | Open [P2G report](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2G_report.md) and then continue with the CLI-first diagnostic follow-up on the completed `grok-4-fast` / `xai` retries |
 | Overall eval workflow | [workflow/README.md](workflow/README.md) |
 | Recent activity log | [workflow/handoffs/recent-activity.md](workflow/handoffs/recent-activity.md) |
 | Hypothesis status | [workflow/hypothesis-registry.md](workflow/hypothesis-registry.md) |
+| Target/run-policy constraints | [workflow/target-capability-registry.md](workflow/target-capability-registry.md) |
 
 ---
 
