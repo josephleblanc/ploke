@@ -9,6 +9,7 @@ use ploke_llm::manager::ChatStepData;
 use ploke_llm::response::ToolCall;
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -23,7 +24,7 @@ use crate::app_state::events::SystemEvent;
 use crate::chat_history::MessageUpdate;
 use crate::chat_history::{ContextTokens, MessageKind};
 use crate::chat_history::{MessageStatus, TokenKind};
-use crate::tracing_setup::{FINISH_REASON_TARGET, TOKENS_TARGET};
+use crate::tracing_setup::{FINISH_REASON_TARGET, FULL_RESPONSE_TARGET, TOKENS_TARGET};
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use ploke_llm::RequestMessage;
 use ploke_llm::response::FinishReason;
@@ -45,6 +46,13 @@ use tokio::time::sleep;
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
 const OPENROUTER_RESPONSE_LOG_RAW: &str = "logs/openrouter/session/last_response_raw.txt";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FullResponseTraceRecord {
+    assistant_message_id: Uuid,
+    response_index: usize,
+    response: OpenAiResponse,
+}
 
 fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
     // Providers sometimes put errors inside a 200 body
@@ -1008,6 +1016,29 @@ pub async fn run_chat_session<R: Router>(
             cfg: &mut cfg,
             model_key: &model_key,
         };
+
+        let trace_record = FullResponseTraceRecord {
+            assistant_message_id,
+            response_index: chain_index,
+            response: full_response.clone(),
+        };
+
+        match serde_json::to_string(&trace_record) {
+            Ok(response_json) => {
+                tracing::info!(target: FULL_RESPONSE_TARGET, "{response_json}");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "ploke_tui",
+                    session_id = %session_id,
+                    parent_id = %parent_id,
+                    assistant_message_id = %assistant_message_id,
+                    model = ?model_key,
+                    %error,
+                    "Failed to serialize full_response for tracing"
+                );
+            }
+        }
 
         match finish_policy.handle_finish_reasons(full_response.clone(), &mut ctx, &mut loop_state)
         {

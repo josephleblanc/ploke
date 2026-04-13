@@ -99,7 +99,9 @@ crates/ploke-tui/local-target/
 crates/ingest/ploke-transform/test-logs/
 
 # archived docs no longer useful
-docs/archive
+docs/archive/*
+!docs/archive/agents/
+!docs/archive/agents/**
 
 # cursor settings
 .cursor/

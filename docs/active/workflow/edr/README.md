@@ -19,7 +19,7 @@ Use `EDR-XXXX-short-title.md`.
 
 ### Complete
 
-- none yet
+- [EDR-0002-cli-trace-review-skill-experiment.md](EDR-0002-cli-trace-review-skill-experiment.md)
 
 ### Superseded
 

@@ -66,7 +66,7 @@ pub fn record_last_run_at(
     fs::write(&path, json).map_err(|source| PrepareError::WriteLastRunRecord { path, source })
 }
 
-pub fn load_last_run_at(eval_home: impl AsRef<Path>) -> Result<LastRunRecord, PrepareError> {
+pub(crate) fn load_last_run_at(eval_home: impl AsRef<Path>) -> Result<LastRunRecord, PrepareError> {
     let eval_home = eval_home.as_ref();
     let path = eval_home.join("last-run.json");
     match fs::read_to_string(&path) {

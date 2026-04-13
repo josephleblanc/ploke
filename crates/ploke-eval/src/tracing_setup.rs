@@ -1,13 +1,30 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::{fs, str::FromStr};
 
 use chrono::Local;
-use ploke_eval::ploke_eval_home;
+use ploke_tui::tracing_setup::FULL_RESPONSE_TARGET;
+use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::filter;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-pub fn init_tracing(debug_tools: bool) -> Option<WorkerGuard> {
+use crate::layout::ploke_eval_home;
+
+#[allow(dead_code)]
+pub struct LoggingGuards {
+    pub main: WorkerGuard,
+    pub full_response: WorkerGuard,
+}
+
+static FULL_RESPONSE_LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn current_full_response_log_path() -> Option<&'static Path> {
+    FULL_RESPONSE_LOG_PATH.get().map(PathBuf::as_path)
+}
+
+pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
     let mut filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,embed-pipeline=trace"));
     if debug_tools
@@ -34,7 +51,13 @@ pub fn init_tracing(debug_tools: bool) -> Option<WorkerGuard> {
     let log_file = log_dir.join(format!("ploke_eval_{run_id}.log"));
     let file_appender =
         tracing_appender::rolling::never(&log_dir, format!("ploke_eval_{run_id}.log"));
-    let (non_blocking_file, file_guard) = tracing_appender::non_blocking(file_appender);
+    let (non_blocking_file, main_guard) = tracing_appender::non_blocking(file_appender);
+    let full_response_log_file = log_dir.join(format!("llm_full_response_{run_id}.log"));
+    let _ = FULL_RESPONSE_LOG_PATH.set(full_response_log_file.clone());
+    let full_response_appender =
+        tracing_appender::rolling::never(&log_dir, format!("llm_full_response_{run_id}.log"));
+    let (full_response_non_blocking, full_response_guard) =
+        tracing_appender::non_blocking(full_response_appender);
 
     let file_layer = fmt::layer()
         .with_target(true)
@@ -45,6 +68,18 @@ pub fn init_tracing(debug_tools: bool) -> Option<WorkerGuard> {
         .with_thread_ids(false)
         .with_ansi(false)
         .with_writer(non_blocking_file);
+
+    let full_response_layer = fmt::layer()
+        .with_writer(full_response_non_blocking)
+        .with_ansi(false)
+        .with_level(false)
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_file(false)
+        .with_line_number(false)
+        .without_time();
+    let only_full_response = filter::Targets::new().with_target(FULL_RESPONSE_TARGET, Level::TRACE);
 
     let console_layer = fmt::layer()
         .with_target(true)
@@ -58,6 +93,7 @@ pub fn init_tracing(debug_tools: bool) -> Option<WorkerGuard> {
     if tracing_subscriber::registry()
         .with(filter)
         .with(file_layer)
+        .with(full_response_layer.with_filter(only_full_response))
         .with(console_layer)
         .try_init()
         .is_ok()
@@ -66,9 +102,13 @@ pub fn init_tracing(debug_tools: bool) -> Option<WorkerGuard> {
             target: "ploke_eval",
             debug_tools,
             log_file = %log_file.display(),
+            full_response_log_file = %full_response_log_file.display(),
             "eval tracing initialized"
         );
-        Some(file_guard)
+        Some(LoggingGuards {
+            main: main_guard,
+            full_response: full_response_guard,
+        })
     } else {
         None
     }

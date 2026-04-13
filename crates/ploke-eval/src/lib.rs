@@ -8,6 +8,7 @@ pub mod registry;
 pub mod run_history;
 pub mod runner;
 pub mod spec;
+pub mod tracing_setup;
 
 pub use cli::Cli;
 pub use layout::{
@@ -16,9 +17,9 @@ pub use layout::{
 pub use msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 pub use record::{
     BuildResult, ConversationMessage, DbState, LlmResponseRecord, NodeInfo,
-    RUN_RECORD_SCHEMA_VERSION, ReplayError, ReplayState, RunMetadata, RunOutcomeSummary, RunPhases,
-    RunRecord, RunRecordBuilder, TimeTravelMarker, ToolExecutionRecord, ToolResult, TurnOutcome,
-    TurnRecord, ValidationPhase,
+    RUN_RECORD_SCHEMA_VERSION, RawFullResponseRecord, ReplayError, ReplayState, RunMetadata,
+    RunOutcomeSummary, RunPhases, RunRecord, RunRecordBuilder, TimeTravelMarker,
+    ToolExecutionRecord, ToolResult, TurnOutcome, TurnRecord, ValidationPhase,
 };
 pub use registry::{
     DatasetRegistryEntry, builtin_dataset_registry_entries, builtin_dataset_registry_entry,

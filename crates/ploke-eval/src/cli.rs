@@ -4,13 +4,13 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 use clap::{ArgAction, Parser, Subcommand};
-use serde::Serialize;
 use ploke_llm::Router;
 use ploke_llm::request::endpoint::Endpoint;
 use ploke_llm::router_only::HasEndpoint;
 use ploke_llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use ploke_llm::{ModelId, ProviderKey};
 use regex::Regex;
+use serde::Serialize;
 
 use crate::layout::{
     active_model_file, batches_dir, cache_dir, datasets_dir, model_registry_file, models_dir,
@@ -24,7 +24,7 @@ use crate::msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 use crate::provider_prefs::{
     clear_provider_for_model, load_provider_for_model, set_provider_for_model,
 };
-use crate::record::read_compressed_record;
+use crate::record::{RawFullResponseRecord, read_compressed_record};
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
 use crate::run_history::print_last_run_assistant_messages;
 use crate::runner::{
@@ -1292,7 +1292,7 @@ pub struct InspectTurnCommand {
     #[arg(long = "turn", hide = true, conflicts_with = "turn")]
     pub turn_flag: Option<u32>,
 
-    /// What to show for this turn: all, messages, loop, tool-calls, tool-call, tool-result, db-state.
+    /// What to show for this turn: all, messages, responses, loop, tool-calls, tool-call, tool-result, db-state.
     #[arg(long, value_enum, default_value_t = TurnShowOption::All)]
     pub show: TurnShowOption,
 
@@ -1365,6 +1365,7 @@ pub enum InspectOutputFormat {
 pub enum TurnShowOption {
     All,
     Messages,
+    Responses,
     Loop,
     ToolCalls,
     ToolCall,
@@ -1450,6 +1451,9 @@ impl RunMsbAgentSingleCommand {
         .await?;
         println!("{}", artifacts.base.execution_log.display());
         println!("{}", artifacts.turn_summary.display());
+        if let Some(path) = artifacts.base.full_response_trace {
+            println!("{}", path.display());
+        }
         if let Some(path) = artifacts.base.msb_submission {
             println!("{}", path.display());
         }
@@ -1581,6 +1585,33 @@ impl InspectConversationsCommand {
 
         match self.format {
             InspectOutputFormat::Table => {
+                let summary = record.outcome_summary();
+                let raw_usage = if summary.total_token_usage.total_tokens == 0 {
+                    load_full_response_usage_totals(&record_path, &record)
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
+                let display_usage = raw_usage.as_ref().unwrap_or(&summary.total_token_usage);
+                println!("Run summary");
+                println!("{}", "-".repeat(40));
+                println!("Turns: {}", summary.turn_count);
+                println!(
+                    "Token usage: {}",
+                    format_usage_triplet(
+                        display_usage.prompt_tokens,
+                        display_usage.completion_tokens,
+                        display_usage.total_tokens,
+                    )
+                );
+                println!("Token cost: ${:.6}", summary.total_token_cost);
+                if raw_usage.is_some() {
+                    println!("Usage source: raw response sidecar");
+                    println!("Usage note: may undercount if final stop response was not captured");
+                }
+                println!("Wall time: {:.3}s", summary.wall_clock_secs);
+                println!();
                 println!("{:<6} {:<6} {:<7} {}", "Turn", "Tools", "Failed", "Outcome");
                 println!("{}", "-".repeat(40));
                 for turn in record.conversations() {
@@ -1877,9 +1908,10 @@ impl InspectTurnCommand {
                 println!();
                 println!("Next:");
                 println!(
-                    "  ploke-eval inspect turn {} --show loop",
+                    "  ploke-eval inspect turn {} --show responses",
                     turn.turn_number
                 );
+                println!("  ploke-eval inspect turn {} --show loop", turn.turn_number);
                 println!(
                     "  ploke-eval inspect turn {} --show tool-calls",
                     turn.turn_number
@@ -1905,6 +1937,40 @@ impl InspectTurnCommand {
                     }
                     InspectOutputFormat::Json => {
                         println!("{}", render_messages_json(&messages)?);
+                    }
+                }
+            }
+            TurnShowOption::Responses => {
+                let trace_path = resolve_full_response_trace_path(&record_path, &record)?;
+                let assistant_message_id =
+                    assistant_message_id_for_turn(turn).ok_or_else(|| {
+                        PrepareError::DatabaseSetup {
+                            phase: "inspect_turn",
+                            detail: format!(
+                                "Turn {} does not expose an assistant_message_id in its artifact",
+                                turn.turn_number
+                            ),
+                        }
+                    })?;
+                let responses =
+                    load_full_response_records_for_turn(&trace_path, assistant_message_id)?;
+                if responses.is_empty() {
+                    println!("No raw full responses captured for this turn.");
+                } else {
+                    match self.format {
+                        InspectOutputFormat::Table => {
+                            println!(
+                                "{}",
+                                render_full_response_table(turn.turn_number, &responses)
+                            );
+                        }
+                        InspectOutputFormat::Json => {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&responses)
+                                    .map_err(PrepareError::Serialize)?
+                            );
+                        }
                     }
                 }
             }
@@ -2365,10 +2431,7 @@ fn tool_loop_entries(tool_calls: &[crate::record::ToolExecutionRecord]) -> Vec<T
         .collect()
 }
 
-fn tool_loop_entry(
-    index: usize,
-    call: &crate::record::ToolExecutionRecord,
-) -> ToolLoopEntry {
+fn tool_loop_entry(index: usize, call: &crate::record::ToolExecutionRecord) -> ToolLoopEntry {
     let input = summarize_tool_inputs(&call.request.arguments);
     match &call.result {
         crate::record::ToolResult::Completed(completed) => ToolLoopEntry {
@@ -2596,6 +2659,179 @@ fn print_turn_summary(turn: &crate::record::TurnRecord) {
         if patch_proposed { "yes" } else { "no" }
     );
     println!("  patch applied ...... {}", patch_applied);
+}
+
+fn assistant_message_id_for_turn(turn: &crate::record::TurnRecord) -> Option<&str> {
+    turn.agent_turn_artifact
+        .as_ref()
+        .and_then(|artifact| artifact.terminal_record.as_ref())
+        .map(|record| record.assistant_message_id.as_str())
+}
+
+fn resolve_full_response_trace_path(
+    record_path: &std::path::Path,
+    record: &crate::record::RunRecord,
+) -> Result<PathBuf, PrepareError> {
+    let run_dir = record_path
+        .parent()
+        .ok_or_else(|| PrepareError::MissingRunManifest(record_path.to_path_buf()))?;
+    let path = run_dir.join("llm-full-responses.jsonl");
+    if path.exists() {
+        Ok(path)
+    } else if record.metadata.run_arm.execution == "agent-single-turn" {
+        Err(PrepareError::MissingRunManifest(path))
+    } else {
+        Err(PrepareError::DatabaseSetup {
+            phase: "inspect_turn",
+            detail: "raw full responses are only captured for agent-mode runs".to_string(),
+        })
+    }
+}
+
+fn load_full_response_records_for_turn(
+    path: &std::path::Path,
+    assistant_message_id: &str,
+) -> Result<Vec<RawFullResponseRecord>, PrepareError> {
+    let text = std::fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut responses = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let record: RawFullResponseRecord =
+            serde_json::from_str(trimmed).map_err(|source| PrepareError::ParseManifest {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        if record.assistant_message_id == assistant_message_id {
+            responses.push(record);
+        }
+    }
+    responses.sort_by_key(|record| record.response_index);
+    Ok(responses)
+}
+
+fn load_all_full_response_records(
+    path: &std::path::Path,
+) -> Result<Vec<RawFullResponseRecord>, PrepareError> {
+    let text = std::fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut responses = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let record: RawFullResponseRecord =
+            serde_json::from_str(trimmed).map_err(|source| PrepareError::ParseManifest {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        responses.push(record);
+    }
+    responses.sort_by_key(|record| record.response_index);
+    Ok(responses)
+}
+
+fn aggregate_full_response_usage(
+    responses: &[RawFullResponseRecord],
+) -> ploke_llm::response::TokenUsage {
+    // Stopgap: this sums the persisted raw-response sidecar as captured today.
+    // It is useful for eval introspection, but may undercount a turn when the
+    // final non-tool-call/stop response is not yet captured into the sidecar.
+    let mut total = ploke_llm::response::TokenUsage {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+    };
+    for record in responses {
+        if let Some(usage) = record.response.usage.as_ref() {
+            total.prompt_tokens += usage.prompt_tokens;
+            total.completion_tokens += usage.completion_tokens;
+            total.total_tokens += usage.total_tokens;
+        }
+    }
+    total
+}
+
+fn load_full_response_usage_totals(
+    record_path: &std::path::Path,
+    record: &crate::record::RunRecord,
+) -> Result<Option<ploke_llm::response::TokenUsage>, PrepareError> {
+    let trace_path = match resolve_full_response_trace_path(record_path, record) {
+        Ok(path) => path,
+        Err(PrepareError::MissingRunManifest(_)) => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let responses = load_all_full_response_records(&trace_path)?;
+    if responses.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(aggregate_full_response_usage(&responses)))
+    }
+}
+
+fn format_usage_triplet(prompt: u32, completion: u32, total: u32) -> String {
+    format!(
+        "prompt:{} completion:{} total:{}",
+        prompt, completion, total
+    )
+}
+
+fn render_full_response_table(turn: u32, responses: &[RawFullResponseRecord]) -> String {
+    let totals = aggregate_full_response_usage(responses);
+    let mut out = String::new();
+    out.push_str(&format!("Turn {} Raw Full Responses\n", turn));
+    out.push_str(&format!("{}\n", "-".repeat(80)));
+    out.push_str(&format!(
+        "{:<5} {:<40} {:<14} {}\n",
+        "Idx", "Response ID", "Finish", "Usage"
+    ));
+    out.push_str(&format!("{}\n", "-".repeat(80)));
+    for record in responses {
+        let response_id = truncate_for_table(&record.response.id, 38);
+        let finish = record
+            .response
+            .choices
+            .first()
+            .and_then(|choice| choice.finish_reason.as_ref())
+            .map(|reason| format!("{reason:?}").to_lowercase())
+            .unwrap_or_else(|| "-".to_string());
+        let usage = record
+            .response
+            .usage
+            .as_ref()
+            .map(|usage| {
+                format!(
+                    "p:{} c:{} t:{}",
+                    usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+                )
+            })
+            .unwrap_or_else(|| "-".to_string());
+        out.push_str(&format!(
+            "{:<5} {:<40} {:<14} {}\n",
+            record.response_index, response_id, finish, usage
+        ));
+    }
+    out.push_str(&format!("{}\n", "-".repeat(80)));
+    out.push_str(&format!(
+        "Totals: {}\n",
+        format_usage_triplet(
+            totals.prompt_tokens,
+            totals.completion_tokens,
+            totals.total_tokens
+        )
+    ));
+    out.push_str(
+        "Note: sidecar totals may undercount if the final stop response was not captured.\n",
+    );
+    out
 }
 
 fn summarize_patch_state(tool_calls: &[crate::record::ToolExecutionRecord]) -> &'static str {
@@ -3526,6 +3762,7 @@ mod tests {
                 tool: tool.to_string(),
                 content: "synthetic output".to_string(),
                 ui_payload: Some(payload),
+                latency_ms: 17,
             }),
             latency_ms: 17,
         }
@@ -3556,6 +3793,7 @@ mod tests {
                 tool: Some(tool.to_string()),
                 error: "synthetic error".to_string(),
                 ui_payload: Some(payload),
+                latency_ms: 31,
             }),
             latency_ms: 31,
         }
@@ -3672,6 +3910,20 @@ mod tests {
             Command::Inspect(InspectCommand {
                 command: InspectSubcommand::Turn(cmd),
             }) => assert_eq!(cmd.show, TurnShowOption::Loop),
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inspect_turn_accepts_responses_show_option() {
+        let parsed =
+            Cli::try_parse_from(["ploke-eval", "inspect", "turn", "1", "--show", "responses"])
+                .expect("turn should accept the responses show option");
+
+        match parsed.command {
+            Command::Inspect(InspectCommand {
+                command: InspectSubcommand::Turn(cmd),
+            }) => assert_eq!(cmd.show, TurnShowOption::Responses),
             other => panic!("unexpected command shape: {:?}", other),
         }
     }

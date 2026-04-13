@@ -331,7 +331,7 @@ Also added `ReplayState` struct containing:
 - **Hypothesis:** A5 (docs/active/workflow/hypothesis-registry.md)
 - **Type Inventory:** docs/active/agents/2026-04-09_run-record-type-inventory.md
 - **Design Handoff:** docs/active/workflow/handoffs/2026-04-09_run-record-design-handoff.md
-- **Original Plan:** docs/active/agents/2026-04-09_runrecord-implementation-plan.md (deprecated)
+- **Original Plan:** docs/archive/agents/2026-04/2026-04-09_runrecord-implementation-plan.md (deprecated)
 
 
 ## 2026-04-11: AUDIT REVEALS CRITICAL GAPS
@@ -368,5 +368,5 @@ An independent audit discovered that while basic types and methods exist, **core
 - **Hypothesis:** A5 (docs/active/workflow/hypothesis-registry.md)
 - **Type Inventory:** docs/active/agents/2026-04-09_run-record-type-inventory.md
 - **Design Handoff:** docs/active/workflow/handoffs/2026-04-09_run-record-design-handoff.md
-- **Original Plan:** docs/active/agents/2026-04-09_runrecord-implementation-plan.md (deprecated)
+- **Original Plan:** docs/archive/agents/2026-04/2026-04-09_runrecord-implementation-plan.md (deprecated)
 - **Phase 1 Audit:** docs/active/agents/phase-1-audit/AUDIT_SYNTHESIS.md (NEW)

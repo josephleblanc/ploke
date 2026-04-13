@@ -162,7 +162,7 @@ Pre-implementation survey addition from restart review:
 10. `P2E` is now accepted: the first formal Phase 2 packet should stay narrow around `BurntSushi__ripgrep-1294`, one concrete config/EDR pair, explicit adopted guards, and an explicit waiver list.
 11. `P2F` is now accepted: the first real formal packet is authored at the workflow level as one config plus one EDR, with explicit adopted guards and explicit waivers.
 12. `P2G` is now accepted: the runner surface preserves explicit arm and endpoint provenance, and the first formal packet is executable at the `ploke-eval` layer.
-13. The active next move is a bounded CLI-first diagnostic packet over the completed `BurntSushi__ripgrep-1294` `x-ai/grok-4-fast` / `xai` treatment retries so behavioral variance can be classified without collapsing it into harness or infra noise.
+13. The ripgrep execution lane is no longer the active target-expansion question: a reviewed `tokio-rs__tokio-6618` probe completed successfully, so the live second-target lane is now a fresh `tokio-rs` batch launch under the target-capability registry's `watch` / `default_run` gate.
 14. Treat `S2B` and `S3B` as accepted and keep their artifacts in the restart path.
 
 ## Resume Path

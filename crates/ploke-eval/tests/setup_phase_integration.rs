@@ -367,6 +367,7 @@ async fn replay_query_works_with_run_record() {
             timestamp_micros,
             event: "turn_complete".to_string(),
         }],
+        timing: None,
         conversation: vec![],
     };
 

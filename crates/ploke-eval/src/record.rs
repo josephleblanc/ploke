@@ -38,7 +38,7 @@
 //! | [`TimeTravelMarker`] | Cozo DB snapshot point | Turn number + validity timestamp |
 //! | [`LlmResponseRecord`] | Structured LLM output | Content, model, token usage, finish reason |
 //! | [`ToolExecutionRecord`] | Tool call + result | Request, result (completed/failed), latency |
-//! | [`RunOutcomeSummary`] | Quick summary | Status, turn count, total tokens, wall time |
+//! | [`RunOutcomeSummary`] | Quick summary | Status, turn count, total tokens, token cost, wall time |
 //!
 //! ## Relationship to Other Artifacts
 //!
@@ -163,6 +163,10 @@ pub struct RunRecord {
 
     /// Complete conversation history across all turns.
     pub conversation: Vec<ConversationMessage>,
+
+    /// Coarse run timing captured at execution time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing: Option<RunTimingSummary>,
 }
 
 impl RunRecord {
@@ -175,6 +179,7 @@ impl RunRecord {
             phases: RunPhases::default(),
             db_time_travel_index: Vec::new(),
             conversation: Vec::new(),
+            timing: None,
         }
     }
 
@@ -264,6 +269,17 @@ impl RunRecord {
         total
     }
 
+    /// Get the total estimated token cost across all turns.
+    pub fn total_token_cost(&self) -> f64 {
+        self.phases
+            .agent_turns
+            .iter()
+            .filter_map(|turn| turn.llm_response.as_ref())
+            .filter_map(|response| response.metadata.as_ref())
+            .map(|metadata| metadata.cost)
+            .sum()
+    }
+
     /// Get the total number of turns in this run.
     pub fn turn_count(&self) -> u32 {
         self.phases.agent_turns.len() as u32
@@ -300,8 +316,13 @@ impl RunRecord {
                 .map(|v| format!("{:?}", v.build_result)),
             turn_count: self.turn_count(),
             total_token_usage: total_usage,
+            total_token_cost: self.total_token_cost(),
             total_tool_calls,
-            wall_clock_secs: 0.0, // Would need to track start/end times
+            wall_clock_secs: self
+                .timing
+                .as_ref()
+                .map(|timing| timing.total_wall_clock_secs)
+                .unwrap_or(0.0),
         }
     }
 
@@ -500,7 +521,7 @@ fn extract_tool_calls_from_events(events: &[ObservedTurnEvent]) -> Vec<ToolExecu
                     tool_calls.push(ToolExecutionRecord {
                         request,
                         result: ToolResult::Completed(completed.clone()),
-                        latency_ms: 0, // Latency not captured in current events
+                        latency_ms: completed.latency_ms,
                     });
                 }
             }
@@ -509,7 +530,7 @@ fn extract_tool_calls_from_events(events: &[ObservedTurnEvent]) -> Vec<ToolExecu
                     tool_calls.push(ToolExecutionRecord {
                         request,
                         result: ToolResult::Failed(failed.clone()),
-                        latency_ms: 0,
+                        latency_ms: failed.latency_ms,
                     });
                 }
             }
@@ -553,6 +574,7 @@ fn turn_outcome_from_artifact(artifact: &AgentTurnArtifact, tool_call_count: usi
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMetadata {
     /// Explicit arm provenance for control vs treatment recovery.
+    #[serde(default = "default_run_arm")]
     pub run_arm: RunArm,
 
     /// The benchmark instance being evaluated.
@@ -566,6 +588,11 @@ pub struct RunMetadata {
 
     /// Budget constraints applied.
     pub budget: EvalBudget,
+}
+
+fn default_run_arm() -> RunArm {
+    // Legacy local records predate explicit arm provenance.
+    RunArm::shell_only_control()
 }
 
 impl RunMetadata {
@@ -1187,6 +1214,22 @@ pub struct LlmResponseRecord {
     pub metadata: Option<LLMMetadata>,
 }
 
+/// Raw full-response trace record captured from the `llm-full-response` target.
+///
+/// This preserves the full normalized provider response envelope for later
+/// inspection without forcing that payload into the main `RunRecord` schema.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawFullResponseRecord {
+    /// Assistant message node being updated by this response.
+    pub assistant_message_id: String,
+
+    /// Ordinal within the turn's response chain.
+    pub response_index: usize,
+
+    /// Full normalized provider response payload.
+    pub response: OpenAiResponse,
+}
+
 /// A single tool execution (request + result).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolExecutionRecord {
@@ -1197,6 +1240,7 @@ pub struct ToolExecutionRecord {
     pub result: ToolResult,
 
     /// Latency in milliseconds.
+    #[serde(default)]
     pub latency_ms: u64,
 }
 
@@ -1360,11 +1404,35 @@ pub struct RunOutcomeSummary {
     /// Total token usage across all turns.
     pub total_token_usage: TokenUsage,
 
+    /// Total estimated token cost across all turns.
+    pub total_token_cost: f64,
+
     /// Total tool calls made.
     pub total_tool_calls: u32,
 
     /// Wall clock time in seconds.
     pub wall_clock_secs: f64,
+}
+
+/// Coarse run timing captured during execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunTimingSummary {
+    /// When the run started.
+    pub started_at: String,
+
+    /// When the run ended.
+    pub ended_at: String,
+
+    /// Total elapsed wall-clock time in seconds.
+    pub total_wall_clock_secs: f64,
+
+    /// Setup-only elapsed wall-clock time in seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_wall_clock_secs: Option<f64>,
+
+    /// Agent-execution elapsed wall-clock time in seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_wall_clock_secs: Option<f64>,
 }
 
 /// Replay state at a specific turn — everything needed to resume or introspect.
@@ -1518,6 +1586,13 @@ mod tests {
                 timestamp_micros: 1744223415500000,
                 event: "turn_complete".to_string(),
             }],
+            timing: Some(RunTimingSummary {
+                started_at: "2026-04-09T18:30:00Z".to_string(),
+                ended_at: "2026-04-09T18:31:00Z".to_string(),
+                total_wall_clock_secs: 60.0,
+                setup_wall_clock_secs: Some(18.0),
+                agent_wall_clock_secs: Some(42.0),
+            }),
             conversation: Vec::new(),
         }
     }
@@ -1554,6 +1629,7 @@ mod tests {
                     tool: "search_code".to_string(),
                     content: "Found function in src/lib.rs".to_string(),
                     ui_payload: None,
+                    latency_ms: 150,
                 }),
                 ObservedTurnEvent::TurnFinished(crate::runner::TurnFinishedRecord {
                     session_id: "session-001".to_string(),
@@ -1630,6 +1706,10 @@ mod tests {
         assert_eq!(
             loaded.db_time_travel_index[0].timestamp_micros,
             1744223415500000
+        );
+        assert_eq!(
+            loaded.timing.as_ref().map(|t| t.total_wall_clock_secs),
+            Some(60.0)
         );
     }
 
@@ -1713,6 +1793,29 @@ mod tests {
             RunArm::structured_current_policy_treatment()
         );
         assert_eq!(record.metadata.benchmark.instance_id, "case-123");
+    }
+
+    #[test]
+    fn run_record_deserializes_legacy_metadata_without_run_arm() {
+        let legacy_json = r#"{
+            "schema_version":"run-record.v1",
+            "manifest_id":"legacy-instance",
+            "metadata":{
+                "benchmark":{"instance_id":"legacy-instance","repo_root":"/tmp/repo","base_sha":null},
+                "agent":{},
+                "runtime":{},
+                "budget":{"max_turns":40,"max_tool_calls":200,"wall_clock_secs":1800}
+            },
+            "phases":{"agent_turns":[]},
+            "db_time_travel_index":[],
+            "conversation":[]
+        }"#;
+
+        let record: RunRecord =
+            serde_json::from_str(legacy_json).expect("legacy record should deserialize");
+
+        assert_eq!(record.metadata.run_arm, RunArm::shell_only_control());
+        assert!(record.timing.is_none());
     }
 
     #[test]
@@ -1829,7 +1932,22 @@ mod tests {
                     total_tokens: 120,
                 }),
                 finish_reason: Some(FinishReason::Stop),
-                metadata: None,
+                metadata: Some(LLMMetadata {
+                    model: "anthropic/claude-sonnet-4".to_string(),
+                    usage: TokenUsage {
+                        prompt_tokens: 100,
+                        completion_tokens: 20,
+                        total_tokens: 120,
+                    },
+                    finish_reason: FinishReason::Stop,
+                    processing_time: std::time::Duration::from_millis(400),
+                    cost: 0.125,
+                    performance: PerformanceMetrics {
+                        tokens_per_second: 300.0,
+                        time_to_first_token: std::time::Duration::from_millis(80),
+                        queue_time: std::time::Duration::from_millis(20),
+                    },
+                }),
             }),
             tool_calls: Vec::new(),
             outcome: TurnOutcome::Content,
@@ -1853,7 +1971,22 @@ mod tests {
                     total_tokens: 150,
                 }),
                 finish_reason: Some(FinishReason::ToolCalls),
-                metadata: None,
+                metadata: Some(LLMMetadata {
+                    model: "anthropic/claude-sonnet-4".to_string(),
+                    usage: TokenUsage {
+                        prompt_tokens: 120,
+                        completion_tokens: 30,
+                        total_tokens: 150,
+                    },
+                    finish_reason: FinishReason::ToolCalls,
+                    processing_time: std::time::Duration::from_millis(500),
+                    cost: 0.25,
+                    performance: PerformanceMetrics {
+                        tokens_per_second: 300.0,
+                        time_to_first_token: std::time::Duration::from_millis(90),
+                        queue_time: std::time::Duration::from_millis(30),
+                    },
+                }),
             }),
             tool_calls: vec![ToolExecutionRecord {
                 request: ToolRequestRecord {
@@ -1870,6 +2003,7 @@ mod tests {
                     tool: "search_code".to_string(),
                     content: "Found function at line 42".to_string(),
                     ui_payload: None,
+                    latency_ms: 150,
                 }),
                 latency_ms: 150,
             }],
@@ -1894,7 +2028,22 @@ mod tests {
                     total_tokens: 190,
                 }),
                 finish_reason: Some(FinishReason::ToolCalls),
-                metadata: None,
+                metadata: Some(LLMMetadata {
+                    model: "anthropic/claude-sonnet-4".to_string(),
+                    usage: TokenUsage {
+                        prompt_tokens: 150,
+                        completion_tokens: 40,
+                        total_tokens: 190,
+                    },
+                    finish_reason: FinishReason::ToolCalls,
+                    processing_time: std::time::Duration::from_millis(600),
+                    cost: 0.5,
+                    performance: PerformanceMetrics {
+                        tokens_per_second: 316.0,
+                        time_to_first_token: std::time::Duration::from_millis(100),
+                        queue_time: std::time::Duration::from_millis(40),
+                    },
+                }),
             }),
             tool_calls: vec![ToolExecutionRecord {
                 request: ToolRequestRecord {
@@ -1911,6 +2060,7 @@ mod tests {
                     tool: "apply_code_edit".to_string(),
                     content: "Edit applied successfully".to_string(),
                     ui_payload: None,
+                    latency_ms: 200,
                 }),
                 latency_ms: 200,
             }],
@@ -2085,7 +2235,58 @@ mod tests {
         );
         assert_eq!(turn.tool_calls.len(), 1);
         assert_eq!(turn.tool_calls[0].request.tool, "search_code");
+        assert_eq!(turn.tool_calls[0].latency_ms, 150);
         assert!(matches!(turn.outcome, TurnOutcome::ToolCalls { count: 1 }));
+    }
+
+    #[test]
+    fn add_turn_from_artifact_persists_failed_tool_latency() {
+        let mut record = create_test_record();
+        let artifact = AgentTurnArtifact {
+            task_id: "test-instance-002".to_string(),
+            selected_model: ModelId::from_str("anthropic/claude-sonnet-4").unwrap(),
+            issue_prompt: "Fix the bug in src/lib.rs".to_string(),
+            user_message_id: "user-002".to_string(),
+            events: vec![
+                ObservedTurnEvent::ToolRequested(ToolRequestRecord {
+                    request_id: "req-010".to_string(),
+                    parent_id: "parent-010".to_string(),
+                    call_id: "call-010".to_string(),
+                    tool: "search_code".to_string(),
+                    arguments: r#"{"query":"handle_request"}"#.to_string(),
+                }),
+                ObservedTurnEvent::ToolFailed(ToolFailedRecord {
+                    request_id: "req-010".to_string(),
+                    parent_id: "parent-010".to_string(),
+                    call_id: "call-010".to_string(),
+                    tool: Some("search_code".to_string()),
+                    error: "timeout".to_string(),
+                    ui_payload: None,
+                    latency_ms: 87,
+                }),
+            ],
+            prompt_debug: None,
+            terminal_record: None,
+            final_assistant_message: None,
+            patch_artifact: PatchArtifact {
+                edit_proposals: Vec::new(),
+                create_proposals: Vec::new(),
+                applied: false,
+                all_proposals_applied: false,
+                expected_file_changes: Vec::new(),
+                any_expected_file_changed: false,
+                all_expected_files_changed: false,
+            },
+            llm_prompt: Vec::new(),
+            llm_response: None,
+        };
+
+        record.add_turn_from_artifact(artifact, 1744223415800000);
+
+        let turn = record.turn_record(1).expect("Should persist turn");
+        assert_eq!(turn.tool_calls.len(), 1);
+        assert_eq!(turn.tool_calls[0].latency_ms, 87);
+        assert!(matches!(turn.tool_calls[0].result, ToolResult::Failed(_)));
     }
 
     #[test]
@@ -2120,7 +2321,9 @@ mod tests {
         assert_eq!(summary.turn_count, 3);
         assert_eq!(summary.total_tool_calls, 2); // 1 in turn 2, 1 in turn 3
         assert_eq!(summary.total_token_usage.total_tokens, 460);
+        assert!((summary.total_token_cost - 0.875).abs() < f64::EPSILON);
         assert_eq!(summary.status, "incomplete"); // No validation phase
+        assert_eq!(summary.wall_clock_secs, 60.0);
     }
 
     // ========================================================================

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -45,10 +46,11 @@ use crate::model_registry::resolve_model_for_run;
 use crate::provider_prefs::load_provider_for_model;
 use crate::record::{
     CrateIndexStatus, IndexedCrateSummary, ParseErrorSummary, ParseFailureRecord, RunRecord,
-    RunRecordBuilder, SetupPhase, write_compressed_record,
+    RunRecordBuilder, RunTimingSummary, SetupPhase, write_compressed_record,
 };
 use crate::run_history::record_last_run;
 use crate::spec::{PrepareError, PreparedMsbBatch, PreparedSingleRun, RunSource};
+use crate::tracing_setup::current_full_response_log_path;
 
 const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
@@ -172,6 +174,8 @@ pub struct RunArtifactPaths {
     /// Path to the compressed RunRecord (`record.json.gz`).
     /// Added in Phase 1 for comprehensive run persistence and replay.
     pub record_path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_response_trace: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -399,6 +403,22 @@ async fn build_setup_phase(
     })
 }
 
+fn finalize_run_timing(
+    run_record: &mut RunRecord,
+    started_at: chrono::DateTime<chrono::Utc>,
+    run_start_instant: Instant,
+    setup_wall_clock_secs: Option<f64>,
+    agent_wall_clock_secs: Option<f64>,
+) {
+    run_record.timing = Some(RunTimingSummary {
+        started_at: started_at.to_rfc3339(),
+        ended_at: chrono::Utc::now().to_rfc3339(),
+        total_wall_clock_secs: run_start_instant.elapsed().as_secs_f64(),
+        setup_wall_clock_secs,
+        agent_wall_clock_secs,
+    });
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotStatusArtifact {
     pub status: String,
@@ -434,6 +454,8 @@ pub struct ExecutionLog {
     pub selected_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_endpoint: Option<SelectedEndpointProvenance>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_response_trace: Option<PathBuf>,
     pub steps: Vec<String>,
 }
 
@@ -523,6 +545,8 @@ pub struct ToolCompletedRecord {
     pub tool: String,
     pub content: String,
     pub ui_payload: Option<ploke_tui::tools::ToolUiPayload>,
+    #[serde(default)]
+    pub latency_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -533,6 +557,8 @@ pub struct ToolFailedRecord {
     pub tool: Option<String>,
     pub error: String,
     pub ui_payload: Option<ploke_tui::tools::ToolUiPayload>,
+    #[serde(default)]
+    pub latency_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1079,6 +1105,7 @@ impl RunMsbSingleRequest {
     pub async fn run(self) -> Result<RunArtifactPaths, PrepareError> {
         let run_arm = RunArm::shell_only_control();
         let setup_start_time = chrono::Utc::now();
+        let run_start_instant = Instant::now();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
         let selected_model = resolve_model_for_run(self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
@@ -1308,6 +1335,8 @@ impl RunMsbSingleRequest {
             steps.push("refresh_starting_db_cache".to_string());
         }
 
+        let setup_wall_clock_secs = Some(run_start_instant.elapsed().as_secs_f64());
+
         let snapshot_file = prepared.output_dir.join("final-snapshot.db");
         info!(
             snapshot = %snapshot_file.display(),
@@ -1342,6 +1371,14 @@ impl RunMsbSingleRequest {
             None
         };
 
+        finalize_run_timing(
+            &mut run_record,
+            setup_start_time,
+            run_start_instant,
+            setup_wall_clock_secs,
+            None,
+        );
+
         let execution_log = ExecutionLog {
             task_id: prepared.task_id,
             run_arm: run_arm.clone(),
@@ -1350,6 +1387,7 @@ impl RunMsbSingleRequest {
             selected_model: selected_model_id,
             selected_provider: Some(selected_provider.slug.as_str().to_string()),
             selected_endpoint: Some(selected_endpoint),
+            full_response_trace: None,
             steps,
         };
         write_json(&execution_log_path, &execution_log)?;
@@ -1385,6 +1423,7 @@ impl RunMsbSingleRequest {
             snapshot_status: snapshot_status_path,
             msb_submission: msb_submission_path,
             record_path: Some(record_path),
+            full_response_trace: None,
         })
     }
 }
@@ -1392,6 +1431,7 @@ impl RunMsbSingleRequest {
 impl RunMsbAgentSingleRequest {
     pub async fn run(self) -> Result<AgentRunArtifactPaths, PrepareError> {
         let setup_start_time = chrono::Utc::now();
+        let run_start_instant = Instant::now();
         let run_arm = RunArm::structured_current_policy_treatment();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
         let selected_model = resolve_model_for_run(self.use_default_model)?;
@@ -1421,7 +1461,13 @@ impl RunMsbAgentSingleRequest {
         let indexing_failure_db = prepared.output_dir.join("indexing-failure.db");
         let turn_trace_path = prepared.output_dir.join("agent-turn-trace.json");
         let turn_summary_path = prepared.output_dir.join("agent-turn-summary.json");
+        let full_response_trace_path = prepared.output_dir.join("llm-full-responses.jsonl");
         let record_path = prepared.output_dir.join("record.json.gz");
+        let full_response_trace_source = current_full_response_log_path().map(Path::to_path_buf);
+        let full_response_trace_start = match full_response_trace_source.as_ref() {
+            Some(path) => Some(current_trace_file_offset(path)?),
+            None => None,
+        };
 
         // Initialize RunRecord for comprehensive run persistence (Phase 1E)
         let mut run_record = RunRecord::new(&prepared, run_arm.clone());
@@ -1638,7 +1684,9 @@ impl RunMsbAgentSingleRequest {
         .await?;
         run_record.phases.setup = Some(setup_phase);
         steps.push("populate_setup_phase".to_string());
+        let setup_wall_clock_secs = Some(run_start_instant.elapsed().as_secs_f64());
 
+        let agent_execution_start = Instant::now();
         let turn_artifact = run_benchmark_turn(
             &prepared,
             &state,
@@ -1653,6 +1701,27 @@ impl RunMsbAgentSingleRequest {
         .await?;
         write_json(&turn_summary_path, &turn_artifact)?;
         steps.push("benchmark_turn_completed".to_string());
+        let full_response_trace = match (
+            full_response_trace_source.as_ref(),
+            full_response_trace_start,
+        ) {
+            (Some(source_path), Some(start_offset)) => {
+                if persist_full_response_trace_slice(
+                    source_path,
+                    start_offset,
+                    &full_response_trace_path,
+                )
+                .await?
+                {
+                    steps.push("persist_full_response_trace".to_string());
+                    Some(full_response_trace_path.clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let agent_wall_clock_secs = Some(agent_execution_start.elapsed().as_secs_f64());
 
         // Capture Cozo timestamp for time-travel queries and add turn to RunRecord
         let db_timestamp =
@@ -1700,6 +1769,14 @@ impl RunMsbAgentSingleRequest {
             None
         };
 
+        finalize_run_timing(
+            &mut run_record,
+            setup_start_time,
+            run_start_instant,
+            setup_wall_clock_secs,
+            agent_wall_clock_secs,
+        );
+
         let execution_log = ExecutionLog {
             task_id: prepared.task_id,
             run_arm: run_arm.clone(),
@@ -1708,6 +1785,7 @@ impl RunMsbAgentSingleRequest {
             selected_model: selected_model_id,
             selected_provider: Some(selected_provider.slug.as_str().to_string()),
             selected_endpoint: Some(selected_endpoint),
+            full_response_trace: full_response_trace.clone(),
             steps,
         };
         write_json(&execution_log_path, &execution_log)?;
@@ -1720,6 +1798,7 @@ impl RunMsbAgentSingleRequest {
             snapshot_status = %snapshot_status_path.display(),
             turn_trace = %turn_trace_path.display(),
             turn_summary = %turn_summary_path.display(),
+            full_response_trace = full_response_trace.as_ref().map(|p| p.display().to_string()),
             msb_submission = msb_submission_path.as_ref().map(|p| p.display().to_string()),
             "runner phase: wrote run artifacts"
         );
@@ -1747,6 +1826,7 @@ impl RunMsbAgentSingleRequest {
                 snapshot_status: snapshot_status_path,
                 msb_submission: msb_submission_path,
                 record_path: Some(record_path),
+                full_response_trace,
             },
             turn_trace: turn_trace_path,
             turn_summary: turn_summary_path,
@@ -2499,6 +2579,7 @@ async fn run_benchmark_turn(
         llm_prompt: Vec::new(),
         llm_response: None,
     };
+    let mut tool_request_started_at: HashMap<String, Instant> = HashMap::new();
     write_json(trace_path, &artifact)?;
 
     loop {
@@ -2535,7 +2616,13 @@ async fn run_benchmark_turn(
             realtime = realtime_rx.recv() => {
                 match realtime {
                     Ok(event) => {
-                        handle_benchmark_event(&mut artifact, state, event).await;
+                        handle_benchmark_event(
+                            &mut artifact,
+                            state,
+                            event,
+                            &mut tool_request_started_at,
+                        )
+                        .await;
                         write_json(trace_path, &artifact)?;
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -2547,7 +2634,13 @@ async fn run_benchmark_turn(
             background = background_rx.recv() => {
                 match background {
                     Ok(event) => {
-                        handle_benchmark_event(&mut artifact, state, event).await;
+                        handle_benchmark_event(
+                            &mut artifact,
+                            state,
+                            event,
+                            &mut tool_request_started_at,
+                        )
+                        .await;
                         write_json(trace_path, &artifact)?;
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -2578,6 +2671,7 @@ async fn handle_benchmark_event(
     artifact: &mut AgentTurnArtifact,
     state: &Arc<AppState>,
     event: AppEvent,
+    tool_request_started_at: &mut HashMap<String, Instant>,
 ) {
     match event {
         AppEvent::Llm(llm_event) => {
@@ -2629,6 +2723,7 @@ async fn handle_benchmark_event(
             parent_id,
             tool_call,
         }) => {
+            tool_request_started_at.insert(tool_call.call_id.to_string(), Instant::now());
             let record = ToolRequestRecord {
                 request_id: request_id.to_string(),
                 parent_id: parent_id.to_string(),
@@ -2665,6 +2760,10 @@ async fn handle_benchmark_event(
                 tool,
                 content,
                 ui_payload,
+                latency_ms: tool_request_started_at
+                    .remove(call_id.as_ref())
+                    .map(|started_at| started_at.elapsed().as_millis() as u64)
+                    .unwrap_or(0),
             };
             artifact
                 .events
@@ -2690,6 +2789,10 @@ async fn handle_benchmark_event(
                 tool,
                 error,
                 ui_payload,
+                latency_ms: tool_request_started_at
+                    .remove(call_id.as_ref())
+                    .map(|started_at| started_at.elapsed().as_millis() as u64)
+                    .unwrap_or(0),
             };
             artifact.events.push(ObservedTurnEvent::ToolFailed(record));
         }
@@ -2828,6 +2931,85 @@ fn append_jsonl_blob(path: &Path, blob: &str) -> Result<(), PrepareError> {
         path: path.to_path_buf(),
         source,
     })
+}
+
+fn current_trace_file_offset(path: &Path) -> Result<u64, PrepareError> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.len()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(source) => Err(PrepareError::ReadManifest {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+async fn persist_full_response_trace_slice(
+    source_path: &Path,
+    start_offset: u64,
+    destination_path: &Path,
+) -> Result<bool, PrepareError> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut attempt = 0usize;
+    let slice = loop {
+        match fs::File::open(source_path) {
+            Ok(mut file) => {
+                let len = file
+                    .metadata()
+                    .map_err(|source| PrepareError::ReadManifest {
+                        path: source_path.to_path_buf(),
+                        source,
+                    })?
+                    .len();
+                if len <= start_offset {
+                    if attempt >= 5 {
+                        break None;
+                    }
+                } else {
+                    file.seek(SeekFrom::Start(start_offset)).map_err(|source| {
+                        PrepareError::ReadManifest {
+                            path: source_path.to_path_buf(),
+                            source,
+                        }
+                    })?;
+                    let mut buf = String::new();
+                    file.read_to_string(&mut buf)
+                        .map_err(|source| PrepareError::ReadManifest {
+                            path: source_path.to_path_buf(),
+                            source,
+                        })?;
+                    if !buf.trim().is_empty() {
+                        break Some(buf);
+                    }
+                    if attempt >= 5 {
+                        break None;
+                    }
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                if attempt >= 5 {
+                    break None;
+                }
+            }
+            Err(source) => {
+                return Err(PrepareError::ReadManifest {
+                    path: source_path.to_path_buf(),
+                    source,
+                });
+            }
+        }
+
+        attempt += 1;
+        sleep(Duration::from_millis(50)).await;
+    };
+
+    if let Some(blob) = slice {
+        append_jsonl_blob(destination_path, &blob)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 fn load_prepared_batch(
@@ -3209,6 +3391,7 @@ mod tests {
                 endpoint_model_name: "Kimi K2.5".to_string(),
                 quantization: Some("fp4".to_string()),
             }),
+            full_response_trace: Some(PathBuf::from("/tmp/out/llm-full-responses.jsonl")),
             steps: vec!["load_manifest".to_string()],
         };
 
@@ -3218,6 +3401,10 @@ mod tests {
         assert_eq!(value["run_arm"]["command"], "run-msb-single");
         assert_eq!(value["selected_endpoint"]["provider_slug"], "friendli");
         assert_eq!(value["selected_endpoint"]["quantization"], "fp4");
+        assert_eq!(
+            value["full_response_trace"],
+            serde_json::Value::String("/tmp/out/llm-full-responses.jsonl".to_string())
+        );
     }
 
     #[test]
@@ -3508,11 +3695,13 @@ mod tests {
             llm_prompt: Vec::new(),
             llm_response: None,
         };
+        let mut tool_request_started_at = HashMap::new();
 
         handle_benchmark_event(
             &mut artifact,
             &state,
             AppEvent::MessageUpdated(MessageUpdatedEvent::new(user_id)),
+            &mut tool_request_started_at,
         )
         .await;
 
@@ -3531,8 +3720,11 @@ mod tests {
                     },
                 },
             }),
+            &mut tool_request_started_at,
         )
         .await;
+
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         handle_benchmark_event(
             &mut artifact,
@@ -3544,6 +3736,7 @@ mod tests {
                 content: "ok".to_string(),
                 ui_payload: None,
             }),
+            &mut tool_request_started_at,
         )
         .await;
 
@@ -3560,6 +3753,7 @@ mod tests {
                 summary: "done".to_string(),
                 attempts: 1,
             }),
+            &mut tool_request_started_at,
         )
         .await;
 
@@ -3577,6 +3771,16 @@ mod tests {
                 .iter()
                 .any(|ev| matches!(ev, ObservedTurnEvent::ToolCompleted(_)))
         );
+        let latency_ms = artifact
+            .events
+            .iter()
+            .rev()
+            .find_map(|ev| match ev {
+                ObservedTurnEvent::ToolCompleted(record) => Some(record.latency_ms),
+                _ => None,
+            })
+            .expect("expected tool completion latency");
+        assert!(latency_ms > 0, "expected a nonzero captured tool latency");
         assert!(
             artifact
                 .events
@@ -3650,9 +3854,10 @@ mod tests {
             formatted_prompt: formatted_prompt.clone(),
             context_plan,
         }));
+        let mut tool_request_started_at = HashMap::new();
 
         // Handle the event
-        handle_benchmark_event(&mut artifact, &state, event).await;
+        handle_benchmark_event(&mut artifact, &state, event, &mut tool_request_started_at).await;
 
         // Verify the prompt was captured
         assert_eq!(
@@ -3726,9 +3931,10 @@ mod tests {
                 latency_ms: 500,
             },
         }));
+        let mut tool_request_started_at = HashMap::new();
 
         // Handle the event
-        handle_benchmark_event(&mut artifact, &state, event).await;
+        handle_benchmark_event(&mut artifact, &state, event, &mut tool_request_started_at).await;
 
         // Verify the response was captured
         assert_eq!(
@@ -3794,9 +4000,10 @@ mod tests {
                 latency_ms: 1200,
             },
         }));
+        let mut tool_request_started_at = HashMap::new();
 
         // Handle the event
-        handle_benchmark_event(&mut artifact, &state, event).await;
+        handle_benchmark_event(&mut artifact, &state, event, &mut tool_request_started_at).await;
 
         // Verify a structured LlmResponse event was captured (Phase 1D)
         let llm_response_events: Vec<_> = artifact

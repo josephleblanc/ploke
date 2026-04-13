@@ -10,6 +10,10 @@ A document may contain multiple entries, each headed by the above information.
 
 Each created document should also be linked to a planning document.
 
+Archived one-off agent docs now live under `docs/archive/agents/YYYY-MM/`. Keep
+`docs/active/agents/` focused on current control planes, live packets, active
+handoffs, and restart-critical notes.
+
 - Re: creating a new directory
 
 Follow the established pattern of the current date (yyyy-mm-dd) at the

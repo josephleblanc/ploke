@@ -43,6 +43,8 @@ Minimum record by work type:
 
 - routine implementation work:
   keep chronology in the lab book and update handoffs or recent activity if context would otherwise be lost
+- active eval execution under time pressure:
+  prefer the smallest restart surface that preserves the next move; keep `CURRENT_FOCUS.md` and `handoffs/recent-activity.md` current, and defer new task-specific handoff notes unless a real decision boundary was crossed or a compaction/restart is about to happen
 - formal run entered into the record:
   follow the run protocol, preserve artifacts, and update the evidence ledger
 - planned A/B test, ablation, or materially diagnostic workflow change:

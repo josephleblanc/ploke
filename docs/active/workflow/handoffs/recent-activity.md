@@ -1,7 +1,7 @@
 # Recent Activity
 
 - last_updated: 2026-04-13
-- ready_for: CLI trace review skill meta-experiment round 2 on top of the bounded Phase 2 diagnostic follow-up
+- ready_for: tokio-rs probe, registry promotion, and fresh second-repo batch launch under orchestrator mode
 - owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
@@ -16,6 +16,76 @@
   - Rationale: Prevent unintended side effects on core infrastructure during eval work
 
 ## 2026-04-13
+
+- **TOKIO-RS SELECTED AS THE NEXT RUST REPO EXPANSION TARGET**
+  - Added a provisional `tokio-rs__tokio` row to [target-capability-registry.md](../target-capability-registry.md) as the live run-policy gate for second-target expansion
+  - Current rationale:
+    - the upstream Multi-SWE-Bench Rust harness exposes five visible `tokio-rs` instances
+    - the family is medium-small and mostly uses `rust:latest`, so it is a cleaner second probe than higher-variance options such as `clap_rs` or `sharkdp`
+    - we do not yet have repo-specific interpretability evidence in `ploke-eval`, so the row remains provisional at `watch`
+  - Immediate next move:
+    - fetch the `tokio-rs` dataset/repo into the normal `~/.ploke-eval` layout
+    - run one reviewed `tokio-rs` probe
+    - promote or tighten the registry row from that evidence before preparing the fresh batch id
+  - Constraint:
+    - do not force a generic benchmark-family row into the target-capability registry unless a real benchmark-wide limitation appears; the registry remains a run-policy/interpretability surface, not a benchmark inventory
+
+- **TOKIO-RS PROBE COMPLETED CLEANLY AND OPENS THE SECOND-REPO BATCH PATH**
+  - Added [tokio-rs probe and batch entry](../../agents/2026-04-12_eval-infra-sprint/2026-04-13_tokio-rs-probe-and-batch-entry.md)
+  - Ran a reviewed single-instance probe on `tokio-rs__tokio-6618` using the upstream `tokio-rs__tokio_dataset.jsonl` file and a normal `~/.ploke-eval/repos/tokio-rs/tokio` checkout
+  - Probe result:
+    - completed successfully
+    - `1` turn
+    - `5` successful tool calls
+    - full artifact set written under `~/.ploke-eval/runs/tokio-rs__tokio-6618/`
+  - Operational interpretation:
+    - no hard parser, modeling, or runner blocker surfaced
+    - `tokio-rs` is materially broader than ripgrep, so the target stays at `watch`
+    - the watch concern is scaling/breadth and legacy-mode non-primary target skipping, not fairness collapse
+  - Registry consequence:
+    - `tokio-rs__tokio` now moves to `run_policy = default_run` with `graph_valid` and a `scaling_constraint` watch note
+  - Immediate next move:
+    - prepare and launch a fresh `tokio-rs` batch id across the visible `tokio-rs` instance family
+
+- **RIPGREP BATCH EXECUTION ROLLED FORWARD TO A USABLE 14-RUN ARTIFACT SET**
+  - Added [ripgrep batch rollup and next target](../../agents/2026-04-12_eval-infra-sprint/2026-04-13_ripgrep-batch-rollup-and-next-target.md)
+  - Under time pressure, the first `ripgrep-all` batch attempt exposed an operational caveat:
+    - the original batch id was reused after an earlier failed attempt
+    - `run_batch()` only writes `batch-run-summary.json` after the full loop finishes
+    - the rerun was interrupted mid-batch, so the old stale `ripgrep-all` summary remained even though several per-run directories had advanced
+  - The clean recovery path was:
+    - trust per-run directories under `~/.ploke-eval/runs/BurntSushi__ripgrep-*`
+    - launch a fresh remainder batch as `ripgrep-remaining-r1`
+    - finish the final straggler `BurntSushi__ripgrep-454` with a direct single-run fallback
+  - Operational result:
+    - all 14 ripgrep instances now have full per-run artifacts
+    - the clean trusted batch-level summary is [ripgrep-remaining-r1/batch-run-summary.json](/home/brasides/.ploke-eval/batches/ripgrep-remaining-r1/batch-run-summary.json), which reports `9/9` succeeded for the remainder slice
+    - the snapshot DBs needed for downstream website work are available per run as `final-snapshot.db` and `indexing-checkpoint.db`
+  - Restart consequence:
+    - ripgrep is no longer the active execution problem
+    - the next bounded orchestrator move is choosing a second repo, classifying it in the target capability registry, and launching a fresh batch id for that repo
+
+- **RAW LLM FULL-RESPONSE TRACE STOPGAP LANDED FOR EVAL INTROSPECTION**
+  - Added [LLM full response trace stopgap](../../agents/2026-04-12_eval-infra-sprint/2026-04-13_llm-full-response-trace-stopgap.md)
+  - Landed a narrow production-code slice in `ploke-tui` and `ploke-eval` with explicit user permission:
+    - `ploke-tui` now emits a serialized wrapper record to a dedicated `llm-full-response` tracing target just before finish-policy handling
+    - the wrapper currently carries `assistant_message_id`, per-turn `response_index`, and the full `OpenAiResponse`
+    - `ploke-eval` now writes a dedicated target-filtered full-response trace file under `.ploke-eval/logs/`
+  - Restart consequence:
+    - raw provider envelopes are now capturable during eval runs
+    - the next bounded slice is deciding how to surface that file from run-local artifacts or `inspect`, not redesigning the whole persistence model
+
+- **FULL-RESPONSE TRACE NOW HAS RUN-LOCAL ARTIFACT + MINIMAL INSPECT SURFACE**
+  - Extended the same stopgap so agent-mode runs now copy the relevant traced slice into `runs/<instance>/llm-full-responses.jsonl`
+  - `execution-log.json` and `RunArtifactPaths` now carry that sidecar path when present
+  - Added `ploke-eval inspect turn <n> --show responses` to load the run-local sidecar and filter by the turn's `assistant_message_id`
+  - Added a narrow `inspect turns` fallback so run summary token usage now comes from the raw sidecar when normalized `RunRecord` totals are zero
+  - Bounded validation against a fresh `BurntSushi__ripgrep-1294` rerun plus the OpenRouter dashboard showed one known remaining gap:
+    - the sidecar captured 13 tool-call responses and useful token totals
+    - but it still missed the final `stop` response, so current sidecar totals undercount exact prompt/completion/total tokens and should not yet drive displayed cost
+  - Restart consequence:
+    - raw provider usage is now reachable from the run directory and visible through the normal CLI flow well enough for eval readiness
+    - the next bounded fix is the missing final-response capture, not broader schema redesign
 
 - **INSPECT TURN-SELECTION UX TIGHTENED; LOOP VIEW SCOPED FOR RESTART**
   - Added [inspect turns and loop UX note](../../agents/2026-04-13_inspect-turns-and-loop-ux-note.md)

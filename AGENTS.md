@@ -97,6 +97,12 @@ We are using Rust 2024 in all crates.
 - Shared agent documents live in `docs/active/agents/`.
 - See [docs/active/agents/readme.md](docs/active/agents/readme.md) for naming conventions and directory guidance.
 
+## End-Of-Session Doc Cleanup
+
+- When a session is ending or a fresh restart is being prepared, bring up the `doc-cleanup` sidecar check.
+- Use it to sweep stale `docs/active/agents/` docs into archive and keep the active set restart-critical.
+- Treat it as a closeout/restart hygiene pass, not an interruption during substantive work.
+
 ## Reading Logs
 
 When the user asks you to check or read logs:

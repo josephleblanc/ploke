@@ -48,6 +48,14 @@ superseded with a forward link.
 6. If a task would weaken correctness, invariants, validation, schema guarantees, or import semantics, stop and escalate before implementation.
 7. Lower-layer measurement and replay work takes priority over higher-layer tool optimization whenever interpretation is blocked.
 
+### Packet Discipline
+
+- Write or update the task packet before spawning a worker.
+- The packet is the source of truth for scope, acceptance criteria, owned files, and required evidence.
+- Worker prompts should reference the packet and include only live deltas or execution-specific constraints.
+- Do not duplicate the full packet in the worker prompt unless no packet exists yet and creating one first is impossible.
+- If a worker is spawned before the packet exists, treat that as drift and correct it immediately.
+
 ## Roles
 
 ### Orchestrator
