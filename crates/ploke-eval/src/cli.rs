@@ -1119,7 +1119,7 @@ Output includes turn number, timestamps, tool call count, and outcome for each t
 "
 )]
 pub struct ConversationsCommand {
-    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
@@ -1152,14 +1152,18 @@ Run-level inspection (matches eval-design.md API):
 
 Turn-level inspection:
 
-  cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 --turn 1
-  cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 --turn 1 --show messages
+  cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 1
+  cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 1 --show messages
 
 Bootstrap questions:
 
-  cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 --turn 1 --show db-state
+  cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 1 --show db-state
   cargo run -p ploke-eval -- inspect query --instance BurntSushi__ripgrep-2209 --turn 1 --lookup GlobSet
   cargo run -p ploke-eval -- inspect conversations --instance BurntSushi__ripgrep-2209
+
+Default target:
+
+  If you omit --record and --instance, inspect uses the most recent completed run.
 "
 )]
 pub struct InspectCommand {
@@ -1170,6 +1174,7 @@ pub struct InspectCommand {
 #[derive(Debug, Subcommand)]
 pub enum InspectSubcommand {
     /// List all agent conversation turns (run.conversations())
+    #[command(alias = "turns")]
     Conversations(InspectConversationsCommand),
     /// List all tool calls from all turns (run.tool_calls())
     ToolCalls(InspectToolCallsCommand),
@@ -1187,7 +1192,7 @@ pub enum InspectSubcommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectConversationsCommand {
-    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
@@ -1202,13 +1207,21 @@ pub struct InspectConversationsCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectToolCallsCommand {
-    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
     /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
+
+    /// Show one tool call in detail by its list index, e.g. `ploke-eval inspect tool-calls 5`.
+    #[arg(value_name = "INDEX")]
+    pub index: Option<usize>,
+
+    /// Expand detail output to include full argument/result payloads.
+    #[arg(long)]
+    pub full: bool,
 
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -1217,7 +1230,7 @@ pub struct InspectToolCallsCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectDbSnapshotsCommand {
-    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
@@ -1232,7 +1245,7 @@ pub struct InspectDbSnapshotsCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectFailuresCommand {
-    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
@@ -1247,7 +1260,7 @@ pub struct InspectFailuresCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectConfigCommand {
-    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
@@ -1262,7 +1275,7 @@ pub struct InspectConfigCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectTurnCommand {
-    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
@@ -1271,8 +1284,12 @@ pub struct InspectTurnCommand {
     pub instance: Option<String>,
 
     /// Turn number (1-indexed) to inspect.
-    #[arg(long)]
-    pub turn: u32,
+    #[arg(value_name = "TURN", conflicts_with = "turn_flag")]
+    pub turn: Option<u32>,
+
+    /// Turn number (1-indexed) to inspect.
+    #[arg(long = "turn", hide = true, conflicts_with = "turn")]
+    pub turn_flag: Option<u32>,
 
     /// What to show for this turn: all, messages, tool-calls, tool-call, tool-result, db-state.
     #[arg(long, value_enum, default_value_t = TurnShowOption::All)]
@@ -1285,6 +1302,14 @@ pub struct InspectTurnCommand {
     /// Tool call index (0-based) when showing specific tool-call or tool-result.
     #[arg(long)]
     pub index: Option<usize>,
+
+    /// Only include selected message roles when using --show messages.
+    #[arg(long, value_enum, value_delimiter = ',')]
+    pub roles: Vec<InspectMessageRole>,
+
+    /// Exclude selected message roles when using --show messages.
+    #[arg(long, value_enum, value_delimiter = ',', conflicts_with = "roles")]
+    pub exclude_roles: Vec<InspectMessageRole>,
 }
 
 #[derive(Debug, Parser)]
@@ -1304,7 +1329,7 @@ Examples:
 "
 )]
 pub struct InspectQueryCommand {
-    /// Path to a run record file (record.json.gz). Defaults to ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
@@ -1343,6 +1368,14 @@ pub enum TurnShowOption {
     ToolCall,
     ToolResult,
     DbState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum InspectMessageRole {
+    System,
+    User,
+    Assistant,
+    Tool,
 }
 
 impl RunMsbSingleCommand {
@@ -1468,15 +1501,7 @@ impl ReplayMsbBatchCommand {
 
 impl ConversationsCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = match (self.record, self.instance) {
-            (Some(path), None) => path,
-            (None, Some(instance)) => runs_dir()?.join(instance).join("record.json.gz"),
-            _ => {
-                return Err(PrepareError::MissingRunManifest(
-                    runs_dir()?.join("<instance>/record.json.gz"),
-                ));
-            }
-        };
+        let record_path = resolve_record_path(self.record, self.instance)?;
 
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
@@ -1554,35 +1579,31 @@ impl InspectConversationsCommand {
 
         match self.format {
             InspectOutputFormat::Table => {
-                println!(
-                    "{:<6} {:<24} {:<24} {:<12} {}",
-                    "Turn", "Started", "Ended", "Tools", "Outcome"
-                );
-                println!("{}", "-".repeat(80));
+                println!("{:<6} {:<6} {:<7} {}", "Turn", "Tools", "Failed", "Outcome");
+                println!("{}", "-".repeat(40));
                 for turn in record.conversations() {
                     let tool_count = turn.tool_calls().len();
-                    let outcome_str = match &turn.outcome {
-                        crate::record::TurnOutcome::ToolCalls { count } => {
-                            format!("tool_calls({})", count)
-                        }
-                        crate::record::TurnOutcome::Content => "content".to_string(),
-                        crate::record::TurnOutcome::Error { message } => {
-                            format!("error: {}", message.chars().take(40).collect::<String>())
-                        }
-                        crate::record::TurnOutcome::Timeout { elapsed_secs } => {
-                            format!("timeout({}s)", elapsed_secs)
-                        }
-                    };
                     println!(
-                        "{:<6} {:<24} {:<24} {:<12} {}",
+                        "{:<6} {:<6} {:<7} {}",
                         turn.turn_number,
-                        turn.started_at.chars().take(23).collect::<String>(),
-                        turn.ended_at.chars().take(23).collect::<String>(),
                         tool_count,
-                        outcome_str
+                        failed_tool_count(turn),
+                        truncate_for_table(&summarize_turn_outcome(turn), 18),
                     );
                 }
                 println!("\nTotal turns: {}", record.conversations().count());
+                if let Some(first_turn) = record.conversations().next() {
+                    println!("Next:");
+                    println!("  ploke-eval inspect turn {}", first_turn.turn_number);
+                    println!(
+                        "  ploke-eval inspect turn {} --show tool-calls",
+                        first_turn.turn_number
+                    );
+                    println!(
+                        "  ploke-eval inspect turn {} --show messages",
+                        first_turn.turn_number
+                    );
+                }
             }
             InspectOutputFormat::Json => {
                 let turns: Vec<_> = record.conversations().collect();
@@ -1606,44 +1627,101 @@ impl InspectToolCallsCommand {
                 source,
             })?;
 
-        let tool_calls = record.tool_calls();
+        let indexed_tool_calls = indexed_tool_calls(&record);
+
+        if let Some(index) = self.index {
+            match self.format {
+                InspectOutputFormat::Table => match indexed_tool_calls.get(index) {
+                    Some((_, turn, call)) => {
+                        print_tool_call_detail(*turn, index, call, self.full);
+                    }
+                    None => {
+                        println!(
+                            "Error: Index {} out of range. Run has {} tool call{} (valid indices: 0..{}).",
+                            index,
+                            indexed_tool_calls.len(),
+                            if indexed_tool_calls.len() == 1 {
+                                ""
+                            } else {
+                                "s"
+                            },
+                            indexed_tool_calls.len().saturating_sub(1)
+                        );
+                    }
+                },
+                InspectOutputFormat::Json => match indexed_tool_calls.get(index) {
+                    Some((_, turn, call)) => {
+                        let payload = serde_json::json!({
+                            "index": index,
+                            "turn": turn,
+                            "tool_call": call,
+                        });
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&payload)
+                                .map_err(PrepareError::Serialize)?
+                        );
+                    }
+                    None => {
+                        println!(
+                            "Error: Index {} out of range. Run has {} tool call{} (valid indices: 0..{}).",
+                            index,
+                            indexed_tool_calls.len(),
+                            if indexed_tool_calls.len() == 1 {
+                                ""
+                            } else {
+                                "s"
+                            },
+                            indexed_tool_calls.len().saturating_sub(1)
+                        );
+                    }
+                },
+            }
+            return Ok(());
+        }
 
         match self.format {
             InspectOutputFormat::Table => {
                 println!(
-                    "{:<6} {:<20} {:<40} {}",
-                    "Turn", "Tool", "Arguments", "Result"
+                    "{:<5} {:<6} {:<20} {:<48} {}",
+                    "Idx", "Turn", "Tool", "Context", "Result"
                 );
-                println!("{}", "-".repeat(100));
-                for (turn, call) in record
-                    .conversations()
-                    .flat_map(|t| t.tool_calls().into_iter().map(move |c| (t.turn_number, c)))
-                {
-                    let args_preview = call.request.arguments.chars().take(37).collect::<String>();
-                    let result_str = match &call.result {
-                        crate::record::ToolResult::Completed(_) => "completed".to_string(),
-                        crate::record::ToolResult::Failed(f) => {
-                            format!("failed: {}", f.error.chars().take(30).collect::<String>())
-                        }
-                    };
+                println!("{}", "-".repeat(120));
+                for (index, turn, call) in &indexed_tool_calls {
                     println!(
-                        "{:<6} {:<20} {:<40} {}",
+                        "{:<5} {:<6} {:<20} {:<48} {}",
+                        index,
                         turn,
-                        call.request.tool.chars().take(18).collect::<String>(),
-                        if args_preview.len() >= 37 {
-                            format!("{}...", args_preview)
-                        } else {
-                            args_preview
-                        },
-                        result_str
+                        truncate_for_table(&call.request.tool, 18),
+                        truncate_for_table(&summarize_tool_inputs(&call.request.arguments), 46),
+                        truncate_for_table(&summarize_tool_result(&call.result), 28),
                     );
                 }
-                println!("\nTotal tool calls: {}", tool_calls.len());
+                println!("\nTotal tool calls: {}", indexed_tool_calls.len());
+                if !indexed_tool_calls.is_empty() {
+                    println!("Next:");
+                    let next_index = tool_call_next_step_index(indexed_tool_calls.len())
+                        .expect("non-empty tool call list should have a next-step index");
+                    println!("  ploke-eval inspect tool-calls {}", next_index);
+                    println!("  ploke-eval inspect tool-calls --full {}", next_index);
+                }
             }
             InspectOutputFormat::Json => {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&tool_calls).map_err(PrepareError::Serialize)?
+                    serde_json::to_string_pretty(
+                        &indexed_tool_calls
+                            .iter()
+                            .map(|(index, turn, call)| {
+                                serde_json::json!({
+                                    "index": index,
+                                    "turn": turn,
+                                    "tool_call": call,
+                                })
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .map_err(PrepareError::Serialize)?
                 );
             }
         }
@@ -1776,27 +1854,53 @@ impl InspectTurnCommand {
                 source,
             })?;
 
+        let turn_number =
+            self.turn
+                .or(self.turn_flag)
+                .ok_or_else(|| PrepareError::DatabaseSetup {
+                    phase: "inspect_turn",
+                    detail: "Turn number is required (for example: `inspect turn 1`)".to_string(),
+                })?;
+
         let turn = record
-            .turn_record(self.turn)
+            .turn_record(turn_number)
             .ok_or_else(|| PrepareError::DatabaseSetup {
                 phase: "inspect_turn",
-                detail: format!("Turn {} not found", self.turn),
+                detail: format!("Turn {} not found", turn_number),
             })?;
 
         match self.show {
             TurnShowOption::All => {
-                // Show comprehensive turn info
-                println!("Turn {}", turn.turn_number);
-                println!("{}", "-".repeat(40));
-                println!("Started: {}", turn.started_at);
-                println!("Ended: {}", turn.ended_at);
-                println!("DB Timestamp: {}", turn.db_timestamp_micros);
-                println!("Messages: {}", turn.messages().len());
-                println!("Tool Calls: {}", turn.tool_calls().len());
-                println!("Outcome: {:?}", turn.outcome);
+                print_turn_summary(turn);
+                println!();
+                println!("Next:");
+                println!(
+                    "  ploke-eval inspect turn {} --show tool-calls",
+                    turn.turn_number
+                );
+                println!(
+                    "  ploke-eval inspect turn {} --show messages",
+                    turn.turn_number
+                );
+                println!(
+                    "  ploke-eval inspect turn {} --show messages --exclude-roles system,user",
+                    turn.turn_number
+                );
             }
             TurnShowOption::Messages => {
-                println!("{}", render_messages_json(&turn.messages())?);
+                let messages = filter_messages(turn.messages(), &self.roles, &self.exclude_roles);
+                match self.format {
+                    InspectOutputFormat::Table => {
+                        println!("{}", render_messages_table(&messages));
+                        println!(
+                            "\nNext:\n  ploke-eval inspect turn {} --show messages --exclude-roles system,user",
+                            turn.turn_number
+                        );
+                    }
+                    InspectOutputFormat::Json => {
+                        println!("{}", render_messages_json(&messages)?);
+                    }
+                }
             }
             TurnShowOption::ToolCalls => {
                 let tool_calls = turn.tool_calls();
@@ -1805,31 +1909,29 @@ impl InspectTurnCommand {
                 } else {
                     match self.format {
                         InspectOutputFormat::Table => {
-                            println!("{:<20} {:<40} {}", "Tool", "Arguments", "Result");
-                            println!("{}", "-".repeat(80));
-                            for call in &tool_calls {
-                                let args_preview =
-                                    call.request.arguments.chars().take(37).collect::<String>();
-                                let result_str = match &call.result {
-                                    crate::record::ToolResult::Completed(_) => {
-                                        "completed".to_string()
-                                    }
-                                    crate::record::ToolResult::Failed(f) => format!(
-                                        "failed: {}",
-                                        f.error.chars().take(20).collect::<String>()
-                                    ),
-                                };
+                            println!("{:<5} {:<20} {:<48} {}", "Idx", "Tool", "Context", "Result");
+                            println!("{}", "-".repeat(110));
+                            for (index, call) in tool_calls.iter().enumerate() {
                                 println!(
-                                    "{:<20} {:<40} {}",
-                                    call.request.tool.chars().take(18).collect::<String>(),
-                                    if args_preview.len() >= 37 {
-                                        format!("{}...", args_preview)
-                                    } else {
-                                        args_preview
-                                    },
-                                    result_str
+                                    "{:<5} {:<20} {:<48} {}",
+                                    index,
+                                    truncate_for_table(&call.request.tool, 18),
+                                    truncate_for_table(
+                                        &summarize_tool_inputs(&call.request.arguments),
+                                        46
+                                    ),
+                                    truncate_for_table(&summarize_tool_result(&call.result), 28),
                                 );
                             }
+                            println!("\nNext:");
+                            println!(
+                                "  ploke-eval inspect turn {} --show tool-call --index 0",
+                                turn.turn_number
+                            );
+                            println!(
+                                "  ploke-eval inspect turn {} --show tool-result --index 0",
+                                turn.turn_number
+                            );
                         }
                         InspectOutputFormat::Json => {
                             println!(
@@ -1848,9 +1950,7 @@ impl InspectTurnCommand {
                         let tool_call = &tool_calls[idx];
                         match self.format {
                             InspectOutputFormat::Table => {
-                                println!("Tool: {}", tool_call.request.tool);
-                                println!("Arguments: {}", tool_call.request.arguments);
-                                println!("Result: {:?}", tool_call.result);
+                                print_tool_call_detail(turn.turn_number, idx, tool_call, false);
                             }
                             InspectOutputFormat::Json => {
                                 println!(
@@ -1874,9 +1974,7 @@ impl InspectTurnCommand {
                         let tool_call = &tool_calls[0];
                         match self.format {
                             InspectOutputFormat::Table => {
-                                println!("Tool: {}", tool_call.request.tool);
-                                println!("Arguments: {}", tool_call.request.arguments);
-                                println!("Result: {:?}", tool_call.result);
+                                print_tool_call_detail(turn.turn_number, 0, tool_call, false);
                             }
                             InspectOutputFormat::Json => {
                                 println!(
@@ -1901,12 +1999,20 @@ impl InspectTurnCommand {
                 let tool_calls = turn.tool_calls();
                 match (self.index, tool_calls.len()) {
                     (Some(idx), len) if idx < len => {
-                        let result = &tool_calls[idx].result;
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&result)
-                                .map_err(PrepareError::Serialize)?
-                        );
+                        let tool_call = &tool_calls[idx];
+                        match self.format {
+                            InspectOutputFormat::Table => {
+                                print_tool_result_detail(idx, &tool_call.result, false);
+                            }
+                            InspectOutputFormat::Json => {
+                                let result = &tool_calls[idx].result;
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&result)
+                                        .map_err(PrepareError::Serialize)?
+                                );
+                            }
+                        }
                     }
                     (Some(idx), len) => {
                         println!(
@@ -1917,14 +2023,19 @@ impl InspectTurnCommand {
                             len.saturating_sub(1)
                         );
                     }
-                    (None, 1) => {
-                        let result = &tool_calls[0].result;
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&result)
-                                .map_err(PrepareError::Serialize)?
-                        );
-                    }
+                    (None, 1) => match self.format {
+                        InspectOutputFormat::Table => {
+                            print_tool_result_detail(0, &tool_calls[0].result, false);
+                        }
+                        InspectOutputFormat::Json => {
+                            let result = &tool_calls[0].result;
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&result)
+                                    .map_err(PrepareError::Serialize)?
+                            );
+                        }
+                    },
                     (None, len) => {
                         println!(
                             "Turn has {} tool call{}. Use --index 0..{} to select one.",
@@ -2139,15 +2250,491 @@ fn render_messages_json(
     serde_json::to_string_pretty(messages).map_err(PrepareError::Serialize)
 }
 
+fn render_messages_table(messages: &[crate::record::ConversationMessage]) -> String {
+    if messages.is_empty() {
+        return "No messages in this turn.".to_string();
+    }
+
+    let mut out = String::new();
+    for (index, message) in messages.iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+
+        out.push_str(&format!("Message {}\n", index + 1));
+        out.push_str(&format!(
+            "  role .......... {}\n",
+            message_role_label(message_role(message))
+        ));
+        if let Some(tool_call_id) = &message.tool_call_id {
+            out.push_str(&format!("  tool call id ... {}\n", tool_call_id));
+        }
+        out.push_str(&format!(
+            "  content ....... {}\n",
+            summarize_message_content(&message.content)
+        ));
+    }
+
+    out.trim_end().to_string()
+}
+
+fn filter_messages(
+    messages: Vec<crate::record::ConversationMessage>,
+    roles: &[InspectMessageRole],
+    exclude_roles: &[InspectMessageRole],
+) -> Vec<crate::record::ConversationMessage> {
+    messages
+        .into_iter()
+        .filter(|message| {
+            let role = message_role(message);
+            (roles.is_empty() || roles.contains(&role)) && !exclude_roles.contains(&role)
+        })
+        .collect()
+}
+
+fn message_role(message: &crate::record::ConversationMessage) -> InspectMessageRole {
+    use ploke_tui::chat_history::MessageKind;
+
+    match message.kind {
+        MessageKind::System => InspectMessageRole::System,
+        MessageKind::SysInfo => InspectMessageRole::System,
+        MessageKind::User => InspectMessageRole::User,
+        MessageKind::Assistant => InspectMessageRole::Assistant,
+        MessageKind::Tool => InspectMessageRole::Tool,
+    }
+}
+
+fn message_role_label(role: InspectMessageRole) -> &'static str {
+    match role {
+        InspectMessageRole::System => "system",
+        InspectMessageRole::User => "user",
+        InspectMessageRole::Assistant => "assistant",
+        InspectMessageRole::Tool => "tool",
+    }
+}
+
+fn indexed_tool_calls(
+    record: &crate::record::RunRecord,
+) -> Vec<(usize, u32, crate::record::ToolExecutionRecord)> {
+    record
+        .conversations()
+        .flat_map(|turn| {
+            turn.tool_calls()
+                .into_iter()
+                .map(move |call| (turn.turn_number, call))
+        })
+        .enumerate()
+        .map(|(index, (turn, call))| (index, turn, call))
+        .collect()
+}
+
+fn failed_tool_count(turn: &crate::record::TurnRecord) -> usize {
+    turn.tool_calls()
+        .iter()
+        .filter(|call| matches!(call.result, crate::record::ToolResult::Failed(_)))
+        .count()
+}
+
+fn summarize_turn_outcome(turn: &crate::record::TurnRecord) -> String {
+    match &turn.outcome {
+        crate::record::TurnOutcome::ToolCalls { .. } => "completed".to_string(),
+        crate::record::TurnOutcome::Content => "content".to_string(),
+        crate::record::TurnOutcome::Error { message } => {
+            format!("error: {}", truncate_middle(message, 16))
+        }
+        crate::record::TurnOutcome::Timeout { elapsed_secs } => {
+            format!("timeout({}s)", elapsed_secs)
+        }
+    }
+}
+
+fn summarize_message_content(content: &str) -> String {
+    let first_line = content.lines().next().unwrap_or("").trim();
+    if first_line.is_empty() {
+        "(empty)".to_string()
+    } else {
+        truncate_middle(first_line, 72)
+    }
+}
+
+fn tool_call_next_step_index(tool_call_count: usize) -> Option<usize> {
+    if tool_call_count > 0 { Some(0) } else { None }
+}
+
+fn print_turn_summary(turn: &crate::record::TurnRecord) {
+    let messages = turn.messages();
+    let tool_calls = turn.tool_calls();
+    let failed_tools = tool_calls
+        .iter()
+        .filter(|call| matches!(call.result, crate::record::ToolResult::Failed(_)))
+        .count();
+    let patch_proposed = tool_calls
+        .iter()
+        .any(|call| call.request.tool == "non_semantic_patch");
+    let patch_applied = summarize_patch_state(&tool_calls);
+
+    println!("Turn {}", turn.turn_number);
+    println!("  tools .............. {}", tool_calls.len());
+    println!("  failed tools ....... {}", failed_tools);
+    println!("  messages ........... {}", messages.len());
+    println!(
+        "  patch proposed ..... {}",
+        if patch_proposed { "yes" } else { "no" }
+    );
+    println!("  patch applied ...... {}", patch_applied);
+}
+
+fn summarize_patch_state(tool_calls: &[crate::record::ToolExecutionRecord]) -> &'static str {
+    let patch_calls: Vec<_> = tool_calls
+        .iter()
+        .filter(|call| call.request.tool == "non_semantic_patch")
+        .collect();
+
+    if patch_calls.is_empty() {
+        return "no";
+    }
+
+    if patch_calls.iter().any(|call| {
+        matches!(
+            &call.result,
+            crate::record::ToolResult::Failed(_) | crate::record::ToolResult::Completed(_)
+        )
+    }) {
+        let completed_calls: Vec<_> = patch_calls
+            .iter()
+            .filter_map(|call| match &call.result {
+                crate::record::ToolResult::Completed(completed) => Some(completed),
+                crate::record::ToolResult::Failed(_) => None,
+            })
+            .collect();
+
+        if completed_calls.is_empty() {
+            "no"
+        } else if completed_calls.iter().any(|completed| {
+            completed
+                .ui_payload
+                .as_ref()
+                .and_then(|ui| {
+                    ui.fields
+                        .iter()
+                        .find(|field| field.name.as_ref() == "applied")
+                        .map(|field| field.value.as_ref())
+                })
+                .map(|value| value != "0")
+                .unwrap_or(false)
+        }) {
+            "yes"
+        } else {
+            "partial"
+        }
+    } else {
+        "no"
+    }
+}
+
+fn print_tool_call_detail(
+    turn: u32,
+    index: usize,
+    call: &crate::record::ToolExecutionRecord,
+    full: bool,
+) {
+    println!("Tool Call {}", index);
+    println!("{}", "-".repeat(40));
+    println!("Turn: {}", turn);
+    println!("Tool: {}", call.request.tool);
+    println!("Status: {}", tool_status_label(&call.result));
+    println!("Latency: {} ms", call.latency_ms);
+    println!();
+    println!("Inputs");
+    println!("{}", "-".repeat(40));
+    let rendered_inputs = render_tool_inputs(&call.request.arguments);
+    if rendered_inputs.is_empty() {
+        println!("(none)");
+    } else {
+        for line in rendered_inputs {
+            println!("{}", line);
+        }
+    }
+    println!();
+    print_tool_result_detail(index, &call.result, full);
+    if full {
+        println!();
+        println!("Raw Arguments");
+        println!("{}", "-".repeat(40));
+        println!("{}", call.request.arguments);
+    }
+}
+
+fn print_tool_result_detail(index: usize, result: &crate::record::ToolResult, full: bool) {
+    println!("Result");
+    println!("{}", "-".repeat(40));
+    match result {
+        crate::record::ToolResult::Completed(completed) => {
+            if let Some(ui_payload) = &completed.ui_payload {
+                println!("Summary: {}", ui_payload.summary);
+                for field in &ui_payload.fields {
+                    println!("{}: {}", field.name, prettify_field_value(&field.value));
+                }
+                if let Some(details) = &ui_payload.details {
+                    println!("Details:");
+                    println!(
+                        "{}",
+                        format_payload_block(details, if full { 1200 } else { 220 })
+                    );
+                }
+            }
+            if !completed.content.is_empty() {
+                println!("Output:");
+                println!(
+                    "{}",
+                    format_payload_block(&completed.content, if full { 2400 } else { 220 })
+                );
+            }
+        }
+        crate::record::ToolResult::Failed(failed) => {
+            println!("Error:");
+            println!(
+                "{}",
+                format_payload_block(&failed.error, if full { 2400 } else { 220 })
+            );
+            if let Some(ui_payload) = &failed.ui_payload {
+                println!("UI Summary: {}", ui_payload.summary);
+                for field in &ui_payload.fields {
+                    println!("{}: {}", field.name, prettify_field_value(&field.value));
+                }
+            }
+        }
+    }
+    if !full {
+        println!();
+        println!("Tip: rerun with `--full {}` for the full payload.", index);
+    }
+}
+
+fn render_tool_inputs(arguments: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
+        return vec![format!(
+            "arguments: {}",
+            format_payload_block(arguments, 220)
+        )];
+    };
+
+    match value {
+        serde_json::Value::Object(map) => map
+            .into_iter()
+            .map(|(key, value)| format!("{}: {}", key, summarize_json_value(&key, &value, true)))
+            .collect(),
+        other => vec![format!(
+            "arguments: {}",
+            summarize_json_value("arguments", &other, true)
+        )],
+    }
+}
+
+fn summarize_tool_inputs(arguments: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
+        return truncate_middle(arguments, 46);
+    };
+
+    let Some(object) = value.as_object() else {
+        return truncate_middle(&value.to_string(), 46);
+    };
+
+    let preferred = [
+        "file",
+        "file_path",
+        "dir",
+        "path",
+        "search_term",
+        "canon",
+        "symbol",
+        "name",
+        "query",
+        "command",
+        "patches",
+        "confidence",
+    ];
+
+    let mut parts = Vec::new();
+    for key in preferred {
+        if let Some(value) = object.get(key) {
+            parts.push(format!(
+                "{}={}",
+                key,
+                summarize_json_value(key, value, false)
+            ));
+        }
+        if parts.len() >= 3 {
+            break;
+        }
+    }
+
+    if parts.is_empty() {
+        for (key, value) in object.iter().take(3) {
+            parts.push(format!(
+                "{}={}",
+                key,
+                summarize_json_value(key, value, false)
+            ));
+        }
+    }
+
+    parts.join("; ")
+}
+
+fn summarize_tool_result(result: &crate::record::ToolResult) -> String {
+    match result {
+        crate::record::ToolResult::Completed(completed) => {
+            if let Some(ui_payload) = &completed.ui_payload {
+                format!("ok: {}", truncate_middle(&ui_payload.summary, 24))
+            } else {
+                "ok".to_string()
+            }
+        }
+        crate::record::ToolResult::Failed(failed) => {
+            format!("failed: {}", truncate_middle(&failed.error, 24))
+        }
+    }
+}
+
+fn summarize_json_value(key: &str, value: &serde_json::Value, multiline: bool) -> String {
+    match value {
+        serde_json::Value::String(text) => {
+            if looks_like_path(key, text) {
+                abbreviate_path_tail(text, if multiline { 72 } else { 24 })
+            } else {
+                let limit = if multiline { 120 } else { 24 };
+                prettify_field_value(&truncate_middle(text, limit))
+            }
+        }
+        serde_json::Value::Array(items) => {
+            if items.is_empty() {
+                "[]".to_string()
+            } else {
+                format!(
+                    "[{} item{}]",
+                    items.len(),
+                    if items.len() == 1 { "" } else { "s" }
+                )
+            }
+        }
+        serde_json::Value::Object(map) => format!(
+            "{{{} key{}}}",
+            map.len(),
+            if map.len() == 1 { "" } else { "s" }
+        ),
+        other => other.to_string(),
+    }
+}
+
+fn looks_like_path(key: &str, value: &str) -> bool {
+    matches!(key, "file" | "file_path" | "dir" | "path" | "root_path")
+        || value.starts_with('/')
+        || value.contains(std::path::MAIN_SEPARATOR)
+}
+
+fn abbreviate_path_tail(path: &str, max_len: usize) -> String {
+    if path.chars().count() <= max_len {
+        return path.to_string();
+    }
+
+    let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+    if parts.is_empty() {
+        return truncate_middle(path, max_len);
+    }
+
+    let mut kept = Vec::new();
+    let mut len = 3usize;
+    for part in parts.iter().rev() {
+        let next_len = len + part.len() + if kept.is_empty() { 0 } else { 1 };
+        if next_len > max_len {
+            break;
+        }
+        kept.push(*part);
+        len = next_len;
+    }
+    kept.reverse();
+
+    if kept.is_empty() {
+        truncate_middle(path, max_len)
+    } else {
+        format!(".../{}", kept.join("/"))
+    }
+}
+
+fn truncate_for_table(text: &str, max_len: usize) -> String {
+    if text.chars().count() <= max_len {
+        text.to_string()
+    } else {
+        format!(
+            "{}...",
+            text.chars()
+                .take(max_len.saturating_sub(3))
+                .collect::<String>()
+        )
+    }
+}
+
+fn truncate_middle(text: &str, max_len: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max_len {
+        return text.to_string();
+    }
+    if max_len <= 3 {
+        return ".".repeat(max_len);
+    }
+    let front = (max_len - 3) / 2;
+    let back = max_len - 3 - front;
+    format!(
+        "{}...{}",
+        chars[..front].iter().collect::<String>(),
+        chars[chars.len() - back..].iter().collect::<String>()
+    )
+}
+
+fn format_payload_block(text: &str, max_len: usize) -> String {
+    let trimmed = text.trim();
+    let rendered = serde_json::from_str::<serde_json::Value>(trimmed)
+        .ok()
+        .and_then(|value| serde_json::to_string_pretty(&value).ok())
+        .unwrap_or_else(|| trimmed.to_string());
+
+    truncate_middle(&rendered, max_len)
+}
+
+fn prettify_field_value(text: &str) -> String {
+    text.replace('\n', "\\n")
+}
+
+fn tool_status_label(result: &crate::record::ToolResult) -> &'static str {
+    match result {
+        crate::record::ToolResult::Completed(_) => "completed",
+        crate::record::ToolResult::Failed(_) => "failed",
+    }
+}
+
 fn resolve_record_path(
     record: Option<PathBuf>,
     instance: Option<String>,
 ) -> Result<PathBuf, PrepareError> {
+    resolve_record_path_from_eval_home(record, instance, crate::layout::ploke_eval_home()?)
+}
+
+fn resolve_record_path_from_eval_home(
+    record: Option<PathBuf>,
+    instance: Option<String>,
+    eval_home: PathBuf,
+) -> Result<PathBuf, PrepareError> {
+    let runs_root = eval_home.join("runs");
     match (record, instance) {
         (Some(path), None) => Ok(path),
-        (None, Some(instance)) => Ok(runs_dir()?.join(instance).join("record.json.gz")),
-        _ => Err(PrepareError::MissingRunManifest(
-            runs_dir()?.join("<instance>/record.json.gz"),
+        (None, Some(instance)) => Ok(runs_root.join(instance).join("record.json.gz")),
+        (None, None) => {
+            let last_run = crate::run_history::load_last_run_at(&eval_home)?;
+            Ok(last_run.run_dir.join("record.json.gz"))
+        }
+        (Some(_), Some(_)) => Err(PrepareError::MissingRunManifest(
+            runs_root.join("<instance>/record.json.gz"),
         )),
     }
 }
@@ -2591,6 +3178,32 @@ fn extract_model_size(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ploke_core::ArcStr;
+    use ploke_tui::chat_history::{MessageKind, MessageStatus};
+    use uuid::Uuid;
+
+    fn sample_message(
+        kind: MessageKind,
+        content: &str,
+        tool_call_id: Option<&str>,
+    ) -> crate::record::ConversationMessage {
+        crate::record::ConversationMessage {
+            id: Uuid::nil(),
+            branch_id: Uuid::nil(),
+            status: MessageStatus::Completed,
+            metadata: None,
+            parent: None,
+            children: Vec::new(),
+            selected_child: None,
+            content: content.to_string(),
+            kind,
+            tool_call_id: tool_call_id.map(ArcStr::from),
+            tool_payload: None,
+            context_status: Default::default(),
+            last_included_turn: None,
+            include_count: 0,
+        }
+    }
 
     #[test]
     fn extracts_size_from_parameter_phrase() {
@@ -2631,5 +3244,150 @@ mod tests {
             render_messages_json(messages).expect("render should succeed"),
             "[]"
         );
+    }
+
+    #[test]
+    fn render_messages_table_renders_compact_blocks() {
+        let messages = vec![
+            sample_message(MessageKind::System, "first line\nsecond line", None),
+            sample_message(MessageKind::Assistant, "assistant response", Some("call-1")),
+        ];
+
+        let rendered = render_messages_table(&messages);
+        assert!(rendered.contains("Message 1"));
+        assert!(rendered.contains("role .......... system"));
+        assert!(rendered.contains("content ....... first line"));
+        assert!(rendered.contains("Message 2"));
+        assert!(rendered.contains("role .......... assistant"));
+        assert!(rendered.contains("tool call id ... call-1"));
+        assert!(!rendered.contains("\"kind\""));
+    }
+
+    #[test]
+    fn tool_call_next_step_index_uses_first_real_index() {
+        assert_eq!(tool_call_next_step_index(0), None);
+        assert_eq!(tool_call_next_step_index(3), Some(0));
+    }
+
+    #[test]
+    fn inspect_tool_calls_accepts_missing_record_selector() {
+        Cli::try_parse_from(["ploke-eval", "inspect", "tool-calls"])
+            .expect("inspect tool-calls should default to the most recent run");
+    }
+
+    #[test]
+    fn resolve_record_path_defaults_to_last_run_record() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let eval_home = tmp.path().join("eval-home");
+        let run_dir = eval_home.join("runs").join("demo-run");
+        std::fs::create_dir_all(&run_dir).expect("run dir");
+        crate::run_history::record_last_run_at(&eval_home, &run_dir).expect("record last run");
+
+        let path = resolve_record_path_from_eval_home(None, None, eval_home)
+            .expect("default record path should resolve");
+
+        assert_eq!(path, run_dir.join("record.json.gz"));
+    }
+
+    #[test]
+    fn abbreviate_path_tail_keeps_filename_suffix() {
+        let path = "/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/globset/src/lib.rs";
+        let abbreviated = abbreviate_path_tail(path, 32);
+        assert!(abbreviated.starts_with(".../"));
+        assert!(abbreviated.ends_with("globset/src/lib.rs"));
+    }
+
+    #[test]
+    fn summarize_tool_inputs_prefers_parsed_fields() {
+        let args = r#"{"file":"/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/globset/src/lib.rs","end_line":120}"#;
+        let summary = summarize_tool_inputs(args);
+        assert!(summary.contains("file=.../globset/src/lib.rs"));
+        assert!(summary.contains("end_line=120"));
+    }
+
+    #[test]
+    fn inspect_tool_calls_accepts_positional_index() {
+        let parsed = Cli::try_parse_from(["ploke-eval", "inspect", "tool-calls", "5"])
+            .expect("tool-calls should accept a positional index");
+
+        match parsed.command {
+            Command::Inspect(InspectCommand {
+                command: InspectSubcommand::ToolCalls(cmd),
+            }) => assert_eq!(cmd.index, Some(5)),
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inspect_turn_accepts_positional_turn() {
+        let parsed = Cli::try_parse_from(["ploke-eval", "inspect", "turn", "1"])
+            .expect("turn should accept a positional turn number");
+
+        match parsed.command {
+            Command::Inspect(InspectCommand {
+                command: InspectSubcommand::Turn(cmd),
+            }) => {
+                assert_eq!(cmd.turn, Some(1));
+                assert_eq!(cmd.turn_flag, None);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inspect_turn_still_accepts_long_turn_flag() {
+        let parsed = Cli::try_parse_from(["ploke-eval", "inspect", "turn", "--turn", "1"])
+            .expect("turn should still accept the hidden --turn flag");
+
+        match parsed.command {
+            Command::Inspect(InspectCommand {
+                command: InspectSubcommand::Turn(cmd),
+            }) => {
+                assert_eq!(cmd.turn, None);
+                assert_eq!(cmd.turn_flag, Some(1));
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inspect_conversations_accepts_turns_alias() {
+        let parsed = Cli::try_parse_from(["ploke-eval", "inspect", "turns"])
+            .expect("conversations should accept the turns alias");
+
+        match parsed.command {
+            Command::Inspect(InspectCommand {
+                command: InspectSubcommand::Conversations(_),
+            }) => {}
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inspect_turn_messages_accepts_role_filters() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "inspect",
+            "turn",
+            "1",
+            "--show",
+            "messages",
+            "--exclude-roles",
+            "system,user",
+        ])
+        .expect("turn messages should accept role filters");
+
+        match parsed.command {
+            Command::Inspect(InspectCommand {
+                command: InspectSubcommand::Turn(cmd),
+            }) => {
+                assert_eq!(cmd.turn, Some(1));
+                assert_eq!(
+                    cmd.exclude_roles,
+                    vec![InspectMessageRole::System, InspectMessageRole::User]
+                );
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
     }
 }

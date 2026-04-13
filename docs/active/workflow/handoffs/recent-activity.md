@@ -1,7 +1,7 @@
 # Recent Activity
 
-- last_updated: 2026-04-12
-- ready_for: bounded Phase 2 diagnostic follow-up under active control plane
+- last_updated: 2026-04-13
+- ready_for: CLI trace review skill meta-experiment round 2 on top of the bounded Phase 2 diagnostic follow-up
 - owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
@@ -14,6 +14,40 @@
     2. Wait for explicit permission before proceeding
   - This applies to: `syn_parser`, `ploke-tui`, `ploke-db`, `ploke-llm`, etc.
   - Rationale: Prevent unintended side effects on core infrastructure during eval work
+
+## 2026-04-13
+
+- **INSPECT TURN-SELECTION UX TIGHTENED; LOOP VIEW SCOPED FOR RESTART**
+  - Added [inspect turns and loop UX note](../../agents/2026-04-13_inspect-turns-and-loop-ux-note.md)
+  - Accepted the CLI inspection ladder:
+    - `inspect conversations` as the compact turn-selection surface
+    - `inspect turns` as the clearer alias-compatible mental model
+    - `inspect turn` as the focused drilldown surface
+  - Landed the narrow `ploke-eval` UX slice in `crates/ploke-eval/src/cli.rs`:
+    - `inspect turns` alias
+    - positional `inspect turn 1`
+    - compact dotted turn summary
+    - next-step hints between list and drilldown views
+    - role filtering for `inspect turn --show messages`
+  - Important caveat captured for restart:
+    - `turn.messages()` reflects prompt/response reconstruction, not the full agent-tool loop
+    - the next bounded slice is a dedicated `inspect turn --show loop` mid-level view rather than overloading `messages`
+
+- **CLI TRACE REVIEW SKILL META-EXPERIMENT SEEDED AND ROUND 1 COMPLETED**
+  - Added [CLI trace review skill meta-experiment](../../agents/2026-04-13_cli-trace-review-skill-meta-experiment.md)
+  - Added [EDR-0002](../edr/EDR-0002-cli-trace-review-skill-experiment.md) to track the prompt-comparison experiment before promoting the workflow into a durable repo-local skill
+  - Fixed the first-round evidence surface to CLI-only `ploke-eval inspect tool-calls` drill-downs against the latest run and explicitly prohibited `crates/ploke-eval/` source inspection during the comparison
+  - Ran three parallel prompt variants over the same latest-run trace:
+    - Variant A: narrative-first
+    - Variant B: failure-classification-first
+    - Variant C: intervention-first
+  - Round-1 comparison outcome:
+    - Variant A was the cleanest fit for sequence-aware narrative and disciplined avoidance of unsupported model blame
+    - Variant B was the strongest on explicit failure bucketing and surfaced the repeated missing-path cluster well
+    - Variant C produced the most concrete product-intervention recommendations and correctly elevated `read_file` recoverability as the highest-leverage gap
+  - Operational consequence:
+    - a longer bake-off was not warranted because all variants converged on the same substantive interpretation
+    - promoted the stable workflow into [docs/workflow/skills/cli-trace-review/SKILL.md](../../workflow/skills/cli-trace-review/SKILL.md), using Variant A as the durable base
 
 ## 2026-04-12
 
