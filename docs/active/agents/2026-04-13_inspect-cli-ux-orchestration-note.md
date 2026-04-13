@@ -104,6 +104,47 @@ Known caveat:
   - concise output summary
   - explicit `not_checked` and `risks`
 
+### Packet `ICU-LOOP-1`
+
+- owner_role: worker
+- status: ready
+- scope:
+  - implement `ploke-eval inspect turn N --show loop`
+  - keep the implementation inside `crates/ploke-eval/`
+  - add bounded tests for the new mid-level rendering path
+- non_goals:
+  - no broad redesign of other inspect surfaces
+  - no attempt to redefine `messages` into a full transcript surface
+- owned_files:
+  - `crates/ploke-eval/src/cli.rs`
+  - minimal supporting tests under `crates/ploke-eval/`
+- acceptance_criteria:
+  1. `inspect turn N --show loop` exists and is discoverable through the turn drilldown surface
+  2. the default loop rendering provides a mid-level chronological view between the compact tool-call table and full single-call detail
+  3. each loop step shows `input`, `status`, and `summary`
+  4. failure steps include an error code and key diagnostics when available without dumping the full payload
+  5. success steps include one or two informative tool-specific fields when available
+  6. the loop view advertises the next narrower command shape
+- required_evidence:
+  - changed file list
+  - targeted checks/tests run
+  - concise live-output or renderer summary
+  - explicit `not_checked` and `risks`
+
+### Packet Family `ICU-COMPARE-*`
+
+- owner_role: worker or explorer depending on packet
+- status: proposed
+- purpose:
+  - test whether the CLI materially improves eval inspection relative to direct artifact reading
+  - identify undersurfaced metrics and workflow gaps against `eval-design.md`
+- intended packets:
+  - `ICU-COMPARE-CLI`: analyze the latest eval using only `ploke-eval` CLI surfaces
+  - `ICU-COMPARE-NONCLI`: analyze the same eval without using `ploke-eval` CLI surfaces
+  - `ICU-COMPARE-METRICS`: assess the current CLI against core outcome and validity metrics from `eval-design.md` and related workflow docs
+- expected output:
+  - three short reports plus one orchestrator synthesis comparing evidence access, friction, blind spots, and missing CLI surfaces
+
 ## Orchestrator Decision Rule
 
 - commit the current slice only after the review and test wave do not surface a

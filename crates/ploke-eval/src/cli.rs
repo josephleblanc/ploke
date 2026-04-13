@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 use clap::{ArgAction, Parser, Subcommand};
+use serde::Serialize;
 use ploke_llm::Router;
 use ploke_llm::request::endpoint::Endpoint;
 use ploke_llm::router_only::HasEndpoint;
@@ -1291,7 +1292,7 @@ pub struct InspectTurnCommand {
     #[arg(long = "turn", hide = true, conflicts_with = "turn")]
     pub turn_flag: Option<u32>,
 
-    /// What to show for this turn: all, messages, tool-calls, tool-call, tool-result, db-state.
+    /// What to show for this turn: all, messages, loop, tool-calls, tool-call, tool-result, db-state.
     #[arg(long, value_enum, default_value_t = TurnShowOption::All)]
     pub show: TurnShowOption,
 
@@ -1364,6 +1365,7 @@ pub enum InspectOutputFormat {
 pub enum TurnShowOption {
     All,
     Messages,
+    Loop,
     ToolCalls,
     ToolCall,
     ToolResult,
@@ -1875,6 +1877,10 @@ impl InspectTurnCommand {
                 println!();
                 println!("Next:");
                 println!(
+                    "  ploke-eval inspect turn {} --show loop",
+                    turn.turn_number
+                );
+                println!(
                     "  ploke-eval inspect turn {} --show tool-calls",
                     turn.turn_number
                 );
@@ -1899,6 +1905,28 @@ impl InspectTurnCommand {
                     }
                     InspectOutputFormat::Json => {
                         println!("{}", render_messages_json(&messages)?);
+                    }
+                }
+            }
+            TurnShowOption::Loop => {
+                let tool_calls = turn.tool_calls();
+                match self.format {
+                    InspectOutputFormat::Table => {
+                        println!("{}", render_tool_loop_table(turn.turn_number, &tool_calls));
+                        if !tool_calls.is_empty() {
+                            println!("\nNext:");
+                            println!(
+                                "  ploke-eval inspect turn {} --show tool-call --index 0",
+                                turn.turn_number
+                            );
+                            println!(
+                                "  ploke-eval inspect turn {} --show tool-result --index 0",
+                                turn.turn_number
+                            );
+                        }
+                    }
+                    InspectOutputFormat::Json => {
+                        println!("{}", render_tool_loop_json(turn.turn_number, &tool_calls)?);
                     }
                 }
             }
@@ -2276,6 +2304,192 @@ fn render_messages_table(messages: &[crate::record::ConversationMessage]) -> Str
     }
 
     out.trim_end().to_string()
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ToolLoopDetail {
+    label: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ToolLoopEntry {
+    index: usize,
+    tool: String,
+    input: String,
+    status: String,
+    summary: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    details: Vec<ToolLoopDetail>,
+}
+
+fn render_tool_loop_table(turn: u32, tool_calls: &[crate::record::ToolExecutionRecord]) -> String {
+    if tool_calls.is_empty() {
+        return format!("Turn {}\n  No tool calls in this turn.", turn);
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("Turn {}\n", turn));
+    for (index, entry) in tool_loop_entries(tool_calls).iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!("[{}] {}\n", entry.index, entry.tool));
+        out.push_str(&dotted_loop_line("input", &entry.input));
+        out.push_str(&dotted_loop_line("status", &entry.status));
+        for detail in &entry.details {
+            out.push_str(&dotted_loop_line(&detail.label, &detail.value));
+        }
+        out.push_str(&dotted_loop_line("summary", &entry.summary));
+    }
+
+    out.trim_end().to_string()
+}
+
+fn render_tool_loop_json(
+    turn: u32,
+    tool_calls: &[crate::record::ToolExecutionRecord],
+) -> Result<String, PrepareError> {
+    let payload = serde_json::json!({
+        "turn": turn,
+        "tool_calls": tool_loop_entries(tool_calls),
+    });
+    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)
+}
+
+fn tool_loop_entries(tool_calls: &[crate::record::ToolExecutionRecord]) -> Vec<ToolLoopEntry> {
+    tool_calls
+        .iter()
+        .enumerate()
+        .map(|(index, call)| tool_loop_entry(index, call))
+        .collect()
+}
+
+fn tool_loop_entry(
+    index: usize,
+    call: &crate::record::ToolExecutionRecord,
+) -> ToolLoopEntry {
+    let input = summarize_tool_inputs(&call.request.arguments);
+    match &call.result {
+        crate::record::ToolResult::Completed(completed) => ToolLoopEntry {
+            index,
+            tool: call.request.tool.clone(),
+            input: normalize_loop_input(&input),
+            status: "completed".to_string(),
+            summary: summarize_loop_success(completed),
+            details: summarize_loop_success_details(completed),
+        },
+        crate::record::ToolResult::Failed(failed) => ToolLoopEntry {
+            index,
+            tool: call.request.tool.clone(),
+            input: normalize_loop_input(&input),
+            status: "failed".to_string(),
+            summary: summarize_loop_failure(failed),
+            details: summarize_loop_failure_details(failed),
+        },
+    }
+}
+
+fn normalize_loop_input(input: &str) -> String {
+    if input.trim().is_empty() {
+        "(none)".to_string()
+    } else {
+        truncate_middle(input, 96)
+    }
+}
+
+fn summarize_loop_success(completed: &crate::runner::ToolCompletedRecord) -> String {
+    if let Some(ui_payload) = &completed.ui_payload {
+        if !ui_payload.summary.trim().is_empty() {
+            return truncate_middle(&ui_payload.summary, 96);
+        }
+    }
+
+    let first_line = completed.content.lines().next().unwrap_or("").trim();
+    if first_line.is_empty() {
+        "ok".to_string()
+    } else {
+        truncate_middle(first_line, 96)
+    }
+}
+
+fn summarize_loop_failure(failed: &crate::runner::ToolFailedRecord) -> String {
+    if let Some(ui_payload) = &failed.ui_payload {
+        if !ui_payload.summary.trim().is_empty() {
+            return truncate_middle(&ui_payload.summary, 96);
+        }
+    }
+
+    let first_line = failed.error.lines().next().unwrap_or("").trim();
+    if first_line.is_empty() {
+        "failed".to_string()
+    } else {
+        truncate_middle(first_line, 96)
+    }
+}
+
+fn summarize_loop_success_details(
+    completed: &crate::runner::ToolCompletedRecord,
+) -> Vec<ToolLoopDetail> {
+    let Some(ui_payload) = &completed.ui_payload else {
+        return Vec::new();
+    };
+
+    let mut details: Vec<ToolLoopDetail> = ui_payload
+        .fields
+        .iter()
+        .filter(|field| field.name.as_ref() != "status")
+        .take(2)
+        .map(|field| ToolLoopDetail {
+            label: field.name.to_string(),
+            value: truncate_middle(&prettify_field_value(&field.value), 96),
+        })
+        .collect();
+
+    if details.is_empty() {
+        if let Some(details_text) = &ui_payload.details {
+            details.push(ToolLoopDetail {
+                label: "details".to_string(),
+                value: truncate_middle(details_text, 96),
+            });
+        }
+    }
+
+    details
+}
+
+fn summarize_loop_failure_details(failed: &crate::runner::ToolFailedRecord) -> Vec<ToolLoopDetail> {
+    let Some(ui_payload) = &failed.ui_payload else {
+        return Vec::new();
+    };
+
+    let mut details = Vec::new();
+    if let Some(error_code) = ui_payload.error_code {
+        details.push(ToolLoopDetail {
+            label: "code".to_string(),
+            value: tool_error_code_label(error_code).to_string(),
+        });
+    }
+
+    for field in ui_payload
+        .fields
+        .iter()
+        .filter(|field| field.name.as_ref() != "code")
+        .take(2)
+    {
+        details.push(ToolLoopDetail {
+            label: field.name.to_string(),
+            value: truncate_middle(&prettify_field_value(&field.value), 96),
+        });
+    }
+
+    details
+}
+
+fn dotted_loop_line(label: &str, value: &str) -> String {
+    const LABEL_WIDTH: usize = 14;
+    let dots = LABEL_WIDTH.saturating_sub(label.chars().count()).max(2);
+    format!("  {} {} {}\n", label, ".".repeat(dots), value)
 }
 
 fn filter_messages(
@@ -2710,6 +2924,21 @@ fn tool_status_label(result: &crate::record::ToolResult) -> &'static str {
     match result {
         crate::record::ToolResult::Completed(_) => "completed",
         crate::record::ToolResult::Failed(_) => "failed",
+    }
+}
+
+fn tool_error_code_label(code: ploke_tui::tools::ToolErrorCode) -> &'static str {
+    use ploke_tui::tools::ToolErrorCode;
+
+    match code {
+        ToolErrorCode::FieldTooLarge => "field_too_large",
+        ToolErrorCode::WrongType => "wrong_type",
+        ToolErrorCode::MissingField => "missing_field",
+        ToolErrorCode::MalformedDiff => "malformed_diff",
+        ToolErrorCode::InvalidFormat => "invalid_format",
+        ToolErrorCode::Io => "io",
+        ToolErrorCode::Timeout => "timeout",
+        ToolErrorCode::Internal => "internal",
     }
 }
 
@@ -3263,6 +3492,106 @@ mod tests {
         assert!(!rendered.contains("\"kind\""));
     }
 
+    fn sample_tool_request(tool: &str, arguments: &str) -> crate::runner::ToolRequestRecord {
+        crate::runner::ToolRequestRecord {
+            request_id: "req-1".to_string(),
+            parent_id: "parent-1".to_string(),
+            call_id: "call-1".to_string(),
+            tool: tool.to_string(),
+            arguments: arguments.to_string(),
+        }
+    }
+
+    fn sample_tool_call_completed(
+        tool: &str,
+        arguments: &str,
+        summary: &str,
+        fields: &[(&str, &str)],
+    ) -> crate::record::ToolExecutionRecord {
+        let mut payload = ploke_tui::tools::ToolUiPayload::new(
+            ploke_tui::tools::ToolName::RequestCodeContext,
+            ArcStr::from("call-1"),
+            summary,
+        );
+        for (name, value) in fields {
+            payload = payload.with_field(*name, *value);
+        }
+
+        crate::record::ToolExecutionRecord {
+            request: sample_tool_request(tool, arguments),
+            result: crate::record::ToolResult::Completed(crate::runner::ToolCompletedRecord {
+                request_id: "req-1".to_string(),
+                parent_id: "parent-1".to_string(),
+                call_id: "call-1".to_string(),
+                tool: tool.to_string(),
+                content: "synthetic output".to_string(),
+                ui_payload: Some(payload),
+            }),
+            latency_ms: 17,
+        }
+    }
+
+    fn sample_tool_call_failed(
+        tool: &str,
+        arguments: &str,
+        summary: &str,
+        fields: &[(&str, &str)],
+    ) -> crate::record::ToolExecutionRecord {
+        let mut payload = ploke_tui::tools::ToolUiPayload::new(
+            ploke_tui::tools::ToolName::NsPatch,
+            ArcStr::from("call-2"),
+            summary,
+        );
+        payload.error_code = Some(ploke_tui::tools::ToolErrorCode::InvalidFormat);
+        for (name, value) in fields {
+            payload = payload.with_field(*name, *value);
+        }
+
+        crate::record::ToolExecutionRecord {
+            request: sample_tool_request(tool, arguments),
+            result: crate::record::ToolResult::Failed(crate::runner::ToolFailedRecord {
+                request_id: "req-2".to_string(),
+                parent_id: "parent-2".to_string(),
+                call_id: "call-2".to_string(),
+                tool: Some(tool.to_string()),
+                error: "synthetic error".to_string(),
+                ui_payload: Some(payload),
+            }),
+            latency_ms: 31,
+        }
+    }
+
+    #[test]
+    fn render_tool_loop_table_renders_compact_blocks() {
+        let tool_calls = vec![
+            sample_tool_call_completed(
+                "request_code_context",
+                r#"{"search_term":"Arg::with_name(\"iglob\")"}"#,
+                "Context assembled",
+                &[("returned", "10 snippets"), ("top score", "0.031")],
+            ),
+            sample_tool_call_failed(
+                "non_semantic_patch",
+                r#"{"patches":[{"file":"src/main.rs"}]}"#,
+                "Send one patch per tool call",
+                &[("field", "patches"), ("expected", "array length of 1")],
+            ),
+        ];
+
+        let rendered = render_tool_loop_table(1, &tool_calls);
+        assert!(rendered.contains("Turn 1"));
+        assert!(rendered.contains("[0] request_code_context"));
+        assert!(rendered.contains("input"));
+        assert!(rendered.contains("status"));
+        assert!(rendered.contains("summary"));
+        assert!(rendered.contains("returned"));
+        assert!(rendered.contains("top score"));
+        assert!(rendered.contains("code ........ internal") || rendered.contains("code"));
+        assert!(rendered.contains("field"));
+        assert!(rendered.contains("expected"));
+        assert!(!rendered.contains("\"arguments\""));
+    }
+
     #[test]
     fn tool_call_next_step_index_uses_first_real_index() {
         assert_eq!(tool_call_next_step_index(0), None);
@@ -3330,6 +3659,19 @@ mod tests {
                 assert_eq!(cmd.turn, Some(1));
                 assert_eq!(cmd.turn_flag, None);
             }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inspect_turn_accepts_loop_show_option() {
+        let parsed = Cli::try_parse_from(["ploke-eval", "inspect", "turn", "1", "--show", "loop"])
+            .expect("turn should accept the loop show option");
+
+        match parsed.command {
+            Command::Inspect(InspectCommand {
+                command: InspectSubcommand::Turn(cmd),
+            }) => assert_eq!(cmd.show, TurnShowOption::Loop),
             other => panic!("unexpected command shape: {:?}", other),
         }
     }
