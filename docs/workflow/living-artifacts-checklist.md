@@ -17,14 +17,13 @@ Use this checklist to keep `§XI` concrete and small.
 - [x] Failure Taxonomy
   Active file: [failure-taxonomy.md](../active/workflow/failure-taxonomy.md)
   Maintenance skill: [failure-taxonomy/SKILL.md](skills/failure-taxonomy/SKILL.md)
-- [x] Lab Book
-  Active directory: [lab-book](../active/workflow/lab-book)
-  Maintenance skill: [lab-book/SKILL.md](skills/lab-book/SKILL.md)
-  Book summary: [SUMMARY.md](../active/workflow/lab-book/src/SUMMARY.md)
+- [x] Evalnomicon
+  Durable directory: [evalnomicon](evalnomicon)
+  Book summary: [SUMMARY.md](evalnomicon/src/SUMMARY.md)
 
 ## Tightness Rules
 
-- Keep artifact scopes distinct. Do not let the evidence ledger become the lab book or the failure taxonomy become a postmortem archive.
+- Keep artifact scopes distinct. Do not let the evidence ledger become the evalnomicon or the failure taxonomy become a postmortem archive.
 - Prefer a new entry in an existing artifact over a new top-level artifact.
 - Add a new failure category only when repeated cases do not fit the current taxonomy.
 - Use `owning_branch` metadata on living artifacts to indicate update responsibility.

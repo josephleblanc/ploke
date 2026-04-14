@@ -7,6 +7,7 @@ This directory holds durable workflow assets for eval-driven development:
 - templates
 - schema drafts
 - framework docs
+- synthesis books
 - repo-local skills
 - ID conventions
 - handoff templates
@@ -20,6 +21,7 @@ Common entry points:
 - [handoff-template.md](handoff-template.md)
 - [phase-tracking-template.md](phase-tracking-template.md)
 - [postmortem-template.md](postmortem-template.md)
+- [evalnomicon/README.md](evalnomicon/README.md)
 - [skills/README.md](skills/README.md)
 
 Use [programme_charter.md](../active/workflow/programme_charter.md), [hypothesis-registry.md](../active/workflow/hypothesis-registry.md), and the other files under [active/workflow](../active/workflow) for the living record.

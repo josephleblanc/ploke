@@ -1,19 +1,19 @@
 # Current Focus
 
-**Last Updated:** 2026-04-13 (`P2G` accepted; ripgrep rollup is complete; tokio-rs probe succeeded and is now the live second-target batch lane)
+**Last Updated:** 2026-04-13 (`P2G` accepted; ripgrep rollup is complete; tokio-rs batch completed 25/25 and next work is a cleaner evaluation pass)
 **Active Planning Doc:** [Eval Infra Sprint Control Plane](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
 
 ---
 
 ## What We're Doing Now
 
-We are now running an **eval-infra sprint under an explicit multi-lane orchestration protocol** with the blocking Phase 1 P0 replay/inspection lane closed. The active work has shifted from Phase 2 entry plumbing into actual batch execution and target expansion. `P2G` remains accepted, the ripgrep run family has a usable 14-instance artifact set, and a reviewed `tokio-rs__tokio-6618` probe now gives us a clean second Rust repo entry point. The immediate working surface is no longer target choice; it is preparing and launching a fresh `tokio-rs` batch from the accepted run-policy gate.
+We are now running an **eval-infra sprint under an explicit multi-lane orchestration protocol** with the blocking Phase 1 P0 replay/inspection lane closed. The active work has shifted from Phase 2 entry plumbing into real batch execution, target expansion, and tighter evaluation of where agent performance is actually degrading. `P2G` remains accepted, the ripgrep family has a usable 14-instance artifact set, and `tokio-rs-all` has now completed `25/25` with full per-run artifacts. The immediate working surface is no longer “can the batch run”; it is using the fresh tokio results to design a cleaner next-pass evaluation on retrieval quality, tool failures, and patch-loop discipline before expanding further.
 
 ---
 
 ## Immediate Next Step
 
-**The Phase 1 P0 replay/inspection lane is accepted; the next step is second-target batch expansion under the live run-policy registry**:
+**The Phase 1 P0 replay/inspection lane is accepted; the next step is a cleaner post-batch evaluation pass under the live run-policy registry**:
 
 1. **`P0A` and `P0B` are accepted with a strict boundary** - setup schema/capture work in `ploke-eval` is accepted, while `DbState`/lookup/query/replay surfaces remain outside that acceptance slice
 2. **`P0C0` is accepted** - the pre-implementation survey recommends using the existing `raw_query_at_timestamp()` / `DbState` path rather than pulling `QueryBuilder` into the sprint
@@ -27,10 +27,10 @@ We are now running an **eval-infra sprint under an explicit multi-lane orchestra
    - `S2D` accepted a tiny real-sample prototype that validates the JSONL-companion/regenerated-markdown shape while keeping canonical manifest keys and some telemetry fields explicitly hypothetical
    - `S3C` accepted the meta-observability inventory, and `S3D` now validates that the current recovery chain is working well enough that no new process change is supported yet
 7. **Current program state** - `S1E` came back as a no-change result, which means the suspected setup-phase test duplication is not a high-value cleanup target. [P2A](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2A_phase-2-entry-run-planning.md), [P2B](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2B_report.md), [P2C](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2C_report.md), [P2D](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2D_report.md), [P2E](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2E_report.md), [P2F](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2F_report.md), and [P2G](agents/2026-04-12_eval-infra-sprint/2026-04-12_P2G_report.md) are now accepted: ripgrep has moved from mixed-edition sentinel uncertainty to baseline candidacy, the validity-guard ambiguity is resolved into an explicit adoption policy, the first formal packet has a bounded provenance/config entry surface, the runner now persists explicit arm and endpoint provenance, and completed `grok-4-fast` / `xai` treatment retries show that the next uncertainty is model-strategy variance rather than artifact inconsistency.
-8. **Current immediate working track** - the ripgrep batch execution loop has now been rolled forward into a usable 14-run artifact set, and `tokio-rs` has passed the second-target probe gate; see [ripgrep batch rollup and next target](agents/2026-04-12_eval-infra-sprint/2026-04-13_ripgrep-batch-rollup-and-next-target.md) and [tokio-rs probe and batch entry](agents/2026-04-12_eval-infra-sprint/2026-04-13_tokio-rs-probe-and-batch-entry.md). The next bounded move is:
-   - prepare a fresh `tokio-rs` batch id across the visible `tokio-rs` instance family
-   - run the second repo batch
-   - keep the target registry at `watch` / `default_run` unless the batch exposes a real scaling restriction
+8. **Current immediate working track** - the ripgrep batch execution loop has now been rolled forward into a usable 14-run artifact set, and `tokio-rs-all` has completed `25/25`; see [ripgrep batch rollup and next target](agents/2026-04-12_eval-infra-sprint/2026-04-13_ripgrep-batch-rollup-and-next-target.md) and [tokio-rs probe and batch entry](agents/2026-04-12_eval-infra-sprint/2026-04-13_tokio-rs-probe-and-batch-entry.md). The next bounded move is:
+   - do a cleaner evaluation pass over the tokio runs with explicit scoring for gross tool failures, retrieval drift, and context bloat
+   - keep `tokio-rs__tokio` at `watch` / `default_run`, because the batch was operationally successful but still surfaced execution-quality issues in the tool/patch loop
+   - choose the next target or next intervention only after that tighter read, rather than treating the first successful full batch as a sufficient optimization signal
 
 **Active surgical note:** [LLM full response trace stopgap](agents/2026-04-12_eval-infra-sprint/2026-04-13_llm-full-response-trace-stopgap.md)
 **Current batch execution note:** [Ripgrep batch rollup and next target](agents/2026-04-12_eval-infra-sprint/2026-04-13_ripgrep-batch-rollup-and-next-target.md)
@@ -64,7 +64,7 @@ We are now running an **eval-infra sprint under an explicit multi-lane orchestra
 |-----------------|---------------|
 | "What were we up to?" | This doc ↑ |
 | "Remind me of next steps" | [Eval Infra Sprint Control Plane](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) |
-| "Let's pick up where we left off" | Open [target-capability-registry.md](workflow/target-capability-registry.md) and [tokio-rs probe and batch entry](agents/2026-04-12_eval-infra-sprint/2026-04-13_tokio-rs-probe-and-batch-entry.md), then prepare and launch the fresh `tokio-rs` batch id |
+| "Let's pick up where we left off" | Open [target-capability-registry.md](workflow/target-capability-registry.md), [recent-activity.md](workflow/handoffs/recent-activity.md), and [tokio-rs probe and batch entry](agents/2026-04-12_eval-infra-sprint/2026-04-13_tokio-rs-probe-and-batch-entry.md), then start the tighter post-batch evaluation pass on the completed `tokio-rs` artifacts |
 | Overall eval workflow | [workflow/README.md](workflow/README.md) |
 | Recent activity log | [workflow/handoffs/recent-activity.md](workflow/handoffs/recent-activity.md) |
 | Hypothesis status | [workflow/hypothesis-registry.md](workflow/hypothesis-registry.md) |

@@ -460,9 +460,9 @@ To make the programme sustainable, maintain:
 3. **Experiment Decision Records** — One per planned A/B or ablation (see above)
 4. **Evidence Ledger** — A running record of what you now believe and why, updated after each experiment cycle
 5. **Failure Taxonomy + Canonical Examples** — Keeps triage consistent across people and time (see §VI)
-6. **Lab Book** — Chronological narrative of changes made, evals run, surprises, dead ends, and lessons learned
+6. **Evalnomicon** — Human-authored synthesis of eval concepts, protocols, experiment threads, and methodology notes
 
-That last one is especially valuable for publications, because many of the most interesting insights are process insights.
+That last one is especially valuable for publications and methodological continuity, because many of the most interesting insights are process insights.
 
 Current artifact locations:
 
@@ -471,7 +471,7 @@ Current artifact locations:
 - [edr](../../workflow/edr)
 - [evidence-ledger.md](../../workflow/evidence-ledger.md)
 - [failure-taxonomy.md](../../workflow/failure-taxonomy.md)
-- [lab-book](../../workflow/lab-book)
+- [evalnomicon](../../../workflow/evalnomicon)
 
 ### Publication Pipeline
 

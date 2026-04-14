@@ -18,5 +18,5 @@ Start from [recent-activity.md](recent-activity.md) for the rolling current-stat
 ## Rules
 
 - Keep these files operational and current, not archival.
-- Put durable decisions in EDRs, durable beliefs in the evidence ledger, and long-form chronology in the lab book.
+- Put durable decisions in EDRs, durable beliefs in the evidence ledger, and method or conceptual synthesis in the [evalnomicon](../../../workflow/evalnomicon/README.md).
 - If a handoff becomes historically important, summarize the stable conclusion elsewhere and let the handoff stay short.

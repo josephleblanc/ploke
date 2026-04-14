@@ -1,6 +1,6 @@
 # Active Workflow Documentation
 
-`docs/active/workflow` is the live programme record: put the current charter, registry, evidence, taxonomy, active EDRs, handoffs, and lab-book entries here when future work should update them in place. Use `docs/workflow` for the durable workflow layer that defines reusable templates, schema drafts, framework docs, and skills.
+`docs/active/workflow` is the live programme record: put the current charter, registry, evidence, taxonomy, active EDRs, handoffs, and other workflow artifacts here when future work should update them in place. Use `docs/workflow` for the durable workflow layer that defines reusable templates, schema drafts, framework docs, skills, and synthesis surfaces such as the `evalnomicon`.
 
 This directory holds the living artifacts for eval-driven development.
 
@@ -18,7 +18,6 @@ Key live entry points:
 - [postmortems/README.md](postmortems/README.md)
 - [handoffs/recent-activity.md](handoffs/recent-activity.md)
 - [handoffs/README.md](handoffs/README.md)
-- [lab-book/README.md](lab-book/README.md)
 - [phased-exec-plan.md](../plans/evals/phased-exec-plan.md)
 
 Use [handoffs/recent-activity.md](handoffs/recent-activity.md) for the rolling current-state board and [handoffs](handoffs) for short-lived task-specific handoff notes.

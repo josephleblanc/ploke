@@ -1,7 +1,7 @@
 # Recent Activity
 
 - last_updated: 2026-04-13
-- ready_for: tokio-rs probe, registry promotion, and fresh second-repo batch launch under orchestrator mode
+- ready_for: post-batch tokio evaluation pass, tighter retrieval/tool-failure scoring, and next-target selection from a cleaner evidence base
 - owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
@@ -16,6 +16,19 @@
   - Rationale: Prevent unintended side effects on core infrastructure during eval work
 
 ## 2026-04-13
+
+- **TOKIO-RS FULL BATCH COMPLETED 25/25**
+  - The fresh `tokio-rs-all` second-target batch completed with `25` attempted, `25` succeeded, `0` failed, and `stopped_early: false`
+  - Trusted batch artifacts:
+    - [tokio-rs-all batch summary](/home/brasides/.ploke-eval/batches/tokio-rs-all/batch-run-summary.json)
+    - [tokio-rs-all submissions](/home/brasides/.ploke-eval/batches/tokio-rs-all/multi-swe-bench-submission.jsonl)
+  - Operational interpretation:
+    - the infra path held up end-to-end under a materially broader repo family than ripgrep
+    - transient OpenRouter response-body decode timeouts were retried successfully and did not prevent full completion
+    - the main remaining issues are no longer batch-startup or parser-collapse problems; they are concentrated in tool/patch-loop execution quality and in tighter evaluation of retrieval relevance and context bloat
+  - Restart consequence:
+    - the next move is a cleaner post-batch evaluation pass over the tokio artifacts rather than another immediate broad batch
+    - keep `tokio-rs__tokio` as `watch` / `default_run` until that tighter read is done
 
 - **TOKIO-RS SELECTED AS THE NEXT RUST REPO EXPANSION TARGET**
   - Added a provisional `tokio-rs__tokio` row to [target-capability-registry.md](../target-capability-registry.md) as the live run-policy gate for second-target expansion
