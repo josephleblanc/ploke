@@ -18,6 +18,23 @@ that control plane is the working task-entry document for the current eval sprin
 When the active planning doc changes, update `CURRENT_FOCUS.md` immediately in the
 same change set and mark the old planning doc superseded with a forward link.
 
+## Naming and Role Encoding
+When multiple concrete types play the same functional role across modules, encode
+that shared role structurally with traits and associated types rather than
+relying on repeated generic names like `Context`, `State`, or `Output`.
+
+Preferred pattern:
+- traits define shared roles (`type Subject`, `type State`, `type Output`, etc.)
+- concrete module-local types fill those roles
+- semantics should live in the module tree and trait structure, not in long
+  compound type names
+- prefer module-qualified use sites like `review::State` over importing generic
+  names bare
+
+Avoid:
+- inventing long compound names to carry semantic identity
+- relying on repeated generic type names alone to imply structural similarity
+
 ## Eval Work Cold-Start Sequence
 
 For evaluation-driven development, benchmarking, replay, or research work, start

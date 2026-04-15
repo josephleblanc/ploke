@@ -1,5 +1,7 @@
 # Evalnomicon
 
+Note to LLMs: check llm.txt
+
 `evalnomicon` is the living handbook for eval work in this repository.
 
 It exists to tie together:

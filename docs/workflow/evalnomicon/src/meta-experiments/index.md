@@ -12,3 +12,7 @@ Examples include:
 
 Durable conclusions should be promoted into `core` or `protocols` when they
 stabilize.
+
+Current anchor notes:
+
+- [Protocol Operationalization Memory](./protocol-operationalization-memory.md)

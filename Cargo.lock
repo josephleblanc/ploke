@@ -4674,6 +4674,7 @@ dependencies = [
  "ploke-embed",
  "ploke-error",
  "ploke-llm",
+ "ploke-protocol",
  "ploke-test-utils",
  "ploke-tui",
  "regex",
@@ -4756,6 +4757,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.100",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "ploke-protocol"
+version = "0.1.0"
+dependencies = [
+ "fxhash",
+ "ploke-llm",
+ "reqwest",
+ "serde",
+ "serde_json",
  "thiserror 2.0.12",
 ]
 

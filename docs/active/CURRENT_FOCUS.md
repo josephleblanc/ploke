@@ -1,19 +1,32 @@
 # Current Focus
 
-**Last Updated:** 2026-04-13 (`P2G` accepted; ripgrep rollup is complete; tokio-rs batch completed 25/25 and next work is a cleaner evaluation pass)
+**Last Updated:** 2026-04-14 (`ploke-protocol` bootstrap landed; evalnomicon conceptual framework and protocol architecture are the active restart-critical thread)
 **Active Planning Doc:** [Eval Infra Sprint Control Plane](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
 
 ---
 
 ## What We're Doing Now
 
-We are now running an **eval-infra sprint under an explicit multi-lane orchestration protocol** with the blocking Phase 1 P0 replay/inspection lane closed. The active work has shifted from Phase 2 entry plumbing into real batch execution, target expansion, and tighter evaluation of where agent performance is actually degrading. `P2G` remains accepted, the ripgrep family has a usable 14-instance artifact set, and `tokio-rs-all` has now completed `25/25` with full per-run artifacts. The immediate working surface is no longer “can the batch run”; it is using the fresh tokio results to design a cleaner next-pass evaluation on retrieval quality, tool failures, and patch-loop discipline before expanding further.
+We are still under the same eval-infra sprint control plane, but the active restart-critical thread has shifted into **conceptual framework and protocol architecture work for eval introspection**. The broad batch-execution path is no longer the immediate blocker: `ripgrep` has a usable artifact set, `tokio-rs-all` completed `25/25`, and the current working surface is designing sharper NOM/introspection methods while bootstrapping a new `ploke-protocol` crate that can turn bounded review procedures into typed, executable protocol steps. The immediate concern is preserving and refining the conceptual thread behind that work so restart does not collapse it into "we added a crate and a command."
 
 ---
 
 ## Immediate Next Step
 
-**The Phase 1 P0 replay/inspection lane is accepted; the next step is a cleaner post-batch evaluation pass under the live run-policy registry**:
+**The next bounded move is to continue the evalnomicon + `ploke-protocol` line cleanly, then fold that back into the broader post-batch evaluation programme**:
+
+0. **Restart-critical sources for this subtrack**:
+   - [Protocol Operationalization Memory](/home/brasides/code/ploke/docs/workflow/evalnomicon/src/meta-experiments/protocol-operationalization-memory.md)
+   - [Ploke-Protocol Bootstrap Handoff](agents/2026-04-12_eval-infra-sprint/2026-04-14_ploke-protocol-bootstrap-handoff.md)
+   - [Conceptual Framework](../workflow/evalnomicon/src/core/conceptual-framework.md)
+1. **Treat `ploke-protocol` as the architectural home for bounded NOM procedures**:
+   - current bootstrap exists in [crates/ploke-protocol](/home/brasides/code/ploke/crates/ploke-protocol)
+   - `ploke-eval` now depends on it and exposes `ploke-eval protocol tool-call-review`
+   - the next concrete engineering slices are protocol artifact persistence, richer input packets, and a second bounded protocol only after the first path feels stable
+2. **Keep the broader eval sprint context in view**:
+   - the active planning/control plane remains [2026-04-12_eval-infra-sprint-control-plane.md](agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
+   - the completed `tokio-rs` artifacts are still waiting for a cleaner post-batch evaluation pass
+   - the protocol/introspection work should sharpen that later pass rather than drift into a disconnected side project
 
 1. **`P0A` and `P0B` are accepted with a strict boundary** - setup schema/capture work in `ploke-eval` is accepted, while `DbState`/lookup/query/replay surfaces remain outside that acceptance slice
 2. **`P0C0` is accepted** - the pre-implementation survey recommends using the existing `raw_query_at_timestamp()` / `DbState` path rather than pulling `QueryBuilder` into the sprint

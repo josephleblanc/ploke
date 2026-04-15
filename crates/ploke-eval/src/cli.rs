@@ -9,6 +9,8 @@ use ploke_llm::request::endpoint::Endpoint;
 use ploke_llm::router_only::HasEndpoint;
 use ploke_llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use ploke_llm::{ModelId, ProviderKey};
+use ploke_protocol::JsonLlmConfig;
+use ploke_protocol::tool_calls::{review, trace};
 use regex::Regex;
 use serde::Serialize;
 
@@ -185,6 +187,8 @@ pub enum Command {
     Conversations(ConversationsCommand),
     /// Inspect run and turn data (conversations, tool calls, db snapshots, etc.)
     Inspect(InspectCommand),
+    /// Run bounded review/adjudication protocols over eval artifacts.
+    Protocol(ProtocolCommand),
     /// Manage the cached OpenRouter model registry and active model selection.
     Model(ModelCommand),
 }
@@ -332,6 +336,13 @@ impl Cli {
                 }
             },
             Command::Inspect(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Command::Protocol(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
@@ -1172,6 +1183,46 @@ pub struct InspectCommand {
     pub command: InspectSubcommand,
 }
 
+#[derive(Debug, Parser)]
+#[command(about = "Run bounded review/adjudication protocols over eval artifacts")]
+pub struct ProtocolCommand {
+    #[command(subcommand)]
+    pub command: ProtocolSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProtocolSubcommand {
+    /// Review one indexed tool call with a one-shot structured LLM judgment.
+    ToolCallReview(ProtocolToolCallReviewCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct ProtocolToolCallReviewCommand {
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Indexed tool call to review, matching `inspect tool-calls <INDEX>`.
+    #[arg(value_name = "INDEX")]
+    pub index: usize,
+
+    /// Override the model id. Defaults to the current active eval model.
+    #[arg(long)]
+    pub model_id: Option<String>,
+
+    /// Override the provider slug. Defaults to the persisted provider for the chosen model, if any.
+    #[arg(long)]
+    pub provider: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum InspectSubcommand {
     /// List all agent conversation turns (run.conversations())
@@ -1571,6 +1622,84 @@ impl InspectCommand {
             InspectSubcommand::Turn(cmd) => cmd.run().await,
             InspectSubcommand::Query(cmd) => cmd.run().await,
         }
+    }
+}
+
+impl ProtocolCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            ProtocolSubcommand::ToolCallReview(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl ProtocolToolCallReviewCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let record_path = resolve_record_path(self.record, self.instance)?;
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        let subject = build_tool_call_trace_subject(&record, &record_path)?;
+        let protocol = review::Spec::default();
+        let summary = summarize_indexed_tool_call(&subject, self.index)?;
+
+        let model_id = resolve_protocol_model_id(self.model_id)?;
+        let provider_slug = resolve_protocol_provider_slug(&model_id, self.provider)?;
+        let client = reqwest::Client::new();
+        let prompt = protocol.build_review_prompt(&summary);
+        let cfg = JsonLlmConfig {
+            model_id: model_id.to_string(),
+            provider_slug,
+            timeout_secs: 30,
+            max_tokens: 400,
+        };
+        let reviewed = ploke_protocol::adjudicate_json::<review::Judgment>(&client, &cfg, &prompt)
+            .await
+            .map_err(protocol_llm_error_to_prepare)?;
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("Protocol: tool-call-review");
+                println!("{}", "-".repeat(40));
+                println!("Model: {}", cfg.model_id);
+                println!(
+                    "Provider: {}",
+                    cfg.provider_slug.as_deref().unwrap_or("auto/openrouter")
+                );
+                println!("Index: {}", summary.index);
+                println!("Turn: {}", summary.turn);
+                println!("Tool: {}", summary.tool_name);
+                println!("Failed: {}", if summary.failed { "yes" } else { "no" });
+                println!("Summary: {}", summary.summary);
+                println!();
+                println!("Review");
+                println!("{}", "-".repeat(40));
+                println!("Verdict: {:?}", reviewed.parsed.verdict);
+                println!("Confidence: {:?}", reviewed.parsed.confidence);
+                println!("Rationale: {}", reviewed.parsed.rationale);
+            }
+            InspectOutputFormat::Json => {
+                let payload = serde_json::json!({
+                    "protocol": "tool-call-review",
+                    "model_id": cfg.model_id,
+                    "provider_slug": cfg.provider_slug,
+                    "input": summary,
+                    "review": reviewed.parsed,
+                    "raw_content": reviewed.content,
+                    "reasoning": reviewed.reasoning,
+                    "response": reviewed.response,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -2603,6 +2732,110 @@ fn indexed_tool_calls(
         .enumerate()
         .map(|(index, (turn, call))| (index, turn, call))
         .collect()
+}
+
+fn build_tool_call_trace_subject(
+    record: &crate::record::RunRecord,
+    record_path: &std::path::Path,
+) -> Result<trace::Trace, PrepareError> {
+    let subject_id = record_path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| record.manifest_id.clone());
+
+    let tool_calls = indexed_tool_calls(record)
+        .into_iter()
+        .map(|(index, turn, call)| trace::Call {
+            index,
+            turn,
+            tool_name: call.request.tool.clone(),
+            summary: tool_call_summary_line(&call),
+            failed: matches!(call.result, crate::record::ToolResult::Failed(_)),
+        })
+        .collect();
+
+    Ok(trace::Trace {
+        subject_id,
+        calls: tool_calls,
+    })
+}
+
+fn summarize_indexed_tool_call(
+    subject: &trace::Trace,
+    index: usize,
+) -> Result<review::Evidence, PrepareError> {
+    let indexed = subject
+        .calls
+        .iter()
+        .find(|call| call.index == index)
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "protocol_tool_call_review",
+            detail: format!("tool call index {} not found", index),
+        })?;
+
+    Ok(review::Evidence {
+        index: indexed.index,
+        turn: indexed.turn,
+        tool_name: indexed.tool_name.clone(),
+        failed: indexed.failed,
+        summary: indexed.summary.clone(),
+    })
+}
+
+fn tool_call_summary_line(call: &crate::record::ToolExecutionRecord) -> String {
+    match &call.result {
+        crate::record::ToolResult::Completed(completed) => format!(
+            "tool={} status=completed latency_ms={} args={} result={}",
+            call.request.tool,
+            call.latency_ms,
+            truncate_middle(&call.request.arguments, 96),
+            truncate_middle(&completed.content, 96),
+        ),
+        crate::record::ToolResult::Failed(failed) => format!(
+            "tool={} status=failed latency_ms={} args={} error={}",
+            call.request.tool,
+            call.latency_ms,
+            truncate_middle(&call.request.arguments, 96),
+            truncate_middle(&failed.error, 96),
+        ),
+    }
+}
+
+fn resolve_protocol_model_id(model_id: Option<String>) -> Result<ModelId, PrepareError> {
+    match model_id {
+        Some(model_id) => {
+            model_id
+                .parse()
+                .map_err(|err: ploke_llm::IdError| PrepareError::DatabaseSetup {
+                    phase: "protocol_model_id",
+                    detail: err.to_string(),
+                })
+        }
+        None => load_active_model().map(|selection| selection.model_id),
+    }
+}
+
+fn resolve_protocol_provider_slug(
+    model_id: &ModelId,
+    provider: Option<String>,
+) -> Result<Option<String>, PrepareError> {
+    if let Some(provider) = provider {
+        let parsed = ProviderKey::new(&provider).map_err(|err| PrepareError::DatabaseSetup {
+            phase: "protocol_provider_slug",
+            detail: err.to_string(),
+        })?;
+        return Ok(Some(parsed.slug.as_str().to_string()));
+    }
+
+    Ok(load_provider_for_model(model_id)?.map(|provider| provider.slug.as_str().to_string()))
+}
+
+fn protocol_llm_error_to_prepare(err: ploke_protocol::ProtocolLlmError) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase: "protocol_tool_call_review",
+        detail: err.to_string(),
+    }
 }
 
 fn failed_tool_count(turn: &crate::record::TurnRecord) -> usize {

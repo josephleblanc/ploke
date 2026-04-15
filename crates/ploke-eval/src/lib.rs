@@ -2,6 +2,7 @@ pub mod cli;
 pub mod layout;
 pub mod model_registry;
 pub mod msb;
+pub mod protocol;
 pub mod provider_prefs;
 pub mod record;
 pub mod registry;

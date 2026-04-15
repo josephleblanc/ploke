@@ -1,7 +1,7 @@
 # Recent Activity
 
-- last_updated: 2026-04-13
-- ready_for: post-batch tokio evaluation pass, tighter retrieval/tool-failure scoring, and next-target selection from a cleaner evidence base
+- last_updated: 2026-04-14
+- ready_for: ploke-protocol bootstrap follow-up, evalnomicon conceptual consolidation, and later reintegration with the cleaner post-batch tokio evaluation pass
 - owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
@@ -16,6 +16,35 @@
   - Rationale: Prevent unintended side effects on core infrastructure during eval work
 
 ## 2026-04-13
+
+- **EVALNOMICON CONCEPTUAL FRAMEWORK WORK DEEPENED INTO A PROTOCOL ARCHITECTURE**
+  - The active design conversation moved from high-level NOM discussion into a sharper framework for:
+    - metric maturity (`D -> C -> N -> O`)
+    - metric vs value-domain distinction
+    - method specification vs executor vs admissible input domain
+    - typed protocol-step composition for mixed mechanized/adjudicative procedures
+  - To avoid losing that nuance on restart, the conceptual thread is now externalized in:
+    - [protocol operationalization memory](../../../workflow/evalnomicon/src/meta-experiments/protocol-operationalization-memory.md)
+    - [notation scratch](../../../workflow/evalnomicon/notation-scratch.md)
+    - [protocol typing scratch](../../../workflow/evalnomicon/protocol-typing-scratch.md)
+  - Operational consequence:
+    - the next method-design work should treat `evalnomicon` as the conceptual heart
+    - do not rely on chat history alone to recover the rationale behind protocol design choices
+
+- **`PLOKE-PROTOCOL` BOOTSTRAP LANDED AS THE FIRST REAL NOM-PROTOCOL IMPLEMENTATION**
+  - Added a new workspace crate:
+    - [ploke-protocol](/home/brasides/code/ploke/crates/ploke-protocol)
+  - `ploke-eval` now exposes:
+    - `ploke-eval protocol tool-call-review`
+  - Current implementation proves the first end-to-end path:
+    - build a typed subject from real run artifacts
+    - send one bounded JSON-output adjudication request through `ploke-llm`
+    - parse typed output back into a protocol result
+  - Current implementation note:
+    - this is still a bootstrap, not a full protocol framework
+    - persistence, richer input packets, calibration, and a second protocol remain next-step work
+  - Active handoff:
+    - [ploke-protocol bootstrap handoff](../../agents/2026-04-12_eval-infra-sprint/2026-04-14_ploke-protocol-bootstrap-handoff.md)
 
 - **TOKIO-RS FULL BATCH COMPLETED 25/25**
   - The fresh `tokio-rs-all` second-target batch completed with `25` attempted, `25` succeeded, `0` failed, and `stopped_early: false`

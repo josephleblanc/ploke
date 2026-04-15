@@ -36,6 +36,7 @@ members = [
     "crates/ingest/ploke-mbe",
     "crates/ingest/ploke-transform",
     "crates/ingest/ploke-embed",
+    "crates/ploke-protocol",
     "crates/ploke-eval",
     "crates/ploke-db",
     "crates/common",
@@ -69,6 +70,7 @@ ploke-db = { path = "crates/ploke-db" }
 common = { path = "crates/common" }
 ploke-test-utils = { path = "crates/test-utils" }
 ploke-core = { path = "crates/ploke-core" }
+ploke-protocol = { path = "crates/ploke-protocol" }
 syn-parser-macros = { path = "proc_macros/syn_parser/syn_parser_macros" }
 ploke-test-macros = { path = "proc_macros/syn_parser/ploke-test-macros" }
 derive-test-helpers = { path = "proc_macros/syn_parser/derive_test_helpers" }
