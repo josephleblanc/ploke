@@ -113,6 +113,7 @@ We are using Rust 2024 in all crates.
 - When the user asks you to create a new document, use `docs/active/agents/` unless directed otherwise.
 - Shared agent documents live in `docs/active/agents/`.
 - See [docs/active/agents/readme.md](docs/active/agents/readme.md) for naming conventions and directory guidance.
+- For the active `ploke-protocol` architecture thread, check [docs/active/agents/2026-04-15_ploke-protocol-control-note.md](docs/active/agents/2026-04-15_ploke-protocol-control-note.md) to resolve the current authoritative checkpoint, fork lineage, and next intended slice before relying on chat history alone.
 
 ## End-Of-Session Doc Cleanup
 

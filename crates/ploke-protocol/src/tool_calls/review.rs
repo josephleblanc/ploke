@@ -31,7 +31,6 @@ pub struct Evidence {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Judgment {
-    pub index: usize,
     pub verdict: Verdict,
     pub confidence: Confidence,
     pub rationale: String,
@@ -149,7 +148,7 @@ impl StepSpec for ReviewEvidence {
 impl JsonAdjudicationSpec for ReviewEvidence {
     fn build_prompt(&self, input: &Self::Input) -> JsonChatPrompt {
         JsonChatPrompt {
-            system: "You are reviewing one localized tool call from an eval trace. Use only the provided evidence packet. Return exactly one JSON object with keys: index, verdict, confidence, rationale. Valid verdict values: appropriate, wrong_tool, bad_arguments, redundant, recoverable_failure, unclear. Valid confidence values: low, medium, high.".to_string(),
+            system: "You are reviewing one localized tool call from an eval trace. Use only the provided evidence packet. Return exactly one JSON object with keys: verdict, confidence, rationale. Valid verdict values: appropriate, wrong_tool, bad_arguments, redundant, recoverable_failure, unclear. Valid confidence values: low, medium, high.".to_string(),
             user: format!(
                 "Review this tool call.\n\nindex: {}\nturn: {}\ntool: {}\nfailed: {}\nsummary: {}\n",
                 input.index,
