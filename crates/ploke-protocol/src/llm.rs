@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use async_trait::async_trait;
 use fxhash::FxBuildHasher;
 use ploke_llm::ProviderSlug;
 use ploke_llm::manager::{ChatHttpConfig, ChatStepOutcome, RequestMessage, chat_step};
@@ -9,6 +10,9 @@ use ploke_llm::router_only::openrouter::{OpenRouter, ProviderPreferences};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::core::ExecutorKind;
+use crate::step::{StepExecution, StepExecutor, StepSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsonChatPrompt {
@@ -35,10 +39,13 @@ impl Default for JsonLlmConfig {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct JsonLlmResult<T> {
-    pub parsed: T,
-    pub content: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonLlmProvenance {
+    pub model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_slug: Option<String>,
+    pub raw_content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
     pub response: OpenAiResponse,
 }
@@ -55,6 +62,75 @@ pub enum ProtocolLlmError {
     MissingContent,
     #[error("failed to parse json response: {detail}; content was: {content}")]
     ParseJson { detail: String, content: String },
+}
+
+pub trait JsonAdjudicationSpec: StepSpec
+where
+    Self::Output: DeserializeOwned,
+{
+    fn build_prompt(&self, input: &Self::Input) -> JsonChatPrompt;
+}
+
+#[derive(Debug, Clone)]
+pub struct JsonAdjudicator {
+    client: reqwest::Client,
+    cfg: JsonLlmConfig,
+}
+
+impl JsonAdjudicator {
+    pub fn new(client: reqwest::Client, cfg: JsonLlmConfig) -> Self {
+        Self { client, cfg }
+    }
+
+    pub fn config(&self) -> &JsonLlmConfig {
+        &self.cfg
+    }
+}
+
+#[async_trait]
+impl<Spec> StepExecutor<Spec> for JsonAdjudicator
+where
+    Spec: JsonAdjudicationSpec + Send + Sync,
+    Spec::Input: Send,
+    Spec::Output: DeserializeOwned + Send,
+{
+    type Provenance = JsonLlmProvenance;
+    type Error = ProtocolLlmError;
+
+    fn kind(&self) -> ExecutorKind {
+        ExecutorKind::LlmAdjudicator
+    }
+
+    fn label(&self) -> &'static str {
+        "openrouter_json_chat"
+    }
+
+    async fn execute(
+        &self,
+        spec: &Spec,
+        input: Spec::Input,
+    ) -> Result<StepExecution<Spec::Output, Self::Provenance>, Self::Error> {
+        let prompt = spec.build_prompt(&input);
+        let parsed = adjudicate_json::<Spec::Output>(&self.client, &self.cfg, &prompt).await?;
+        Ok(StepExecution {
+            output: parsed.parsed,
+            provenance: JsonLlmProvenance {
+                model_id: self.cfg.model_id.clone(),
+                provider_slug: self.cfg.provider_slug.clone(),
+                raw_content: parsed.content,
+                reasoning: parsed.reasoning,
+                response: parsed.response,
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct JsonLlmResult<T> {
+    pub parsed: T,
+    pub content: String,
+    pub reasoning: Option<String>,
+    pub response: OpenAiResponse,
 }
 
 pub async fn adjudicate_json<T: DeserializeOwned>(

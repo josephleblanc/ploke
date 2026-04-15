@@ -1,27 +1,13 @@
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::core::{Confidence, Measurement, Protocol as ProtocolTrait};
-use crate::llm::JsonChatPrompt;
-use crate::tool_calls::trace;
+use crate::core::{Confidence, EvidencePolicy, Measurement};
+use crate::llm::{JsonAdjudicationSpec, JsonAdjudicator, JsonChatPrompt, ProtocolLlmError};
+use crate::procedure::{NamedProcedure, Procedure, ProcedureExt, Sequence, SequenceError};
+use crate::step::{MechanizedExecutor, MechanizedSpec, Step, StepSpec};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CandidateKind {
-    FailedCall,
-    WrongTool,
-    RedundantRepeat,
-    LikelyBadArguments,
-    RecoveryOpportunity,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Candidate {
-    pub index: usize,
-    pub kind: CandidateKind,
-    pub confidence: Confidence,
-    pub reason: String,
-}
+use super::trace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,14 +21,6 @@ pub enum Verdict {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Judgment {
-    pub index: usize,
-    pub verdict: Verdict,
-    pub confidence: Confidence,
-    pub rationale: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Evidence {
     pub index: usize,
     pub turn: u32,
@@ -51,11 +29,19 @@ pub struct Evidence {
     pub summary: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Judgment {
+    pub index: usize,
+    pub verdict: Verdict,
+    pub confidence: Confidence,
+    pub rationale: String,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Metric;
 
 impl Measurement for Metric {
-    type Subject = Evidence;
+    type Subject = trace::Trace;
     type Value = Judgment;
 
     fn name(&self) -> &'static str {
@@ -63,149 +49,161 @@ impl Measurement for Metric {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct State {
-    pub trace: trace::Trace,
-    pub candidate: Candidate,
+#[derive(Debug, Clone, Copy)]
+pub struct SelectIndexedCall {
+    pub index: usize,
 }
 
-/// Bootstrap specification for a bounded localized tool-call review.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Spec;
+impl StepSpec for SelectIndexedCall {
+    type Input = trace::Trace;
+    type Output = Evidence;
+
+    fn step_id(&self) -> &'static str {
+        "select_indexed_tool_call"
+    }
+
+    fn step_name(&self) -> &'static str {
+        "select_indexed_tool_call"
+    }
+
+    fn evidence_policy(&self) -> EvidencePolicy {
+        EvidencePolicy {
+            allowed: vec![
+                "subject.calls[index]".to_string(),
+                "subject.calls[index].summary".to_string(),
+            ],
+            forbidden: vec![
+                "external context".to_string(),
+                "future turns not encoded in the selected call summary".to_string(),
+            ],
+            hindsight_allowed: false,
+            external_context_allowed: false,
+        }
+    }
+}
 
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum Error {
+pub enum SelectIndexedCallError {
     #[error("tool-call trace is empty")]
     EmptyTrace,
     #[error("selected tool call index {0} not found")]
     MissingIndex(usize),
 }
 
-impl Spec {
-    /// Cheap heuristic seed for later adjudication: pick the first failed call,
-    /// otherwise the first call in the trace.
-    pub fn select_candidate(&self, subject: &trace::Trace) -> Result<Candidate, Error> {
-        let first = subject.calls.first().ok_or(Error::EmptyTrace)?;
+impl MechanizedSpec for SelectIndexedCall {
+    type Error = SelectIndexedCallError;
 
-        let candidate = subject
+    fn execute_mechanized(&self, input: Self::Input) -> Result<Self::Output, Self::Error> {
+        if input.calls.is_empty() {
+            return Err(SelectIndexedCallError::EmptyTrace);
+        }
+
+        let indexed = input
             .calls
-            .iter()
-            .find(|call| call.failed)
-            .unwrap_or(first);
-
-        let kind = if candidate.failed {
-            CandidateKind::FailedCall
-        } else {
-            CandidateKind::RecoveryOpportunity
-        };
-
-        Ok(Candidate {
-            index: candidate.index,
-            kind,
-            confidence: Confidence::Low,
-            reason: "heuristic seed selection".to_string(),
-        })
-    }
-
-    pub fn build_state(&self, trace: trace::Trace) -> Result<State, Error> {
-        let candidate = self.select_candidate(&trace)?;
-        Ok(State { trace, candidate })
-    }
-
-    pub fn build_evidence(&self, state: &State) -> Result<Evidence, Error> {
-        let call = state
-            .trace
-            .calls
-            .iter()
-            .find(|call| call.index == state.candidate.index)
-            .ok_or(Error::MissingIndex(state.candidate.index))?;
+            .into_iter()
+            .find(|call| call.index == self.index)
+            .ok_or(SelectIndexedCallError::MissingIndex(self.index))?;
 
         Ok(Evidence {
-            index: call.index,
-            turn: call.turn,
-            tool_name: call.tool_name.clone(),
-            failed: call.failed,
-            summary: call.summary.clone(),
+            index: indexed.index,
+            turn: indexed.turn,
+            tool_name: indexed.tool_name,
+            failed: indexed.failed,
+            summary: indexed.summary,
         })
     }
+}
 
-    pub fn build_review_prompt(&self, evidence: &Evidence) -> JsonChatPrompt {
-        let system = "You are reviewing one tool call from an eval trace. Return only a JSON object with fields verdict, confidence, and rationale. Allowed verdict values: appropriate, wrong_tool, bad_arguments, redundant, recoverable_failure, unclear. Allowed confidence values: low, medium, high.".to_string();
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReviewEvidence;
 
-        let evidence_json = serde_json::to_string_pretty(evidence)
-            .expect("tool-call review evidence should serialize");
-        let user = format!(
-            "Review the following tool call evidence and classify whether the call was appropriate.\n\nTool call evidence JSON:\n{evidence_json}\n"
-        );
+impl StepSpec for ReviewEvidence {
+    type Input = Evidence;
+    type Output = Judgment;
 
-        JsonChatPrompt { system, user }
+    fn step_id(&self) -> &'static str {
+        "adjudicate_tool_call_review"
+    }
+
+    fn step_name(&self) -> &'static str {
+        "adjudicate_tool_call_review"
+    }
+
+    fn evidence_policy(&self) -> EvidencePolicy {
+        EvidencePolicy {
+            allowed: vec![
+                "selected tool-call evidence packet".to_string(),
+                "explicitly provided summary fields".to_string(),
+            ],
+            forbidden: vec![
+                "unstated run context".to_string(),
+                "external repository knowledge".to_string(),
+                "counterfactual assumptions not supported by the packet".to_string(),
+            ],
+            hindsight_allowed: false,
+            external_context_allowed: false,
+        }
     }
 }
 
-impl ProtocolTrait for Spec {
+impl JsonAdjudicationSpec for ReviewEvidence {
+    fn build_prompt(&self, input: &Self::Input) -> JsonChatPrompt {
+        JsonChatPrompt {
+            system: "You are reviewing one localized tool call from an eval trace. Use only the provided evidence packet. Return exactly one JSON object with keys: index, verdict, confidence, rationale. Valid verdict values: appropriate, wrong_tool, bad_arguments, redundant, recoverable_failure, unclear. Valid confidence values: low, medium, high.".to_string(),
+            user: format!(
+                "Review this tool call.\n\nindex: {}\nturn: {}\ntool: {}\nfailed: {}\nsummary: {}\n",
+                input.index,
+                input.turn,
+                input.tool_name,
+                input.failed,
+                input.summary
+            ),
+        }
+    }
+}
+
+pub type ToolCallReviewInner =
+    Sequence<Step<SelectIndexedCall, MechanizedExecutor>, Step<ReviewEvidence, JsonAdjudicator>>;
+
+pub type ToolCallReviewArtifact = crate::core::ProcedureArtifact<
+    crate::core::SequenceArtifact<
+        crate::core::StepArtifact<trace::Trace, Evidence, crate::step::MechanizedProvenance>,
+        crate::core::StepArtifact<Evidence, Judgment, crate::llm::JsonLlmProvenance>,
+    >,
+>;
+
+pub type ToolCallReviewError = SequenceError<SelectIndexedCallError, ProtocolLlmError>;
+
+#[derive(Debug, Clone)]
+pub struct ToolCallReview {
+    inner: NamedProcedure<ToolCallReviewInner>,
+}
+
+impl ToolCallReview {
+    pub fn new(index: usize, adjudicator: JsonAdjudicator) -> Self {
+        let select = Step::new(SelectIndexedCall { index }, MechanizedExecutor);
+        let review = Step::new(ReviewEvidence, adjudicator);
+        Self {
+            inner: select.then(review).named("tool_call_review"),
+        }
+    }
+}
+
+#[async_trait]
+impl Procedure for ToolCallReview {
     type Subject = trace::Trace;
-    type State = State;
-    type Output = Evidence;
-    type Error = Error;
+    type Output = Judgment;
+    type Artifact = ToolCallReviewArtifact;
+    type Error = ToolCallReviewError;
 
     fn name(&self) -> &'static str {
-        "tool_call_review"
+        self.inner.name()
     }
 
-    fn run(&self, subject: Self::Subject) -> Result<Self::Output, Self::Error> {
-        let state = self.build_state(subject)?;
-        self.build_evidence(&state)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn protocol_prefers_failed_call_when_present() {
-        let protocol = Spec;
-        let subject = trace::Trace {
-            subject_id: "run-1".to_string(),
-            calls: vec![
-                trace::Call {
-                    index: 0,
-                    turn: 1,
-                    tool_name: "search".to_string(),
-                    summary: "searched".to_string(),
-                    failed: false,
-                },
-                trace::Call {
-                    index: 1,
-                    turn: 2,
-                    tool_name: "read_file".to_string(),
-                    summary: "bad path".to_string(),
-                    failed: true,
-                },
-            ],
-        };
-
-        let evidence = protocol.run(subject).expect("evidence");
-        assert_eq!(evidence.index, 1);
-        assert!(evidence.failed);
-    }
-
-    #[test]
-    fn protocol_falls_back_to_first_call() {
-        let protocol = Spec;
-        let subject = trace::Trace {
-            subject_id: "run-2".to_string(),
-            calls: vec![trace::Call {
-                index: 0,
-                turn: 1,
-                tool_name: "search".to_string(),
-                summary: "searched".to_string(),
-                failed: false,
-            }],
-        };
-
-        let evidence = protocol.run(subject).expect("evidence");
-        assert_eq!(evidence.index, 0);
-        assert!(!evidence.failed);
+    async fn run(
+        &self,
+        subject: Self::Subject,
+    ) -> Result<crate::core::ProcedureRun<Self::Output, Self::Artifact>, Self::Error> {
+        self.inner.run(subject).await
     }
 }

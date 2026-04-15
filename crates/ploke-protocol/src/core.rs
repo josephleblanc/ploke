@@ -9,40 +9,6 @@ pub trait Measurement {
     fn name(&self) -> &'static str;
 }
 
-/// A protocol is a bounded procedure for producing one typed output from one
-/// typed subject.
-pub trait Protocol {
-    type Subject;
-    type State;
-    type Output;
-    type Error;
-
-    fn name(&self) -> &'static str;
-
-    fn run(&self, subject: Self::Subject) -> Result<Self::Output, Self::Error>;
-}
-
-/// A single typed step inside a larger protocol.
-pub trait ProtocolStep {
-    type Input;
-    type Output;
-    type Error;
-
-    fn name(&self) -> &'static str;
-
-    fn run(&self, input: Self::Input) -> Result<Self::Output, Self::Error>;
-}
-
-/// An executor carries out a step specification. Some executors are
-/// deterministic code, others may be LLM-backed or human-supervised.
-pub trait Executor<Spec, Input, Output> {
-    type Error;
-
-    fn kind(&self) -> ExecutorKind;
-
-    fn execute(&self, spec: &Spec, input: Input) -> Result<Output, Self::Error>;
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutorKind {
@@ -59,11 +25,52 @@ pub enum Confidence {
     High,
 }
 
-/// Minimal persisted artifact for a protocol run. Higher-level consumers can
-/// wrap this with protocol-specific input/output payloads and raw model traces.
+/// Encodes the admissible evidence contract for a step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct EvidencePolicy {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forbidden: Vec<String>,
+    #[serde(default)]
+    pub hindsight_allowed: bool,
+    #[serde(default)]
+    pub external_context_allowed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProtocolArtifact {
-    pub protocol_name: String,
+pub struct StepArtifact<Input, Output, Provenance> {
+    pub step_id: String,
+    pub step_name: String,
     pub executor_kind: ExecutorKind,
-    pub subject_id: String,
+    pub executor_label: String,
+    pub evidence_policy: EvidencePolicy,
+    pub input: Input,
+    pub output: Output,
+    pub provenance: Provenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SequenceArtifact<First, Second> {
+    pub first: First,
+    pub second: Second,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FanOutArtifact<Left, Right> {
+    pub left: Left,
+    pub right: Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcedureArtifact<Artifact> {
+    pub procedure_name: String,
+    pub artifact: Artifact,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcedureRun<Output, Artifact> {
+    pub procedure_name: String,
+    pub output: Output,
+    pub artifact: Artifact,
 }

@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// Flattened tool-call trace for one reviewed run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Trace {
     pub subject_id: String,

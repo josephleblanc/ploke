@@ -9,8 +9,8 @@ use ploke_llm::request::endpoint::Endpoint;
 use ploke_llm::router_only::HasEndpoint;
 use ploke_llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use ploke_llm::{ModelId, ProviderKey};
-use ploke_protocol::JsonLlmConfig;
 use ploke_protocol::tool_calls::{review, trace};
+use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure};
 use regex::Regex;
 use serde::Serialize;
 
@@ -1643,54 +1643,60 @@ impl ProtocolToolCallReviewCommand {
             })?;
 
         let subject = build_tool_call_trace_subject(&record, &record_path)?;
-        let protocol = review::Spec::default();
-        let summary = summarize_indexed_tool_call(&subject, self.index)?;
 
         let model_id = resolve_protocol_model_id(self.model_id)?;
         let provider_slug = resolve_protocol_provider_slug(&model_id, self.provider)?;
         let client = reqwest::Client::new();
-        let prompt = protocol.build_review_prompt(&summary);
         let cfg = JsonLlmConfig {
             model_id: model_id.to_string(),
             provider_slug,
             timeout_secs: 30,
             max_tokens: 400,
         };
-        let reviewed = ploke_protocol::adjudicate_json::<review::Judgment>(&client, &cfg, &prompt)
+        let protocol = review::ToolCallReview::new(self.index, JsonAdjudicator::new(client, cfg));
+        let reviewed = protocol
+            .run(subject)
             .await
-            .map_err(protocol_llm_error_to_prepare)?;
+            .map_err(tool_call_review_error_to_prepare)?;
+        let selected = &reviewed.artifact.artifact.first.output;
+        let review = &reviewed.output;
 
         match self.format {
             InspectOutputFormat::Table => {
-                println!("Protocol: tool-call-review");
+                println!("Protocol: {}", reviewed.procedure_name);
                 println!("{}", "-".repeat(40));
-                println!("Model: {}", cfg.model_id);
+                println!(
+                    "Model: {}",
+                    reviewed.artifact.artifact.second.provenance.model_id
+                );
                 println!(
                     "Provider: {}",
-                    cfg.provider_slug.as_deref().unwrap_or("auto/openrouter")
+                    reviewed
+                        .artifact
+                        .artifact
+                        .second
+                        .provenance
+                        .provider_slug
+                        .as_deref()
+                        .unwrap_or("auto/openrouter")
                 );
-                println!("Index: {}", summary.index);
-                println!("Turn: {}", summary.turn);
-                println!("Tool: {}", summary.tool_name);
-                println!("Failed: {}", if summary.failed { "yes" } else { "no" });
-                println!("Summary: {}", summary.summary);
+                println!("Index: {}", selected.index);
+                println!("Turn: {}", selected.turn);
+                println!("Tool: {}", selected.tool_name);
+                println!("Failed: {}", if selected.failed { "yes" } else { "no" });
+                println!("Summary: {}", selected.summary);
                 println!();
                 println!("Review");
                 println!("{}", "-".repeat(40));
-                println!("Verdict: {:?}", reviewed.parsed.verdict);
-                println!("Confidence: {:?}", reviewed.parsed.confidence);
-                println!("Rationale: {}", reviewed.parsed.rationale);
+                println!("Verdict: {:?}", review.verdict);
+                println!("Confidence: {:?}", review.confidence);
+                println!("Rationale: {}", review.rationale);
             }
             InspectOutputFormat::Json => {
                 let payload = serde_json::json!({
-                    "protocol": "tool-call-review",
-                    "model_id": cfg.model_id,
-                    "provider_slug": cfg.provider_slug,
-                    "input": summary,
-                    "review": reviewed.parsed,
-                    "raw_content": reviewed.content,
-                    "reasoning": reviewed.reasoning,
-                    "response": reviewed.response,
+                    "procedure": reviewed.procedure_name,
+                    "output": reviewed.output,
+                    "artifact": reviewed.artifact,
                 });
                 println!(
                     "{}",
@@ -2761,28 +2767,6 @@ fn build_tool_call_trace_subject(
     })
 }
 
-fn summarize_indexed_tool_call(
-    subject: &trace::Trace,
-    index: usize,
-) -> Result<review::Evidence, PrepareError> {
-    let indexed = subject
-        .calls
-        .iter()
-        .find(|call| call.index == index)
-        .ok_or_else(|| PrepareError::DatabaseSetup {
-            phase: "protocol_tool_call_review",
-            detail: format!("tool call index {} not found", index),
-        })?;
-
-    Ok(review::Evidence {
-        index: indexed.index,
-        turn: indexed.turn,
-        tool_name: indexed.tool_name.clone(),
-        failed: indexed.failed,
-        summary: indexed.summary.clone(),
-    })
-}
-
 fn tool_call_summary_line(call: &crate::record::ToolExecutionRecord) -> String {
     match &call.result {
         crate::record::ToolResult::Completed(completed) => format!(
@@ -2835,6 +2819,16 @@ fn protocol_llm_error_to_prepare(err: ploke_protocol::ProtocolLlmError) -> Prepa
     PrepareError::DatabaseSetup {
         phase: "protocol_tool_call_review",
         detail: err.to_string(),
+    }
+}
+
+fn tool_call_review_error_to_prepare(err: review::ToolCallReviewError) -> PrepareError {
+    match err {
+        ploke_protocol::SequenceError::First(first) => PrepareError::DatabaseSetup {
+            phase: "protocol_tool_call_review",
+            detail: first.to_string(),
+        },
+        ploke_protocol::SequenceError::Second(second) => protocol_llm_error_to_prepare(second),
     }
 }
 

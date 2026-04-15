@@ -4764,12 +4764,14 @@ dependencies = [
 name = "ploke-protocol"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "fxhash",
  "ploke-llm",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
+ "tokio",
 ]
 
 [[package]]
