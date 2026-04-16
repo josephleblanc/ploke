@@ -11,6 +11,7 @@ Use this book to synthesize method and framework:
 - conceptual foundations belong here
 - operational review protocols belong here
 - semi-structured experiment and meta-experiment threads belong here
+- working consolidation drafts live under [drafts/](drafts/README.md)
 
 Do not use this book as:
 

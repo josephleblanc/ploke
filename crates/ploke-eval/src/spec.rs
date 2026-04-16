@@ -247,6 +247,28 @@ pub enum PrepareError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("failed to read protocol artifact '{path}': {source}")]
+    ReadProtocolArtifact {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to parse protocol artifact '{path}': {source}")]
+    ParseProtocolArtifact {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    #[error("failed to create protocol artifact dir '{path}': {source}")]
+    CreateProtocolArtifactDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to write protocol artifact '{path}': {source}")]
+    WriteProtocolArtifact {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to serialize protocol artifact: {0}")]
+    SerializeProtocolArtifact(serde_json::Error),
     #[error("model '{model}' was not found in registry '{path}'")]
     UnknownModelInRegistry { model: String, path: PathBuf },
     #[error("model registry file '{0}' does not exist")]

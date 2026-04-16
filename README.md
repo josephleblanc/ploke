@@ -9,6 +9,13 @@ Ploke is a Rust-focused terminal-based application for developer-LLM collaborati
 
 If you want your coding LLMs to have deep comprehension of your Rust code base, you are in the right place.
 
+## Workspace note
+
+`crates/ploke-tui` is the user-facing application and the workspace default member.
+`crates/ploke-eval` and `crates/ploke-protocol` are internal, non-release-facing
+evaluation/protocol crates; they are expected to evolve faster, may be more
+experimental, and can be less tested than the main TUI path.
+
 <p align="center">
   <a href="#quick-start">Getting Started</a> ·
   <a href="#features-roadmap">Features</a> ·
@@ -22,7 +29,7 @@ If you want your coding LLMs to have deep comprehension of your Rust code base, 
 </p>
 
 Under development, will likely not crash/panic if it tries to parse a crate with an
-error, or in certain [known limitations](.docs/design/known_limitations/) or
+error, or in certain [known limitations](docs/design/known_limitations/) or
 unknown bugs. Please [open an issue](https://github.com/josephleblanc/ploke/issues) if you discovery one, it will jump to the
 top of our todo list.
 

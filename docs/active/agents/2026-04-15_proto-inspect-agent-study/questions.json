@@ -1,0 +1,15 @@
+[
+  "What is understandable with their limited information?",
+  "What is obvious?",
+  "What is non-obvious?",
+  "What conclusions can be made about the underlying dataset?",
+  "What do each of the headers mean? E.g. not \"Gaps\" but gaps in what?",
+  "What information is derivable from these commands?",
+  "What do each of the graphs mean?",
+  "What reasonable assumptions may be made?",
+  "What information is not being presented that they believe would provide the greatest unlock in the graph? Top 5?",
+  "What information is being presented which is the least meaningful of what they do understand about the data?",
+  "If they were designing the system that produced this data, what actions would the data suggest they take?",
+  "What one thing would you change about the graph?",
+  "What one thing would you not change about the graph?"
+]

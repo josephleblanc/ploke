@@ -66,9 +66,9 @@ pub enum ProtocolLlmError {
 
 pub trait JsonAdjudicationSpec: StepSpec
 where
-    Self::Output: DeserializeOwned,
+    Self::OutputState: DeserializeOwned,
 {
-    fn build_prompt(&self, input: &Self::Input) -> JsonChatPrompt;
+    fn build_prompt(&self, input: &Self::InputState) -> JsonChatPrompt;
 }
 
 #[derive(Debug, Clone)]
@@ -91,8 +91,8 @@ impl JsonAdjudicator {
 impl<Spec> StepExecutor<Spec> for JsonAdjudicator
 where
     Spec: JsonAdjudicationSpec + Send + Sync,
-    Spec::Input: Send,
-    Spec::Output: DeserializeOwned + Send,
+    Spec::InputState: Send,
+    Spec::OutputState: DeserializeOwned + Send,
 {
     type Provenance = JsonLlmProvenance;
     type Error = ProtocolLlmError;
@@ -108,12 +108,12 @@ where
     async fn execute(
         &self,
         spec: &Spec,
-        input: Spec::Input,
-    ) -> Result<StepExecution<Spec::Output, Self::Provenance>, Self::Error> {
+        input: Spec::InputState,
+    ) -> Result<StepExecution<Spec::OutputState, Self::Provenance>, Self::Error> {
         let prompt = spec.build_prompt(&input);
-        let parsed = adjudicate_json::<Spec::Output>(&self.client, &self.cfg, &prompt).await?;
+        let parsed = adjudicate_json::<Spec::OutputState>(&self.client, &self.cfg, &prompt).await?;
         Ok(StepExecution {
-            output: parsed.parsed,
+            state: parsed.parsed,
             provenance: JsonLlmProvenance {
                 model_id: self.cfg.model_id.clone(),
                 provider_slug: self.cfg.provider_slug.clone(),
@@ -121,6 +121,7 @@ where
                 reasoning: parsed.reasoning,
                 response: parsed.response,
             },
+            disposition: spec.disposition(),
         })
     }
 }

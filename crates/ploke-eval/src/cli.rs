@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::OnceLock;
+use std::{collections::BTreeMap, io::IsTerminal};
 
 use clap::{ArgAction, Parser, Subcommand};
 use ploke_llm::Router;
@@ -9,7 +10,8 @@ use ploke_llm::request::endpoint::Endpoint;
 use ploke_llm::router_only::HasEndpoint;
 use ploke_llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use ploke_llm::{ModelId, ProviderKey};
-use ploke_protocol::tool_calls::{review, trace};
+use ploke_protocol::tool_calls::trace::NeighborhoodSource;
+use ploke_protocol::tool_calls::{review, segment, trace};
 use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure};
 use regex::Regex;
 use serde::Serialize;
@@ -23,6 +25,18 @@ use crate::model_registry::{
     registry_has_model, save_active_model,
 };
 use crate::msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
+use crate::protocol::protocol_aggregate::{
+    ProtocolAggregate, ProtocolCallReviewRow, load_protocol_aggregate,
+};
+use crate::protocol_artifacts::{
+    StoredProtocolArtifactFile, list_protocol_artifacts, load_protocol_artifact,
+    protocol_artifact_preview, protocol_artifact_summary, write_protocol_artifact,
+};
+use crate::protocol_report::{
+    ProtocolAggregateCallIssueRow, ProtocolAggregateCoverage, ProtocolAggregateReport,
+    ProtocolAggregateSegmentRow, ProtocolColorProfile, ProtocolReportRenderOptions,
+    render_protocol_aggregate_report_with_options,
+};
 use crate::provider_prefs::{
     clear_provider_for_model, load_provider_for_model, set_provider_for_model,
 };
@@ -1172,6 +1186,8 @@ Bootstrap questions:
   cargo run -p ploke-eval -- inspect turn --instance BurntSushi__ripgrep-2209 1 --show db-state
   cargo run -p ploke-eval -- inspect query --instance BurntSushi__ripgrep-2209 --turn 1 --lookup GlobSet
   cargo run -p ploke-eval -- inspect conversations --instance BurntSushi__ripgrep-2209
+  cargo run -p ploke-eval -- inspect proto --instance BurntSushi__ripgrep-2209
+  cargo run -p ploke-eval -- inspect proto --all-runs
 
 Default target:
 
@@ -1192,8 +1208,12 @@ pub struct ProtocolCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ProtocolSubcommand {
-    /// Review one indexed tool call with a one-shot structured LLM judgment.
+    /// Review one indexed tool call using a bounded neighborhood, forked judgments, and merged assessment.
     ToolCallReview(ProtocolToolCallReviewCommand),
+    /// Segment an ordered tool-call sequence into contiguous intent episodes.
+    ToolCallIntentSegments(ProtocolToolCallIntentSegmentsCommand),
+    /// Review one intent segment using the shared local-analysis packet over segmented trace state.
+    ToolCallSegmentReview(ProtocolToolCallSegmentReviewCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -1209,6 +1229,56 @@ pub struct ProtocolToolCallReviewCommand {
     /// Indexed tool call to review, matching `inspect tool-calls <INDEX>`.
     #[arg(value_name = "INDEX")]
     pub index: usize,
+
+    /// Override the model id. Defaults to the current active eval model.
+    #[arg(long)]
+    pub model_id: Option<String>,
+
+    /// Override the provider slug. Defaults to the persisted provider for the chosen model, if any.
+    #[arg(long)]
+    pub provider: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct ProtocolToolCallIntentSegmentsCommand {
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Override the model id. Defaults to the current active eval model.
+    #[arg(long)]
+    pub model_id: Option<String>,
+
+    /// Override the provider slug. Defaults to the persisted provider for the chosen model, if any.
+    #[arg(long)]
+    pub provider: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct ProtocolToolCallSegmentReviewCommand {
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Segment index from `ploke-eval protocol tool-call-intent-segments`.
+    #[arg(value_name = "SEGMENT")]
+    pub segment_index: usize,
 
     /// Override the model id. Defaults to the current active eval model.
     #[arg(long)]
@@ -1240,6 +1310,12 @@ pub enum InspectSubcommand {
     Turn(InspectTurnCommand),
     /// Run Cozo queries against historical DB snapshots at turn timestamps
     Query(InspectQueryCommand),
+    /// List or inspect persisted protocol artifacts for a run.
+    #[command(alias = "protocols")]
+    ProtocolArtifacts(InspectProtocolArtifactsCommand),
+    /// Aggregate persisted protocol artifacts into a human-facing report.
+    #[command(alias = "proto", alias = "pview")]
+    ProtocolOverview(InspectProtocolOverviewCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -1404,6 +1480,115 @@ pub struct InspectQueryCommand {
     /// Cozo query string. Optional if --lookup is provided.
     #[arg(conflicts_with = "lookup")]
     pub query: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectProtocolOverviewCommand {
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["instance", "all_runs"])]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with_all = ["record", "all_runs"])]
+    pub instance: Option<String>,
+
+    /// Aggregate all finished runs instead of one run.
+    #[arg(long, conflicts_with_all = ["record", "instance"])]
+    pub all_runs: bool,
+
+    /// Which panel to emphasize for a single-run report.
+    #[arg(long, value_enum, default_value_t = ProtocolOverviewView::Overview)]
+    pub view: ProtocolOverviewView,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Only show issue-oriented rows where possible.
+    #[arg(long)]
+    pub only_issues: bool,
+
+    /// Filter by overall verdict (e.g. mixed, focused_progress).
+    #[arg(long)]
+    pub overall: Option<String>,
+
+    /// Filter segments by label (e.g. refine_search).
+    #[arg(long)]
+    pub segment_label: Option<String>,
+
+    /// Filter call issues by tool name.
+    #[arg(long)]
+    pub tool: Option<String>,
+
+    /// Maximum number of rows to show in the call-issues table or all-runs summary.
+    #[arg(long, default_value_t = 8)]
+    pub limit: usize,
+
+    /// Target render width for table output.
+    #[arg(long, default_value_t = 100)]
+    pub width: usize,
+
+    /// Color mode for table output.
+    #[arg(long, value_enum, default_value_t = ProtocolColorMode::Auto)]
+    pub color: ProtocolColorMode,
+
+    /// Semantic color profile for table output.
+    #[arg(long, value_enum, default_value_t = ProtocolColorProfileOption::TokioNight)]
+    pub color_profile: ProtocolColorProfileOption,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ProtocolOverviewView {
+    Overview,
+    Segments,
+    Calls,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ProtocolColorMode {
+    Auto,
+    Always,
+    Never,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ProtocolColorProfileOption {
+    TokioNight,
+    Gruvbox,
+    MonoDark,
+}
+
+impl From<ProtocolColorProfileOption> for ProtocolColorProfile {
+    fn from(value: ProtocolColorProfileOption) -> Self {
+        match value {
+            ProtocolColorProfileOption::TokioNight => ProtocolColorProfile::TokioNight,
+            ProtocolColorProfileOption::Gruvbox => ProtocolColorProfile::Gruvbox,
+            ProtocolColorProfileOption::MonoDark => ProtocolColorProfile::MonoDark,
+        }
+    }
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectProtocolArtifactsCommand {
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Show one protocol artifact in detail by its list index.
+    #[arg(value_name = "INDEX")]
+    pub index: Option<usize>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Show the full nested JSON payloads instead of bounded previews.
+    #[arg(long)]
+    pub full: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -1621,6 +1806,8 @@ impl InspectCommand {
             InspectSubcommand::Config(cmd) => cmd.run().await,
             InspectSubcommand::Turn(cmd) => cmd.run().await,
             InspectSubcommand::Query(cmd) => cmd.run().await,
+            InspectSubcommand::ProtocolArtifacts(cmd) => cmd.run().await,
+            InspectSubcommand::ProtocolOverview(cmd) => cmd.run().await,
         }
     }
 }
@@ -1629,6 +1816,8 @@ impl ProtocolCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         match self.command {
             ProtocolSubcommand::ToolCallReview(cmd) => cmd.run().await,
+            ProtocolSubcommand::ToolCallIntentSegments(cmd) => cmd.run().await,
+            ProtocolSubcommand::ToolCallSegmentReview(cmd) => cmd.run().await,
         }
     }
 }
@@ -1642,7 +1831,9 @@ impl ProtocolToolCallReviewCommand {
                 source,
             })?;
 
-        let subject = build_tool_call_trace_subject(&record, &record_path)?;
+        let subject = build_tool_call_review_subject(&record, &record_path, self.index)?;
+        let subject_id = subject.subject_id.clone();
+        let persisted_input = subject.clone();
 
         let model_id = resolve_protocol_model_id(self.model_id)?;
         let provider_slug = resolve_protocol_provider_slug(&model_id, self.provider)?;
@@ -1653,50 +1844,387 @@ impl ProtocolToolCallReviewCommand {
             timeout_secs: 30,
             max_tokens: 400,
         };
-        let protocol = review::ToolCallReview::new(self.index, JsonAdjudicator::new(client, cfg));
+        let protocol = review::ToolCallReview::new(JsonAdjudicator::new(client, cfg.clone()));
         let reviewed = protocol
             .run(subject)
             .await
             .map_err(tool_call_review_error_to_prepare)?;
-        let selected = &reviewed.artifact.artifact.first.output;
+        let persisted_path = write_protocol_artifact(
+            &record_path,
+            &reviewed.procedure_name,
+            &subject_id,
+            Some(cfg.model_id.as_str()),
+            cfg.provider_slug.as_deref(),
+            &persisted_input,
+            &reviewed.output,
+            &reviewed.artifact,
+        )?;
         let review = &reviewed.output;
 
         match self.format {
             InspectOutputFormat::Table => {
                 println!("Protocol: {}", reviewed.procedure_name);
                 println!("{}", "-".repeat(40));
-                println!(
-                    "Model: {}",
-                    reviewed.artifact.artifact.second.provenance.model_id
-                );
+                println!("Model: {}", cfg.model_id);
                 println!(
                     "Provider: {}",
-                    reviewed
-                        .artifact
-                        .artifact
-                        .second
-                        .provenance
-                        .provider_slug
-                        .as_deref()
-                        .unwrap_or("auto/openrouter")
+                    cfg.provider_slug.as_deref().unwrap_or("auto/openrouter")
                 );
-                println!("Index: {}", selected.index);
-                println!("Turn: {}", selected.turn);
-                println!("Tool: {}", selected.tool_name);
-                println!("Failed: {}", if selected.failed { "yes" } else { "no" });
-                println!("Summary: {}", selected.summary);
+                println!("Artifact: {}", persisted_path.display());
+                println!(
+                    "Target: {:?} {}",
+                    review.packet.target_kind, review.packet.target_id
+                );
+                println!("Scope: {}", review.packet.scope_summary);
+                println!("Turns: {}", join_turns(&review.packet.turn_span));
+                println!("Calls in scope: {}", review.packet.total_calls_in_scope);
+                if let Some(focal_index) = review.packet.focal_call_index {
+                    println!("Focal call index: {}", focal_index);
+                }
+                println!("Calls:");
+                for call in &review.packet.calls {
+                    let marker = if Some(call.index) == review.packet.focal_call_index {
+                        "focal"
+                    } else {
+                        "scope"
+                    };
+                    println!(
+                        "  {:<6} [{}] {} | {}",
+                        marker, call.index, call.tool_name, call.summary
+                    );
+                }
                 println!();
-                println!("Review");
+                println!("Signals");
                 println!("{}", "-".repeat(40));
-                println!("Verdict: {:?}", review.verdict);
-                println!("Confidence: {:?}", review.confidence);
-                println!("Rationale: {}", review.rationale);
+                println!(
+                    "Repeated tool calls: {}",
+                    review.signals.repeated_tool_name_count
+                );
+                println!("Distinct tools: {}", review.signals.distinct_tool_count);
+                println!(
+                    "Similar searches: {}",
+                    review.signals.similar_search_neighbors
+                );
+                println!("Directory pivots: {}", review.signals.directory_pivots);
+                println!("Search calls: {}", review.signals.search_calls_in_scope);
+                println!("Read calls: {}", review.signals.read_calls_in_scope);
+                println!("Browse calls: {}", review.signals.browse_calls_in_scope);
+                println!(
+                    "Candidate concerns: {:?}",
+                    review.signals.candidate_concerns
+                );
+                println!();
+                println!("Assessments");
+                println!("{}", "-".repeat(40));
+                println!(
+                    "Usefulness: {:?} ({:?})",
+                    review.usefulness.verdict, review.usefulness.confidence
+                );
+                println!("  {}", review.usefulness.rationale);
+                println!(
+                    "Redundancy: {:?} ({:?})",
+                    review.redundancy.verdict, review.redundancy.confidence
+                );
+                println!("  {}", review.redundancy.rationale);
+                println!(
+                    "Recoverability: {:?} ({:?})",
+                    review.recoverability.verdict, review.recoverability.confidence
+                );
+                println!("  {}", review.recoverability.rationale);
+                println!();
+                println!(
+                    "Overall: {:?} ({:?})",
+                    review.overall, review.overall_confidence
+                );
+                println!("Synthesis: {}", review.synthesis_rationale);
             }
             InspectOutputFormat::Json => {
                 let payload = serde_json::json!({
                     "procedure": reviewed.procedure_name,
+                    "persisted_artifact_path": persisted_path,
                     "output": reviewed.output,
                     "artifact": reviewed.artifact,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl ProtocolToolCallSegmentReviewCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let record_path = resolve_record_path(self.record, self.instance)?;
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        let sequence_subject = build_tool_call_sequence_subject(&record, &record_path)?;
+        let model_id = resolve_protocol_model_id(self.model_id)?;
+        let provider_slug = resolve_protocol_provider_slug(&model_id, self.provider)?;
+        let client = reqwest::Client::new();
+        let cfg = JsonLlmConfig {
+            model_id: model_id.to_string(),
+            provider_slug,
+            timeout_secs: 45,
+            max_tokens: 1200,
+        };
+        let adjudicator = JsonAdjudicator::new(client, cfg.clone());
+        let segmentation = segment::ToolCallIntentSegmentation::new(adjudicator.clone())
+            .run(sequence_subject)
+            .await
+            .map_err(tool_call_intent_segmentation_error_to_prepare)?;
+
+        let subject = build_segment_review_subject(&segmentation.output, self.segment_index)?;
+        let subject_id = subject.subject_id.clone();
+        let persisted_input = subject.clone();
+        let protocol = review::ToolCallSegmentReview::new(adjudicator);
+        let reviewed = protocol
+            .run(subject)
+            .await
+            .map_err(tool_call_segment_review_error_to_prepare)?;
+        let persisted_path = write_protocol_artifact(
+            &record_path,
+            &reviewed.procedure_name,
+            &subject_id,
+            Some(cfg.model_id.as_str()),
+            cfg.provider_slug.as_deref(),
+            &persisted_input,
+            &reviewed.output,
+            &reviewed.artifact,
+        )?;
+        let review = &reviewed.output;
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("Protocol: {}", reviewed.procedure_name);
+                println!("{}", "-".repeat(40));
+                println!("Model: {}", cfg.model_id);
+                println!(
+                    "Provider: {}",
+                    cfg.provider_slug.as_deref().unwrap_or("auto/openrouter")
+                );
+                println!("Artifact: {}", persisted_path.display());
+                println!(
+                    "Target: {:?} {}",
+                    review.packet.target_kind, review.packet.target_id
+                );
+                println!("Scope: {}", review.packet.scope_summary);
+                println!("Turns: {}", join_turns(&review.packet.turn_span));
+                println!("Calls in scope: {}", review.packet.total_calls_in_scope);
+                println!("Calls:");
+                for call in &review.packet.calls {
+                    println!("  [{}] {} | {}", call.index, call.tool_name, call.summary);
+                }
+                println!();
+                println!("Signals");
+                println!("{}", "-".repeat(40));
+                println!(
+                    "Repeated tool calls: {}",
+                    review.signals.repeated_tool_name_count
+                );
+                println!("Distinct tools: {}", review.signals.distinct_tool_count);
+                println!("Directory pivots: {}", review.signals.directory_pivots);
+                println!("Search calls: {}", review.signals.search_calls_in_scope);
+                println!("Read calls: {}", review.signals.read_calls_in_scope);
+                println!("Browse calls: {}", review.signals.browse_calls_in_scope);
+                println!(
+                    "Source labeled segments: {}",
+                    review.signals.labeled_segments_in_source.unwrap_or(0)
+                );
+                println!(
+                    "Source ambiguous segments: {}",
+                    review.signals.ambiguous_segments_in_source.unwrap_or(0)
+                );
+                println!(
+                    "Source uncovered calls: {}",
+                    review.signals.uncovered_calls_in_source.unwrap_or(0)
+                );
+                println!(
+                    "Candidate concerns: {:?}",
+                    review.signals.candidate_concerns
+                );
+                println!();
+                println!("Assessments");
+                println!("{}", "-".repeat(40));
+                println!(
+                    "Usefulness: {:?} ({:?})",
+                    review.usefulness.verdict, review.usefulness.confidence
+                );
+                println!("  {}", review.usefulness.rationale);
+                println!(
+                    "Redundancy: {:?} ({:?})",
+                    review.redundancy.verdict, review.redundancy.confidence
+                );
+                println!("  {}", review.redundancy.rationale);
+                println!(
+                    "Recoverability: {:?} ({:?})",
+                    review.recoverability.verdict, review.recoverability.confidence
+                );
+                println!("  {}", review.recoverability.rationale);
+                println!();
+                println!(
+                    "Overall: {:?} ({:?})",
+                    review.overall, review.overall_confidence
+                );
+                println!("Synthesis: {}", review.synthesis_rationale);
+            }
+            InspectOutputFormat::Json => {
+                let payload = serde_json::json!({
+                    "procedure": reviewed.procedure_name,
+                    "persisted_artifact_path": persisted_path,
+                    "output": reviewed.output,
+                    "artifact": reviewed.artifact,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl ProtocolToolCallIntentSegmentsCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let record_path = resolve_record_path(self.record, self.instance)?;
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        let subject = build_tool_call_sequence_subject(&record, &record_path)?;
+        let subject_id = subject.subject_id.clone();
+        let persisted_input = subject.clone();
+
+        let model_id = resolve_protocol_model_id(self.model_id)?;
+        let provider_slug = resolve_protocol_provider_slug(&model_id, self.provider)?;
+        let client = reqwest::Client::new();
+        let cfg = JsonLlmConfig {
+            model_id: model_id.to_string(),
+            provider_slug,
+            timeout_secs: 45,
+            max_tokens: 1200,
+        };
+        let protocol =
+            segment::ToolCallIntentSegmentation::new(JsonAdjudicator::new(client, cfg.clone()));
+        let segmented = protocol
+            .run(subject)
+            .await
+            .map_err(tool_call_intent_segmentation_error_to_prepare)?;
+        let persisted_path = write_protocol_artifact(
+            &record_path,
+            &segmented.procedure_name,
+            &subject_id,
+            Some(cfg.model_id.as_str()),
+            cfg.provider_slug.as_deref(),
+            &persisted_input,
+            &segmented.output,
+            &segmented.artifact,
+        )?;
+        let output = &segmented.output;
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("Protocol: {}", segmented.procedure_name);
+                println!("{}", "-".repeat(40));
+                println!("Model: {}", cfg.model_id);
+                println!(
+                    "Provider: {}",
+                    cfg.provider_slug.as_deref().unwrap_or("auto/openrouter")
+                );
+                println!("Artifact: {}", persisted_path.display());
+                println!("Turns: {}", output.sequence.total_turns);
+                println!("Tool calls: {}", output.sequence.total_calls_in_run);
+                println!("Segments: {}", output.segments.len());
+                println!("Labeled segments: {}", output.coverage.labeled_segments);
+                println!("Ambiguous segments: {}", output.coverage.ambiguous_segments);
+                println!("Labeled calls: {}", output.coverage.labeled_calls);
+                println!("Ambiguous calls: {}", output.coverage.ambiguous_calls);
+                println!("Uncovered calls: {}", output.coverage.uncovered_calls);
+                if !output.uncovered_call_indices.is_empty() {
+                    println!(
+                        "Uncovered indices: {}",
+                        join_indices(&output.uncovered_call_indices)
+                    );
+                }
+                if !output.uncovered_spans.is_empty() {
+                    println!(
+                        "Uncovered spans: {}",
+                        output
+                            .uncovered_spans
+                            .iter()
+                            .map(|span| format!("{}..={}", span.start_index, span.end_index))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                println!();
+                println!("Sequence Signals");
+                println!("{}", "-".repeat(40));
+                println!("Search calls: {}", output.signals.search_calls);
+                println!("Read calls: {}", output.signals.read_calls);
+                println!("Browse calls: {}", output.signals.browse_calls);
+                println!("Edit calls: {}", output.signals.edit_calls);
+                println!("Failed calls: {}", output.signals.failed_calls);
+                println!(
+                    "Repeated search runs: {}",
+                    output.signals.repeated_search_runs
+                );
+                println!("Directory pivots: {}", output.signals.directory_pivots);
+                println!();
+                println!("Intent Segments");
+                println!("{}", "-".repeat(40));
+                for segment in &output.segments {
+                    println!(
+                        "[{}] {} {}..={} confidence={:?}",
+                        segment.segment_index,
+                        format_segment_descriptor(segment.status, segment.label),
+                        segment.start_index,
+                        segment.end_index,
+                        segment.confidence
+                    );
+                    println!("  turns ......... {}", join_turns(&segment.turns));
+                    println!("  rationale ..... {}", segment.rationale);
+                    for call in &segment.calls {
+                        println!(
+                            "  call .......... [{}] {} | {}",
+                            call.index, call.tool_name, call.summary
+                        );
+                    }
+                    println!();
+                }
+                if !output.uncovered_spans.is_empty() {
+                    println!("Uncovered Regions");
+                    println!("{}", "-".repeat(40));
+                    for span in &output.uncovered_spans {
+                        println!(
+                            "{}..={} calls={}",
+                            span.start_index,
+                            span.end_index,
+                            join_indices(&span.call_indices)
+                        );
+                        println!("  rationale ..... {}", span.rationale);
+                    }
+                    println!();
+                }
+                println!("Overall rationale");
+                println!("{}", "-".repeat(40));
+                println!("{}", output.overall_rationale);
+            }
+            InspectOutputFormat::Json => {
+                let payload = serde_json::json!({
+                    "persisted_artifact_path": persisted_path,
+                    "run": segmented,
                 });
                 println!(
                     "{}",
@@ -2420,6 +2948,695 @@ impl InspectQueryCommand {
     }
 }
 
+impl InspectProtocolArtifactsCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let record_path = resolve_record_path(self.record, self.instance)?;
+        let artifacts = list_protocol_artifacts(&record_path)?;
+
+        if let Some(index) = self.index {
+            let selected = artifacts
+                .get(index)
+                .ok_or_else(|| PrepareError::DatabaseSetup {
+                    phase: "inspect_protocol_artifacts",
+                    detail: format!(
+                        "protocol artifact index {} out of range ({} artifact{})",
+                        index,
+                        artifacts.len(),
+                        if artifacts.len() == 1 { "" } else { "s" }
+                    ),
+                })?;
+            match self.format {
+                InspectOutputFormat::Table => {
+                    print_protocol_artifact_detail(index, selected, self.full);
+                }
+                InspectOutputFormat::Json => {
+                    if self.full {
+                        let payload = serde_json::json!({
+                            "index": index,
+                            "path": selected.path,
+                            "artifact": selected.stored,
+                        });
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&payload)
+                                .map_err(PrepareError::Serialize)?
+                        );
+                    } else {
+                        let payload = serde_json::json!({
+                            "index": index,
+                            "path": selected.path,
+                            "procedure_name": selected.stored.procedure_name,
+                            "subject_id": selected.stored.subject_id,
+                            "run_id": selected.stored.run_id,
+                            "created_at_ms": selected.stored.created_at_ms,
+                            "model_id": selected.stored.model_id,
+                            "provider_slug": selected.stored.provider_slug,
+                            "summary": protocol_artifact_summary(selected),
+                            "input_preview": protocol_artifact_preview(&selected.stored.input),
+                            "output_preview": protocol_artifact_preview(&selected.stored.output),
+                            "artifact_preview": protocol_artifact_preview(&selected.stored.artifact),
+                        });
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&payload)
+                                .map_err(PrepareError::Serialize)?
+                        );
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                if artifacts.is_empty() {
+                    println!("No persisted protocol artifacts for this run.");
+                } else {
+                    println!(
+                        "{:<5} {:<30} {:<28} {:<16} Summary",
+                        "Idx", "Procedure", "Subject", "Model"
+                    );
+                    println!("{}", "-".repeat(120));
+                    for (index, entry) in artifacts.iter().enumerate() {
+                        println!(
+                            "{:<5} {:<30} {:<28} {:<16} {}",
+                            index,
+                            truncate_for_table(&entry.stored.procedure_name, 28),
+                            truncate_for_table(&entry.stored.subject_id, 26),
+                            truncate_for_table(entry.stored.model_id.as_deref().unwrap_or("-"), 14),
+                            truncate_for_table(&protocol_artifact_summary(entry), 42),
+                        );
+                    }
+                    println!("\nTotal protocol artifacts: {}", artifacts.len());
+                    println!("Next:");
+                    println!("  ploke-eval inspect protocol-artifacts 0");
+                    println!("  ploke-eval inspect protocol-artifacts 0 --full");
+                }
+            }
+            InspectOutputFormat::Json => {
+                let payload: Vec<_> = artifacts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entry)| {
+                        serde_json::json!({
+                            "index": index,
+                            "path": entry.path,
+                            "procedure_name": entry.stored.procedure_name,
+                            "subject_id": entry.stored.subject_id,
+                            "created_at_ms": entry.stored.created_at_ms,
+                            "model_id": entry.stored.model_id,
+                            "provider_slug": entry.stored.provider_slug,
+                            "summary": protocol_artifact_summary(entry),
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl InspectProtocolOverviewCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        if self.all_runs {
+            let summaries = collect_protocol_run_summaries()?;
+            return match self.format {
+                InspectOutputFormat::Table => {
+                    print_protocol_run_summaries(&summaries, &self);
+                    Ok(())
+                }
+                InspectOutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&summaries)
+                            .map_err(PrepareError::Serialize)?
+                    );
+                    Ok(())
+                }
+            };
+        }
+
+        let record_path = resolve_record_path(self.record.clone(), self.instance.clone())?;
+        let aggregate =
+            load_protocol_aggregate(&record_path).map_err(|err| PrepareError::DatabaseSetup {
+                phase: "inspect_protocol_overview",
+                detail: err.to_string(),
+            })?;
+        let mut report = build_protocol_report(&aggregate)?;
+        apply_protocol_report_filters(&mut report, &self);
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                let use_color = match self.color {
+                    ProtocolColorMode::Always => true,
+                    ProtocolColorMode::Never => false,
+                    ProtocolColorMode::Auto => std::io::stdout().is_terminal(),
+                };
+                let rendered = render_protocol_aggregate_report_with_options(
+                    &report,
+                    ProtocolReportRenderOptions {
+                        width: self.width,
+                        use_color,
+                        top_call_issues: self.limit,
+                        color_profile: self.color_profile.into(),
+                    },
+                );
+                print!("{rendered}");
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProtocolRunSummaryRow {
+    run_id: String,
+    subject_id: String,
+    call_review_ratio: f32,
+    usable_segment_ratio: f32,
+    tool_calls_total: usize,
+    segments_total: usize,
+    call_issues: usize,
+    mismatched_segment_reviews: usize,
+    missing_call_reviews: usize,
+    missing_segment_reviews: usize,
+}
+
+#[derive(Debug, Clone)]
+struct SegmentEvidenceCounts {
+    usable: usize,
+    mismatched: usize,
+    missing: usize,
+    missing_indices: Vec<usize>,
+}
+
+fn collect_protocol_run_summaries() -> Result<Vec<ProtocolRunSummaryRow>, PrepareError> {
+    let mut summaries = Vec::new();
+    for record_path in collect_finished_record_paths()? {
+        let aggregate =
+            load_protocol_aggregate(&record_path).map_err(|err| PrepareError::DatabaseSetup {
+                phase: "inspect_protocol_overview",
+                detail: err.to_string(),
+            })?;
+        let segment_evidence = segment_evidence_counts(&aggregate);
+        let report = build_protocol_report(&aggregate)?;
+        summaries.push(ProtocolRunSummaryRow {
+            run_id: aggregate.run.run_id.clone(),
+            subject_id: aggregate.run.subject_id.clone(),
+            call_review_ratio: ratio(
+                aggregate.coverage.reviewed_call_count,
+                aggregate.coverage.total_calls_in_run,
+            ),
+            usable_segment_ratio: ratio(
+                segment_evidence.usable,
+                aggregate.coverage.total_segments_in_anchor,
+            ),
+            tool_calls_total: aggregate.coverage.total_calls_in_run,
+            segments_total: aggregate.coverage.total_segments_in_anchor,
+            call_issues: report.call_issues.len(),
+            mismatched_segment_reviews: segment_evidence.mismatched,
+            missing_call_reviews: aggregate.coverage.missing_call_indices.len(),
+            missing_segment_reviews: segment_evidence.missing,
+        });
+    }
+    summaries.sort_by(|left, right| {
+        let left_evidence_concerns = left.mismatched_segment_reviews
+            + left.missing_segment_reviews
+            + left.missing_call_reviews;
+        let right_evidence_concerns = right.mismatched_segment_reviews
+            + right.missing_segment_reviews
+            + right.missing_call_reviews;
+        right_evidence_concerns
+            .cmp(&left_evidence_concerns)
+            .then_with(|| right.call_issues.cmp(&left.call_issues))
+            .then_with(|| right.tool_calls_total.cmp(&left.tool_calls_total))
+    });
+    Ok(summaries)
+}
+
+fn segment_evidence_counts(aggregate: &ProtocolAggregate) -> SegmentEvidenceCounts {
+    let accepted_segment_indices = aggregate
+        .segment_reviews
+        .iter()
+        .map(|row| row.basis.segment_index)
+        .collect::<std::collections::BTreeSet<_>>();
+    let mismatched_segment_indices = aggregate
+        .skipped_segment_reviews
+        .iter()
+        .map(|row| row.segment_index)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let mut usable = 0usize;
+    let mut mismatched = 0usize;
+    let mut missing_indices = Vec::new();
+
+    for basis in &aggregate.segmentation.segments {
+        if accepted_segment_indices.contains(&basis.segment_index) {
+            usable += 1;
+        } else if mismatched_segment_indices.contains(&basis.segment_index) {
+            mismatched += 1;
+        } else {
+            missing_indices.push(basis.segment_index);
+        }
+    }
+
+    SegmentEvidenceCounts {
+        usable,
+        mismatched,
+        missing: missing_indices.len(),
+        missing_indices,
+    }
+}
+
+fn collect_finished_record_paths() -> Result<Vec<PathBuf>, PrepareError> {
+    let root = runs_dir()?;
+    let mut paths = Vec::new();
+    for entry in std::fs::read_dir(&root).map_err(|source| PrepareError::ReadManifest {
+        path: root.clone(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| PrepareError::ReadManifest {
+            path: root.clone(),
+            source,
+        })?;
+        let path = entry.path().join("record.json.gz");
+        if path.exists() {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+fn build_protocol_report(
+    aggregate: &ProtocolAggregate,
+) -> Result<ProtocolAggregateReport, PrepareError> {
+    let segment_evidence = segment_evidence_counts(aggregate);
+    let call_details = load_anchor_call_details(aggregate)?;
+    let segment_review_by_index = aggregate
+        .segment_reviews
+        .iter()
+        .map(|row| (row.basis.segment_index, row))
+        .collect::<BTreeMap<_, _>>();
+
+    let segments = aggregate
+        .segmentation
+        .segments
+        .iter()
+        .map(|basis| {
+            let reviewed_call_count = aggregate
+                .call_reviews
+                .iter()
+                .filter(|row| row.segment_index == Some(basis.segment_index))
+                .count();
+            let segment_review = segment_review_by_index.get(&basis.segment_index);
+            let note = if aggregate
+                .skipped_segment_reviews
+                .iter()
+                .any(|row| row.segment_index == basis.segment_index)
+            {
+                Some("mismatch with current anchor".to_string())
+            } else if segment_review.is_none() {
+                Some("missing segment review".to_string())
+            } else if reviewed_call_count < basis.call_count {
+                Some(format!(
+                    "call coverage {reviewed_call_count}/{}",
+                    basis.call_count
+                ))
+            } else {
+                None
+            };
+            ProtocolAggregateSegmentRow {
+                index: basis.segment_index,
+                label: Some(basis.label.clone()),
+                call_span: Some(format!("{}..{}", basis.start_index, basis.end_index)),
+                status: Some(
+                    segment_review
+                        .map(|review| review.overall.clone())
+                        .unwrap_or_else(|| basis.status.clone()),
+                ),
+                evidence: Some(
+                    if aggregate
+                        .skipped_segment_reviews
+                        .iter()
+                        .any(|row| row.segment_index == basis.segment_index)
+                    {
+                        "mismatched".to_string()
+                    } else if segment_review.is_some() {
+                        "usable".to_string()
+                    } else {
+                        "missing".to_string()
+                    },
+                ),
+                confidence: segment_review
+                    .and_then(|review| {
+                        confidence_fraction(Some(review.overall_confidence.as_str()))
+                    })
+                    .or_else(|| confidence_fraction(basis.confidence.as_deref())),
+                note,
+                call_refs: basis.call_indices.clone(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let call_issues = aggregate
+        .call_reviews
+        .iter()
+        .filter_map(|row| {
+            let detail = call_details.get(&row.focal_call_index);
+            let issue = primary_call_issue(row);
+            if issue.is_none() {
+                return None;
+            }
+            Some(ProtocolAggregateCallIssueRow {
+                index: row.focal_call_index,
+                turn: row.turn_span.first().copied().map(|turn| turn as u32),
+                segment_index: row.segment_index,
+                tool_name: detail.map(|detail| detail.tool_name.clone()),
+                issue,
+                overall: Some(row.overall.clone()),
+                detail: detail
+                    .map(|detail| detail.summary.clone())
+                    .or_else(|| Some(format!("scope={}", join_indices(&row.scope_call_indices)))),
+                severity: Some(call_review_severity(row)),
+                confidence: confidence_fraction(Some(row.overall_confidence.as_str())),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let duplicate_artifacts = Some(
+        aggregate
+            .coverage
+            .artifact_counts
+            .get("tool_call_review")
+            .copied()
+            .unwrap_or(0)
+            .saturating_sub(aggregate.coverage.reviewed_call_count)
+            + aggregate
+                .coverage
+                .artifact_counts
+                .get("tool_call_segment_review")
+                .copied()
+                .unwrap_or(0)
+                .saturating_sub(aggregate.coverage.reviewed_segment_count),
+    );
+
+    Ok(ProtocolAggregateReport {
+        run_id: aggregate.run.run_id.clone(),
+        subject_id: aggregate.run.subject_id.clone(),
+        title: Some("Evidence reliability".to_string()),
+        generated_at: None,
+        scope: Some("protocol-derived evidence".to_string()),
+        provenance: vec![
+            format!(
+                "anchor={} {}",
+                aggregate.segmentation.artifact.created_at_ms,
+                truncate_middle(
+                    aggregate
+                        .segmentation
+                        .artifact
+                        .path
+                        .to_string_lossy()
+                        .as_ref(),
+                    44
+                )
+            ),
+            "derived from intent segmentation + tool call review + segment review".to_string(),
+        ],
+        coverage: ProtocolAggregateCoverage {
+            total_tool_calls: aggregate.coverage.total_calls_in_run,
+            reviewed_tool_calls: aggregate.coverage.reviewed_call_count,
+            total_segments: aggregate.coverage.total_segments_in_anchor,
+            usable_segment_reviews: segment_evidence.usable,
+            mismatched_segment_reviews: segment_evidence.mismatched,
+            missing_tool_call_indices: aggregate.coverage.missing_call_indices.clone(),
+            missing_segment_indices: segment_evidence.missing_indices.clone(),
+            duplicate_artifacts,
+        },
+        segments,
+        call_issues,
+        notes: if segment_evidence.mismatched > 0 {
+            vec![format!(
+                "{} segment review artifacts excluded because they do not match the current anchor",
+                segment_evidence.mismatched
+            )]
+        } else {
+            Vec::new()
+        },
+    })
+}
+
+fn apply_protocol_report_filters(
+    report: &mut ProtocolAggregateReport,
+    command: &InspectProtocolOverviewCommand,
+) {
+    let overall_filter = command.overall.as_deref().map(str::to_lowercase);
+    let label_filter = command.segment_label.as_deref().map(str::to_lowercase);
+    let tool_filter = command.tool.as_deref().map(str::to_lowercase);
+
+    if let Some(label) = label_filter.as_deref() {
+        report.segments.retain(|row| {
+            row.label
+                .as_deref()
+                .map(|value| value.eq_ignore_ascii_case(label))
+                .unwrap_or(false)
+        });
+    }
+
+    if let Some(overall) = overall_filter.as_deref() {
+        report.segments.retain(|row| {
+            row.status
+                .as_deref()
+                .map(|value| value.eq_ignore_ascii_case(overall))
+                .unwrap_or(false)
+        });
+        report.call_issues.retain(|row| {
+            row.overall
+                .as_deref()
+                .map(|value| value.eq_ignore_ascii_case(overall))
+                .unwrap_or(false)
+        });
+    }
+
+    if let Some(tool) = tool_filter.as_deref() {
+        report.call_issues.retain(|row| {
+            row.tool_name
+                .as_deref()
+                .map(|value| value.to_ascii_lowercase().contains(tool))
+                .unwrap_or(false)
+        });
+    }
+
+    if command.only_issues {
+        report.segments.retain(|row| {
+            row.note.is_some()
+                || row
+                    .status
+                    .as_deref()
+                    .map(|value| value != "focused_progress")
+                    .unwrap_or(true)
+                || row
+                    .evidence
+                    .as_deref()
+                    .map(|value| value != "usable")
+                    .unwrap_or(true)
+        });
+    }
+
+    match command.view {
+        ProtocolOverviewView::Overview => {}
+        ProtocolOverviewView::Segments => {
+            report.call_issues.clear();
+        }
+        ProtocolOverviewView::Calls => {
+            report.segments.clear();
+        }
+    }
+}
+
+fn print_protocol_run_summaries(
+    summaries: &[ProtocolRunSummaryRow],
+    command: &InspectProtocolOverviewCommand,
+) {
+    let mut rows = summaries.to_vec();
+    if command.only_issues {
+        rows.retain(|row| {
+            row.call_issues > 0
+                || row.missing_call_reviews > 0
+                || row.missing_segment_reviews > 0
+                || row.mismatched_segment_reviews > 0
+        });
+    }
+    rows.truncate(command.limit.max(1));
+
+    println!("Segment evidence legend: u=usable, m=mismatched, x=missing");
+    println!(
+        "{:<28} {:<10} {:<18} {:<8} Summary",
+        "Run", "Calls", "Segment evidence", "Issues"
+    );
+    println!("{}", "─".repeat(command.width.min(120)));
+    for row in rows {
+        let missing_segments = row.missing_segment_reviews;
+        let summary = format!(
+            "{} {}",
+            progress_bar(row.call_review_ratio, 6),
+            summary_segment_bar(
+                (row.usable_segment_ratio * row.segments_total as f32).round() as usize,
+                row.mismatched_segment_reviews,
+                missing_segments,
+                6,
+            )
+        );
+        println!(
+            "{:<28} {:<10} {:<18} {:<8} {}",
+            truncate_for_table(&row.run_id, 26),
+            format!(
+                "{}/{}",
+                (row.call_review_ratio * row.tool_calls_total as f32).round() as usize,
+                row.tool_calls_total
+            ),
+            format!(
+                "u{} m{} x{}",
+                (row.usable_segment_ratio * row.segments_total as f32).round() as usize,
+                row.mismatched_segment_reviews,
+                missing_segments
+            ),
+            row.call_issues,
+            summary,
+        );
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AnchorCallDetail {
+    tool_name: String,
+    summary: String,
+}
+
+fn load_anchor_call_details(
+    aggregate: &ProtocolAggregate,
+) -> Result<BTreeMap<usize, AnchorCallDetail>, PrepareError> {
+    let artifact = load_protocol_artifact(&aggregate.segmentation.artifact.path)?;
+    let mut details = BTreeMap::new();
+    if let Some(calls) = artifact
+        .stored
+        .input
+        .get("calls")
+        .and_then(|value| value.as_array())
+    {
+        for call in calls {
+            if let Some(index) = call.get("index").and_then(|value| value.as_u64()) {
+                details.insert(
+                    index as usize,
+                    AnchorCallDetail {
+                        tool_name: call
+                            .get("tool_name")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("-")
+                            .to_string(),
+                        summary: call
+                            .get("summary")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("-")
+                            .to_string(),
+                    },
+                );
+            }
+        }
+    }
+    Ok(details)
+}
+
+fn primary_call_issue(row: &ProtocolCallReviewRow) -> Option<String> {
+    if row.redundancy.verdict == "search_thrash" {
+        Some("search_thrash".to_string())
+    } else if row.recoverability.verdict == "partial_next_step" {
+        Some("partial_next_step".to_string())
+    } else if row.overall != "focused_progress" {
+        Some(row.overall.clone())
+    } else {
+        None
+    }
+}
+
+fn call_review_severity(row: &ProtocolCallReviewRow) -> f32 {
+    if row.redundancy.verdict == "search_thrash" {
+        0.95
+    } else if row.recoverability.verdict == "no_clear_recovery" {
+        0.85
+    } else if row.recoverability.verdict == "partial_next_step" {
+        0.7
+    } else if row.overall == "mixed" {
+        0.55
+    } else {
+        0.25
+    }
+}
+
+fn confidence_fraction(value: Option<&str>) -> Option<f32> {
+    match value? {
+        "high" | "High" => Some(0.9),
+        "medium" | "Medium" => Some(0.6),
+        "low" | "Low" => Some(0.3),
+        _ => None,
+    }
+}
+
+fn ratio(numerator: usize, denominator: usize) -> f32 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f32 / denominator as f32
+    }
+}
+
+fn progress_bar(value: f32, width: usize) -> String {
+    let width = width.max(3);
+    let filled = ((value.clamp(0.0, 1.0) * width as f32).round() as usize).min(width);
+    format!("[{}{}]", "█".repeat(filled), "░".repeat(width - filled))
+}
+
+fn summary_segment_bar(usable: usize, mismatched: usize, missing: usize, width: usize) -> String {
+    let total = usable + mismatched + missing;
+    if total == 0 {
+        return "[------]".to_string();
+    }
+    let width = width.max(3);
+    let usable_width = ((usable as f32 / total as f32) * width as f32).round() as usize;
+    let mismatch_width = ((mismatched as f32 / total as f32) * width as f32).round() as usize;
+    let mut missing_width = width.saturating_sub(usable_width + mismatch_width);
+    let mut usable_width = usable_width.min(width);
+    let mut mismatch_width = mismatch_width.min(width.saturating_sub(usable_width));
+    missing_width = missing_width.min(width.saturating_sub(usable_width + mismatch_width));
+    while usable_width + mismatch_width + missing_width < width {
+        if missing > 0 {
+            missing_width += 1;
+        } else if mismatched > 0 {
+            mismatch_width += 1;
+        } else {
+            usable_width += 1;
+        }
+    }
+    format!(
+        "[{}{}{}]",
+        "█".repeat(usable_width),
+        "▓".repeat(mismatch_width),
+        "░".repeat(missing_width)
+    )
+}
+
 /// Convert a Cozo DataValue to a JSON Value
 fn cozo_data_to_json(val: &cozo::DataValue) -> serde_json::Value {
     use cozo::DataValue;
@@ -2740,31 +3957,219 @@ fn indexed_tool_calls(
         .collect()
 }
 
-fn build_tool_call_trace_subject(
+fn build_tool_call_sequence_subject(
     record: &crate::record::RunRecord,
     record_path: &std::path::Path,
-) -> Result<trace::Trace, PrepareError> {
+) -> Result<trace::ToolCallSequence, PrepareError> {
     let subject_id = record_path
         .parent()
         .and_then(|parent| parent.file_name())
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| record.manifest_id.clone());
+    let indexed = indexed_tool_calls(record);
 
-    let tool_calls = indexed_tool_calls(record)
-        .into_iter()
-        .map(|(index, turn, call)| trace::Call {
-            index,
-            turn,
-            tool_name: call.request.tool.clone(),
-            summary: tool_call_summary_line(&call),
-            failed: matches!(call.result, crate::record::ToolResult::Failed(_)),
+    let turns = record
+        .conversations()
+        .map(|turn| trace::TurnContext {
+            turn: turn.turn_number,
+            tool_count: turn.tool_calls().len(),
+            failed_tool_count: failed_tool_count(turn),
+            patch_proposed: turn
+                .tool_calls()
+                .iter()
+                .any(|call| call.request.tool == "non_semantic_patch"),
+            patch_applied: summarize_patch_state(&turn.tool_calls()) == "yes",
         })
         .collect();
 
-    Ok(trace::Trace {
+    let calls = indexed
+        .iter()
+        .map(|(index, turn, call)| summarize_neighborhood_call(*index, *turn, call))
+        .collect();
+
+    Ok(trace::ToolCallSequence {
         subject_id,
-        calls: tool_calls,
+        total_turns: record.conversations().count(),
+        total_calls_in_run: indexed.len(),
+        turns,
+        calls,
     })
+}
+
+struct RecordToolCallNeighborhoodAdapter<'a> {
+    record: &'a crate::record::RunRecord,
+    subject_id: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum RecordToolCallNeighborhoodError {
+    #[error("selected tool call index {0} not found")]
+    MissingIndex(usize),
+    #[error("turn {0} not found for selected tool call")]
+    MissingTurn(u32),
+}
+
+impl trace::NeighborhoodSource for RecordToolCallNeighborhoodAdapter<'_> {
+    type Error = RecordToolCallNeighborhoodError;
+
+    fn neighborhood(
+        &self,
+        request: &trace::NeighborhoodRequest,
+    ) -> Result<trace::ToolCallNeighborhood, Self::Error> {
+        let indexed = indexed_tool_calls(self.record);
+        let focal_turn = indexed
+            .iter()
+            .find(|(index, _, _)| *index == request.focal_index)
+            .map(|(_, turn, _)| *turn)
+            .ok_or(RecordToolCallNeighborhoodError::MissingIndex(
+                request.focal_index,
+            ))?;
+
+        let turn_record = self
+            .record
+            .turn_record(focal_turn)
+            .ok_or(RecordToolCallNeighborhoodError::MissingTurn(focal_turn))?;
+        let turn_calls: Vec<_> = indexed
+            .iter()
+            .filter(|(_, turn, _)| *turn == focal_turn)
+            .cloned()
+            .collect();
+        let turn_position = turn_calls
+            .iter()
+            .position(|(index, _, _)| *index == request.focal_index)
+            .ok_or(RecordToolCallNeighborhoodError::MissingIndex(
+                request.focal_index,
+            ))?;
+        let start = turn_position.saturating_sub(request.radius_before);
+        let end = (turn_position + request.radius_after + 1).min(turn_calls.len());
+
+        let before = turn_calls[start..turn_position]
+            .iter()
+            .map(|(index, turn, call)| summarize_neighborhood_call(*index, *turn, call))
+            .collect();
+        let focal = summarize_neighborhood_call(
+            turn_calls[turn_position].0,
+            turn_calls[turn_position].1,
+            &turn_calls[turn_position].2,
+        );
+        let after = turn_calls[turn_position + 1..end]
+            .iter()
+            .map(|(index, turn, call)| summarize_neighborhood_call(*index, *turn, call))
+            .collect();
+
+        Ok(trace::ToolCallNeighborhood {
+            subject_id: self.subject_id.clone(),
+            total_calls_in_run: indexed.len(),
+            total_calls_in_turn: turn_calls.len(),
+            turn: trace::TurnContext {
+                turn: focal_turn,
+                tool_count: turn_record.tool_calls().len(),
+                failed_tool_count: failed_tool_count(turn_record),
+                patch_proposed: turn_record
+                    .tool_calls()
+                    .iter()
+                    .any(|call| call.request.tool == "non_semantic_patch"),
+                patch_applied: summarize_patch_state(&turn_record.tool_calls()) == "yes",
+            },
+            before,
+            focal,
+            after,
+        })
+    }
+}
+
+fn build_tool_call_review_subject(
+    record: &crate::record::RunRecord,
+    record_path: &std::path::Path,
+    index: usize,
+) -> Result<trace::ToolCallNeighborhood, PrepareError> {
+    let subject_id = record_path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| record.manifest_id.clone());
+    let adapter = RecordToolCallNeighborhoodAdapter { record, subject_id };
+    adapter
+        .neighborhood(&trace::NeighborhoodRequest::centered(index))
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "protocol_tool_call_review",
+            detail: err.to_string(),
+        })
+}
+
+fn build_segment_review_subject(
+    segmented: &segment::SegmentedToolCallSequence,
+    segment_index: usize,
+) -> Result<review::SegmentReviewSubject, PrepareError> {
+    let segment = segmented
+        .segments
+        .iter()
+        .find(|segment| segment.segment_index == segment_index)
+        .cloned()
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "protocol_tool_call_segment_review",
+            detail: format!("segment index {segment_index} not found"),
+        })?;
+
+    Ok(review::SegmentReviewSubject {
+        subject_id: segmented.sequence.subject_id.clone(),
+        sequence: segmented.sequence.clone(),
+        segment,
+        coverage: segmented.coverage.clone(),
+    })
+}
+
+fn summarize_neighborhood_call(
+    index: usize,
+    turn: u32,
+    call: &crate::record::ToolExecutionRecord,
+) -> trace::NeighborhoodCall {
+    trace::NeighborhoodCall {
+        index,
+        turn,
+        tool_name: call.request.tool.clone(),
+        tool_kind: classify_tool_kind(&call.request.tool),
+        failed: matches!(call.result, crate::record::ToolResult::Failed(_)),
+        latency_ms: call.latency_ms,
+        summary: tool_call_summary_line(call),
+        args_preview: truncate_middle(&call.request.arguments, 96),
+        result_preview: tool_result_preview(call),
+        search_term: extract_argument_string(&call.request.arguments, &["search_term", "query"]),
+        path_hint: extract_argument_string(
+            &call.request.arguments,
+            &["file", "dir", "path", "target_dir"],
+        ),
+    }
+}
+
+fn classify_tool_kind(tool_name: &str) -> trace::ToolKind {
+    match tool_name {
+        "request_code_context" | "search_code" | "search_symbols" | "query_codebase" => {
+            trace::ToolKind::Search
+        }
+        "read_file" => trace::ToolKind::Read,
+        "list_dir" => trace::ToolKind::Browse,
+        "apply_code_edit" => trace::ToolKind::Edit,
+        "run_command" | "shell" => trace::ToolKind::Execute,
+        _ => trace::ToolKind::Other,
+    }
+}
+
+fn tool_result_preview(call: &crate::record::ToolExecutionRecord) -> String {
+    match &call.result {
+        crate::record::ToolResult::Completed(completed) => truncate_middle(&completed.content, 96),
+        crate::record::ToolResult::Failed(failed) => truncate_middle(&failed.error, 96),
+    }
+}
+
+fn extract_argument_string(arguments: &str, keys: &[&str]) -> Option<String> {
+    let json = serde_json::from_str::<serde_json::Value>(arguments).ok()?;
+    for key in keys {
+        if let Some(value) = json.get(*key).and_then(|value| value.as_str()) {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 fn tool_call_summary_line(call: &crate::record::ToolExecutionRecord) -> String {
@@ -2815,20 +4220,89 @@ fn resolve_protocol_provider_slug(
     Ok(load_provider_for_model(model_id)?.map(|provider| provider.slug.as_str().to_string()))
 }
 
-fn protocol_llm_error_to_prepare(err: ploke_protocol::ProtocolLlmError) -> PrepareError {
+fn print_protocol_artifact_detail(index: usize, entry: &StoredProtocolArtifactFile, full: bool) {
+    println!("Protocol Artifact {}", index);
+    println!("{}", "-".repeat(40));
+    println!("Path: {}", entry.path.display());
+    println!("Procedure: {}", entry.stored.procedure_name);
+    println!("Subject: {}", entry.stored.subject_id);
+    println!("Run: {}", entry.stored.run_id);
+    println!("Created (ms): {}", entry.stored.created_at_ms);
+    println!(
+        "Model: {}",
+        entry.stored.model_id.as_deref().unwrap_or("(unknown)")
+    );
+    println!(
+        "Provider: {}",
+        entry
+            .stored
+            .provider_slug
+            .as_deref()
+            .unwrap_or("auto/openrouter")
+    );
+    println!("Summary: {}", protocol_artifact_summary(entry));
+    println!();
+    if full {
+        println!("Input");
+        println!("{}", "-".repeat(40));
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&entry.stored.input)
+                .unwrap_or_else(|_| { protocol_artifact_preview(&entry.stored.input) })
+        );
+        println!();
+        println!("Output");
+        println!("{}", "-".repeat(40));
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&entry.stored.output)
+                .unwrap_or_else(|_| { protocol_artifact_preview(&entry.stored.output) })
+        );
+        println!();
+        println!("Artifact");
+        println!("{}", "-".repeat(40));
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&entry.stored.artifact)
+                .unwrap_or_else(|_| { protocol_artifact_preview(&entry.stored.artifact) })
+        );
+    } else {
+        println!("Input: {}", protocol_artifact_preview(&entry.stored.input));
+        println!(
+            "Output: {}",
+            protocol_artifact_preview(&entry.stored.output)
+        );
+        println!(
+            "Artifact: {}",
+            protocol_artifact_preview(&entry.stored.artifact)
+        );
+        println!();
+        println!("Tip: rerun with `--full` to print the full nested payloads.");
+    }
+}
+
+fn tool_call_review_error_to_prepare(err: review::ToolCallReviewError) -> PrepareError {
     PrepareError::DatabaseSetup {
         phase: "protocol_tool_call_review",
         detail: err.to_string(),
     }
 }
 
-fn tool_call_review_error_to_prepare(err: review::ToolCallReviewError) -> PrepareError {
-    match err {
-        ploke_protocol::SequenceError::First(first) => PrepareError::DatabaseSetup {
-            phase: "protocol_tool_call_review",
-            detail: first.to_string(),
-        },
-        ploke_protocol::SequenceError::Second(second) => protocol_llm_error_to_prepare(second),
+fn tool_call_intent_segmentation_error_to_prepare(
+    err: segment::IntentSegmentationError,
+) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase: "protocol_tool_call_intent_segmentation",
+        detail: err.to_string(),
+    }
+}
+
+fn tool_call_segment_review_error_to_prepare(
+    err: review::ToolCallSegmentReviewError,
+) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase: "protocol_tool_call_segment_review",
+        detail: err.to_string(),
     }
 }
 
@@ -2863,6 +4337,33 @@ fn summarize_message_content(content: &str) -> String {
 
 fn tool_call_next_step_index(tool_call_count: usize) -> Option<usize> {
     if tool_call_count > 0 { Some(0) } else { None }
+}
+
+fn join_indices(indices: &[usize]) -> String {
+    indices
+        .iter()
+        .map(|idx| idx.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn join_turns(turns: &[u32]) -> String {
+    turns
+        .iter()
+        .map(|turn| turn.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_segment_descriptor(
+    status: segment::SegmentStatus,
+    label: Option<segment::IntentLabel>,
+) -> String {
+    match (status, label) {
+        (segment::SegmentStatus::Labeled, Some(label)) => format!("labeled:{label:?}"),
+        (segment::SegmentStatus::Labeled, None) => "labeled:<missing>".to_string(),
+        (segment::SegmentStatus::Ambiguous, _) => "ambiguous".to_string(),
+    }
 }
 
 fn print_turn_summary(turn: &crate::record::TurnRecord) {

@@ -23,7 +23,7 @@ descriptive name if the date and git name are taken.
 - Re: open-questions.md
 
 Open questions may be addressed to either the main agent directly, or through
-`docs/active/agents/open_questions.md`. You may not direct a question directly
+`docs/active/agents/open-questions.md`. You may not direct a question directly
 to the user, but it will be reviewed and possibly bumped to the user if an
 answer cannot be found by the main agent.
 

@@ -88,7 +88,10 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
         .with_file(true)
         .with_line_number(true)
         .with_ansi(true)
-        .with_writer(std::io::stderr);
+        .with_writer(std::io::stderr)
+        // Keep the human-facing CLI surface clean; detailed info-level traces
+        // still go to the log files configured above.
+        .with_filter(filter::LevelFilter::WARN);
 
     if tracing_subscriber::registry()
         .with(filter)

@@ -56,6 +56,8 @@ members = [
     "proc_macros/ploke-db-derive",
     # Add more modules as needed
 ]
+# The TUI is the release-facing default member; `ploke-eval` and
+# `ploke-protocol` remain internal/non-release-facing tooling crates.
 default-members = ["crates/ploke-tui"]
 
 [workspace.package]

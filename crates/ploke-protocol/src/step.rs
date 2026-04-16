@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use serde::Serialize;
 
-use crate::core::{EvidencePolicy, ExecutorKind, StepArtifact};
+use crate::core::{EvidencePolicy, ExecutorKind, ProcedureState, StateDisposition, StepArtifact};
 
 pub trait StepSpec {
-    type Input: Clone + Serialize;
-    type Output: Clone + Serialize;
+    type InputState: ProcedureState;
+    type OutputState: ProcedureState;
 
     fn step_id(&self) -> &'static str;
 
@@ -14,11 +14,16 @@ pub trait StepSpec {
     fn evidence_policy(&self) -> EvidencePolicy {
         EvidencePolicy::default()
     }
+
+    fn disposition(&self) -> StateDisposition {
+        StateDisposition::RecordAndForward
+    }
 }
 
-pub struct StepExecution<Output, Provenance> {
-    pub output: Output,
+pub struct StepExecution<OutputState, Provenance> {
+    pub state: OutputState,
     pub provenance: Provenance,
+    pub disposition: StateDisposition,
 }
 
 #[async_trait]
@@ -36,14 +41,15 @@ where
     async fn execute(
         &self,
         spec: &Spec,
-        input: Spec::Input,
-    ) -> Result<StepExecution<Spec::Output, Self::Provenance>, Self::Error>;
+        input: Spec::InputState,
+    ) -> Result<StepExecution<Spec::OutputState, Self::Provenance>, Self::Error>;
 }
 
 pub trait MechanizedSpec: StepSpec {
     type Error;
 
-    fn execute_mechanized(&self, input: Self::Input) -> Result<Self::Output, Self::Error>;
+    fn execute_mechanized(&self, input: Self::InputState)
+    -> Result<Self::OutputState, Self::Error>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -58,8 +64,8 @@ pub struct MechanizedExecutor;
 impl<Spec> StepExecutor<Spec> for MechanizedExecutor
 where
     Spec: MechanizedSpec + Send + Sync,
-    Spec::Input: Send,
-    Spec::Output: Send,
+    Spec::InputState: Send,
+    Spec::OutputState: Send,
     Spec::Error: Send,
 {
     type Provenance = MechanizedProvenance;
@@ -76,14 +82,15 @@ where
     async fn execute(
         &self,
         spec: &Spec,
-        input: Spec::Input,
-    ) -> Result<StepExecution<Spec::Output, Self::Provenance>, Self::Error> {
-        let output = spec.execute_mechanized(input)?;
+        input: Spec::InputState,
+    ) -> Result<StepExecution<Spec::OutputState, Self::Provenance>, Self::Error> {
+        let state = spec.execute_mechanized(input)?;
         Ok(StepExecution {
-            output,
+            state,
             provenance: MechanizedProvenance {
                 strategy: "native_rust".to_string(),
             },
+            disposition: spec.disposition(),
         })
     }
 }
@@ -107,8 +114,9 @@ where
 {
     pub async fn run(
         &self,
-        input: Spec::Input,
-    ) -> Result<StepArtifact<Spec::Input, Spec::Output, Exec::Provenance>, Exec::Error> {
+        input: Spec::InputState,
+    ) -> Result<StepArtifact<Spec::InputState, Spec::OutputState, Exec::Provenance>, Exec::Error>
+    {
         let captured_input = input.clone();
         let execution = self.executor.execute(&self.spec, input).await?;
         Ok(StepArtifact {
@@ -118,7 +126,9 @@ where
             executor_label: self.executor.label().to_string(),
             evidence_policy: self.spec.evidence_policy(),
             input: captured_input,
-            output: execution.output,
+            input_disposition: StateDisposition::ForwardOnly,
+            output: execution.state,
+            output_disposition: execution.disposition,
             provenance: execution.provenance,
         })
     }

@@ -23,6 +23,10 @@ pub fn runs_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("runs"))
 }
 
+pub fn protocol_artifacts_dir_for_run(run_dir: &std::path::Path) -> PathBuf {
+    run_dir.join("protocol-artifacts")
+}
+
 pub fn batches_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("batches"))
 }

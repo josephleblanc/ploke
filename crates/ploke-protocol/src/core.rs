@@ -9,6 +9,11 @@ pub trait Measurement {
     fn name(&self) -> &'static str;
 }
 
+/// Marker trait for typed procedure states.
+pub trait ProcedureState: Clone + Serialize + Send + Sync + std::fmt::Debug + 'static {}
+
+impl<T> ProcedureState for T where T: Clone + Serialize + Send + Sync + std::fmt::Debug + 'static {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutorKind {
@@ -38,15 +43,43 @@ pub struct EvidencePolicy {
     pub external_context_allowed: bool,
 }
 
+/// Recording and forwarding are separate concerns in the procedure model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StateDisposition {
+    RecordOnly,
+    ForwardOnly,
+    RecordAndForward,
+    Ephemeral,
+}
+
+impl StateDisposition {
+    pub fn should_record(self) -> bool {
+        matches!(self, Self::RecordOnly | Self::RecordAndForward)
+    }
+
+    pub fn should_forward(self) -> bool {
+        matches!(self, Self::ForwardOnly | Self::RecordAndForward)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StepArtifact<Input, Output, Provenance> {
+pub struct StateEnvelope<State> {
+    pub state: State,
+    pub disposition: StateDisposition,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StepArtifact<InputState, OutputState, Provenance> {
     pub step_id: String,
     pub step_name: String,
     pub executor_kind: ExecutorKind,
     pub executor_label: String,
     pub evidence_policy: EvidencePolicy,
-    pub input: Input,
-    pub output: Output,
+    pub input: InputState,
+    pub input_disposition: StateDisposition,
+    pub output: OutputState,
+    pub output_disposition: StateDisposition,
     pub provenance: Provenance,
 }
 
@@ -57,9 +90,25 @@ pub struct SequenceArtifact<First, Second> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FanOutArtifact<Left, Right> {
-    pub left: Left,
-    pub right: Right,
+pub struct ForkState<SourceState, LeftState, RightState> {
+    pub source: SourceState,
+    pub left: LeftState,
+    pub right: RightState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FanOutArtifact<InputState, LeftArtifact, RightArtifact> {
+    pub input: StateEnvelope<InputState>,
+    pub left_branch: String,
+    pub right_branch: String,
+    pub left: LeftArtifact,
+    pub right: RightArtifact,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeArtifact<BranchesArtifact, MergeStepArtifact> {
+    pub branches: BranchesArtifact,
+    pub merge: MergeStepArtifact,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,8 +118,8 @@ pub struct ProcedureArtifact<Artifact> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProcedureRun<Output, Artifact> {
+pub struct ProcedureRun<OutputState, Artifact> {
     pub procedure_name: String,
-    pub output: Output,
+    pub output: OutputState,
     pub artifact: Artifact,
 }

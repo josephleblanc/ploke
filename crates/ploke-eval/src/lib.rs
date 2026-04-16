@@ -3,6 +3,8 @@ pub mod layout;
 pub mod model_registry;
 pub mod msb;
 pub mod protocol;
+mod protocol_artifacts;
+mod protocol_report;
 pub mod provider_prefs;
 pub mod record;
 pub mod registry;
@@ -13,7 +15,8 @@ pub mod tracing_setup;
 
 pub use cli::Cli;
 pub use layout::{
-    batches_dir, datasets_dir, ploke_eval_home, repos_dir, runs_dir, workspace_root_for_key,
+    batches_dir, datasets_dir, ploke_eval_home, protocol_artifacts_dir_for_run, repos_dir,
+    runs_dir, workspace_root_for_key,
 };
 pub use msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 pub use record::{

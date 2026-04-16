@@ -21,6 +21,9 @@ Common entry points:
 - [handoff-template.md](handoff-template.md)
 - [phase-tracking-template.md](phase-tracking-template.md)
 - [postmortem-template.md](postmortem-template.md)
+- [target-capability-registry.md](target-capability-registry.md)
+- [experiment-config.v0.draft.json](experiment-config.v0.draft.json)
+- [run-manifest.v0.draft.json](run-manifest.v0.draft.json)
 - [evalnomicon/README.md](evalnomicon/README.md)
 - [skills/README.md](skills/README.md)
 

@@ -1,7 +1,7 @@
 # Recent Activity
 
-- last_updated: 2026-04-14
-- ready_for: ploke-protocol bootstrap follow-up, evalnomicon conceptual consolidation, and later reintegration with the cleaner post-batch tokio evaluation pass
+- last_updated: 2026-04-15
+- ready_for: restart/doc hygiene, unattended-doc tracking, testing/documentation audits, and protocol-artifact coverage generation across finished runs
 - owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
@@ -14,6 +14,67 @@
     2. Wait for explicit permission before proceeding
   - This applies to: `syn_parser`, `ploke-tui`, `ploke-db`, `ploke-llm`, etc.
   - Rationale: Prevent unintended side effects on core infrastructure during eval work
+
+## 2026-04-15
+
+- **`INSPECT PROTO` SHIFTED TO AN EVIDENCE-RELIABILITY SLICE**
+  - The human-facing aggregate CLI in `ploke-eval` now frames the first useful surface as evidence reliability rather than mixed generic coverage.
+  - Concrete changes in `crates/ploke-eval/src/cli.rs` and `crates/ploke-eval/src/protocol_report.rs`:
+    - single-run report now emphasizes `Call reviews`, `Usable seg reviews`, and explicit segment evidence states (`usable`, `mismatched`, `missing`)
+    - added provenance lines for the current anchor and derivation path
+    - removed the older `Coverage shape` / `Signal histograms` sections
+    - added larger issue-surface charts for issue kinds and issue tools
+    - added hardcoded semantic color profiles:
+      - `tokio-night`
+      - `gruvbox`
+      - `mono-dark`
+  - Operational consequence:
+    - the current CLI is now more clearly an admissibility / evidence-trust surface
+    - it is still not yet the intervention-ranking view
+  - Restart references:
+    - [2026-04-15_protocol-aggregate-cli.md](../../agents/2026-04-15_protocol-aggregate-cli.md)
+
+- **CURRENT PASS SHIFTED FROM PROTOCOL DEVELOPMENT TO ORCHESTRATED HYGIENE + ARTIFACT COVERAGE**
+  - New `ploke-protocol` development is intentionally shelved for now.
+  - The live working surface is:
+    - restart-critical doc cleanup
+    - README and folder-index hygiene
+    - doc comment / README coverage auditing
+    - testing-surface auditing
+    - persisted protocol-artifact generation across finished eval runs
+  - Active orchestration note:
+    - [2026-04-15_orchestration-hygiene-and-artifact-monitor.md](../../agents/2026-04-15_orchestration-hygiene-and-artifact-monitor.md)
+  - Operational consequence:
+    - treat this as a documentation, monitoring, and artifact-generation pass
+    - prefer reports and tracking docs over fresh implementation work
+
+- **PROTOCOL-ARTIFACT COVERAGE IS NOW THE HIGHEST-PRIORITY OPERATIONAL LANE**
+  - `ploke-eval` already exposes:
+    - `protocol tool-call-intent-segments`
+    - `protocol tool-call-review`
+    - `protocol tool-call-segment-review`
+    - `inspect protocol-artifacts`
+  - Current local inventory at start of pass:
+    - `39` runs with `record.json.gz`
+    - `2` runs with `protocol-artifacts/`
+    - `37` runs still missing protocol-artifact coverage
+  - Immediate next move:
+    - generate protocol artifacts across the finished-run set using the existing CLI
+    - once at least half coverage is present, run sampled sanity-check review passes comparing protocol outputs against `inspect`-based qualitative reads
+
+- **DOC HYGIENE TRACKING SURFACES WERE ADDED**
+  - Added [2026-04-15_docs-hygiene-tracker.md](../../agents/2026-04-15_docs-hygiene-tracker.md)
+  - Current tracked concerns include:
+    - stale restart pointers
+    - under-indexed README surfaces
+    - stale-but-keep docs for later review
+    - README/doc-comment drift
+    - testing-surface follow-up findings
+
+- **EARLY TESTING AUDIT FOUND A REAL BUG WORTH TRACKING**
+  - Added [2026-04-15-observability-test-todo-panic.md](../../bugs/2026-04-15-observability-test-todo-panic.md)
+  - Why it matters:
+    - an active `ploke-db` observability test still contains `todo!()` placeholders and should not be treated as meaningful coverage until reviewed
 
 ## 2026-04-13
 
@@ -460,6 +521,30 @@
   - Rust 2015 async identifiers (`fn async(&self)`) now parse successfully
   - **Handoff:** [2026-04-11_dual-syn-implementation-handoff.md](2026-04-11_dual-syn-implementation-handoff.md)
   - **Next:** Complete syn1→syn2 conversion, then integrate into `process_fn_arg_syn1`
+
+## 2026-04-15 (Protocol Aggregate CLI)
+
+- Added a new human-facing protocol aggregate inspection surface in `ploke-eval`:
+  - `inspect protocol-overview`
+  - alias:
+    - `inspect proto`
+- The new command currently supports:
+  - all-runs summary table:
+    - `./target/debug/ploke-eval inspect proto --all-runs --limit 12`
+  - single-run aggregate report:
+    - `./target/debug/ploke-eval inspect proto --instance tokio-rs__tokio-5200 --width 100`
+  - filtered single-run views:
+    - `--view overview|segments|calls`
+    - `--only-issues`
+    - `--overall`
+    - `--segment-label`
+    - `--tool`
+- Aggregation is anchored to the latest persisted `tool_call_intent_segmentation` artifact for the run.
+- Segment reviews are only merged when they still match the selected anchor basis; anchor mismatches are surfaced explicitly rather than silently merged.
+- Older malformed persisted review artifacts are now skipped so the all-runs summary remains usable.
+- Default console tracing for `ploke-eval` was tightened so the new terminal report is not prefixed by routine info-level tracing noise.
+- Current main limitation:
+  - large-run segment-review coverage still often collapses into `anchor mismatch` rows because many persisted segment reviews do not match the latest segmentation basis.
 
 ## 2026-04-10 (Afternoon)
 
