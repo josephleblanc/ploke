@@ -16,6 +16,10 @@ use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure};
 use regex::Regex;
 use serde::Serialize;
 
+use crate::closure::{
+    ClosureRecomputeRequest, closure_state_path, load_closure_state, recompute_closure_state,
+    render_closure_status,
+};
 use crate::layout::{
     active_model_file, batches_dir, cache_dir, datasets_dir, model_registry_file, models_dir,
     repos_dir, runs_dir, starting_db_cache_dir, workspace_root_for_key,
@@ -49,6 +53,10 @@ use crate::runner::{
 };
 use crate::spec::{
     EvalBudget, IssueInput, OutputMode, PrepareError, PrepareSingleRunRequest, PrepareWrite,
+};
+use crate::target_registry::{
+    BenchmarkFamily, RegistryRecomputeRequest, load_target_registry, recompute_target_registry,
+    render_target_registry_status, target_registry_path,
 };
 
 const CLI_LONG_ABOUT: &str = "\
@@ -205,6 +213,10 @@ pub enum Command {
     Protocol(ProtocolCommand),
     /// Manage the cached OpenRouter model registry and active model selection.
     Model(ModelCommand),
+    /// Manage the local typed benchmark target registry.
+    Registry(RegistryCommand),
+    /// Track staged closure of registry, eval, and protocol coverage for a campaign.
+    Closure(ClosureCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -364,6 +376,20 @@ impl Cli {
                 }
             },
             Command::Model(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Command::Registry(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Command::Closure(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
@@ -1206,6 +1232,104 @@ pub struct ProtocolCommand {
     pub command: ProtocolSubcommand,
 }
 
+#[derive(Debug, Parser)]
+#[command(about = "Manage the local typed benchmark target registry")]
+pub struct RegistryCommand {
+    #[command(subcommand)]
+    pub command: RegistrySubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RegistrySubcommand {
+    /// Recompute the persisted target registry from dataset sources.
+    Recompute(RegistryRecomputeCommand),
+    /// Print the current persisted target registry.
+    Status(RegistryStatusCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct RegistryRecomputeCommand {
+    /// Built-in dataset registry key. Repeat for multiple datasets.
+    #[arg(long)]
+    pub dataset_key: Vec<String>,
+
+    /// Explicit dataset JSONL file. Repeat for multiple datasets.
+    #[arg(long, value_name = "PATH")]
+    pub dataset: Vec<PathBuf>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct RegistryStatusCommand {
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Track staged closure across registry, eval, and protocol layers")]
+pub struct ClosureCommand {
+    #[command(subcommand)]
+    pub command: ClosureSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ClosureSubcommand {
+    /// Recompute reduced campaign closure state from existing datasets and artifacts.
+    Recompute(ClosureRecomputeCommand),
+    /// Print the current reduced closure state for a campaign.
+    Status(ClosureStatusCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct ClosureRecomputeCommand {
+    /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
+    #[arg(long)]
+    pub campaign: String,
+
+    /// Built-in dataset registry key. Repeat for multiple datasets.
+    #[arg(long)]
+    pub dataset_key: Vec<String>,
+
+    /// Explicit dataset JSONL file. Repeat for multiple datasets.
+    #[arg(long, value_name = "PATH")]
+    pub dataset: Vec<PathBuf>,
+
+    /// Model id for the tracked campaign config.
+    #[arg(long)]
+    pub model_id: Option<String>,
+
+    /// Provider slug for the tracked campaign config.
+    #[arg(long)]
+    pub provider: Option<String>,
+
+    /// Required protocol procedure. Repeat for multiple procedures.
+    #[arg(long)]
+    pub required_procedure: Vec<String>,
+
+    /// Override the runs root. Defaults to ~/.ploke-eval/runs or stored campaign config.
+    #[arg(long, value_name = "PATH")]
+    pub runs_root: Option<PathBuf>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct ClosureStatusCommand {
+    /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
+    #[arg(long)]
+    pub campaign: String,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum ProtocolSubcommand {
     /// Review one indexed tool call using a bounded neighborhood, forked judgments, and merged assessment.
@@ -1819,6 +1943,117 @@ impl ProtocolCommand {
             ProtocolSubcommand::ToolCallIntentSegments(cmd) => cmd.run().await,
             ProtocolSubcommand::ToolCallSegmentReview(cmd) => cmd.run().await,
         }
+    }
+}
+
+impl RegistryCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            RegistrySubcommand::Recompute(cmd) => cmd.run().await,
+            RegistrySubcommand::Status(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl ClosureCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            ClosureSubcommand::Recompute(cmd) => cmd.run().await,
+            ClosureSubcommand::Status(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl RegistryRecomputeCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let (path, registry) = recompute_target_registry(RegistryRecomputeRequest {
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            dataset_keys: self.dataset_key,
+            dataset_files: self.dataset,
+        })?;
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("{}", render_target_registry_status(&registry));
+                println!("state: {}", path.display());
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&registry).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl RegistryStatusCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let registry = load_target_registry(BenchmarkFamily::MultiSweBenchRust)?;
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("{}", render_target_registry_status(&registry));
+                println!(
+                    "state: {}",
+                    target_registry_path(BenchmarkFamily::MultiSweBenchRust)?.display()
+                );
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&registry).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ClosureRecomputeCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let (path, state) = recompute_closure_state(ClosureRecomputeRequest {
+            campaign_id: self.campaign,
+            model_id: self.model_id,
+            provider_slug: self.provider,
+            dataset_keys: self.dataset_key,
+            dataset_files: self.dataset,
+            required_procedures: self.required_procedure,
+            runs_root: self.runs_root,
+        })?;
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("{}", render_closure_status(&state));
+                println!("state: {}", path.display());
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&state).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ClosureStatusCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let state = load_closure_state(&self.campaign)?;
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("{}", render_closure_status(&state));
+                println!("state: {}", closure_state_path(&self.campaign)?.display());
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&state).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
     }
 }
 

@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod closure;
 pub mod layout;
 pub mod model_registry;
 pub mod msb;
@@ -11,12 +12,18 @@ pub mod registry;
 pub mod run_history;
 pub mod runner;
 pub mod spec;
+pub mod target_registry;
 pub mod tracing_setup;
 
 pub use cli::Cli;
+pub use closure::{
+    CLOSURE_STATE_SCHEMA_VERSION, ClosureClass, ClosureConfig, ClosureState,
+    DEFAULT_REQUIRED_PROCEDURES, closure_state_path, load_closure_state, recompute_closure_state,
+    render_closure_status,
+};
 pub use layout::{
-    batches_dir, datasets_dir, ploke_eval_home, protocol_artifacts_dir_for_run, repos_dir,
-    runs_dir, workspace_root_for_key,
+    batches_dir, campaigns_dir, datasets_dir, ploke_eval_home, protocol_artifacts_dir_for_run,
+    registries_dir, repos_dir, runs_dir, workspace_root_for_key,
 };
 pub use msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 pub use record::{
@@ -35,6 +42,12 @@ pub use runner::{
 pub use spec::{
     EvalBudget, IssueInput, MultiSweBenchSource, OutputMode, PrepareSingleRunRequest, PrepareWrite,
     PreparedMsbBatch, PreparedSingleRun, RunSource,
+};
+pub use target_registry::{
+    BenchmarkFamily, RegistryDatasetSource, RegistryEntry, RegistryEntryState,
+    RegistryRecomputeRequest, TARGET_REGISTRY_SCHEMA_VERSION, TargetRegistry, load_target_registry,
+    recompute_target_registry, render_target_registry_status, resolve_registry_dataset_sources,
+    target_registry_path,
 };
 
 #[cfg(test)]

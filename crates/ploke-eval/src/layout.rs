@@ -19,6 +19,14 @@ pub fn repos_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("repos"))
 }
 
+pub fn campaigns_dir() -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?.join("campaigns"))
+}
+
+pub fn registries_dir() -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?.join("registries"))
+}
+
 pub fn runs_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("runs"))
 }
