@@ -1,21 +1,24 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::fs::{self};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::layout::{batches_dir, campaigns_dir, datasets_dir, runs_dir};
+use crate::layout::{batches_dir, campaigns_dir, runs_dir};
 use crate::protocol::protocol_aggregate::{ProtocolAggregateError, load_protocol_aggregate};
 use crate::protocol_artifacts::{StoredProtocolArtifactFile, list_protocol_artifacts};
 use crate::record::read_compressed_record;
-use crate::registry::builtin_dataset_registry_entry;
 use crate::runner::{
     BatchRunSummary, ExecutionLog, IndexingStatusArtifact, SnapshotStatusArtifact,
 };
-use crate::spec::{PrepareError, PreparedSingleRun};
+use crate::spec::PrepareError;
+use crate::target_registry::{
+    BenchmarkFamily, RegistryDatasetSource, RegistryEntry, RegistryEntryState,
+    RegistryRecomputeRequest, TargetRegistry, load_target_registry, recompute_target_registry,
+    target_registry_path,
+};
 
 pub const CLOSURE_STATE_SCHEMA_VERSION: &str = "closure-state.v1";
 
@@ -54,22 +57,20 @@ pub struct ClosureState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosureConfig {
+    #[serde(default = "default_benchmark_family")]
+    pub benchmark_family: BenchmarkFamily,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_path: Option<PathBuf>,
     pub dataset_sources: Vec<ClosureDatasetSource>,
     pub required_procedures: Vec<String>,
     pub runs_root: PathBuf,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClosureDatasetSource {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
-    pub path: PathBuf,
-    pub label: String,
-}
+pub type ClosureDatasetSource = RegistryDatasetSource;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -189,21 +190,6 @@ pub struct ClosureProtocolCounts {
     pub missing_segments: usize,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct DatasetRecord {
-    instance_id: Option<String>,
-    org: String,
-    repo: String,
-    number: u64,
-}
-
-#[derive(Debug, Clone)]
-struct DatasetUniverseEntry {
-    instance_id: String,
-    dataset_label: String,
-    repo_family: String,
-}
-
 #[derive(Debug, Clone, Default)]
 struct BatchFailureInfo {
     errors: Vec<String>,
@@ -247,11 +233,12 @@ pub fn recompute_closure_state(
 ) -> Result<(PathBuf, ClosureState), PrepareError> {
     let campaign_id = request.campaign_id.clone();
     let existing = load_closure_state(&request.campaign_id).ok();
-    let config = resolve_config(request, existing)?;
-    let datasets = load_dataset_universe(&config.dataset_sources)?;
+    let (config, registry_source) = resolve_config(request, existing)?;
     let batch_failures = collect_batch_failures()?;
 
-    let mut instances = datasets
+    let mut instances = registry_source
+        .entries
+        .iter()
         .into_iter()
         .map(|entry| build_instance_row(&config, entry, &batch_failures))
         .collect::<Result<Vec<_>, _>>()?;
@@ -387,26 +374,15 @@ pub fn render_closure_status(state: &ClosureState) -> String {
     out
 }
 
+fn default_benchmark_family() -> BenchmarkFamily {
+    BenchmarkFamily::MultiSweBenchRust
+}
+
 fn resolve_config(
     request: ClosureRecomputeRequest,
     existing: Option<ClosureState>,
-) -> Result<ClosureConfig, PrepareError> {
+) -> Result<(ClosureConfig, TargetRegistry), PrepareError> {
     let prior = existing.map(|state| state.config);
-
-    let mut dataset_sources =
-        resolve_dataset_sources(&request.dataset_keys, &request.dataset_files)?;
-    if dataset_sources.is_empty() {
-        if let Some(config) = prior.as_ref() {
-            dataset_sources = config.dataset_sources.clone();
-        }
-    }
-    if dataset_sources.is_empty() {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail:
-                "closure recompute requires at least one dataset file or dataset key on first run"
-                    .to_string(),
-        });
-    }
 
     let required_procedures = if request.required_procedures.is_empty() {
         prior
@@ -431,121 +407,49 @@ fn resolve_config(
         .or_else(|| prior.as_ref().map(|config| config.runs_root.clone()))
         .unwrap_or(runs_dir()?);
 
-    Ok(ClosureConfig {
-        model_id: request
-            .model_id
-            .or_else(|| prior.as_ref().and_then(|config| config.model_id.clone())),
-        provider_slug: request.provider_slug.or_else(|| {
-            prior
+    let benchmark_family = prior
+        .as_ref()
+        .map(|config| config.benchmark_family)
+        .unwrap_or_else(default_benchmark_family);
+
+    let (registry_path, registry_source) =
+        if request.dataset_keys.is_empty() && request.dataset_files.is_empty() {
+            let registry = load_target_registry(benchmark_family)?;
+            let path = prior
                 .as_ref()
-                .and_then(|config| config.provider_slug.clone())
-        }),
-        dataset_sources,
-        required_procedures,
-        runs_root,
-    })
+                .and_then(|config| config.registry_path.clone())
+                .unwrap_or(target_registry_path(benchmark_family)?);
+            (path, registry)
+        } else {
+            recompute_target_registry(RegistryRecomputeRequest {
+                benchmark_family,
+                dataset_keys: request.dataset_keys,
+                dataset_files: request.dataset_files,
+            })?
+        };
+
+    Ok((
+        ClosureConfig {
+            benchmark_family,
+            model_id: request
+                .model_id
+                .or_else(|| prior.as_ref().and_then(|config| config.model_id.clone())),
+            provider_slug: request.provider_slug.or_else(|| {
+                prior
+                    .as_ref()
+                    .and_then(|config| config.provider_slug.clone())
+            }),
+            registry_path: Some(registry_path),
+            dataset_sources: registry_source.dataset_sources.clone(),
+            required_procedures,
+            runs_root,
+        },
+        registry_source,
+    ))
 }
 
 fn config_campaign_id(_config: &ClosureConfig, requested: &str) -> String {
     requested.to_string()
-}
-
-fn resolve_dataset_sources(
-    dataset_keys: &[String],
-    dataset_files: &[PathBuf],
-) -> Result<Vec<ClosureDatasetSource>, PrepareError> {
-    let mut sources = Vec::new();
-
-    for key in dataset_keys {
-        let entry = builtin_dataset_registry_entry(key)
-            .ok_or_else(|| PrepareError::UnknownDatasetKey(key.clone()))?;
-        let path = datasets_dir()?.join(entry.filename);
-        if !path.exists() {
-            return Err(PrepareError::MissingDatasetFile(path));
-        }
-        sources.push(ClosureDatasetSource {
-            key: Some(key.clone()),
-            path,
-            label: key.clone(),
-        });
-    }
-
-    for path in dataset_files {
-        let path = if path.exists() {
-            path.canonicalize()
-                .map_err(|source| PrepareError::Canonicalize {
-                    path: path.clone(),
-                    source,
-                })?
-        } else {
-            return Err(PrepareError::MissingDatasetFile(path.clone()));
-        };
-        sources.push(ClosureDatasetSource {
-            key: None,
-            label: dataset_label_for_path(&path),
-            path,
-        });
-    }
-
-    sources.sort_by(|left, right| {
-        left.label
-            .cmp(&right.label)
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    sources.dedup_by(|left, right| left.path == right.path);
-    Ok(sources)
-}
-
-fn dataset_label_for_path(path: &Path) -> String {
-    path.file_stem()
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "dataset".to_string())
-        .trim_end_matches("_dataset")
-        .to_string()
-}
-
-fn load_dataset_universe(
-    sources: &[ClosureDatasetSource],
-) -> Result<Vec<DatasetUniverseEntry>, PrepareError> {
-    let mut entries = Vec::new();
-    let mut seen = BTreeSet::new();
-    for source in sources {
-        let file = File::open(&source.path).map_err(|err| PrepareError::OpenDatasetFile {
-            path: source.path.clone(),
-            source: err,
-        })?;
-        for (line_no, line) in BufReader::new(file).lines().enumerate() {
-            let line = line.map_err(|source_err| PrepareError::ReadDatasetLine {
-                path: source.path.clone(),
-                line: line_no + 1,
-                source: source_err,
-            })?;
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let record: DatasetRecord = serde_json::from_str(trimmed).map_err(|source_err| {
-                PrepareError::ParseDatasetLine {
-                    path: source.path.clone(),
-                    line: line_no + 1,
-                    source: source_err,
-                }
-            })?;
-            let instance_id = record
-                .instance_id
-                .clone()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| format!("{}__{}-{}", record.org, record.repo, record.number));
-            if seen.insert(instance_id.clone()) {
-                entries.push(DatasetUniverseEntry {
-                    instance_id,
-                    dataset_label: source.label.clone(),
-                    repo_family: format!("{}__{}", record.org, record.repo),
-                });
-            }
-        }
-    }
-    Ok(entries)
 }
 
 fn collect_batch_failures() -> Result<HashMap<String, BatchFailureInfo>, PrepareError> {
@@ -595,7 +499,7 @@ fn collect_batch_failures() -> Result<HashMap<String, BatchFailureInfo>, Prepare
 
 fn build_instance_row(
     config: &ClosureConfig,
-    entry: DatasetUniverseEntry,
+    entry: &RegistryEntry,
     batch_failures: &HashMap<String, BatchFailureInfo>,
 ) -> Result<ClosureInstanceRow, PrepareError> {
     let run_dir = config.runs_root.join(&entry.instance_id);
@@ -626,33 +530,59 @@ fn build_instance_row(
         artifacts.snapshot_status = Some(snapshot_status_path.clone());
     }
 
-    let registry_status = classify_registry_status(&run_manifest, &entry.instance_id)?;
-    let (eval_status, eval_failure, eval_last_event) = classify_eval_status(
-        &run_dir,
-        &record_path,
-        &indexing_status_path,
-        &parse_failure_path,
-        &execution_log_path,
-        &snapshot_status_path,
-        batch_failures.get(&entry.instance_id),
-        &mut artifacts,
-    )?;
+    let registry_status = RegistryInstanceStatus::Mapped;
+    let (eval_status, eval_failure, eval_last_event, protocol) = match &entry.state {
+        RegistryEntryState::Active => {
+            let (eval_status, eval_failure, eval_last_event) = classify_eval_status(
+                &run_dir,
+                &record_path,
+                &indexing_status_path,
+                &parse_failure_path,
+                &execution_log_path,
+                &snapshot_status_path,
+                batch_failures.get(&entry.instance_id),
+                &mut artifacts,
+            )?;
 
-    let protocol = if eval_status == ClosureClass::Complete {
-        assess_protocol_state(&record_path, &config.required_procedures)?
-    } else {
-        let procedures = config
-            .required_procedures
-            .iter()
-            .map(|name| (name.clone(), ClosureClass::Ineligible))
-            .collect::<BTreeMap<_, _>>();
-        ProtocolInstanceAssessment {
-            overall: ClosureClass::Ineligible,
-            procedures,
-            counts: None,
-            anchor_path: None,
-            failure: None,
-            last_event_at: None,
+            let protocol = if eval_status == ClosureClass::Complete {
+                assess_protocol_state(&record_path, &config.required_procedures)?
+            } else {
+                let procedures = config
+                    .required_procedures
+                    .iter()
+                    .map(|name| (name.clone(), ClosureClass::Ineligible))
+                    .collect::<BTreeMap<_, _>>();
+                ProtocolInstanceAssessment {
+                    overall: ClosureClass::Ineligible,
+                    procedures,
+                    counts: None,
+                    anchor_path: None,
+                    failure: None,
+                    last_event_at: None,
+                }
+            };
+
+            (eval_status, eval_failure, eval_last_event, protocol)
+        }
+        RegistryEntryState::Ineligible { reason } => {
+            let procedures = config
+                .required_procedures
+                .iter()
+                .map(|name| (name.clone(), ClosureClass::Ineligible))
+                .collect::<BTreeMap<_, _>>();
+            (
+                ClosureClass::Ineligible,
+                Some(reason.clone()),
+                None,
+                ProtocolInstanceAssessment {
+                    overall: ClosureClass::Ineligible,
+                    procedures,
+                    counts: None,
+                    anchor_path: None,
+                    failure: None,
+                    last_event_at: None,
+                },
+            )
         }
     };
 
@@ -660,9 +590,9 @@ fn build_instance_row(
     let last_event_at = latest_timestamp(eval_last_event, protocol.last_event_at);
 
     Ok(ClosureInstanceRow {
-        instance_id: entry.instance_id,
-        dataset_label: entry.dataset_label,
-        repo_family: entry.repo_family,
+        instance_id: entry.instance_id.clone(),
+        dataset_label: entry.dataset_label.clone(),
+        repo_family: entry.repo_family.clone(),
         registry_status,
         eval_status,
         protocol_status: protocol.overall,
@@ -673,29 +603,6 @@ fn build_instance_row(
         protocol_counts: protocol.counts,
         last_event_at,
     })
-}
-
-fn classify_registry_status(
-    run_manifest: &Path,
-    instance_id: &str,
-) -> Result<RegistryInstanceStatus, PrepareError> {
-    if !run_manifest.exists() {
-        return Ok(RegistryInstanceStatus::Missing);
-    }
-    let text = fs::read_to_string(run_manifest).map_err(|source| PrepareError::ReadManifest {
-        path: run_manifest.to_path_buf(),
-        source,
-    })?;
-    let manifest: PreparedSingleRun =
-        serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
-            path: run_manifest.to_path_buf(),
-            source,
-        })?;
-    if manifest.task_id == instance_id {
-        Ok(RegistryInstanceStatus::Mapped)
-    } else {
-        Ok(RegistryInstanceStatus::Ambiguous)
-    }
 }
 
 fn classify_eval_status(
@@ -987,7 +894,7 @@ fn summarize_registry(instances: &[ClosureInstanceRow]) -> RegistryClosureSummar
 fn summarize_eval(instances: &[ClosureInstanceRow]) -> EvalClosureSummary {
     let relevant = instances
         .iter()
-        .filter(|row| row.registry_status == RegistryInstanceStatus::Mapped)
+        .filter(|row| row.eval_status != ClosureClass::Ineligible)
         .collect::<Vec<_>>();
     let expected_total = relevant.len();
     let complete_total = relevant

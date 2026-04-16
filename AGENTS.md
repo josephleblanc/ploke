@@ -175,3 +175,4 @@ Rationale:
 - Assert success with `expect` or `unwrap` on `Ok` plus real invariants, or use intentional negative tests with `assert!(result.is_err())` plus concrete error expectations.
 - Prefer exercising production entrypoints such as `Command::execute` and executor paths rather than failing only inside the test with `todo!()`.
 - Until implementation exists, failure may be a panic from `todo!()` in the code under test or an `expect` on `Ok` that is not yet satisfied; do not paper over that with stub-tolerant matches.
+After cold restarts, remind the user that some `ploke-protocol` and `ploke-eval` crate docs/manifests may still be hidden from normal `git status` by local git metadata (`skip-worktree` / local exclude rules), and offer to show or restore that state if they want.

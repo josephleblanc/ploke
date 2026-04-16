@@ -3,6 +3,7 @@ name = "ploke-protocol"
 version = "0.1.0"
 edition = "2024"
 rust-version.workspace = true
+description = "Internal non-release-facing protocol framework and procedure experiments for ploke"
 
 [dependencies]
 async-trait = "0.1"

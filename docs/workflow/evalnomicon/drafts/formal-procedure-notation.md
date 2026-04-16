@@ -1,15 +1,11 @@
 # Formal Procedure Notation Draft
 
-This note is a compact notation-first draft for the current `evalnomicon`
-procedure framework.
+Draft for architecture on mixed adjudication and programmatic composing procedures.
 
-It is intended to consolidate ideas that are currently split across:
-
-- [`../notation-scratch.md`](../notation-scratch.md)
-- [`../protocol-typing-scratch.md`](../protocol-typing-scratch.md)
-
-This note is not yet book-authoritative. It is a staging surface for checking
-whether the logical objects are well-defined and compose cleanly.
+An eval may have metrics which are derived programmatically or by LLM adjudication. These metrics may be said to be derived by a procedure x which operates on an input of admissible evidence carried by state s with an executor e such that: 
+Exec(e, x, s) = s'
+where the executor e may be either a programmatic or an LLM adjudication.
+The state s may be modeled with typed state transitions which may branch or merge and are composable into arbitrary direct acyclical graphs.
 
 ## 1. Universes And Basic Sorts
 

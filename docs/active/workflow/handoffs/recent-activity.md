@@ -1,7 +1,7 @@
 # Recent Activity
 
-- last_updated: 2026-04-15
-- ready_for: restart/doc hygiene, unattended-doc tracking, testing/documentation audits, and protocol-artifact coverage generation across finished runs
+- last_updated: 2026-04-16
+- ready_for: restart into the completed `clap` baseline state, protocol-artifact continuation over the completed `clap` runs, and explicit follow-up on the two failed `clap` parse/indexing cases
 - owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
@@ -14,6 +14,139 @@
     2. Wait for explicit permission before proceeding
   - This applies to: `syn_parser`, `ploke-tui`, `ploke-db`, `ploke-llm`, etc.
   - Rationale: Prevent unintended side effects on core infrastructure during eval work
+
+## 2026-04-16
+
+- **CLOSURE NOW CONSUMES THE EXPLICIT TARGET REGISTRY `T` DIRECTLY**
+  - The earlier closure slice has been retargeted so `ploke-eval closure recompute` now resolves or refreshes the persisted target registry and builds campaign rows from `RegistryEntry` rather than reconstructing registry state from dataset rows plus `run.json`.
+  - Important semantic consequence:
+    - registry closure is now genuinely `E_r -> T`
+    - eval closure is now genuinely `T -> A`
+    - protocol closure remains `A -> M`
+  - Verified on the full local Rust dataset slice:
+    - registry: `239/239` complete
+    - eval: `171/239` progressed, `169` success, `2` fail, `68` missing
+    - protocol: `40/169` progressed, `13` full, `27` partial, `129` missing
+  - Operational consequence:
+    - the control plane no longer treats `run.json` presence as the registry surrogate
+    - next work can choose explicitly between expanding eval coverage over the missing `68` targets or continuing protocol follow-through over the completed `169`
+
+- **`T` NOW EXISTS AS AN EXPLICIT PERSISTED TARGET REGISTRY IN `PLOKE-EVAL`**
+  - Implemented a new typed local target-registry surface in `crates/ploke-eval/` plus CLI entrypoints:
+    - `ploke-eval registry recompute`
+    - `ploke-eval registry status`
+  - Important semantic change:
+    - `T` is no longer only an inferred mapping surface from dataset rows plus `run.json`
+    - there is now a persisted local registry under:
+      - `~/.ploke-eval/registries/multi-swe-bench-rust.json`
+  - Verified on the current local Rust dataset slice as:
+    - `10` dataset families
+    - `10` repo families
+    - `239` active entries
+    - `0` ineligible
+  - Current represented dataset families:
+    - `BurntSushi__ripgrep`
+    - `clap-rs__clap`
+    - `nushell__nushell`
+    - `rayon-rs__rayon`
+    - `serde-rs__serde`
+    - `sharkdp__bat`
+    - `sharkdp__fd`
+    - `tokio-rs__bytes`
+    - `tokio-rs__tokio`
+    - `tokio-rs__tracing`
+  - Historical note:
+    - this was the intermediate state before the next slice retargeted closure to consume the registry directly
+
+- **`PLOKE-EVAL` NOW HAS THE FIRST WORKING `CLOSURE RECOMPUTE` / `CLOSURE STATUS` SLICE**
+  - Implemented a new campaign-level closure module in `crates/ploke-eval/` plus CLI entrypoints:
+    - `ploke-eval closure recompute`
+    - `ploke-eval closure status`
+  - Important semantic choice preserved from the sketch:
+    - `closure-state.json` is a reduced campaign snapshot under `~/.ploke-eval/campaigns/<campaign>/`
+    - it points at existing run/protocol artifacts instead of duplicating `record.json.gz` or persisted protocol outputs
+  - The reducer currently uses:
+    - dataset JSONL files for the expected benchmark universe
+    - `run.json` as the current local registry carrier
+    - run-local artifacts plus batch summaries to classify eval completeness vs explicit failure
+    - persisted protocol artifacts plus protocol aggregate reduction to classify per-procedure follow-through
+  - Verified against the current Rust baseline as:
+    - registry: `171/171` mapped
+    - eval: `169` complete, `2` failed
+    - protocol: `169` expected, `11` full, `29` partial, `129` missing
+  - Important interpretive note:
+    - the protocol layer is stricter than the old “protocol-artifact directory exists” count
+    - many previously “covered” runs now show as `partial` because segment-review follow-through is still missing or mismatched under the current anchor
+  - Restart consequence:
+    - use `closure status` as the compact control-plane readout before rescanning the filesystem manually
+    - the next implementation slice is optional sparse event emission, but the immediate operational move is still to resume the protocol coverage queue
+
+- **EVAL-CLOSURE FORMAL SKETCH LANDED AS THE NEW COMPACT PLANNING SURFACE**
+  - Added [2026-04-16_eval-closure-formal-sketch.md](../../agents/2026-04-16_eval-closure-formal-sketch.md)
+  - The note reframes the active problem as layered closure over:
+    - benchmark-instance mapping
+    - eval-artifact completion
+    - protocol-artifact completion
+  - Important implementation clarification captured there:
+    - `closure-state.json` should be reduced campaign state, not a duplicate of `record.json.gz` or persisted protocol outputs
+    - `closure-events.jsonl` should stay sparse and semantic rather than becoming another tracing stream
+    - the first useful implementation slice is:
+      - `closure recompute`
+      - `closure status`
+      - then optional event emission via existing producer commands
+  - Restart consequence:
+    - if the next thread starts on implementation rather than more orchestration, use the eval-closure sketch as the planning entrypoint instead of reconstructing the state model from chat
+
+- **`CLAP-RS-ALL` BASELINE EFFECTIVELY COMPLETED AT `130/132` ON `GROK-4-FAST` / `XAI`**
+  - Direct batch state from `~/.ploke-eval/batches/clap-rs-all/batch-run-summary.json` is now:
+    - `132` attempted
+    - `130` succeeded
+    - `2` failed
+    - `stopped_early: false`
+    - `selected_model: x-ai/grok-4-fast`
+    - `selected_provider: xai`
+  - The two failed instances are:
+    - `clap-rs__clap-1624`
+    - `clap-rs__clap-941`
+  - Failure class:
+    - both are parse/indexing failures in the local `clap-rs/clap` checkout, not provider-routing failures
+  - Important interpretive note:
+    - the reused batch summary still carries stale-looking `run_arm` metadata, so per-run directories and run-local artifacts should be treated as the source of truth over that batch header field
+  - Restart consequence:
+    - treat the Rust baseline as established except for the two explicit `clap` failures
+    - do not spend the next restart rediscovering whether the `clap` batch ran; it did
+
+- **PROTOCOL COVERAGE PROGRESSED, THEN STOPPED AT THE FIRST `CLAP` FRONTIER**
+  - Protocol-artifact coverage moved from the older legacy gap set into the first completed `clap` run, then stopped.
+  - Confirmed on disk:
+    - `BurntSushi__ripgrep-727` now has:
+      - `1` intent segmentation
+      - `11` tool-call reviews
+      - `4` segment reviews
+    - `tokio-rs__tokio-5520` now has:
+      - `1` intent segmentation
+      - `11` tool-call reviews
+      - `3` segment reviews
+    - `clap-rs__clap-3521` now has partial protocol coverage:
+      - `1` intent segmentation
+      - `2` tool-call reviews
+      - `0` segment reviews
+  - Aggregate state:
+    - protocol-artifact run directories increased to `40`
+    - last observed protocol-artifact write was on `2026-04-15 22:53` for `clap-rs__clap-3521`
+  - Operational consequence:
+    - progress did not stop because evals were still running; it stopped because orchestration of the protocol queue stopped after `clap-rs__clap-3521`
+  - Restart consequence:
+    - resume protocol coverage exactly from that frontier rather than rescanning from zero
+
+- **COZO-FRAMED BUILDER-REVIVAL DESIGN NOTE WAS LANDED**
+  - Added [2026-04-15_ploke-db-builder-revival-note.md](../../agents/2026-04-15_ploke-db-builder-revival-note.md)
+  - The note now:
+    - frames Cozo as `an algebra of relations`
+    - treats the builder revival as a basis-aware query-intent surface
+    - includes formal/symbolic specification plus five explicit refinement/evaluation cycles
+  - Operational consequence:
+    - the note should be treated as a semantic design input for later `ploke-db` work, not as implementation permission
 
 ## 2026-04-15
 

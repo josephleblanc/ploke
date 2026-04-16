@@ -2,6 +2,11 @@
 
 Minimal benchmark/eval runner scaffolding for `ploke`.
 
+`ploke-eval` is an internal, non-release-facing crate. It exists to support
+evaluation, artifact generation, inspection, and experimental analysis work
+around `ploke`; it is expected to move faster and may be less stable than the
+user-facing `ploke-tui` application.
+
 Current scope:
 - fetch a benchmark repo into a stable local cache
 - prepare one run manifest from a Multi-SWE-bench instance
