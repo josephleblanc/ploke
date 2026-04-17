@@ -587,6 +587,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
         run_manifest: replay_manifest,
         index_debug_snapshots: false,
         use_default_model: true,
+        model_id: None,
         provider: None,
     }
     .run()
@@ -671,6 +672,7 @@ async fn test_historical_ripgrep_setup_replay_gets_past_indexing_with_convert_ke
         run_manifest: replay_manifest,
         index_debug_snapshots: false,
         use_default_model: true,
+        model_id: None,
         provider: None,
     }
     .run()

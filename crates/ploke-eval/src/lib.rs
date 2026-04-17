@@ -1,3 +1,4 @@
+pub mod campaign;
 pub mod cli;
 pub mod closure;
 pub mod layout;
@@ -16,6 +17,12 @@ pub mod target_registry;
 pub mod tracing_setup;
 
 pub use cli::Cli;
+pub use campaign::{
+    CAMPAIGN_MANIFEST_SCHEMA_VERSION, CampaignManifest, CampaignOverrides,
+    CampaignValidationCheck, EvalCampaignPolicy, ProtocolCampaignPolicy, ResolvedCampaignConfig,
+    campaign_manifest_path, load_campaign_manifest, render_resolved_campaign_config,
+    resolve_campaign_config, save_campaign_manifest, validate_campaign_config,
+};
 pub use closure::{
     CLOSURE_STATE_SCHEMA_VERSION, ClosureClass, ClosureConfig, ClosureState,
     DEFAULT_REQUIRED_PROCEDURES, closure_state_path, load_closure_state, recompute_closure_state,
@@ -40,8 +47,9 @@ pub use runner::{
     RunMsbAgentSingleRequest, RunMsbBatchRequest,
 };
 pub use spec::{
-    EvalBudget, IssueInput, MultiSweBenchSource, OutputMode, PrepareSingleRunRequest, PrepareWrite,
-    PreparedMsbBatch, PreparedSingleRun, RunSource,
+    EvalBudget, FrameworkConfig, FrameworkToolConfig, IssueInput, MultiSweBenchSource, OutputMode,
+    PrepareSingleRunRequest, PrepareWrite, PreparedCampaignContext, PreparedMsbBatch,
+    PreparedSingleRun, RunSource,
 };
 pub use target_registry::{
     BenchmarkFamily, RegistryDatasetSource, RegistryEntry, RegistryEntryState,

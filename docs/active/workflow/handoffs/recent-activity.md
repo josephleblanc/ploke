@@ -1,7 +1,7 @@
 # Recent Activity
 
-- last_updated: 2026-04-16
-- ready_for: restart into the completed `clap` baseline state, protocol-artifact continuation over the completed `clap` runs, and explicit follow-up on the two failed `clap` parse/indexing cases
+- last_updated: 2026-04-17
+- ready_for: restart into a stricter operator-driven eval/protocol pass, beginning with provider-fidelity verification on the live `rayon` batch and direct continuation over the non-`nushell` missing eval families
 - owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
@@ -16,6 +16,101 @@
   - Rationale: Prevent unintended side effects on core infrastructure during eval work
 
 ## 2026-04-16
+
+## 2026-04-17
+
+- **REPO CACHE LAYOUT WAS NORMALIZED FOR THE FULL LOCAL RUST SLICE**
+  - The newly added dataset families initially had repo clones in flat cache paths such as:
+    - `~/.ploke-eval/repos/rayon`
+    - `~/.ploke-eval/repos/bat`
+    - `~/.ploke-eval/repos/fd`
+    - `~/.ploke-eval/repos/bytes`
+    - `~/.ploke-eval/repos/tracing`
+  - `ploke-eval prepare-msb-batch` expects the cache at:
+    - `~/.ploke-eval/repos/<org>/<repo>`
+  - The cache was normalized into the expected layout:
+    - `rayon-rs/rayon`
+    - `serde-rs/serde`
+    - `sharkdp/bat`
+    - `sharkdp/fd`
+    - `tokio-rs/bytes`
+    - `tokio-rs/tracing`
+  - After normalization, prep probes succeeded for all seven newly targeted families:
+    - `nushell`
+    - `rayon`
+    - `serde`
+    - `bat`
+    - `fd`
+    - `bytes`
+    - `tracing`
+
+- **EVAL CLOSURE ADVANCED, BUT THE NEW FAILURE MASS IS NOW CONCENTRATED IN `NUSHELL`**
+  - Closure moved from the older `171/239` eval-progress state to:
+    - `186/239` progressed
+    - `169` success
+    - `16` fail
+    - `1` partial
+    - `53` missing
+  - The new failures are dominated by `nushell` parser/indexing problems, including:
+    - duplicate `crate::commands` module-tree path
+    - `generic_lifetime` relation failure
+    - `indexing_completed` timeouts
+  - Operational consequence:
+    - `nushell` should be treated as a low-yield failure family for now
+    - the next eval continuation should focus on:
+      - `rayon`
+      - `serde`
+      - `bat`
+      - `fd`
+      - `bytes`
+      - `tracing`
+
+- **SUB-AGENT ORCHESTRATION FAILED TO ADVANCE THE PIPELINE RELIABLY**
+  - Multiple workers were launched for eval expansion and protocol follow-through.
+  - The first pair moved some state but underperformed:
+    - eval moved mostly through `nushell`
+    - protocol advanced `clap-rs__clap-3521` locally without changing campaign totals
+  - The second, narrower pair failed their role more clearly:
+    - they mostly inspected closure state and protocol artifacts
+    - they did not actually run the producer commands required to move closure
+  - Operational consequence:
+    - the session ended with a reversion to direct operator mode
+    - the next thread should not assume sub-agent execution is paying off unless the first checkpoint shows real producer-driven deltas
+
+- **PROTOCOL FOLLOW-THROUGH DID NOT CHANGE CAMPAIGN TOTALS**
+  - Protocol closure stayed flat at:
+    - `40/169` progressed
+    - `13` full
+    - `27` partial
+    - `129` missing
+  - `clap-rs__clap-3521` did advance locally during the session:
+    - `tool-call-review` moved to `3/24`
+    - segment state became `usable 2 / mismatched 3 / missing 0`
+  - But the overall protocol counts did not move.
+  - Important protocol blockers still surfaced:
+    - `BurntSushi__ripgrep-1294`: segment `4 not found`
+    - `tokio-rs__tokio-5179`: segment `5 not found`
+  - Operational consequence:
+    - the next protocol continuation should be direct and write-producing
+    - read-only inspection alone is not enough to move closure on the current partial rows
+
+- **THE LIVE `RAYON` BATCH IS CURRENTLY PROVIDER-SUSPECT**
+  - Direct operator mode resumed late in the session:
+    - `rayon-missing` was prepared
+    - `serde-missing` was prepared
+    - `run-msb-agent-batch --batch-id rayon-missing --provider xai` was started directly
+  - The run is real enough to have created artifacts for `rayon-rs__rayon-986`, including:
+    - `agent-turn-trace.json`
+    - indexing artifacts
+  - But during the live model turn, the runtime emitted a warning referencing:
+    - `https://openrouter.ai/api/v1/chat/completions`
+  - This matters because the batch was launched with:
+    - `--provider xai`
+  - Restart consequence:
+    - before trusting any new `rayon` eval artifacts, verify whether this is:
+      - a true provider mismatch
+      - or only a misleading internal logging path in the provider/router layer
+    - until that is resolved, treat the current `rayon` run as suspect rather than baseline-trustworthy
 
 - **CLOSURE NOW CONSUMES THE EXPLICIT TARGET REGISTRY `T` DIRECTLY**
   - The earlier closure slice has been retargeted so `ploke-eval closure recompute` now resolves or refreshes the persisted target registry and builds campaign rows from `RegistryEntry` rather than reconstructing registry state from dataset rows plus `run.json`.

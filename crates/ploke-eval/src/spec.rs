@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -25,6 +26,35 @@ impl Default for EvalBudget {
             max_tool_calls: 200,
             wall_clock_secs: 1800,
         }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameworkConfig {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tools: BTreeMap<String, FrameworkToolConfig>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameworkToolConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreparedCampaignContext {
+    pub campaign_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_slug: Option<String>,
+    #[serde(default, skip_serializing_if = "FrameworkConfig::is_default")]
+    pub framework: FrameworkConfig,
+}
+
+impl FrameworkConfig {
+    pub fn is_default(&self) -> bool {
+        self.tools.is_empty()
     }
 }
 
@@ -74,6 +104,8 @@ pub struct PreparedSingleRun {
     pub head_sha: Option<String>,
     pub budget: EvalBudget,
     pub source: Option<RunSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign: Option<PreparedCampaignContext>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +118,8 @@ pub struct PreparedMsbBatch {
     pub output_dir: PathBuf,
     pub budget: EvalBudget,
     pub instances: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign: Option<PreparedCampaignContext>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,6 +244,25 @@ pub enum PrepareError {
     },
     #[error("failed to serialize provider preferences: {0}")]
     SerializeProviderPrefs(serde_json::Error),
+    #[error("campaign manifest file '{0}' does not exist")]
+    MissingCampaignManifest(PathBuf),
+    #[error("failed to read campaign manifest file '{path}': {source}")]
+    ReadCampaignManifest {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to parse campaign manifest file '{path}': {source}")]
+    ParseCampaignManifest {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    #[error("failed to write campaign manifest file '{path}': {source}")]
+    WriteCampaignManifest {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to serialize campaign manifest: {0}")]
+    SerializeCampaignManifest(serde_json::Error),
     #[error("failed to read starting db cache metadata file '{path}': {source}")]
     ReadStartingDbCacheMetadata {
         path: PathBuf,
@@ -373,6 +426,7 @@ impl PrepareSingleRunRequest {
             head_sha,
             budget: self.budget,
             source: None,
+            campaign: None,
         })
     }
 }

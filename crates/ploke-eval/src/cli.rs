@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::OnceLock;
@@ -16,6 +16,15 @@ use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure};
 use regex::Regex;
 use serde::Serialize;
 
+use crate::campaign::{
+    CampaignManifest, CampaignOverrides, CampaignValidationCheck, EvalCampaignPolicy,
+    ProtocolCampaignPolicy, ResolvedCampaignConfig,
+    adopt_campaign_manifest_from_closure_state, adopt_campaign_manifest_from_registry,
+    apply_campaign_overrides, campaign_closure_state_path, campaign_manifest_path,
+    dataset_files_from_sources, dataset_keys_from_sources, list_campaigns,
+    render_resolved_campaign_config, resolve_campaign_config, save_campaign_manifest,
+    validate_campaign_config,
+};
 use crate::closure::{
     ClosureRecomputeRequest, closure_state_path, load_closure_state, recompute_closure_state,
     render_closure_status,
@@ -48,15 +57,16 @@ use crate::record::{RawFullResponseRecord, read_compressed_record};
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
 use crate::run_history::print_last_run_assistant_messages;
 use crate::runner::{
-    ReplayMsbBatchRequest, RunMsbAgentBatchRequest, RunMsbAgentSingleRequest, RunMsbBatchRequest,
-    RunMsbSingleRequest, resolve_provider_for_model,
+    BatchRunSummary, ReplayMsbBatchRequest, RunMsbAgentBatchRequest, RunMsbAgentSingleRequest,
+    RunMsbBatchRequest, RunMsbSingleRequest, resolve_provider_for_model,
 };
 use crate::spec::{
     EvalBudget, IssueInput, OutputMode, PrepareError, PrepareSingleRunRequest, PrepareWrite,
+    PreparedCampaignContext,
 };
 use crate::target_registry::{
-    BenchmarkFamily, RegistryRecomputeRequest, load_target_registry, recompute_target_registry,
-    render_target_registry_status, target_registry_path,
+    BenchmarkFamily, RegistryEntry, RegistryRecomputeRequest, TargetRegistry, load_target_registry,
+    recompute_target_registry, render_target_registry_status, target_registry_path,
 };
 
 const CLI_LONG_ABOUT: &str = "\
@@ -213,6 +223,8 @@ pub enum Command {
     Protocol(ProtocolCommand),
     /// Manage the cached OpenRouter model registry and active model selection.
     Model(ModelCommand),
+    /// Manage campaign manifests used by closure-driven operator workflows.
+    Campaign(CampaignCommand),
     /// Manage the local typed benchmark target registry.
     Registry(RegistryCommand),
     /// Track staged closure of registry, eval, and protocol coverage for a campaign.
@@ -376,6 +388,13 @@ impl Cli {
                 }
             },
             Command::Model(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Command::Campaign(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
@@ -682,6 +701,10 @@ pub struct RunMsbSingleCommand {
     #[arg(long)]
     pub use_default_model: bool,
 
+    /// Explicit model id to use for this run.
+    #[arg(long)]
+    pub model_id: Option<String>,
+
     /// Explicit provider slug to pin for the selected model.
     #[arg(long, value_name = "PROVIDER")]
     pub provider: Option<String>,
@@ -718,6 +741,10 @@ pub struct RunMsbBatchCommand {
     /// Use the default model instead of the persisted active model selection.
     #[arg(long)]
     pub use_default_model: bool,
+
+    /// Explicit model id to use for this batch.
+    #[arg(long)]
+    pub model_id: Option<String>,
 
     /// Explicit provider slug to pin for the selected model.
     #[arg(long, value_name = "PROVIDER")]
@@ -757,6 +784,10 @@ pub struct RunMsbAgentSingleCommand {
     #[arg(long)]
     pub use_default_model: bool,
 
+    /// Explicit model id to use for this run.
+    #[arg(long)]
+    pub model_id: Option<String>,
+
     /// Explicit provider slug to pin for the selected model.
     #[arg(long, value_name = "PROVIDER")]
     pub provider: Option<String>,
@@ -793,6 +824,10 @@ pub struct RunMsbAgentBatchCommand {
     /// Use the default model instead of the persisted active model selection.
     #[arg(long)]
     pub use_default_model: bool,
+
+    /// Explicit model id to use for this batch.
+    #[arg(long)]
+    pub model_id: Option<String>,
 
     /// Explicit provider slug to pin for the selected model.
     #[arg(long, value_name = "PROVIDER")]
@@ -1239,6 +1274,117 @@ pub struct RegistryCommand {
     pub command: RegistrySubcommand,
 }
 
+#[derive(Debug, Parser)]
+#[command(about = "Manage campaign manifests and resolved campaign configuration")]
+pub struct CampaignCommand {
+    #[command(subcommand)]
+    pub command: CampaignSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CampaignSubcommand {
+    /// List campaign directories and indicate whether they have a manifest, closure state, or both.
+    List(CampaignListCommand),
+    /// Create or overwrite a campaign manifest under ~/.ploke-eval/campaigns/<campaign>/campaign.json.
+    Init(CampaignInitCommand),
+    /// Print the resolved campaign configuration.
+    Show(CampaignShowCommand),
+    /// Validate the resolved campaign configuration against local state and provider routing.
+    Validate(CampaignValidateCommand),
+}
+
+#[derive(Debug, Parser, Clone, Default)]
+pub struct CampaignOverrideArgs {
+    /// Built-in dataset registry key. Repeat for multiple datasets.
+    #[arg(long)]
+    pub dataset_key: Vec<String>,
+
+    /// Explicit dataset JSONL file. Repeat for multiple datasets.
+    #[arg(long, value_name = "PATH")]
+    pub dataset: Vec<PathBuf>,
+
+    /// Override the selected model id.
+    #[arg(long)]
+    pub model_id: Option<String>,
+
+    /// Override the selected provider slug.
+    #[arg(long)]
+    pub provider: Option<String>,
+
+    /// Override required protocol procedures. Repeat for multiple values.
+    #[arg(long)]
+    pub required_procedure: Vec<String>,
+
+    /// Override the runs root.
+    #[arg(long, value_name = "PATH")]
+    pub runs_root: Option<PathBuf>,
+
+    /// Override the batches root.
+    #[arg(long, value_name = "PATH")]
+    pub batches_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Parser)]
+pub struct CampaignInitCommand {
+    /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
+    #[arg(long)]
+    pub campaign: String,
+
+    #[command(flatten)]
+    pub overrides: CampaignOverrideArgs,
+
+    /// Seed the manifest from ~/.ploke-eval/campaigns/<campaign>/closure-state.json.
+    #[arg(long, conflicts_with = "from_registry")]
+    pub from_closure_state: bool,
+
+    /// Seed the manifest from the persisted target registry and active model settings.
+    #[arg(long, conflicts_with = "from_closure_state")]
+    pub from_registry: bool,
+
+    /// Overwrite an existing campaign manifest.
+    #[arg(long)]
+    pub force: bool,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct CampaignListCommand {
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct CampaignShowCommand {
+    /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
+    #[arg(long)]
+    pub campaign: String,
+
+    #[command(flatten)]
+    pub overrides: CampaignOverrideArgs,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct CampaignValidateCommand {
+    /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
+    #[arg(long)]
+    pub campaign: String,
+
+    #[command(flatten)]
+    pub overrides: CampaignOverrideArgs,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum RegistrySubcommand {
     /// Recompute the persisted target registry from dataset sources.
@@ -1282,6 +1428,24 @@ pub enum ClosureSubcommand {
     Recompute(ClosureRecomputeCommand),
     /// Print the current reduced closure state for a campaign.
     Status(ClosureStatusCommand),
+    /// Advance closure by producing missing eval or protocol artifacts from campaign config.
+    Advance(ClosureAdvanceCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct ClosureAdvanceCommand {
+    #[command(subcommand)]
+    pub command: ClosureAdvanceSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ClosureAdvanceSubcommand {
+    /// Prepare and execute eval batches for rows whose eval state is still missing.
+    Eval(ClosureAdvanceEvalCommand),
+    /// Produce protocol artifacts for completed eval runs whose protocol state is not yet complete.
+    Protocol(ClosureAdvanceProtocolCommand),
+    /// Run eval advancement first, then protocol advancement.
+    All(ClosureAdvanceAllCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -1290,29 +1454,8 @@ pub struct ClosureRecomputeCommand {
     #[arg(long)]
     pub campaign: String,
 
-    /// Built-in dataset registry key. Repeat for multiple datasets.
-    #[arg(long)]
-    pub dataset_key: Vec<String>,
-
-    /// Explicit dataset JSONL file. Repeat for multiple datasets.
-    #[arg(long, value_name = "PATH")]
-    pub dataset: Vec<PathBuf>,
-
-    /// Model id for the tracked campaign config.
-    #[arg(long)]
-    pub model_id: Option<String>,
-
-    /// Provider slug for the tracked campaign config.
-    #[arg(long)]
-    pub provider: Option<String>,
-
-    /// Required protocol procedure. Repeat for multiple procedures.
-    #[arg(long)]
-    pub required_procedure: Vec<String>,
-
-    /// Override the runs root. Defaults to ~/.ploke-eval/runs or stored campaign config.
-    #[arg(long, value_name = "PATH")]
-    pub runs_root: Option<PathBuf>,
+    #[command(flatten)]
+    pub overrides: CampaignOverrideArgs,
 
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -1324,6 +1467,88 @@ pub struct ClosureStatusCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
     pub campaign: String,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct ClosureAdvanceEvalCommand {
+    /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
+    #[arg(long)]
+    pub campaign: String,
+
+    #[command(flatten)]
+    pub overrides: CampaignOverrideArgs,
+
+    /// Show the batches and instances that would be selected without executing them.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Override the eval selection limit for this invocation.
+    #[arg(long)]
+    pub limit: Option<usize>,
+
+    /// Stop eval advancement after the first batch failure.
+    #[arg(long)]
+    pub stop_on_error: bool,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct ClosureAdvanceProtocolCommand {
+    /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
+    #[arg(long)]
+    pub campaign: String,
+
+    #[command(flatten)]
+    pub overrides: CampaignOverrideArgs,
+
+    /// Show the selected runs and missing protocol units without executing them.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Override the protocol selection limit for this invocation.
+    #[arg(long)]
+    pub limit_runs: Option<usize>,
+
+    /// Stop protocol advancement after the first run-level failure.
+    #[arg(long)]
+    pub stop_on_error: bool,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct ClosureAdvanceAllCommand {
+    /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
+    #[arg(long)]
+    pub campaign: String,
+
+    #[command(flatten)]
+    pub overrides: CampaignOverrideArgs,
+
+    /// Show the selected eval batches and protocol runs without executing them.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Override the eval selection limit for this invocation.
+    #[arg(long)]
+    pub eval_limit: Option<usize>,
+
+    /// Override the protocol selection limit for this invocation.
+    #[arg(long)]
+    pub protocol_limit_runs: Option<usize>,
+
+    /// Stop as soon as eval or protocol advancement hits a failure.
+    #[arg(long)]
+    pub stop_on_error: bool,
 
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -1757,6 +1982,7 @@ impl RunMsbSingleCommand {
             run_manifest,
             index_debug_snapshots: self.index_debug_snapshots,
             use_default_model: self.use_default_model,
+            model_id: self.model_id,
             provider: parse_provider_key(self.provider)?,
         }
         .run()
@@ -1776,6 +2002,7 @@ impl RunMsbBatchCommand {
             batch_manifest,
             index_debug_snapshots: self.index_debug_snapshots,
             use_default_model: self.use_default_model,
+            model_id: self.model_id,
             provider: parse_provider_key(self.provider)?,
             stop_on_error: self.stop_on_error,
         }
@@ -1805,6 +2032,7 @@ impl RunMsbAgentSingleCommand {
             run_manifest,
             index_debug_snapshots: self.index_debug_snapshots,
             use_default_model: self.use_default_model,
+            model_id: self.model_id,
             provider: parse_provider_key(self.provider)?,
         }
         .run()
@@ -1828,6 +2056,7 @@ impl RunMsbAgentBatchCommand {
             batch_manifest,
             index_debug_snapshots: self.index_debug_snapshots,
             use_default_model: self.use_default_model,
+            model_id: self.model_id,
             provider: parse_provider_key(self.provider)?,
             stop_on_error: self.stop_on_error,
         }
@@ -1946,6 +2175,17 @@ impl ProtocolCommand {
     }
 }
 
+impl CampaignCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            CampaignSubcommand::List(cmd) => cmd.run().await,
+            CampaignSubcommand::Init(cmd) => cmd.run().await,
+            CampaignSubcommand::Show(cmd) => cmd.run().await,
+            CampaignSubcommand::Validate(cmd) => cmd.run().await,
+        }
+    }
+}
+
 impl RegistryCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         match self.command {
@@ -1960,7 +2200,164 @@ impl ClosureCommand {
         match self.command {
             ClosureSubcommand::Recompute(cmd) => cmd.run().await,
             ClosureSubcommand::Status(cmd) => cmd.run().await,
+            ClosureSubcommand::Advance(cmd) => cmd.run().await,
         }
+    }
+}
+
+impl ClosureAdvanceCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            ClosureAdvanceSubcommand::Eval(cmd) => cmd.run().await,
+            ClosureAdvanceSubcommand::Protocol(cmd) => cmd.run().await,
+            ClosureAdvanceSubcommand::All(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl CampaignOverrideArgs {
+    fn into_overrides(self) -> CampaignOverrides {
+        CampaignOverrides {
+            dataset_keys: self.dataset_key,
+            dataset_files: self.dataset,
+            model_id: self.model_id,
+            provider_slug: self.provider,
+            required_procedures: self.required_procedure,
+            runs_root: self.runs_root,
+            batches_root: self.batches_root,
+        }
+    }
+}
+
+impl CampaignInitCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let path = campaign_manifest_path(&self.campaign)?;
+        if path.exists() && !self.force {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "campaign_init",
+                detail: format!(
+                    "campaign manifest already exists at '{}' (pass --force to overwrite)",
+                    path.display()
+                ),
+            });
+        }
+
+        let overrides = self.overrides.into_overrides();
+        let mut manifest = if self.from_closure_state {
+            adopt_campaign_manifest_from_closure_state(&self.campaign)?
+        } else if self.from_registry {
+            adopt_campaign_manifest_from_registry(&self.campaign)?
+        } else {
+            let closure_path = campaign_closure_state_path(&self.campaign)?;
+            if closure_path.exists() && overrides.is_empty() {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "campaign_init",
+                    detail: format!(
+                        "closure state exists at '{}' but no manifest exists; pass --from-closure-state to adopt it",
+                        closure_path.display()
+                    ),
+                });
+            }
+            CampaignManifest::new(self.campaign.clone())
+        };
+        apply_campaign_overrides(&mut manifest, &overrides)?;
+        let saved_path = save_campaign_manifest(&manifest)?;
+        let resolved = resolve_campaign_config(&self.campaign, &CampaignOverrides::default())?;
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("{}", render_resolved_campaign_config(&resolved));
+                println!("manifest: {}", saved_path.display());
+            }
+            InspectOutputFormat::Json => {
+                let payload = serde_json::json!({
+                    "manifest_path": saved_path,
+                    "config": resolved,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl CampaignListCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let campaigns = list_campaigns()?;
+        match self.format {
+            InspectOutputFormat::Table => {
+                if campaigns.is_empty() {
+                    println!("campaigns: none");
+                } else {
+                    println!("campaigns");
+                    for campaign in &campaigns {
+                        let status = match (campaign.has_manifest, campaign.has_closure_state) {
+                            (true, true) => "manifest+closure",
+                            (true, false) => "manifest-only",
+                            (false, true) => "closure-only",
+                            (false, false) => "empty",
+                        };
+                        println!("  - {} | {}", campaign.campaign_id, status);
+                    }
+                }
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&campaigns).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl CampaignShowCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let resolved = resolve_campaign_config(&self.campaign, &self.overrides.into_overrides())?;
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("{}", render_resolved_campaign_config(&resolved));
+                println!(
+                    "manifest: {}",
+                    campaign_manifest_path(&self.campaign)?.display()
+                );
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&resolved).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl CampaignValidateCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let resolved = resolve_campaign_config(&self.campaign, &self.overrides.into_overrides())?;
+        let checks = validate_campaign_config(&resolved).await?;
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("{}", render_resolved_campaign_config(&resolved));
+                println!("\nvalidation");
+                for check in &checks {
+                    println!("  - {}: {}", check.label, check.detail);
+                }
+            }
+            InspectOutputFormat::Json => {
+                let payload = CampaignValidationView { config: resolved, checks };
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2012,15 +2409,8 @@ impl RegistryStatusCommand {
 
 impl ClosureRecomputeCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let (path, state) = recompute_closure_state(ClosureRecomputeRequest {
-            campaign_id: self.campaign,
-            model_id: self.model_id,
-            provider_slug: self.provider,
-            dataset_keys: self.dataset_key,
-            dataset_files: self.dataset,
-            required_procedures: self.required_procedure,
-            runs_root: self.runs_root,
-        })?;
+        let resolved = resolve_campaign_config(&self.campaign, &self.overrides.into_overrides())?;
+        let (path, state) = recompute_closure_state(closure_request_from_campaign(&resolved))?;
 
         match self.format {
             InspectOutputFormat::Table => {
@@ -2189,6 +2579,737 @@ impl ProtocolToolCallReviewCommand {
 
         Ok(())
     }
+}
+
+impl ClosureAdvanceEvalCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let resolved = resolve_campaign_config(&self.campaign, &self.overrides.into_overrides())?;
+        let mut policy = resolved.eval.clone();
+        if let Some(limit) = self.limit {
+            policy.limit = Some(limit);
+        }
+        if self.stop_on_error {
+            policy.stop_on_error = true;
+        }
+        let report = advance_eval_closure(&resolved, &policy, self.dry_run).await?;
+        render_advance_eval_report(report, self.format)
+    }
+}
+
+impl ClosureAdvanceProtocolCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let resolved = resolve_campaign_config(&self.campaign, &self.overrides.into_overrides())?;
+        let mut policy = resolved.protocol.clone();
+        if let Some(limit_runs) = self.limit_runs {
+            policy.limit_runs = Some(limit_runs);
+        }
+        if self.stop_on_error {
+            policy.stop_on_error = true;
+        }
+        let report = advance_protocol_closure(&resolved, &policy, self.dry_run).await?;
+        render_advance_protocol_report(report, self.format)
+    }
+}
+
+impl ClosureAdvanceAllCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let resolved = resolve_campaign_config(&self.campaign, &self.overrides.into_overrides())?;
+        let mut eval_policy = resolved.eval.clone();
+        if let Some(limit) = self.eval_limit {
+            eval_policy.limit = Some(limit);
+        }
+        if self.stop_on_error {
+            eval_policy.stop_on_error = true;
+        }
+        let mut protocol_policy = resolved.protocol.clone();
+        if let Some(limit_runs) = self.protocol_limit_runs {
+            protocol_policy.limit_runs = Some(limit_runs);
+        }
+        if self.stop_on_error {
+            protocol_policy.stop_on_error = true;
+        }
+
+        let eval_report = advance_eval_closure(&resolved, &eval_policy, self.dry_run).await?;
+        let protocol_report =
+            advance_protocol_closure(&resolved, &protocol_policy, self.dry_run).await?;
+        render_advance_all_report(
+            ClosureAdvanceAllReport {
+                campaign_id: resolved.campaign_id,
+                dry_run: self.dry_run,
+                eval: eval_report,
+                protocol: protocol_report,
+            },
+            self.format,
+        )
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct CampaignValidationView {
+    config: ResolvedCampaignConfig,
+    checks: Vec<CampaignValidationCheck>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvalBatchPlan {
+    batch_id: String,
+    dataset_label: String,
+    dataset_path: PathBuf,
+    instances: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ClosureAdvanceEvalReport {
+    campaign_id: String,
+    dry_run: bool,
+    before: crate::closure::EvalClosureSummary,
+    after: crate::closure::EvalClosureSummary,
+    selected_instances: Vec<String>,
+    selected_batches: Vec<EvalBatchPlan>,
+    executed_batches: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProtocolRunPlan {
+    instance_id: String,
+    segmentation_needed: bool,
+    missing_call_indices: Vec<usize>,
+    missing_segment_indices: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ClosureAdvanceProtocolReport {
+    campaign_id: String,
+    dry_run: bool,
+    before: crate::closure::ProtocolClosureSummary,
+    after: crate::closure::ProtocolClosureSummary,
+    selected_runs: Vec<ProtocolRunPlan>,
+    executed_runs: usize,
+    segmentations_created: usize,
+    call_reviews_created: usize,
+    segment_reviews_created: usize,
+    failures: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ClosureAdvanceAllReport {
+    campaign_id: String,
+    dry_run: bool,
+    eval: ClosureAdvanceEvalReport,
+    protocol: ClosureAdvanceProtocolReport,
+}
+
+fn closure_request_from_campaign(config: &ResolvedCampaignConfig) -> ClosureRecomputeRequest {
+    ClosureRecomputeRequest {
+        campaign_id: config.campaign_id.clone(),
+        benchmark_family: Some(config.benchmark_family),
+        model_id: Some(config.model_id.clone()),
+        provider_slug: config.provider_slug.clone(),
+        dataset_keys: dataset_keys_from_sources(&config.dataset_sources),
+        dataset_files: dataset_files_from_sources(&config.dataset_sources),
+        required_procedures: config.required_procedures.clone(),
+        runs_root: Some(config.runs_root.clone()),
+        batches_root: Some(config.batches_root.clone()),
+        framework: Some(config.framework.clone()),
+    }
+}
+
+fn campaign_context_from_config(config: &ResolvedCampaignConfig) -> PreparedCampaignContext {
+    PreparedCampaignContext {
+        campaign_id: config.campaign_id.clone(),
+        model_id: Some(config.model_id.clone()),
+        provider_slug: config.provider_slug.clone(),
+        framework: config.framework.clone(),
+    }
+}
+
+fn select_eval_rows<'a>(
+    state: &'a crate::closure::ClosureState,
+    policy: &EvalCampaignPolicy,
+) -> Vec<&'a crate::closure::ClosureInstanceRow> {
+    let mut selected = state
+        .instances
+        .iter()
+        .filter(|row| match row.eval_status {
+            crate::closure::ClosureClass::Missing => true,
+            crate::closure::ClosureClass::Partial => policy.include_partial,
+            _ => false,
+        })
+        .filter(|row| {
+            (policy.include_dataset_labels.is_empty()
+                || policy
+                    .include_dataset_labels
+                    .iter()
+                    .any(|label| label == &row.dataset_label))
+                && !policy
+                    .exclude_dataset_labels
+                    .iter()
+                    .any(|label| label == &row.dataset_label)
+        })
+        .collect::<Vec<_>>();
+    if let Some(limit) = policy.limit {
+        selected.truncate(limit);
+    }
+    selected
+}
+
+fn select_protocol_rows<'a>(
+    state: &'a crate::closure::ClosureState,
+    policy: &ProtocolCampaignPolicy,
+) -> Vec<&'a crate::closure::ClosureInstanceRow> {
+    let mut selected = state
+        .instances
+        .iter()
+        .filter(|row| row.eval_status == crate::closure::ClosureClass::Complete)
+        .filter(|row| match row.protocol_status {
+            crate::closure::ClosureClass::Missing => true,
+            crate::closure::ClosureClass::Partial => policy.include_partial,
+            crate::closure::ClosureClass::Incompatible => policy.include_incompatible,
+            crate::closure::ClosureClass::Failed => policy.include_failed,
+            _ => false,
+        })
+        .collect::<Vec<_>>();
+    if let Some(limit) = policy.limit_runs {
+        selected.truncate(limit);
+    }
+    selected
+}
+
+fn build_eval_batch_plans(
+    registry: &TargetRegistry,
+    selected_rows: &[&crate::closure::ClosureInstanceRow],
+    campaign_id: &str,
+    batch_prefix: Option<&str>,
+) -> Result<Vec<EvalBatchPlan>, PrepareError> {
+    let mut by_instance = BTreeMap::<String, RegistryEntry>::new();
+    for entry in &registry.entries {
+        by_instance.insert(entry.instance_id.clone(), entry.clone());
+    }
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+    let prefix = batch_prefix.unwrap_or(campaign_id);
+    let mut grouped = BTreeMap::<(String, PathBuf), Vec<String>>::new();
+    for row in selected_rows {
+        let entry = by_instance
+            .get(&row.instance_id)
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "closure_advance_eval",
+                detail: format!("registry entry missing for '{}'", row.instance_id),
+            })?;
+        grouped
+            .entry((row.dataset_label.clone(), entry.source.dataset_path.clone()))
+            .or_default()
+            .push(row.instance_id.clone());
+    }
+
+    let mut plans = Vec::new();
+    for ((dataset_label, dataset_path), mut instances) in grouped {
+        instances.sort();
+        let batch_id = format!(
+            "{}-eval-{}-{}",
+            sanitize_batch_component(prefix),
+            sanitize_batch_component(&dataset_label),
+            timestamp
+        );
+        plans.push(EvalBatchPlan {
+            batch_id,
+            dataset_label,
+            dataset_path,
+            instances,
+        });
+    }
+    plans.sort_by(|left, right| left.batch_id.cmp(&right.batch_id));
+    Ok(plans)
+}
+
+async fn advance_eval_closure(
+    config: &ResolvedCampaignConfig,
+    policy: &EvalCampaignPolicy,
+    dry_run: bool,
+) -> Result<ClosureAdvanceEvalReport, PrepareError> {
+    let before_state = recompute_closure_state(closure_request_from_campaign(config))?.1;
+    let selected_rows = select_eval_rows(&before_state, policy);
+    let registry = recompute_target_registry(RegistryRecomputeRequest {
+        benchmark_family: config.benchmark_family,
+        dataset_keys: dataset_keys_from_sources(&config.dataset_sources),
+        dataset_files: dataset_files_from_sources(&config.dataset_sources),
+    })?
+    .1;
+    let plans = build_eval_batch_plans(
+        &registry,
+        &selected_rows,
+        &config.campaign_id,
+        policy.batch_prefix.as_deref(),
+    )?;
+    let selected_instances = plans
+        .iter()
+        .flat_map(|plan| plan.instances.iter().cloned())
+        .collect::<Vec<_>>();
+
+    let mut executed_batches = 0usize;
+    if !dry_run {
+        let campaign_context = campaign_context_from_config(config);
+        let provider = parse_provider_key(config.provider_slug.clone())?;
+        for plan in &plans {
+            let mut prepared = PrepareMsbBatchRequest {
+                dataset_file: Some(plan.dataset_path.clone()),
+                dataset_key: None,
+                batch_id: plan.batch_id.clone(),
+                select_all: false,
+                instance_ids: plan.instances.clone(),
+                specifics: Vec::new(),
+                limit: None,
+                repo_cache: repos_dir()?,
+                runs_root: config.runs_root.clone(),
+                batches_root: config.batches_root.clone(),
+                budget: policy.budget.clone(),
+            }
+            .prepare()?;
+
+            for run in &mut prepared.runs {
+                run.campaign = Some(campaign_context.clone());
+                run.write_manifest(OutputMode::Pretty, PrepareWrite::File(run.manifest_path()))?;
+            }
+            prepared.batch.campaign = Some(campaign_context.clone());
+            prepared.batch.write_manifest(OutputMode::Pretty)?;
+
+            let artifacts = RunMsbAgentBatchRequest {
+                batch_manifest: prepared.batch.manifest_path(),
+                index_debug_snapshots: true,
+                use_default_model: false,
+                model_id: Some(config.model_id.clone()),
+                provider: provider.clone(),
+                stop_on_error: policy.stop_on_error,
+            }
+            .run()
+            .await?;
+            executed_batches += 1;
+
+            if policy.stop_on_error && batch_summary_has_failure(&artifacts.summary)? {
+                break;
+            }
+        }
+    }
+
+    let after_state = recompute_closure_state(closure_request_from_campaign(config))?.1;
+    Ok(ClosureAdvanceEvalReport {
+        campaign_id: config.campaign_id.clone(),
+        dry_run,
+        before: before_state.eval,
+        after: after_state.eval,
+        selected_instances,
+        selected_batches: plans,
+        executed_batches,
+    })
+}
+
+async fn advance_protocol_closure(
+    config: &ResolvedCampaignConfig,
+    policy: &ProtocolCampaignPolicy,
+    dry_run: bool,
+) -> Result<ClosureAdvanceProtocolReport, PrepareError> {
+    let before_state = recompute_closure_state(closure_request_from_campaign(config))?.1;
+    let selected_rows = select_protocol_rows(&before_state, policy);
+    let mut plans = Vec::new();
+    let mut executed_runs = 0usize;
+    let mut segmentations_created = 0usize;
+    let mut call_reviews_created = 0usize;
+    let mut segment_reviews_created = 0usize;
+    let mut failures = Vec::new();
+
+    for row in selected_rows {
+        let record_path = row
+            .artifacts
+            .record_path
+            .clone()
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "closure_advance_protocol",
+                detail: format!("record path missing for '{}'", row.instance_id),
+            })?;
+        let mut plan = protocol_run_plan(&row.instance_id, &record_path)?;
+
+        if !dry_run {
+            let result = async {
+                if plan.segmentation_needed {
+                    execute_protocol_intent_segments_quiet(
+                        &record_path,
+                        Some(config.model_id.clone()),
+                        config.provider_slug.clone(),
+                    )
+                    .await?;
+                    segmentations_created += 1;
+                    plan = protocol_run_plan(&row.instance_id, &record_path)?;
+                }
+
+                for call_index in &plan.missing_call_indices {
+                    execute_protocol_tool_call_review_quiet(
+                        &record_path,
+                        Some(config.model_id.clone()),
+                        config.provider_slug.clone(),
+                        *call_index,
+                    )
+                    .await?;
+                    call_reviews_created += 1;
+                }
+
+                plan = protocol_run_plan(&row.instance_id, &record_path)?;
+                for segment_index in &plan.missing_segment_indices {
+                    execute_protocol_tool_call_segment_review_quiet(
+                        &record_path,
+                        Some(config.model_id.clone()),
+                        config.provider_slug.clone(),
+                        *segment_index,
+                    )
+                    .await?;
+                    segment_reviews_created += 1;
+                }
+                Ok::<(), PrepareError>(())
+            }
+            .await;
+
+            match result {
+                Ok(()) => {
+                    executed_runs += 1;
+                    plan = protocol_run_plan(&row.instance_id, &record_path)?;
+                }
+                Err(err) => {
+                    failures.push(format!("{}: {}", row.instance_id, err));
+                    if policy.stop_on_error {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        plans.push(plan);
+    }
+
+    let after_state = recompute_closure_state(closure_request_from_campaign(config))?.1;
+    Ok(ClosureAdvanceProtocolReport {
+        campaign_id: config.campaign_id.clone(),
+        dry_run,
+        before: before_state.protocol,
+        after: after_state.protocol,
+        selected_runs: plans,
+        executed_runs,
+        segmentations_created,
+        call_reviews_created,
+        segment_reviews_created,
+        failures,
+    })
+}
+
+fn protocol_run_plan(instance_id: &str, record_path: &Path) -> Result<ProtocolRunPlan, PrepareError> {
+    match load_protocol_aggregate(record_path) {
+        Ok(aggregate) => Ok(ProtocolRunPlan {
+            instance_id: instance_id.to_string(),
+            segmentation_needed: false,
+            missing_call_indices: aggregate.coverage.missing_call_indices,
+            missing_segment_indices: aggregate.coverage.missing_segment_indices,
+        }),
+        Err(err) => match err {
+            crate::protocol::protocol_aggregate::ProtocolAggregateError::MissingAnchor { .. } => {
+                Ok(ProtocolRunPlan {
+                    instance_id: instance_id.to_string(),
+                    segmentation_needed: true,
+                    missing_call_indices: Vec::new(),
+                    missing_segment_indices: Vec::new(),
+                })
+            }
+            other => Err(PrepareError::DatabaseSetup {
+                phase: "closure_advance_protocol",
+                detail: format!("{}: {other}", instance_id),
+            }),
+        },
+    }
+}
+
+fn batch_summary_has_failure(path: &Path) -> Result<bool, PrepareError> {
+    let text = std::fs::read_to_string(path).map_err(|source| PrepareError::ReadBatchManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let summary: BatchRunSummary =
+        serde_json::from_str(&text).map_err(|source| PrepareError::ParseBatchManifest {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(summary.instances_failed > 0)
+}
+
+async fn execute_protocol_intent_segments_quiet(
+    record_path: &Path,
+    model_id: Option<String>,
+    provider: Option<String>,
+) -> Result<segment::SegmentedToolCallSequence, PrepareError> {
+    let record =
+        read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
+            path: record_path.to_path_buf(),
+            source,
+        })?;
+    let subject = build_tool_call_sequence_subject(&record, record_path)?;
+    let subject_id = subject.subject_id.clone();
+    let persisted_input = subject.clone();
+    let model_id = resolve_protocol_model_id(model_id)?;
+    let provider_slug = resolve_protocol_provider_slug(&model_id, provider)?;
+    let client = reqwest::Client::new();
+    let cfg = JsonLlmConfig {
+        model_id: model_id.to_string(),
+        provider_slug,
+        timeout_secs: 45,
+        max_tokens: 1200,
+    };
+    let protocol =
+        segment::ToolCallIntentSegmentation::new(JsonAdjudicator::new(client, cfg.clone()));
+    let segmented = protocol
+        .run(subject)
+        .await
+        .map_err(tool_call_intent_segmentation_error_to_prepare)?;
+    write_protocol_artifact(
+        record_path,
+        &segmented.procedure_name,
+        &subject_id,
+        Some(cfg.model_id.as_str()),
+        cfg.provider_slug.as_deref(),
+        &persisted_input,
+        &segmented.output,
+        &segmented.artifact,
+    )?;
+    Ok(segmented.output)
+}
+
+async fn execute_protocol_tool_call_review_quiet(
+    record_path: &Path,
+    model_id: Option<String>,
+    provider: Option<String>,
+    index: usize,
+) -> Result<(), PrepareError> {
+    let record =
+        read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
+            path: record_path.to_path_buf(),
+            source,
+        })?;
+    let subject = build_tool_call_review_subject(&record, record_path, index)?;
+    let subject_id = subject.subject_id.clone();
+    let persisted_input = subject.clone();
+    let model_id = resolve_protocol_model_id(model_id)?;
+    let provider_slug = resolve_protocol_provider_slug(&model_id, provider)?;
+    let client = reqwest::Client::new();
+    let cfg = JsonLlmConfig {
+        model_id: model_id.to_string(),
+        provider_slug,
+        timeout_secs: 30,
+        max_tokens: 400,
+    };
+    let protocol = review::ToolCallReview::new(JsonAdjudicator::new(client, cfg.clone()));
+    let reviewed = protocol
+        .run(subject)
+        .await
+        .map_err(tool_call_review_error_to_prepare)?;
+    write_protocol_artifact(
+        record_path,
+        &reviewed.procedure_name,
+        &subject_id,
+        Some(cfg.model_id.as_str()),
+        cfg.provider_slug.as_deref(),
+        &persisted_input,
+        &reviewed.output,
+        &reviewed.artifact,
+    )?;
+    Ok(())
+}
+
+fn load_latest_segmented_sequence(
+    record_path: &Path,
+) -> Result<Option<segment::SegmentedToolCallSequence>, PrepareError> {
+    let artifacts = list_protocol_artifacts(record_path)?;
+    let latest = artifacts
+        .into_iter()
+        .filter(|entry| entry.stored.procedure_name == "tool_call_intent_segmentation")
+        .max_by_key(|entry| entry.stored.created_at_ms);
+    latest
+        .map(|entry| {
+            serde_json::from_value(entry.stored.output).map_err(|source| PrepareError::DatabaseSetup {
+                phase: "protocol_load_segmented_sequence",
+                detail: source.to_string(),
+            })
+        })
+        .transpose()
+}
+
+async fn execute_protocol_tool_call_segment_review_quiet(
+    record_path: &Path,
+    model_id: Option<String>,
+    provider: Option<String>,
+    segment_index: usize,
+) -> Result<(), PrepareError> {
+    let segmented = match load_latest_segmented_sequence(record_path)? {
+        Some(segmented) => segmented,
+        None => {
+            execute_protocol_intent_segments_quiet(record_path, model_id.clone(), provider.clone())
+                .await?
+        }
+    };
+    let subject = build_segment_review_subject(&segmented, segment_index)?;
+    let subject_id = subject.subject_id.clone();
+    let persisted_input = subject.clone();
+    let model_id = resolve_protocol_model_id(model_id)?;
+    let provider_slug = resolve_protocol_provider_slug(&model_id, provider)?;
+    let client = reqwest::Client::new();
+    let cfg = JsonLlmConfig {
+        model_id: model_id.to_string(),
+        provider_slug,
+        timeout_secs: 45,
+        max_tokens: 1200,
+    };
+    let protocol = review::ToolCallSegmentReview::new(JsonAdjudicator::new(client, cfg.clone()));
+    let reviewed = protocol
+        .run(subject)
+        .await
+        .map_err(tool_call_segment_review_error_to_prepare)?;
+    write_protocol_artifact(
+        record_path,
+        &reviewed.procedure_name,
+        &subject_id,
+        Some(cfg.model_id.as_str()),
+        cfg.provider_slug.as_deref(),
+        &persisted_input,
+        &reviewed.output,
+        &reviewed.artifact,
+    )?;
+    Ok(())
+}
+
+fn render_advance_eval_report(
+    report: ClosureAdvanceEvalReport,
+    format: InspectOutputFormat,
+) -> Result<(), PrepareError> {
+    match format {
+        InspectOutputFormat::Table => {
+            println!(
+                "campaign {} | eval before {} complete / {} fail / {} partial / {} missing",
+                report.campaign_id,
+                report.before.complete_total,
+                report.before.failed_total,
+                report.before.partial_total,
+                report.before.missing_total
+            );
+            println!(
+                "selected {} instance(s) in {} batch(es){}",
+                report.selected_instances.len(),
+                report.selected_batches.len(),
+                if report.dry_run { " [dry-run]" } else { "" }
+            );
+            for batch in &report.selected_batches {
+                println!(
+                    "  - {} | {} | {} instance(s)",
+                    batch.batch_id,
+                    batch.dataset_label,
+                    batch.instances.len()
+                );
+            }
+            println!(
+                "eval after {} complete / {} fail / {} partial / {} missing",
+                report.after.complete_total,
+                report.after.failed_total,
+                report.after.partial_total,
+                report.after.missing_total
+            );
+        }
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+            );
+        }
+    }
+    Ok(())
+}
+
+fn render_advance_protocol_report(
+    report: ClosureAdvanceProtocolReport,
+    format: InspectOutputFormat,
+) -> Result<(), PrepareError> {
+    match format {
+        InspectOutputFormat::Table => {
+            println!(
+                "campaign {} | protocol before {} full / {} partial / {} incompatible / {} fail / {} missing",
+                report.campaign_id,
+                report.before.full_total,
+                report.before.partial_total,
+                report.before.incompatible_total,
+                report.before.failed_total,
+                report.before.missing_total
+            );
+            println!(
+                "selected {} run(s){}",
+                report.selected_runs.len(),
+                if report.dry_run { " [dry-run]" } else { "" }
+            );
+            for run in &report.selected_runs {
+                println!(
+                    "  - {} | segmentation {} | missing calls {} | missing segments {}",
+                    run.instance_id,
+                    if run.segmentation_needed { "yes" } else { "no" },
+                    run.missing_call_indices.len(),
+                    run.missing_segment_indices.len()
+                );
+            }
+            println!(
+                "protocol after {} full / {} partial / {} incompatible / {} fail / {} missing",
+                report.after.full_total,
+                report.after.partial_total,
+                report.after.incompatible_total,
+                report.after.failed_total,
+                report.after.missing_total
+            );
+            if !report.failures.is_empty() {
+                println!("\nfailures");
+                for failure in &report.failures {
+                    println!("  - {}", failure);
+                }
+            }
+        }
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+            );
+        }
+    }
+    Ok(())
+}
+
+fn render_advance_all_report(
+    report: ClosureAdvanceAllReport,
+    format: InspectOutputFormat,
+) -> Result<(), PrepareError> {
+    match format {
+        InspectOutputFormat::Table => {
+            println!(
+                "campaign {}{}",
+                report.campaign_id,
+                if report.dry_run { " [dry-run]" } else { "" }
+            );
+            println!(
+                "eval: selected {} instance(s), missing now {}",
+                report.eval.selected_instances.len(),
+                report.eval.after.missing_total
+            );
+            println!(
+                "protocol: selected {} run(s), missing now {}",
+                report.protocol.selected_runs.len(),
+                report.protocol.after.missing_total
+            );
+        }
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+            );
+        }
+    }
+    Ok(())
 }
 
 impl ProtocolToolCallSegmentReviewCommand {

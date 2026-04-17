@@ -13,6 +13,7 @@ use crate::record::read_compressed_record;
 use crate::runner::{
     BatchRunSummary, ExecutionLog, IndexingStatusArtifact, SnapshotStatusArtifact,
 };
+use crate::spec::FrameworkConfig;
 use crate::spec::PrepareError;
 use crate::target_registry::{
     BenchmarkFamily, RegistryDatasetSource, RegistryEntry, RegistryEntryState,
@@ -35,12 +36,15 @@ const STORED_TOOL_CALL_SEGMENT_REVIEW: &str = "tool_call_segment_review";
 #[derive(Debug, Clone)]
 pub struct ClosureRecomputeRequest {
     pub campaign_id: String,
+    pub benchmark_family: Option<BenchmarkFamily>,
     pub model_id: Option<String>,
     pub provider_slug: Option<String>,
     pub dataset_keys: Vec<String>,
     pub dataset_files: Vec<PathBuf>,
     pub required_procedures: Vec<String>,
     pub runs_root: Option<PathBuf>,
+    pub batches_root: Option<PathBuf>,
+    pub framework: Option<FrameworkConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +72,9 @@ pub struct ClosureConfig {
     pub dataset_sources: Vec<ClosureDatasetSource>,
     pub required_procedures: Vec<String>,
     pub runs_root: PathBuf,
+    pub batches_root: PathBuf,
+    #[serde(default, skip_serializing_if = "FrameworkConfig::is_default")]
+    pub framework: FrameworkConfig,
 }
 
 pub type ClosureDatasetSource = RegistryDatasetSource;
@@ -234,7 +241,7 @@ pub fn recompute_closure_state(
     let campaign_id = request.campaign_id.clone();
     let existing = load_closure_state(&request.campaign_id).ok();
     let (config, registry_source) = resolve_config(request, existing)?;
-    let batch_failures = collect_batch_failures()?;
+    let batch_failures = collect_batch_failures(&config.batches_root)?;
 
     let mut instances = registry_source
         .entries
@@ -406,10 +413,14 @@ fn resolve_config(
         .runs_root
         .or_else(|| prior.as_ref().map(|config| config.runs_root.clone()))
         .unwrap_or(runs_dir()?);
+    let batches_root = request
+        .batches_root
+        .or_else(|| prior.as_ref().map(|config| config.batches_root.clone()))
+        .unwrap_or(batches_dir()?);
 
-    let benchmark_family = prior
-        .as_ref()
-        .map(|config| config.benchmark_family)
+    let benchmark_family = request
+        .benchmark_family
+        .or_else(|| prior.as_ref().map(|config| config.benchmark_family))
         .unwrap_or_else(default_benchmark_family);
 
     let (registry_path, registry_source) =
@@ -443,6 +454,11 @@ fn resolve_config(
             dataset_sources: registry_source.dataset_sources.clone(),
             required_procedures,
             runs_root,
+            batches_root,
+            framework: request
+                .framework
+                .or_else(|| prior.as_ref().map(|config| config.framework.clone()))
+                .unwrap_or_default(),
         },
         registry_source,
     ))
@@ -452,8 +468,8 @@ fn config_campaign_id(_config: &ClosureConfig, requested: &str) -> String {
     requested.to_string()
 }
 
-fn collect_batch_failures() -> Result<HashMap<String, BatchFailureInfo>, PrepareError> {
-    let root = batches_dir()?;
+fn collect_batch_failures(root: &Path) -> Result<HashMap<String, BatchFailureInfo>, PrepareError> {
+    let root = root.to_path_buf();
     let mut failures = HashMap::new();
     if !root.exists() {
         return Ok(failures);

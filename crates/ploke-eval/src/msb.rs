@@ -121,6 +121,7 @@ impl PrepareMsbBatchRequest {
             output_dir: batch_output_dir,
             budget: self.budget,
             instances: runs.iter().map(|run| run.task_id.clone()).collect(),
+            campaign: None,
         };
         Ok(PreparedMsbBatchBundle { batch, runs })
     }

@@ -191,31 +191,27 @@ pub fn registry_has_model(registry: &ModelRegistry, model_id: &ModelId) -> bool 
     registry.data.iter().any(|item| item.id == *model_id)
 }
 
-pub fn resolve_model_for_run(use_default_model: bool) -> Result<ResponseItem, PrepareError> {
+pub fn resolve_model_for_run(
+    explicit_model_id: Option<&ModelId>,
+    use_default_model: bool,
+) -> Result<ResponseItem, PrepareError> {
     let path = model_registry_path()?;
-    if use_default_model {
-        let registry = load_model_registry()?;
-        let default_id = ModelId::from(ModelKey::default());
-        registry
-            .data
-            .into_iter()
-            .find(|item| item.id == default_id)
-            .ok_or_else(|| PrepareError::UnknownModelInRegistry {
-                model: default_id.to_string(),
-                path: path.clone(),
-            })
+    let registry = load_model_registry()?;
+    let model_id = if let Some(model_id) = explicit_model_id {
+        model_id.clone()
+    } else if use_default_model {
+        ModelId::from(ModelKey::default())
     } else {
-        let registry = load_model_registry()?;
-        let model_id = load_active_model()?.model_id;
-        registry
-            .data
-            .into_iter()
-            .find(|item| item.id == model_id)
-            .ok_or_else(|| PrepareError::UnknownModelInRegistry {
-                model: model_id.to_string(),
-                path,
-            })
-    }
+        load_active_model()?.model_id
+    };
+    registry
+        .data
+        .into_iter()
+        .find(|item| item.id == model_id)
+        .ok_or_else(|| PrepareError::UnknownModelInRegistry {
+            model: model_id.to_string(),
+            path,
+        })
 }
 
 pub fn find_models<'a>(registry: &'a ModelRegistry, query: &str) -> Vec<&'a ResponseItem> {

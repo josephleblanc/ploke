@@ -74,6 +74,8 @@ pub struct RunMsbAgentSingleRequest {
     #[serde(default)]
     pub use_default_model: bool,
     #[serde(default)]
+    pub model_id: Option<String>,
+    #[serde(default)]
     pub provider: Option<ProviderKey>,
 }
 
@@ -84,6 +86,8 @@ pub struct RunMsbSingleRequest {
     #[serde(default)]
     pub use_default_model: bool,
     #[serde(default)]
+    pub model_id: Option<String>,
+    #[serde(default)]
     pub provider: Option<ProviderKey>,
 }
 
@@ -93,6 +97,8 @@ pub struct RunMsbBatchRequest {
     pub index_debug_snapshots: bool,
     #[serde(default)]
     pub use_default_model: bool,
+    #[serde(default)]
+    pub model_id: Option<String>,
     #[serde(default)]
     pub provider: Option<ProviderKey>,
     #[serde(default)]
@@ -105,6 +111,8 @@ pub struct RunMsbAgentBatchRequest {
     pub index_debug_snapshots: bool,
     #[serde(default)]
     pub use_default_model: bool,
+    #[serde(default)]
+    pub model_id: Option<String>,
     #[serde(default)]
     pub provider: Option<ProviderKey>,
     #[serde(default)]
@@ -1101,13 +1109,27 @@ pub(crate) async fn resolve_provider_for_model(
     })
 }
 
+fn parse_requested_model_id(model_id: Option<&str>) -> Result<Option<ModelId>, PrepareError> {
+    model_id
+        .map(|model_id| {
+            model_id
+                .parse()
+                .map_err(|err: ploke_llm::IdError| PrepareError::DatabaseSetup {
+                    phase: "resolve_run_model_id",
+                    detail: err.to_string(),
+                })
+        })
+        .transpose()
+}
+
 impl RunMsbSingleRequest {
     pub async fn run(self) -> Result<RunArtifactPaths, PrepareError> {
         let run_arm = RunArm::shell_only_control();
         let setup_start_time = chrono::Utc::now();
         let run_start_instant = Instant::now();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
-        let selected_model = resolve_model_for_run(self.use_default_model)?;
+        let requested_model = parse_requested_model_id(self.model_id.as_deref())?;
+        let selected_model = resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
         let preferred_provider = load_provider_for_model(&selected_model_id)?;
         let resolved_provider = resolve_provider_for_model(
@@ -1434,7 +1456,8 @@ impl RunMsbAgentSingleRequest {
         let run_start_instant = Instant::now();
         let run_arm = RunArm::structured_current_policy_treatment();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
-        let selected_model = resolve_model_for_run(self.use_default_model)?;
+        let requested_model = parse_requested_model_id(self.model_id.as_deref())?;
+        let selected_model = resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
         let preferred_provider = load_provider_for_model(&selected_model_id)?;
         let resolved_provider = resolve_provider_for_model(
@@ -1840,6 +1863,7 @@ impl RunMsbBatchRequest {
             self.batch_manifest,
             self.index_debug_snapshots,
             self.use_default_model,
+            self.model_id,
             self.provider,
             self.stop_on_error,
             false,
@@ -1854,6 +1878,7 @@ impl RunMsbAgentBatchRequest {
             self.batch_manifest,
             self.index_debug_snapshots,
             self.use_default_model,
+            self.model_id,
             self.provider,
             self.stop_on_error,
             true,
@@ -1866,6 +1891,7 @@ async fn run_batch(
     batch_manifest: PathBuf,
     index_debug_snapshots: bool,
     use_default_model: bool,
+    model_id: Option<String>,
     provider: Option<ProviderKey>,
     stop_on_error: bool,
     agent_mode: bool,
@@ -1877,7 +1903,8 @@ async fn run_batch(
         source,
     })?;
 
-    let selected_model = resolve_model_for_run(use_default_model)?;
+    let requested_model = parse_requested_model_id(model_id.as_deref())?;
+    let selected_model = resolve_model_for_run(requested_model.as_ref(), use_default_model)?;
     let selected_model_id = selected_model.id.clone();
     let preferred_provider = load_provider_for_model(&selected_model_id)?;
     let resolved_provider = resolve_provider_for_model(
@@ -1904,6 +1931,7 @@ async fn run_batch(
                 run_manifest: run_manifest.clone(),
                 index_debug_snapshots,
                 use_default_model,
+                model_id: model_id.clone(),
                 provider: provider.clone(),
             })
             .run()
@@ -1956,6 +1984,7 @@ async fn run_batch(
                 run_manifest: run_manifest.clone(),
                 index_debug_snapshots,
                 use_default_model,
+                model_id: model_id.clone(),
                 provider: provider.clone(),
             })
             .run()
