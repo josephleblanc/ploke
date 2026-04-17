@@ -89,6 +89,8 @@ system, event channel architecture, and test-runtime access to `AppState`.
 - Setup-only, replay, and live-model execution paths must stay conceptually separate.
 - Do not silently weaken correctness to make evals look better.
 - Lower-layer measurement and replay gaps take priority over higher-layer tool optimization when interpretation is blocked.
+- When running `ploke-eval` repeatedly during active eval/protocol work, prefer the built binary at `./target/debug/ploke-eval` over `cargo run -p ploke-eval` once the crate is already built.
+- Use `cargo run -p ploke-eval` only when you actually need a rebuild or when the binary is not yet present.
 
 ## Orchestration And Reporting Rules
 
