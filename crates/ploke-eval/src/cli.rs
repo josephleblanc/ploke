@@ -5808,12 +5808,12 @@ fn build_protocol_report(
             };
             ProtocolAggregateSegmentRow {
                 index: basis.segment_index,
-                label: Some(basis.label.clone()),
+                label: basis.label.map(intent_label_name),
                 call_span: Some(format!("{}..{}", basis.start_index, basis.end_index)),
                 status: Some(
                     segment_review
                         .map(|review| review.overall.clone())
-                        .unwrap_or_else(|| basis.status.clone()),
+                        .unwrap_or_else(|| segment_status_name(basis.status).to_string()),
                 ),
                 evidence: Some(
                     if aggregate
@@ -5832,7 +5832,7 @@ fn build_protocol_report(
                     .and_then(|review| {
                         confidence_fraction(Some(review.overall_confidence.as_str()))
                     })
-                    .or_else(|| confidence_fraction(basis.confidence.as_deref())),
+                    .or_else(|| basis.confidence.map(confidence_fraction_typed)),
                 note,
                 call_refs: basis.call_indices.clone(),
             }
@@ -6130,6 +6130,33 @@ fn confidence_fraction(value: Option<&str>) -> Option<f32> {
         "medium" | "Medium" => Some(0.6),
         "low" | "Low" => Some(0.3),
         _ => None,
+    }
+}
+
+fn confidence_fraction_typed(value: ploke_protocol::Confidence) -> f32 {
+    match value {
+        ploke_protocol::Confidence::High => 0.9,
+        ploke_protocol::Confidence::Medium => 0.6,
+        ploke_protocol::Confidence::Low => 0.3,
+    }
+}
+
+fn intent_label_name(label: ploke_protocol::IntentLabel) -> String {
+    match label {
+        ploke_protocol::IntentLabel::LocateTarget => "locate_target".to_string(),
+        ploke_protocol::IntentLabel::InspectCandidate => "inspect_candidate".to_string(),
+        ploke_protocol::IntentLabel::RefineSearch => "refine_search".to_string(),
+        ploke_protocol::IntentLabel::ValidateHypothesis => "validate_hypothesis".to_string(),
+        ploke_protocol::IntentLabel::EditAttempt => "edit_attempt".to_string(),
+        ploke_protocol::IntentLabel::Recovery => "recovery".to_string(),
+        ploke_protocol::IntentLabel::Other => "other".to_string(),
+    }
+}
+
+fn segment_status_name(status: ploke_protocol::SegmentStatus) -> &'static str {
+    match status {
+        ploke_protocol::SegmentStatus::Labeled => "labeled",
+        ploke_protocol::SegmentStatus::Ambiguous => "ambiguous",
     }
 }
 

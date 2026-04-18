@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use ploke_protocol::{
+    Confidence,
+    tool_calls::segment::{IntentLabel, SegmentStatus, SegmentedToolCallSequence},
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -53,9 +57,11 @@ pub struct ProtocolSegmentationCoverage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolSegmentBasis {
     pub segment_index: usize,
-    pub label: String,
-    pub status: String,
-    pub confidence: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<IntentLabel>,
+    pub status: SegmentStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<Confidence>,
     pub rationale: Option<String>,
     pub start_index: usize,
     pub end_index: usize,
@@ -165,12 +171,14 @@ pub struct ProtocolCrosswalkRow {
 pub struct ProtocolSkippedSegmentReview {
     pub artifact: ProtocolArtifactRef,
     pub segment_index: usize,
-    pub observed_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_label: Option<String>,
     pub observed_status: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observed_turn_span: Vec<usize>,
     pub observed_total_calls_in_scope: usize,
-    pub anchor_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_label: Option<String>,
     pub anchor_status: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub anchor_turn_span: Vec<usize>,
@@ -384,7 +392,7 @@ pub(crate) fn load_protocol_aggregate_from_artifacts(
 fn normalize_anchor(
     entry: &StoredProtocolArtifactFile,
 ) -> Result<ProtocolSegmentationAnchor, ProtocolAggregateError> {
-    let output: RawIntentSegmentationOutput = from_artifact_output(entry)?;
+    let output: SegmentedToolCallSequence = from_artifact_output(entry)?;
     let artifact = artifact_ref(entry);
     let coverage = ProtocolSegmentationCoverage {
         total_calls: output.coverage.total_calls,
@@ -409,7 +417,7 @@ fn normalize_anchor(
                 rationale: Some(segment.rationale),
                 start_index: segment.start_index,
                 end_index: segment.end_index,
-                turn_span: segment.turns,
+                turn_span: segment.turns.into_iter().map(|turn| turn as usize).collect(),
                 call_indices,
                 call_count,
             }
@@ -450,8 +458,10 @@ fn normalize_call_review(
         artifact,
         focal_call_index: output.packet.focal_call_index,
         segment_index: segment.as_ref().map(|basis| basis.segment_index),
-        segment_label: segment.as_ref().map(|basis| basis.label.clone()),
-        segment_status: segment.as_ref().map(|basis| basis.status.clone()),
+        segment_label: segment.and_then(|basis| basis.label.map(intent_label_name)),
+        segment_status: segment
+            .as_ref()
+            .map(|basis| segment_status_name(basis.status).to_string()),
         scope_call_indices,
         total_calls_in_run: output.packet.total_calls_in_run,
         total_calls_in_scope: output.packet.total_calls_in_scope,
@@ -489,12 +499,12 @@ fn normalize_segment_review(
         .packet
         .segment_label
         .as_ref()
-        .is_some_and(|label| &basis.label != label)
+        .is_some_and(|label| intent_label_name_opt(basis.label) != Some(label.as_str()))
         || output
             .packet
             .segment_status
             .as_ref()
-            .is_some_and(|status| &basis.status != status)
+            .is_some_and(|status| segment_status_name(basis.status) != status)
         || basis.turn_span != output.packet.turn_span
         || basis.call_count != output.packet.total_calls_in_scope
     {
@@ -536,18 +546,12 @@ fn describe_segment_mismatch(
     Ok(ProtocolSkippedSegmentReview {
         artifact: artifact_ref(entry),
         segment_index: output.packet.segment_index,
-        observed_label: output
-            .packet
-            .segment_label
-            .unwrap_or_else(|| "<missing>".to_string()),
-        observed_status: output
-            .packet
-            .segment_status
-            .unwrap_or_else(|| "<missing>".to_string()),
+        observed_label: output.packet.segment_label,
+        observed_status: output.packet.segment_status.unwrap_or_else(|| "<missing>".to_string()),
         observed_turn_span: output.packet.turn_span,
         observed_total_calls_in_scope: output.packet.total_calls_in_scope,
-        anchor_label: basis.label.clone(),
-        anchor_status: basis.status.clone(),
+        anchor_label: basis.label.map(intent_label_name),
+        anchor_status: segment_status_name(basis.status).to_string(),
         anchor_turn_span: basis.turn_span.clone(),
         anchor_total_calls_in_scope: basis.call_count,
         reason: "segment review does not match selected anchor basis".to_string(),
@@ -663,47 +667,9 @@ fn count_string_field(values: impl Iterator<Item = String>) -> BTreeMap<String, 
     counts
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct RawIntentSegmentationOutput {
-    coverage: RawSegmentationCoverage,
-    segments: Vec<RawAnchorSegment>,
-    sequence: RawCallSequence,
-    signals: RawSignals,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawSegmentationCoverage {
-    ambiguous_calls: usize,
-    ambiguous_segments: usize,
-    labeled_calls: usize,
-    labeled_segments: usize,
-    total_calls: usize,
-    uncovered_calls: usize,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct RawCallSequence {
-    calls: Vec<RawIndexedCall>,
-}
-
 #[derive(Debug, Deserialize, Clone)]
 struct RawIndexedCall {
     index: usize,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawAnchorSegment {
-    calls: Vec<RawIndexedCall>,
-    confidence: String,
-    end_index: usize,
-    label: String,
-    rationale: String,
-    segment_index: usize,
-    start_index: usize,
-    status: String,
-    turns: Vec<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -801,6 +767,37 @@ struct RawSignals {
     uncovered_calls_in_source: Option<usize>,
 }
 
+fn segment_status_name(status: SegmentStatus) -> &'static str {
+    match status {
+        SegmentStatus::Labeled => "labeled",
+        SegmentStatus::Ambiguous => "ambiguous",
+    }
+}
+
+fn intent_label_name(label: IntentLabel) -> String {
+    match label {
+        IntentLabel::LocateTarget => "locate_target".to_string(),
+        IntentLabel::InspectCandidate => "inspect_candidate".to_string(),
+        IntentLabel::RefineSearch => "refine_search".to_string(),
+        IntentLabel::ValidateHypothesis => "validate_hypothesis".to_string(),
+        IntentLabel::EditAttempt => "edit_attempt".to_string(),
+        IntentLabel::Recovery => "recovery".to_string(),
+        IntentLabel::Other => "other".to_string(),
+    }
+}
+
+fn intent_label_name_opt(label: Option<IntentLabel>) -> Option<&'static str> {
+    label.map(|label| match label {
+        IntentLabel::LocateTarget => "locate_target",
+        IntentLabel::InspectCandidate => "inspect_candidate",
+        IntentLabel::RefineSearch => "refine_search",
+        IntentLabel::ValidateHypothesis => "validate_hypothesis",
+        IntentLabel::EditAttempt => "edit_attempt",
+        IntentLabel::Recovery => "recovery",
+        IntentLabel::Other => "other",
+    })
+}
+
 impl From<RawBranchAssessment> for ProtocolBranchAssessment {
     fn from(value: RawBranchAssessment) -> Self {
         Self {
@@ -836,6 +833,31 @@ impl From<RawSignals> for ProtocolReviewSignals {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
+
+    fn turn_context_json() -> Value {
+        serde_json::json!({
+            "turn": 1,
+            "tool_count": 4,
+            "failed_tool_count": 1,
+            "patch_proposed": false,
+            "patch_applied": false
+        })
+    }
+
+    fn call_json(index: usize, turn: u32, tool_name: &str, tool_kind: &str, summary: &str) -> Value {
+        serde_json::json!({
+            "index": index,
+            "turn": turn,
+            "tool_name": tool_name,
+            "tool_kind": tool_kind,
+            "failed": false,
+            "latency_ms": 10,
+            "summary": summary,
+            "args_preview": "",
+            "result_preview": ""
+        })
+    }
 
     fn artifact(
         path: &str,
@@ -865,9 +887,9 @@ mod tests {
 
     #[test]
     fn normalizes_latest_unique_rows_and_rejects_basis_mismatch() {
-        let record_path = PathBuf::from("/tmp/run/record.json.gz");
         let run_id = "tokio-rs__tokio-5583";
         let subject_id = "tokio-rs__tokio-5583";
+        let record_path = PathBuf::from(format!("/tmp/{run_id}/record.json.gz"));
 
         let anchor = artifact(
             "/tmp/run/1000_tool_call_intent_segmentation_tokio-rs__tokio-5583.json",
@@ -886,7 +908,10 @@ mod tests {
                 },
                 "segments": [
                     {
-                        "calls": [{"index": 0}, {"index": 1}],
+                        "calls": [
+                            call_json(0, 1, "rg", "search", "find target"),
+                            call_json(1, 1, "sed", "read", "inspect file")
+                        ],
                         "confidence": "high",
                         "end_index": 1,
                         "label": "locate_target",
@@ -897,7 +922,10 @@ mod tests {
                         "turns": [1]
                     },
                     {
-                        "calls": [{"index": 2}, {"index": 3}],
+                        "calls": [
+                            call_json(2, 1, "rg", "search", "refine search"),
+                            call_json(3, 1, "sed", "read", "inspect candidate")
+                        ],
                         "confidence": "high",
                         "end_index": 3,
                         "label": "inspect_candidate",
@@ -908,24 +936,32 @@ mod tests {
                         "turns": [1]
                     }
                 ],
-                "sequence": {"calls": [{"index": 0}, {"index": 1}, {"index": 2}, {"index": 3}]},
+                "sequence": {
+                    "subject_id": subject_id,
+                    "total_turns": 1,
+                    "total_calls_in_run": 4,
+                    "turns": [turn_context_json()],
+                    "calls": [
+                        call_json(0, 1, "rg", "search", "find target"),
+                        call_json(1, 1, "sed", "read", "inspect file"),
+                        call_json(2, 1, "rg", "search", "refine search"),
+                        call_json(3, 1, "sed", "read", "inspect candidate")
+                    ]
+                },
                 "signals": {
-                    "browse_calls_in_scope": 1,
-                    "candidate_concerns": ["RecoveryOpportunity"],
+                    "browse_calls": 1,
                     "directory_pivots": 1,
-                    "distinct_tool_count": 3,
-                    "edit_calls_in_scope": 0,
-                    "execute_calls_in_scope": 0,
-                    "failed_calls_in_scope": 1,
-                    "labeled_segments_in_source": 2,
-                    "ambiguous_segments_in_source": 0,
-                    "read_calls_in_scope": 1,
-                    "repeated_tool_name_count": 1,
-                    "scope_turn_count": 1,
-                    "search_calls_in_scope": 1,
-                    "similar_search_neighbors": 0,
-                    "uncovered_calls_in_source": 0
-                }
+                    "edit_calls": 0,
+                    "execute_calls": 0,
+                    "failed_calls": 1,
+                    "read_calls": 2,
+                    "repeated_search_runs": 1,
+                    "search_calls": 2,
+                    "search_terms_seen": [],
+                    "total_calls": 4,
+                    "total_turns": 1
+                },
+                "overall_rationale": "two labeled segments"
             }),
         );
 
@@ -1230,7 +1266,7 @@ mod tests {
         assert_eq!(aggregate.segment_reviews[0].basis.segment_index, 1);
         assert_eq!(
             aggregate.segment_reviews[0].basis.label,
-            "inspect_candidate"
+            Some(IntentLabel::InspectCandidate)
         );
         assert_eq!(aggregate.crosswalk[1].reviewed_call_indices, vec![2]);
         assert_eq!(
@@ -1256,5 +1292,76 @@ mod tests {
             Some(&1)
         );
         assert_eq!(aggregate.derived_metrics.calls_with_segment_crosswalk, 2);
+    }
+
+    #[test]
+    fn loads_ambiguous_anchor_segment_without_label() {
+        let run_id = "tokio-rs__tokio-ambiguous";
+        let subject_id = "tokio-rs__tokio-ambiguous";
+        let record_path = PathBuf::from(format!("/tmp/{run_id}/record.json.gz"));
+
+        let anchor = artifact(
+            "/tmp/run/1000_tool_call_intent_segmentation_tokio-rs__tokio-ambiguous.json",
+            TOOL_CALL_INTENT_SEGMENTATION,
+            1000,
+            subject_id,
+            run_id,
+            serde_json::json!({
+                "coverage": {
+                    "ambiguous_calls": 2,
+                    "ambiguous_segments": 1,
+                    "labeled_calls": 0,
+                    "labeled_segments": 0,
+                    "total_calls": 2,
+                    "uncovered_calls": 0
+                },
+                "segments": [
+                    {
+                        "calls": [
+                            call_json(0, 1, "rg", "search", "search broadly"),
+                            call_json(1, 1, "fd", "search", "pivot search")
+                        ],
+                        "confidence": "medium",
+                        "end_index": 1,
+                        "rationale": "coherent but hard to classify",
+                        "segment_index": 0,
+                        "start_index": 0,
+                        "status": "ambiguous",
+                        "turns": [1]
+                    }
+                ],
+                "sequence": {
+                    "subject_id": subject_id,
+                    "total_turns": 1,
+                    "total_calls_in_run": 2,
+                    "turns": [turn_context_json()],
+                    "calls": [
+                        call_json(0, 1, "rg", "search", "search broadly"),
+                        call_json(1, 1, "fd", "search", "pivot search")
+                    ]
+                },
+                "signals": {
+                    "browse_calls": 0,
+                    "directory_pivots": 0,
+                    "edit_calls": 0,
+                    "execute_calls": 0,
+                    "failed_calls": 0,
+                    "read_calls": 0,
+                    "repeated_search_runs": 0,
+                    "search_calls": 2,
+                    "search_terms_seen": [],
+                    "total_calls": 2,
+                    "total_turns": 1
+                },
+                "overall_rationale": "one ambiguous segment"
+            }),
+        );
+
+        let aggregate = load_protocol_aggregate_from_artifacts(&record_path, vec![anchor])
+            .expect("aggregate should load ambiguous anchor");
+
+        assert_eq!(aggregate.segmentation.segments.len(), 1);
+        assert_eq!(aggregate.segmentation.segments[0].status, SegmentStatus::Ambiguous);
+        assert_eq!(aggregate.segmentation.segments[0].label, None);
     }
 }
