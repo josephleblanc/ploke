@@ -36,6 +36,14 @@ aggregation.
 - [`2026-04-17_protocol-diagnosis-subagent-template.md`](./2026-04-17_protocol-diagnosis-subagent-template.md)
   Copyable sub-agent launch template that packages the workflow, ownership
   gate, and fixed report schema into one reusable prompt.
+- [`2026-04-17_edr-0003-downstream-validation-plan.md`](./2026-04-17_edr-0003-downstream-validation-plan.md)
+  Concrete downstream validation plan for `EDR-0003`, using the local
+  Multi-SWE-bench harness and a fixed protocol-derived cohort rather than an
+  invented recommendation oracle.
+- [`2026-04-17_edr-0003-baseline-cohort-report.md`](./2026-04-17_edr-0003-baseline-cohort-report.md)
+  Hard Multi-SWE-bench baseline report for the fixed `EDR-0003` pilot cohort,
+  including the `0/5` resolved starting point and benchmark-side invalidation
+  pattern.
 - [`2026-04-17_workflow-trial-search-thrash.md`](./2026-04-17_workflow-trial-search-thrash.md)
   Trial report for the `search_thrash` issue-family slice.
 - [`2026-04-17_workflow-trial-request-code-context.md`](./2026-04-17_workflow-trial-request-code-context.md)

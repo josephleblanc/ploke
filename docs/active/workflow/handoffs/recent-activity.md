@@ -6,15 +6,6 @@
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
 
-## Guardrails
-
-- **PRODUCTION CODE CHANGES OUTSIDE PLOKE-EVAL REQUIRE EXPLICIT PERMISSION**
-  - Before modifying any production code outside `crates/ploke-eval/`:
-    1. STOP and ask the user
-    2. Wait for explicit permission before proceeding
-  - This applies to: `syn_parser`, `ploke-tui`, `ploke-db`, `ploke-llm`, etc.
-  - Rationale: Prevent unintended side effects on core infrastructure during eval work
-
 ## 2026-04-16
 
 ## 2026-04-17

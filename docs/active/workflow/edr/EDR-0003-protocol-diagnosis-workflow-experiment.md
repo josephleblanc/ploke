@@ -21,77 +21,89 @@
   - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-partial-next-step.md`
   - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-artifact-errors.md`
   - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-read-file-partial-next-step.md`
+  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_edr-0003-downstream-validation-plan.md`
+  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_edr-0003-baseline-cohort-report.md`
 
 ## Decision
 
-Run a bounded parallel trial of a protocol-driven diagnosis workflow before
-relying on it as the default way to turn campaign protocol data into production
-`ploke` / `ploke-tui` improvement hypotheses.
+Run a bounded downstream cohort-replay experiment to test whether the
+protocol-driven diagnosis workflow can select a production-harness change that
+improves real Multi-SWE-bench outcomes on a fixed cohort.
 
 ## Why Now
 
-The new campaign triage surface in `ploke-eval` makes it possible to move from
-campaign-level protocol evidence to one bounded issue/tool/status slice, but the
-workflow for using that surface was not yet stable enough to trust by default.
+The workflow trial established that the process is runnable, but not that its
+recommendations are good. We already have a local adjudication system
+(`ploke-protocol`) for trace evidence and a local Multi-SWE-bench harness for
+hard downstream outcomes. That means the next validation step should use those
+existing surfaces directly rather than inventing a new recommendation-scoring
+oracle.
 
-This was a materially diagnostic workflow change because the question was not
-only "can we inspect the data?" but "can multiple agents use the same workflow
-and reach similar, actionable conclusions without drifting into the wrong code
-layer?"
+The real question is now:
 
-The main risk was exactly what the trial needed to test:
+- can the workflow choose a bounded production-harness intervention
+- that intervention can be implemented
+- and the resulting change improves hard benchmark results on a fixed cohort
 
-- issue-only slices might collapse into `ploke-eval` / protocol-analysis work
-- tool-focused slices might produce better production-facing recommendations
-- artifact/status slices might need a different ownership path than tool
-  diagnosis
+The current pilot uses a protocol-derived `request_code_context +
+search_thrash` cohort with existing non-empty submissions and a local
+Multi-SWE-bench runner path.
 
 ## Control And Treatment
 
 - control:
-  ad hoc diagnosis prompts without a fixed workflow, ownership gate, or fixed
-  report schema
+  current production harness and current submission artifacts for the fixed
+  cohort
 - treatment:
-  a bounded workflow using campaign triage, bounded slice selection, exemplar
-  review, code-surface inspection, and a ranked intervention ladder
+  one bounded production-harness change selected through the structured
+  protocol diagnosis workflow and evaluated on the same cohort
 - frozen variables:
-  same campaign (`rust-baseline-grok4-xai`), same `ploke-eval` campaign triage
-  surface, same top-level report headings, same intervention ladder shape, and
-  one slice per agent
+  same cohort, same benchmark harness, same dataset file, same evaluation
+  config shape, and the same adjudicated protocol evidence surface used to
+  choose the intervention
 
 ## Acceptance Criteria
 
 - primary:
-  sub-agents can use the workflow to produce concise reports with one bounded
-  problem family, one plausible owning surface, and one concrete recommended
-  next move
+  treatment improves `resolved_instances` on the fixed cohort relative to the
+  baseline submission set
 - secondary:
-  multiple sub-agents converge on similar intervention shapes for tool-focused
-  slices, and the workflow reveals where issue-only slices are under-specified
+  treatment does not increase benchmark `error_instances` or
+  `incomplete_instances`, and at least one targeted protocol-slice signal moves
+  in the expected direction on rerun traces
 - validity guards:
-  each agent stays inside one slice, inspects only a small exemplar set, writes
-  only its assigned report, and does not implement fixes during the trial
+  fixed cohort, one bounded production change, same benchmark harness config
+  shape, and explicit `inconclusive` handling if provider/harness instability
+  dominates interpretation
 
 ## Plan
 
-1. Implement the campaign triage surface needed to support the workflow.
-2. Run several sub-agents in parallel over different slice types.
-3. Compare convergence, drift, and recommendation quality.
-4. Revise the workflow only after the trial results are in.
+1. Establish a hard Multi-SWE-bench baseline for the fixed cohort.
+2. Run the diagnosis workflow on the selected protocol slice and choose one
+   bounded production-harness intervention.
+3. Implement that intervention.
+4. Regenerate submissions for the same cohort.
+5. Re-run Multi-SWE-bench on the same cohort and compare the before/after
+   result plus the targeted protocol-slice deltas.
 
 ## Result
 
 - outcome:
-  first bounded trial completed; external usefulness still unvalidated
+  workflow trial completed and hard downstream baseline established; treatment
+  not yet run
 - key metrics:
-  qualitative workflow-comparison outcome only; no formal run manifests and no
-  independent quality scoring of the resulting recommendations
+  - workflow trial: qualitative only
+  - downstream baseline cohort: `0/5` resolved, `5/5` unresolved
 - failure breakdown:
   - tool-focused and combined tool+issue slices produced the most
     production-facing recommendations
   - `status=error` worked well for artifact/schema ownership
   - issue-only slices (`search_thrash`, `partial_next_step`) drifted toward
     `ploke-eval` / protocol-calibration work unless ownership was forced
+  - downstream pilot baseline on the selected `request_code_context +
+    search_thrash` `clap` cohort produced:
+    - `3/5` invalid benchmark reports with no fix-stage test results captured
+    - `2/5` benchmark reports where fix-stage tests ran but solved nothing
 - surprises:
   - the workflow was stable enough to run in parallel without extra handholding
   - the combined slice (`read_file` + `partial_next_step`) constrained
@@ -106,8 +118,8 @@ The main risk was exactly what the trial needed to test:
 - adopt / reject / inconclusive:
   inconclusive
 - next action:
-  treat the current workflow and sub-agent template as experimental scaffolding
-  only; do not treat the workflow as validated until a follow-up pass evaluates
-  recommendation quality against operator judgment or downstream implementation
-  outcomes. Keep the ownership-gate refinement, but require an explicit
-  validation step before promotion.
+  baseline is now established; run the structured diagnosis workflow on the
+  selected slice, choose one bounded production-harness intervention, implement
+  it, regenerate the cohort submissions, and compare the treatment
+  `final_report.json` plus rerun protocol-slice deltas against the recorded
+  baseline.

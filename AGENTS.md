@@ -131,17 +131,6 @@ When the user asks you to check or read logs:
 - If a possible fix would make the system more permissive, tolerate previously invalid states, silently skip expected data, or weaken invariants, stop and ask before implementing it.
 - When presenting such a proposal, describe the tradeoff plainly: what invariant would be weakened, what failures would stop surfacing, and what safer alternatives exist.
 
-## Production Code Changes For Eval Work
-
-- **Do not modify production code outside `crates/ploke-eval/` without explicit user permission.**
-- Before changing `syn_parser`, `ploke-tui`, `ploke-db`, `ploke-llm`, or other core crates:
-  1. stop
-  2. ask the user
-  3. wait for explicit permission before proceeding
-
-Rationale:
-- prevents unintended side effects on core infrastructure during eval work
-
 ## Backup Fixtures
 
 - Treat backup fixture databases under `tests/backup_dbs/` as schema-coupled fixtures, not long-term compatibility targets by default.
