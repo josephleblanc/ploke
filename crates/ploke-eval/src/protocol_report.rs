@@ -805,6 +805,7 @@ mod tests {
                 width: 100,
                 use_color: false,
                 top_call_issues: 8,
+                color_profile: ProtocolColorProfile::TokioNight,
             },
         );
 

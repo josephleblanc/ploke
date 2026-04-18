@@ -12,6 +12,8 @@
 
 ## 2026-04-18
 
+- Added `crates/ploke-eval/src/inner/HANDOFF.md` with cold-start instructions for the rewrite: current slice, required reads, verification command, next seam, and guardrails against framework sprawl.
+
 - Inner eval rewrite slice 1 landed. `RunIntent` freezes into `FrozenRunSpec`, `RunRegistration` now takes storage roots from the frozen intent, stable run ids remain task-readable, and registration errors keep path provenance.
 
 - **PROTOCOL DIAGNOSIS WORKFLOW IS NOW EXPLICIT, BUT ITS EXPERIMENT RECORD REMAINS ACTIVE AND INCONCLUSIVE**

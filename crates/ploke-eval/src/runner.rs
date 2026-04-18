@@ -3251,6 +3251,7 @@ mod tests {
             head_sha: Some("def456".to_string()),
             budget: EvalBudget::default(),
             source: None,
+            campaign: None,
         };
 
         let db = init_runtime_db().expect("init runtime db");
@@ -3301,6 +3302,7 @@ mod tests {
             head_sha: Some("def456".to_string()),
             budget: EvalBudget::default(),
             source: None,
+            campaign: None,
         };
         let prepared_b = PreparedSingleRun {
             base_sha: Some("different".to_string()),
@@ -3453,6 +3455,7 @@ mod tests {
             head_sha: None,
             budget: EvalBudget::default(),
             source: None,
+            campaign: None,
         };
 
         let prompt = build_agent_issue_prompt(&prepared);
@@ -3487,6 +3490,7 @@ mod tests {
                 language: Some("rust".to_string()),
                 expected_patch_files: vec![PathBuf::from("crates/printer/src/util.rs")],
             })),
+            campaign: None,
         };
 
         let record = build_msb_submission_record(&prepared, "diff --git a/foo b/foo\n".to_string())
@@ -3551,6 +3555,7 @@ mod tests {
                 language: Some("rust".to_string()),
                 expected_patch_files: vec![PathBuf::from("src/lib.rs")],
             })),
+            campaign: None,
         };
 
         let fix_patch = collect_submission_fix_patch(&prepared).expect("submission patch");

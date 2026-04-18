@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -64,8 +65,8 @@ use crate::record::{RawFullResponseRecord, read_compressed_record};
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
 use crate::run_history::print_last_run_assistant_messages;
 use crate::runner::{
-    BatchRunSummary, ReplayMsbBatchRequest, RunMsbAgentBatchRequest, RunMsbAgentSingleRequest,
-    RunMsbBatchRequest, RunMsbSingleRequest, resolve_provider_for_model,
+    BatchRunSummary, MultiSweBenchSubmissionRecord, ReplayMsbBatchRequest, RunMsbAgentBatchRequest,
+    RunMsbAgentSingleRequest, RunMsbBatchRequest, RunMsbSingleRequest, resolve_provider_for_model,
 };
 use crate::spec::{
     EvalBudget, IssueInput, OutputMode, PrepareError, PrepareSingleRunRequest, PrepareWrite,
@@ -114,6 +115,11 @@ Batch example
 
   cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --specific 2209
   cargo run -p ploke-eval -- run-msb-agent-batch --batch-id ripgrep-2209
+
+Export campaign submissions
+
+  cargo run -p ploke-eval -- campaign export-submissions --campaign rust-baseline-grok4-xai
+  cargo run -p ploke-eval -- campaign export-submissions --campaign rust-baseline-grok4-xai --nonempty-only
 
 Health check
 
@@ -1298,6 +1304,8 @@ pub enum CampaignSubcommand {
     Show(CampaignShowCommand),
     /// Validate the resolved campaign configuration against local state and provider routing.
     Validate(CampaignValidateCommand),
+    /// Export Multi-SWE-bench submission JSONL from completed runs in the campaign closure state.
+    ExportSubmissions(CampaignExportSubmissionsCommand),
 }
 
 #[derive(Debug, Parser, Clone, Default)]
@@ -1386,6 +1394,25 @@ pub struct CampaignValidateCommand {
 
     #[command(flatten)]
     pub overrides: CampaignOverrideArgs,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct CampaignExportSubmissionsCommand {
+    /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
+    #[arg(long)]
+    pub campaign: String,
+
+    /// Write only records whose fix_patch is non-empty.
+    #[arg(long)]
+    pub nonempty_only: bool,
+
+    /// Output path for the exported JSONL.
+    #[arg(long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
 
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -2213,6 +2240,7 @@ impl CampaignCommand {
             CampaignSubcommand::Init(cmd) => cmd.run().await,
             CampaignSubcommand::Show(cmd) => cmd.run().await,
             CampaignSubcommand::Validate(cmd) => cmd.run().await,
+            CampaignSubcommand::ExportSubmissions(cmd) => cmd.run().await,
         }
     }
 }
@@ -2388,6 +2416,92 @@ impl CampaignValidateCommand {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl CampaignExportSubmissionsCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let state = load_closure_state(&self.campaign)?;
+        let records = collect_campaign_submission_records(&state, self.nonempty_only)?;
+        let complete_eval_rows = state
+            .instances
+            .iter()
+            .filter(|row| row.eval_status == ClosureClass::Complete)
+            .count();
+        let empty_patch_rows = count_campaign_empty_patch_rows(&state)?;
+        let output_path = self
+            .output
+            .unwrap_or(default_campaign_submission_export_path(
+                &self.campaign,
+                self.nonempty_only,
+            )?);
+
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+
+        let mut jsonl = String::new();
+        for record in &records {
+            let line = serde_json::to_string(record).map_err(PrepareError::Serialize)?;
+            jsonl.push_str(&line);
+            jsonl.push('\n');
+        }
+        fs::write(&output_path, jsonl).map_err(|source| PrepareError::WriteManifest {
+            path: output_path.clone(),
+            source,
+        })?;
+
+        let summary = CampaignSubmissionExportSummary {
+            campaign_id: self.campaign,
+            closure_state_path: closure_state_path(&state.campaign_id)?,
+            output_path,
+            exported_records: records.len(),
+            nonempty_only: self.nonempty_only,
+            complete_eval_rows,
+            empty_patch_rows_skipped: if self.nonempty_only {
+                empty_patch_rows
+            } else {
+                0
+            },
+            failed_eval_rows: state
+                .instances
+                .iter()
+                .filter(|row| row.eval_status == ClosureClass::Failed)
+                .count(),
+        };
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!(
+                    "campaign {} | exported {} submission records{}",
+                    summary.campaign_id,
+                    summary.exported_records,
+                    if summary.nonempty_only {
+                        " (non-empty only)"
+                    } else {
+                        ""
+                    }
+                );
+                println!("closure: {}", summary.closure_state_path.display());
+                println!("output: {}", summary.output_path.display());
+                println!("complete eval rows: {}", summary.complete_eval_rows);
+                println!(
+                    "empty patch rows skipped: {}",
+                    summary.empty_patch_rows_skipped
+                );
+                println!("failed eval rows: {}", summary.failed_eval_rows);
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&summary).map_err(PrepareError::Serialize)?
                 );
             }
         }
@@ -2691,6 +2805,18 @@ struct CampaignValidationView {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct CampaignSubmissionExportSummary {
+    campaign_id: String,
+    closure_state_path: PathBuf,
+    output_path: PathBuf,
+    exported_records: usize,
+    complete_eval_rows: usize,
+    empty_patch_rows_skipped: usize,
+    failed_eval_rows: usize,
+    nonempty_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct EvalBatchPlan {
     batch_id: String,
     dataset_label: String,
@@ -2776,6 +2902,70 @@ fn campaign_context_from_config(config: &ResolvedCampaignConfig) -> PreparedCamp
         provider_slug: config.provider_slug.clone(),
         framework: config.framework.clone(),
     }
+}
+
+fn default_campaign_submission_export_path(
+    campaign_id: &str,
+    nonempty_only: bool,
+) -> Result<PathBuf, PrepareError> {
+    let file_name = if nonempty_only {
+        "multi-swe-bench-submission.nonempty.jsonl"
+    } else {
+        "multi-swe-bench-submission.jsonl"
+    };
+    Ok(crate::layout::campaigns_dir()?
+        .join(campaign_id)
+        .join(file_name))
+}
+
+fn collect_campaign_submission_records(
+    state: &crate::closure::ClosureState,
+    nonempty_only: bool,
+) -> Result<Vec<MultiSweBenchSubmissionRecord>, PrepareError> {
+    let mut records = Vec::new();
+    for row in &state.instances {
+        if row.eval_status != ClosureClass::Complete {
+            continue;
+        }
+        let record = load_submission_record_for_row(state, row)?;
+        if nonempty_only && record.fix_patch.trim().is_empty() {
+            continue;
+        }
+        records.push(record);
+    }
+    Ok(records)
+}
+
+fn count_campaign_empty_patch_rows(
+    state: &crate::closure::ClosureState,
+) -> Result<usize, PrepareError> {
+    let mut count = 0;
+    for row in &state.instances {
+        if row.eval_status != ClosureClass::Complete {
+            continue;
+        }
+        let record = load_submission_record_for_row(state, row)?;
+        if record.fix_patch.trim().is_empty() {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn load_submission_record_for_row(
+    state: &crate::closure::ClosureState,
+    row: &crate::closure::ClosureInstanceRow,
+) -> Result<MultiSweBenchSubmissionRecord, PrepareError> {
+    let path = state
+        .config
+        .runs_root
+        .join(&row.instance_id)
+        .join("multi-swe-bench-submission.jsonl");
+    let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
+        path: path.clone(),
+        source,
+    })?;
+    serde_json::from_str(text.trim()).map_err(|source| PrepareError::ParseManifest { path, source })
 }
 
 fn select_eval_rows<'a>(
@@ -7722,6 +7912,7 @@ mod tests {
     use super::*;
     use ploke_core::ArcStr;
     use ploke_tui::chat_history::{MessageKind, MessageStatus};
+    use tempfile::tempdir;
     use uuid::Uuid;
 
     fn sample_message(
@@ -8057,6 +8248,184 @@ mod tests {
                     cmd.exclude_roles,
                     vec![InspectMessageRole::System, InspectMessageRole::User]
                 );
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    fn sample_closure_state_for_submission_export(
+        runs_root: PathBuf,
+    ) -> crate::closure::ClosureState {
+        crate::closure::ClosureState {
+            schema_version: crate::closure::CLOSURE_STATE_SCHEMA_VERSION.to_string(),
+            campaign_id: "campaign-1".to_string(),
+            updated_at: "2026-04-17T00:00:00Z".to_string(),
+            config: crate::closure::ClosureConfig {
+                benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+                model_id: Some("x-ai/grok-4-fast".to_string()),
+                provider_slug: Some("xai".to_string()),
+                registry_path: None,
+                dataset_sources: Vec::new(),
+                required_procedures: Vec::new(),
+                runs_root,
+                batches_root: PathBuf::from("/tmp/batches"),
+                framework: crate::spec::FrameworkConfig::default(),
+            },
+            registry: crate::closure::RegistryClosureSummary {
+                expected_total: 3,
+                mapped_total: 3,
+                missing_total: 0,
+                ambiguous_total: 0,
+                status: ClosureClass::Complete,
+            },
+            eval: crate::closure::EvalClosureSummary {
+                expected_total: 3,
+                complete_total: 2,
+                failed_total: 1,
+                missing_total: 0,
+                partial_total: 0,
+                in_progress_total: 0,
+                status: ClosureClass::Partial,
+                last_transition_at: None,
+            },
+            protocol: crate::closure::ProtocolClosureSummary {
+                expected_total: 0,
+                full_total: 0,
+                partial_total: 0,
+                failed_total: 0,
+                missing_total: 0,
+                incompatible_total: 0,
+                ineligible_total: 0,
+                in_progress_total: 0,
+                status: ClosureClass::Complete,
+                required_procedures: Vec::new(),
+                status_by_procedure: BTreeMap::new(),
+                last_transition_at: None,
+            },
+            instances: vec![
+                crate::closure::ClosureInstanceRow {
+                    instance_id: "org__repo-1".to_string(),
+                    dataset_label: "org__repo".to_string(),
+                    repo_family: "org__repo".to_string(),
+                    registry_status: crate::closure::RegistryInstanceStatus::Mapped,
+                    eval_status: ClosureClass::Complete,
+                    protocol_status: ClosureClass::Complete,
+                    eval_failure: None,
+                    protocol_failure: None,
+                    artifacts: crate::closure::ClosureArtifactRefs::default(),
+                    protocol_procedures: BTreeMap::new(),
+                    protocol_counts: None,
+                    last_event_at: None,
+                },
+                crate::closure::ClosureInstanceRow {
+                    instance_id: "org__repo-2".to_string(),
+                    dataset_label: "org__repo".to_string(),
+                    repo_family: "org__repo".to_string(),
+                    registry_status: crate::closure::RegistryInstanceStatus::Mapped,
+                    eval_status: ClosureClass::Complete,
+                    protocol_status: ClosureClass::Complete,
+                    eval_failure: None,
+                    protocol_failure: None,
+                    artifacts: crate::closure::ClosureArtifactRefs::default(),
+                    protocol_procedures: BTreeMap::new(),
+                    protocol_counts: None,
+                    last_event_at: None,
+                },
+                crate::closure::ClosureInstanceRow {
+                    instance_id: "org__repo-3".to_string(),
+                    dataset_label: "org__repo".to_string(),
+                    repo_family: "org__repo".to_string(),
+                    registry_status: crate::closure::RegistryInstanceStatus::Mapped,
+                    eval_status: ClosureClass::Failed,
+                    protocol_status: ClosureClass::Ineligible,
+                    eval_failure: Some("failed".to_string()),
+                    protocol_failure: None,
+                    artifacts: crate::closure::ClosureArtifactRefs::default(),
+                    protocol_procedures: BTreeMap::new(),
+                    protocol_counts: None,
+                    last_event_at: None,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn collect_campaign_submission_records_filters_empty_patches_only_when_requested() {
+        let tmp = tempdir().expect("tempdir");
+        let runs_root = tmp.path().join("runs");
+        fs::create_dir_all(runs_root.join("org__repo-1")).expect("run dir 1");
+        fs::create_dir_all(runs_root.join("org__repo-2")).expect("run dir 2");
+        fs::write(
+            runs_root
+                .join("org__repo-1")
+                .join("multi-swe-bench-submission.jsonl"),
+            serde_json::to_string(&MultiSweBenchSubmissionRecord {
+                org: "org".to_string(),
+                repo: "repo".to_string(),
+                number: 1,
+                fix_patch: "diff --git a/src/lib.rs b/src/lib.rs\n".to_string(),
+            })
+            .expect("json"),
+        )
+        .expect("write submission 1");
+        fs::write(
+            runs_root
+                .join("org__repo-2")
+                .join("multi-swe-bench-submission.jsonl"),
+            serde_json::to_string(&MultiSweBenchSubmissionRecord {
+                org: "org".to_string(),
+                repo: "repo".to_string(),
+                number: 2,
+                fix_patch: String::new(),
+            })
+            .expect("json"),
+        )
+        .expect("write submission 2");
+
+        let state = sample_closure_state_for_submission_export(runs_root);
+        let all_records =
+            collect_campaign_submission_records(&state, false).expect("all records export");
+        let nonempty_records =
+            collect_campaign_submission_records(&state, true).expect("nonempty export");
+
+        assert_eq!(all_records.len(), 2);
+        assert_eq!(nonempty_records.len(), 1);
+        assert_eq!(nonempty_records[0].number, 1);
+        assert_eq!(
+            count_campaign_empty_patch_rows(&state).expect("empty rows"),
+            1
+        );
+    }
+
+    #[test]
+    fn default_campaign_submission_export_path_uses_campaign_directory() {
+        let path =
+            default_campaign_submission_export_path("campaign-1", false).expect("default path");
+        assert!(path.ends_with("campaign-1/multi-swe-bench-submission.jsonl"));
+
+        let nonempty_path =
+            default_campaign_submission_export_path("campaign-1", true).expect("nonempty path");
+        assert!(nonempty_path.ends_with("campaign-1/multi-swe-bench-submission.nonempty.jsonl"));
+    }
+
+    #[test]
+    fn campaign_export_submissions_parses_nonempty_flag() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "campaign",
+            "export-submissions",
+            "--campaign",
+            "campaign-1",
+            "--nonempty-only",
+        ])
+        .expect("campaign export-submissions should parse");
+
+        match parsed.command {
+            Command::Campaign(CampaignCommand {
+                command: CampaignSubcommand::ExportSubmissions(cmd),
+            }) => {
+                assert_eq!(cmd.campaign, "campaign-1");
+                assert!(cmd.nonempty_only);
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

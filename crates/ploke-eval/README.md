@@ -124,6 +124,17 @@ official Multi-SWE-bench evaluator. Local `ploke-eval` artifacts such as
 telemetry, not the benchmark source of truth. Official pass/fail comes from
 running the external Multi-SWE-bench evaluator on the exported submission.
 
+Campaign-wide export:
+
+```bash
+cargo run -p ploke-eval -- campaign export-submissions --campaign rust-baseline-grok4-xai
+cargo run -p ploke-eval -- campaign export-submissions --campaign rust-baseline-grok4-xai --nonempty-only
+```
+
+This reuses the persisted `closure-state.json` for the campaign, reads each
+completed run's `multi-swe-bench-submission.jsonl`, and writes a single
+campaign-scoped JSONL under `~/.ploke-eval/campaigns/<campaign>/`.
+
 ## Current embedding preset
 
 `run-msb-single` currently uses a hardcoded OpenRouter embedding preset:

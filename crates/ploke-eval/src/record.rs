@@ -1785,6 +1785,7 @@ mod tests {
             head_sha: None,
             budget: crate::spec::EvalBudget::default(),
             source: None,
+            campaign: None,
         };
 
         let record = RunRecord::new(&manifest, RunArm::structured_current_policy_treatment());

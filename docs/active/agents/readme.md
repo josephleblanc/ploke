@@ -24,6 +24,12 @@ Restart-oriented table of contents for `docs/active/agents/` and nearby restart-
 
 ## Supporting Context
 
+- [2026-04-18_ploke-eval-canonical-artifact-set.md](./2026-04-18_ploke-eval-canonical-artifact-set.md)
+  Reduced stored artifact policy for the `ploke-eval` rewrite: one registration surface, one run/evidence record, one final DB attachment, and explicit elimination rules for duplicate sidecars.
+- [2026-04-18_ploke-eval-procedure-model.md](./2026-04-18_ploke-eval-procedure-model.md)
+  Eval-specific procedure model for the `ploke-eval` rewrite: larger run execution object, configuration authority, transition boundaries, and semantic-vs-evidence-vs-projection separation.
+- [2026-04-18_ploke-eval-pipeline-recon/README.md](./2026-04-18_ploke-eval-pipeline-recon/README.md)
+  Recon packet for untangling the current `ploke-eval` patch-generation domain: runtime construction, run-setup configuration, domain mapping, and entanglement notes.
 - [2026-04-15_protocol-aggregate-cli.md](./2026-04-15_protocol-aggregate-cli.md)
   Aggregate inspection surface for protocol artifacts and coverage.
 - [2026-04-15_clap-baseline-eval-orchestration.md](./2026-04-15_clap-baseline-eval-orchestration.md)
