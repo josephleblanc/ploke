@@ -1,6 +1,6 @@
 # Recent Activity
 
-- last_updated: 2026-04-17
+- last_updated: 2026-04-18
 - ready_for: restart into a design-oriented eval/protocol pass using the current protocol harvest as evidence about scheduler shape, artifact schema compatibility, and how local analysis outputs should improve tools rather than only fill coverage cells
 - owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
@@ -9,6 +9,10 @@
 ## 2026-04-16
 
 ## 2026-04-17
+
+## 2026-04-18
+
+- Inner eval rewrite slice 1 landed. `RunIntent` freezes into `FrozenRunSpec`, `RunRegistration` now takes storage roots from the frozen intent, stable run ids remain task-readable, and registration errors keep path provenance.
 
 - **PROTOCOL DIAGNOSIS WORKFLOW IS NOW EXPLICIT, BUT ITS EXPERIMENT RECORD REMAINS ACTIVE AND INCONCLUSIVE**
   - Added a formal protocol-driven diagnosis workflow and sub-agent launch template:

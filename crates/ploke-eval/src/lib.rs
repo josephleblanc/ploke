@@ -1,3 +1,5 @@
+pub mod inner;
+
 pub mod campaign;
 pub mod cli;
 pub mod closure;
