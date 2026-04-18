@@ -1129,7 +1129,8 @@ impl RunMsbSingleRequest {
         let run_start_instant = Instant::now();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
         let requested_model = parse_requested_model_id(self.model_id.as_deref())?;
-        let selected_model = resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
+        let selected_model =
+            resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
         let preferred_provider = load_provider_for_model(&selected_model_id)?;
         let resolved_provider = resolve_provider_for_model(
@@ -1457,7 +1458,8 @@ impl RunMsbAgentSingleRequest {
         let run_arm = RunArm::structured_current_policy_treatment();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
         let requested_model = parse_requested_model_id(self.model_id.as_deref())?;
-        let selected_model = resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
+        let selected_model =
+            resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
         let preferred_provider = load_provider_for_model(&selected_model_id)?;
         let resolved_provider = resolve_provider_for_model(

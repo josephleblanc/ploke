@@ -151,6 +151,7 @@ Unkown command: {s}\nvalid choices:\n\traw\n\tall\n\tid\n\tarch\n\ttop
     Ok(())
 }
 
+use crate::{HttpFailure, HttpSendFailure};
 use color_eyre::Result;
 use itertools::Itertools as _;
 use ploke_test_utils::workspace_root;
@@ -168,10 +169,18 @@ async fn test_simple_query_models() -> Result<()> {
         .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| LlmError::Request {
-            message: e.to_string(),
-            url: Some(url.to_string()),
-            is_timeout: e.is_timeout(),
+        .map_err(|e| {
+            let phase = if e.is_timeout() {
+                HttpSendFailure::Timeout
+            } else {
+                HttpSendFailure::Failed
+            };
+            LlmError::Http(HttpFailure::send(
+                Some(url.to_string()),
+                None,
+                e.to_string(),
+                phase,
+            ))
         })?;
 
     let response_json = response.text().await?;
@@ -236,10 +245,18 @@ async fn test_default_query_endpoints() -> Result<()> {
         .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| LlmError::Request {
-            message: e.to_string(),
-            url: Some(url.to_string()),
-            is_timeout: e.is_timeout(),
+        .map_err(|e| {
+            let phase = if e.is_timeout() {
+                HttpSendFailure::Timeout
+            } else {
+                HttpSendFailure::Failed
+            };
+            LlmError::Http(HttpFailure::send(
+                Some(url.to_string()),
+                None,
+                e.to_string(),
+                phase,
+            ))
         })?;
 
     let is_success = response.status().is_success();
@@ -289,10 +306,18 @@ async fn test_free_query_endpoints() -> Result<()> {
         .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| LlmError::Request {
-            message: e.to_string(),
-            url: Some(url_for_err),
-            is_timeout: e.is_timeout(),
+        .map_err(|e| {
+            let phase = if e.is_timeout() {
+                HttpSendFailure::Timeout
+            } else {
+                HttpSendFailure::Failed
+            };
+            LlmError::Http(HttpFailure::send(
+                Some(url_for_err),
+                None,
+                e.to_string(),
+                phase,
+            ))
         })?;
 
     let is_success = response.status().is_success();
@@ -359,10 +384,18 @@ async fn test_default_post_completions() -> Result<()> {
         .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| LlmError::Request {
-            message: e.to_string(),
-            url: Some(url.to_string()),
-            is_timeout: e.is_timeout(),
+        .map_err(|e| {
+            let phase = if e.is_timeout() {
+                HttpSendFailure::Timeout
+            } else {
+                HttpSendFailure::Failed
+            };
+            LlmError::Http(HttpFailure::send(
+                Some(url.to_string()),
+                None,
+                e.to_string(),
+                phase,
+            ))
         })?;
     let is_success = response.status().is_success();
     eprintln!("is_success: {}", is_success);

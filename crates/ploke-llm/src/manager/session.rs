@@ -12,6 +12,7 @@ use tracing::warn;
 
 use crate::HTTP_REFERER;
 use crate::HTTP_TITLE;
+use crate::error::{HttpBodyFailure, HttpFailure, HttpReceivePhase, HttpSendFailure};
 use crate::response::FinishReason;
 use crate::response::OpenAiResponse;
 use crate::response::ToolCall;
@@ -59,10 +60,13 @@ pub async fn chat_step<R: Router>(
     cfg: &ChatHttpConfig,
 ) -> Result<ChatStepData, LlmError> {
     let url = R::COMPLETION_URL;
-    let api_key = R::resolve_api_key().map_err(|e| LlmError::Request {
-        message: format!("missing api key: {e}"),
-        url: None,
-        is_timeout: false,
+    let api_key = R::resolve_api_key().map_err(|e| {
+        LlmError::Http(HttpFailure::send(
+            None,
+            None,
+            format!("missing api key: {e}"),
+            HttpSendFailure::Failed,
+        ))
     })?;
 
     let request_json = serde_json::to_string_pretty(req).ok();
@@ -93,11 +97,17 @@ pub async fn chat_step<R: Router>(
         .await
         .map_err(|e| {
             trace_chat_http_error("send", url, start.elapsed(), e.is_timeout(), &e.to_string());
-            LlmError::Request {
-                message: format!("sending request to {url}: {e}"),
-                url: Some(url.to_string()),
-                is_timeout: e.is_timeout(),
-            }
+            let phase = if e.is_timeout() {
+                HttpSendFailure::Timeout
+            } else {
+                HttpSendFailure::Failed
+            };
+            LlmError::Http(HttpFailure::send(
+                Some(url.to_string()),
+                Some(start.elapsed().as_millis()),
+                format!("sending request to {url}: {e}"),
+                phase,
+            ))
         })?;
 
     let resp_url = resp.url().to_string();
@@ -111,11 +121,20 @@ pub async fn chat_step<R: Router>(
             e.is_timeout(),
             &e.to_string(),
         );
-        LlmError::Request {
-            message: format!("while reading response body (status {status}): {e}"),
-            url: Some(resp_url.clone()),
-            is_timeout: e.is_timeout(),
-        }
+        let phase = if e.is_timeout() {
+            HttpBodyFailure::Timeout
+        } else if e.is_decode() {
+            HttpBodyFailure::DecodeFailed
+        } else {
+            HttpBodyFailure::ReadFailed
+        };
+        LlmError::Http(HttpFailure::receive(
+            Some(resp_url.clone()),
+            Some(start.elapsed().as_millis()),
+            Some(status),
+            format!("while reading response body (status {status}): {e}"),
+            HttpReceivePhase::Body(phase),
+        ))
     })?;
 
     let _ = log_api_raw_response(&resp_url, status, &body);

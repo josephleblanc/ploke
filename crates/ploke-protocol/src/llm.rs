@@ -9,6 +9,7 @@ use ploke_llm::router_only::Router;
 use ploke_llm::router_only::openrouter::{OpenRouter, ProviderPreferences};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::core::ExecutorKind;
@@ -134,6 +135,66 @@ pub struct JsonLlmResult<T> {
     pub response: OpenAiResponse,
 }
 
+const JSON_ALIAS_KEYS: &[&str] = &["rationale", "overall_rationale"];
+
+fn parse_protocol_json_content<T: DeserializeOwned>(content: &str) -> Result<T, ProtocolLlmError> {
+    match serde_json::from_str::<T>(content) {
+        Ok(parsed) => Ok(parsed),
+        Err(original_err) => {
+            let mut value: Value =
+                serde_json::from_str(content).map_err(|_| ProtocolLlmError::ParseJson {
+                    detail: original_err.to_string(),
+                    content: content.to_string(),
+                })?;
+
+            if !normalize_protocol_json_aliases(&mut value) {
+                return Err(ProtocolLlmError::ParseJson {
+                    detail: original_err.to_string(),
+                    content: content.to_string(),
+                });
+            }
+
+            serde_json::from_value::<T>(value).map_err(|err| ProtocolLlmError::ParseJson {
+                detail: err.to_string(),
+                content: content.to_string(),
+            })
+        }
+    }
+}
+
+fn normalize_protocol_json_aliases(value: &mut Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            let mut changed = false;
+            for canonical in JSON_ALIAS_KEYS {
+                if map.contains_key(*canonical) {
+                    continue;
+                }
+                let alias_key = map
+                    .keys()
+                    .find(|key| key.eq_ignore_ascii_case(canonical))
+                    .cloned();
+                if let Some(alias_key) = alias_key {
+                    if alias_key != *canonical {
+                        if let Some(alias_value) = map.remove(&alias_key) {
+                            map.insert((*canonical).to_string(), alias_value);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            for nested in map.values_mut() {
+                changed |= normalize_protocol_json_aliases(nested);
+            }
+            changed
+        }
+        Value::Array(items) => items.iter_mut().fold(false, |changed, item| {
+            changed | normalize_protocol_json_aliases(item)
+        }),
+        _ => false,
+    }
+}
+
 pub async fn adjudicate_json<T: DeserializeOwned>(
     client: &reqwest::Client,
     cfg: &JsonLlmConfig,
@@ -179,11 +240,7 @@ pub async fn adjudicate_json<T: DeserializeOwned>(
     match response.outcome {
         ChatStepOutcome::Content { content, reasoning } => {
             let content = content.ok_or(ProtocolLlmError::MissingContent)?.to_string();
-            let parsed =
-                serde_json::from_str::<T>(&content).map_err(|err| ProtocolLlmError::ParseJson {
-                    detail: err.to_string(),
-                    content: content.clone(),
-                })?;
+            let parsed = parse_protocol_json_content::<T>(&content)?;
             Ok(JsonLlmResult {
                 parsed,
                 content,
@@ -192,5 +249,54 @@ pub async fn adjudicate_json<T: DeserializeOwned>(
             })
         }
         ChatStepOutcome::ToolCalls { .. } => Err(ProtocolLlmError::UnexpectedToolCalls),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Deserialize, PartialEq, Eq)]
+    struct ReviewLike {
+        verdict: String,
+        confidence: String,
+        rationale: String,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq, Eq)]
+    struct OverallLike {
+        overall_rationale: String,
+    }
+
+    #[test]
+    fn parse_protocol_json_content_recovers_capitalized_rationale_key() {
+        let parsed = parse_protocol_json_content::<ReviewLike>(
+            r#"{"verdict":"helpful_but_non_essential","confidence":"medium","Rationale":"useful context"}"#,
+        )
+        .expect("parser should recover rationale alias");
+
+        assert_eq!(
+            parsed,
+            ReviewLike {
+                verdict: "helpful_but_non_essential".to_string(),
+                confidence: "medium".to_string(),
+                rationale: "useful context".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_protocol_json_content_recovers_capitalized_overall_rationale_key() {
+        let parsed = parse_protocol_json_content::<OverallLike>(
+            r#"{"Overall_Rationale":"coherent sequence"}"#,
+        )
+        .expect("parser should recover overall rationale alias");
+
+        assert_eq!(
+            parsed,
+            OverallLike {
+                overall_rationale: "coherent sequence".to_string(),
+            }
+        );
     }
 }

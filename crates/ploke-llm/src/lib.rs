@@ -10,7 +10,10 @@ pub mod wire;
 
 pub mod embeddings;
 
-pub use error::LlmError;
+pub use error::{
+    HttpBodyFailure, HttpFailure, HttpPhase, HttpReceiveFailure, HttpReceivePhase, HttpSendFailure,
+    LlmError,
+};
 pub use request::endpoint::EndpointsResponse;
 pub use types::enums::*;
 pub use types::meta::LLMMetadata;

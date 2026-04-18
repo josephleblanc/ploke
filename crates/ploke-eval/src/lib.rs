@@ -7,6 +7,7 @@ pub mod msb;
 pub mod protocol;
 mod protocol_artifacts;
 mod protocol_report;
+mod protocol_triage_report;
 pub mod provider_prefs;
 pub mod record;
 pub mod registry;
@@ -16,13 +17,13 @@ pub mod spec;
 pub mod target_registry;
 pub mod tracing_setup;
 
-pub use cli::Cli;
 pub use campaign::{
-    CAMPAIGN_MANIFEST_SCHEMA_VERSION, CampaignManifest, CampaignOverrides,
-    CampaignValidationCheck, EvalCampaignPolicy, ProtocolCampaignPolicy, ResolvedCampaignConfig,
-    campaign_manifest_path, load_campaign_manifest, render_resolved_campaign_config,
-    resolve_campaign_config, save_campaign_manifest, validate_campaign_config,
+    CAMPAIGN_MANIFEST_SCHEMA_VERSION, CampaignManifest, CampaignOverrides, CampaignValidationCheck,
+    EvalCampaignPolicy, ProtocolCampaignPolicy, ResolvedCampaignConfig, campaign_manifest_path,
+    load_campaign_manifest, render_resolved_campaign_config, resolve_campaign_config,
+    save_campaign_manifest, validate_campaign_config,
 };
+pub use cli::Cli;
 pub use closure::{
     CLOSURE_STATE_SCHEMA_VERSION, ClosureClass, ClosureConfig, ClosureState,
     DEFAULT_REQUIRED_PROCEDURES, closure_state_path, load_closure_state, recompute_closure_state,

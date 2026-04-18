@@ -1,8 +1,9 @@
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::OnceLock;
-use std::{collections::BTreeMap, io::IsTerminal};
 
 use clap::{ArgAction, Parser, Subcommand};
 use ploke_llm::Router;
@@ -15,19 +16,19 @@ use ploke_protocol::tool_calls::{review, segment, trace};
 use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure};
 use regex::Regex;
 use serde::Serialize;
+use tokio::task::JoinSet;
 
 use crate::campaign::{
     CampaignManifest, CampaignOverrides, CampaignValidationCheck, EvalCampaignPolicy,
-    ProtocolCampaignPolicy, ResolvedCampaignConfig,
-    adopt_campaign_manifest_from_closure_state, adopt_campaign_manifest_from_registry,
-    apply_campaign_overrides, campaign_closure_state_path, campaign_manifest_path,
-    dataset_files_from_sources, dataset_keys_from_sources, list_campaigns,
+    ProtocolCampaignPolicy, ResolvedCampaignConfig, adopt_campaign_manifest_from_closure_state,
+    adopt_campaign_manifest_from_registry, apply_campaign_overrides, campaign_closure_state_path,
+    campaign_manifest_path, dataset_files_from_sources, dataset_keys_from_sources, list_campaigns,
     render_resolved_campaign_config, resolve_campaign_config, save_campaign_manifest,
     validate_campaign_config,
 };
 use crate::closure::{
-    ClosureRecomputeRequest, closure_state_path, load_closure_state, recompute_closure_state,
-    render_closure_status,
+    ClosureClass, ClosureRecomputeRequest, closure_state_path, load_closure_state,
+    recompute_closure_state, render_closure_status,
 };
 use crate::layout::{
     active_model_file, batches_dir, cache_dir, datasets_dir, model_registry_file, models_dir,
@@ -39,7 +40,8 @@ use crate::model_registry::{
 };
 use crate::msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 use crate::protocol::protocol_aggregate::{
-    ProtocolAggregate, ProtocolCallReviewRow, load_protocol_aggregate,
+    ProtocolAggregate, ProtocolAggregateError, ProtocolCallReviewRow, load_protocol_aggregate,
+    load_protocol_aggregate_from_artifacts,
 };
 use crate::protocol_artifacts::{
     StoredProtocolArtifactFile, list_protocol_artifacts, load_protocol_artifact,
@@ -49,6 +51,11 @@ use crate::protocol_report::{
     ProtocolAggregateCallIssueRow, ProtocolAggregateCoverage, ProtocolAggregateReport,
     ProtocolAggregateSegmentRow, ProtocolColorProfile, ProtocolReportRenderOptions,
     render_protocol_aggregate_report_with_options,
+};
+use crate::protocol_triage_report::{
+    ProtocolCampaignCountRow, ProtocolCampaignEvidence, ProtocolCampaignExemplarRow,
+    ProtocolCampaignFamilyRow, ProtocolCampaignSummary, ProtocolCampaignTriageReport,
+    render_protocol_campaign_triage_report, sort_count_rows,
 };
 use crate::provider_prefs::{
     clear_provider_for_model, load_provider_for_model, set_provider_for_model,
@@ -1516,6 +1523,10 @@ pub struct ClosureAdvanceProtocolCommand {
     #[arg(long)]
     pub limit_runs: Option<usize>,
 
+    /// Override the maximum number of protocol runs processed concurrently.
+    #[arg(long)]
+    pub max_concurrency: Option<usize>,
+
     /// Stop protocol advancement after the first run-level failure.
     #[arg(long)]
     pub stop_on_error: bool,
@@ -1545,6 +1556,10 @@ pub struct ClosureAdvanceAllCommand {
     /// Override the protocol selection limit for this invocation.
     #[arg(long)]
     pub protocol_limit_runs: Option<usize>,
+
+    /// Override the maximum number of protocol runs processed concurrently.
+    #[arg(long)]
+    pub protocol_max_concurrency: Option<usize>,
 
     /// Stop as soon as eval or protocol advancement hits a failure.
     #[arg(long)]
@@ -1834,16 +1849,20 @@ pub struct InspectQueryCommand {
 #[derive(Debug, Parser)]
 pub struct InspectProtocolOverviewCommand {
     /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
-    #[arg(long, value_name = "PATH", conflicts_with_all = ["instance", "all_runs"])]
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["instance", "all_runs", "campaign"])]
     pub record: Option<PathBuf>,
 
     /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
-    #[arg(long, conflicts_with_all = ["record", "all_runs"])]
+    #[arg(long, conflicts_with_all = ["record", "all_runs", "campaign"])]
     pub instance: Option<String>,
 
     /// Aggregate all finished runs instead of one run.
-    #[arg(long, conflicts_with_all = ["record", "instance"])]
+    #[arg(long, conflicts_with_all = ["record", "instance", "campaign"])]
     pub all_runs: bool,
+
+    /// Inspect one campaign-scoped protocol triage surface instead of one run or all visible runs.
+    #[arg(long, conflicts_with_all = ["record", "instance", "all_runs"])]
+    pub campaign: Option<String>,
 
     /// Which panel to emphasize for a single-run report.
     #[arg(long, value_enum, default_value_t = ProtocolOverviewView::Overview)]
@@ -1861,6 +1880,10 @@ pub struct InspectProtocolOverviewCommand {
     #[arg(long)]
     pub overall: Option<String>,
 
+    /// Filter campaign triage by issue kind (e.g. search_thrash, partial_next_step).
+    #[arg(long, requires = "campaign")]
+    pub issue: Option<String>,
+
     /// Filter segments by label (e.g. refine_search).
     #[arg(long)]
     pub segment_label: Option<String>,
@@ -1869,7 +1892,15 @@ pub struct InspectProtocolOverviewCommand {
     #[arg(long)]
     pub tool: Option<String>,
 
-    /// Maximum number of rows to show in the call-issues table or all-runs summary.
+    /// Filter campaign triage by protocol status (full, partial, error, missing, ineligible).
+    #[arg(long, requires = "campaign")]
+    pub status: Option<String>,
+
+    /// Expand the exemplar list in campaign triage mode.
+    #[arg(long, requires = "campaign")]
+    pub examples: bool,
+
+    /// Maximum number of rows to show in detail tables, exemplar lists, or all-runs summaries.
     #[arg(long, default_value_t = 8)]
     pub limit: usize,
 
@@ -2350,7 +2381,10 @@ impl CampaignValidateCommand {
                 }
             }
             InspectOutputFormat::Json => {
-                let payload = CampaignValidationView { config: resolved, checks };
+                let payload = CampaignValidationView {
+                    config: resolved,
+                    checks,
+                };
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
@@ -2603,6 +2637,9 @@ impl ClosureAdvanceProtocolCommand {
         if let Some(limit_runs) = self.limit_runs {
             policy.limit_runs = Some(limit_runs);
         }
+        if let Some(max_concurrency) = self.max_concurrency {
+            policy.max_concurrency = max_concurrency.max(1);
+        }
         if self.stop_on_error {
             policy.stop_on_error = true;
         }
@@ -2624,6 +2661,9 @@ impl ClosureAdvanceAllCommand {
         let mut protocol_policy = resolved.protocol.clone();
         if let Some(limit_runs) = self.protocol_limit_runs {
             protocol_policy.limit_runs = Some(limit_runs);
+        }
+        if let Some(max_concurrency) = self.protocol_max_concurrency {
+            protocol_policy.max_concurrency = max_concurrency.max(1);
         }
         if self.stop_on_error {
             protocol_policy.stop_on_error = true;
@@ -2675,6 +2715,21 @@ struct ProtocolRunPlan {
     segmentation_needed: bool,
     missing_call_indices: Vec<usize>,
     missing_segment_indices: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct ProtocolRunTask {
+    instance_id: String,
+    record_path: PathBuf,
+}
+
+#[derive(Debug)]
+struct ProtocolRunExecution {
+    instance_id: String,
+    plan: ProtocolRunPlan,
+    segmentations_created: usize,
+    call_reviews_created: usize,
+    segment_reviews_created: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2790,12 +2845,13 @@ fn build_eval_batch_plans(
     let prefix = batch_prefix.unwrap_or(campaign_id);
     let mut grouped = BTreeMap::<(String, PathBuf), Vec<String>>::new();
     for row in selected_rows {
-        let entry = by_instance
-            .get(&row.instance_id)
-            .ok_or_else(|| PrepareError::DatabaseSetup {
-                phase: "closure_advance_eval",
-                detail: format!("registry entry missing for '{}'", row.instance_id),
-            })?;
+        let entry =
+            by_instance
+                .get(&row.instance_id)
+                .ok_or_else(|| PrepareError::DatabaseSetup {
+                    phase: "closure_advance_eval",
+                    detail: format!("registry entry missing for '{}'", row.instance_id),
+                })?;
         grouped
             .entry((row.dataset_label.clone(), entry.source.dataset_path.clone()))
             .or_default()
@@ -2910,79 +2966,113 @@ async fn advance_protocol_closure(
 ) -> Result<ClosureAdvanceProtocolReport, PrepareError> {
     let before_state = recompute_closure_state(closure_request_from_campaign(config))?.1;
     let selected_rows = select_protocol_rows(&before_state, policy);
-    let mut plans = Vec::new();
+    let selected_order = selected_rows
+        .iter()
+        .map(|row| row.instance_id.clone())
+        .collect::<Vec<_>>();
+    let tasks =
+        selected_rows
+            .iter()
+            .map(|row| {
+                let record_path = row.artifacts.record_path.clone().ok_or_else(|| {
+                    PrepareError::DatabaseSetup {
+                        phase: "closure_advance_protocol",
+                        detail: format!("record path missing for '{}'", row.instance_id),
+                    }
+                })?;
+                Ok(ProtocolRunTask {
+                    instance_id: row.instance_id.clone(),
+                    record_path,
+                })
+            })
+            .collect::<Result<Vec<_>, PrepareError>>()?;
+    let mut plans_by_instance = BTreeMap::<String, ProtocolRunPlan>::new();
     let mut executed_runs = 0usize;
     let mut segmentations_created = 0usize;
     let mut call_reviews_created = 0usize;
     let mut segment_reviews_created = 0usize;
     let mut failures = Vec::new();
 
-    for row in selected_rows {
-        let record_path = row
-            .artifacts
-            .record_path
-            .clone()
-            .ok_or_else(|| PrepareError::DatabaseSetup {
-                phase: "closure_advance_protocol",
-                detail: format!("record path missing for '{}'", row.instance_id),
-            })?;
-        let mut plan = protocol_run_plan(&row.instance_id, &record_path)?;
+    if dry_run {
+        for task in tasks {
+            let plan = protocol_run_plan(&task.instance_id, &task.record_path)?;
+            plans_by_instance.insert(task.instance_id, plan);
+        }
+    } else {
+        let max_concurrency = policy.max_concurrency.max(1);
+        let mut pending = tasks.into_iter().collect::<VecDeque<_>>();
+        let mut join_set = JoinSet::new();
+        while join_set.len() < max_concurrency {
+            let Some(task) = pending.pop_front() else {
+                break;
+            };
+            spawn_protocol_run_task(
+                &mut join_set,
+                task,
+                config.model_id.clone(),
+                config.provider_slug.clone(),
+            );
+        }
 
-        if !dry_run {
-            let result = async {
-                if plan.segmentation_needed {
-                    execute_protocol_intent_segments_quiet(
-                        &record_path,
-                        Some(config.model_id.clone()),
-                        config.provider_slug.clone(),
-                    )
-                    .await?;
-                    segmentations_created += 1;
-                    plan = protocol_run_plan(&row.instance_id, &record_path)?;
-                }
-
-                for call_index in &plan.missing_call_indices {
-                    execute_protocol_tool_call_review_quiet(
-                        &record_path,
-                        Some(config.model_id.clone()),
-                        config.provider_slug.clone(),
-                        *call_index,
-                    )
-                    .await?;
-                    call_reviews_created += 1;
-                }
-
-                plan = protocol_run_plan(&row.instance_id, &record_path)?;
-                for segment_index in &plan.missing_segment_indices {
-                    execute_protocol_tool_call_segment_review_quiet(
-                        &record_path,
-                        Some(config.model_id.clone()),
-                        config.provider_slug.clone(),
-                        *segment_index,
-                    )
-                    .await?;
-                    segment_reviews_created += 1;
-                }
-                Ok::<(), PrepareError>(())
-            }
-            .await;
-
-            match result {
-                Ok(()) => {
+        while let Some(joined) = join_set.join_next().await {
+            match joined {
+                Ok(Ok(execution)) => {
                     executed_runs += 1;
-                    plan = protocol_run_plan(&row.instance_id, &record_path)?;
+                    segmentations_created += execution.segmentations_created;
+                    call_reviews_created += execution.call_reviews_created;
+                    segment_reviews_created += execution.segment_reviews_created;
+                    plans_by_instance.insert(execution.instance_id.clone(), execution.plan);
+                    if let Some(task) = pending.pop_front() {
+                        spawn_protocol_run_task(
+                            &mut join_set,
+                            task,
+                            config.model_id.clone(),
+                            config.provider_slug.clone(),
+                        );
+                    }
+                }
+                Ok(Err(err)) => {
+                    failures.push(err.to_string());
+                    if policy.stop_on_error {
+                        join_set.abort_all();
+                        return Err(err);
+                    }
+                    if let Some(task) = pending.pop_front() {
+                        spawn_protocol_run_task(
+                            &mut join_set,
+                            task,
+                            config.model_id.clone(),
+                            config.provider_slug.clone(),
+                        );
+                    }
                 }
                 Err(err) => {
-                    failures.push(format!("{}: {}", row.instance_id, err));
+                    let detail = PrepareError::DatabaseSetup {
+                        phase: "closure_advance_protocol",
+                        detail: format!("protocol worker task failed: {err}"),
+                    };
+                    failures.push(detail.to_string());
                     if policy.stop_on_error {
-                        return Err(err);
+                        join_set.abort_all();
+                        return Err(detail);
+                    }
+                    if let Some(task) = pending.pop_front() {
+                        spawn_protocol_run_task(
+                            &mut join_set,
+                            task,
+                            config.model_id.clone(),
+                            config.provider_slug.clone(),
+                        );
                     }
                 }
             }
         }
-
-        plans.push(plan);
     }
+
+    let plans = selected_order
+        .into_iter()
+        .filter_map(|instance_id| plans_by_instance.remove(&instance_id))
+        .collect::<Vec<_>>();
 
     let after_state = recompute_closure_state(closure_request_from_campaign(config))?.1;
     Ok(ClosureAdvanceProtocolReport {
@@ -2999,7 +3089,105 @@ async fn advance_protocol_closure(
     })
 }
 
-fn protocol_run_plan(instance_id: &str, record_path: &Path) -> Result<ProtocolRunPlan, PrepareError> {
+fn spawn_protocol_run_task(
+    join_set: &mut JoinSet<Result<ProtocolRunExecution, PrepareError>>,
+    task: ProtocolRunTask,
+    model_id: String,
+    provider_slug: Option<String>,
+) {
+    join_set.spawn(async move { execute_protocol_run_task(task, model_id, provider_slug).await });
+}
+
+async fn execute_protocol_run_task(
+    task: ProtocolRunTask,
+    model_id: String,
+    provider_slug: Option<String>,
+) -> Result<ProtocolRunExecution, PrepareError> {
+    let mut plan = protocol_run_plan(&task.instance_id, &task.record_path).map_err(|err| {
+        PrepareError::DatabaseSetup {
+            phase: "closure_advance_protocol",
+            detail: format!("{}: {err}", task.instance_id),
+        }
+    })?;
+    let mut segmentations_created = 0usize;
+    let mut call_reviews_created = 0usize;
+    let mut segment_reviews_created = 0usize;
+
+    if plan.segmentation_needed {
+        execute_protocol_intent_segments_quiet(
+            &task.record_path,
+            Some(model_id.clone()),
+            provider_slug.clone(),
+        )
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "closure_advance_protocol",
+            detail: format!("{}: {err}", task.instance_id),
+        })?;
+        segmentations_created += 1;
+        plan = protocol_run_plan(&task.instance_id, &task.record_path).map_err(|err| {
+            PrepareError::DatabaseSetup {
+                phase: "closure_advance_protocol",
+                detail: format!("{}: {err}", task.instance_id),
+            }
+        })?;
+    }
+
+    for call_index in plan.missing_call_indices.clone() {
+        execute_protocol_tool_call_review_quiet(
+            &task.record_path,
+            Some(model_id.clone()),
+            provider_slug.clone(),
+            call_index,
+        )
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "closure_advance_protocol",
+            detail: format!("{}: {err}", task.instance_id),
+        })?;
+        call_reviews_created += 1;
+    }
+
+    plan = protocol_run_plan(&task.instance_id, &task.record_path).map_err(|err| {
+        PrepareError::DatabaseSetup {
+            phase: "closure_advance_protocol",
+            detail: format!("{}: {err}", task.instance_id),
+        }
+    })?;
+    for segment_index in plan.missing_segment_indices.clone() {
+        execute_protocol_tool_call_segment_review_quiet(
+            &task.record_path,
+            Some(model_id.clone()),
+            provider_slug.clone(),
+            segment_index,
+        )
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "closure_advance_protocol",
+            detail: format!("{}: {err}", task.instance_id),
+        })?;
+        segment_reviews_created += 1;
+    }
+
+    let plan = protocol_run_plan(&task.instance_id, &task.record_path).map_err(|err| {
+        PrepareError::DatabaseSetup {
+            phase: "closure_advance_protocol",
+            detail: format!("{}: {err}", task.instance_id),
+        }
+    })?;
+    Ok(ProtocolRunExecution {
+        instance_id: task.instance_id,
+        plan,
+        segmentations_created,
+        call_reviews_created,
+        segment_reviews_created,
+    })
+}
+
+fn protocol_run_plan(
+    instance_id: &str,
+    record_path: &Path,
+) -> Result<ProtocolRunPlan, PrepareError> {
     match load_protocol_aggregate(record_path) {
         Ok(aggregate) => Ok(ProtocolRunPlan {
             instance_id: instance_id.to_string(),
@@ -3008,14 +3196,14 @@ fn protocol_run_plan(instance_id: &str, record_path: &Path) -> Result<ProtocolRu
             missing_segment_indices: aggregate.coverage.missing_segment_indices,
         }),
         Err(err) => match err {
-            crate::protocol::protocol_aggregate::ProtocolAggregateError::MissingAnchor { .. } => {
-                Ok(ProtocolRunPlan {
-                    instance_id: instance_id.to_string(),
-                    segmentation_needed: true,
-                    missing_call_indices: Vec::new(),
-                    missing_segment_indices: Vec::new(),
-                })
-            }
+            crate::protocol::protocol_aggregate::ProtocolAggregateError::MissingAnchor {
+                ..
+            } => Ok(ProtocolRunPlan {
+                instance_id: instance_id.to_string(),
+                segmentation_needed: true,
+                missing_call_indices: Vec::new(),
+                missing_segment_indices: Vec::new(),
+            }),
             other => Err(PrepareError::DatabaseSetup {
                 phase: "closure_advance_protocol",
                 detail: format!("{}: {other}", instance_id),
@@ -3129,9 +3317,11 @@ fn load_latest_segmented_sequence(
         .max_by_key(|entry| entry.stored.created_at_ms);
     latest
         .map(|entry| {
-            serde_json::from_value(entry.stored.output).map_err(|source| PrepareError::DatabaseSetup {
-                phase: "protocol_load_segmented_sequence",
-                detail: source.to_string(),
+            serde_json::from_value(entry.stored.output).map_err(|source| {
+                PrepareError::DatabaseSetup {
+                    phase: "protocol_load_segmented_sequence",
+                    detail: source.to_string(),
+                }
             })
         })
         .transpose()
@@ -3233,13 +3423,14 @@ fn render_advance_protocol_report(
     match format {
         InspectOutputFormat::Table => {
             println!(
-                "campaign {} | protocol before {} full / {} partial / {} incompatible / {} fail / {} missing",
+                "campaign {} | protocol before {} full / {} partial / {} incompatible / {} fail / {} missing / {} ineligible",
                 report.campaign_id,
                 report.before.full_total,
                 report.before.partial_total,
                 report.before.incompatible_total,
                 report.before.failed_total,
-                report.before.missing_total
+                report.before.missing_total,
+                report.before.ineligible_total
             );
             println!(
                 "selected {} run(s){}",
@@ -3256,12 +3447,13 @@ fn render_advance_protocol_report(
                 );
             }
             println!(
-                "protocol after {} full / {} partial / {} incompatible / {} fail / {} missing",
+                "protocol after {} full / {} partial / {} incompatible / {} fail / {} missing / {} ineligible",
                 report.after.full_total,
                 report.after.partial_total,
                 report.after.incompatible_total,
                 report.after.failed_total,
-                report.after.missing_total
+                report.after.missing_total,
+                report.after.ineligible_total
             );
             if !report.failures.is_empty() {
                 println!("\nfailures");
@@ -4419,6 +4611,26 @@ impl InspectProtocolArtifactsCommand {
 
 impl InspectProtocolOverviewCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
+        if let Some(campaign_id) = self.campaign.clone() {
+            let report = collect_protocol_campaign_triage_report(&campaign_id, &self)?;
+            return match self.format {
+                InspectOutputFormat::Table => {
+                    print!(
+                        "{}",
+                        render_protocol_campaign_triage_report(&report, self.width.max(88),)
+                    );
+                    Ok(())
+                }
+                InspectOutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                    );
+                    Ok(())
+                }
+            };
+        }
+
         if self.all_runs {
             let summaries = collect_protocol_run_summaries()?;
             return match self.format {
@@ -4476,10 +4688,666 @@ impl InspectProtocolOverviewCommand {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct ProtocolCampaignQuery {
+    issue: Option<String>,
+    tool: Option<String>,
+    status: Option<String>,
+}
+
+impl ProtocolCampaignQuery {
+    fn from_command(command: &InspectProtocolOverviewCommand) -> Self {
+        Self {
+            issue: command.issue.as_deref().map(normalize_filter_value),
+            tool: command.tool.as_deref().map(normalize_filter_value),
+            status: command.status.as_deref().map(normalize_filter_value),
+        }
+    }
+
+    fn matches_entry(&self, entry: &ProtocolRunSummaryRecord) -> bool {
+        if let Some(status) = self.status.as_deref() {
+            if entry.summary.protocol_status != status {
+                return false;
+            }
+        }
+
+        if self.issue.is_none() && self.tool.is_none() {
+            return true;
+        }
+
+        entry
+            .report
+            .as_ref()
+            .map(|report| {
+                report
+                    .call_issues
+                    .iter()
+                    .any(|row| self.matches_call_issue(row))
+            })
+            .unwrap_or(false)
+    }
+
+    fn matches_call_issue(&self, row: &ProtocolAggregateCallIssueRow) -> bool {
+        if let Some(issue) = self.issue.as_deref() {
+            let row_issue = row
+                .issue
+                .as_deref()
+                .map(normalize_filter_value)
+                .unwrap_or_default();
+            if row_issue != issue {
+                return false;
+            }
+        }
+
+        if let Some(tool) = self.tool.as_deref() {
+            let row_tool = row
+                .tool_name
+                .as_deref()
+                .map(normalize_filter_value)
+                .unwrap_or_default();
+            if !row_tool.contains(tool) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn scope_label(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(status) = self.status.as_deref() {
+            parts.push(format!("status={status}"));
+        }
+        if let Some(issue) = self.issue.as_deref() {
+            parts.push(format!("issue={issue}"));
+        }
+        if let Some(tool) = self.tool.as_deref() {
+            parts.push(format!("tool={tool}"));
+        }
+        if parts.is_empty() {
+            "campaign-wide protocol triage".to_string()
+        } else {
+            format!("campaign protocol triage filtered by {}", parts.join(", "))
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ProtocolRunSummaryRecord {
+    summary: ProtocolRunSummaryRow,
+    report: Option<ProtocolAggregateReport>,
+}
+
+fn collect_protocol_campaign_triage_report(
+    campaign_id: &str,
+    command: &InspectProtocolOverviewCommand,
+) -> Result<ProtocolCampaignTriageReport, PrepareError> {
+    let state = load_closure_state(campaign_id)?;
+    let query = ProtocolCampaignQuery::from_command(command);
+
+    let mut entries = Vec::new();
+    for row in state
+        .instances
+        .iter()
+        .filter(|row| row.eval_status == ClosureClass::Complete)
+    {
+        entries.push(collect_protocol_campaign_summary_record(row)?);
+    }
+
+    let campaign_runs = entries.len();
+    let selected_entries = entries
+        .iter()
+        .filter(|entry| query.matches_entry(entry))
+        .collect::<Vec<_>>();
+
+    let mut issue_kind_counts = BTreeMap::<String, (usize, BTreeSet<String>)>::new();
+    let mut issue_tool_counts = BTreeMap::<String, (usize, BTreeSet<String>)>::new();
+    let mut segment_label_counts = BTreeMap::<String, (usize, BTreeSet<String>)>::new();
+    let mut segment_status_counts = BTreeMap::<String, (usize, BTreeSet<String>)>::new();
+    let mut summary = ProtocolCampaignSummary::default();
+    let mut evidence = ProtocolCampaignEvidence::default();
+    let mut problem_families = Vec::new();
+    let mut exemplars = Vec::new();
+    let mut filtered_matching_runs = BTreeSet::new();
+
+    let mut artifact_error_runs = Vec::new();
+    let mut missing_coverage_runs = Vec::new();
+    let mut ineligible_runs = Vec::new();
+    let mut high_issue_runs = Vec::new();
+
+    for entry in selected_entries.iter().copied() {
+        match entry.summary.protocol_status.as_str() {
+            "ineligible" => summary.ineligible_runs += 1,
+            _ => {
+                summary.eligible_runs += 1;
+                match entry.summary.protocol_status.as_str() {
+                    "full" => summary.full_runs += 1,
+                    "partial" => summary.partial_runs += 1,
+                    "error" => summary.error_runs += 1,
+                    "missing" => summary.missing_runs += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        evidence.total_tool_calls += entry.summary.tool_calls_total;
+        evidence.missing_tool_call_reviews += entry.summary.missing_call_reviews;
+        if entry.summary.protocol_status == "error" {
+            evidence.artifact_failure_runs += 1;
+        }
+
+        if let Some(report) = entry.report.as_ref() {
+            evidence.reviewed_tool_calls += report.coverage.reviewed_tool_calls;
+            evidence.known_segments += report.coverage.total_segments;
+            evidence.usable_segment_reviews += report.coverage.usable_segment_reviews;
+            evidence.mismatched_segment_reviews += report.coverage.mismatched_segment_reviews;
+            evidence.missing_segment_reviews += report.coverage.missing_segment_indices.len();
+            evidence.duplicate_artifacts += report.coverage.duplicate_artifacts.unwrap_or(0);
+
+            let matching_issues = report
+                .call_issues
+                .iter()
+                .filter(|row| query.matches_call_issue(row))
+                .collect::<Vec<_>>();
+
+            if !matching_issues.is_empty() {
+                filtered_matching_runs.insert(entry.summary.run_id.clone());
+                let segment_rows = report
+                    .segments
+                    .iter()
+                    .map(|row| (row.index, row))
+                    .collect::<BTreeMap<_, _>>();
+                for row in matching_issues {
+                    if let Some(issue) = row.issue.as_deref() {
+                        let (count, runs) = issue_kind_counts
+                            .entry(issue.to_string())
+                            .or_insert_with(|| (0usize, BTreeSet::new()));
+                        *count += 1;
+                        runs.insert(entry.summary.run_id.clone());
+                    }
+                    if let Some(tool) = row.tool_name.as_deref() {
+                        let (count, runs) = issue_tool_counts
+                            .entry(tool.to_string())
+                            .or_insert_with(|| (0usize, BTreeSet::new()));
+                        *count += 1;
+                        runs.insert(entry.summary.run_id.clone());
+                    }
+                    if let Some(segment_index) = row.segment_index {
+                        if let Some(segment) = segment_rows.get(&segment_index) {
+                            if let Some(label) = segment.label.as_deref() {
+                                let (count, runs) = segment_label_counts
+                                    .entry(label.to_string())
+                                    .or_insert_with(|| (0usize, BTreeSet::new()));
+                                *count += 1;
+                                runs.insert(entry.summary.run_id.clone());
+                            }
+                            if let Some(status) = segment.status.as_deref() {
+                                let (count, runs) = segment_status_counts
+                                    .entry(status.to_string())
+                                    .or_insert_with(|| (0usize, BTreeSet::new()));
+                                *count += 1;
+                                runs.insert(entry.summary.run_id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            if entry.summary.call_issues > 0 {
+                high_issue_runs.push(entry);
+            }
+        }
+
+        if entry.summary.protocol_status == "error" {
+            artifact_error_runs.push(entry);
+        } else if entry.summary.protocol_status == "partial"
+            || entry.summary.protocol_status == "missing"
+        {
+            missing_coverage_runs.push(entry);
+        } else if entry.summary.protocol_status == "ineligible" {
+            ineligible_runs.push(entry);
+        }
+    }
+
+    summary.runs_with_issue_calls = if query.issue.is_some() || query.tool.is_some() {
+        filtered_matching_runs.len()
+    } else {
+        selected_entries
+            .iter()
+            .filter(|entry| entry.summary.call_issues > 0)
+            .count()
+    };
+
+    let mut issue_kinds = count_rows_from_map(issue_kind_counts);
+    let mut issue_tools = count_rows_from_map(issue_tool_counts);
+    let nearby_segment_labels = count_rows_from_map(segment_label_counts);
+    let nearby_segment_statuses = count_rows_from_map(segment_status_counts);
+
+    if query.issue.is_none() && query.tool.is_none() {
+        if !artifact_error_runs.is_empty() {
+            problem_families.push(problem_family_for_status_group(
+                "artifact/schema failures",
+                "artifact_schema_failure",
+                &artifact_error_runs,
+                "ploke-protocol / ploke-eval",
+                "protocol artifact compatibility is blocking interpretation",
+                "reduce error-status runs to zero",
+            ));
+        }
+        if !missing_coverage_runs.is_empty() {
+            problem_families.push(problem_family_for_status_group(
+                "missing review coverage",
+                "missing_review_coverage",
+                &missing_coverage_runs,
+                "ploke-eval protocol execution",
+                "reviews are incomplete, so the campaign cannot fully explain tool behavior yet",
+                "reduce partial+missing protocol rows",
+            ));
+        }
+        for row in issue_kinds.iter().take(3) {
+            let exemplars_for_issue = selected_entries
+                .iter()
+                .filter(|entry| {
+                    entry
+                        .report
+                        .as_ref()
+                        .map(|report| {
+                            report.call_issues.iter().any(|issue| {
+                                issue
+                                    .issue
+                                    .as_deref()
+                                    .map(|value| value == row.label)
+                                    .unwrap_or(false)
+                            })
+                        })
+                        .unwrap_or(false)
+                })
+                .collect::<Vec<_>>();
+            if !exemplars_for_issue.is_empty() {
+                problem_families.push(ProtocolCampaignFamilyRow {
+                    label: format!("issue: {}", row.label),
+                    family_kind: "issue_family".to_string(),
+                    affected_runs: row.affected_runs,
+                    affected_calls: row.count,
+                    likely_owner: "ploke-tui tool harness".to_string(),
+                    exemplar_run: exemplars_for_issue
+                        .first()
+                        .map(|entry| entry.summary.run_id.clone()),
+                    note: Some(
+                        "completed protocol data still shows friction in this call family"
+                            .to_string(),
+                    ),
+                    success_metric: Some(format!(
+                        "lower {} issue-call count and affected runs",
+                        row.label
+                    )),
+                });
+            }
+        }
+        if !ineligible_runs.is_empty() {
+            problem_families.push(problem_family_for_status_group(
+                "ineligible zero-tool runs",
+                "ineligible",
+                &ineligible_runs,
+                "campaign/selection hygiene",
+                "these rows do not speak to tool friction and should stay outside the main frontier",
+                "keep ineligible rows out of runnable protocol work",
+            ));
+        }
+    } else {
+        let label = describe_selected_family(&query);
+        let affected_calls = selected_entries
+            .iter()
+            .map(|entry| matching_issue_count(entry, &query))
+            .sum();
+        problem_families.push(ProtocolCampaignFamilyRow {
+            label,
+            family_kind: "filtered_family".to_string(),
+            affected_runs: selected_entries.len(),
+            affected_calls,
+            likely_owner: "ploke-tui tool harness".to_string(),
+            exemplar_run: selected_entries
+                .first()
+                .map(|entry| entry.summary.run_id.clone()),
+            note: Some("this slice is the current drilldown target".to_string()),
+            success_metric: Some(
+                "reduce matching calls and affected runs after the next tool/harness change"
+                    .to_string(),
+            ),
+        });
+    }
+
+    sort_problem_families(&mut problem_families);
+
+    if query.issue.is_none() && query.tool.is_none() {
+        high_issue_runs.sort_by(|left, right| {
+            right
+                .summary
+                .call_issues
+                .cmp(&left.summary.call_issues)
+                .then_with(|| {
+                    right
+                        .summary
+                        .tool_calls_total
+                        .cmp(&left.summary.tool_calls_total)
+                })
+        });
+        exemplars.extend(
+            artifact_error_runs
+                .iter()
+                .take(1)
+                .chain(missing_coverage_runs.iter().take(1))
+                .chain(
+                    high_issue_runs
+                        .iter()
+                        .take(command.limit.max(4).saturating_sub(2)),
+                )
+                .map(|entry| exemplar_row_for_entry(entry, None)),
+        );
+    } else {
+        let mut filtered_entries = selected_entries.clone();
+        filtered_entries.sort_by(|left, right| {
+            matching_issue_count(right, &query)
+                .cmp(&matching_issue_count(left, &query))
+                .then_with(|| right.summary.call_issues.cmp(&left.summary.call_issues))
+                .then_with(|| {
+                    right
+                        .summary
+                        .tool_calls_total
+                        .cmp(&left.summary.tool_calls_total)
+                })
+        });
+        exemplars.extend(
+            filtered_entries
+                .into_iter()
+                .take(if command.examples {
+                    command.limit.max(6)
+                } else {
+                    command.limit.min(5).max(3)
+                })
+                .map(|entry| exemplar_row_for_entry(entry, Some(&query))),
+        );
+    }
+
+    dedupe_exemplars(&mut exemplars);
+    issue_kinds.truncate(command.limit.max(3));
+    issue_tools.truncate(command.limit.max(3));
+    let mut nearby_segment_labels = nearby_segment_labels;
+    let mut nearby_segment_statuses = nearby_segment_statuses;
+    nearby_segment_labels.truncate(command.limit.max(3));
+    nearby_segment_statuses.truncate(command.limit.max(3));
+    problem_families.truncate(command.limit.max(4));
+    if !command.examples {
+        exemplars.truncate(command.limit.min(5).max(4));
+    }
+
+    let next_steps = build_triage_next_steps(
+        campaign_id,
+        &query,
+        &problem_families,
+        &issue_kinds,
+        &issue_tools,
+        &exemplars,
+    );
+
+    Ok(ProtocolCampaignTriageReport {
+        campaign_id: campaign_id.to_string(),
+        scope: query.scope_label(),
+        issue_filter: command.issue.clone(),
+        tool_filter: command.tool.clone(),
+        status_filter: command.status.clone(),
+        selected_runs: selected_entries.len(),
+        campaign_runs,
+        summary,
+        evidence,
+        issue_kinds,
+        issue_tools,
+        nearby_segment_labels,
+        nearby_segment_statuses,
+        problem_families,
+        exemplars,
+        next_steps,
+    })
+}
+
+fn collect_protocol_campaign_summary_record(
+    row: &crate::closure::ClosureInstanceRow,
+) -> Result<ProtocolRunSummaryRecord, PrepareError> {
+    if let Some(record_path) = row.artifacts.record_path.as_deref() {
+        if record_path.exists() {
+            return collect_protocol_run_summary_record(record_path);
+        }
+    }
+    Ok(ProtocolRunSummaryRecord {
+        summary: protocol_summary_row_from_closure_row(row),
+        report: None,
+    })
+}
+
+fn protocol_summary_row_from_closure_row(
+    row: &crate::closure::ClosureInstanceRow,
+) -> ProtocolRunSummaryRow {
+    let protocol_status = match row.protocol_status {
+        ClosureClass::Complete => "full",
+        ClosureClass::Partial => "partial",
+        ClosureClass::Missing => "missing",
+        ClosureClass::Ineligible => "ineligible",
+        ClosureClass::Failed | ClosureClass::Incompatible => "error",
+    };
+    let counts = row.protocol_counts.as_ref();
+    let total_calls = counts.map(|counts| counts.total_calls).unwrap_or(0);
+    let reviewed_calls = counts.map(|counts| counts.reviewed_calls).unwrap_or(0);
+    let total_segments = counts.map(|counts| counts.total_segments).unwrap_or(0);
+    let usable_segments = counts.map(|counts| counts.usable_segments).unwrap_or(0);
+    ProtocolRunSummaryRow {
+        run_id: row.instance_id.clone(),
+        subject_id: row.instance_id.clone(),
+        protocol_status: protocol_status.to_string(),
+        call_review_ratio: ratio(reviewed_calls, total_calls),
+        usable_segment_ratio: ratio(usable_segments, total_segments),
+        tool_calls_total: total_calls,
+        segments_total: total_segments,
+        call_issues: 0,
+        mismatched_segment_reviews: counts.map(|counts| counts.mismatched_segments).unwrap_or(0),
+        missing_call_reviews: total_calls.saturating_sub(reviewed_calls),
+        missing_segment_reviews: counts.map(|counts| counts.missing_segments).unwrap_or(0),
+        note: row.protocol_failure.clone(),
+    }
+}
+
+fn count_rows_from_map(
+    rows: BTreeMap<String, (usize, BTreeSet<String>)>,
+) -> Vec<ProtocolCampaignCountRow> {
+    let mut counts = rows
+        .into_iter()
+        .map(|(label, (count, runs))| ProtocolCampaignCountRow {
+            label,
+            count,
+            affected_runs: runs.len(),
+        })
+        .collect::<Vec<_>>();
+    sort_count_rows(&mut counts);
+    counts
+}
+
+fn problem_family_for_status_group(
+    label: &str,
+    family_kind: &str,
+    entries: &[&ProtocolRunSummaryRecord],
+    likely_owner: &str,
+    note: &str,
+    success_metric: &str,
+) -> ProtocolCampaignFamilyRow {
+    let exemplar_run = entries.first().map(|entry| entry.summary.run_id.clone());
+    let affected_calls = entries
+        .iter()
+        .map(|entry| {
+            if family_kind == "issue_family" || family_kind == "filtered_family" {
+                entry.summary.call_issues
+            } else {
+                entry.summary.missing_call_reviews + entry.summary.missing_segment_reviews
+            }
+        })
+        .sum();
+    ProtocolCampaignFamilyRow {
+        label: label.to_string(),
+        family_kind: family_kind.to_string(),
+        affected_runs: entries.len(),
+        affected_calls,
+        likely_owner: likely_owner.to_string(),
+        exemplar_run,
+        note: Some(note.to_string()),
+        success_metric: Some(success_metric.to_string()),
+    }
+}
+
+fn sort_problem_families(rows: &mut [ProtocolCampaignFamilyRow]) {
+    rows.sort_by(|left, right| {
+        right
+            .affected_runs
+            .cmp(&left.affected_runs)
+            .then_with(|| right.affected_calls.cmp(&left.affected_calls))
+            .then_with(|| left.label.cmp(&right.label))
+    });
+}
+
+fn matching_issue_count(entry: &ProtocolRunSummaryRecord, query: &ProtocolCampaignQuery) -> usize {
+    entry
+        .report
+        .as_ref()
+        .map(|report| {
+            report
+                .call_issues
+                .iter()
+                .filter(|row| query.matches_call_issue(row))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+fn exemplar_row_for_entry(
+    entry: &ProtocolRunSummaryRecord,
+    query: Option<&ProtocolCampaignQuery>,
+) -> ProtocolCampaignExemplarRow {
+    let matching_calls = query
+        .map(|query| matching_issue_count(entry, query))
+        .unwrap_or(entry.summary.call_issues);
+    let focus = if let Some(query) = query {
+        Some(describe_selected_family(query))
+    } else if entry.summary.protocol_status == "error" {
+        Some("artifact/schema failure".to_string())
+    } else if entry.summary.protocol_status == "partial"
+        || entry.summary.protocol_status == "missing"
+    {
+        Some("missing protocol coverage".to_string())
+    } else if entry.summary.call_issues > 0 {
+        entry.report.as_ref().and_then(|report| {
+            report
+                .call_issues
+                .iter()
+                .find_map(|row| row.issue.as_deref().map(|value| value.to_string()))
+        })
+    } else {
+        None
+    };
+    ProtocolCampaignExemplarRow {
+        run_id: entry.summary.run_id.clone(),
+        protocol_status: entry.summary.protocol_status.clone(),
+        matching_calls,
+        total_issues: entry.summary.call_issues,
+        tool_calls_total: entry.summary.tool_calls_total,
+        focus,
+        note: entry.summary.note.clone(),
+    }
+}
+
+fn dedupe_exemplars(rows: &mut Vec<ProtocolCampaignExemplarRow>) {
+    let mut seen = BTreeSet::new();
+    rows.retain(|row| seen.insert(row.run_id.clone()));
+}
+
+fn build_triage_next_steps(
+    campaign_id: &str,
+    query: &ProtocolCampaignQuery,
+    problem_families: &[ProtocolCampaignFamilyRow],
+    issue_kinds: &[ProtocolCampaignCountRow],
+    issue_tools: &[ProtocolCampaignCountRow],
+    exemplars: &[ProtocolCampaignExemplarRow],
+) -> Vec<String> {
+    let mut steps = Vec::new();
+    if query.issue.is_none() {
+        if let Some(top_issue) = issue_kinds.first() {
+            steps.push(format!(
+                "if you want exemplar runs for the top issue family, try `ploke-eval inspect protocol-overview --campaign {campaign_id} --issue {}`",
+                top_issue.label
+            ));
+        }
+    }
+    if query.tool.is_none() {
+        if let Some(top_tool) = issue_tools.first() {
+            steps.push(format!(
+                "if you want the most suspicious tool slice next, try `ploke-eval inspect protocol-overview --campaign {campaign_id} --tool {}`",
+                top_tool.label
+            ));
+        }
+    }
+    if query.status.is_none()
+        && problem_families
+            .iter()
+            .any(|family| family.family_kind == "artifact_schema_failure")
+    {
+        steps.push(format!(
+            "if you want only artifact/schema failures, try `ploke-eval inspect protocol-overview --campaign {campaign_id} --status error`"
+        ));
+    }
+    if let Some(exemplar) = exemplars.first() {
+        steps.push(format!(
+            "if you want the protocol report for the top exemplar, try `ploke-eval inspect protocol-overview --instance {}`",
+            exemplar.run_id
+        ));
+        if exemplar.protocol_status == "error" {
+            steps.push(format!(
+                "if you want the raw artifact failure for that exemplar, try `ploke-eval inspect protocol-artifacts --instance {} --full`",
+                exemplar.run_id
+            ));
+        } else {
+            steps.push(format!(
+                "if you want the local tool trace around that exemplar, try `ploke-eval inspect tool-calls --instance {}`",
+                exemplar.run_id
+            ));
+        }
+    }
+    steps.truncate(4);
+    steps
+}
+
+fn describe_selected_family(query: &ProtocolCampaignQuery) -> String {
+    let mut parts = Vec::new();
+    if let Some(status) = query.status.as_deref() {
+        parts.push(format!("status={status}"));
+    }
+    if let Some(issue) = query.issue.as_deref() {
+        parts.push(format!("issue={issue}"));
+    }
+    if let Some(tool) = query.tool.as_deref() {
+        parts.push(format!("tool={tool}"));
+    }
+    if parts.is_empty() {
+        "campaign slice".to_string()
+    } else {
+        parts.join(" + ")
+    }
+}
+
+fn normalize_filter_value(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct ProtocolRunSummaryRow {
     run_id: String,
     subject_id: String,
+    protocol_status: String,
     call_review_ratio: f32,
     usable_segment_ratio: f32,
     tool_calls_total: usize,
@@ -4488,6 +5356,7 @@ struct ProtocolRunSummaryRow {
     mismatched_segment_reviews: usize,
     missing_call_reviews: usize,
     missing_segment_reviews: usize,
+    note: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -4501,31 +5370,7 @@ struct SegmentEvidenceCounts {
 fn collect_protocol_run_summaries() -> Result<Vec<ProtocolRunSummaryRow>, PrepareError> {
     let mut summaries = Vec::new();
     for record_path in collect_finished_record_paths()? {
-        let aggregate =
-            load_protocol_aggregate(&record_path).map_err(|err| PrepareError::DatabaseSetup {
-                phase: "inspect_protocol_overview",
-                detail: err.to_string(),
-            })?;
-        let segment_evidence = segment_evidence_counts(&aggregate);
-        let report = build_protocol_report(&aggregate)?;
-        summaries.push(ProtocolRunSummaryRow {
-            run_id: aggregate.run.run_id.clone(),
-            subject_id: aggregate.run.subject_id.clone(),
-            call_review_ratio: ratio(
-                aggregate.coverage.reviewed_call_count,
-                aggregate.coverage.total_calls_in_run,
-            ),
-            usable_segment_ratio: ratio(
-                segment_evidence.usable,
-                aggregate.coverage.total_segments_in_anchor,
-            ),
-            tool_calls_total: aggregate.coverage.total_calls_in_run,
-            segments_total: aggregate.coverage.total_segments_in_anchor,
-            call_issues: report.call_issues.len(),
-            mismatched_segment_reviews: segment_evidence.mismatched,
-            missing_call_reviews: aggregate.coverage.missing_call_indices.len(),
-            missing_segment_reviews: segment_evidence.missing,
-        });
+        summaries.push(collect_protocol_run_summary_record(&record_path)?.summary);
     }
     summaries.sort_by(|left, right| {
         let left_evidence_concerns = left.mismatched_segment_reviews
@@ -4534,12 +5379,149 @@ fn collect_protocol_run_summaries() -> Result<Vec<ProtocolRunSummaryRow>, Prepar
         let right_evidence_concerns = right.mismatched_segment_reviews
             + right.missing_segment_reviews
             + right.missing_call_reviews;
-        right_evidence_concerns
-            .cmp(&left_evidence_concerns)
+        protocol_summary_status_rank(&left.protocol_status)
+            .cmp(&protocol_summary_status_rank(&right.protocol_status))
+            .then_with(|| right_evidence_concerns.cmp(&left_evidence_concerns))
             .then_with(|| right.call_issues.cmp(&left.call_issues))
             .then_with(|| right.tool_calls_total.cmp(&left.tool_calls_total))
     });
     Ok(summaries)
+}
+
+fn collect_protocol_run_summary_record(
+    record_path: &Path,
+) -> Result<ProtocolRunSummaryRecord, PrepareError> {
+    let record =
+        read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
+            path: record_path.to_path_buf(),
+            source,
+        })?;
+    let run_id = record_path
+        .parent()
+        .and_then(|path| path.file_name())
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| record.manifest_id.clone());
+    let subject_id = record.metadata.benchmark.instance_id.clone();
+    let tool_calls_total = record.tool_calls().len();
+    let artifacts =
+        list_protocol_artifacts(record_path).map_err(|err| PrepareError::DatabaseSetup {
+            phase: "inspect_protocol_overview",
+            detail: err.to_string(),
+        })?;
+
+    match load_protocol_aggregate_from_artifacts(record_path, artifacts) {
+        Ok(aggregate) => {
+            let report = build_protocol_report(&aggregate)?;
+            let summary = protocol_summary_row_from_aggregate_with_report(&aggregate, &report);
+            Ok(ProtocolRunSummaryRecord {
+                summary,
+                report: Some(report),
+            })
+        }
+        Err(ProtocolAggregateError::MissingAnchor { .. }) if tool_calls_total == 0 => {
+            Ok(ProtocolRunSummaryRecord {
+                summary: ProtocolRunSummaryRow {
+                    run_id,
+                    subject_id,
+                    protocol_status: "ineligible".to_string(),
+                    call_review_ratio: 0.0,
+                    usable_segment_ratio: 0.0,
+                    tool_calls_total,
+                    segments_total: 0,
+                    call_issues: 0,
+                    mismatched_segment_reviews: 0,
+                    missing_call_reviews: 0,
+                    missing_segment_reviews: 0,
+                    note: Some("zero tool calls".to_string()),
+                },
+                report: None,
+            })
+        }
+        Err(ProtocolAggregateError::MissingAnchor { .. }) => Ok(ProtocolRunSummaryRecord {
+            summary: ProtocolRunSummaryRow {
+                run_id,
+                subject_id,
+                protocol_status: "missing".to_string(),
+                call_review_ratio: 0.0,
+                usable_segment_ratio: 0.0,
+                tool_calls_total,
+                segments_total: 0,
+                call_issues: 0,
+                mismatched_segment_reviews: 0,
+                missing_call_reviews: tool_calls_total,
+                missing_segment_reviews: 0,
+                note: Some("no intent segmentation artifact".to_string()),
+            },
+            report: None,
+        }),
+        Err(err) => Ok(ProtocolRunSummaryRecord {
+            summary: ProtocolRunSummaryRow {
+                run_id,
+                subject_id,
+                protocol_status: "error".to_string(),
+                call_review_ratio: 0.0,
+                usable_segment_ratio: 0.0,
+                tool_calls_total,
+                segments_total: 0,
+                call_issues: 0,
+                mismatched_segment_reviews: 0,
+                missing_call_reviews: 0,
+                missing_segment_reviews: 0,
+                note: Some(err.to_string()),
+            },
+            report: None,
+        }),
+    }
+}
+
+fn protocol_summary_row_from_aggregate_with_report(
+    aggregate: &ProtocolAggregate,
+    report: &ProtocolAggregateReport,
+) -> ProtocolRunSummaryRow {
+    let segment_evidence = segment_evidence_counts(aggregate);
+    let missing_call_reviews = aggregate.coverage.missing_call_indices.len();
+    let missing_segment_reviews = segment_evidence.missing;
+    let mismatched_segment_reviews = segment_evidence.mismatched;
+    let protocol_status = if missing_call_reviews == 0
+        && missing_segment_reviews == 0
+        && mismatched_segment_reviews == 0
+    {
+        "full"
+    } else {
+        "partial"
+    };
+
+    ProtocolRunSummaryRow {
+        run_id: aggregate.run.run_id.clone(),
+        subject_id: aggregate.run.subject_id.clone(),
+        protocol_status: protocol_status.to_string(),
+        call_review_ratio: ratio(
+            aggregate.coverage.reviewed_call_count,
+            aggregate.coverage.total_calls_in_run,
+        ),
+        usable_segment_ratio: ratio(
+            segment_evidence.usable,
+            aggregate.coverage.total_segments_in_anchor,
+        ),
+        tool_calls_total: aggregate.coverage.total_calls_in_run,
+        segments_total: aggregate.coverage.total_segments_in_anchor,
+        call_issues: report.call_issues.len(),
+        mismatched_segment_reviews,
+        missing_call_reviews,
+        missing_segment_reviews,
+        note: None,
+    }
+}
+
+fn protocol_summary_status_rank(status: &str) -> u8 {
+    match status {
+        "error" => 0,
+        "missing" => 1,
+        "partial" => 2,
+        "full" => 3,
+        "ineligible" => 4,
+        _ => 5,
+    }
 }
 
 fn segment_evidence_counts(aggregate: &ProtocolAggregate) -> SegmentEvidenceCounts {
@@ -4829,7 +5811,8 @@ fn print_protocol_run_summaries(
     let mut rows = summaries.to_vec();
     if command.only_issues {
         rows.retain(|row| {
-            row.call_issues > 0
+            row.protocol_status != "full" && row.protocol_status != "ineligible"
+                || row.call_issues > 0
                 || row.missing_call_reviews > 0
                 || row.missing_segment_reviews > 0
                 || row.mismatched_segment_reviews > 0
@@ -4839,36 +5822,46 @@ fn print_protocol_run_summaries(
 
     println!("Segment evidence legend: u=usable, m=mismatched, x=missing");
     println!(
-        "{:<28} {:<10} {:<18} {:<8} Summary",
-        "Run", "Calls", "Segment evidence", "Issues"
+        "{:<28} {:<10} {:<12} {:<18} {:<8} Summary",
+        "Run", "Calls", "Status", "Segment evidence", "Issues"
     );
     println!("{}", "─".repeat(command.width.min(120)));
     for row in rows {
         let missing_segments = row.missing_segment_reviews;
-        let summary = format!(
-            "{} {}",
-            progress_bar(row.call_review_ratio, 6),
-            summary_segment_bar(
+        let segment_evidence = if row.segments_total == 0 {
+            "-".to_string()
+        } else {
+            format!(
+                "u{} m{} x{}",
                 (row.usable_segment_ratio * row.segments_total as f32).round() as usize,
                 row.mismatched_segment_reviews,
-                missing_segments,
-                6,
+                missing_segments
             )
-        );
+        };
+        let summary = if row.protocol_status == "full" || row.protocol_status == "partial" {
+            format!(
+                "{} {}",
+                progress_bar(row.call_review_ratio, 6),
+                summary_segment_bar(
+                    (row.usable_segment_ratio * row.segments_total as f32).round() as usize,
+                    row.mismatched_segment_reviews,
+                    missing_segments,
+                    6,
+                )
+            )
+        } else {
+            truncate_for_table(row.note.as_deref().unwrap_or("-"), command.width.min(40))
+        };
         println!(
-            "{:<28} {:<10} {:<18} {:<8} {}",
+            "{:<28} {:<10} {:<12} {:<18} {:<8} {}",
             truncate_for_table(&row.run_id, 26),
             format!(
                 "{}/{}",
                 (row.call_review_ratio * row.tool_calls_total as f32).round() as usize,
                 row.tool_calls_total
             ),
-            format!(
-                "u{} m{} x{}",
-                (row.usable_segment_ratio * row.segments_total as f32).round() as usize,
-                row.mismatched_segment_reviews,
-                missing_segments
-            ),
+            row.protocol_status,
+            segment_evidence,
             row.call_issues,
             summary,
         );

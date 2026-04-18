@@ -1,34 +1,44 @@
-Directory for sharing progress and information for main agents and sub-agents.
+# Active Agent Docs
 
-For any created progress files, include the current date (yyyy-mm-dd) at the beginning of the file name, and in the document header include:
-- date
-- task title
-- task description
-- related planning files
+Restart-oriented table of contents for `docs/active/agents/` and nearby restart-critical surfaces.
 
-A document may contain multiple entries, each headed by the above information.
+## Start Here
 
-Each created document should also be linked to a planning document.
+- [../CURRENT_FOCUS.md](../CURRENT_FOCUS.md)
+  Primary restart pointer for the current eval/protocol thread.
+- [../workflow/handoffs/recent-activity.md](../workflow/handoffs/recent-activity.md)
+  Rolling workflow board with the freshest state changes and restart consequences.
+- [../workflow/handoffs/2026-04-17_protocol-design-reset.md](../workflow/handoffs/2026-04-17_protocol-design-reset.md)
+  Compact restart handoff for the protocol frontier, scheduler cost model, and design pivot.
 
-Archived one-off agent docs now live under `docs/archive/agents/YYYY-MM/`. Keep
-`docs/active/agents/` focused on current control planes, live packets, active
-handoffs, and restart-critical notes.
+## Current Planning Surfaces
 
-- Re: creating a new directory
+- [2026-04-17_eval-failure-and-protocol-audit/README.md](./2026-04-17_eval-failure-and-protocol-audit/README.md)
+  Control-plane docs for failed-run audit, known-limitations reconciliation, blind trace review, and protocol-output comparison.
+- [2026-04-16_eval-closure-formal-sketch.md](./2026-04-16_eval-closure-formal-sketch.md)
+  Active planning note for layered registry/eval/protocol closure.
+- [2026-04-15_ploke-protocol-control-note.md](./2026-04-15_ploke-protocol-control-note.md)
+  Authoritative checkpoint for the active `ploke-protocol` architecture thread.
+- [2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md](./2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md)
+  Execution contract for eval-control-plane work unless explicitly superseded.
 
-Follow the established pattern of the current date (yyyy-mm-dd) at the
-beginning of the directory name, then the current git branch name or a short
-descriptive name if the date and git name are taken.
+## Supporting Context
 
-- Re: open-questions.md
+- [2026-04-15_protocol-aggregate-cli.md](./2026-04-15_protocol-aggregate-cli.md)
+  Aggregate inspection surface for protocol artifacts and coverage.
+- [2026-04-15_clap-baseline-eval-orchestration.md](./2026-04-15_clap-baseline-eval-orchestration.md)
+  Batch/operator context for the Clap-heavy Rust baseline work.
+- [2026-04-12_eval-infra-sprint/README.md](./2026-04-12_eval-infra-sprint/README.md)
+  Legacy sprint archive index; keep for lineage, not as the primary restart surface.
 
-Open questions may be addressed to either the main agent directly, or through
-`docs/active/agents/open-questions.md`. You may not direct a question directly
-to the user, but it will be reviewed and possibly bumped to the user if an
-answer cannot be found by the main agent.
+## Conventions
 
-- Re: notable-inconsistencies.md
-
-Notable inconsistencies in the code base, task, or documentation. This is to
-help note any areas where the project might be later improved, and should not
-be immediately addressed. To be reviewed by user periodically.
+- When creating a new active agent document, use the current date (`yyyy-mm-dd`) at the beginning of the file or directory name.
+- In the document header include:
+  - date
+  - task title
+  - task description
+  - related planning files
+- Archived one-off agent docs live under `docs/archive/agents/YYYY-MM/`.
+- `open-questions.md` is for agent-to-agent open questions, not direct user prompts.
+- `notable-inconsistencies.md` is for durable inconsistencies worth preserving without forcing immediate action.

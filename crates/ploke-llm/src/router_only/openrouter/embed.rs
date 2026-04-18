@@ -705,6 +705,8 @@ mod tests {
         serde_json::to_value(req).expect("embedding request serializes")
     }
 
+    use crate::{HttpFailure, HttpSendFailure};
+
     /// Queries and writes the response formatted from serde's Value defaults into a file as json.
     ///
     /// Basic test that the endpoint is correct and response is well-formed json.
@@ -719,10 +721,18 @@ mod tests {
             .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
             .send()
             .await
-            .map_err(|e| LlmError::Request {
-                message: e.to_string(),
-                url: Some(url.to_string()),
-                is_timeout: e.is_timeout(),
+            .map_err(|e| {
+                let phase = if e.is_timeout() {
+                    HttpSendFailure::Timeout
+                } else {
+                    HttpSendFailure::Failed
+                };
+                LlmError::Http(HttpFailure::send(
+                    Some(url.to_string()),
+                    None,
+                    e.to_string(),
+                    phase,
+                ))
             })?;
 
         let response_json = response.text().await?;

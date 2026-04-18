@@ -1,7 +1,7 @@
 # Recent Activity
 
 - last_updated: 2026-04-17
-- ready_for: restart into a stricter operator-driven eval/protocol pass, beginning with provider-fidelity verification on the live `rayon` batch and direct continuation over the non-`nushell` missing eval families
+- ready_for: restart into a design-oriented eval/protocol pass using the current protocol harvest as evidence about scheduler shape, artifact schema compatibility, and how local analysis outputs should improve tools rather than only fill coverage cells
 - owning_branch: refactor/tool-calls
 - review_cadence: update after meaningful workflow-doc changes or handoffs
 - update_trigger: update after touching workflow structure, review rules, or active artifact layout
@@ -18,6 +18,65 @@
 ## 2026-04-16
 
 ## 2026-04-17
+
+- **PROTOCOL DIAGNOSIS WORKFLOW IS NOW EXPLICIT, BUT ITS EXPERIMENT RECORD REMAINS ACTIVE AND INCONCLUSIVE**
+  - Added a formal protocol-driven diagnosis workflow and sub-agent launch template:
+    - [2026-04-17_protocol-diagnosis-workflow.md](../../agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-diagnosis-workflow.md)
+    - [2026-04-17_protocol-diagnosis-subagent-template.md](../../agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-diagnosis-subagent-template.md)
+  - Ran a bounded parallel workflow trial across issue, tool, combined, and status slices and captured the synthesis in:
+    - [2026-04-17_workflow-trial-synthesis.md](../../agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-synthesis.md)
+  - The governing experiment record is:
+    - [EDR-0003-protocol-diagnosis-workflow-experiment.md](../edr/EDR-0003-protocol-diagnosis-workflow-experiment.md)
+  - Important status:
+    - the workflow is runnable and structurally useful
+    - it is **not yet validated** as a high-quality recommendation workflow
+    - the current EDR status is `active` / `inconclusive`, not adopted
+  - Restart consequence:
+    - treat the workflow as experimental scaffolding
+    - the next step is to design a validation experiment for recommendation quality rather than assuming the workflow is already good
+
+- **EVAL CLOSURE FINISHED FOR THE CURRENT RUST SLICE, BUT PROTOCOL IS NOW THE EXPENSIVE FRONTIER**
+  - Fresh closure recompute reached:
+    - eval: `221` success, `18` fail, `0` missing
+    - protocol: `72` full, `21` partial, `8` fail, `120` missing
+  - Operational consequence:
+    - the restart story is no longer “finish missing evals”
+    - eval is effectively closed for this slice
+    - protocol is now the active lane
+
+- **THE CAMPAIGN-BACKED PROTOCOL PASS IS FINITE, BUT MUCH MORE EXPENSIVE THAN THE CLI SURFACE SUGGESTS**
+  - `closure advance all` is not a fixed-point loop.
+  - It does:
+    - one eval pass
+    - then one large protocol frontier walk
+  - The expensive part is not just segmentation plus one review per unit.
+  - The protocol review procedures themselves fan out into three adjudication branches:
+    - usefulness
+    - redundancy
+    - recoverability
+  - Operational consequence:
+    - long protocol runtimes can be real even without transport retries or credit exhaustion
+    - the operator problem is partly a scheduler/modeling problem, not only a command-choice problem
+
+- **PROTOCOL FAILURES NOW INCLUDE A REAL ARTIFACT SCHEMA MISMATCH**
+  - Some protocol rows failed with:
+    - `missing field label`
+  - This is not just “still missing coverage”.
+  - It indicates a reader/writer incompatibility around stored intent-segmentation artifacts.
+  - Operational consequence:
+    - some failed rows will not converge by simply letting a frontier walk continue longer
+    - restart work should separate:
+      - missing coverage
+      - partial coverage
+      - hard schema/read-model failures
+
+- **LOCAL `PLOKE-EVAL` WORK NOW INCLUDES A BOUNDED-CONCURRENCY PROTOCOL QUEUE**
+  - The local worktree includes a scheduler change in `crates/ploke-eval/` that moves protocol advancement from a fully serial per-run walk toward a bounded concurrent worker queue with `max_concurrency`.
+  - Important architectural choice:
+    - keep `ploke-protocol` as the typed procedure library
+    - keep campaign scheduling and queueing in `ploke-eval`
+  - Restart consequence:
+    - the next thread should treat this as implementation progress toward a better scheduler, not as the whole design answer
 
 - **REPO CACHE LAYOUT WAS NORMALIZED FOR THE FULL LOCAL RUST SLICE**
   - The newly added dataset families initially had repo clones in flat cache paths such as:
@@ -44,7 +103,7 @@
     - `bytes`
     - `tracing`
 
-- **EVAL CLOSURE ADVANCED, BUT THE NEW FAILURE MASS IS NOW CONCENTRATED IN `NUSHELL`**
+- **EARLIER EVAL-CLOSURE ADVANCE CONCENTRATED THE NEW FAILURE MASS IN `NUSHELL`**
   - Closure moved from the older `171/239` eval-progress state to:
     - `186/239` progressed
     - `169` success
@@ -77,22 +136,17 @@
     - the session ended with a reversion to direct operator mode
     - the next thread should not assume sub-agent execution is paying off unless the first checkpoint shows real producer-driven deltas
 
-- **PROTOCOL FOLLOW-THROUGH DID NOT CHANGE CAMPAIGN TOTALS**
-  - Protocol closure stayed flat at:
+- **EARLIER PROTOCOL FOLLOW-THROUGH DID NOT CHANGE CAMPAIGN TOTALS, BUT THAT IS NO LONGER THE CURRENT STATE**
+  - Earlier in the closure rollout, protocol totals were still flat at:
     - `40/169` progressed
     - `13` full
     - `27` partial
     - `129` missing
-  - `clap-rs__clap-3521` did advance locally during the session:
-    - `tool-call-review` moved to `3/24`
-    - segment state became `usable 2 / mismatched 3 / missing 0`
-  - But the overall protocol counts did not move.
-  - Important protocol blockers still surfaced:
-    - `BurntSushi__ripgrep-1294`: segment `4 not found`
-    - `tokio-rs__tokio-5179`: segment `5 not found`
-  - Operational consequence:
-    - the next protocol continuation should be direct and write-producing
-    - read-only inspection alone is not enough to move closure on the current partial rows
+  - Since then, protocol has moved materially.
+  - The current restart-critical totals are the fresh recompute at the top of this file, not this earlier plateau.
+  - Historical significance:
+    - this section explains why the old operator instinct was “protocol is not moving”
+    - it should not be mistaken for the current campaign state
 
 - **THE LIVE `RAYON` BATCH IS CURRENTLY PROVIDER-SUSPECT**
   - Direct operator mode resumed late in the session:
@@ -118,10 +172,11 @@
     - registry closure is now genuinely `E_r -> T`
     - eval closure is now genuinely `T -> A`
     - protocol closure remains `A -> M`
-  - Verified on the full local Rust dataset slice:
+  - Verified earlier on the full local Rust dataset slice as:
     - registry: `239/239` complete
     - eval: `171/239` progressed, `169` success, `2` fail, `68` missing
     - protocol: `40/169` progressed, `13` full, `27` partial, `129` missing
+  - That historical snapshot is no longer the current campaign state; see the fresh totals at the top of this file.
   - Operational consequence:
     - the control plane no longer treats `run.json` presence as the registry surrogate
     - next work can choose explicitly between expanding eval coverage over the missing `68` targets or continuing protocol follow-through over the completed `169`

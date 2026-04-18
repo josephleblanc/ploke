@@ -128,6 +128,7 @@ pub struct ProtocolClosureSummary {
     pub failed_total: usize,
     pub missing_total: usize,
     pub incompatible_total: usize,
+    pub ineligible_total: usize,
     pub in_progress_total: usize,
     pub status: ClosureClass,
     pub required_procedures: Vec<String>,
@@ -313,7 +314,7 @@ pub fn render_closure_status(state: &ClosureState) -> String {
         state.eval.missing_total
     ));
     out.push_str(&format!(
-        "protocol [{}] | progress {}/{} | full {} | partial {} | incompatible {} | fail {} | missing {}\n",
+        "protocol [{}] | progress {}/{} | full {} | partial {} | incompatible {} | fail {} | missing {} | ineligible {}\n",
         format_closure_class(state.protocol.status),
         state.protocol.full_total
             + state.protocol.partial_total
@@ -324,7 +325,8 @@ pub fn render_closure_status(state: &ClosureState) -> String {
         state.protocol.partial_total,
         state.protocol.incompatible_total,
         state.protocol.failed_total,
-        state.protocol.missing_total
+        state.protocol.missing_total,
+        state.protocol.ineligible_total
     ));
 
     let eval_failures = state
@@ -742,17 +744,6 @@ fn assess_protocol_state(
         .map(|name| (name.clone(), ClosureClass::Missing))
         .collect::<BTreeMap<_, _>>();
     let artifacts = list_protocol_artifacts(record_path)?;
-    if artifacts.is_empty() {
-        return Ok(ProtocolInstanceAssessment {
-            overall: ClosureClass::Missing,
-            procedures,
-            counts: None,
-            anchor_path: None,
-            failure: None,
-            last_event_at: None,
-        });
-    }
-
     let record =
         read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
             path: record_path.to_path_buf(),
@@ -760,6 +751,44 @@ fn assess_protocol_state(
         })?;
     let total_calls = record.tool_calls().len();
     let latest_anchor = latest_artifact_path(&artifacts, STORED_TOOL_CALL_INTENT_SEGMENTATION);
+
+    if total_calls == 0 {
+        let procedures = required_procedures
+            .iter()
+            .map(|name| (name.clone(), ClosureClass::Ineligible))
+            .collect::<BTreeMap<_, _>>();
+        let last_event_at = latest_timestamp(
+            newest_protocol_timestamp(&artifacts),
+            file_timestamp_string(record_path)?,
+        );
+        return Ok(ProtocolInstanceAssessment {
+            overall: ClosureClass::Ineligible,
+            procedures,
+            counts: Some(ClosureProtocolCounts {
+                total_calls: 0,
+                reviewed_calls: 0,
+                total_segments: 0,
+                usable_segments: 0,
+                mismatched_segments: 0,
+                missing_segments: 0,
+            }),
+            anchor_path: latest_anchor,
+            failure: None,
+            last_event_at,
+        });
+    }
+
+    if artifacts.is_empty() {
+        return Ok(ProtocolInstanceAssessment {
+            overall: ClosureClass::Missing,
+            procedures,
+            counts: None,
+            anchor_path: None,
+            failure: None,
+            last_event_at: file_timestamp_string(record_path)?,
+        });
+    }
+
     let call_reviews = distinct_count_by(&artifacts, STORED_TOOL_CALL_REVIEW, call_review_index);
     let segment_review_count = distinct_count_by(
         &artifacts,
@@ -964,7 +993,10 @@ fn summarize_protocol(
         .iter()
         .filter(|row| row.eval_status == ClosureClass::Complete)
         .collect::<Vec<_>>();
-    let expected_total = relevant.len();
+    let expected_total = relevant
+        .iter()
+        .filter(|row| row.protocol_status != ClosureClass::Ineligible)
+        .count();
     let full_total = relevant
         .iter()
         .filter(|row| row.protocol_status == ClosureClass::Complete)
@@ -985,8 +1017,16 @@ fn summarize_protocol(
         .iter()
         .filter(|row| row.protocol_status == ClosureClass::Incompatible)
         .count();
+    let ineligible_total = relevant
+        .iter()
+        .filter(|row| row.protocol_status == ClosureClass::Ineligible)
+        .count();
     let status = if expected_total == 0 {
-        ClosureClass::Missing
+        if ineligible_total > 0 {
+            ClosureClass::Ineligible
+        } else {
+            ClosureClass::Missing
+        }
     } else if full_total == expected_total {
         ClosureClass::Complete
     } else if full_total == 0 && partial_total == 0 && incompatible_total == 0 && failed_total == 0
@@ -1037,6 +1077,7 @@ fn summarize_protocol(
         failed_total,
         missing_total,
         incompatible_total,
+        ineligible_total,
         in_progress_total: 0,
         status,
         required_procedures: required_procedures.to_vec(),
@@ -1046,7 +1087,9 @@ fn summarize_protocol(
 }
 
 fn classify_fraction(done: usize, total: usize) -> ClosureClass {
-    if total == 0 || done == 0 {
+    if total == 0 {
+        ClosureClass::Ineligible
+    } else if done == 0 {
         ClosureClass::Missing
     } else if done >= total {
         ClosureClass::Complete
@@ -1103,6 +1146,11 @@ fn summarize_overall_protocol(procedures: &BTreeMap<String, ClosureClass>) -> Cl
 
     if any_failed {
         ClosureClass::Failed
+    } else if procedures
+        .values()
+        .all(|status| *status == ClosureClass::Ineligible)
+    {
+        ClosureClass::Ineligible
     } else if procedures
         .values()
         .all(|status| *status == ClosureClass::Complete)
@@ -1271,5 +1319,86 @@ fn format_closure_class(value: ClosureClass) -> &'static str {
         ClosureClass::Ineligible => "ineligible",
         ClosureClass::Incompatible => "incompatible",
         ClosureClass::Partial => "partial",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_protocol_row(protocol_status: ClosureClass) -> ClosureInstanceRow {
+        ClosureInstanceRow {
+            instance_id: "sample".to_string(),
+            dataset_label: "sample".to_string(),
+            repo_family: "sample".to_string(),
+            registry_status: RegistryInstanceStatus::Mapped,
+            eval_status: ClosureClass::Complete,
+            protocol_status,
+            eval_failure: None,
+            protocol_failure: None,
+            artifacts: ClosureArtifactRefs::default(),
+            protocol_procedures: BTreeMap::from([(
+                "tool-call-review".to_string(),
+                protocol_status,
+            )]),
+            protocol_counts: None,
+            last_event_at: None,
+        }
+    }
+
+    #[test]
+    fn classify_fraction_marks_zero_total_as_ineligible() {
+        assert_eq!(classify_fraction(0, 0), ClosureClass::Ineligible);
+    }
+
+    #[test]
+    fn summarize_overall_protocol_marks_all_ineligible() {
+        let procedures = BTreeMap::from([
+            (
+                "tool-call-intent-segments".to_string(),
+                ClosureClass::Ineligible,
+            ),
+            ("tool-call-review".to_string(), ClosureClass::Ineligible),
+            (
+                "tool-call-segment-review".to_string(),
+                ClosureClass::Ineligible,
+            ),
+        ]);
+
+        assert_eq!(
+            summarize_overall_protocol(&procedures),
+            ClosureClass::Ineligible
+        );
+    }
+
+    #[test]
+    fn summarize_protocol_excludes_ineligible_rows_from_expected_total() {
+        let instances = vec![
+            sample_protocol_row(ClosureClass::Complete),
+            sample_protocol_row(ClosureClass::Ineligible),
+        ];
+        let summary = summarize_protocol(&instances, &["tool-call-review".to_string()]);
+
+        assert_eq!(summary.expected_total, 1);
+        assert_eq!(summary.full_total, 1);
+        assert_eq!(summary.ineligible_total, 1);
+        assert_eq!(summary.status, ClosureClass::Complete);
+        let procedure = summary
+            .status_by_procedure
+            .get("tool-call-review")
+            .expect("procedure summary");
+        assert_eq!(procedure.expected_total, 1);
+        assert_eq!(procedure.complete_total, 1);
+        assert_eq!(procedure.ineligible_total, 1);
+    }
+
+    #[test]
+    fn summarize_protocol_marks_all_ineligible_runs_as_ineligible() {
+        let instances = vec![sample_protocol_row(ClosureClass::Ineligible)];
+        let summary = summarize_protocol(&instances, &["tool-call-review".to_string()]);
+
+        assert_eq!(summary.expected_total, 0);
+        assert_eq!(summary.ineligible_total, 1);
+        assert_eq!(summary.status, ClosureClass::Ineligible);
     }
 }

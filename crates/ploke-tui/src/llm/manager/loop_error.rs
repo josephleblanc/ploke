@@ -2,7 +2,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use ploke_core::ArcStr;
-use ploke_llm::{LlmError, response::FinishReason};
+use ploke_llm::{
+    HttpBodyFailure, HttpPhase, HttpReceivePhase, HttpSendFailure, LlmError, response::FinishReason,
+};
 use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
@@ -266,31 +268,84 @@ pub fn classify_llm_error(
     commit_phase: CommitPhase,
 ) -> LoopError {
     let (kind, code, severity, retry, user_action, llm_action) = match err {
-        LlmError::Request { is_timeout, .. } => {
-            let code = if *is_timeout {
-                ArcStr::from("TRANSPORT_TIMEOUT")
-            } else {
-                ArcStr::from("TRANSPORT_REQUEST_FAILED")
-            };
-            let retry = if *is_timeout {
+        LlmError::Http(http) => match &http.phase {
+            HttpPhase::Send(HttpSendFailure::Timeout) => (
+                LoopErrorKind::Transport,
+                ArcStr::from("HTTP_SEND_TIMEOUT"),
+                ErrorSeverity::Error,
                 RetryAdvice::Yes {
                     strategy: RetryStrategy::Backoff,
-                    reason: ArcStr::from("Transient timeout"),
-                }
-            } else {
-                RetryAdvice::Maybe {
-                    reason: ArcStr::from("Transient network error"),
-                }
-            };
-            (
-                LoopErrorKind::Transport,
-                code,
-                ErrorSeverity::Error,
-                retry,
-                Some(ArcStr::from("Check network connectivity and retry.")),
+                    reason: ArcStr::from("Transient timeout while sending request"),
+                },
+                Some(ArcStr::from(
+                    "Retry the request and inspect provider connectivity.",
+                )),
                 None,
-            )
-        }
+            ),
+            HttpPhase::Send(HttpSendFailure::Failed) => (
+                LoopErrorKind::Transport,
+                ArcStr::from("HTTP_SEND_FAILED"),
+                ErrorSeverity::Error,
+                RetryAdvice::Maybe {
+                    reason: ArcStr::from("Transient network error while sending request"),
+                },
+                Some(ArcStr::from(
+                    "Retry the request and inspect provider connectivity.",
+                )),
+                None,
+            ),
+            HttpPhase::Receive(receive) => match &receive.phase {
+                HttpReceivePhase::Headers => (
+                    LoopErrorKind::Transport,
+                    ArcStr::from("HTTP_HEADERS_FAILED"),
+                    ErrorSeverity::Error,
+                    RetryAdvice::Maybe {
+                        reason: ArcStr::from("Failed while receiving response headers"),
+                    },
+                    Some(ArcStr::from(
+                        "Retry the request and inspect provider/router logs.",
+                    )),
+                    None,
+                ),
+                HttpReceivePhase::Body(HttpBodyFailure::Timeout) => (
+                    LoopErrorKind::Transport,
+                    ArcStr::from("HTTP_BODY_TIMEOUT"),
+                    ErrorSeverity::Error,
+                    RetryAdvice::Yes {
+                        strategy: RetryStrategy::Backoff,
+                        reason: ArcStr::from("Timed out while reading response body"),
+                    },
+                    Some(ArcStr::from(
+                        "Retry the request and inspect provider/router body streaming behavior.",
+                    )),
+                    None,
+                ),
+                HttpReceivePhase::Body(HttpBodyFailure::ReadFailed) => (
+                    LoopErrorKind::Transport,
+                    ArcStr::from("HTTP_BODY_READ_FAILED"),
+                    ErrorSeverity::Error,
+                    RetryAdvice::Maybe {
+                        reason: ArcStr::from("Failed while reading response body"),
+                    },
+                    Some(ArcStr::from(
+                        "Retry the request and inspect provider/router body streaming behavior.",
+                    )),
+                    None,
+                ),
+                HttpReceivePhase::Body(HttpBodyFailure::DecodeFailed) => (
+                    LoopErrorKind::Transport,
+                    ArcStr::from("HTTP_BODY_DECODE_FAILED"),
+                    ErrorSeverity::Error,
+                    RetryAdvice::Maybe {
+                        reason: ArcStr::from("Response body was truncated or could not be decoded"),
+                    },
+                    Some(ArcStr::from(
+                        "Retry the request and inspect the returned payload for truncation or corruption.",
+                    )),
+                    None,
+                ),
+            },
+        },
         LlmError::Api { status, .. } => {
             let code = ArcStr::from(format!("HTTP_{}", status));
             let retry = match *status {

@@ -12,6 +12,8 @@ Start from [recent-activity.md](recent-activity.md) for the rolling current-stat
 
 - [recent-activity.md](recent-activity.md)
   Rolling summary of the most recently touched workflow docs and why they changed.
+- [2026-04-17_protocol-design-reset.md](2026-04-17_protocol-design-reset.md)
+  Restart-critical handoff for the expensive protocol frontier walk, schema blockers, and the design pivot toward using analysis output to improve tools.
 - [handoff-template.md](../../../workflow/handoff-template.md)
   Durable template for task-specific handoff notes.
 - [2026-04-09-doc-review-followups.md](2026-04-09-doc-review-followups.md)

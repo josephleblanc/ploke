@@ -98,7 +98,10 @@ pub use context::{ContextExt, ContextualError, ErrorContext, SourceSpan};
 pub use diagnostic::{DiagnosticField, DiagnosticInfo, DiagnosticSite, DiagnosticSpan};
 pub use domain::DomainError;
 pub use fatal::FatalError;
-pub use internal::InternalError;
+pub use internal::{
+    InternalError, LlmBodyFailure, LlmReceiveFailure, LlmReceivePhase, LlmSendFailure,
+    LlmTransportFailure, LlmTransportPhase,
+};
 #[cfg(feature = "diagnostic")]
 pub use policy::MiettePolicy;
 #[cfg(feature = "tracing")]

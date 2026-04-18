@@ -1,57 +1,47 @@
 # Current Focus
 
-**Last Updated:** 2026-04-17 (repo-cache layout was normalized for all `10` Rust dataset families, eval/protocol work resumed under the closure control plane, and the current restart-critical state is mixed: eval closure advanced, protocol closure did not, and the live `rayon` batch is provider-suspect because a run launched with `--provider xai` emitted an `openrouter.ai` request warning)
+**Last Updated:** 2026-04-17 (eval closure reached `221` success / `18` fail / `0` missing, protocol closure reached `72` full / `21` partial / `8` fail / `120` missing on fresh recompute, and the main restart-critical discovery is that the campaign-backed protocol pass is finite but far more expensive than advertised because local review procedures fan out into usefulness/redundancy/recoverability adjudications while some failed rows are blocked by a `missing field label` schema mismatch)
 **Active Planning Doc:** [Eval Closure Formal Sketch](agents/2026-04-16_eval-closure-formal-sketch.md)
 
 ---
 
 ## What We're Doing Now
 
-The current pass has two connected layers. Structurally, `ploke-eval` now has both explicit persisted surfaces required by the formal sketch: `registry recompute` / `registry status` write the local typed target registry `T` under `~/.ploke-eval/registries/`, and `closure recompute` / `closure status` write reduced campaign state under `~/.ploke-eval/campaigns/<campaign>/closure-state.json` while consuming that registry directly. Operationally, the local Rust benchmark slice now contains `239` active targets across `10` dataset families and the repo cache has been normalized into the `<org>/<repo>` layout expected by `ploke-eval`. Closure now shows `186/239` eval rows progressed with `169` success, `16` explicit failure, `1` partial, and `53` still missing. Protocol follow-through remains unchanged at `40/169` progressed with `13` full, `27` partial, and `129` missing. The main new failure concentration is `nushell`, while the live `rayon` batch must be treated carefully because a model-turn warning referenced `https://openrouter.ai/api/v1/chat/completions` even though the batch was launched with `--provider xai`.
+The current pass has shifted from “close the remaining evals” to “understand and redesign the protocol frontier.” Structurally, `ploke-eval` still has the persisted registry and closure surfaces required by the formal sketch, and the local Rust slice remains `239` active targets across `10` dataset families. Operationally, eval closure is now effectively done for this slice: `221` success, `18` explicit failure, `0` missing. Protocol is the live frontier at `72` full, `21` partial, `8` fail, `120` missing on fresh recompute. The important new finding is that `closure advance all` is one eval pass plus one very large protocol frontier walk, not a fixed-point loop, and that the protocol workload is much more expensive than the CLI suggests because per-call and per-segment reviews fan out into usefulness/redundancy/recoverability adjudications. Some failed protocol rows are also blocked by a real artifact schema mismatch (`missing field label`) rather than mere incompleteness.
 
 ---
 
 ## Immediate Next Step
 
-**The next bounded move is to re-enter the eval/protocol pass from a stricter operator stance, starting by validating provider fidelity on the live `rayon` batch before trusting any new eval artifacts, then continuing direct operator-driven eval batches and only afterward returning to protocol follow-through**:
+**The next bounded move is to restart from a design-oriented protocol pass rather than more raw operator frontier walking**:
 
-1. treat the local Rust benchmark slice as explicitly materialized in the target registry:
-   - `239` active entries across `10` dataset families
-   - persisted at `~/.ploke-eval/registries/multi-swe-bench-rust.json`
-2. preserve the known failed eval cases and new explicit failure classes:
+1. treat the fresh closure recompute as the stable baseline:
+   - registry: `239/239`
+   - eval: `221` success, `18` fail, `0` missing
+   - protocol: `72` full, `21` partial, `8` fail, `120` missing
+2. if the old campaign-backed protocol pass is still running when back at the machine, stop it and recompute closure again before doing more work
+3. preserve the hard blocker classes separately from mere missing coverage:
    - `clap-rs__clap-1624`
    - `clap-rs__clap-941`
-   - `nushell` parser/indexing failures:
-     - duplicate `crate::commands` module-tree path
-     - `generic_lifetime` relation failure
-     - `indexing_completed` timeouts
-3. use `ploke-eval closure status --campaign rust-baseline-grok4-xai` as the compact monitoring surface for:
-   - registry closure: `239/239`
-   - eval closure: `186/239` progressed, `169` success, `16` fail, `1` partial, `53` missing
-   - protocol closure: `40/169` progressed, `13` full, `27` partial, `129` missing
-4. before trusting the currently running `rayon` family, verify whether the observed `openrouter.ai` warning was:
-   - a true provider mismatch
-   - or only a misleading internal logging path
-5. if the `rayon` run is valid, continue direct operator-driven eval batches over:
-   - `rayon`
-   - `serde`
-   - `bat`
-   - `fd`
-   - `bytes`
-   - `tracing`
-   while leaving `nushell` aside as a low-yield failure family for now
-6. return to protocol follow-through only after the eval lane is back under direct control and write-producing commands are being run rather than read-only inspection
+   - `nushell` parser/indexing failures
+   - protocol artifact failures with `missing field label`
+4. treat the long protocol runtime as a scheduler/design problem, not only an operator problem:
+   - `closure advance all` is a bounded two-part pass, not a fixed-point loop
+   - protocol reviews are fork/merge procedures with hidden adjudication fan-out
+5. restart from the question:
+   - how should usefulness / redundancy / recoverability analysis output improve tools and workflow, rather than only filling protocol coverage cells?
+6. use the compact restart handoff:
+   - [2026-04-17_protocol-design-reset.md](workflow/handoffs/2026-04-17_protocol-design-reset.md)
 
 Current high-priority references:
 
 - [Eval Closure Formal Sketch](agents/2026-04-16_eval-closure-formal-sketch.md)
+- [Protocol Design Reset](workflow/handoffs/2026-04-17_protocol-design-reset.md)
 - [Clap Baseline Eval Orchestration](agents/2026-04-15_clap-baseline-eval-orchestration.md)
 - [Protocol Aggregate CLI](agents/2026-04-15_protocol-aggregate-cli.md)
-- [Orchestration Hygiene And Artifact Monitor](agents/2026-04-15_orchestration-hygiene-and-artifact-monitor.md)
 - [Ploke-Protocol Control Note](agents/2026-04-15_ploke-protocol-control-note.md)
 - [Recent Activity](workflow/handoffs/recent-activity.md)
 - [Target Capability Registry](workflow/target-capability-registry.md)
-- [Docs Hygiene Tracker](agents/2026-04-15_docs-hygiene-tracker.md)
 
 ---
 
@@ -61,7 +51,7 @@ Current high-priority references:
 |-----------------|---------------|
 | "What were we up to?" | This doc ↑ |
 | "Remind me of next steps" | [Eval Closure Formal Sketch](agents/2026-04-16_eval-closure-formal-sketch.md) |
-| "Let's pick up where we left off" | Open [recent-activity.md](workflow/handoffs/recent-activity.md) and [2026-04-16_eval-closure-formal-sketch.md](agents/2026-04-16_eval-closure-formal-sketch.md), verify provider fidelity on the live `rayon` batch, then continue direct operator-driven eval expansion over the non-`nushell` missing families before returning to protocol follow-through |
+| "Let's pick up where we left off" | Open [2026-04-17_protocol-design-reset.md](workflow/handoffs/2026-04-17_protocol-design-reset.md), then [recent-activity.md](workflow/handoffs/recent-activity.md), then [2026-04-16_eval-closure-formal-sketch.md](agents/2026-04-16_eval-closure-formal-sketch.md); treat eval as closed, protocol as the active frontier, and the next question as design/use-of-analysis-output rather than more blind frontier walking |
 | Overall eval workflow | [workflow/README.md](workflow/README.md) |
 | Recent activity log | [workflow/handoffs/recent-activity.md](workflow/handoffs/recent-activity.md) |
 | Hypothesis status | [workflow/hypothesis-registry.md](workflow/hypothesis-registry.md) |

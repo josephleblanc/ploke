@@ -16,6 +16,7 @@ Use `EDR-XXXX-short-title.md`.
 ### Active
 
 - [EDR-0001-ripgrep-1294-phase2-entry.md](EDR-0001-ripgrep-1294-phase2-entry.md)
+- [EDR-0003-protocol-diagnosis-workflow-experiment.md](EDR-0003-protocol-diagnosis-workflow-experiment.md)
 
 ### Complete
 

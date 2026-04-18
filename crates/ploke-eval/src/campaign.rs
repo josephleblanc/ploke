@@ -78,6 +78,8 @@ pub struct ProtocolCampaignPolicy {
     pub stop_on_error: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit_runs: Option<usize>,
+    #[serde(default = "default_protocol_max_concurrency")]
+    pub max_concurrency: usize,
 }
 
 impl Default for ProtocolCampaignPolicy {
@@ -88,6 +90,7 @@ impl Default for ProtocolCampaignPolicy {
             include_failed: false,
             stop_on_error: false,
             limit_runs: None,
+            max_concurrency: default_protocol_max_concurrency(),
         }
     }
 }
@@ -179,6 +182,10 @@ fn default_benchmark_family() -> BenchmarkFamily {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_protocol_max_concurrency() -> usize {
+    100
 }
 
 impl CampaignManifest {
@@ -366,7 +373,8 @@ pub fn apply_campaign_overrides(
         manifest.provider_slug = Some(provider_slug);
     }
     if !overrides.required_procedures.is_empty() {
-        manifest.required_procedures = normalize_required_procedures(&overrides.required_procedures)?;
+        manifest.required_procedures =
+            normalize_required_procedures(&overrides.required_procedures)?;
     }
     if let Some(runs_root) = overrides.runs_root.clone() {
         manifest.runs_root = Some(runs_root);
@@ -419,7 +427,8 @@ pub fn resolve_campaign_config(
 ) -> Result<ResolvedCampaignConfig, PrepareError> {
     let manifest = load_campaign_manifest(campaign_id)?;
 
-    let dataset_sources = if overrides.dataset_keys.is_empty() && overrides.dataset_files.is_empty() {
+    let dataset_sources = if overrides.dataset_keys.is_empty() && overrides.dataset_files.is_empty()
+    {
         manifest.dataset_sources.clone()
     } else {
         resolve_registry_dataset_sources(&overrides.dataset_keys, &overrides.dataset_files)?
@@ -526,7 +535,10 @@ pub async fn validate_campaign_config(
     if !registry_has_model(&model_registry, &model_id) {
         return Err(PrepareError::DatabaseSetup {
             phase: "campaign_validate_model",
-            detail: format!("model '{}' was not found in the cached model registry", config.model_id),
+            detail: format!(
+                "model '{}' was not found in the cached model registry",
+                config.model_id
+            ),
         });
     }
     let selected_model = model_registry
@@ -535,7 +547,10 @@ pub async fn validate_campaign_config(
         .find(|item| item.id == model_id)
         .ok_or_else(|| PrepareError::DatabaseSetup {
             phase: "campaign_validate_model",
-            detail: format!("model '{}' was not found in the cached model registry", config.model_id),
+            detail: format!(
+                "model '{}' was not found in the cached model registry",
+                config.model_id
+            ),
         })?;
     checks.push(CampaignValidationCheck {
         label: "model".to_string(),
@@ -543,10 +558,14 @@ pub async fn validate_campaign_config(
     });
 
     let requested_provider = match config.provider_slug.as_deref() {
-        Some(provider) => Some(ProviderKey::new(provider).map_err(|err| PrepareError::DatabaseSetup {
-            phase: "campaign_validate_provider",
-            detail: err.to_string(),
-        })?),
+        Some(provider) => {
+            Some(
+                ProviderKey::new(provider).map_err(|err| PrepareError::DatabaseSetup {
+                    phase: "campaign_validate_provider",
+                    detail: err.to_string(),
+                })?,
+            )
+        }
         None => None,
     };
     let resolved_provider =
@@ -601,13 +620,13 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
     out.push_str(&format!("model: {}\n", config.model_id));
     out.push_str(&format!(
         "provider: {}\n",
-        config
-            .provider_slug
-            .as_deref()
-            .unwrap_or("auto/openrouter")
+        config.provider_slug.as_deref().unwrap_or("auto/openrouter")
     ));
     out.push_str(&format!("runs_root: {}\n", config.runs_root.display()));
-    out.push_str(&format!("batches_root: {}\n", config.batches_root.display()));
+    out.push_str(&format!(
+        "batches_root: {}\n",
+        config.batches_root.display()
+    ));
     out.push_str(&format!(
         "required_procedures: {}\n",
         config.required_procedures.join(", ")
@@ -665,7 +684,7 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
     ));
     out.push_str("\nprotocol\n");
     out.push_str(&format!(
-        "  include_partial: {} | include_incompatible: {} | include_failed: {} | stop_on_error: {} | limit_runs: {}\n",
+        "  include_partial: {} | include_incompatible: {} | include_failed: {} | stop_on_error: {} | limit_runs: {} | max_concurrency: {}\n",
         config.protocol.include_partial,
         config.protocol.include_incompatible,
         config.protocol.include_failed,
@@ -674,7 +693,8 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
             .protocol
             .limit_runs
             .map(|value| value.to_string())
-            .unwrap_or_else(|| "none".to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        config.protocol.max_concurrency
     ));
     out.push_str("\nframework tools\n");
     if config.framework.tools.is_empty() {
@@ -735,7 +755,10 @@ fn normalize_required_procedures(values: &[String]) -> Result<Vec<String>, Prepa
                 });
             }
         };
-        if !normalized.iter().any(|existing| existing == normalized_value) {
+        if !normalized
+            .iter()
+            .any(|existing| existing == normalized_value)
+        {
             normalized.push(normalized_value.to_string());
         }
     }
@@ -746,7 +769,12 @@ fn active_registry_count(registry: &TargetRegistry) -> usize {
     registry
         .entries
         .iter()
-        .filter(|entry| matches!(entry.state, crate::target_registry::RegistryEntryState::Active))
+        .filter(|entry| {
+            matches!(
+                entry.state,
+                crate::target_registry::RegistryEntryState::Active
+            )
+        })
         .count()
 }
 

@@ -9,7 +9,7 @@ use std::time::Duration;
 use color_eyre::Result;
 use reqwest::Client;
 
-use crate::{error::LlmError, router_only::openrouter::OpenRouter};
+use crate::{HttpFailure, HttpSendFailure, error::LlmError, router_only::openrouter::OpenRouter};
 
 // TODO:ploke-llm
 // These are these same files as in the original module for `llm`, and not oriented around
@@ -53,10 +53,18 @@ async fn simple_query_models() -> Result<()> {
         .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| LlmError::Request {
-            message: e.to_string(),
-            url: Some(url.to_string()),
-            is_timeout: e.is_timeout(),
+        .map_err(|e| {
+            let phase = if e.is_timeout() {
+                HttpSendFailure::Timeout
+            } else {
+                HttpSendFailure::Failed
+            };
+            LlmError::Http(HttpFailure::send(
+                Some(url.to_string()),
+                None,
+                e.to_string(),
+                phase,
+            ))
         })?;
 
     let response_json = response.text().await?;
