@@ -24,7 +24,7 @@ lazy_static::lazy_static! {
             "properties": {
                 "search_term": {
                     "type": "string",
-                    "description": "Search term guides which code guide hybrid semantic search and bm25."
+                    "description": "A likely identifier, module, file, error, or other narrowing term for broad code retrieval. Prefer exact symbols or nearby file/module names over long natural-language guesses."
                 },
                 "token_budget": {
                     "type": "integer",
@@ -34,6 +34,23 @@ lazy_static::lazy_static! {
             }
         }
     );
+}
+
+fn zero_result_note(search_term: &str) -> String {
+    format!(
+        "No indexed snippets matched `{search_term}`. This tool is broad retrieval, not exact symbol lookup."
+    )
+}
+
+fn zero_result_next_steps() -> Vec<String> {
+    vec![
+        "Retry with an exact symbol, type, method, module, or error name if you know one."
+            .to_string(),
+        "If you know the area but not the symbol, use list_dir or read_file on likely directories/files."
+            .to_string(),
+        "If you know the item name, switch to code_item_lookup for exact-definition lookup."
+            .to_string(),
+    ]
 }
 
 // --- GAT-based tool impl ---
@@ -162,12 +179,31 @@ impl super::Tool for RequestCodeContextGat {
             kind: ContextPartKind::Code,
         };
         tracing::debug!(?parts, ?stats);
-        let result = RequestCodeContextResult::from_assembled(parts, assembled_meta);
-        let summary = format!("Context assembled: {} snippets", result.context.len());
-        let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
+        let mut result = RequestCodeContextResult::from_assembled(parts, assembled_meta);
+        let summary = if result.context.is_empty() {
+            result.note = Some(zero_result_note(&result.search_term));
+            result.next_steps = zero_result_next_steps();
+            "No code context found (0 snippets)".to_string()
+        } else {
+            format!("Context assembled: {} snippets", result.context.len())
+        };
+        let mut ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("search_term", result.search_term.as_str())
             .with_field("top_k", result.top_k.to_string())
             .with_field("returned", result.context.len().to_string());
+        if let Some(note) = result.note.as_ref() {
+            let details = std::iter::once(note.as_str().to_string())
+                .chain(
+                    result
+                        .next_steps
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, step)| format!("{}. {}", idx + 1, step)),
+                )
+                .collect::<Vec<_>>()
+                .join("\n");
+            ui_payload = ui_payload.with_details(details);
+        }
         let serialized = serde_json::to_string(&result).expect("serialization");
         Ok(ToolResult {
             content: serialized,
@@ -222,13 +258,13 @@ mod gat_tests {
             "type": "function",
             "function": {
                 "name": "request_code_context",
-                "description": "Request additional code context from the repository up to a token budget.",
+                "description": "Request broad code context from the indexed workspace up to a token budget. Best for exploratory retrieval when you have likely identifiers, module names, file names, or error/type names. If it returns 0 snippets or broad irrelevant snippets, narrow the query with exact symbols or switch to code_item_lookup for exact definitions, or use list_dir/read_file once you know the area.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "search_term": {
                             "type": "string",
-                            "description": "Search term guides which code guide hybrid semantic search and bm25."
+                            "description": "A likely identifier, module, file, error, or other narrowing term for broad code retrieval. Prefer exact symbols or nearby file/module names over long natural-language guesses."
                         },
                         "token_budget": {
                             "type": "integer",

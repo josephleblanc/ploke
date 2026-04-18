@@ -126,7 +126,9 @@ impl From<ToolFunctionDef> for ToolDefinition {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq)]
 pub enum ToolDescr {
-    #[serde(rename = "Request additional code context from the repository up to a token budget.")]
+    #[serde(
+        rename = "Request broad code context from the indexed workspace up to a token budget. Best for exploratory retrieval when you have likely identifiers, module names, file names, or error/type names. If it returns 0 snippets or broad irrelevant snippets, narrow the query with exact symbols or switch to code_item_lookup for exact definitions, or use list_dir/read_file once you know the area."
+    )]
     RequestCodeContext,
     #[serde(
         rename = "Apply canonical code edits to one or more semantic targets identified by canonical path. Use `node_type=method` for associated items, and `node_type=function` for primary items. If you need help locating the target, use `code_item_lookup` or `code_item_edges`; use `non_semantic_patch` for direct text edits."

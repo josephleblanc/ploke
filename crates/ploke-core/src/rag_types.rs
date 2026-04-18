@@ -93,6 +93,10 @@ pub struct RequestCodeContextResult {
     pub search_term: String,
     pub top_k: usize,
     pub kind: ContextPartKind,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub next_steps: Vec<String>,
     pub context: Vec<ConciseContext>,
 }
 
@@ -111,6 +115,8 @@ impl RequestCodeContextResult {
             search_term: m.search_term,
             top_k: m.top_k,
             kind: m.kind,
+            note: None,
+            next_steps: Vec::new(),
             context,
         }
     }

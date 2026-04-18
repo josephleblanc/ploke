@@ -25,6 +25,11 @@ fn serde_roundtrip_request_code_context() {
         ok: true,
         search_term: "foo".to_string(),
         top_k: 3,
+        note: Some("No indexed snippets matched `foo`.".to_string()),
+        next_steps: vec![
+            "Retry with an exact symbol.".to_string(),
+            "Use code_item_lookup.".to_string(),
+        ],
         context: vec![part.clone()],
         kind: ContextPartKind::Code,
     };
@@ -34,6 +39,11 @@ fn serde_roundtrip_request_code_context() {
     assert!(res_back.ok);
     assert_eq!(res_back.search_term, "foo");
     assert_eq!(res_back.top_k, 3);
+    assert_eq!(
+        res_back.note.as_deref(),
+        Some("No indexed snippets matched `foo`.")
+    );
+    assert_eq!(res_back.next_steps.len(), 2);
     assert_eq!(res_back.context, vec![part]);
     assert_eq!(res_back.kind, ContextPartKind::Code);
 }
