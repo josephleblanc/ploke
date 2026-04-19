@@ -3551,6 +3551,39 @@ mod tests {
         assert!(status.success(), "{label} failed with status {status}");
     }
 
+    fn test_eval_embedding_selection() -> EvalEmbeddingSelection {
+        let model: ResponseItem = serde_json::from_value(serde_json::json!({
+            "id": OPENROUTER_CODESTRAL_MODEL,
+            "name": "Codestral Embed",
+            "created": 1_i64,
+            "description": "test embedding model",
+            "architecture": {
+                "modality": "text->embeddings",
+                "input_modalities": ["text"],
+                "output_modalities": ["embeddings"],
+                "tokenizer": "Mistral",
+                "instruct_type": null
+            },
+            "pricing": {
+                "prompt": "0.00000015",
+                "completion": "0"
+            },
+            "top_provider": {
+                "context_length": 32768,
+                "max_completion_tokens": null,
+                "is_moderated": false
+            },
+            "context_length": 32768
+        }))
+        .expect("test embedding model parses");
+
+        EvalEmbeddingSelection {
+            model,
+            provider: None,
+            dimensions: 1536,
+        }
+    }
+
     #[tokio::test]
     async fn runner_component_setup_emits_tracing() {
         init_tracing();
@@ -3565,7 +3598,8 @@ mod tests {
             .expect("active embedding set");
         info!(?currently_active_set);
 
-        let _processor = codestral_embedding_processor().expect("init embedding processor");
+        let selection = test_eval_embedding_selection();
+        let _processor = eval_embedding_processor(&selection).expect("init embedding processor");
         info!("embedding processor setup completed");
 
         // -- checking database's active embedding set --
@@ -3580,7 +3614,8 @@ mod tests {
         init_tracing();
 
         let runtime_db = init_runtime_db().expect("init runtime db");
-        let processor = codestral_embedding_processor().expect("init embedding processor");
+        let selection = test_eval_embedding_selection();
+        let processor = eval_embedding_processor(&selection).expect("init embedding processor");
         let runtime = TestRuntime::new_with_embedding_processor(&runtime_db, processor);
         let state = runtime.state_arc();
 
@@ -3589,7 +3624,7 @@ mod tests {
             .expect("active embedding set before activation");
         info!(?before, "active embedding set before activation");
 
-        activate_codestral_runtime(&state).expect("activate codestral runtime");
+        activate_eval_embedding_runtime(&state, &selection).expect("activate eval embedding runtime");
 
         let after: EmbeddingSet = runtime_db
             .with_active_set(|set| set.clone())
@@ -3597,7 +3632,7 @@ mod tests {
         info!(?after, "active embedding set after activation");
 
         assert_ne!(before.hash_id(), after.hash_id());
-        assert_eq!(after.hash_id(), codestral_embedding_set().hash_id());
+        assert_eq!(after.hash_id(), eval_embedding_set(&selection).hash_id());
     }
 
     #[tokio::test]
@@ -3631,14 +3666,21 @@ mod tests {
         .await
         .expect("persist snapshot");
 
-        let paths = persist_starting_db_cache_at(cache_root.path(), &prepared, &snapshot_path)
+        let selection = test_eval_embedding_selection();
+
+        let paths = persist_starting_db_cache_at(
+            cache_root.path(),
+            &prepared,
+            &selection,
+            &snapshot_path,
+        )
             .await
             .expect("persist cache");
         assert!(paths.snapshot.exists());
         assert!(paths.metadata.exists());
 
-        let loaded =
-            load_cached_starting_db_at(cache_root.path(), &prepared).expect("load cache hit");
+        let loaded = load_cached_starting_db_at(cache_root.path(), &prepared, &selection)
+            .expect("load cache hit");
         let loaded = loaded.expect("cache should be reusable");
         assert_eq!(loaded.snapshot, paths.snapshot);
 
@@ -3676,13 +3718,14 @@ mod tests {
             ..prepared_a.clone()
         };
 
-        let paths = starting_db_cache_paths_at(cache_root.path(), &prepared_a);
+        let selection = test_eval_embedding_selection();
+        let paths = starting_db_cache_paths_at(cache_root.path(), &prepared_a, &selection);
         assert_ne!(
             paths.snapshot,
-            starting_db_cache_paths_at(cache_root.path(), &prepared_b).snapshot
+            starting_db_cache_paths_at(cache_root.path(), &prepared_b, &selection).snapshot
         );
         assert!(
-            load_cached_starting_db_at(cache_root.path(), &prepared_a)
+            load_cached_starting_db_at(cache_root.path(), &prepared_a, &selection)
                 .expect("empty cache should not error")
                 .is_none()
         );
@@ -4607,7 +4650,7 @@ mod tests {
     #[test]
     fn embedding_preflight_error_mentions_registry_and_suggestions() {
         let detail = format_embedding_preflight_error(
-            &eval_embedding_model_id(),
+            &default_eval_embedding_model_id(),
             Some(Path::new("/tmp/embedding-models-openrouter.json")),
             "No successful provider responses",
             &[
