@@ -10,6 +10,7 @@ use crate::layout::{batches_dir, campaigns_dir, runs_dir};
 use crate::protocol::protocol_aggregate::{ProtocolAggregateError, load_protocol_aggregate};
 use crate::protocol_artifacts::{StoredProtocolArtifactFile, list_protocol_artifacts};
 use crate::record::read_compressed_record;
+use crate::run_history::{RunDirPreference, preferred_run_dir_for_instance};
 use crate::runner::{
     BatchRunSummary, ExecutionLog, IndexingStatusArtifact, SnapshotStatusArtifact,
 };
@@ -328,6 +329,9 @@ pub fn render_closure_status(state: &ClosureState) -> String {
         state.protocol.missing_total,
         state.protocol.ineligible_total
     ));
+    out.push_str(
+        "\nKey\n  registry: mapped=target resolved | missing=not in registry | ambiguous=multiple matches\n  eval: success=record exists | fail=run/indexing/batch failure | partial=artifacts exist without final record | missing=no run artifacts\n  protocol: full=all required protocol coverage present | partial=coverage missing | incompatible=stored reviews disagree with anchor | fail=protocol artifact/aggregate failure | missing=no protocol artifacts | ineligible=zero tool calls\n",
+    );
 
     let eval_failures = state
         .instances
@@ -338,10 +342,14 @@ pub fn render_closure_status(state: &ClosureState) -> String {
     if !eval_failures.is_empty() {
         out.push_str("\nEval failures\n");
         for row in eval_failures {
+            out.push_str(&format!("  - {}\n", row.instance_id));
+            for line in summarize_failure_lines(row.eval_failure.as_deref().unwrap_or("failed")) {
+                out.push_str(&format!("    {}\n", line));
+            }
+            out.push_str("    ...\n");
             out.push_str(&format!(
-                "  - {}: {}\n",
-                row.instance_id,
-                row.eval_failure.as_deref().unwrap_or("failed")
+                "    full: {}\n",
+                full_failure_command(&state.campaign_id, row)
             ));
         }
     }
@@ -359,7 +367,9 @@ pub fn render_closure_status(state: &ClosureState) -> String {
         .take(8)
         .collect::<Vec<_>>();
     if !protocol_frontier.is_empty() {
-        out.push_str("\nProtocol frontier\n");
+        out.push_str(
+            "\nProtocol frontier\n  eval-complete runs that still need protocol coverage or have incompatible protocol state\n",
+        );
         for row in protocol_frontier {
             out.push_str(&format!(
                 "  - {} [{}]",
@@ -381,6 +391,39 @@ pub fn render_closure_status(state: &ClosureState) -> String {
     }
 
     out
+}
+
+fn summarize_failure_lines(message: &str) -> Vec<&str> {
+    message
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(2)
+        .collect()
+}
+
+fn full_failure_command(campaign_id: &str, row: &ClosureInstanceRow) -> String {
+    if let Some(path) = row
+        .artifacts
+        .indexing_status
+        .as_ref()
+        .or(row.artifacts.parse_failure.as_ref())
+        .or(row.artifacts.execution_log.as_ref())
+    {
+        format!("sed -n '1,200p' {}", shell_escape_path(path))
+    } else if let Some(path) = row.artifacts.record_path.as_ref() {
+        format!("sed -n '1,200p' {}", shell_escape_path(path))
+    } else {
+        format!(
+            "cargo run -p ploke-eval -- closure status --campaign {} --format json",
+            campaign_id
+        )
+    }
+}
+
+fn shell_escape_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    format!("'{}'", raw.replace('\'', "'\"'\"'"))
 }
 
 fn default_benchmark_family() -> BenchmarkFamily {
@@ -520,8 +563,14 @@ fn build_instance_row(
     entry: &RegistryEntry,
     batch_failures: &HashMap<String, BatchFailureInfo>,
 ) -> Result<ClosureInstanceRow, PrepareError> {
-    let run_dir = config.runs_root.join(&entry.instance_id);
-    let run_manifest = run_dir.join("run.json");
+    let instance_root = config.runs_root.join(&entry.instance_id);
+    let run_dir = preferred_run_dir_for_instance(
+        &config.runs_root,
+        &entry.instance_id,
+        RunDirPreference::PreferTreatment,
+    )?
+    .unwrap_or_else(|| instance_root.clone());
+    let run_manifest = instance_root.join("run.json");
     let record_path = run_dir.join("record.json.gz");
     let execution_log_path = run_dir.join("execution-log.json");
     let indexing_status_path = run_dir.join("indexing-status.json");

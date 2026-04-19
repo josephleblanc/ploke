@@ -1,4 +1,8 @@
 use std::time::Duration;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
@@ -26,6 +30,17 @@ impl Default for EmbClientConfig {
             // timing
             timeout: Duration::from_secs(15),
         }
+    }
+}
+
+impl EmbClientConfig {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 }
 
@@ -132,6 +147,52 @@ pub trait HasEmbeddingModels: Router {
             Ok(resp.json::<Self::Response>().await?)
         }
     }
+}
+
+pub fn load_embedding_models_registry<R, P>(path: P) -> color_eyre::Result<R::Response>
+where
+    R: HasEmbeddingModels,
+    R::Response: for<'a> Deserialize<'a>,
+    P: AsRef<Path>,
+{
+    let bytes = fs::read(path.as_ref())?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+pub fn write_embedding_models_registry<R, P>(
+    path: P,
+    response: &R::Response,
+) -> color_eyre::Result<PathBuf>
+where
+    R: HasEmbeddingModels,
+    R::Response: Serialize,
+    P: AsRef<Path>,
+{
+    let path = path.as_ref();
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let pretty = serde_json::to_string_pretty(response)?;
+    fs::write(path, pretty)?;
+    Ok(path.to_path_buf())
+}
+
+pub async fn fetch_and_write_embedding_models_registry<R, P>(
+    client: &reqwest::Client,
+    cfg: EmbClientConfig,
+    path: P,
+) -> color_eyre::Result<R::Response>
+where
+    R: HasEmbeddingModels,
+    R::Response: for<'a> Deserialize<'a> + Serialize,
+    P: AsRef<Path>,
+{
+    let response = R::fetch_embedding_models(client, cfg).await?;
+    write_embedding_models_registry::<R, _>(path, &response)?;
+    Ok(response)
 }
 
 // TODO:ploke-llm:someday 2025-12-14
@@ -351,5 +412,73 @@ mod embedding_request_generic_field_tests {
                 "user": "user_123"
             }),
         );
+    }
+}
+
+#[cfg(test)]
+mod embedding_models_registry_tests {
+    use std::path::PathBuf;
+
+    use uuid::Uuid;
+
+    use crate::{
+        embeddings::{load_embedding_models_registry, write_embedding_models_registry},
+        request::models,
+        router_only::openrouter::OpenRouter,
+    };
+
+    fn temp_registry_path(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("ploke-llm-{name}-{}.json", Uuid::new_v4()));
+        path
+    }
+
+    fn sample_response() -> models::Response {
+        serde_json::from_value(serde_json::json!({
+            "data": [{
+                "id": "openai/text-embedding-3-small",
+                "name": "OpenAI: Text Embedding 3 Small",
+                "created": 1761857455_i64,
+                "description": "small embedding model",
+                "architecture": {
+                    "modality": "text->embeddings",
+                    "input_modalities": ["text"],
+                    "output_modalities": ["embeddings"],
+                    "tokenizer": "Other",
+                    "instruct_type": null
+                },
+                "pricing": {
+                    "prompt": "0.00000002",
+                    "completion": "0"
+                },
+                "top_provider": {
+                    "context_length": 8192,
+                    "max_completion_tokens": null,
+                    "is_moderated": true
+                },
+                "canonical_slug": "openai/text-embedding-3-small",
+                "context_length": 8192
+            }]
+        }))
+        .expect("sample embedding models response parses")
+    }
+
+    #[test]
+    fn embedding_models_registry_round_trip() {
+        let response = sample_response();
+        let path = temp_registry_path("embedding-models-registry-round-trip");
+
+        write_embedding_models_registry::<OpenRouter, _>(&path, &response)
+            .expect("writes embedding models registry");
+        let restored = load_embedding_models_registry::<OpenRouter, _>(&path)
+            .expect("loads embedding models registry");
+
+        assert_eq!(restored.data.len(), 1);
+        assert_eq!(
+            restored.data[0].id.to_string(),
+            "openai/text-embedding-3-small"
+        );
+
+        let _ = std::fs::remove_file(path);
     }
 }

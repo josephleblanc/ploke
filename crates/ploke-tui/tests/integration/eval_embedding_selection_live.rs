@@ -111,6 +111,8 @@ fn codestral_config() -> OpenRouterConfig {
         initial_backoff_ms: 250,
         max_backoff_ms: 10_000,
         input_type: Some("code-snippet".into()),
+        provider_order: None,
+        allow_fallbacks: None,
         timeout_secs: 30,
         truncate_policy: TruncatePolicy::Truncate,
     }

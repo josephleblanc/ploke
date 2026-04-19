@@ -195,6 +195,7 @@ async fn setup_phase_populates_correctly_after_indexing() {
     let indexing_status = IndexingStatusArtifact {
         status: "completed".to_string(),
         detail: "Successfully indexed test crate".to_string(),
+        last_progress: None,
     };
 
     let setup = build_setup_phase(&db, repo_state, indexing_status, false)
@@ -445,6 +446,7 @@ async fn setup_phase_with_cached_db_path() {
     let indexing_status = IndexingStatusArtifact {
         status: "cached".to_string(),
         detail: "Using cached database".to_string(),
+        last_progress: None,
     };
 
     let setup = build_setup_phase(&db, repo_state, indexing_status, true)
@@ -539,6 +541,7 @@ async fn setup_phase_lists_multiple_crates() {
     let indexing_status = IndexingStatusArtifact {
         status: "completed".to_string(),
         detail: "Successfully indexed workspace".to_string(),
+        last_progress: None,
     };
 
     let setup = build_setup_phase(&db, repo_state, indexing_status, false)

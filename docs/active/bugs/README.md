@@ -19,3 +19,13 @@ for near-term implementation planning.
   `nu-cli` indexing fails with duplicate `crate::commands` module-path collisions.
 - [`2026-04-17-nushell-indexing-completed-timeout.md`](./2026-04-17-nushell-indexing-completed-timeout.md)
   Current `nushell` runs timing out at `indexing_completed` after 300 seconds.
+- [`2026-04-18-eval-patch-artifact-collision-and-empty-diff.md`](./2026-04-18-eval-patch-artifact-collision-and-empty-diff.md)
+  Eval runs can mix arms or report successful patch activity without a trustworthy final diff.
+- [`2026-04-18-openrouter-codestral-embed-404-fallback.md`](./2026-04-18-openrouter-codestral-embed-404-fallback.md)
+  Live eval RAG requests currently fall back to conversation-only mode after OpenRouter embeddings return `404` for Codestral.
+- [`2026-04-18-semantic-edit-applied-zero-writes.md`](./2026-04-18-semantic-edit-applied-zero-writes.md)
+  Semantic edit approval could present zero-write proposals as `Applied`, polluting patch summaries.
+- [`2026-04-18-multi-edit-apply-result-accounting.md`](./2026-04-18-multi-edit-apply-result-accounting.md)
+  Same-file multi-edit apply and result accounting lose per-edit semantics and can under-report failures.
+- [`2026-04-18-arm-agnostic-latest-run-selection.md`](./2026-04-18-arm-agnostic-latest-run-selection.md)
+  Read-side run selection still picks the newest run dir without respecting control vs treatment arms.

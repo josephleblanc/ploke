@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use clap::{ArgAction, Parser, Subcommand};
 use ploke_llm::Router;
@@ -63,7 +64,10 @@ use crate::provider_prefs::{
 };
 use crate::record::{RawFullResponseRecord, read_compressed_record};
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
-use crate::run_history::print_last_run_assistant_messages;
+use crate::run_history::{
+    RunDirPreference, list_finished_record_paths_in_runs_root, preferred_run_dir_for_instance,
+    print_last_run_assistant_messages,
+};
 use crate::runner::{
     BatchRunSummary, MultiSweBenchSubmissionRecord, ReplayMsbBatchRequest, RunMsbAgentBatchRequest,
     RunMsbAgentSingleRequest, RunMsbBatchRequest, RunMsbSingleRequest, resolve_provider_for_model,
@@ -804,6 +808,14 @@ pub struct RunMsbAgentSingleCommand {
     /// Explicit provider slug to pin for the selected model.
     #[arg(long, value_name = "PROVIDER")]
     pub provider: Option<String>,
+
+    /// Explicit embedding model id to use for eval indexing/retrieval on this run.
+    #[arg(long)]
+    pub embedding_model_id: Option<String>,
+
+    /// Explicit provider slug to pin for the embedding model on this run.
+    #[arg(long, value_name = "PROVIDER")]
+    pub embedding_provider: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -1691,6 +1703,8 @@ pub enum InspectSubcommand {
     Conversations(InspectConversationsCommand),
     /// List all tool calls from all turns (run.tool_calls())
     ToolCalls(InspectToolCallsCommand),
+    /// Aggregate campaign-scoped tool usage and failure patterns.
+    ToolOverview(InspectToolOverviewCommand),
     /// List DB snapshots at each turn boundary (run.db_snapshots())
     DbSnapshots(InspectDbSnapshotsCommand),
     /// List turns with error outcomes (run.failures())
@@ -1745,6 +1759,25 @@ pub struct InspectToolCallsCommand {
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectToolOverviewCommand {
+    /// Campaign id whose eval-complete runs should be scanned.
+    #[arg(long)]
+    pub campaign: String,
+
+    /// Restrict the report to one tool name, e.g. `apply_code_edit`.
+    #[arg(long)]
+    pub tool: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Maximum number of rows to show in ranked sections.
+    #[arg(long, default_value_t = 8)]
+    pub limit: usize,
 }
 
 #[derive(Debug, Parser)]
@@ -2092,6 +2125,8 @@ impl RunMsbAgentSingleCommand {
             use_default_model: self.use_default_model,
             model_id: self.model_id,
             provider: parse_provider_key(self.provider)?,
+            embedding_model_id: self.embedding_model_id,
+            embedding_provider: parse_provider_key(self.embedding_provider)?,
         }
         .run()
         .await?;
@@ -2212,6 +2247,7 @@ impl InspectCommand {
         match self.command {
             InspectSubcommand::Conversations(cmd) => cmd.run().await,
             InspectSubcommand::ToolCalls(cmd) => cmd.run().await,
+            InspectSubcommand::ToolOverview(cmd) => cmd.run().await,
             InspectSubcommand::DbSnapshots(cmd) => cmd.run().await,
             InspectSubcommand::Failures(cmd) => cmd.run().await,
             InspectSubcommand::Config(cmd) => cmd.run().await,
@@ -2956,11 +2992,14 @@ fn load_submission_record_for_row(
     state: &crate::closure::ClosureState,
     row: &crate::closure::ClosureInstanceRow,
 ) -> Result<MultiSweBenchSubmissionRecord, PrepareError> {
-    let path = state
-        .config
-        .runs_root
-        .join(&row.instance_id)
-        .join("multi-swe-bench-submission.jsonl");
+    let instance_root = state.config.runs_root.join(&row.instance_id);
+    let run_dir = preferred_run_dir_for_instance(
+        &state.config.runs_root,
+        &row.instance_id,
+        RunDirPreference::PreferTreatmentWithSubmission,
+    )?
+    .unwrap_or(instance_root);
+    let path = run_dir.join("multi-swe-bench-submission.jsonl");
     let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
         path: path.clone(),
         source,
@@ -4164,6 +4203,22 @@ impl InspectToolCallsCommand {
     }
 }
 
+impl InspectToolOverviewCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let report = collect_tool_campaign_overview(&self)?;
+
+        match self.format {
+            InspectOutputFormat::Table => print_tool_campaign_overview(&report, self.limit.max(1)),
+            InspectOutputFormat::Json => println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+            ),
+        }
+
+        Ok(())
+    }
+}
+
 impl InspectDbSnapshotsCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         let record_path = resolve_record_path(self.record, self.instance)?;
@@ -5360,6 +5415,143 @@ fn count_rows_from_map(
     counts
 }
 
+fn collect_tool_campaign_overview(
+    command: &InspectToolOverviewCommand,
+) -> Result<ToolCampaignOverviewReport, PrepareError> {
+    let state = load_closure_state(&command.campaign)?;
+    let tool_filter = command.tool.as_deref().map(normalize_filter_value);
+    let mut report = ToolCampaignOverviewReport {
+        campaign_id: command.campaign.clone(),
+        tool_filter: command.tool.clone(),
+        scanned_complete_runs: 0,
+        runs_with_tool: 0,
+        runs_with_failed_calls: 0,
+        repeated_failure_runs: 0,
+        mixed_outcome_runs: 0,
+        total_calls: 0,
+        completed_calls: 0,
+        failed_calls: 0,
+        failure_codes: Vec::new(),
+        failure_reasons: Vec::new(),
+        exemplar_runs: Vec::new(),
+        next_steps: Vec::new(),
+    };
+    let mut failure_code_counts = BTreeMap::<String, (usize, BTreeSet<String>)>::new();
+    let mut failure_reason_counts = BTreeMap::<String, (usize, BTreeSet<String>)>::new();
+    let mut run_rows = Vec::new();
+
+    for row in state
+        .instances
+        .iter()
+        .filter(|row| row.eval_status == ClosureClass::Complete)
+    {
+        report.scanned_complete_runs += 1;
+        let Some(record_path) = row.artifacts.record_path.as_ref() else {
+            continue;
+        };
+        if !record_path.exists() {
+            continue;
+        }
+        let record =
+            read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+        let mut run = ToolRunAccumulator::default();
+
+        for call in record.tool_calls().into_iter().filter(|call| {
+            tool_filter.as_deref().map_or(true, |tool| {
+                normalize_filter_value(&call.request.tool) == tool
+            })
+        }) {
+            run.total_calls += 1;
+            report.total_calls += 1;
+            match call.result {
+                crate::record::ToolResult::Completed(_) => {
+                    run.completed_calls += 1;
+                    report.completed_calls += 1;
+                }
+                crate::record::ToolResult::Failed(failed) => {
+                    run.failed_calls += 1;
+                    report.failed_calls += 1;
+
+                    let reason = summarize_failure_reason(&failed.error);
+                    *run.failure_reasons.entry(reason.clone()).or_insert(0) += 1;
+                    let (count, runs) = failure_reason_counts
+                        .entry(reason)
+                        .or_insert_with(|| (0usize, BTreeSet::new()));
+                    *count += 1;
+                    runs.insert(row.instance_id.clone());
+
+                    if let Some(code) = tool_failure_code(&failed) {
+                        *run.failure_codes.entry(code.clone()).or_insert(0) += 1;
+                        let (count, runs) = failure_code_counts
+                            .entry(code)
+                            .or_insert_with(|| (0usize, BTreeSet::new()));
+                        *count += 1;
+                        runs.insert(row.instance_id.clone());
+                    }
+                }
+            }
+        }
+
+        if run.total_calls == 0 {
+            continue;
+        }
+
+        report.runs_with_tool += 1;
+        if run.failed_calls > 0 {
+            report.runs_with_failed_calls += 1;
+        }
+        if run.failed_calls >= 2 {
+            report.repeated_failure_runs += 1;
+        }
+        if run.failed_calls > 0 && run.completed_calls > 0 {
+            report.mixed_outcome_runs += 1;
+        }
+
+        run_rows.push(ToolOverviewRunRow {
+            run_id: row.instance_id.clone(),
+            total_calls: run.total_calls,
+            completed_calls: run.completed_calls,
+            failed_calls: run.failed_calls,
+            top_failure_code: top_failure_label(&run.failure_codes),
+            top_failure_reason: top_failure_label(&run.failure_reasons),
+        });
+    }
+
+    report.failure_codes = count_rows_from_map(failure_code_counts)
+        .into_iter()
+        .map(|row| ToolOverviewCountRow {
+            label: row.label,
+            count: row.count,
+            affected_runs: row.affected_runs,
+        })
+        .collect();
+    report.failure_reasons = count_rows_from_map(failure_reason_counts)
+        .into_iter()
+        .map(|row| ToolOverviewCountRow {
+            label: row.label,
+            count: row.count,
+            affected_runs: row.affected_runs,
+        })
+        .collect();
+    run_rows.sort_by(|left, right| {
+        right
+            .failed_calls
+            .cmp(&left.failed_calls)
+            .then_with(|| right.total_calls.cmp(&left.total_calls))
+            .then_with(|| left.run_id.cmp(&right.run_id))
+    });
+    run_rows.truncate(command.limit.max(3));
+    report.exemplar_runs = run_rows;
+    report.failure_codes.truncate(command.limit.max(3));
+    report.failure_reasons.truncate(command.limit.max(3));
+    report.next_steps = build_tool_overview_next_steps(&report);
+
+    Ok(report)
+}
+
 fn problem_family_for_status_group(
     label: &str,
     family_kind: &str,
@@ -5529,6 +5721,25 @@ fn describe_selected_family(query: &ProtocolCampaignQuery) -> String {
     }
 }
 
+fn build_tool_overview_next_steps(report: &ToolCampaignOverviewReport) -> Vec<String> {
+    let tool = report
+        .tool_filter
+        .clone()
+        .unwrap_or_else(|| "apply_code_edit".to_string());
+    let mut steps = Vec::new();
+    if let Some(run) = report.exemplar_runs.first() {
+        steps.push(format!(
+            "inspect the worst exemplar with `ploke-eval inspect tool-calls --instance {}`",
+            run.run_id
+        ));
+    }
+    steps.push(format!(
+        "compare protocol issue context with `ploke-eval inspect protocol-overview --campaign {} --tool {}`",
+        report.campaign_id, tool
+    ));
+    steps
+}
+
 fn normalize_filter_value(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
@@ -5549,6 +5760,50 @@ struct ProtocolRunSummaryRow {
     note: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ToolCampaignOverviewReport {
+    campaign_id: String,
+    tool_filter: Option<String>,
+    scanned_complete_runs: usize,
+    runs_with_tool: usize,
+    runs_with_failed_calls: usize,
+    repeated_failure_runs: usize,
+    mixed_outcome_runs: usize,
+    total_calls: usize,
+    completed_calls: usize,
+    failed_calls: usize,
+    failure_codes: Vec<ToolOverviewCountRow>,
+    failure_reasons: Vec<ToolOverviewCountRow>,
+    exemplar_runs: Vec<ToolOverviewRunRow>,
+    next_steps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ToolOverviewCountRow {
+    label: String,
+    count: usize,
+    affected_runs: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ToolOverviewRunRow {
+    run_id: String,
+    total_calls: usize,
+    completed_calls: usize,
+    failed_calls: usize,
+    top_failure_code: Option<String>,
+    top_failure_reason: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct ToolRunAccumulator {
+    total_calls: usize,
+    completed_calls: usize,
+    failed_calls: usize,
+    failure_codes: BTreeMap<String, usize>,
+    failure_reasons: BTreeMap<String, usize>,
+}
+
 #[derive(Debug, Clone)]
 struct SegmentEvidenceCounts {
     usable: usize,
@@ -5558,9 +5813,20 @@ struct SegmentEvidenceCounts {
 }
 
 fn collect_protocol_run_summaries() -> Result<Vec<ProtocolRunSummaryRow>, PrepareError> {
+    let total_start = Instant::now();
     let mut summaries = Vec::new();
     for record_path in collect_finished_record_paths()? {
-        summaries.push(collect_protocol_run_summary_record(&record_path)?.summary);
+        let run_start = Instant::now();
+        let summary = collect_protocol_run_summary_record(&record_path)?.summary;
+        let elapsed = run_start.elapsed();
+        if elapsed.as_millis() >= 200 {
+            eprintln!(
+                "protocol-overview: slow run {} took {} ms",
+                summary.run_id,
+                elapsed.as_millis()
+            );
+        }
+        summaries.push(summary);
     }
     summaries.sort_by(|left, right| {
         let left_evidence_concerns = left.mismatched_segment_reviews
@@ -5575,6 +5841,11 @@ fn collect_protocol_run_summaries() -> Result<Vec<ProtocolRunSummaryRow>, Prepar
             .then_with(|| right.call_issues.cmp(&left.call_issues))
             .then_with(|| right.tool_calls_total.cmp(&left.tool_calls_total))
     });
+    eprintln!(
+        "protocol-overview: scanned {} runs in {:.2}s",
+        summaries.len(),
+        total_start.elapsed().as_secs_f32()
+    );
     Ok(summaries)
 }
 
@@ -5750,22 +6021,7 @@ fn segment_evidence_counts(aggregate: &ProtocolAggregate) -> SegmentEvidenceCoun
 
 fn collect_finished_record_paths() -> Result<Vec<PathBuf>, PrepareError> {
     let root = runs_dir()?;
-    let mut paths = Vec::new();
-    for entry in std::fs::read_dir(&root).map_err(|source| PrepareError::ReadManifest {
-        path: root.clone(),
-        source,
-    })? {
-        let entry = entry.map_err(|source| PrepareError::ReadManifest {
-            path: root.clone(),
-            source,
-        })?;
-        let path = entry.path().join("record.json.gz");
-        if path.exists() {
-            paths.push(path);
-        }
-    }
-    paths.sort();
-    Ok(paths)
+    list_finished_record_paths_in_runs_root(&root)
 }
 
 fn build_protocol_report(
@@ -6012,8 +6268,11 @@ fn print_protocol_run_summaries(
 
     println!("Segment evidence legend: u=usable, m=mismatched, x=missing");
     println!(
+        "Protocol status: full=all expected protocol reviews present; partial=review coverage missing; missing=no segmentation anchor; error=artifact/schema failure; ineligible=zero tool calls"
+    );
+    println!(
         "{:<28} {:<10} {:<12} {:<18} {:<8} Summary",
-        "Run", "Calls", "Status", "Segment evidence", "Issues"
+        "Run", "Call revs", "Protocol", "Segment evidence", "Issues"
     );
     println!("{}", "─".repeat(command.width.min(120)));
     for row in rows {
@@ -6055,6 +6314,65 @@ fn print_protocol_run_summaries(
             row.call_issues,
             summary,
         );
+    }
+}
+
+fn print_tool_campaign_overview(report: &ToolCampaignOverviewReport, limit: usize) {
+    println!("Campaign: {}", report.campaign_id);
+    println!(
+        "Tool: {}",
+        report.tool_filter.as_deref().unwrap_or("<all tools>")
+    );
+    println!(
+        "Runs: {} complete scanned | {} with tool",
+        report.scanned_complete_runs, report.runs_with_tool
+    );
+    println!(
+        "Calls: {} total | {} completed | {} failed",
+        report.total_calls, report.completed_calls, report.failed_calls
+    );
+    println!(
+        "Run outcomes: {} with failures | {} repeated-failure runs | {} mixed-outcome runs",
+        report.runs_with_failed_calls, report.repeated_failure_runs, report.mixed_outcome_runs
+    );
+
+    if !report.failure_codes.is_empty() {
+        println!("\nTop failure codes");
+        for row in report.failure_codes.iter().take(limit) {
+            println!(
+                "  - {}: {} calls across {} runs",
+                row.label, row.count, row.affected_runs
+            );
+        }
+    }
+
+    if !report.failure_reasons.is_empty() {
+        println!("\nTop failure reasons");
+        for row in report.failure_reasons.iter().take(limit) {
+            println!(
+                "  - {}: {} calls across {} runs",
+                row.label, row.count, row.affected_runs
+            );
+        }
+    }
+
+    if !report.exemplar_runs.is_empty() {
+        println!("\nExemplar runs");
+        for row in report.exemplar_runs.iter().take(limit) {
+            let code = row.top_failure_code.as_deref().unwrap_or("-");
+            let reason = row.top_failure_reason.as_deref().unwrap_or("-");
+            println!(
+                "  - {}: {} calls | {} completed | {} failed | top code {} | {}",
+                row.run_id, row.total_calls, row.completed_calls, row.failed_calls, code, reason
+            );
+        }
+    }
+
+    if !report.next_steps.is_empty() {
+        println!("\nNext");
+        for step in report.next_steps.iter().take(4) {
+            println!("  - {}", step);
+        }
     }
 }
 
@@ -7341,6 +7659,46 @@ fn summarize_tool_result(result: &crate::record::ToolResult) -> String {
     }
 }
 
+fn summarize_failure_reason(error: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(error) {
+        for key in ["user", "summary", "message", "error"] {
+            if let Some(text) = value.get(key).and_then(|value| value.as_str()) {
+                let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                if !normalized.is_empty() {
+                    return truncate_middle(&normalized, 96);
+                }
+            }
+        }
+    }
+    let normalized = error
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .unwrap_or_else(|| "-".to_string());
+    truncate_middle(&normalized, 96)
+}
+
+fn tool_failure_code(failed: &crate::runner::ToolFailedRecord) -> Option<String> {
+    failed
+        .ui_payload
+        .as_ref()
+        .and_then(|payload| payload.error_code)
+        .map(tool_error_code_label)
+        .map(str::to_string)
+}
+
+fn top_failure_label(counts: &BTreeMap<String, usize>) -> Option<String> {
+    counts
+        .iter()
+        .max_by(|(left_label, left_count), (right_label, right_count)| {
+            left_count
+                .cmp(right_count)
+                .then_with(|| right_label.cmp(left_label))
+        })
+        .map(|(label, _)| label.clone())
+}
+
 fn summarize_json_value(key: &str, value: &serde_json::Value, multiline: bool) -> String {
     match value {
         serde_json::Value::String(text) => {
@@ -7487,7 +7845,13 @@ fn resolve_record_path_from_eval_home(
     let runs_root = eval_home.join("runs");
     match (record, instance) {
         (Some(path), None) => Ok(path),
-        (None, Some(instance)) => Ok(runs_root.join(instance).join("record.json.gz")),
+        (None, Some(instance)) => Ok(preferred_run_dir_for_instance(
+            &runs_root,
+            &instance,
+            RunDirPreference::PreferTreatment,
+        )?
+        .unwrap_or_else(|| runs_root.join(&instance))
+        .join("record.json.gz")),
         (None, None) => {
             let last_run = crate::run_history::load_last_run_at(&eval_home)?;
             Ok(last_run.run_dir.join("record.json.gz"))
@@ -7965,6 +8329,26 @@ mod tests {
         }
     }
 
+    fn write_test_run_record(path: &Path, run_arm: crate::runner::RunArm) {
+        let prepared = crate::spec::PreparedSingleRun {
+            task_id: "org__repo-1".to_string(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            output_dir: PathBuf::from("/tmp/output"),
+            issue: crate::spec::IssueInput {
+                title: None,
+                body: None,
+                body_path: None,
+            },
+            base_sha: None,
+            head_sha: None,
+            budget: crate::spec::EvalBudget::default(),
+            source: None,
+            campaign: None,
+        };
+        let record = crate::record::RunRecord::new(&prepared, run_arm);
+        crate::record::write_compressed_record(path, &record).expect("write record");
+    }
+
     #[test]
     fn extracts_size_from_parameter_phrase() {
         let text = "Cogito v2 is a multilingual, instruction-tuned Mixture of Experts (MoE) large language model with 671 billion parameters.";
@@ -8152,6 +8536,52 @@ mod tests {
     }
 
     #[test]
+    fn resolve_record_path_prefers_latest_nested_run_for_instance() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let eval_home = tmp.path().join("eval-home");
+        let instance_root = eval_home.join("runs").join("org__repo-1");
+        let older_run = instance_root.join("runs").join("run-older");
+        let newer_run = instance_root.join("runs").join("run-newer");
+        std::fs::create_dir_all(&older_run).expect("older run dir");
+        std::fs::create_dir_all(&newer_run).expect("newer run dir");
+        std::fs::write(older_run.join("record.json.gz"), "older").expect("older record");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(newer_run.join("record.json.gz"), "newer").expect("newer record");
+
+        let path =
+            resolve_record_path_from_eval_home(None, Some("org__repo-1".to_string()), eval_home)
+                .expect("instance record path should resolve");
+
+        assert_eq!(path, newer_run.join("record.json.gz"));
+    }
+
+    #[test]
+    fn resolve_record_path_prefers_treatment_run_over_newer_control_run() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let eval_home = tmp.path().join("eval-home");
+        let instance_root = eval_home.join("runs").join("org__repo-1");
+        let treatment_run = instance_root.join("runs").join("run-treatment");
+        let control_run = instance_root.join("runs").join("run-control");
+        std::fs::create_dir_all(&treatment_run).expect("treatment run dir");
+        std::fs::create_dir_all(&control_run).expect("control run dir");
+        write_test_run_record(
+            &treatment_run.join("record.json.gz"),
+            crate::runner::RunArm::structured_current_policy_treatment(),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        write_test_run_record(
+            &control_run.join("record.json.gz"),
+            crate::runner::RunArm::shell_only_control(),
+        );
+
+        let path =
+            resolve_record_path_from_eval_home(None, Some("org__repo-1".to_string()), eval_home)
+                .expect("instance record path should resolve");
+
+        assert_eq!(path, treatment_run.join("record.json.gz"));
+    }
+
+    #[test]
     fn abbreviate_path_tail_keeps_filename_suffix() {
         let path = "/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/globset/src/lib.rs";
         let abbreviated = abbreviate_path_tail(path, 32);
@@ -8178,6 +8608,41 @@ mod tests {
             }) => assert_eq!(cmd.index, Some(5)),
             other => panic!("unexpected command shape: {:?}", other),
         }
+    }
+
+    #[test]
+    fn inspect_tool_overview_accepts_campaign_and_tool() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "inspect",
+            "tool-overview",
+            "--campaign",
+            "rust-baseline-grok4-xai",
+            "--tool",
+            "apply_code_edit",
+        ])
+        .expect("tool-overview should parse campaign and tool");
+
+        match parsed.command {
+            Command::Inspect(InspectCommand {
+                command: InspectSubcommand::ToolOverview(cmd),
+            }) => {
+                assert_eq!(cmd.campaign, "rust-baseline-grok4-xai");
+                assert_eq!(cmd.tool.as_deref(), Some("apply_code_edit"));
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn summarize_failure_reason_uses_first_non_empty_line() {
+        let summary = summarize_failure_reason(
+            "\napply_code_edit: No matching node found (strict+fallback)\nerror code: invalid_format\n",
+        );
+        assert_eq!(
+            summary,
+            "apply_code_edit: No matching node found (strict+fallback)"
+        );
     }
 
     #[test]
@@ -8380,11 +8845,33 @@ mod tests {
     fn collect_campaign_submission_records_filters_empty_patches_only_when_requested() {
         let tmp = tempdir().expect("tempdir");
         let runs_root = tmp.path().join("runs");
-        fs::create_dir_all(runs_root.join("org__repo-1")).expect("run dir 1");
-        fs::create_dir_all(runs_root.join("org__repo-2")).expect("run dir 2");
+        fs::create_dir_all(runs_root.join("org__repo-1").join("runs").join("run-a"))
+            .expect("run dir 1");
+        fs::create_dir_all(runs_root.join("org__repo-2").join("runs").join("run-b"))
+            .expect("run dir 2");
         fs::write(
             runs_root
                 .join("org__repo-1")
+                .join("runs")
+                .join("run-a")
+                .join("record.json.gz"),
+            "record",
+        )
+        .expect("write record 1");
+        fs::write(
+            runs_root
+                .join("org__repo-2")
+                .join("runs")
+                .join("run-b")
+                .join("record.json.gz"),
+            "record",
+        )
+        .expect("write record 2");
+        fs::write(
+            runs_root
+                .join("org__repo-1")
+                .join("runs")
+                .join("run-a")
                 .join("multi-swe-bench-submission.jsonl"),
             serde_json::to_string(&MultiSweBenchSubmissionRecord {
                 org: "org".to_string(),
@@ -8398,6 +8885,8 @@ mod tests {
         fs::write(
             runs_root
                 .join("org__repo-2")
+                .join("runs")
+                .join("run-b")
                 .join("multi-swe-bench-submission.jsonl"),
             serde_json::to_string(&MultiSweBenchSubmissionRecord {
                 org: "org".to_string(),
@@ -8421,6 +8910,54 @@ mod tests {
         assert_eq!(
             count_campaign_empty_patch_rows(&state).expect("empty rows"),
             1
+        );
+    }
+
+    #[test]
+    fn collect_campaign_submission_records_prefers_treatment_submission_over_newer_control_run() {
+        let tmp = tempdir().expect("tempdir");
+        let runs_root = tmp.path().join("runs");
+        let treatment_run = runs_root
+            .join("org__repo-1")
+            .join("runs")
+            .join("run-treatment");
+        let control_run = runs_root
+            .join("org__repo-1")
+            .join("runs")
+            .join("run-control");
+        fs::create_dir_all(&treatment_run).expect("treatment run dir");
+        fs::create_dir_all(&control_run).expect("control run dir");
+        write_test_run_record(
+            &treatment_run.join("record.json.gz"),
+            crate::runner::RunArm::structured_current_policy_treatment(),
+        );
+        fs::write(
+            treatment_run.join("multi-swe-bench-submission.jsonl"),
+            serde_json::to_string(&MultiSweBenchSubmissionRecord {
+                org: "org".to_string(),
+                repo: "repo".to_string(),
+                number: 1,
+                fix_patch: "diff --git a/src/lib.rs b/src/lib.rs\n".to_string(),
+            })
+            .expect("json"),
+        )
+        .expect("write treatment submission");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        write_test_run_record(
+            &control_run.join("record.json.gz"),
+            crate::runner::RunArm::shell_only_control(),
+        );
+
+        let mut state = sample_closure_state_for_submission_export(runs_root);
+        state.instances.truncate(1);
+        let records =
+            collect_campaign_submission_records(&state, false).expect("all records export");
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].number, 1);
+        assert_eq!(
+            records[0].fix_patch,
+            "diff --git a/src/lib.rs b/src/lib.rs\n"
         );
     }
 

@@ -32,13 +32,25 @@ pub enum RunRegistrationError {
     #[error("failed to serialize run registration: {source}")]
     Serialize { source: serde_json::Error },
     #[error("failed to create directory '{path}': {source}")]
-    CreateDir { path: PathBuf, source: std::io::Error },
+    CreateDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("failed to write run registration '{path}': {source}")]
-    Write { path: PathBuf, source: std::io::Error },
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("failed to read run registration '{path}': {source}")]
-    Read { path: PathBuf, source: std::io::Error },
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("failed to parse run registration '{path}': {source}")]
-    Parse { path: PathBuf, source: serde_json::Error },
+    Parse {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
 }
 
 impl RunRegistration {
@@ -101,10 +113,8 @@ impl RunRegistration {
             source,
         })?;
 
-        let json =
-            serde_json::to_string_pretty(self).map_err(|source| RunRegistrationError::Serialize {
-                source,
-            })?;
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|source| RunRegistrationError::Serialize { source })?;
         fs::write(&registry_path, json).map_err(|source| RunRegistrationError::Write {
             path: registry_path,
             source,
@@ -212,7 +222,10 @@ mod tests {
                 .join("runs")
                 .join(format!("{}.json", registration.run_id))
         );
-        assert_eq!(registration.run_root(), roots.runs_dir.join(&registration.run_id));
+        assert_eq!(
+            registration.run_root(),
+            roots.runs_dir.join(&registration.run_id)
+        );
         assert_eq!(
             registration.record_path(),
             roots

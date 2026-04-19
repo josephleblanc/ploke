@@ -731,6 +731,51 @@ async fn test_auto_confirm_workflow() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "test_harness")]
+async fn test_manual_approve_marks_semantic_edit_failed_when_file_changed_after_staging() {
+    use crate::rag::editing::approve_edits;
+    use std::fs;
+
+    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let request_id = Uuid::new_v4();
+
+    let edit_request = create_canonical_edit_request(
+        "src/structs.rs",
+        "crate::structs::SampleStruct",
+        NodeType::Struct,
+        "pub struct SampleStruct { pub field: String, raced_field: usize }",
+        Some(0.9f32),
+    );
+
+    let arguments = serde_json::to_value(&edit_request).expect("serialize request");
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
+
+    apply_code_edit_tool(params).await;
+
+    let mut original_path = workspace_root();
+    original_path.push(ORIGINAL_FIXTURE);
+    let current = fs::read_to_string(&original_path).expect("read fixture before mutation");
+    fs::write(&original_path, format!("{current}\n// external mutation\n"))
+        .expect("mutate fixture after staging");
+
+    approve_edits(&harness.state, &harness.event_bus, request_id).await;
+
+    {
+        let proposals = harness.state.proposals.read().await;
+        let proposal = proposals.get(&request_id).expect("proposal should exist");
+        assert!(
+            matches!(proposal.status, EditProposalStatus::Failed(_)),
+            "semantic proposal should fail when file changed after staging, got {:?}",
+            proposal.status
+        );
+    }
+
+    restore_fixture();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tool_result_structure() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();

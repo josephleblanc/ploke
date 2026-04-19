@@ -2449,6 +2449,7 @@ mod tests {
             indexing_status: IndexingStatusArtifact {
                 status: "completed".to_string(),
                 detail: "Successfully indexed 2 crates".to_string(),
+                last_progress: None,
             },
             indexed_crates: vec![
                 IndexedCrateSummary {
@@ -2558,6 +2559,7 @@ mod tests {
             indexing_status: IndexingStatusArtifact {
                 status: "completed".to_string(),
                 detail: "No crates to index".to_string(),
+                last_progress: None,
             },
             indexed_crates: vec![], // Empty
             parse_failures: vec![], // Empty

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use ploke_core::embeddings::{
@@ -13,13 +13,19 @@ use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
+use ploke_llm::embeddings::{
+    EmbClientConfig, EmbeddingInput, EmbeddingRequest, HasDims, HasEmbeddings,
+};
 use ploke_llm::manager::RequestMessage;
 use ploke_llm::request::{endpoint::Endpoint, models::ResponseItem};
 use ploke_llm::router_only::{
     HasEndpoint,
-    openrouter::{OpenRouter, OpenRouterModelId},
+    openrouter::{
+        EmbeddingProviderPrefs, OpenRouter, OpenRouterModelId, ProviderPreferences,
+        embed::OpenRouterEmbeddingFields,
+    },
 };
-use ploke_llm::{ModelId, ProviderKey, SupportsTools};
+use ploke_llm::{ModelId, ProviderKey, ProviderSlug, SupportsTools};
 use ploke_tui::AppEvent;
 use ploke_tui::app::App;
 use ploke_tui::app::commands::harness::TestAppAccessor;
@@ -39,6 +45,7 @@ use tokio::sync::broadcast;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, sleep};
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::LlmResponseRecord;
 use crate::layout;
@@ -55,8 +62,8 @@ use crate::tracing_setup::current_full_response_log_path;
 const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
-const OPENROUTER_CODESTRAL_DIMS: usize = 1536;
 const STARTING_DB_CACHE_VERSION: u32 = 1;
+static EMBEDDING_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
 
 fn benchmark_chat_policy() -> ChatPolicy {
     let mut policy = ChatPolicy::default();
@@ -65,6 +72,25 @@ fn benchmark_chat_policy() -> ChatPolicy {
     policy.timeout_base_secs = 5;
     policy.error_retry_limit = 3;
     policy.validated()
+}
+
+fn artifact_runs_dir(instance_dir: &Path) -> PathBuf {
+    instance_dir.join("runs")
+}
+
+fn allocate_run_output_dir(instance_dir: &Path, run_arm: &RunArm) -> Result<PathBuf, PrepareError> {
+    let parent = artifact_runs_dir(instance_dir);
+    fs::create_dir_all(&parent).map_err(|source| PrepareError::CreateOutputDir {
+        path: parent.clone(),
+        source,
+    })?;
+    let run_id = format!(
+        "run-{}-{}-{}",
+        chrono::Utc::now().timestamp_millis(),
+        run_arm.id,
+        &Uuid::new_v4().simple().to_string()[..8]
+    );
+    Ok(parent.join(run_id))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +103,10 @@ pub struct RunMsbAgentSingleRequest {
     pub model_id: Option<String>,
     #[serde(default)]
     pub provider: Option<ProviderKey>,
+    #[serde(default)]
+    pub embedding_model_id: Option<String>,
+    #[serde(default)]
+    pub embedding_provider: Option<ProviderKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,6 +242,20 @@ pub struct RepoStateArtifact {
 pub struct IndexingStatusArtifact {
     pub status: String,
     pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_progress: Option<IndexingProgressArtifact>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexingProgressArtifact {
+    pub raw_status: String,
+    pub recent_processed: usize,
+    pub num_not_proc: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_file: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+    pub observed_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,30 +266,64 @@ pub struct ParseFailureArtifact {
     pub diagnostics: Vec<FlattenedParserDiagnostic>,
 }
 
-fn indexing_status_artifact_for_error(err: &PrepareError) -> Option<IndexingStatusArtifact> {
+impl From<&IndexingStatus> for IndexingProgressArtifact {
+    fn from(status: &IndexingStatus) -> Self {
+        Self {
+            raw_status: indexing_status_name(&status.status).to_string(),
+            recent_processed: status.recent_processed,
+            num_not_proc: status.num_not_proc,
+            current_file: status.current_file.clone(),
+            errors: status.errors.clone(),
+            observed_at_ms: chrono::Utc::now().timestamp_millis(),
+        }
+    }
+}
+
+fn indexing_status_name(status: &IndexStatus) -> &'static str {
+    match status {
+        IndexStatus::Idle => "idle",
+        IndexStatus::Running => "running",
+        IndexStatus::Paused => "paused",
+        IndexStatus::Completed => "completed",
+        IndexStatus::Failed(_) => "failed",
+        IndexStatus::Cancelled => "cancelled",
+    }
+}
+
+fn indexing_status_artifact_for_error(
+    err: &PrepareError,
+    last_progress: Option<IndexingProgressArtifact>,
+) -> Option<IndexingStatusArtifact> {
     match err {
         PrepareError::IndexingFailed { detail } => Some(IndexingStatusArtifact {
             status: "failed".to_string(),
             detail: detail.clone(),
+            last_progress,
         }),
         PrepareError::Timeout { phase, secs } if phase.starts_with("indexing_completed") => {
             Some(IndexingStatusArtifact {
                 status: "timed_out".to_string(),
                 detail: format!("timed out waiting for '{phase}' after {secs} seconds"),
+                last_progress,
             })
         }
         PrepareError::EventStreamClosed { phase } if phase.starts_with("indexing_completed") => {
             Some(IndexingStatusArtifact {
                 status: "event_stream_closed".to_string(),
                 detail: format!("event stream closed while waiting for '{phase}'"),
+                last_progress,
             })
         }
         _ => None,
     }
 }
 
-fn persist_indexing_failure_status(indexing_status_path: &Path, err: &PrepareError) {
-    let Some(artifact) = indexing_status_artifact_for_error(err) else {
+fn persist_indexing_failure_status(
+    indexing_status_path: &Path,
+    err: &PrepareError,
+    last_progress: Option<IndexingProgressArtifact>,
+) {
+    let Some(artifact) = indexing_status_artifact_for_error(err, last_progress) else {
         return;
     };
     if let Err(write_err) = write_json(indexing_status_path, &artifact) {
@@ -444,6 +522,24 @@ pub struct StartingDbCacheMetadata {
     pub embedding_model: String,
     pub embedding_dimensions: u32,
     pub embedding_dtype: String,
+}
+
+#[derive(Debug, Clone)]
+struct EvalEmbeddingSelection {
+    model: ResponseItem,
+    provider: Option<ProviderKey>,
+    dimensions: u32,
+}
+
+impl EvalEmbeddingSelection {
+    fn cache_key(&self) -> String {
+        let provider = self
+            .provider
+            .as_ref()
+            .map(|provider| provider.slug.as_str())
+            .unwrap_or("<auto>");
+        format!("{}::{provider}", self.model.id)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -818,19 +914,37 @@ fn expected_patch_files(prepared: &PreparedSingleRun) -> Vec<PathBuf> {
     }
 }
 
-fn build_msb_submission_record(
+fn maybe_build_msb_submission_record(
     prepared: &PreparedSingleRun,
-    fix_patch: String,
-) -> Option<MultiSweBenchSubmissionRecord> {
+    run_arm: &RunArm,
+) -> Result<Option<MultiSweBenchSubmissionRecord>, PrepareError> {
+    if run_arm.role != RunArmRole::Treatment {
+        return Ok(None);
+    }
+    let fix_patch = collect_submission_fix_patch(prepared)?;
     match &prepared.source {
-        Some(RunSource::MultiSweBench(source)) => Some(MultiSweBenchSubmissionRecord {
+        Some(RunSource::MultiSweBench(source)) => Ok(Some(MultiSweBenchSubmissionRecord {
             org: source.org.clone(),
             repo: source.repo.clone(),
             number: source.number,
             fix_patch,
-        }),
-        None => None,
+        })),
+        None => Ok(None),
     }
+}
+
+fn write_msb_submission_artifact(
+    prepared: &PreparedSingleRun,
+    run_arm: &RunArm,
+    run_output_dir: &Path,
+) -> Result<Option<PathBuf>, PrepareError> {
+    let Some(record) = maybe_build_msb_submission_record(prepared, run_arm)? else {
+        return Ok(None);
+    };
+
+    let path = run_output_dir.join("multi-swe-bench-submission.jsonl");
+    write_jsonl_line(&path, &record)?;
+    Ok(Some(path))
 }
 
 fn collect_submission_fix_patch(prepared: &PreparedSingleRun) -> Result<String, PrepareError> {
@@ -887,6 +1001,258 @@ fn collect_expected_file_changes(
         .collect()
 }
 
+fn default_eval_embedding_model_id() -> ModelId {
+    OPENROUTER_CODESTRAL_MODEL
+        .parse()
+        .expect("eval embedding model id must parse")
+}
+
+fn eval_embedding_registry_path() -> Result<PathBuf, PrepareError> {
+    layout::embedding_model_registry_file()
+}
+
+fn embedding_preflight_cache() -> &'static Mutex<HashMap<String, u32>> {
+    EMBEDDING_PREFLIGHT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn eval_embedding_provider_prefs(
+    provider: Option<&ProviderKey>,
+) -> Option<EmbeddingProviderPrefs> {
+    provider.map(|provider| {
+        EmbeddingProviderPrefs::from_base_provider_prefs(
+            ProviderPreferences::default()
+                .with_order(std::iter::once(ProviderSlug::new(provider.slug.as_str())))
+                .with_allow_fallbacks(false),
+        )
+    })
+}
+
+fn eval_embedding_provider_order(provider: Option<&ProviderKey>) -> Option<Vec<String>> {
+    provider.map(|provider| vec![provider.slug.as_str().to_string()])
+}
+
+fn eval_embedding_preflight_request(
+    model: &ResponseItem,
+    provider: Option<&ProviderKey>,
+) -> EmbeddingRequest<OpenRouter> {
+    EmbeddingRequest::<OpenRouter> {
+        model: model.id.clone(),
+        input: EmbeddingInput::Single("ploke eval embedding preflight".to_string()),
+        router: OpenRouterEmbeddingFields {
+            input_type: Some("code-snippet".into()),
+            provider: eval_embedding_provider_prefs(provider),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+async fn load_eval_embedding_registry(
+    client: &reqwest::Client,
+    registry_path: &Path,
+) -> Result<ploke_llm::request::models::Response, PrepareError> {
+    match OpenRouter::fetch_and_write_embedding_models_registry(
+        client,
+        EmbClientConfig::new().with_timeout(Duration::from_secs(15)),
+        registry_path,
+    )
+    .await
+    {
+        Ok(registry) => Ok(registry),
+        Err(fetch_err) => OpenRouter::load_embedding_models_registry(registry_path).map_err(
+            |load_err| PrepareError::DatabaseSetup {
+                phase: "load_embedding_model_registry",
+                detail: format!(
+                    "failed to refresh embedding registry '{}': {fetch_err}; failed to load cached snapshot: {load_err}",
+                    registry_path.display()
+                ),
+            },
+        ),
+    }
+}
+
+fn resolve_embedding_model_from_registry(
+    registry: &ploke_llm::request::models::Response,
+    registry_path: &Path,
+    requested_model: &ModelId,
+) -> Result<ResponseItem, PrepareError> {
+    registry
+        .data
+        .iter()
+        .find(|item| item.id == *requested_model)
+        .cloned()
+        .ok_or_else(|| PrepareError::UnknownModelInRegistry {
+            model: requested_model.to_string(),
+            path: registry_path.to_path_buf(),
+        })
+}
+
+fn format_embedding_preflight_error(
+    failing_model: &ModelId,
+    registry_path: Option<&Path>,
+    source: &str,
+    suggestions: &[String],
+) -> String {
+    let mut detail = format!(
+        "embedding preflight failed for '{}': {}",
+        failing_model, source
+    );
+    if let Some(path) = registry_path {
+        detail.push_str(&format!(
+            ". embedding registry snapshot path: '{}'",
+            path.display()
+        ));
+    }
+    if !suggestions.is_empty() {
+        detail.push_str(&format!(
+            ". suggested alternatives: {}",
+            suggestions.join(", ")
+        ));
+    }
+    detail.push_str(
+        ". choose one embedding model and rerun; do not mix embedding models within the same run or target crate",
+    );
+    detail
+}
+
+async fn resolve_eval_embedding_selection(
+    requested_model_id: Option<&str>,
+    requested_provider: Option<&ProviderKey>,
+) -> Result<EvalEmbeddingSelection, PrepareError> {
+    let requested_model = parse_requested_model_id(requested_model_id)?
+        .unwrap_or_else(default_eval_embedding_model_id);
+    let registry_path = eval_embedding_registry_path()?;
+    let client = reqwest::Client::new();
+    let registry = load_eval_embedding_registry(&client, &registry_path).await?;
+    let model = resolve_embedding_model_from_registry(&registry, &registry_path, &requested_model)?;
+
+    let cache_key = format!(
+        "{}::{}",
+        model.id,
+        requested_provider
+            .map(|provider| provider.slug.as_str())
+            .unwrap_or("<auto>")
+    );
+    if let Some(dimensions) = embedding_preflight_cache()
+        .lock()
+        .expect("embedding preflight cache poisoned")
+        .get(&cache_key)
+        .copied()
+    {
+        return Ok(EvalEmbeddingSelection {
+            model,
+            provider: requested_provider.cloned(),
+            dimensions,
+        });
+    }
+
+    let request = eval_embedding_preflight_request(&model, requested_provider);
+    let preflight = <OpenRouter as HasEmbeddings>::fetch_embeddings(&client, &request).await;
+    match preflight {
+        Ok(response) => {
+            let dimensions = response.dims().ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "embedding_model_preflight",
+                detail: format!(
+                    "embedding preflight returned no vectors for '{}'",
+                    model.id
+                ),
+            })? as u32;
+            embedding_preflight_cache()
+                .lock()
+                .expect("embedding preflight cache poisoned")
+                .insert(cache_key, dimensions);
+            Ok(EvalEmbeddingSelection {
+                model,
+                provider: requested_provider.cloned(),
+                dimensions,
+            })
+        }
+        Err(err) => {
+            let suggestions = OpenRouter::suggest_embedding_model_alternatives(
+                &registry,
+                &request.model,
+                5,
+            )
+            .into_iter()
+            .map(|item| item.id.to_string())
+            .collect::<Vec<_>>();
+
+            Err(PrepareError::DatabaseSetup {
+                phase: "embedding_model_preflight",
+                detail: format_embedding_preflight_error(
+                    &request.model,
+                    Some(&registry_path),
+                    &err.to_string(),
+                    &suggestions,
+                ),
+            })
+        }
+    }
+}
+
+fn eval_embedding_config(selection: &EvalEmbeddingSelection) -> OpenRouterConfig {
+    OpenRouterConfig {
+        model: selection.model.id.to_string(),
+        dimensions: Some(selection.dimensions as usize),
+        request_dimensions: None,
+        snippet_batch_size: 100,
+        max_in_flight: 1,
+        requests_per_second: Some(1),
+        max_attempts: 3,
+        initial_backoff_ms: 250,
+        max_backoff_ms: 10_000,
+        input_type: Some("code-snippet".into()),
+        provider_order: eval_embedding_provider_order(selection.provider.as_ref()),
+        allow_fallbacks: selection.provider.as_ref().map(|_| false),
+        timeout_secs: 30,
+        truncate_policy: TruncatePolicy::Truncate,
+    }
+}
+
+fn eval_embedding_processor(selection: &EvalEmbeddingSelection) -> Result<EmbeddingProcessor, PrepareError> {
+    info!(
+        model = %selection.model.id,
+        dimensions = selection.dimensions,
+        provider = ?selection.provider.as_ref().map(|provider| provider.slug.as_str()),
+        "building eval embedding processor"
+    );
+    let backend = OpenRouterBackend::new(&eval_embedding_config(selection)).map_err(|err| {
+        PrepareError::DatabaseSetup {
+            phase: "init_codestral_embedder",
+            detail: err.to_string(),
+        }
+    })?;
+    info!("eval embedding processor initialized");
+    Ok(EmbeddingProcessor::new(EmbeddingSource::OpenRouter(
+        backend,
+    )))
+}
+
+fn eval_embedding_set(selection: &EvalEmbeddingSelection) -> EmbeddingSet {
+    EmbeddingSet::new(
+        EmbeddingProviderSlug::new_from_str("openrouter"),
+        EmbeddingModelId::new_from_str(&selection.model.id.to_string()),
+        EmbeddingShape::new_dims_default(selection.dimensions),
+    )
+}
+
+fn activate_eval_embedding_runtime(
+    state: &Arc<AppState>,
+    selection: &EvalEmbeddingSelection,
+) -> Result<(), PrepareError> {
+    info!(model = %selection.model.id, "activating eval embedding set");
+    let processor = Arc::new(eval_embedding_processor(selection)?);
+    state
+        .embedder
+        .activate(&state.db, eval_embedding_set(selection), processor)
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "activate_codestral_embedding_set",
+            detail: err.to_string(),
+        })?;
+    info!("eval embedding set activated");
+    Ok(())
+}
+
 fn hash_file_contents(path: &Path) -> Result<Option<String>, PrepareError> {
     match fs::read(path) {
         Ok(bytes) => {
@@ -902,8 +1268,11 @@ fn hash_file_contents(path: &Path) -> Result<Option<String>, PrepareError> {
     }
 }
 
-fn starting_db_cache_metadata(prepared: &PreparedSingleRun) -> StartingDbCacheMetadata {
-    let embedding = codestral_embedding_set();
+fn starting_db_cache_metadata(
+    prepared: &PreparedSingleRun,
+    embedding_selection: &EvalEmbeddingSelection,
+) -> StartingDbCacheMetadata {
+    let embedding = eval_embedding_set(embedding_selection);
     StartingDbCacheMetadata {
         version: STARTING_DB_CACHE_VERSION,
         task_id: prepared.task_id.clone(),
@@ -918,8 +1287,11 @@ fn starting_db_cache_metadata(prepared: &PreparedSingleRun) -> StartingDbCacheMe
     }
 }
 
-fn starting_db_cache_key(prepared: &PreparedSingleRun) -> String {
-    let metadata = starting_db_cache_metadata(prepared);
+fn starting_db_cache_key(
+    prepared: &PreparedSingleRun,
+    embedding_selection: &EvalEmbeddingSelection,
+) -> String {
+    let metadata = starting_db_cache_metadata(prepared, embedding_selection);
     let payload = format!(
         "{version}:{task_id}:{checkout_sha}:{provider}:{model}:{dims}:{dtype}",
         version = metadata.version,
@@ -936,8 +1308,9 @@ fn starting_db_cache_key(prepared: &PreparedSingleRun) -> String {
 fn starting_db_cache_paths_at(
     eval_home: impl AsRef<Path>,
     prepared: &PreparedSingleRun,
+    embedding_selection: &EvalEmbeddingSelection,
 ) -> StartingDbCachePaths {
-    let key = starting_db_cache_key(prepared);
+    let key = starting_db_cache_key(prepared, embedding_selection);
     let base = eval_home.as_ref().join("cache").join("starting-dbs");
     StartingDbCachePaths {
         snapshot: base.join(format!("{key}.sqlite")),
@@ -948,8 +1321,9 @@ fn starting_db_cache_paths_at(
 fn load_cached_starting_db_at(
     eval_home: impl AsRef<Path>,
     prepared: &PreparedSingleRun,
+    embedding_selection: &EvalEmbeddingSelection,
 ) -> Result<Option<StartingDbCachePaths>, PrepareError> {
-    let paths = starting_db_cache_paths_at(eval_home, prepared);
+    let paths = starting_db_cache_paths_at(eval_home, prepared, embedding_selection);
     if !paths.snapshot.exists() || !paths.metadata.exists() {
         return Ok(None);
     }
@@ -970,7 +1344,7 @@ fn load_cached_starting_db_at(
             source,
         }
     })?;
-    if metadata != starting_db_cache_metadata(prepared) {
+    if metadata != starting_db_cache_metadata(prepared, embedding_selection) {
         return Ok(None);
     }
 
@@ -979,16 +1353,18 @@ fn load_cached_starting_db_at(
 
 fn load_cached_starting_db(
     prepared: &PreparedSingleRun,
+    embedding_selection: &EvalEmbeddingSelection,
 ) -> Result<Option<StartingDbCachePaths>, PrepareError> {
-    load_cached_starting_db_at(layout::ploke_eval_home()?, prepared)
+    load_cached_starting_db_at(layout::ploke_eval_home()?, prepared, embedding_selection)
 }
 
 async fn persist_starting_db_cache_at(
     eval_home: impl AsRef<Path>,
     prepared: &PreparedSingleRun,
+    embedding_selection: &EvalEmbeddingSelection,
     snapshot_path: &Path,
 ) -> Result<StartingDbCachePaths, PrepareError> {
-    let paths = starting_db_cache_paths_at(eval_home, prepared);
+    let paths = starting_db_cache_paths_at(eval_home, prepared, embedding_selection);
     if let Some(parent) = paths.snapshot.parent() {
         fs::create_dir_all(parent).map_err(|source| {
             PrepareError::WriteStartingDbCacheSnapshot {
@@ -1005,7 +1381,7 @@ async fn persist_starting_db_cache_at(
         }
     })?;
 
-    let metadata = starting_db_cache_metadata(prepared);
+    let metadata = starting_db_cache_metadata(prepared, embedding_selection);
     let json = serde_json::to_string_pretty(&metadata)
         .map_err(PrepareError::SerializeStartingDbCacheMetadata)?;
     fs::write(&paths.metadata, json).map_err(|source| {
@@ -1020,9 +1396,16 @@ async fn persist_starting_db_cache_at(
 
 async fn persist_starting_db_cache(
     prepared: &PreparedSingleRun,
+    embedding_selection: &EvalEmbeddingSelection,
     snapshot_path: &Path,
 ) -> Result<StartingDbCachePaths, PrepareError> {
-    persist_starting_db_cache_at(layout::ploke_eval_home()?, prepared, snapshot_path).await
+    persist_starting_db_cache_at(
+        layout::ploke_eval_home()?,
+        prepared,
+        embedding_selection,
+        snapshot_path,
+    )
+    .await
 }
 
 pub(crate) async fn resolve_provider_for_model(
@@ -1128,6 +1511,7 @@ impl RunMsbSingleRequest {
         let setup_start_time = chrono::Utc::now();
         let run_start_instant = Instant::now();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
+        let embedding_selection = resolve_eval_embedding_selection(None, None).await?;
         let requested_model = parse_requested_model_id(self.model_id.as_deref())?;
         let selected_model =
             resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
@@ -1147,15 +1531,20 @@ impl RunMsbSingleRequest {
                 source,
             }
         })?;
+        let run_output_dir = allocate_run_output_dir(&prepared.output_dir, &run_arm)?;
+        fs::create_dir_all(&run_output_dir).map_err(|source| PrepareError::CreateOutputDir {
+            path: run_output_dir.clone(),
+            source,
+        })?;
 
-        let execution_log_path = prepared.output_dir.join("execution-log.json");
-        let repo_state_path = prepared.output_dir.join("repo-state.json");
-        let indexing_status_path = prepared.output_dir.join("indexing-status.json");
-        let parse_failure_path = prepared.output_dir.join("parse-failure.json");
-        let snapshot_status_path = prepared.output_dir.join("snapshot-status.json");
-        let indexing_checkpoint_db = prepared.output_dir.join("indexing-checkpoint.db");
-        let indexing_failure_db = prepared.output_dir.join("indexing-failure.db");
-        let record_path = prepared.output_dir.join("record.json.gz");
+        let execution_log_path = run_output_dir.join("execution-log.json");
+        let repo_state_path = run_output_dir.join("repo-state.json");
+        let indexing_status_path = run_output_dir.join("indexing-status.json");
+        let parse_failure_path = run_output_dir.join("parse-failure.json");
+        let snapshot_status_path = run_output_dir.join("snapshot-status.json");
+        let indexing_checkpoint_db = run_output_dir.join("indexing-checkpoint.db");
+        let indexing_failure_db = run_output_dir.join("indexing-failure.db");
+        let record_path = run_output_dir.join("record.json.gz");
 
         let mut run_record = RunRecord::new(&prepared, run_arm.clone());
         run_record.metadata.agent.model_id = Some(selected_model_id.clone());
@@ -1185,7 +1574,8 @@ impl RunMsbSingleRequest {
         write_json(&repo_state_path, &repo_state)?;
         steps.push("write_repo_state".to_string());
 
-        let cached_starting_db = match load_cached_starting_db(&prepared) {
+        let cached_starting_db =
+            match load_cached_starting_db(&prepared, &embedding_selection) {
             Ok(cached) => cached,
             Err(err) => {
                 warn!(error = %err, "runner phase: starting db cache lookup failed; falling back to fresh indexing");
@@ -1221,7 +1611,7 @@ impl RunMsbSingleRequest {
             db
         };
 
-        let config_home = prepared.output_dir.join("config");
+        let config_home = run_output_dir.join("config");
         fs::create_dir_all(&config_home).map_err(|source| PrepareError::CreateOutputDir {
             path: config_home.clone(),
             source,
@@ -1229,7 +1619,9 @@ impl RunMsbSingleRequest {
         let _config_guard = XdgConfigHomeGuard::set_to(&config_home);
         steps.push("sandbox_config_home".to_string());
 
-        let embedding_processor = codestral_embedding_processor()?;
+        steps.push("embedding_model_preflight".to_string());
+
+        let embedding_processor = eval_embedding_processor(&embedding_selection)?;
         steps.push("init_codestral_embedder".to_string());
 
         let runtime = TestRuntime::new_with_embedding_processor(&runtime_db, embedding_processor)
@@ -1263,7 +1655,7 @@ impl RunMsbSingleRequest {
             "active embedding set before activation"
         );
 
-        activate_codestral_runtime(&state)?;
+        activate_eval_embedding_runtime(&state, &embedding_selection)?;
 
         let currently_active_set: EmbeddingSet = runtime_db
             .with_active_set(|set| set.clone())
@@ -1294,6 +1686,7 @@ impl RunMsbSingleRequest {
             steps.push("run_index_command".to_string());
 
             info!("runner phase: waiting for indexing completion");
+            let mut last_index_progress = None;
             if let Err(err) = wait_for_indexing_completion(
                 &mut app,
                 &mut realtime_rx,
@@ -1303,10 +1696,11 @@ impl RunMsbSingleRequest {
                 indexing_checkpoint_db.clone(),
                 indexing_failure_db.clone(),
                 self.index_debug_snapshots,
+                &mut last_index_progress,
             )
             .await
             {
-                persist_indexing_failure_status(&indexing_status_path, &err);
+                persist_indexing_failure_status(&indexing_status_path, &err, last_index_progress);
                 persist_parse_failure_artifact(&state, &parse_failure_path).await;
                 return Err(err);
             }
@@ -1323,6 +1717,7 @@ impl RunMsbSingleRequest {
             } else {
                 "Indexing completed through the full app command path.".to_string()
             },
+            last_progress: None,
         };
         write_json(&indexing_status_path, &indexing_status)?;
         steps.push("write_indexing_status".to_string());
@@ -1348,7 +1743,13 @@ impl RunMsbSingleRequest {
         steps.push("write_indexing_checkpoint".to_string());
 
         if !using_cached_starting_db {
-            if let Err(err) = persist_starting_db_cache(&prepared, &indexing_checkpoint_db).await {
+            if let Err(err) = persist_starting_db_cache(
+                &prepared,
+                &embedding_selection,
+                &indexing_checkpoint_db,
+            )
+            .await
+            {
                 warn!(
                     snapshot = %indexing_checkpoint_db.display(),
                     error = %err,
@@ -1360,7 +1761,7 @@ impl RunMsbSingleRequest {
 
         let setup_wall_clock_secs = Some(run_start_instant.elapsed().as_secs_f64());
 
-        let snapshot_file = prepared.output_dir.join("final-snapshot.db");
+        let snapshot_file = run_output_dir.join("final-snapshot.db");
         info!(
             snapshot = %snapshot_file.display(),
             "runner phase: persisting final eval snapshot"
@@ -1383,16 +1784,11 @@ impl RunMsbSingleRequest {
         write_json(&snapshot_status_path, &snapshot_status)?;
         steps.push("write_snapshot_status".to_string());
 
-        let msb_submission_path = if let Some(record) =
-            build_msb_submission_record(&prepared, collect_submission_fix_patch(&prepared)?)
-        {
-            let path = prepared.output_dir.join("multi-swe-bench-submission.jsonl");
-            write_jsonl_line(&path, &record)?;
+        let msb_submission_path =
+            write_msb_submission_artifact(&prepared, &run_arm, &run_output_dir)?;
+        if msb_submission_path.is_some() {
             steps.push("write_msb_submission".to_string());
-            Some(path)
-        } else {
-            None
-        };
+        }
 
         finalize_run_timing(
             &mut run_record,
@@ -1406,7 +1802,7 @@ impl RunMsbSingleRequest {
             task_id: prepared.task_id,
             run_arm: run_arm.clone(),
             repo_root: prepared.repo_root,
-            output_dir: prepared.output_dir,
+            output_dir: run_output_dir,
             selected_model: selected_model_id,
             selected_provider: Some(selected_provider.slug.as_str().to_string()),
             selected_endpoint: Some(selected_endpoint),
@@ -1457,6 +1853,11 @@ impl RunMsbAgentSingleRequest {
         let run_start_instant = Instant::now();
         let run_arm = RunArm::structured_current_policy_treatment();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
+        let embedding_selection = resolve_eval_embedding_selection(
+            self.embedding_model_id.as_deref(),
+            self.embedding_provider.as_ref(),
+        )
+        .await?;
         let requested_model = parse_requested_model_id(self.model_id.as_deref())?;
         let selected_model =
             resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
@@ -1476,18 +1877,23 @@ impl RunMsbAgentSingleRequest {
                 source,
             }
         })?;
+        let run_output_dir = allocate_run_output_dir(&prepared.output_dir, &run_arm)?;
+        fs::create_dir_all(&run_output_dir).map_err(|source| PrepareError::CreateOutputDir {
+            path: run_output_dir.clone(),
+            source,
+        })?;
 
-        let execution_log_path = prepared.output_dir.join("execution-log.json");
-        let repo_state_path = prepared.output_dir.join("repo-state.json");
-        let indexing_status_path = prepared.output_dir.join("indexing-status.json");
-        let parse_failure_path = prepared.output_dir.join("parse-failure.json");
-        let snapshot_status_path = prepared.output_dir.join("snapshot-status.json");
-        let indexing_checkpoint_db = prepared.output_dir.join("indexing-checkpoint.db");
-        let indexing_failure_db = prepared.output_dir.join("indexing-failure.db");
-        let turn_trace_path = prepared.output_dir.join("agent-turn-trace.json");
-        let turn_summary_path = prepared.output_dir.join("agent-turn-summary.json");
-        let full_response_trace_path = prepared.output_dir.join("llm-full-responses.jsonl");
-        let record_path = prepared.output_dir.join("record.json.gz");
+        let execution_log_path = run_output_dir.join("execution-log.json");
+        let repo_state_path = run_output_dir.join("repo-state.json");
+        let indexing_status_path = run_output_dir.join("indexing-status.json");
+        let parse_failure_path = run_output_dir.join("parse-failure.json");
+        let snapshot_status_path = run_output_dir.join("snapshot-status.json");
+        let indexing_checkpoint_db = run_output_dir.join("indexing-checkpoint.db");
+        let indexing_failure_db = run_output_dir.join("indexing-failure.db");
+        let turn_trace_path = run_output_dir.join("agent-turn-trace.json");
+        let turn_summary_path = run_output_dir.join("agent-turn-summary.json");
+        let full_response_trace_path = run_output_dir.join("llm-full-responses.jsonl");
+        let record_path = run_output_dir.join("record.json.gz");
         let full_response_trace_source = current_full_response_log_path().map(Path::to_path_buf);
         let full_response_trace_start = match full_response_trace_source.as_ref() {
             Some(path) => Some(current_trace_file_offset(path)?),
@@ -1526,7 +1932,8 @@ impl RunMsbAgentSingleRequest {
         write_json(&repo_state_path, &repo_state)?;
         steps.push("write_repo_state".to_string());
 
-        let cached_starting_db = match load_cached_starting_db(&prepared) {
+        let cached_starting_db =
+            match load_cached_starting_db(&prepared, &embedding_selection) {
             Ok(cached) => cached,
             Err(err) => {
                 warn!(error = %err, "runner phase: starting db cache lookup failed; falling back to fresh indexing");
@@ -1562,7 +1969,7 @@ impl RunMsbAgentSingleRequest {
             db
         };
 
-        let config_home = prepared.output_dir.join("config");
+        let config_home = run_output_dir.join("config");
         fs::create_dir_all(&config_home).map_err(|source| PrepareError::CreateOutputDir {
             path: config_home.clone(),
             source,
@@ -1570,7 +1977,9 @@ impl RunMsbAgentSingleRequest {
         let _config_guard = XdgConfigHomeGuard::set_to(&config_home);
         steps.push("sandbox_config_home".to_string());
 
-        let embedding_processor = codestral_embedding_processor()?;
+        steps.push("embedding_model_preflight".to_string());
+
+        let embedding_processor = eval_embedding_processor(&embedding_selection)?;
         steps.push("init_codestral_embedder".to_string());
 
         let runtime = TestRuntime::new_with_embedding_processor(&runtime_db, embedding_processor)
@@ -1614,7 +2023,7 @@ impl RunMsbAgentSingleRequest {
             "active embedding set before activation"
         );
 
-        activate_codestral_runtime(&state)?;
+        activate_eval_embedding_runtime(&state, &embedding_selection)?;
 
         let currently_active_set: EmbeddingSet = runtime_db
             .with_active_set(|set| set.clone())
@@ -1645,6 +2054,7 @@ impl RunMsbAgentSingleRequest {
             steps.push("run_index_command".to_string());
 
             info!("runner phase: waiting for indexing completion");
+            let mut last_index_progress = None;
             if let Err(err) = wait_for_indexing_completion(
                 &mut app,
                 &mut realtime_rx,
@@ -1654,10 +2064,11 @@ impl RunMsbAgentSingleRequest {
                 indexing_checkpoint_db.clone(),
                 indexing_failure_db.clone(),
                 self.index_debug_snapshots,
+                &mut last_index_progress,
             )
             .await
             {
-                persist_indexing_failure_status(&indexing_status_path, &err);
+                persist_indexing_failure_status(&indexing_status_path, &err, last_index_progress);
                 persist_parse_failure_artifact(&state, &parse_failure_path).await;
                 return Err(err);
             }
@@ -1674,6 +2085,7 @@ impl RunMsbAgentSingleRequest {
             } else {
                 "Indexing completed through the full app command path.".to_string()
             },
+            last_progress: None,
         };
         write_json(&indexing_status_path, &indexing_status)?;
         steps.push("write_indexing_status".to_string());
@@ -1687,7 +2099,13 @@ impl RunMsbAgentSingleRequest {
         steps.push("write_indexing_checkpoint".to_string());
 
         if !using_cached_starting_db {
-            if let Err(err) = persist_starting_db_cache(&prepared, &indexing_checkpoint_db).await {
+            if let Err(err) = persist_starting_db_cache(
+                &prepared,
+                &embedding_selection,
+                &indexing_checkpoint_db,
+            )
+            .await
+            {
                 warn!(
                     snapshot = %indexing_checkpoint_db.display(),
                     error = %err,
@@ -1760,7 +2178,7 @@ impl RunMsbAgentSingleRequest {
         run_record.mark_time_travel(1, db_timestamp, "turn_complete");
         run_record.add_turn_from_artifact(turn_artifact, db_timestamp);
 
-        let snapshot_file = prepared.output_dir.join("final-snapshot.db");
+        let snapshot_file = run_output_dir.join("final-snapshot.db");
         info!(
             snapshot = %snapshot_file.display(),
             "runner phase: persisting final eval snapshot"
@@ -1783,16 +2201,11 @@ impl RunMsbAgentSingleRequest {
         write_json(&snapshot_status_path, &snapshot_status)?;
         steps.push("write_snapshot_status".to_string());
 
-        let msb_submission_path = if let Some(record) =
-            build_msb_submission_record(&prepared, collect_submission_fix_patch(&prepared)?)
-        {
-            let path = prepared.output_dir.join("multi-swe-bench-submission.jsonl");
-            write_jsonl_line(&path, &record)?;
+        let msb_submission_path =
+            write_msb_submission_artifact(&prepared, &run_arm, &run_output_dir)?;
+        if msb_submission_path.is_some() {
             steps.push("write_msb_submission".to_string());
-            Some(path)
-        } else {
-            None
-        };
+        }
 
         finalize_run_timing(
             &mut run_record,
@@ -1806,7 +2219,7 @@ impl RunMsbAgentSingleRequest {
             task_id: prepared.task_id,
             run_arm: run_arm.clone(),
             repo_root: prepared.repo_root,
-            output_dir: prepared.output_dir,
+            output_dir: run_output_dir,
             selected_model: selected_model_id,
             selected_provider: Some(selected_provider.slug.as_str().to_string()),
             selected_endpoint: Some(selected_endpoint),
@@ -1935,6 +2348,8 @@ async fn run_batch(
                 use_default_model,
                 model_id: model_id.clone(),
                 provider: provider.clone(),
+                embedding_model_id: None,
+                embedding_provider: None,
             })
             .run()
             .await
@@ -2167,6 +2582,7 @@ async fn setup_replay_runtime(
     prepared: &PreparedSingleRun,
 ) -> Result<(App, Arc<AppState>, XdgConfigHomeGuard), PrepareError> {
     let runtime_db = init_runtime_db()?;
+    let embedding_selection = resolve_eval_embedding_selection(None, None).await?;
 
     let config_home = prepared.output_dir.join("config");
     fs::create_dir_all(&config_home).map_err(|source| PrepareError::CreateOutputDir {
@@ -2175,14 +2591,14 @@ async fn setup_replay_runtime(
     })?;
     let config_guard = XdgConfigHomeGuard::set_to(&config_home);
 
-    let embedding_processor = codestral_embedding_processor()?;
+    let embedding_processor = eval_embedding_processor(&embedding_selection)?;
     let runtime = TestRuntime::new_with_embedding_processor(&runtime_db, embedding_processor)
         .spawn_file_manager()
         .spawn_state_manager()
         .spawn_event_bus();
     let state = runtime.state_arc();
 
-    activate_codestral_runtime(&state)?;
+    activate_eval_embedding_runtime(&state, &embedding_selection)?;
 
     prepare_workspace_for_replay(&state, prepared).await?;
 
@@ -2269,63 +2685,6 @@ async fn prepare_workspace_for_replay(
     Ok(())
 }
 
-fn codestral_embedding_config() -> OpenRouterConfig {
-    OpenRouterConfig {
-        model: OPENROUTER_CODESTRAL_MODEL.to_string(),
-        dimensions: Some(OPENROUTER_CODESTRAL_DIMS),
-        request_dimensions: None,
-        snippet_batch_size: 100,
-        max_in_flight: 1,
-        requests_per_second: Some(1),
-        max_attempts: 3,
-        initial_backoff_ms: 250,
-        max_backoff_ms: 10_000,
-        input_type: Some("code-snippet".into()),
-        timeout_secs: 30,
-        truncate_policy: TruncatePolicy::Truncate,
-    }
-}
-
-fn codestral_embedding_processor() -> Result<EmbeddingProcessor, PrepareError> {
-    info!(
-        model = OPENROUTER_CODESTRAL_MODEL,
-        dimensions = OPENROUTER_CODESTRAL_DIMS,
-        "building codestral embedding processor"
-    );
-    let backend = OpenRouterBackend::new(&codestral_embedding_config()).map_err(|err| {
-        PrepareError::DatabaseSetup {
-            phase: "init_codestral_embedder",
-            detail: err.to_string(),
-        }
-    })?;
-    info!("codestral embedding processor initialized");
-    Ok(EmbeddingProcessor::new(EmbeddingSource::OpenRouter(
-        backend,
-    )))
-}
-
-fn codestral_embedding_set() -> EmbeddingSet {
-    EmbeddingSet::new(
-        EmbeddingProviderSlug::new_from_str("openrouter"),
-        EmbeddingModelId::new_from_str(OPENROUTER_CODESTRAL_MODEL),
-        EmbeddingShape::new_dims_default(OPENROUTER_CODESTRAL_DIMS as u32),
-    )
-}
-
-fn activate_codestral_runtime(state: &Arc<AppState>) -> Result<(), PrepareError> {
-    info!("activating codestral embedding set");
-    let processor = Arc::new(codestral_embedding_processor()?);
-    state
-        .embedder
-        .activate(&state.db, codestral_embedding_set(), processor)
-        .map_err(|err| PrepareError::DatabaseSetup {
-            phase: "activate_codestral_embedding_set",
-            detail: err.to_string(),
-        })?;
-    info!("codestral embedding set activated");
-    Ok(())
-}
-
 async fn wait_for_indexing_completion(
     app: &mut App,
     realtime_rx: &mut broadcast::Receiver<AppEvent>,
@@ -2335,6 +2694,7 @@ async fn wait_for_indexing_completion(
     checkpoint_snapshot: PathBuf,
     failure_snapshot: PathBuf,
     persist_debug_snapshots: bool,
+    last_progress: &mut Option<IndexingProgressArtifact>,
 ) -> Result<(), PrepareError> {
     let deadline = Instant::now() + Duration::from_secs(DEFAULT_PHASE_TIMEOUT_SECS);
     let mut last_heartbeat = Instant::now();
@@ -2435,53 +2795,60 @@ async fn wait_for_indexing_completion(
             }
             raw = index_rx.recv() => {
                 match raw {
-                    Ok(IndexingStatus { status: IndexStatus::Running, .. }) => {
-                        if persist_debug_snapshots {
-                            persist_db_snapshot(
-                                Arc::clone(&db),
-                                checkpoint_snapshot.clone(),
-                                "indexing checkpoint",
-                            )
-                            .await?;
+                    Ok(status) => {
+                        *last_progress = Some(IndexingProgressArtifact::from(&status));
+                        match &status.status {
+                            IndexStatus::Running => {
+                                if persist_debug_snapshots {
+                                    persist_db_snapshot(
+                                        Arc::clone(&db),
+                                        checkpoint_snapshot.clone(),
+                                        "indexing checkpoint",
+                                    )
+                                    .await?;
+                                }
+                                continue;
+                            }
+                            IndexStatus::Completed => {
+                                if persist_debug_snapshots {
+                                    persist_db_snapshot(
+                                        Arc::clone(&db),
+                                        checkpoint_snapshot.clone(),
+                                        "completed checkpoint",
+                                    )
+                                    .await?;
+                                }
+                                return Ok(());
+                            }
+                            IndexStatus::Failed(err) => {
+                                if persist_debug_snapshots {
+                                    persist_db_snapshot(
+                                        Arc::clone(&db),
+                                        failure_snapshot.clone(),
+                                        "indexing failure",
+                                    )
+                                    .await?;
+                                }
+                                return Err(PrepareError::IndexingFailed {
+                                    detail: err.clone(),
+                                });
+                            }
+                            IndexStatus::Cancelled => {
+                                if persist_debug_snapshots {
+                                    persist_db_snapshot(
+                                        Arc::clone(&db),
+                                        failure_snapshot.clone(),
+                                        "indexing cancelled",
+                                    )
+                                    .await?;
+                                }
+                                return Err(PrepareError::IndexingFailed {
+                                    detail: "indexing cancelled".to_string(),
+                                });
+                            }
+                            _ => continue,
                         }
-                        continue;
                     }
-                    Ok(IndexingStatus { status: IndexStatus::Completed, .. }) => {
-                        if persist_debug_snapshots {
-                            persist_db_snapshot(
-                                Arc::clone(&db),
-                                checkpoint_snapshot.clone(),
-                                "completed checkpoint",
-                            )
-                            .await?;
-                        }
-                        return Ok(());
-                    }
-                    Ok(IndexingStatus { status: IndexStatus::Failed(err), .. }) => {
-                        if persist_debug_snapshots {
-                            persist_db_snapshot(
-                                Arc::clone(&db),
-                                failure_snapshot.clone(),
-                                "indexing failure",
-                            )
-                            .await?;
-                        }
-                        return Err(PrepareError::IndexingFailed { detail: err });
-                    }
-                    Ok(IndexingStatus { status: IndexStatus::Cancelled, .. }) => {
-                        if persist_debug_snapshots {
-                            persist_db_snapshot(
-                                Arc::clone(&db),
-                                failure_snapshot.clone(),
-                                "indexing cancelled",
-                            )
-                            .await?;
-                        }
-                        return Err(PrepareError::IndexingFailed {
-                            detail: "indexing cancelled".to_string(),
-                        });
-                    }
-                    Ok(_) => continue,
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => {
                         return Err(PrepareError::EventStreamClosed {
@@ -3333,7 +3700,7 @@ mod tests {
             detail: "Parse failed for crate: /tmp/ripgrep/crates/cli".to_string(),
         };
 
-        let artifact = indexing_status_artifact_for_error(&err).expect("indexing artifact");
+        let artifact = indexing_status_artifact_for_error(&err, None).expect("indexing artifact");
         assert_eq!(artifact.status, "failed");
         assert!(artifact.detail.contains("Parse failed for crate"));
     }
@@ -3380,9 +3747,25 @@ mod tests {
             secs: 300,
         };
 
-        let artifact = indexing_status_artifact_for_error(&err).expect("timeout artifact");
+        let progress = IndexingProgressArtifact {
+            raw_status: "running".to_string(),
+            recent_processed: 42,
+            num_not_proc: 100,
+            current_file: Some(PathBuf::from("/tmp/repo/src/lib.rs")),
+            errors: vec![],
+            observed_at_ms: 1234,
+        };
+        let artifact = indexing_status_artifact_for_error(&err, Some(progress.clone()))
+            .expect("timeout artifact");
         assert_eq!(artifact.status, "timed_out");
         assert!(artifact.detail.contains("300 seconds"));
+        let last_progress = artifact.last_progress.expect("last progress");
+        assert_eq!(last_progress.raw_status, progress.raw_status);
+        assert_eq!(last_progress.recent_processed, 42);
+        assert_eq!(
+            last_progress.current_file,
+            Some(PathBuf::from("/tmp/repo/src/lib.rs"))
+        );
     }
 
     #[test]
@@ -3392,7 +3775,7 @@ mod tests {
             secs: 10,
         };
 
-        assert!(indexing_status_artifact_for_error(&err).is_none());
+        assert!(indexing_status_artifact_for_error(&err, None).is_none());
     }
 
     #[test]
@@ -3467,7 +3850,7 @@ mod tests {
     }
 
     #[test]
-    fn build_msb_submission_record_uses_benchmark_identity() {
+    fn maybe_build_msb_submission_record_uses_benchmark_identity() {
         let prepared = PreparedSingleRun {
             task_id: "BurntSushi__ripgrep-2209".to_string(),
             repo_root: PathBuf::from("/tmp/repo"),
@@ -3493,12 +3876,70 @@ mod tests {
             campaign: None,
         };
 
-        let record = build_msb_submission_record(&prepared, "diff --git a/foo b/foo\n".to_string())
-            .expect("submission record");
+        let record = maybe_build_msb_submission_record(
+            &prepared,
+            &RunArm::structured_current_policy_treatment(),
+        )
+        .expect("submission record result")
+        .expect("submission record");
         assert_eq!(record.org, "BurntSushi");
         assert_eq!(record.repo, "ripgrep");
         assert_eq!(record.number, 2209);
         assert!(record.fix_patch.starts_with("diff --git"));
+    }
+
+    #[test]
+    fn maybe_build_msb_submission_record_skips_setup_only_runs() {
+        let prepared = PreparedSingleRun {
+            task_id: "BurntSushi__ripgrep-2209".to_string(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            output_dir: PathBuf::from("/tmp/out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some("abc123".to_string()),
+            head_sha: None,
+            budget: EvalBudget::default(),
+            source: Some(RunSource::MultiSweBench(crate::spec::MultiSweBenchSource {
+                dataset_file: PathBuf::from("/tmp/dataset.jsonl"),
+                dataset_url: None,
+                instance_id: "BurntSushi__ripgrep-2209".to_string(),
+                org: "BurntSushi".to_string(),
+                repo: "ripgrep".to_string(),
+                number: 2209,
+                language: Some("rust".to_string()),
+                expected_patch_files: vec![PathBuf::from("crates/printer/src/util.rs")],
+            })),
+            campaign: None,
+        };
+
+        let record = maybe_build_msb_submission_record(&prepared, &RunArm::shell_only_control())
+            .expect("setup-only submission result");
+        assert!(record.is_none());
+    }
+
+    #[test]
+    fn allocate_run_output_dir_nests_unique_run_directories() {
+        let tmp = tempdir().expect("tempdir");
+        let instance_dir = tmp.path().join("runs").join("org__repo-1");
+        fs::create_dir_all(&instance_dir).expect("instance dir");
+
+        let first = allocate_run_output_dir(
+            &instance_dir,
+            &RunArm::structured_current_policy_treatment(),
+        )
+        .expect("first dir");
+        let second = allocate_run_output_dir(
+            &instance_dir,
+            &RunArm::structured_current_policy_treatment(),
+        )
+        .expect("second dir");
+
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), Some(instance_dir.join("runs").as_path()));
+        assert_eq!(second.parent(), Some(instance_dir.join("runs").as_path()));
     }
 
     #[test]
@@ -3562,7 +4003,12 @@ mod tests {
         assert!(fix_patch.contains("diff --git a/src/lib.rs b/src/lib.rs"));
         assert!(fix_patch.contains("+    println!(\"hi\");"));
 
-        let record = build_msb_submission_record(&prepared, fix_patch).expect("submission");
+        let record = maybe_build_msb_submission_record(
+            &prepared,
+            &RunArm::structured_current_policy_treatment(),
+        )
+        .expect("submission result")
+        .expect("submission");
         let jsonl_path = tmp.path().join("submission.jsonl");
         write_jsonl_line(&jsonl_path, &record).expect("write jsonl");
 
@@ -3573,6 +4019,87 @@ mod tests {
         assert_eq!(parsed.repo, "repo");
         assert_eq!(parsed.number, 1);
         assert!(parsed.fix_patch.contains("diff --git"));
+    }
+
+    #[test]
+    fn write_msb_submission_artifact_writes_treatment_submission_into_run_dir() {
+        let tmp = tempdir().expect("tempdir");
+        let repo_root = tmp.path();
+        let src_dir = repo_root.join("src");
+        let file = src_dir.join("lib.rs");
+        fs::create_dir_all(&src_dir).expect("src dir");
+
+        run_git_test(repo_root, &["init"], "git init");
+        run_git_test(
+            repo_root,
+            &["config", "user.name", "Ploke Eval"],
+            "git config name",
+        );
+        run_git_test(
+            repo_root,
+            &["config", "user.email", "ploke-eval@example.com"],
+            "git config email",
+        );
+
+        fs::write(&file, "fn main() {}\n").expect("write initial file");
+        run_git_test(repo_root, &["add", "src/lib.rs"], "git add");
+        run_git_test(repo_root, &["commit", "-m", "base"], "git commit");
+
+        let base_sha = git_stdout(repo_root, &["rev-parse", "HEAD"], "git rev-parse HEAD")
+            .expect("base sha")
+            .expect("stdout")
+            .trim()
+            .to_string();
+
+        fs::write(&file, "fn main() {\n    println!(\"hi\");\n}\n").expect("write modified file");
+
+        let prepared = PreparedSingleRun {
+            task_id: "case-123".to_string(),
+            repo_root: repo_root.to_path_buf(),
+            output_dir: tmp.path().join("out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some(base_sha),
+            head_sha: None,
+            budget: EvalBudget::default(),
+            source: Some(RunSource::MultiSweBench(crate::spec::MultiSweBenchSource {
+                dataset_file: tmp.path().join("dataset.jsonl"),
+                dataset_url: None,
+                instance_id: "acme__repo-1".to_string(),
+                org: "acme".to_string(),
+                repo: "repo".to_string(),
+                number: 1,
+                language: Some("rust".to_string()),
+                expected_patch_files: vec![PathBuf::from("src/lib.rs")],
+            })),
+            campaign: None,
+        };
+        let run_output_dir = tmp.path().join("out").join("runs").join("run-123");
+        fs::create_dir_all(&run_output_dir).expect("run output dir");
+
+        let submission_path = write_msb_submission_artifact(
+            &prepared,
+            &RunArm::structured_current_policy_treatment(),
+            &run_output_dir,
+        )
+        .expect("write submission")
+        .expect("submission path");
+
+        assert_eq!(
+            submission_path,
+            run_output_dir.join("multi-swe-bench-submission.jsonl")
+        );
+        let line = fs::read_to_string(&submission_path).expect("read submission");
+        let parsed: MultiSweBenchSubmissionRecord =
+            serde_json::from_str(line.trim()).expect("parse submission");
+        assert_eq!(parsed.org, "acme");
+        assert_eq!(parsed.repo, "repo");
+        assert_eq!(parsed.number, 1);
+        assert!(parsed.fix_patch.contains("diff --git a/src/lib.rs b/src/lib.rs"));
+        assert!(parsed.fix_patch.contains("+    println!(\"hi\");"));
     }
 
     #[tokio::test]
@@ -4075,5 +4602,24 @@ mod tests {
         let metadata = record.metadata.as_ref().unwrap();
         assert_eq!(metadata.model, "anthropic/claude-3-sonnet");
         assert_eq!(metadata.cost, 0.0024);
+    }
+
+    #[test]
+    fn embedding_preflight_error_mentions_registry_and_suggestions() {
+        let detail = format_embedding_preflight_error(
+            &eval_embedding_model_id(),
+            Some(Path::new("/tmp/embedding-models-openrouter.json")),
+            "No successful provider responses",
+            &[
+                "openai/text-embedding-3-small".to_string(),
+                "mistralai/mistral-embed-2312".to_string(),
+            ],
+        );
+
+        assert!(detail.contains("embedding preflight failed"));
+        assert!(detail.contains("mistralai/codestral-embed-2505"));
+        assert!(detail.contains("/tmp/embedding-models-openrouter.json"));
+        assert!(detail.contains("openai/text-embedding-3-small"));
+        assert!(detail.contains("do not mix embedding models"));
     }
 }

@@ -29,7 +29,12 @@ pub use manager::{
     ChatHttpConfig, ChatStepOutcome, RequestMessage, chat_step, handle_endpoint_request_async,
 };
 
+pub use embeddings::{
+    EmbClientConfig, fetch_and_write_embedding_models_registry, load_embedding_models_registry,
+    write_embedding_models_registry,
+};
 pub use router_only::{HasModels, Router};
+pub use router_only::openrouter::OpenRouter;
 pub use utils::const_settings::{HTTP_REFERER, HTTP_TITLE};
 
 use serde::{Deserialize, Serialize};

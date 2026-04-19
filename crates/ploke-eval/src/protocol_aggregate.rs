@@ -417,7 +417,11 @@ fn normalize_anchor(
                 rationale: Some(segment.rationale),
                 start_index: segment.start_index,
                 end_index: segment.end_index,
-                turn_span: segment.turns.into_iter().map(|turn| turn as usize).collect(),
+                turn_span: segment
+                    .turns
+                    .into_iter()
+                    .map(|turn| turn as usize)
+                    .collect(),
                 call_indices,
                 call_count,
             }
@@ -547,7 +551,10 @@ fn describe_segment_mismatch(
         artifact: artifact_ref(entry),
         segment_index: output.packet.segment_index,
         observed_label: output.packet.segment_label,
-        observed_status: output.packet.segment_status.unwrap_or_else(|| "<missing>".to_string()),
+        observed_status: output
+            .packet
+            .segment_status
+            .unwrap_or_else(|| "<missing>".to_string()),
         observed_turn_span: output.packet.turn_span,
         observed_total_calls_in_scope: output.packet.total_calls_in_scope,
         anchor_label: basis.label.map(intent_label_name),
@@ -845,7 +852,13 @@ mod tests {
         })
     }
 
-    fn call_json(index: usize, turn: u32, tool_name: &str, tool_kind: &str, summary: &str) -> Value {
+    fn call_json(
+        index: usize,
+        turn: u32,
+        tool_name: &str,
+        tool_kind: &str,
+        summary: &str,
+    ) -> Value {
         serde_json::json!({
             "index": index,
             "turn": turn,
@@ -1361,7 +1374,10 @@ mod tests {
             .expect("aggregate should load ambiguous anchor");
 
         assert_eq!(aggregate.segmentation.segments.len(), 1);
-        assert_eq!(aggregate.segmentation.segments[0].status, SegmentStatus::Ambiguous);
+        assert_eq!(
+            aggregate.segmentation.segments[0].status,
+            SegmentStatus::Ambiguous
+        );
         assert_eq!(aggregate.segmentation.segments[0].label, None);
     }
 }

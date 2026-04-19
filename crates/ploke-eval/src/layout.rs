@@ -59,6 +59,10 @@ pub fn provider_prefs_file() -> Result<PathBuf, PrepareError> {
     Ok(models_dir()?.join("provider-preferences.json"))
 }
 
+pub fn embedding_model_registry_file() -> Result<PathBuf, PrepareError> {
+    Ok(models_dir()?.join("embedding-models-openrouter.json"))
+}
+
 pub fn cache_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("cache"))
 }

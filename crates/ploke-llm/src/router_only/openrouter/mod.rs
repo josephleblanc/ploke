@@ -469,6 +469,16 @@ pub struct EmbeddingProviderPrefs {
     max_latency: Option<f64>,
 }
 
+impl EmbeddingProviderPrefs {
+    pub fn from_base_provider_prefs(base_provider_prefs: ProviderPreferences) -> Self {
+        Self {
+            base_provider_prefs,
+            min_throughput: None,
+            max_latency: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum DataCollection {

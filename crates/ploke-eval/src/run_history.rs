@@ -5,6 +5,8 @@ use chrono::Utc;
 use ploke_db::ObservabilityStore;
 use serde::{Deserialize, Serialize};
 
+use crate::record::read_compressed_record;
+use crate::runner::RunArmRole;
 use crate::spec::PrepareError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -24,6 +26,183 @@ pub fn record_last_run(run_dir: impl AsRef<Path>) -> Result<(), PrepareError> {
 
 pub fn load_last_run() -> Result<LastRunRecord, PrepareError> {
     load_last_run_at(crate::layout::ploke_eval_home()?)
+}
+
+fn nested_runs_dir(instance_root: &Path) -> PathBuf {
+    instance_root.join("runs")
+}
+
+fn looks_like_run_dir(path: &Path) -> bool {
+    [
+        "record.json.gz",
+        "execution-log.json",
+        "indexing-status.json",
+        "parse-failure.json",
+        "snapshot-status.json",
+        "repo-state.json",
+    ]
+    .into_iter()
+    .any(|name| path.join(name).exists())
+}
+
+fn candidate_run_dirs_for_instance_root(
+    instance_root: &Path,
+) -> Result<Vec<PathBuf>, PrepareError> {
+    let mut dirs = Vec::new();
+    if looks_like_run_dir(instance_root) {
+        dirs.push(instance_root.to_path_buf());
+    }
+
+    let nested_root = nested_runs_dir(instance_root);
+    let entries = match fs::read_dir(&nested_root) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(dirs),
+        Err(source) => {
+            return Err(PrepareError::ReadManifest {
+                path: nested_root,
+                source,
+            });
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if path.is_dir() && looks_like_run_dir(&path) {
+            dirs.push(path);
+        }
+    }
+
+    Ok(dirs)
+}
+
+fn run_dir_sort_key(run_dir: &Path) -> Option<std::time::SystemTime> {
+    let record = run_dir.join("record.json.gz");
+    let execution_log = run_dir.join("execution-log.json");
+    let indexing_status = run_dir.join("indexing-status.json");
+    let parse_failure = run_dir.join("parse-failure.json");
+    let snapshot_status = run_dir.join("snapshot-status.json");
+    let repo_state = run_dir.join("repo-state.json");
+    let final_snapshot = run_dir.join("final-snapshot.db");
+    fs::metadata(&record)
+        .and_then(|meta| meta.modified())
+        .or_else(|_| fs::metadata(&execution_log).and_then(|meta| meta.modified()))
+        .or_else(|_| fs::metadata(&indexing_status).and_then(|meta| meta.modified()))
+        .or_else(|_| fs::metadata(&parse_failure).and_then(|meta| meta.modified()))
+        .or_else(|_| fs::metadata(&snapshot_status).and_then(|meta| meta.modified()))
+        .or_else(|_| fs::metadata(&repo_state).and_then(|meta| meta.modified()))
+        .or_else(|_| fs::metadata(&final_snapshot).and_then(|meta| meta.modified()))
+        .ok()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunDirPreference {
+    LatestAny,
+    PreferTreatment,
+    PreferTreatmentWithSubmission,
+}
+
+fn run_dir_role(run_dir: &Path) -> Option<RunArmRole> {
+    let record_path = run_dir.join("record.json.gz");
+    read_compressed_record(&record_path)
+        .ok()
+        .map(|record| record.metadata.run_arm.role)
+}
+
+fn run_dir_matches_preference(run_dir: &Path, preference: RunDirPreference) -> bool {
+    match preference {
+        RunDirPreference::LatestAny => true,
+        RunDirPreference::PreferTreatment => {
+            matches!(run_dir_role(run_dir), Some(RunArmRole::Treatment))
+        }
+        RunDirPreference::PreferTreatmentWithSubmission => {
+            matches!(run_dir_role(run_dir), Some(RunArmRole::Treatment))
+                && run_dir.join("multi-swe-bench-submission.jsonl").exists()
+        }
+    }
+}
+
+fn best_run_dir_for_instance_root(
+    instance_root: &Path,
+    preference: RunDirPreference,
+) -> Result<Option<PathBuf>, PrepareError> {
+    let candidates = candidate_run_dirs_for_instance_root(instance_root)?;
+    let mut best_preferred: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut best_any: Option<(std::time::SystemTime, PathBuf)> = None;
+
+    for run_dir in candidates {
+        let Some(modified) = run_dir_sort_key(&run_dir) else {
+            continue;
+        };
+        if best_any
+            .as_ref()
+            .is_none_or(|(best_time, _)| modified > *best_time)
+        {
+            best_any = Some((modified, run_dir.clone()));
+        }
+        if run_dir_matches_preference(&run_dir, preference)
+            && best_preferred
+                .as_ref()
+                .is_none_or(|(best_time, _)| modified > *best_time)
+        {
+            best_preferred = Some((modified, run_dir));
+        }
+    }
+
+    Ok(best_preferred.or(best_any).map(|(_, path)| path))
+}
+
+pub(crate) fn latest_run_dir_for_instance_root(
+    instance_root: &Path,
+) -> Result<Option<PathBuf>, PrepareError> {
+    best_run_dir_for_instance_root(instance_root, RunDirPreference::LatestAny)
+}
+
+pub(crate) fn preferred_run_dir_for_instance(
+    runs_root: &Path,
+    instance_id: &str,
+    preference: RunDirPreference,
+) -> Result<Option<PathBuf>, PrepareError> {
+    best_run_dir_for_instance_root(&runs_root.join(instance_id), preference)
+}
+
+pub(crate) fn list_finished_record_paths_in_runs_root(
+    runs_root: &Path,
+) -> Result<Vec<PathBuf>, PrepareError> {
+    let mut paths = Vec::new();
+    let entries = match fs::read_dir(runs_root) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(paths),
+        Err(source) => {
+            return Err(PrepareError::ReadManifest {
+                path: runs_root.to_path_buf(),
+                source,
+            });
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        let instance_root = entry.path();
+        if !instance_root.is_dir() {
+            continue;
+        }
+        if let Some(run_dir) = latest_run_dir_for_instance_root(&instance_root)? {
+            let record_path = run_dir.join("record.json.gz");
+            if record_path.exists() {
+                paths.push(record_path);
+            }
+        }
+    }
+
+    paths.sort();
+    Ok(paths)
 }
 
 pub async fn print_last_run_assistant_messages() -> Result<(), PrepareError> {
@@ -109,47 +288,20 @@ fn load_final_snapshot_path(run_dir: &Path) -> Result<PathBuf, PrepareError> {
 fn discover_last_run_dir(eval_home: impl AsRef<Path>) -> Result<Option<PathBuf>, PrepareError> {
     let root = eval_home.as_ref().join("runs");
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-
-    let entries = match fs::read_dir(&root) {
-        Ok(entries) => entries,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => {
-            return Err(PrepareError::ReadLastRunRecord { path: root, source });
-        }
-    };
-
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        if !path.is_dir() {
+    for record_path in list_finished_record_paths_in_runs_root(&root)? {
+        let Some(run_dir) = record_path.parent() else {
             continue;
-        }
-
-        let snapshot_status = path.join("snapshot-status.json");
-        let final_snapshot = path.join("final-snapshot.db");
-        if !snapshot_status.exists() || !final_snapshot.exists() {
-            continue;
-        }
-
-        let modified = fs::metadata(&snapshot_status)
-            .and_then(|meta| meta.modified())
-            .or_else(|_| fs::metadata(&final_snapshot).and_then(|meta| meta.modified()));
-        let modified = match modified {
-            Ok(modified) => modified,
-            Err(_) => continue,
         };
-
+        let Some(modified) = run_dir_sort_key(run_dir) else {
+            continue;
+        };
         if best
             .as_ref()
             .is_none_or(|(best_time, _)| modified > *best_time)
         {
-            best = Some((modified, path));
+            best = Some((modified, run_dir.to_path_buf()));
         }
     }
-
     Ok(best.map(|(_, path)| path))
 }
 

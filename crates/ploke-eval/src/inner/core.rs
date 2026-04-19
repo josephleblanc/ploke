@@ -156,7 +156,10 @@ mod tests {
         assert_eq!(frozen.storage_roots.runs_dir, PathBuf::from("/tmp/runs"));
         assert_eq!(frozen.base_sha.as_deref(), Some("deadbeef"));
         assert_eq!(frozen.budget.max_turns, 8);
-        assert_eq!(frozen.model_id.as_deref(), Some("anthropic/claude-sonnet-4"));
+        assert_eq!(
+            frozen.model_id.as_deref(),
+            Some("anthropic/claude-sonnet-4")
+        );
         assert_eq!(frozen.provider_slug.as_deref(), Some("openrouter"));
         assert_eq!(frozen.storage_roots, intent.storage_roots);
     }

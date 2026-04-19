@@ -12,6 +12,13 @@
 
 ## 2026-04-18
 
+- Added eval embedding-model preflight on the hardcoded Codestral path. `ploke-eval` now issues one tiny live embeddings request before expensive run setup, refreshes or loads an OpenRouter embedding-model registry snapshot at `~/.ploke-eval/models/embedding-models-openrouter.json`, and fails fast with suggested alternative model ids instead of burning a run after RAG has already started failing.
+- Added `ploke-llm` embedding-model registry helpers on top of the existing OpenRouter `/embeddings/models` types: typed fetch, pretty JSON write, JSON load, and fetch-and-write wrappers, plus concrete `OpenRouter` convenience methods and a round-trip test. This is the first clean seam for eval embedding-model preflight and alternative-model suggestions without re-implementing provider registry logic in `ploke-eval`.
+- Removed the eval-only hardcoded Codestral embedding override from `ploke-eval` runner setup. Eval now uses the shared default embedding policy via `TestRuntime::new`, cache metadata follows the default local embedding set, focused runner tests passed, and a live rerun of `clap-rs__clap-4032` no longer failed on the previous OpenRouter embeddings `404` path. The live run still appears bottlenecked later in setup/turn execution, with only `repo-state.json` and `indexing-checkpoint.db` written so far.
+- Added four focused bug reports for the current eval regressions: Codestral embedding `404` fallback, semantic edit zero-write `Applied` status, multi-edit apply/result-accounting drift, and arm-agnostic latest-run selection. The bug index now exposes each seam separately instead of folding them back into the larger patch-integrity report.
+- Traced the live patch-integrity bug more precisely: historical setup-only runs really leaked submission artifacts, semantic edit apply can still mark proposals `Applied` with `applied == 0`, and current nested run dirs fix write collision but not arm-agnostic latest-run lookup for export/closure/`--instance` reads.
+- filed [2026-04-18-eval-patch-artifact-collision-and-empty-diff.md](../../bugs/2026-04-18-eval-patch-artifact-collision-and-empty-diff.md) for a high-severity `ploke-eval` integrity failure in patch capture and run-output isolation
+- Began fixing the patch-artifact corruption seam in `ploke-eval`: run artifacts now write into nested per-run directories under each instance, setup-only runs no longer emit benchmark submission files, and instance-based CLI/closure discovery was updated to resolve the latest nested run without breaking existing `--instance` workflows.
 - Added `crates/ploke-eval/src/inner/HANDOFF.md` with cold-start instructions for the rewrite: current slice, required reads, verification command, next seam, and guardrails against framework sprawl.
 
 - Inner eval rewrite slice 1 landed. `RunIntent` freezes into `FrozenRunSpec`, `RunRegistration` now takes storage roots from the frozen intent, stable run ids remain task-readable, and registration errors keep path provenance.
@@ -905,6 +912,11 @@
 - **Phase 1 COMPLETE** — All RunRecord deliverables finished
   - 46 tests passing in ploke-eval (was 34, added 12 new)
   - No changes required outside ploke-eval crate
+
+## 2026-04-18
+
+- Made `ploke-eval` read-side run selection arm-aware for `--instance`, closure, and submission export: those surfaces now prefer treatment runs, and submission export prefers treatment runs with a submission artifact. Added mixed-arm regression tests and live-validated the fix on `clap-rs__clap-4032` by creating a newer control run and confirming `inspect conversations --instance` still resolves to the older treatment run with 1 turn.
+- Added a focused `ploke-eval` runner test for the single-agent submission-write seam: a treatment run with a real repo diff now proves it writes a non-empty `multi-swe-bench-submission.jsonl` into the nested run output directory. This rules out one harness-level failure mode where eval could have computed a patch but failed to persist the submission artifact.
 
 ## 2026-04-09
 
