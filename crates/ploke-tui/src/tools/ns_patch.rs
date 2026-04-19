@@ -262,22 +262,6 @@ fn validate_params(params: &NsPatchParams<'_>) -> Result<(), ToolInvocationError
         ));
     }
 
-    if params.patches.len() > 1 {
-        let count = params.patches.len();
-        return Err(ToolInvocationError::Validation(
-            ToolError::new(
-                ToolName::NsPatch,
-                ToolErrorCode::InvalidFormat,
-                "ns_patch currently supports a single patch per call",
-            )
-            .field("patches")
-            .expected("array length of 1")
-            .received(count.to_string())
-            .retry_hint("Send one patch per tool call.")
-            .retry_context(json!({ "count": count })),
-        ));
-    }
-
     for (idx, patch) in params.patches.iter().enumerate() {
         validate_file_path_basic(ToolName::NsPatch, "file", patch.file.as_ref(), false).map_err(
             |err| {

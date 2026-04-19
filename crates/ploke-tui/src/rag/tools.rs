@@ -899,56 +899,49 @@ pub async fn apply_ns_code_edit_tool(
     } = tool_call_params.clone();
     let editing_cfg = { state.config.read().await.editing.clone() };
     let edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
-    let files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
-    let count = typed_req.edits.len();
-    let mut patches = typed_req.edits.into_iter().filter_map(|ed| match ed {
-        Edit::Patch {
-            file,
-            diff,
-            reasoning,
-        } => Some((file, diff, reasoning)),
-        _ => None,
-    });
-    if count > 1 {
-        tracing::error!("found multiple patches in apply_ns_code_edit_tool\ncount: {count}");
+    let mut patches: Vec<(String, String, String)> = typed_req
+        .edits
+        .into_iter()
+        .filter_map(|ed| match ed {
+            Edit::Patch {
+                file,
+                diff,
+                reasoning,
+            } => Some((file, diff, reasoning)),
+            _ => None,
+        })
+        .collect();
+    if patches.is_empty() {
+        tool_call_params.tool_call_failed("No patches provided".to_string());
+        return Ok(());
     }
-    if let Some((file, diff, reasoning)) = patches.next() {
+
+    let (primary_root, policy) = state
+        .with_system_read(|sys| {
+            sys.tool_path_context()
+                .map(|(p, pol)| (p.clone(), pol.clone()))
+        })
+        .await
+        .ok_or_else(|| {
+            ploke_error::Error::Domain(DomainError::Ui {
+                message:
+                    "No workspace is loaded; load a workspace before using non_semantic_patch."
+                        .to_string(),
+            })
+        })?;
+
+    let mut per_file: Vec<BeforeAfter> = Vec::with_capacity(patches.len());
+    let mut unified_diff = String::new();
+    let mut edits_ns: Vec<NsWriteSnippetData> = Vec::with_capacity(patches.len());
+    let mut files: Vec<PathBuf> = Vec::with_capacity(patches.len());
+    let mut display_files: Vec<String> = Vec::with_capacity(patches.len());
+    let mut chat_preview_sections: Vec<String> = Vec::with_capacity(patches.len());
+    let mut seen_files: BTreeSet<PathBuf> = BTreeSet::new();
+
+    for (file, diff, _reasoning) in patches.drain(..) {
         use mpatch::ApplyOptions;
         let state_cfg = state.config.read().await;
         let apply_options = ApplyOptions::from(state_cfg.editing.patch_cfg);
-
-        // let p = PathBuf::from(file);
-        // let file_was_relative = !p.is_absolute();
-        // let abs_path = if let Some(root) = crate_root.as_ref() {
-        //     match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
-        //         Ok(pb) => pb,
-        //         Err(err) => {
-        //             let msg = format!("invalid path: {}", err);
-        //             tool_call_params.tool_call_failed(msg);
-        //             return;
-        //         }
-        //     }
-        // } else if p.is_absolute() {
-        //     p
-        // } else {
-        //     std::env::current_dir()
-        //         .unwrap_or_else(|_| PathBuf::from("."))
-        //         .join(p)
-        // };
-
-        let (primary_root, policy) = state
-            .with_system_read(|sys| {
-                sys.tool_path_context()
-                    .map(|(p, pol)| (p.clone(), pol.clone()))
-            })
-            .await
-            .ok_or_else(|| {
-                ploke_error::Error::Domain(DomainError::Ui {
-                    message:
-                        "No workspace is loaded; load a workspace before using non_semantic_patch."
-                            .to_string(),
-                })
-            })?;
 
         let requested_path = PathBuf::from(file.as_str());
         let abs_path = path_scoping::resolve_tool_path(
@@ -963,6 +956,14 @@ pub async fn apply_ns_code_edit_tool(
                 ),
             })
         })?;
+        if !seen_files.insert(abs_path.clone()) {
+            let msg = format!(
+                "multiple non_semantic_patch entries targeted '{}'; combine them into one unified diff per file",
+                abs_path.display()
+            );
+            tool_call_params.tool_call_failed(msg.clone());
+            return Err(ploke_error::Error::Domain(DomainError::Io { message: msg }));
+        }
 
         let request = ploke_io::ReadFileRequest {
             file_path: abs_path.clone(),
@@ -1004,13 +1005,6 @@ pub async fn apply_ns_code_edit_tool(
 
         debug!(?abs_path);
 
-        use mpatch::{apply_patches_to_dir, parse_auto};
-        let patches = parse_auto(&diff).map_err(|e| {
-            let msg = e.to_string();
-            tool_call_params.tool_call_failed(msg.clone());
-            ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
-        })?;
-
         // Pick a namespace. If you really don’t have one yet, re-use your placeholder.
         let namespace = PROJECT_NAMESPACE_UUID;
 
@@ -1024,14 +1018,6 @@ pub async fn apply_ns_code_edit_tool(
             tool_call_params.tool_call_failed(msg.clone());
             ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
         })?;
-
-        let unified_diff = patch.hunks.clone().into_iter().map(|h| h.to_string()).fold(
-            String::new(),
-            |mut acc, s| {
-                acc.push_str(&s);
-                acc
-            },
-        );
 
         tracing::info!(
             request_id = %request_id,
@@ -1051,7 +1037,7 @@ pub async fn apply_ns_code_edit_tool(
             .strip_prefix(&primary_root)
             .unwrap_or(abs_path.as_path())
             .to_path_buf();
-        let per_file = BeforeAfter {
+        let before_after = BeforeAfter {
             file_path: display_path.clone(),
             before: content,
             after: apply_patch_result.new_content,
@@ -1068,92 +1054,94 @@ pub async fn apply_ns_code_edit_tool(
             options,
             large_file_policy,
         };
-        let edits_ns: Vec<NsWriteSnippetData> = vec![sn_write_data];
-        let files = vec![file_path_for_registry];
-        let display_files: Vec<String> = files
-            .iter()
-            .map(|p| {
-                p.strip_prefix(&primary_root)
-                    .map(|rp| rp.display().to_string())
-                    .unwrap_or_else(|_| p.display().to_string())
-            })
-            .collect();
-        let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-            "diff"
-        } else {
-            "codeblock"
-        };
-        let max_lines = editing_cfg.max_preview_lines;
-        let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-            let filtered =
-                filter_unified_diff_with_context(&unified_diff, CHAT_PREVIEW_CONTEXT_LINES);
-            truncate_lines(&filtered, max_lines)
-        } else {
-            let chunk = diff_chunk_with_context(
-                &display_path,
-                &per_file.before,
-                &per_file.after,
-                CHAT_PREVIEW_CONTEXT_LINES,
-            );
-            truncate_lines(&chunk, max_lines)
-        };
-        tracing::info!(
-            request_id = %request_id,
-            call_id = %call_id,
-            file = %abs_path.display(),
-            "ns_patch: before proposals.write"
-        );
-        let mut reg = state.proposals.write().await;
-        tracing::info!(
-            request_id = %request_id,
-            call_id = %call_id,
-            file = %abs_path.display(),
-            "ns_patch: after proposals.write"
-        );
-        reg.insert(
+        if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+            unified_diff.push_str(sn_write_data.diff.as_ref());
+            if !unified_diff.ends_with('\n') {
+                unified_diff.push('\n');
+            }
+        }
+        chat_preview_sections.push(diff_chunk_with_context(
+            &display_path,
+            &before_after.before,
+            &before_after.after,
+            CHAT_PREVIEW_CONTEXT_LINES,
+        ));
+        edits_ns.push(sn_write_data);
+        files.push(file_path_for_registry);
+        display_files.push(display_path.display().to_string());
+        per_file.push(before_after);
+    }
+
+    let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+        "diff"
+    } else {
+        "codeblock"
+    };
+    let max_lines = editing_cfg.max_preview_lines;
+    let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+        let filtered = filter_unified_diff_with_context(&unified_diff, CHAT_PREVIEW_CONTEXT_LINES);
+        truncate_lines(&filtered, max_lines)
+    } else {
+        truncate_lines(&chat_preview_sections.join("\n"), max_lines)
+    };
+
+    tracing::info!(
+        request_id = %request_id,
+        call_id = %call_id,
+        file_count = files.len(),
+        "ns_patch: before proposals.write"
+    );
+    let mut reg = state.proposals.write().await;
+    tracing::info!(
+        request_id = %request_id,
+        call_id = %call_id,
+        file_count = files.len(),
+        "ns_patch: after proposals.write"
+    );
+    reg.insert(
+        request_id,
+        EditProposal {
             request_id,
-            EditProposal {
-                request_id,
-                parent_id,
-                call_id: call_id.clone(),
-                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
-                edits,
-                edits_ns,
-                files: files.clone(),
-                preview: if matches!(
-                    editing_cfg.preview_mode,
-                    crate::app_state::core::PreviewMode::Diff
-                ) {
-                    crate::app_state::core::DiffPreview::UnifiedDiff {
-                        text: unified_diff.clone(),
-                    }
-                } else {
-                    crate::app_state::core::DiffPreview::CodeBlocks {
-                        per_file: vec![per_file.clone()],
-                    }
-                },
-                status: EditProposalStatus::Pending,
-                is_semantic: false,
+            parent_id,
+            call_id: call_id.clone(),
+            proposed_at_ms: chrono::Utc::now().timestamp_millis(),
+            edits,
+            edits_ns,
+            files: files.clone(),
+            preview: if matches!(
+                editing_cfg.preview_mode,
+                crate::app_state::core::PreviewMode::Diff
+            ) {
+                crate::app_state::core::DiffPreview::UnifiedDiff {
+                    text: unified_diff.clone(),
+                }
+            } else {
+                crate::app_state::core::DiffPreview::CodeBlocks {
+                    per_file: per_file.clone(),
+                }
             },
-        );
-        drop(reg);
+            status: EditProposalStatus::Pending,
+            is_semantic: false,
+        },
+    );
+    drop(reg);
 
-        tracing::info!(
-            request_id = %request_id,
-            call_id = %call_id,
-            file = %abs_path.display(),
-            "ns_patch: before save_proposals"
-        );
-        crate::app_state::handlers::proposals::save_proposals(&state).await;
-        tracing::info!(
-            request_id = %request_id,
-            call_id = %call_id,
-            file = %abs_path.display(),
-            "ns_patch: after save_proposals"
-        );
+    tracing::info!(
+        request_id = %request_id,
+        call_id = %call_id,
+        file_count = files.len(),
+        "ns_patch: before save_proposals"
+    );
+    crate::app_state::handlers::proposals::save_proposals(&state).await;
+    tracing::info!(
+        request_id = %request_id,
+        call_id = %call_id,
+        file_count = files.len(),
+        "ns_patch: after save_proposals"
+    );
 
-        let summary = format!(
-            r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
+    let summary = format!(
+        r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
 Files:
     {files}
 
@@ -1162,31 +1150,30 @@ Preview (mode={preview_label}, context={context_lines} lines, first {max_lines} 
 
 Approve:  edit approve {request_id}
 Deny:     edit deny {request_id}{auto_confirm}"#,
-            files = display_files.join("\n  "),
-            preview_label = preview_label,
-            context_lines = CHAT_PREVIEW_CONTEXT_LINES,
-            max_lines = max_lines,
-            preview_snippet = chat_preview_snippet,
-            auto_confirm = if editing_cfg.auto_confirm_edits {
-                "\n\nAuto-approval enabled: applying now..."
-            } else {
-                ""
-            },
-        );
-        tracing::info!(
-            request_id = %request_id,
-            call_id = %call_id,
-            file = %abs_path.display(),
-            "ns_patch: before add_msg_immediate_sysinfo_unpinned"
-        );
-        chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
-        tracing::info!(
-            request_id = %request_id,
-            call_id = %call_id,
-            file = %abs_path.display(),
-            "ns_patch: after add_msg_immediate_sysinfo_unpinned"
-        );
-    }
+        files = display_files.join("\n  "),
+        preview_label = preview_label,
+        context_lines = CHAT_PREVIEW_CONTEXT_LINES,
+        max_lines = max_lines,
+        preview_snippet = chat_preview_snippet,
+        auto_confirm = if editing_cfg.auto_confirm_edits {
+            "\n\nAuto-approval enabled: applying now..."
+        } else {
+            ""
+        },
+    );
+    tracing::info!(
+        request_id = %request_id,
+        call_id = %call_id,
+        file_count = files.len(),
+        "ns_patch: before add_msg_immediate_sysinfo_unpinned"
+    );
+    chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
+    tracing::info!(
+        request_id = %request_id,
+        call_id = %call_id,
+        file_count = files.len(),
+        "ns_patch: after add_msg_immediate_sysinfo_unpinned"
+    );
     tracing::info!(
         request_id = %request_id,
         call_id = %call_id,
