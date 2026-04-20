@@ -57,6 +57,257 @@ where
     async fn call_tool(&self, tool_input: T) -> R;
 }
 
+pub async fn stage_semantic_edit_proposal(
+    tool_call_params: ToolCallParams,
+    edits: Vec<WriteSnippetData>,
+) {
+    let ToolCallParams {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        name,
+        call_id,
+        ..
+    } = tool_call_params.clone();
+
+    {
+        let reg = state.proposals.read().await;
+        if reg.contains_key(&request_id) {
+            let msg = format!(
+                "Duplicate {} request ignored for request_id {}",
+                name.as_str(),
+                request_id
+            );
+            tool_call_params.tool_call_failed(msg.clone());
+            chat::add_msg_immediate(
+                &state,
+                &event_bus,
+                Uuid::new_v4(),
+                msg,
+                MessageKind::SysInfo,
+            )
+            .await;
+            return;
+        }
+    }
+
+    if edits.is_empty() {
+        tool_call_params.tool_call_failed("No edits provided".to_string());
+        return;
+    }
+
+    let primary_root = state
+        .with_system_read(|sys| sys.tool_path_context().map(|(p, _)| p.clone()))
+        .await;
+    let editing_cfg = { state.config.read().await.editing.clone() };
+    let files_set: BTreeSet<PathBuf> = edits.iter().map(|edit| edit.file_path.clone()).collect();
+    let mut per_file: Vec<BeforeAfter> = Vec::new();
+    let mut unified_diff = String::new();
+    let mut chat_preview_sections: Vec<String> = Vec::new();
+
+    for path in &files_set {
+        let (file_hash, namespace) = edits
+            .iter()
+            .find(|e| &e.file_path == path)
+            .map(|e| (e.expected_file_hash, e.namespace))
+            .expect("Mismatched path in file edit");
+        let before = match state
+            .io_handle
+            .read_full_verified(path.clone(), file_hash, namespace)
+            .await
+        {
+            Ok(Ok(s)) => s,
+            _ => "<unreadable or binary file>".to_string(),
+        };
+        tracing::debug!(?before);
+
+        let mut bytes = before.clone().into_bytes();
+        let mut file_edits: Vec<&WriteSnippetData> =
+            edits.iter().filter(|e| &e.file_path == path).collect();
+        file_edits.sort_by_key(|e| e.start_byte);
+        file_edits.reverse();
+        for e in file_edits {
+            let start = e.start_byte.min(bytes.len());
+            let end = e.end_byte.min(bytes.len());
+            if start > end {
+                continue;
+            }
+            let mut new_bytes = Vec::with_capacity(bytes.len() + e.replacement.len());
+            new_bytes.extend_from_slice(&bytes[..start]);
+            new_bytes.extend_from_slice(e.replacement.as_bytes());
+            new_bytes.extend_from_slice(&bytes[end..]);
+            bytes = new_bytes;
+        }
+        let after = String::from_utf8_lossy(&bytes).to_string();
+
+        let display_path = if let Some(root) = primary_root.as_ref() {
+            path.strip_prefix(root)
+                .unwrap_or(path.as_path())
+                .to_path_buf()
+        } else {
+            path.clone()
+        };
+        per_file.push(BeforeAfter {
+            file_path: display_path.clone(),
+            before: truncate_lines(&before, editing_cfg.max_preview_lines),
+            after: truncate_lines(&after, editing_cfg.max_preview_lines),
+        });
+        chat_preview_sections.push(diff_chunk_with_context(
+            &display_path,
+            &before,
+            &after,
+            CHAT_PREVIEW_CONTEXT_LINES,
+        ));
+        if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+            let header_a = format!("a/{}", display_path.display());
+            let header_b = format!("b/{}", display_path.display());
+            let diff = TextDiff::from_lines(&before, &after)
+                .unified_diff()
+                .header(&header_a, &header_b)
+                .to_string();
+            unified_diff.push_str(&diff);
+            if !unified_diff.ends_with('\n') {
+                unified_diff.push('\n');
+            }
+        }
+    }
+
+    let files: Vec<PathBuf> = files_set.into_iter().collect();
+    let display_files: Vec<String> = files
+        .iter()
+        .map(|p| {
+            if let Some(root) = primary_root.as_ref() {
+                p.strip_prefix(root)
+                    .map(|rp| rp.display().to_string())
+                    .unwrap_or_else(|_| p.display().to_string())
+            } else {
+                p.display().to_string()
+            }
+        })
+        .collect();
+
+    let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+        "diff"
+    } else {
+        "codeblock"
+    };
+    let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+        let filtered = filter_unified_diff_with_context(&unified_diff, CHAT_PREVIEW_CONTEXT_LINES);
+        truncate_lines(&filtered, editing_cfg.max_preview_lines)
+    } else {
+        truncate_lines(
+            &chat_preview_sections.join("\n"),
+            editing_cfg.max_preview_lines,
+        )
+    };
+
+    let edit_len = edits.len();
+    {
+        let mut reg = state.proposals.write().await;
+        reg.insert(
+            request_id,
+            EditProposal {
+                request_id,
+                parent_id,
+                call_id: call_id.clone(),
+                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
+                edits,
+                edits_ns: Vec::new(),
+                files: files.clone(),
+                preview: if matches!(
+                    editing_cfg.preview_mode,
+                    crate::app_state::core::PreviewMode::Diff
+                ) {
+                    crate::app_state::core::DiffPreview::UnifiedDiff {
+                        text: unified_diff.clone(),
+                    }
+                } else {
+                    crate::app_state::core::DiffPreview::CodeBlocks {
+                        per_file: per_file.clone(),
+                    }
+                },
+                status: EditProposalStatus::Pending,
+                is_semantic: true,
+            },
+        );
+    }
+    crate::app_state::handlers::proposals::save_proposals(&state).await;
+
+    let summary = format!(
+        r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
+Files:
+    {files}
+
+Preview (mode={preview_label}, context={context_lines} lines, first {max_lines} lines):
+{preview_snippet}
+
+Approve:  edit approve {request_id}
+Deny:     edit deny {request_id}{auto_confirm}"#,
+        files = display_files.join("\n  "),
+        preview_label = preview_label,
+        context_lines = CHAT_PREVIEW_CONTEXT_LINES,
+        max_lines = editing_cfg.max_preview_lines,
+        preview_snippet = chat_preview_snippet,
+        auto_confirm = if editing_cfg.auto_confirm_edits {
+            "\n\nAuto-approval enabled: applying now..."
+        } else {
+            ""
+        },
+    );
+    chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
+
+    let result = ApplyCodeEditResult {
+        ok: true,
+        staged: edit_len,
+        applied: 0,
+        files: display_files.clone(),
+        preview_mode: preview_label.to_string(),
+        auto_confirmed: editing_cfg.auto_confirm_edits,
+    };
+    let ui_payload = ToolUiPayload::new(
+        name,
+        call_id.clone(),
+        format!(
+            "Staged {} edits across {} files",
+            result.staged,
+            result.files.len()
+        ),
+    )
+    .with_request_id(request_id)
+    .with_field("status", "pending")
+    .with_field("staged", result.staged.to_string())
+    .with_field("applied", result.applied.to_string())
+    .with_field("files", result.files.len().to_string())
+    .with_field("preview_mode", result.preview_mode.as_str())
+    .with_field("auto_confirmed", result.auto_confirmed.to_string());
+    let content = match serde_json::to_string(&result) {
+        Ok(s) => s,
+        Err(e) => {
+            let err = format!("Failed to serialize ApplyCodeEditResult: {}", e);
+            tool_call_params.tool_call_failed(err);
+            return;
+        }
+    };
+    let _ = event_bus
+        .realtime_tx
+        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            content,
+            ui_payload: Some(ui_payload),
+        }));
+
+    if editing_cfg.auto_confirm_edits {
+        let state2 = Arc::clone(&state);
+        let event_bus2 = Arc::clone(&event_bus);
+        tokio::spawn(async move {
+            approve_edits(&state2, &event_bus2, request_id).await;
+        });
+    }
+}
+
 const CHAT_PREVIEW_CONTEXT_LINES: usize = 2;
 
 fn truncate_lines(text: &str, max_lines: usize) -> String {
@@ -370,29 +621,6 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         tool_call_params.tool_call_failed(parse_failure.message.clone());
         return;
     }
-    // Idempotency: guard duplicate requests
-    {
-        let reg = state.proposals.read().await;
-        if reg.contains_key(&request_id) {
-            let msg = format!(
-                "Duplicate apply_code_edit request ignored for request_id {}",
-                request_id
-            );
-            #[cfg(test)]
-            eprintln!("Detected duplicate for state.proposals.read");
-            tool_call_params.tool_call_failed(msg.clone());
-            chat::add_msg_immediate(
-                &state,
-                &event_bus,
-                Uuid::new_v4(),
-                msg,
-                MessageKind::SysInfo,
-            )
-            .await;
-            return;
-        }
-    }
-
     if typed_req.edits.is_empty() {
         tool_call_params.tool_call_failed("No edits provided".to_string());
         chat::add_msg_immediate(
@@ -413,10 +641,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 .map(|(p, pol)| (p.clone(), pol.clone()))
         })
         .await;
-    let primary_root = tool_paths.as_ref().map(|(p, _)| p.clone());
-    let editing_cfg = { state.config.read().await.editing.clone() };
     let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
-    let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
 
     for edit in typed_req.edits.iter() {
         match edit {
@@ -463,7 +688,6 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     replacement: replacement.clone(),
                     namespace: *namespace,
                 };
-                files_set.insert(abs_path.clone());
                 edits.push(ws);
             }
             Edit::Canonical {
@@ -660,7 +884,6 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     replacement: code.clone(),
                     namespace: ed.namespace,
                 };
-                files_set.insert(ed.file_path.clone());
                 edits.push(ws);
             }
             Edit::Patch { .. } => {
@@ -669,220 +892,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         }
     }
 
-    // Build preview (reuse minimal version from prior implementation)
-    let mut per_file: Vec<BeforeAfter> = Vec::new();
-    let mut unified_diff = String::new();
-    let mut chat_preview_sections: Vec<String> = Vec::new();
-
-    for path in files_set.iter() {
-        // Fetch full file content via IoManager (verified against tracking hash)
-        let (file_hash, namespace) = edits
-            .iter()
-            .find(|e| &e.file_path == path)
-            .map(|e| (e.expected_file_hash, e.namespace))
-            .expect("Mismatched path in file edit");
-        let tracking_hash_before = file_hash;
-        // Read via IoManager with tracking-hash verification; fall back to a placeholder on error.
-        let before = match state
-            .io_handle
-            .read_full_verified(path.clone(), file_hash, namespace)
-            .await
-        {
-            Ok(Ok(s)) => s,
-            _ => "<unreadable or binary file>".to_string(),
-        };
-        tracing::debug!(?before);
-        // Apply all edits for this file in-memory (descending by start to keep indices stable)
-        let mut bytes = before.clone().into_bytes();
-        let mut file_edits: Vec<&WriteSnippetData> =
-            edits.iter().filter(|e| &e.file_path == path).collect();
-        file_edits.sort_by_key(|e| e.start_byte);
-        file_edits.reverse();
-        for e in file_edits {
-            let start = e.start_byte.min(bytes.len());
-            let end = e.end_byte.min(bytes.len());
-            if start > end {
-                continue;
-            }
-            let mut new_bytes = Vec::with_capacity(bytes.len() + e.replacement.len());
-            new_bytes.extend_from_slice(&bytes[..start]);
-            new_bytes.extend_from_slice(e.replacement.as_bytes());
-            new_bytes.extend_from_slice(&bytes[end..]);
-            bytes = new_bytes;
-        }
-        let after = String::from_utf8_lossy(&bytes).to_string();
-
-        let display_path = if let Some(root) = primary_root.as_ref() {
-            path.strip_prefix(root)
-                .unwrap_or(path.as_path())
-                .to_path_buf()
-        } else {
-            path.clone()
-        };
-        per_file.push(BeforeAfter {
-            file_path: display_path.clone(),
-            before: truncate_lines(&before, editing_cfg.max_preview_lines),
-            after: truncate_lines(&after, editing_cfg.max_preview_lines),
-        });
-        chat_preview_sections.push(diff_chunk_with_context(
-            &display_path,
-            &before,
-            &after,
-            CHAT_PREVIEW_CONTEXT_LINES,
-        ));
-        if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-            let header_a = format!("a/{}", display_path.display());
-            let header_b = format!("b/{}", display_path.display());
-            let diff = TextDiff::from_lines(&before, &after)
-                .unified_diff()
-                .header(&header_a, &header_b)
-                .to_string();
-            unified_diff.push_str(&diff);
-            if !unified_diff.ends_with('\n') {
-                unified_diff.push('\n');
-            }
-        }
-    }
-
-    let files: Vec<PathBuf> = files_set.into_iter().collect();
-    let display_files: Vec<String> = files
-        .iter()
-        .map(|p| {
-            if let Some(root) = primary_root.as_ref() {
-                p.strip_prefix(root)
-                    .map(|rp| rp.display().to_string())
-                    .unwrap_or_else(|_| p.display().to_string())
-            } else {
-                p.display().to_string()
-            }
-        })
-        .collect();
-
-    let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-        "diff"
-    } else {
-        "codeblock"
-    };
-
-    let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-        let filtered = filter_unified_diff_with_context(&unified_diff, CHAT_PREVIEW_CONTEXT_LINES);
-        truncate_lines(&filtered, editing_cfg.max_preview_lines)
-    } else {
-        truncate_lines(
-            &chat_preview_sections.join("\n"),
-            editing_cfg.max_preview_lines,
-        )
-    };
-
-    let edit_len = edits.len();
-    // Stash proposal in registry
-    {
-        let mut reg = state.proposals.write().await;
-        reg.insert(
-            request_id,
-            EditProposal {
-                request_id,
-                parent_id,
-                call_id: call_id.clone(),
-                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
-                edits,
-                // TODO: Change edits_ns to a None or otherwise handle better
-                edits_ns: Vec::new(),
-                files: files.clone(),
-                preview: if matches!(
-                    editing_cfg.preview_mode,
-                    crate::app_state::core::PreviewMode::Diff
-                ) {
-                    crate::app_state::core::DiffPreview::UnifiedDiff {
-                        text: unified_diff.clone(),
-                    }
-                } else {
-                    crate::app_state::core::DiffPreview::CodeBlocks {
-                        per_file: per_file.clone(),
-                    }
-                },
-                status: EditProposalStatus::Pending,
-                is_semantic: true,
-            },
-        );
-    }
-    // Persist proposals (best-effort)
-    crate::app_state::handlers::proposals::save_proposals(&state).await;
-
-    // Emit SysInfo summary with how to approve/deny
-    let summary = format!(
-        r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
-Files:
-    {files}
-
-Preview (mode={preview_label}, context={context_lines} lines, first {max_lines} lines):
-{preview_snippet}
-
-Approve:  edit approve {request_id}
-Deny:     edit deny {request_id}{auto_confirm}"#,
-        files = display_files.join("\n  "),
-        preview_label = preview_label,
-        context_lines = CHAT_PREVIEW_CONTEXT_LINES,
-        max_lines = editing_cfg.max_preview_lines,
-        preview_snippet = chat_preview_snippet,
-        auto_confirm = if editing_cfg.auto_confirm_edits {
-            "\n\nAuto-approval enabled: applying now..."
-        } else {
-            ""
-        },
-    );
-    chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
-
-    // Emit a typed ToolCallCompleted so the LLM loop can proceed deterministically.
-    let result = ApplyCodeEditResult {
-        ok: true,
-        staged: edit_len,
-        applied: 0,
-        files: display_files.clone(),
-        preview_mode: preview_label.to_string(),
-        auto_confirmed: editing_cfg.auto_confirm_edits,
-    };
-    let ui_payload = ToolUiPayload::new(
-        ToolName::ApplyCodeEdit,
-        call_id.clone(),
-        format!(
-            "Staged {} edits across {} files",
-            result.staged,
-            result.files.len()
-        ),
-    )
-    .with_request_id(request_id)
-    .with_field("status", "pending")
-    .with_field("staged", result.staged.to_string())
-    .with_field("applied", result.applied.to_string())
-    .with_field("files", result.files.len().to_string())
-    .with_field("preview_mode", result.preview_mode.as_str())
-    .with_field("auto_confirmed", result.auto_confirmed.to_string());
-    let content = match serde_json::to_string(&result) {
-        Ok(s) => s,
-        Err(e) => {
-            let err = format!("Failed to serialize ApplyCodeEditResult: {}", e);
-            tool_call_params.tool_call_failed(err);
-            return;
-        }
-    };
-    let _ = event_bus
-        .realtime_tx
-        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
-            request_id,
-            parent_id,
-            call_id: call_id.clone(),
-            content,
-            ui_payload: Some(ui_payload),
-        }));
-
-    if editing_cfg.auto_confirm_edits {
-        let state2 = Arc::clone(&state);
-        let event_bus2 = Arc::clone(&event_bus);
-        tokio::spawn(async move {
-            approve_edits(&state2, &event_bus2, request_id).await;
-        });
-    }
+    stage_semantic_edit_proposal(tool_call_params, edits).await;
 }
 
 pub async fn apply_ns_code_edit_tool(

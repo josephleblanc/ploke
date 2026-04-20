@@ -49,6 +49,7 @@ pub mod code_item_lookup;
 pub mod create_file;
 pub mod error;
 pub mod get_code_edges;
+pub mod insert_rust_item;
 pub mod list_dir;
 pub mod ns_patch;
 pub mod ns_read;
@@ -233,6 +234,35 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 format_args!("{:#?}", &content),
             );
             code_edit::GatCodeEdit::emit_completed(&ctx, content, ui_payload);
+            Ok(())
+        }
+        ToolName::InsertRustItem => {
+            let params =
+                insert_rust_item::InsertRustItem::deserialize_params(&args).map_err(|err| {
+                    let terr = insert_rust_item::InsertRustItem::adapt_error(err);
+                    insert_rust_item::InsertRustItem::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult {
+                content,
+                ui_payload,
+            } = insert_rust_item::InsertRustItem::execute(params, ctx.clone())
+                .await
+                .map_err(|e| {
+                    let terr =
+                        insert_rust_item::InsertRustItem::adapt_error(ToolInvocationError::Exec(e));
+                    insert_rust_item::InsertRustItem::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            insert_rust_item::InsertRustItem::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
         ToolName::CreateFile => {
@@ -565,6 +595,7 @@ mod tests {
             "request_code_context"
         );
         assert_eq!(ToolName::ApplyCodeEdit.as_str(), "apply_code_edit");
+        assert_eq!(ToolName::InsertRustItem.as_str(), "insert_rust_item");
         assert_eq!(ToolName::CreateFile.as_str(), "create_file");
     }
 

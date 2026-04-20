@@ -7607,6 +7607,8 @@ fn summarize_tool_inputs(arguments: &str) -> String {
         "file_path",
         "dir",
         "path",
+        "start_line",
+        "end_line",
         "search_term",
         "canon",
         "symbol",

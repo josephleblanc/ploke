@@ -47,8 +47,8 @@ use crate::{
     chat_history::{ContextTokens, MessageKind, TokenKind},
     tools::{
         self, Tool as _, ToolDefinition, cargo::CargoTool, code_edit::GatCodeEdit,
-        create_file::CreateFile, list_dir::ListDir, ns_patch::NsPatch, ns_read::NsRead,
-        request_code_context::RequestCodeContextGat,
+        create_file::CreateFile, insert_rust_item::InsertRustItem, list_dir::ListDir,
+        ns_patch::NsPatch, ns_read::NsRead, request_code_context::RequestCodeContextGat,
     },
     tracing_setup::TOKENS_TARGET,
     utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT},
@@ -507,6 +507,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     let tool_defs: Vec<ToolDefinition> = vec![
         RequestCodeContextGat::tool_def(),
         GatCodeEdit::tool_def(),
+        InsertRustItem::tool_def(),
         CreateFile::tool_def(),
         NsPatch::tool_def(),
         NsRead::tool_def(),

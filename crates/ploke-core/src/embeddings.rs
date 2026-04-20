@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use uuid::Uuid;
 
 use crate::{ArcStr, arcstr_wrapper};
@@ -70,11 +71,8 @@ impl EmbeddingSet {
     ) -> Self {
         let dims = shape.dimension;
         // Note sanitization step.
-        let rel_name = EmbRelName::new_from_string(
-            format!("emb_{model}_{dims}")
-                .replace("-", "_")
-                .replace("/", "_slash_"),
-        );
+        let rel_name =
+            EmbRelName::new_from_string(sanitize_embedding_relation_name(&model.to_string(), dims));
         let hash_id = EmbeddingSetId::from_components(&provider, &model, &shape);
         Self {
             provider,
@@ -118,6 +116,25 @@ impl Default for EmbeddingSet {
             EmbeddingShape::new_dims_default(384),
         )
     }
+}
+
+fn sanitize_embedding_relation_name(model: &str, dims: u32) -> String {
+    let mut sanitized = String::with_capacity(model.len() + 32);
+    sanitized.push_str("emb_");
+    for ch in model.chars() {
+        match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => sanitized.push(ch),
+            '-' => sanitized.push('_'),
+            '/' => sanitized.push_str("_slash_"),
+            '.' => sanitized.push_str("_dot_"),
+            ':' => sanitized.push_str("_colon_"),
+            other => {
+                let _ = write!(&mut sanitized, "_u{:x}_", other as u32);
+            }
+        }
+    }
+    let _ = write!(&mut sanitized, "_{dims}");
+    sanitized
 }
 
 /// Typed wrapper for an embedding model.
@@ -282,6 +299,20 @@ mod tests {
         assert_eq!(
             set.hash_id,
             EmbeddingSetId::from_components(&provider, &model, &shape)
+        );
+    }
+
+    #[test]
+    fn embedding_set_rel_name_sanitizes_model_id_for_relations() {
+        let set = EmbeddingSet::new(
+            EmbeddingProviderSlug::new_from_str("openrouter"),
+            EmbeddingModelId::new_from_str("baai/bge-base-en-v1.5:free"),
+            EmbeddingShape::new_dims_default(768),
+        );
+
+        assert_eq!(
+            set.rel_name.as_ref(),
+            "emb_baai_slash_bge_base_en_v1_dot_5_colon_free_768"
         );
     }
 }

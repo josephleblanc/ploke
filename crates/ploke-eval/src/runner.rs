@@ -3914,27 +3914,57 @@ mod tests {
 
     #[test]
     fn maybe_build_msb_submission_record_uses_benchmark_identity() {
+        let tmp = tempdir().expect("tempdir");
+        let repo_root = tmp.path();
+        let src_dir = repo_root.join("src");
+        let file = src_dir.join("lib.rs");
+        fs::create_dir_all(&src_dir).expect("src dir");
+
+        run_git_test(repo_root, &["init"], "git init");
+        run_git_test(
+            repo_root,
+            &["config", "user.name", "Ploke Eval"],
+            "git config name",
+        );
+        run_git_test(
+            repo_root,
+            &["config", "user.email", "ploke-eval@example.com"],
+            "git config email",
+        );
+
+        fs::write(&file, "fn main() {}\n").expect("write initial file");
+        run_git_test(repo_root, &["add", "src/lib.rs"], "git add");
+        run_git_test(repo_root, &["commit", "-m", "base"], "git commit");
+
+        let base_sha = git_stdout(repo_root, &["rev-parse", "HEAD"], "git rev-parse HEAD")
+            .expect("base sha")
+            .expect("stdout")
+            .trim()
+            .to_string();
+
+        fs::write(&file, "fn main() {\n    println!(\"hi\");\n}\n").expect("write modified file");
+
         let prepared = PreparedSingleRun {
             task_id: "BurntSushi__ripgrep-2209".to_string(),
-            repo_root: PathBuf::from("/tmp/repo"),
-            output_dir: PathBuf::from("/tmp/out"),
+            repo_root: repo_root.to_path_buf(),
+            output_dir: tmp.path().join("out"),
             issue: crate::spec::IssueInput {
                 title: Some("Fix the thing".to_string()),
                 body: Some("The body text.".to_string()),
                 body_path: None,
             },
-            base_sha: Some("abc123".to_string()),
+            base_sha: Some(base_sha),
             head_sha: None,
             budget: EvalBudget::default(),
             source: Some(RunSource::MultiSweBench(crate::spec::MultiSweBenchSource {
-                dataset_file: PathBuf::from("/tmp/dataset.jsonl"),
+                dataset_file: tmp.path().join("dataset.jsonl"),
                 dataset_url: None,
                 instance_id: "BurntSushi__ripgrep-2209".to_string(),
                 org: "BurntSushi".to_string(),
                 repo: "ripgrep".to_string(),
                 number: 2209,
                 language: Some("rust".to_string()),
-                expected_patch_files: vec![PathBuf::from("crates/printer/src/util.rs")],
+                expected_patch_files: vec![PathBuf::from("src/lib.rs")],
             })),
             campaign: None,
         };

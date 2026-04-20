@@ -315,8 +315,10 @@ pub(crate) fn should_render_tool_buttons(payload: &crate::tools::ToolUiPayload) 
     let is_pending = tool_payload_status(payload)
         .map(|status| status.eq_ignore_ascii_case("pending"))
         .unwrap_or(true);
-    matches!(payload.tool, ToolName::ApplyCodeEdit | ToolName::NsPatch)
-        && payload.error.is_none()
+    matches!(
+        payload.tool,
+        ToolName::ApplyCodeEdit | ToolName::InsertRustItem | ToolName::NsPatch
+    ) && payload.error.is_none()
         && payload.request_id.is_some()
         && is_pending
 }

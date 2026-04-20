@@ -6,6 +6,8 @@ pub enum ToolName {
     RequestCodeContext,
     #[serde(rename = "apply_code_edit")]
     ApplyCodeEdit,
+    #[serde(rename = "insert_rust_item")]
+    InsertRustItem,
     #[serde(rename = "create_file")]
     CreateFile,
     #[serde(rename = "non_semantic_patch", alias = "ns_patch")]
@@ -23,9 +25,10 @@ pub enum ToolName {
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 9] = [
+    pub const ALL: [ToolName; 10] = [
         ToolName::RequestCodeContext,
         ToolName::ApplyCodeEdit,
+        ToolName::InsertRustItem,
         ToolName::CreateFile,
         ToolName::NsPatch,
         ToolName::NsRead,
@@ -40,6 +43,7 @@ impl ToolName {
         match self {
             RequestCodeContext => "request_code_context",
             ApplyCodeEdit => "apply_code_edit",
+            InsertRustItem => "insert_rust_item",
             CreateFile => "create_file",
             NsPatch => "non_semantic_patch",
             NsRead => "read_file",
@@ -135,6 +139,10 @@ pub enum ToolDescr {
     )]
     ApplyCodeEdit,
     #[serde(
+        rename = "Insert a new Rust item into an existing Rust file. Use this when the target item does not already exist. Supports file-scope insertion plus module, trait, and inherent impl containers in parseable Rust files."
+    )]
+    InsertRustItem,
+    #[serde(
         rename = "Create a new Rust source file atomically within the workspace, staging for approval."
     )]
     CreateFile,
@@ -209,5 +217,11 @@ mod tests {
         assert!(description.contains("semantic targets"));
         assert!(description.contains("code_item_lookup"));
         assert!(description.contains("non_semantic_patch"));
+    }
+
+    #[test]
+    fn insert_rust_item_tool_name_serializes() {
+        let name = serde_json::to_string(&ToolName::InsertRustItem).expect("serialize");
+        assert_eq!(name, "\"insert_rust_item\"");
     }
 }

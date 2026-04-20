@@ -481,7 +481,7 @@ impl WorkspaceRegistry {
     }
 
     pub fn default_registry_path() -> std::path::PathBuf {
-        dirs::config_local_dir()
+        dirs::config_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("ploke")
             .join("workspaces.toml")

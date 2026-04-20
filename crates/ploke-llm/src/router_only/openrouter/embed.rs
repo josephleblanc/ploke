@@ -14,6 +14,12 @@ use serde::{Deserialize, Serialize};
 use std::{path::Path, path::PathBuf, time::Duration};
 use thiserror::Error;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedLiveEmbeddingModel {
+    pub model_id: ModelId,
+    pub dims: u32,
+}
+
 impl EmbeddingModelName {
     /// OpenRouter may echo only the slug (e.g., `text-embedding-3-small`) even if the request used
     /// a fully qualified `author/slug[:variant]`. Accept any of the observed forms.
@@ -91,6 +97,55 @@ impl OpenRouterEmbedEnv {
 }
 
 impl super::OpenRouter {
+    pub async fn resolve_live_text_embedding_model(
+        client: &reqwest::Client,
+        cfg: EmbClientConfig,
+        preferred_model: Option<&str>,
+        probe_input: &str,
+    ) -> color_eyre::Result<Option<ResolvedLiveEmbeddingModel>> {
+        let response = Self::fetch_embedding_models_registry(client, cfg).await?;
+
+        let mut candidates = response
+            .data
+            .into_iter()
+            .filter(|item| item.architecture.modality == Modality::TextToEmbeddings)
+            .filter(|item| {
+                item.architecture
+                    .input_modalities
+                    .contains(&InputModality::Text)
+            })
+            .filter(|item| {
+                item.architecture
+                    .output_modalities
+                    .contains(&OutputModality::Embeddings)
+            })
+            .collect::<Vec<_>>();
+
+        candidates.sort_by_key(|item| {
+            let model = item.id.to_string();
+            let is_preferred = preferred_model.is_some_and(|preferred| preferred == model);
+            (!is_preferred, model.to_ascii_lowercase())
+        });
+
+        for candidate in candidates {
+            let req = EmbeddingRequest::<Self> {
+                model: candidate.id.clone(),
+                input: crate::embeddings::EmbeddingInput::Single(probe_input.to_string()),
+                ..Default::default()
+            };
+            let dims = match <Self as HasEmbeddings>::fetch_validate_dims(client, &req).await {
+                Ok(dims) => dims as u32,
+                Err(_) => continue,
+            };
+            return Ok(Some(ResolvedLiveEmbeddingModel {
+                model_id: candidate.id,
+                dims,
+            }));
+        }
+
+        Ok(None)
+    }
+
     pub async fn fetch_embeddings_with_env(
         client: &reqwest::Client,
         req: &EmbeddingRequest<Self>,

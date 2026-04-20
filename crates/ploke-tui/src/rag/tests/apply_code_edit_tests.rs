@@ -733,32 +733,57 @@ async fn test_auto_confirm_workflow() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "test_harness")]
 async fn test_manual_approve_marks_semantic_edit_failed_when_file_changed_after_staging() {
+    use crate::app_state::core::EditProposal;
     use crate::rag::editing::approve_edits;
-    use std::fs;
+    use chrono::Utc;
+    use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID, WriteSnippetData};
+    use ploke_io::read::read_and_compute_filehash;
+    use std::{fs, path::PathBuf};
+    use tempfile::tempdir;
 
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
+    let tmp = tempdir().expect("tempdir");
+    let file_path = tmp.path().join("staged_semantic_edit.rs");
+    let initial = "fn before() {}\n";
+    fs::write(&file_path, initial).expect("write initial temp file");
 
-    let edit_request = create_canonical_edit_request(
-        "src/structs.rs",
-        "crate::structs::SampleStruct",
-        NodeType::Struct,
-        "pub struct SampleStruct { pub field: String, raced_field: usize }",
-        Some(0.9f32),
-    );
-
-    let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments)
+    let file_hash = read_and_compute_filehash(&file_path, PROJECT_NAMESPACE_UUID)
         .await
-        .expect("valid apply_code_edit params");
+        .expect("compute file hash");
 
-    apply_code_edit_tool(params).await;
+    {
+        let mut proposals = harness.state.proposals.write().await;
+        proposals.insert(
+            request_id,
+            EditProposal {
+                request_id,
+                parent_id: Uuid::new_v4(),
+                call_id: ArcStr::from("test_call_id"),
+                proposed_at_ms: Utc::now().timestamp_millis(),
+                edits: vec![WriteSnippetData {
+                    id: Uuid::new_v4(),
+                    name: "staged_semantic_edit".to_string(),
+                    file_path: file_path.clone(),
+                    expected_file_hash: file_hash.hash,
+                    start_byte: 0,
+                    end_byte: initial.len(),
+                    replacement: "fn after() {}\n".to_string(),
+                    namespace: PROJECT_NAMESPACE_UUID,
+                }],
+                edits_ns: vec![],
+                files: vec![PathBuf::from(&file_path)],
+                preview: DiffPreview::UnifiedDiff {
+                    text: String::new(),
+                },
+                status: EditProposalStatus::Pending,
+                is_semantic: true,
+            },
+        );
+    }
 
-    let mut original_path = workspace_root();
-    original_path.push(ORIGINAL_FIXTURE);
-    let current = fs::read_to_string(&original_path).expect("read fixture before mutation");
-    fs::write(&original_path, format!("{current}\n// external mutation\n"))
-        .expect("mutate fixture after staging");
+    fs::write(&file_path, "pub const EXTERNAL_MUTATION: usize = 1;\n")
+        .expect("mutate temp file after staging");
 
     approve_edits(&harness.state, &harness.event_bus, request_id).await;
 
@@ -771,8 +796,6 @@ async fn test_manual_approve_marks_semantic_edit_failed_when_file_changed_after_
             proposal.status
         );
     }
-
-    restore_fixture();
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1,7 +1,7 @@
 #![cfg(feature = "test_harness")]
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -20,9 +20,11 @@ use ploke_embed::{
     runtime::EmbeddingRuntime,
 };
 use ploke_io::IoManagerHandle;
+use ploke_llm::OpenRouter;
+use ploke_llm::embeddings::EmbClientConfig;
+use ploke_llm::router_only::openrouter::embed::ResolvedLiveEmbeddingModel;
 use ploke_rag::TokenBudget;
 use ploke_test_utils::workspace_root;
-use ploke_tui::AppEvent;
 use ploke_tui::app::commands::harness::TestRuntime;
 use ploke_tui::app_state::handlers::indexing::index_workspace;
 use ploke_tui::app_state::{
@@ -35,12 +37,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Instant, sleep, timeout};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use uuid::Uuid;
 
 const OVERLAY_WAIT_SECS: u64 = 60;
 const DIRECT_INDEX_WAIT_SECS: u64 = 300;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
-const OPENROUTER_CODESTRAL_DIMS: usize = 1536;
+const OPENROUTER_SEARCH_PROBE: &str = "test for dims";
 
 fn config_home_lock() -> &'static TokioMutex<()> {
     static LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
@@ -99,10 +100,17 @@ fn require_openrouter_gate(test_name: &str) {
     }
 }
 
-fn codestral_config() -> OpenRouterConfig {
+#[derive(Debug, Clone)]
+struct LiveEmbeddingTarget {
+    model_id: String,
+    dims: usize,
+    embedding_set: EmbeddingSet,
+}
+
+fn openrouter_embedding_config(model: &str, dims: usize) -> OpenRouterConfig {
     OpenRouterConfig {
-        model: OPENROUTER_CODESTRAL_MODEL.to_string(),
-        dimensions: Some(OPENROUTER_CODESTRAL_DIMS),
+        model: model.to_string(),
+        dimensions: Some(dims),
         request_dimensions: None,
         snippet_batch_size: 100,
         max_in_flight: 1,
@@ -118,19 +126,54 @@ fn codestral_config() -> OpenRouterConfig {
     }
 }
 
-fn codestral_embedding_set() -> EmbeddingSet {
+fn embedding_set_for(model: &str, dims: usize) -> EmbeddingSet {
     EmbeddingSet::new(
         EmbeddingProviderSlug::new_from_str("openrouter"),
-        EmbeddingModelId::new_from_str(OPENROUTER_CODESTRAL_MODEL),
-        EmbeddingShape::new_dims_default(OPENROUTER_CODESTRAL_DIMS as u32),
+        EmbeddingModelId::new_from_str(model),
+        EmbeddingShape::new_dims_default(dims as u32),
     )
 }
 
-fn codestral_processor() -> Result<EmbeddingProcessor, Box<dyn std::error::Error>> {
-    let backend = OpenRouterBackend::new(&codestral_config())?;
+fn openrouter_processor(
+    model: &str,
+    dims: usize,
+) -> Result<EmbeddingProcessor, Box<dyn std::error::Error>> {
+    let backend = OpenRouterBackend::new(&openrouter_embedding_config(model, dims))?;
     Ok(EmbeddingProcessor::new(EmbeddingSource::OpenRouter(
         backend,
     )))
+}
+
+async fn resolve_live_embedding_target()
+-> Result<Option<LiveEmbeddingTarget>, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let resolved = match OpenRouter::resolve_live_text_embedding_model(
+        &client,
+        EmbClientConfig::new(),
+        Some(OPENROUTER_CODESTRAL_MODEL),
+        OPENROUTER_SEARCH_PROBE,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            eprintln!(
+                "skipping live OpenRouter embedding test: failed to fetch embedding models registry: {err}"
+            );
+            return Ok(None);
+        }
+    };
+    let Some(ResolvedLiveEmbeddingModel { model_id, dims }) = resolved else {
+        eprintln!("skipping live OpenRouter embedding test: no usable text embedding model found");
+        return Ok(None);
+    };
+    let model_id = model_id.to_string();
+    let dims = dims as usize;
+    Ok(Some(LiveEmbeddingTarget {
+        embedding_set: embedding_set_for(&model_id, dims),
+        model_id,
+        dims,
+    }))
 }
 
 fn send_key(input_tx: &UnboundedSender<Result<Event, std::io::Error>>, key: KeyEvent) {
@@ -145,9 +188,10 @@ async fn send_command(input_tx: &UnboundedSender<Result<Event, std::io::Error>>,
     send_key(input_tx, KeyEvent::from(KeyCode::Enter));
 }
 
-async fn select_codestral_via_overlay_input(
+async fn select_embedding_via_overlay_input(
     input_tx: &UnboundedSender<Result<Event, std::io::Error>>,
     state: &Arc<AppState>,
+    expected_rel: &str,
 ) -> String {
     let deadline = Instant::now() + Duration::from_secs(OVERLAY_WAIT_SECS);
     loop {
@@ -155,7 +199,7 @@ async fn select_codestral_via_overlay_input(
             .db
             .with_active_set(|set| set.rel_name.as_ref().to_string())
             .expect("read active set relation");
-        if rel.contains("codestral") {
+        if rel == expected_rel {
             return rel;
         }
         if let Some(last_msg) = latest_chat_message(state).await {
@@ -169,8 +213,9 @@ async fn select_codestral_via_overlay_input(
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for active set relation containing codestral (last={})",
-            rel
+            "timed out waiting for active set relation {} (last={})",
+            expected_rel,
+            rel,
         );
         send_key(
             input_tx,
@@ -202,18 +247,20 @@ fn function_has_embedding(
     !query.rows.is_empty()
 }
 
-fn build_codestral_index_state() -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
+fn build_live_openrouter_index_state(
+    target: &LiveEmbeddingTarget,
+) -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
     let db = Arc::new(Database::init_with_schema()?);
     db.setup_multi_embedding()?;
 
     let runtime = Arc::new(EmbeddingRuntime::from_shared_set(
         Arc::clone(&db.active_embedding_set),
-        codestral_processor()?,
+        openrouter_processor(&target.model_id, target.dims)?,
     ));
     runtime.activate(
         &db,
-        codestral_embedding_set(),
-        Arc::new(codestral_processor()?),
+        target.embedding_set.clone(),
+        Arc::new(openrouter_processor(&target.model_id, target.dims)?),
     )?;
 
     let io_handle = IoManagerHandle::new();
@@ -250,6 +297,12 @@ async fn live_codestral_selection_via_overlay_switches_active_set() {
         require_openrouter_gate("live_codestral_selection_via_overlay_switches_active_set");
         return;
     }
+    let Some(target) = resolve_live_embedding_target()
+        .await
+        .expect("resolve live OpenRouter embedding target")
+    else {
+        return;
+    };
 
     let _sandbox = setup_config_sandbox().await;
     let crate_root = workspace_root().join("tests/fixture_crates/simple_crate");
@@ -291,15 +344,13 @@ async fn live_codestral_selection_via_overlay_switches_active_set() {
         .await
     });
 
-    send_command(
-        &input_tx,
-        &format!("/embedding search {OPENROUTER_CODESTRAL_MODEL}"),
-    )
-    .await;
-    let active_rel = select_codestral_via_overlay_input(&input_tx, &state).await;
+    send_command(&input_tx, &format!("/embedding search {}", target.model_id)).await;
+    let expected_rel = target.embedding_set.rel_name.to_string();
+    let active_rel = select_embedding_via_overlay_input(&input_tx, &state, &expected_rel).await;
     assert!(
-        active_rel.contains("codestral"),
-        "expected active relation to switch to codestral, got {}",
+        active_rel == expected_rel,
+        "expected active relation to switch to {}, got {}",
+        expected_rel,
         active_rel
     );
     assert!(
@@ -318,10 +369,13 @@ async fn live_direct_codestral_indexing_completes() -> Result<(), Box<dyn std::e
         require_openrouter_gate("live_direct_codestral_indexing_completes");
         return Ok(());
     }
+    let Some(target) = resolve_live_embedding_target().await? else {
+        return Ok(());
+    };
 
     let _sandbox = setup_config_sandbox().await;
     let crate_root = workspace_root().join("tests/fixture_crates/simple_crate");
-    let state = build_codestral_index_state()?;
+    let state = build_live_openrouter_index_state(&target)?;
     let event_bus = Arc::new(ploke_tui::event_bus::EventBus::new(
         ploke_tui::event_bus::EventBusCaps::default(),
     ));
@@ -390,9 +444,10 @@ async fn live_direct_codestral_indexing_completes() -> Result<(), Box<dyn std::e
 
     let active_set = state.db.with_active_set(|set| set.clone())?;
     assert!(
-        active_set.rel_name.as_ref().contains("codestral"),
-        "expected active embedding relation to remain codestral, got {}",
-        active_set.rel_name
+        active_set == target.embedding_set,
+        "expected active embedding set to remain {:?}, got {:?}",
+        target.embedding_set,
+        active_set
     );
     assert_eq!(
         state.db.count_unembedded_nonfiles()?,
