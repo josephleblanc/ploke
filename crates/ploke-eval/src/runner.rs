@@ -1117,11 +1117,38 @@ async fn resolve_eval_embedding_selection(
     requested_model_id: Option<&str>,
     requested_provider: Option<&ProviderKey>,
 ) -> Result<EvalEmbeddingSelection, PrepareError> {
-    let requested_model = parse_requested_model_id(requested_model_id)?
-        .unwrap_or_else(default_eval_embedding_model_id);
     let registry_path = eval_embedding_registry_path()?;
     let client = reqwest::Client::new();
     let registry = load_eval_embedding_registry(&client, &registry_path).await?;
+    if requested_model_id.is_none() && requested_provider.is_none() {
+        if let Ok(Some(resolved)) = OpenRouter::resolve_live_text_embedding_model(
+            &client,
+            EmbClientConfig::new().with_timeout(Duration::from_secs(15)),
+            Some(OPENROUTER_CODESTRAL_MODEL),
+            "fn smoke_eval_probe() {}",
+        )
+        .await
+        {
+            let model = resolve_embedding_model_from_registry(
+                &registry,
+                &registry_path,
+                &resolved.model_id,
+            )?;
+            let cache_key = format!("{}::<auto>", model.id);
+            embedding_preflight_cache()
+                .lock()
+                .expect("embedding preflight cache poisoned")
+                .insert(cache_key, resolved.dims);
+            return Ok(EvalEmbeddingSelection {
+                model,
+                provider: None,
+                dimensions: resolved.dims,
+            });
+        }
+    }
+
+    let requested_model = parse_requested_model_id(requested_model_id)?
+        .unwrap_or_else(default_eval_embedding_model_id);
     let model = resolve_embedding_model_from_registry(&registry, &registry_path, &requested_model)?;
 
     let cache_key = format!(
@@ -2564,7 +2591,7 @@ fn init_runtime_db() -> Result<Arc<Database>, PrepareError> {
     Ok(db)
 }
 
-async fn setup_replay_runtime(
+pub(crate) async fn setup_replay_runtime(
     prepared: &PreparedSingleRun,
 ) -> Result<(App, Arc<AppState>, XdgConfigHomeGuard), PrepareError> {
     let runtime_db = init_runtime_db()?;
@@ -3476,7 +3503,7 @@ fn log_replay_batch_context(batch_number: usize, batch: &[ploke_db::TypedEmbedDa
     }
 }
 
-struct XdgConfigHomeGuard {
+pub(crate) struct XdgConfigHomeGuard {
     old_xdg: Option<String>,
 }
 
@@ -4197,6 +4224,100 @@ mod tests {
                 .contains("diff --git a/src/lib.rs b/src/lib.rs")
         );
         assert!(parsed.fix_patch.contains("+    println!(\"hi\");"));
+    }
+
+    #[test]
+    fn write_msb_submission_artifact_uses_repo_diff_only_for_partial_apply_state() {
+        let tmp = tempdir().expect("tempdir");
+        let repo_root = tmp.path();
+        let src_dir = repo_root.join("src");
+        let lib_file = src_dir.join("lib.rs");
+        let main_file = src_dir.join("main.rs");
+        fs::create_dir_all(&src_dir).expect("src dir");
+
+        run_git_test(repo_root, &["init"], "git init");
+        run_git_test(
+            repo_root,
+            &["config", "user.name", "Ploke Eval"],
+            "git config name",
+        );
+        run_git_test(
+            repo_root,
+            &["config", "user.email", "ploke-eval@example.com"],
+            "git config email",
+        );
+
+        fs::write(&lib_file, "pub fn helper() {}\n").expect("write initial lib file");
+        fs::write(&main_file, "fn main() {}\n").expect("write initial main file");
+        run_git_test(repo_root, &["add", "src/lib.rs", "src/main.rs"], "git add");
+        run_git_test(repo_root, &["commit", "-m", "base"], "git commit");
+
+        let base_sha = git_stdout(repo_root, &["rev-parse", "HEAD"], "git rev-parse HEAD")
+            .expect("base sha")
+            .expect("stdout")
+            .trim()
+            .to_string();
+
+        fs::write(&lib_file, "pub fn helper() {\n    println!(\"hi\");\n}\n")
+            .expect("write modified lib file");
+
+        let prepared = PreparedSingleRun {
+            task_id: "case-partial".to_string(),
+            repo_root: repo_root.to_path_buf(),
+            output_dir: tmp.path().join("out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some(base_sha),
+            head_sha: None,
+            budget: EvalBudget::default(),
+            source: Some(RunSource::MultiSweBench(crate::spec::MultiSweBenchSource {
+                dataset_file: tmp.path().join("dataset.jsonl"),
+                dataset_url: None,
+                instance_id: "acme__repo-2".to_string(),
+                org: "acme".to_string(),
+                repo: "repo".to_string(),
+                number: 2,
+                language: Some("rust".to_string()),
+                expected_patch_files: vec![
+                    PathBuf::from("src/lib.rs"),
+                    PathBuf::from("src/main.rs"),
+                ],
+            })),
+            campaign: None,
+        };
+        let run_output_dir = tmp.path().join("out").join("runs").join("run-456");
+        fs::create_dir_all(&run_output_dir).expect("run output dir");
+
+        let submission_path = write_msb_submission_artifact(
+            &prepared,
+            &RunArm::structured_current_policy_treatment(),
+            &run_output_dir,
+        )
+        .expect("write submission")
+        .expect("submission path");
+
+        let line = fs::read_to_string(&submission_path).expect("read submission");
+        let parsed: MultiSweBenchSubmissionRecord =
+            serde_json::from_str(line.trim()).expect("parse submission");
+        assert!(
+            parsed
+                .fix_patch
+                .contains("diff --git a/src/lib.rs b/src/lib.rs"),
+            "submission should include the applied lib.rs change"
+        );
+        assert!(
+            parsed.fix_patch.contains("+    println!(\"hi\");"),
+            "submission should include the actual applied hunk"
+        );
+        assert!(
+            !parsed
+                .fix_patch
+                .contains("diff --git a/src/main.rs b/src/main.rs"),
+            "submission should not invent a diff for an expected-but-unchanged file"
+        );
     }
 
     #[tokio::test]

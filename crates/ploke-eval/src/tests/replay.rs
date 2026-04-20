@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
+    process::Command,
     sync::Arc,
     time::Duration,
 };
@@ -14,7 +15,7 @@ use ploke_tui::{
         tools::apply_code_edit_tool,
         utils::{ApplyCodeEditRequest, Edit, ToolCallParams},
     },
-    tools::{ToolErrorCode, ToolErrorWire, ToolName},
+    tools::{Ctx, Tool, ToolErrorCode, ToolErrorWire, ToolName, ns_patch::NsPatch},
     user_config::{ChatPolicy, ChatTimeoutStrategy},
 };
 use serde::Deserialize;
@@ -24,7 +25,10 @@ use uuid::Uuid;
 
 use crate::{
     PreparedSingleRun,
-    runner::{IndexingStatusArtifact, ParseFailureArtifact, RunMsbSingleRequest},
+    runner::{
+        AgentTurnArtifact, IndexingStatusArtifact, ObservedTurnEvent, RunMsbSingleRequest,
+        ToolRequestRecord, setup_replay_runtime,
+    },
     spec::PrepareError,
 };
 
@@ -110,6 +114,120 @@ fn load_recorded_apply_code_edit_request() -> RecordedApplyCodeEditToolRequest {
 fn load_prepared_single_run(path: &Path) -> PreparedSingleRun {
     let text = std::fs::read_to_string(path).expect("read historical run manifest");
     serde_json::from_str(&text).expect("historical run manifest must parse")
+}
+
+fn load_agent_turn_artifact(path: &Path) -> AgentTurnArtifact {
+    let text = std::fs::read_to_string(path).expect("read historical agent turn artifact");
+    serde_json::from_str(&text).expect("historical agent turn artifact must parse")
+}
+
+fn find_tool_request(artifact: &AgentTurnArtifact, call_id: &str) -> ToolRequestRecord {
+    artifact
+        .events
+        .iter()
+        .find_map(|event| match event {
+            ObservedTurnEvent::ToolRequested(record) if record.call_id == call_id => {
+                Some(record.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing ToolRequested record for call_id {call_id}"))
+}
+
+fn run_git(repo_root: &Path, args: &[&str], label: &str) {
+    let status = Command::new("git")
+        .current_dir(repo_root)
+        .args(args)
+        .status()
+        .unwrap_or_else(|err| panic!("{label}: failed to spawn git: {err}"));
+    assert!(
+        status.success(),
+        "{label}: git exited with status {:?}",
+        status.code()
+    );
+}
+
+fn git_stdout(repo_root: &Path, args: &[&str], label: &str) -> String {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args(args)
+        .output()
+        .unwrap_or_else(|err| panic!("{label}: failed to spawn git: {err}"));
+    assert!(
+        output.status.success(),
+        "{label}: git exited with status {:?}",
+        output.status.code()
+    );
+    String::from_utf8(output.stdout).expect("git stdout should be utf-8")
+}
+
+fn clone_repo_for_replay(source_repo: &Path, dest_repo: &Path) {
+    let source = source_repo
+        .to_str()
+        .expect("historical source repo path should be utf-8");
+    let dest = dest_repo
+        .to_str()
+        .expect("replay destination repo path should be utf-8");
+    let status = Command::new("git")
+        .args(["clone", "--quiet", "--no-local", source, dest])
+        .status()
+        .expect("spawn git clone for replay");
+    assert!(
+        status.success(),
+        "git clone for replay failed with status {:?}",
+        status.code()
+    );
+}
+
+async fn replay_ns_patch_request(
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    request: &ToolRequestRecord,
+) {
+    let request_id = Uuid::parse_str(&request.request_id).expect("request_id should be a uuid");
+    let parent_id = Uuid::parse_str(&request.parent_id).expect("parent_id should be a uuid");
+    let ctx = Ctx {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        call_id: ploke_core::ArcStr::from(request.call_id.clone()),
+    };
+
+    let params = NsPatch::deserialize_params(&request.arguments)
+        .expect("historical non_semantic_patch payload should deserialize");
+    let ploke_tui::tools::ToolResult {
+        content,
+        ui_payload,
+    } = NsPatch::execute(params, ctx.clone())
+        .await
+        .expect("historical non_semantic_patch replay should execute");
+    NsPatch::emit_completed(&ctx, content, ui_payload);
+}
+
+async fn wait_for_terminal_proposal_status(
+    state: &Arc<AppState>,
+    request_id: Uuid,
+) -> ploke_tui::app_state::core::EditProposalStatus {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(status) = {
+                let proposals = state.proposals.read().await;
+                proposals
+                    .get(&request_id)
+                    .map(|proposal| proposal.status.clone())
+            } {
+                match status {
+                    ploke_tui::app_state::core::EditProposalStatus::Pending
+                    | ploke_tui::app_state::core::EditProposalStatus::Approved => {}
+                    other => return other,
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("proposal should reach a terminal status within timeout")
 }
 
 /// Debug aid for this replay: show the DB resolution behavior around `canon` parsing.
@@ -623,7 +741,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
         "expected parse failure artifact at {}",
         parse_failure_path.display()
     );
-    let parse_failure: ParseFailureArtifact = serde_json::from_str(
+    let parse_failure: crate::runner::ParseFailureArtifact = serde_json::from_str(
         &std::fs::read_to_string(&parse_failure_path).expect("read parse failure artifact"),
     )
     .expect("parse parse failure artifact");
@@ -637,6 +755,104 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
     eprintln!(
         "REPLAY_DIAG: ripgrep historical setup concrete failing source path={}",
         concrete_source_path.display()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "historical diagnostic replay of fd-1121 non-semantic patch partial-apply runtime flow"]
+async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow() {
+    const RUN_MANIFEST: &str = "/home/brasides/.ploke-eval/runs/sharkdp__fd-1121/run.json";
+    const TURN_TRACE: &str =
+        "/home/brasides/.ploke-eval/runs/sharkdp__fd-1121/agent-turn-trace.json";
+    const JOB_CALL_ID: &str = "call_86042515";
+    const WALK_CALL_ID: &str = "call_80363220";
+
+    let run_manifest = PathBuf::from(RUN_MANIFEST);
+    let turn_trace = PathBuf::from(TURN_TRACE);
+    assert!(
+        run_manifest.exists(),
+        "expected historical run manifest at {}",
+        run_manifest.display()
+    );
+    assert!(
+        turn_trace.exists(),
+        "expected historical turn trace at {}",
+        turn_trace.display()
+    );
+
+    let historical = load_prepared_single_run(&run_manifest);
+    let trace = load_agent_turn_artifact(&turn_trace);
+    let job_request = find_tool_request(&trace, JOB_CALL_ID);
+    let walk_request = find_tool_request(&trace, WALK_CALL_ID);
+
+    let temp = tempdir().expect("tempdir");
+    let replay_repo_root = temp.path().join("fd-replay");
+    let replay_output_dir = temp.path().join("replay-output");
+    clone_repo_for_replay(&historical.repo_root, &replay_repo_root);
+
+    let mut prepared = historical.clone();
+    prepared.repo_root = replay_repo_root.clone();
+    prepared.output_dir = replay_output_dir.clone();
+
+    run_git(
+        &prepared.repo_root,
+        &["reset", "--hard"],
+        "git reset --hard",
+    );
+    if let Some(base_sha) = prepared.base_sha.as_deref() {
+        run_git(
+            &prepared.repo_root,
+            &["checkout", "--detach", base_sha],
+            "git checkout --detach base sha",
+        );
+    }
+
+    let (_app, state, _config_guard) = setup_replay_runtime(&prepared)
+        .await
+        .expect("setup replay runtime for fd-1121");
+    {
+        let mut cfg = state.config.write().await;
+        cfg.editing.auto_confirm_edits = true;
+        cfg.chat_policy = benchmark_chat_policy();
+    }
+    let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+    replay_ns_patch_request(Arc::clone(&state), Arc::clone(&event_bus), &job_request).await;
+    let job_status = wait_for_terminal_proposal_status(
+        &state,
+        Uuid::parse_str(&job_request.request_id).expect("job request id uuid"),
+    )
+    .await;
+    assert_eq!(
+        job_status,
+        ploke_tui::app_state::core::EditProposalStatus::Applied
+    );
+
+    replay_ns_patch_request(Arc::clone(&state), Arc::clone(&event_bus), &walk_request).await;
+    let walk_status = wait_for_terminal_proposal_status(
+        &state,
+        Uuid::parse_str(&walk_request.request_id).expect("walk request id uuid"),
+    )
+    .await;
+    assert_eq!(
+        walk_status,
+        ploke_tui::app_state::core::EditProposalStatus::Failed(
+            "No non-semantic edits were applied".to_string()
+        )
+    );
+
+    let diff = git_stdout(
+        &prepared.repo_root,
+        &["diff", "--no-ext-diff"],
+        "git diff after replay",
+    );
+    assert!(
+        diff.contains("diff --git a/src/exec/job.rs b/src/exec/job.rs"),
+        "replayed repo diff should include src/exec/job.rs:\n{diff}"
+    );
+    assert!(
+        !diff.contains("diff --git a/src/walk.rs b/src/walk.rs"),
+        "replayed repo diff should exclude src/walk.rs after failed apply:\n{diff}"
     );
 }
 
