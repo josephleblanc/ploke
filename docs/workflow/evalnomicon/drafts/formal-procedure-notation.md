@@ -2,6 +2,8 @@
 
 Draft for architecture on mixed adjudication and programmatic composing procedures.
 
+> for selecting better trajectories through problem-solving state space
+
 An eval may have metrics which are derived programmatically or by LLM adjudication. These metrics may be said to be derived by a procedure x which operates on an input of admissible evidence carried by state s with an executor e such that: 
 Exec(e, x, s) = s'
 where the executor e may be either a programmatic or an LLM adjudication.

@@ -16,7 +16,6 @@ use crate::{
 };
 use ploke_llm::request::models as openrouter_models;
 
-use ploke_llm::{ModelId, ProviderSlug};
 use ploke_llm::embeddings::{EmbeddingEncodingFormat, EmbeddingInput, EmbeddingRequest};
 use ploke_llm::router_only::openrouter::embed::{
     OpenRouterEmbedEnv, OpenRouterEmbeddingError, OpenRouterEmbeddingFields,
@@ -24,6 +23,7 @@ use ploke_llm::router_only::openrouter::embed::{
 use ploke_llm::router_only::openrouter::{
     EmbeddingProviderPrefs, OpenRouter, ProviderPreferences, embed::OpenRouterEmbeddingVector,
 };
+use ploke_llm::{ModelId, ProviderSlug};
 
 const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
 
@@ -118,7 +118,10 @@ impl OpenRouterBackend {
             request_dimensions: cfg.request_dimensions.map(|d| d as u32),
             input_type: cfg.input_type.clone(),
             provider_order: cfg.provider_order.as_ref().map(|order| {
-                order.iter().map(|slug| ProviderSlug::new(slug.clone())).collect()
+                order
+                    .iter()
+                    .map(|slug| ProviderSlug::new(slug.clone()))
+                    .collect()
             }),
             allow_fallbacks: cfg.allow_fallbacks,
             truncate_policy: cfg.truncate_policy,
@@ -202,13 +205,16 @@ impl OpenRouterBackend {
     // configuration that the user might make to use specific provider preferences
     // - c.f. `EmbeddingProviderPrefs` in ploke-llm/src/router_only/openrouter/mod.rs
     fn build_request(&self, snippets: Vec<String>) -> EmbeddingRequest<OpenRouter> {
-        let provider = self.provider_order.as_ref().map(|order: &Vec<ProviderSlug>| {
-            let mut prefs = ProviderPreferences::default().with_order(order.iter().cloned());
-            if let Some(allow_fallbacks) = self.allow_fallbacks {
-                prefs = prefs.with_allow_fallbacks(allow_fallbacks);
-            }
-            EmbeddingProviderPrefs::from_base_provider_prefs(prefs)
-        });
+        let provider = self
+            .provider_order
+            .as_ref()
+            .map(|order: &Vec<ProviderSlug>| {
+                let mut prefs = ProviderPreferences::default().with_order(order.iter().cloned());
+                if let Some(allow_fallbacks) = self.allow_fallbacks {
+                    prefs = prefs.with_allow_fallbacks(allow_fallbacks);
+                }
+                EmbeddingProviderPrefs::from_base_provider_prefs(prefs)
+            });
         EmbeddingRequest::<OpenRouter>::default()
             .with_model(self.model.clone())
             .with_input(EmbeddingInput::Batch(snippets))

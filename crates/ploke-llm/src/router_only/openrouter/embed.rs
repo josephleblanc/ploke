@@ -1,5 +1,5 @@
 use crate::{
-    EmbeddingModelName, EmbeddingResponseId, InputModality, LlmError, ModelId, Modality,
+    EmbeddingModelName, EmbeddingResponseId, InputModality, LlmError, Modality, ModelId,
     OutputModality,
     embeddings::{
         EmbClientConfig, EmbeddingRequest, HasDims, HasEmbeddingModels, HasEmbeddings,
@@ -318,7 +318,11 @@ impl super::OpenRouter {
             .iter()
             .filter(|item| item.id != *failing_model)
             .filter(|item| item.architecture.modality == Modality::TextToEmbeddings)
-            .filter(|item| item.architecture.input_modalities.contains(&InputModality::Text))
+            .filter(|item| {
+                item.architecture
+                    .input_modalities
+                    .contains(&InputModality::Text)
+            })
             .filter(|item| {
                 item.architecture
                     .output_modalities
@@ -646,12 +650,16 @@ mod embedding_model_suggestion_tests {
     #[test]
     fn suggest_embedding_model_alternatives_excludes_failing_and_non_text_embeddings() {
         let registry = sample_registry();
-        let failing: ModelId = "mistralai/codestral-embed-2505".parse().expect("model id parses");
-        let suggestions =
-            OpenRouter::suggest_embedding_model_alternatives(&registry, &failing, 5);
+        let failing: ModelId = "mistralai/codestral-embed-2505"
+            .parse()
+            .expect("model id parses");
+        let suggestions = OpenRouter::suggest_embedding_model_alternatives(&registry, &failing, 5);
 
         assert_eq!(suggestions.len(), 1);
-        assert_eq!(suggestions[0].id.to_string(), "openai/text-embedding-3-small");
+        assert_eq!(
+            suggestions[0].id.to_string(),
+            "openai/text-embedding-3-small"
+        );
     }
 }
 

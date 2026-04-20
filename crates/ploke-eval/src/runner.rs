@@ -1015,14 +1015,12 @@ fn embedding_preflight_cache() -> &'static Mutex<HashMap<String, u32>> {
     EMBEDDING_PREFLIGHT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn eval_embedding_provider_prefs(
-    provider: Option<&ProviderKey>,
-) -> Option<EmbeddingProviderPrefs> {
+fn eval_embedding_provider_prefs(provider: Option<&ProviderKey>) -> Option<EmbeddingProviderPrefs> {
     provider.map(|provider| {
         EmbeddingProviderPrefs::from_base_provider_prefs(
             ProviderPreferences::default()
                 .with_order(std::iter::once(ProviderSlug::new(provider.slug.as_str())))
-                .with_allow_fallbacks(false),
+                .with_allow_fallbacks(true),
         )
     })
 }
@@ -1152,10 +1150,7 @@ async fn resolve_eval_embedding_selection(
         Ok(response) => {
             let dimensions = response.dims().ok_or_else(|| PrepareError::DatabaseSetup {
                 phase: "embedding_model_preflight",
-                detail: format!(
-                    "embedding preflight returned no vectors for '{}'",
-                    model.id
-                ),
+                detail: format!("embedding preflight returned no vectors for '{}'", model.id),
             })? as u32;
             embedding_preflight_cache()
                 .lock()
@@ -1168,14 +1163,11 @@ async fn resolve_eval_embedding_selection(
             })
         }
         Err(err) => {
-            let suggestions = OpenRouter::suggest_embedding_model_alternatives(
-                &registry,
-                &request.model,
-                5,
-            )
-            .into_iter()
-            .map(|item| item.id.to_string())
-            .collect::<Vec<_>>();
+            let suggestions =
+                OpenRouter::suggest_embedding_model_alternatives(&registry, &request.model, 5)
+                    .into_iter()
+                    .map(|item| item.id.to_string())
+                    .collect::<Vec<_>>();
 
             Err(PrepareError::DatabaseSetup {
                 phase: "embedding_model_preflight",
@@ -1203,13 +1195,15 @@ fn eval_embedding_config(selection: &EvalEmbeddingSelection) -> OpenRouterConfig
         max_backoff_ms: 10_000,
         input_type: Some("code-snippet".into()),
         provider_order: eval_embedding_provider_order(selection.provider.as_ref()),
-        allow_fallbacks: selection.provider.as_ref().map(|_| false),
+        allow_fallbacks: selection.provider.as_ref().map(|_| true),
         timeout_secs: 30,
         truncate_policy: TruncatePolicy::Truncate,
     }
 }
 
-fn eval_embedding_processor(selection: &EvalEmbeddingSelection) -> Result<EmbeddingProcessor, PrepareError> {
+fn eval_embedding_processor(
+    selection: &EvalEmbeddingSelection,
+) -> Result<EmbeddingProcessor, PrepareError> {
     info!(
         model = %selection.model.id,
         dimensions = selection.dimensions,
@@ -1574,8 +1568,7 @@ impl RunMsbSingleRequest {
         write_json(&repo_state_path, &repo_state)?;
         steps.push("write_repo_state".to_string());
 
-        let cached_starting_db =
-            match load_cached_starting_db(&prepared, &embedding_selection) {
+        let cached_starting_db = match load_cached_starting_db(&prepared, &embedding_selection) {
             Ok(cached) => cached,
             Err(err) => {
                 warn!(error = %err, "runner phase: starting db cache lookup failed; falling back to fresh indexing");
@@ -1743,12 +1736,9 @@ impl RunMsbSingleRequest {
         steps.push("write_indexing_checkpoint".to_string());
 
         if !using_cached_starting_db {
-            if let Err(err) = persist_starting_db_cache(
-                &prepared,
-                &embedding_selection,
-                &indexing_checkpoint_db,
-            )
-            .await
+            if let Err(err) =
+                persist_starting_db_cache(&prepared, &embedding_selection, &indexing_checkpoint_db)
+                    .await
             {
                 warn!(
                     snapshot = %indexing_checkpoint_db.display(),
@@ -1932,8 +1922,7 @@ impl RunMsbAgentSingleRequest {
         write_json(&repo_state_path, &repo_state)?;
         steps.push("write_repo_state".to_string());
 
-        let cached_starting_db =
-            match load_cached_starting_db(&prepared, &embedding_selection) {
+        let cached_starting_db = match load_cached_starting_db(&prepared, &embedding_selection) {
             Ok(cached) => cached,
             Err(err) => {
                 warn!(error = %err, "runner phase: starting db cache lookup failed; falling back to fresh indexing");
@@ -2099,12 +2088,9 @@ impl RunMsbAgentSingleRequest {
         steps.push("write_indexing_checkpoint".to_string());
 
         if !using_cached_starting_db {
-            if let Err(err) = persist_starting_db_cache(
-                &prepared,
-                &embedding_selection,
-                &indexing_checkpoint_db,
-            )
-            .await
+            if let Err(err) =
+                persist_starting_db_cache(&prepared, &embedding_selection, &indexing_checkpoint_db)
+                    .await
             {
                 warn!(
                     snapshot = %indexing_checkpoint_db.display(),
@@ -3584,6 +3570,43 @@ mod tests {
         }
     }
 
+    fn test_provider_key() -> ProviderKey {
+        ProviderKey::new("deepinfra").expect("provider key")
+    }
+
+    #[test]
+    fn eval_embedding_preflight_request_prefers_provider_but_allows_fallbacks() {
+        let selection = test_eval_embedding_selection();
+        let provider = test_provider_key();
+
+        let request = eval_embedding_preflight_request(&selection.model, Some(&provider));
+        let value = serde_json::to_value(&request).expect("serialize preflight request");
+
+        assert_eq!(
+            value["model"],
+            serde_json::json!(OPENROUTER_CODESTRAL_MODEL)
+        );
+        assert_eq!(value["input_type"], serde_json::json!("code-snippet"));
+        assert_eq!(value["provider"]["order"], serde_json::json!(["deepinfra"]));
+        assert_eq!(
+            value["provider"]["allow_fallbacks"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn eval_embedding_config_prefers_provider_but_allows_fallbacks() {
+        let mut selection = test_eval_embedding_selection();
+        selection.provider = Some(test_provider_key());
+
+        let cfg = eval_embedding_config(&selection);
+
+        assert_eq!(cfg.provider_order, Some(vec!["deepinfra".to_string()]));
+        assert_eq!(cfg.allow_fallbacks, Some(true));
+        assert_eq!(cfg.dimensions, Some(1536));
+        assert_eq!(cfg.request_dimensions, None);
+    }
+
     #[tokio::test]
     async fn runner_component_setup_emits_tracing() {
         init_tracing();
@@ -3624,7 +3647,8 @@ mod tests {
             .expect("active embedding set before activation");
         info!(?before, "active embedding set before activation");
 
-        activate_eval_embedding_runtime(&state, &selection).expect("activate eval embedding runtime");
+        activate_eval_embedding_runtime(&state, &selection)
+            .expect("activate eval embedding runtime");
 
         let after: EmbeddingSet = runtime_db
             .with_active_set(|set| set.clone())
@@ -3668,14 +3692,10 @@ mod tests {
 
         let selection = test_eval_embedding_selection();
 
-        let paths = persist_starting_db_cache_at(
-            cache_root.path(),
-            &prepared,
-            &selection,
-            &snapshot_path,
-        )
-            .await
-            .expect("persist cache");
+        let paths =
+            persist_starting_db_cache_at(cache_root.path(), &prepared, &selection, &snapshot_path)
+                .await
+                .expect("persist cache");
         assert!(paths.snapshot.exists());
         assert!(paths.metadata.exists());
 
@@ -4141,7 +4161,11 @@ mod tests {
         assert_eq!(parsed.org, "acme");
         assert_eq!(parsed.repo, "repo");
         assert_eq!(parsed.number, 1);
-        assert!(parsed.fix_patch.contains("diff --git a/src/lib.rs b/src/lib.rs"));
+        assert!(
+            parsed
+                .fix_patch
+                .contains("diff --git a/src/lib.rs b/src/lib.rs")
+        );
         assert!(parsed.fix_patch.contains("+    println!(\"hi\");"));
     }
 
