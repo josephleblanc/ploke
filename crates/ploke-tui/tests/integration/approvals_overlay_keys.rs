@@ -18,8 +18,8 @@ use ploke_tui::EventBus;
 use ploke_tui::app::App;
 use ploke_tui::app::types::Mode;
 use ploke_tui::app_state::core::{
-    AppState, ChatState, ConfigState, DiffPreview, EditProposal, EditProposalStatus,
-    RuntimeConfig, SystemState, derive_edit_proposal_id,
+    AppState, ChatState, ConfigState, DiffPreview, EditProposal, EditProposalStatus, RuntimeConfig,
+    SystemState, derive_edit_proposal_id,
 };
 use ploke_tui::event_bus::EventBusCaps;
 use tokio::sync::{RwLock, mpsc, watch};

@@ -487,11 +487,7 @@ async fn apply_semantic_edit(
     }
 }
 
-fn rescan_for_changes(
-    state: &Arc<AppState>,
-    event_bus: &Arc<EventBus>,
-    request_id: Uuid,
-) {
+fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
     tokio::spawn({
         let state = Arc::clone(state);

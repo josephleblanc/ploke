@@ -1,5 +1,11 @@
 # Bugs that are still alive
 
+## Eval cargo tool can fail on the global Cargo cache path (Apr 20, 2026)
+
+Detected: Apr 20, 2026
+
+See: `docs/bugs/live_bugs/004-eval-cargo-tool-global-cache.md`
+
 ## Duplicate Relation (Sep 24, 2025)
 
 Detected: Sep 24, 2025

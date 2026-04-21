@@ -134,6 +134,45 @@ impl IndexTargetDir {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IndexTarget {
+    WorkspaceRoot(PathBuf),
+    CrateRoot(PathBuf),
+    // 2026-04-20: `LoadedWorkspace` is intentionally "the one current loaded
+    // workspace in AppState", not a Cargo-native workspace name/identity.
+    // If AppState ever supports multiple loaded workspace contexts, replace
+    // this implicit variant with an explicit workspace identity such as
+    // `LoadedWorkspace(WorkspaceId)` or an equivalent typed handle.
+    LoadedWorkspace,
+    LoadedCrate(CrateId),
+}
+
+impl IndexTarget {
+    pub fn resolve_against_loaded_state(
+        &self,
+        status: &super::core::SystemStatus,
+    ) -> Option<IndexTargetDir> {
+        match self {
+            Self::WorkspaceRoot(path) | Self::CrateRoot(path) => {
+                Some(IndexTargetDir::new(path.clone()))
+            }
+            Self::LoadedWorkspace => status.loaded_workspace_root().map(IndexTargetDir::new),
+            Self::LoadedCrate(crate_id) => status
+                .loaded_crate(crate_id)
+                .map(|loaded| IndexTargetDir::new(loaded.context.root_path.clone())),
+        }
+    }
+
+    pub fn describe(&self) -> String {
+        match self {
+            Self::WorkspaceRoot(path) => format!("workspace root {}", path.display()),
+            Self::CrateRoot(path) => format!("crate root {}", path.display()),
+            Self::LoadedWorkspace => "loaded workspace".to_string(),
+            Self::LoadedCrate(crate_id) => format!("loaded crate {crate_id:?}"),
+        }
+    }
+}
+
 impl From<String> for IndexTargetDir {
     fn from(value: String) -> Self {
         Self(PathBuf::from(value))
@@ -1658,7 +1697,7 @@ module tree process or run_parse_no_transform"
         if emit_reindex {
             trace!("Finishing scanning, sending message to reindex workspace");
             event_bus.send(AppEvent::System(SystemEvent::ReIndex {
-                workspace: crate_name.to_string(),
+                target: IndexTarget::LoadedCrate(target.crate_id),
             }));
         }
         let _ = scan_tx.send(Some(changed_filenames));
@@ -1743,22 +1782,10 @@ pub(super) async fn workspace_update(
         let _ = scan_rx.await;
     }
 
-    let workspace_target = state
-        .with_system_read(|sys| {
-            sys.loaded_workspace_root()
-                .or_else(|| sys.focused_crate_root())
-                .ok_or_else(|| {
-                    ploke_error::Error::Domain(DomainError::Ui {
-                        message: "No loaded crate or workspace is available to update.".to_string(),
-                    })
-                })
-        })
-        .await?;
-
-    crate::app_state::handlers::indexing::index_workspace(
+    crate::app_state::handlers::indexing::index_target(
         state,
         event_bus,
-        Some(IndexTargetDir::new(workspace_target)),
+        Some(IndexTarget::LoadedWorkspace),
         false,
     )
     .await;

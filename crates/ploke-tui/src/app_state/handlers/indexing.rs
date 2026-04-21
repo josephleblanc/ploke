@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::EventBus;
 use crate::INDEXING_FAILURE_CONTAINMENT_NOTE;
-use crate::app_state::{AppState, IndexTargetDir, handlers};
+use crate::app_state::{AppState, IndexTarget, IndexTargetDir, handlers};
 use crate::chat_history::MessageKind;
 use crate::parser::{resolve_index_target, run_parse_resolved};
 use crate::utils::parse_errors::{extract_nested_parser_diagnostics, format_parse_failure};
@@ -217,12 +217,61 @@ pub async fn index_workspace(
     }
 }
 
+pub async fn index_target(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    target: Option<IndexTarget>,
+    needs_parse: bool,
+) {
+    let add_msg_shortcut = |msg: &str| {
+        handlers::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            MessageKind::SysInfo,
+        )
+    };
+
+    let Some(target) = target else {
+        index_workspace(state, event_bus, None, needs_parse).await;
+        return;
+    };
+
+    let display_target = target.describe();
+    let resolved = state
+        .with_system_read(|sys| target.resolve_against_loaded_state(sys))
+        .await;
+
+    let Some(target_dir) = resolved else {
+        let msg = format!(
+            "Indexing target resolution failed: {display_target} is not available in loaded state."
+        );
+        state
+            .with_system_txn(|txn| {
+                txn.record_parse_failure(PathBuf::from(display_target.clone()), msg.clone());
+            })
+            .await;
+        add_msg_shortcut(&msg).await;
+        tracing::warn!(
+            "Semantic indexing target resolution failed: {}. {}",
+            msg,
+            INDEXING_FAILURE_CONTAINMENT_NOTE
+        );
+        emit_indexing_failed_status(event_bus, msg, None);
+        return;
+    };
+
+    index_workspace(state, event_bus, Some(target_dir), needs_parse).await;
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::app_state::IndexTargetDir;
     use crate::app_state::core::SystemStatus;
+    use crate::app_state::{IndexTarget, IndexTargetDir};
     use crate::event_bus::{EventBus, EventBusCaps};
     use crate::test_utils::mock::create_mock_app_state;
+    use ploke_core::CrateId;
     use ploke_embed::indexer::IndexStatus;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -267,6 +316,47 @@ mod tests {
         let resolved = target.resolve_against_loaded_state(&status);
 
         assert!(resolved.is_none());
+    }
+
+    #[tokio::test]
+    async fn loaded_crate_target_uses_loaded_root_instead_of_pwd_resolution() {
+        let fixture_root = std::fs::canonicalize(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixture_crates/fixture_update_embed"),
+        )
+        .expect("canonical fixture root");
+        let crate_id = CrateId::from_root_path(&fixture_root);
+
+        let state = Arc::new(create_mock_app_state());
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+        state
+            .with_system_txn(|txn| {
+                txn.set_pwd(PathBuf::from("/tmp/not-the-crate-root"));
+                txn.set_focus_from_root(fixture_root.clone());
+            })
+            .await;
+
+        super::index_target(
+            &state,
+            &event_bus,
+            Some(IndexTarget::LoadedCrate(crate_id)),
+            false,
+        )
+        .await;
+
+        let failure = state
+            .with_system_read(|sys| sys.last_parse_failure().cloned())
+            .await;
+        assert!(
+            failure.is_none(),
+            "unexpected parse failure after semantic target resolution: {:?}",
+            failure
+        );
+        assert_eq!(
+            state.system.loaded_workspace_root_for_test().await,
+            Some(fixture_root)
+        );
     }
 
     #[tokio::test]

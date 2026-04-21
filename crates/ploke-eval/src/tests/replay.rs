@@ -823,11 +823,7 @@ async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow(
     let job_request_id = Uuid::parse_str(&job_request.request_id).expect("job request id uuid");
     let job_call_id: ploke_core::ArcStr = job_request.call_id.clone().into();
     let job_proposal_id = derive_edit_proposal_id(job_request_id, &job_call_id);
-    let job_status = wait_for_terminal_proposal_status(
-        &state,
-        job_proposal_id,
-    )
-    .await;
+    let job_status = wait_for_terminal_proposal_status(&state, job_proposal_id).await;
     assert_eq!(
         job_status,
         ploke_tui::app_state::core::EditProposalStatus::Applied

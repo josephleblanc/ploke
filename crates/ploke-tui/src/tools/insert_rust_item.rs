@@ -695,8 +695,7 @@ mod tests {
         let harness = AppHarness::spawn().await.expect("spawn harness");
         let request_id = Uuid::new_v4();
         let call_id = ploke_core::ArcStr::from("test_insert_rust_item");
-        let proposal_id =
-            crate::app_state::core::derive_edit_proposal_id(request_id, &call_id);
+        let proposal_id = crate::app_state::core::derive_edit_proposal_id(request_id, &call_id);
         let ctx = Ctx {
             state: Arc::clone(&harness.state),
             event_bus: Arc::clone(&harness.event_bus),

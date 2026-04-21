@@ -20,13 +20,13 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tracing::{trace_span, warn};
 
-use super::IndexTargetDir;
 use super::commands::{
     IndexCmd, IndexResolveError, LoadCmd, LoadResolveError, LoadValidationError, StateCommand,
     Validate, WorkspaceCmd, emit_validation_error, validate_workspace_cmd,
 };
 use super::core::AppState;
 use super::events::SystemEvent;
+use super::{IndexTarget, IndexTargetDir};
 use super::{database, handlers};
 use crate::AppEvent;
 use crate::chat_history::MessageKind;
@@ -195,6 +195,13 @@ pub async fn state_manager(
 
             StateCommand::Load(cmd) => {
                 handle_load_cmd(&state, &event_bus, cmd).await;
+            }
+
+            StateCommand::IndexTarget {
+                target,
+                needs_parse,
+            } => {
+                spawn_index_target(&state, &event_bus, target, needs_parse);
             }
 
             StateCommand::IndexTargetDir {
@@ -604,6 +611,19 @@ fn spawn_index_workspace(
     let event_bus = Arc::clone(event_bus);
     tokio::spawn(async move {
         handlers::indexing::index_workspace(&state, &event_bus, target_dir, needs_parse).await;
+    });
+}
+
+fn spawn_index_target(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    target: Option<IndexTarget>,
+    needs_parse: bool,
+) {
+    let state = Arc::clone(state);
+    let event_bus = Arc::clone(event_bus);
+    tokio::spawn(async move {
+        handlers::indexing::index_target(&state, &event_bus, target, needs_parse).await;
     });
 }
 

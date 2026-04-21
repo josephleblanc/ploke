@@ -101,27 +101,36 @@ async fn approve_pending_edits_applies_newest_and_marks_overlap_stale() {
     let reg = harness.state.proposals.read().await;
     assert!(
         matches!(
-            reg.get(&derive_edit_proposal_id(new_id, &ArcStr::from("test_call_id")))
-                .unwrap()
-                .status,
+            reg.get(&derive_edit_proposal_id(
+                new_id,
+                &ArcStr::from("test_call_id")
+            ))
+            .unwrap()
+            .status,
             EditProposalStatus::Applied
         ),
         "newest overlapping proposal should be applied"
     );
     assert!(
         matches!(
-            reg.get(&derive_edit_proposal_id(other_id, &ArcStr::from("test_call_id")))
-                .unwrap()
-                .status,
+            reg.get(&derive_edit_proposal_id(
+                other_id,
+                &ArcStr::from("test_call_id")
+            ))
+            .unwrap()
+            .status,
             EditProposalStatus::Applied
         ),
         "non-overlapping proposal should be applied"
     );
     assert!(
         matches!(
-            reg.get(&derive_edit_proposal_id(old_id, &ArcStr::from("test_call_id")))
-                .unwrap()
-                .status,
+            reg.get(&derive_edit_proposal_id(
+                old_id,
+                &ArcStr::from("test_call_id")
+            ))
+            .unwrap()
+            .status,
             EditProposalStatus::Stale(_)
         ),
         "older overlapping proposal should be marked stale"
@@ -171,18 +180,24 @@ async fn deny_pending_edits_marks_all_pending_denied() {
     let reg = harness.state.proposals.read().await;
     assert!(
         matches!(
-            reg.get(&derive_edit_proposal_id(first_id, &ArcStr::from("test_call_id")))
-                .unwrap()
-                .status,
+            reg.get(&derive_edit_proposal_id(
+                first_id,
+                &ArcStr::from("test_call_id")
+            ))
+            .unwrap()
+            .status,
             EditProposalStatus::Denied
         ),
         "pending proposals should be denied"
     );
     assert!(
         matches!(
-            reg.get(&derive_edit_proposal_id(second_id, &ArcStr::from("test_call_id")))
-                .unwrap()
-                .status,
+            reg.get(&derive_edit_proposal_id(
+                second_id,
+                &ArcStr::from("test_call_id")
+            ))
+            .unwrap()
+            .status,
             EditProposalStatus::Denied
         ),
         "pending proposals should be denied"
