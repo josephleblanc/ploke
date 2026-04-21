@@ -1507,23 +1507,23 @@ impl App {
                             // if let Some(msg) = path.get(selected)
                             //     && let Some(payload) = msg.tool_payload()
                             //     && should_render_tool_buttons(payload)
-                            //     && let Some(req_id) = payload.request_id
+                            //     && let Some(proposal_id) = payload.proposal_id
                             // {
-                            //     return Some(req_id);
+                            //     return Some(proposal_id);
                             // }
-                            let req_id = path
+                            let proposal_id = path
                                 .get(selected)
                                 .and_then(|msg| msg.tool_payload())
                                 .filter(|p| should_render_tool_buttons(p))
-                                .and_then(|payload| payload.request_id);
-                            if req_id.is_some() {
-                                return req_id;
+                                .and_then(|payload| payload.proposal_id);
+                            if proposal_id.is_some() {
+                                return proposal_id;
                             }
                             None
                         })
                     });
 
-                    if let Some(request_id) = should_trigger {
+                    if let Some(proposal_id) = should_trigger {
                         let is_yes = self
                             .confirmation_states
                             .get(
@@ -1538,9 +1538,9 @@ impl App {
                             .unwrap_or(true);
 
                         if is_yes {
-                            self.send_cmd(StateCommand::ApproveEdits { request_id });
+                            self.send_cmd(StateCommand::ApproveEdits { proposal_id });
                         } else {
-                            self.send_cmd(StateCommand::DenyEdits { request_id });
+                            self.send_cmd(StateCommand::DenyEdits { proposal_id });
                         }
                     }
                 }
@@ -1594,13 +1594,13 @@ impl App {
             if let Some(ApprovalListItem { kind, id, .. }) = items.get(sel_index).cloned() {
                 let _ = match (approve, kind) {
                     (true, ProposalKind::Edit) => {
-                        cmd_tx.try_send(StateCommand::ApproveEdits { request_id: id })
+                        cmd_tx.try_send(StateCommand::ApproveEdits { proposal_id: id })
                     }
                     (true, ProposalKind::Create) => {
                         cmd_tx.try_send(StateCommand::ApproveCreations { request_id: id })
                     }
                     (false, ProposalKind::Edit) => {
-                        cmd_tx.try_send(StateCommand::DenyEdits { request_id: id })
+                        cmd_tx.try_send(StateCommand::DenyEdits { proposal_id: id })
                     }
                     (false, ProposalKind::Create) => {
                         cmd_tx.try_send(StateCommand::DenyCreations { request_id: id })

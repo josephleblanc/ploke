@@ -378,11 +378,11 @@ pub async fn state_manager(
                 query,
                 top_k,
             } => rag::search::dense_search(&state, &event_bus, req_id, query, top_k).await,
-            StateCommand::ApproveEdits { request_id } => {
-                rag::editing::approve_edits(&state, &event_bus, request_id).await;
+            StateCommand::ApproveEdits { proposal_id } => {
+                rag::editing::approve_edits(&state, &event_bus, proposal_id).await;
             }
-            StateCommand::DenyEdits { request_id } => {
-                rag::editing::deny_edits(&state, &event_bus, request_id).await;
+            StateCommand::DenyEdits { proposal_id } => {
+                rag::editing::deny_edits(&state, &event_bus, proposal_id).await;
             }
             StateCommand::ApprovePendingEdits => {
                 rag::editing::approve_pending_edits(&state, &event_bus).await;

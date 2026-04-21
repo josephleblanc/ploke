@@ -1,4 +1,6 @@
-use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus};
+use crate::app_state::core::{
+    DiffPreview, EditProposal, EditProposalStatus, derive_edit_proposal_id,
+};
 use crate::rag::editing::{approve_pending_edits, deny_pending_edits};
 use crate::test_utils::new_test_harness::AppHarness;
 use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID, WriteSnippetData};
@@ -18,10 +20,12 @@ async fn make_pending_proposal(
     let file_hash = read_and_compute_filehash(&file_path, PROJECT_NAMESPACE_UUID)
         .await
         .expect("compute file hash");
+    let call_id = ArcStr::from("test_call_id");
     EditProposal {
+        proposal_id: derive_edit_proposal_id(request_id, &call_id),
         request_id,
         parent_id: Uuid::new_v4(),
-        call_id: ArcStr::from("test_call_id"),
+        call_id,
         proposed_at_ms,
         edits: vec![WriteSnippetData {
             id: Uuid::new_v4(),
@@ -87,9 +91,9 @@ async fn approve_pending_edits_applies_newest_and_marks_overlap_stale() {
 
     {
         let mut reg = harness.state.proposals.write().await;
-        reg.insert(new_id, newer);
-        reg.insert(other_id, other);
-        reg.insert(old_id, older);
+        reg.insert(newer.proposal_id, newer);
+        reg.insert(other.proposal_id, other);
+        reg.insert(older.proposal_id, older);
     }
 
     approve_pending_edits(&harness.state, &harness.event_bus).await;
@@ -97,21 +101,27 @@ async fn approve_pending_edits_applies_newest_and_marks_overlap_stale() {
     let reg = harness.state.proposals.read().await;
     assert!(
         matches!(
-            reg.get(&new_id).unwrap().status,
+            reg.get(&derive_edit_proposal_id(new_id, &ArcStr::from("test_call_id")))
+                .unwrap()
+                .status,
             EditProposalStatus::Applied
         ),
         "newest overlapping proposal should be applied"
     );
     assert!(
         matches!(
-            reg.get(&other_id).unwrap().status,
+            reg.get(&derive_edit_proposal_id(other_id, &ArcStr::from("test_call_id")))
+                .unwrap()
+                .status,
             EditProposalStatus::Applied
         ),
         "non-overlapping proposal should be applied"
     );
     assert!(
         matches!(
-            reg.get(&old_id).unwrap().status,
+            reg.get(&derive_edit_proposal_id(old_id, &ArcStr::from("test_call_id")))
+                .unwrap()
+                .status,
             EditProposalStatus::Stale(_)
         ),
         "older overlapping proposal should be marked stale"
@@ -152,8 +162,8 @@ async fn deny_pending_edits_marks_all_pending_denied() {
 
     {
         let mut reg = harness.state.proposals.write().await;
-        reg.insert(first_id, first);
-        reg.insert(second_id, second);
+        reg.insert(first.proposal_id, first);
+        reg.insert(second.proposal_id, second);
     }
 
     deny_pending_edits(&harness.state, &harness.event_bus).await;
@@ -161,14 +171,18 @@ async fn deny_pending_edits_marks_all_pending_denied() {
     let reg = harness.state.proposals.read().await;
     assert!(
         matches!(
-            reg.get(&first_id).unwrap().status,
+            reg.get(&derive_edit_proposal_id(first_id, &ArcStr::from("test_call_id")))
+                .unwrap()
+                .status,
             EditProposalStatus::Denied
         ),
         "pending proposals should be denied"
     );
     assert!(
         matches!(
-            reg.get(&second_id).unwrap().status,
+            reg.get(&derive_edit_proposal_id(second_id, &ArcStr::from("test_call_id")))
+                .unwrap()
+                .status,
             EditProposalStatus::Denied
         ),
         "pending proposals should be denied"

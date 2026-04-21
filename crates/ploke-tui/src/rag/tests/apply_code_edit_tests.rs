@@ -95,6 +95,13 @@ async fn create_test_tool_params(
     })
 }
 
+fn test_proposal_id(request_id: Uuid) -> Uuid {
+    crate::app_state::core::derive_edit_proposal_id(
+        request_id,
+        &ploke_core::ArcStr::from("test_call_id"),
+    )
+}
+
 // ============================================================================
 // Phase 1: Input Validation & Idempotency Tests
 // ============================================================================
@@ -139,7 +146,8 @@ async fn test_duplicate_request_detection() {
     // Verify proposal was created (database must be loaded for this to work)
     {
         let proposals = harness.state.proposals.read().await;
-        if !proposals.contains_key(&request_id) {
+        let proposal_id = test_proposal_id(request_id);
+        if !proposals.contains_key(&proposal_id) {
             // Debug information to understand what went wrong
             println!("DEBUG: No proposal found for request_id: {}", request_id);
             println!(
@@ -178,7 +186,7 @@ async fn test_duplicate_request_detection() {
         let proposals = harness.state.proposals.read().await;
         assert_eq!(proposals.len(), 1, "Should not create duplicate proposals");
         assert!(
-            proposals.get(&request_id).is_some(),
+            proposals.get(&test_proposal_id(request_id)).is_some(),
             "Original proposal should still exist"
         );
     }
@@ -344,7 +352,7 @@ async fn test_canonical_resolution_success() {
     // Verify proposal was created successfully (proves database resolution worked)
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect(
+        let proposal = proposals.get(&test_proposal_id(request_id)).expect(
             "Proposal should be created - failure indicates database resolution failed. \
                 Verify fixture_nodes backup exists and contains SampleStruct",
         );
@@ -461,7 +469,7 @@ async fn test_canonical_fallback_resolver() {
     {
         let proposals = harness.state.proposals.read().await;
         let proposal = proposals
-            .get(&request_id)
+            .get(&test_proposal_id(request_id))
             .expect("Fallback resolution should work");
         assert_eq!(proposal.status, EditProposalStatus::Pending);
         assert!(!proposal.edits.is_empty(), "Should have resolved edits");
@@ -501,7 +509,9 @@ async fn test_unified_diff_preview_generation() {
 
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("Proposal should exist");
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("Proposal should exist");
 
         // Should generate unified diff preview
         match &proposal.preview {
@@ -546,7 +556,9 @@ async fn test_codeblock_preview_generation() {
 
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("Proposal should exist");
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("Proposal should exist");
 
         // Should generate code block preview
         match &proposal.preview {
@@ -603,7 +615,9 @@ async fn test_preview_truncation() {
 
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("Proposal should exist");
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("Proposal should exist");
 
         // Check that preview is truncated
         match &proposal.preview {
@@ -670,7 +684,7 @@ async fn test_proposal_creation_and_storage() {
     {
         let proposals = harness.state.proposals.read().await;
         let proposal = proposals
-            .get(&request_id)
+            .get(&test_proposal_id(request_id))
             .expect("Proposal should be created");
 
         // Verify all proposal fields are populated correctly
@@ -722,7 +736,9 @@ async fn test_auto_confirm_workflow() {
 
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("Proposal should exist");
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("Proposal should exist");
 
         // Auto-approval should have completed and applied the edit
         assert_eq!(proposal.status, EditProposalStatus::Applied);
@@ -754,12 +770,15 @@ async fn test_manual_approve_marks_semantic_edit_failed_when_file_changed_after_
 
     {
         let mut proposals = harness.state.proposals.write().await;
+        let call_id = ArcStr::from("test_call_id");
+        let proposal_id = crate::app_state::core::derive_edit_proposal_id(request_id, &call_id);
         proposals.insert(
-            request_id,
+            proposal_id,
             EditProposal {
+                proposal_id,
                 request_id,
                 parent_id: Uuid::new_v4(),
-                call_id: ArcStr::from("test_call_id"),
+                call_id,
                 proposed_at_ms: Utc::now().timestamp_millis(),
                 edits: vec![WriteSnippetData {
                     id: Uuid::new_v4(),
@@ -785,11 +804,18 @@ async fn test_manual_approve_marks_semantic_edit_failed_when_file_changed_after_
     fs::write(&file_path, "pub const EXTERNAL_MUTATION: usize = 1;\n")
         .expect("mutate temp file after staging");
 
-    approve_edits(&harness.state, &harness.event_bus, request_id).await;
+    approve_edits(
+        &harness.state,
+        &harness.event_bus,
+        test_proposal_id(request_id),
+    )
+    .await;
 
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("proposal should exist");
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("proposal should exist");
         assert!(
             matches!(proposal.status, EditProposalStatus::Failed(_)),
             "semantic proposal should fail when file changed after staging, got {:?}",
@@ -821,7 +847,9 @@ async fn test_tool_result_structure() {
     // Verify proposal exists and can be used to construct tool result
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("Proposal should exist");
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("Proposal should exist");
 
         // Simulate the tool result construction logic from apply_code_edit_tool
         let primary_root = harness
@@ -905,7 +933,7 @@ async fn test_multiple_files_batch_processing() {
 
         // Either both edits succeed (creating 1 proposal with 2 edits),
         // or only the valid ones succeed (depends on fixture data)
-        if let Some(proposal) = proposals.get(&request_id) {
+        if let Some(proposal) = proposals.get(&test_proposal_id(request_id)) {
             assert!(
                 !proposal.edits.is_empty(),
                 "Should have at least one successful edit"
@@ -1079,7 +1107,7 @@ async fn test_complete_canonical_edit_flow_integration() {
     // Comprehensive verification
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect(
+        let proposal = proposals.get(&test_proposal_id(request_id)).expect(
             "Integration test should create proposal. Failure indicates:\n\
                 1. Database backup missing or empty\n\
                 2. fixture_nodes not properly parsed\n\

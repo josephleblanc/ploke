@@ -129,15 +129,16 @@ impl super::Tool for NsPatch {
     }
 
     fn adapt_error(err: ToolInvocationError) -> ToolError {
-        let hint = "Use an absolute path or workspace-root-relative file path (e.g., \"crates/my-crate/Cargo.toml\").";
+        let path_hint = "Use an absolute path or workspace-root-relative file path (e.g., \"crates/my-crate/Cargo.toml\").";
         match err {
             ToolInvocationError::Exec(ploke_error::Error::Domain(
                 ploke_error::DomainError::Io { message },
-            )) => ToolError::new(ToolName::NsPatch, ToolErrorCode::Io, message).retry_hint(hint),
+            )) => ToolError::new(ToolName::NsPatch, ToolErrorCode::Io, message.clone())
+                .retry_hint(retry_hint_for_exec_message(&message)),
             ToolInvocationError::Exec(ploke_error::Error::Domain(
                 ploke_error::DomainError::Ui { message },
             )) => ToolError::new(ToolName::NsPatch, ToolErrorCode::InvalidFormat, message)
-                .retry_hint(hint),
+                .retry_hint(path_hint),
             other => other.into_tool_error(ToolName::NsPatch),
         }
     }
@@ -214,7 +215,7 @@ impl super::Tool for NsPatch {
             call_id = %ctx.call_id,
             "ns_patch: before apply_ns_code_edit_tool"
         );
-        apply_ns_code_edit_tool(params_env).await?;
+        let proposal_id = apply_ns_code_edit_tool(params_env).await?;
         tracing::info!(
             request_id = %request_id,
             call_id = %ctx.call_id,
@@ -225,16 +226,20 @@ impl super::Tool for NsPatch {
             call_id = %ctx.call_id,
             "ns_patch: before print_code_edit_results"
         );
-        let result =
-            crate::tools::code_edit::print_code_edit_results(&ctx, request_id, ToolName::NsPatch)
-                .await;
+        let result = crate::tools::code_edit::print_code_edit_results(
+            &ctx,
+            Some(proposal_id),
+            request_id,
+            ToolName::NsPatch,
+        )
+        .await;
         if result.is_ok() {
             let editing_cfg = { ctx.state.config.read().await.editing.clone() };
             if editing_cfg.auto_confirm_edits {
                 spawn_auto_confirm_edits(
                     Arc::clone(&ctx.state),
                     Arc::clone(&ctx.event_bus),
-                    request_id,
+                    proposal_id,
                 );
             }
             tracing::info!(
@@ -244,6 +249,16 @@ impl super::Tool for NsPatch {
             );
         }
         result
+    }
+}
+
+fn retry_hint_for_exec_message(message: &str) -> &'static str {
+    if message.contains("Patch applied partially") {
+        "The patch did not match the current file cleanly. Read the file again and regenerate a tighter unified diff with exact current context lines."
+    } else if message.contains("Failed to parse patch") || message.contains("missing hunk") {
+        "Provide a valid unified diff with ---/+++ headers and @@ hunks."
+    } else {
+        "Use an absolute path or workspace-root-relative file path (e.g., \"crates/my-crate/Cargo.toml\")."
     }
 }
 
@@ -385,5 +400,24 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn adapt_error_reports_partial_apply_retry_hint() {
+        let err = ToolInvocationError::Exec(ploke_error::Error::Domain(
+            ploke_error::DomainError::Io {
+                message: "failed to patch src/lib.rs: IO error: NsPatchError: Patch applied partially. See report for details.".to_string(),
+            },
+        ));
+
+        let adapted = NsPatch::adapt_error(err);
+
+        assert_eq!(adapted.code, ToolErrorCode::Io);
+        assert_eq!(
+            adapted.retry_hint.as_deref(),
+            Some(
+                "The patch did not match the current file cleanly. Read the file again and regenerate a tighter unified diff with exact current context lines."
+            )
+        );
     }
 }

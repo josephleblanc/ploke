@@ -6,7 +6,9 @@ use ratatui::layout::Rect;
 use ratatui::{Terminal, backend::TestBackend};
 
 use ploke_tui::app::view::components::approvals::{ApprovalsState, render_approvals_overlay};
-use ploke_tui::app_state::core::{DiffPreview, EditProposal, EditProposalStatus};
+use ploke_tui::app_state::core::{
+    DiffPreview, EditProposal, EditProposalStatus, derive_edit_proposal_id,
+};
 
 fn buffer_to_string(term: &Terminal<TestBackend>) -> String {
     let buf = term.backend().buffer();
@@ -38,14 +40,17 @@ async fn overlay_renders_with_fixture_app_state() {
 
     // Stage a simple proposal into the shared AppState
     let req_id = uuid::Uuid::from_u128(0x11111111_2222_3333_4444_555555555555);
+    let call_id: ploke_core::ArcStr = "call-fixture".into();
+    let proposal_id = derive_edit_proposal_id(req_id, &call_id);
     {
         let mut reg = state.proposals.write().await;
         reg.insert(
-            req_id,
+            proposal_id,
             EditProposal {
+                proposal_id,
                 request_id: req_id,
                 parent_id: uuid::Uuid::new_v4(),
-                call_id: "call-fixture".into(),
+                call_id,
                 proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                 edits: vec![],
                 edits_ns: vec![],

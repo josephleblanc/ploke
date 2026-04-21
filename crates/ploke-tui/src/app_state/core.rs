@@ -43,7 +43,7 @@ pub struct AppState {
     pub embedder: Arc<EmbeddingRuntime>,
     pub io_handle: IoManagerHandle,
 
-    // In-memory registry for staged code-edit proposals (M1)
+    // In-memory registry for staged code-edit proposals (M1), keyed by proposal_id.
     pub proposals: RwLock<HashMap<Uuid, EditProposal>>,
     // In-memory registry for staged file-creation proposals
     pub create_proposals: RwLock<HashMap<Uuid, CreateProposal>>,
@@ -358,6 +358,8 @@ pub enum DiffPreview {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditProposal {
+    #[serde(default = "default_edit_proposal_id")]
+    pub proposal_id: Uuid,
     pub request_id: Uuid,
     pub parent_id: Uuid,
     pub call_id: ArcStr,
@@ -369,6 +371,22 @@ pub struct EditProposal {
     pub status: EditProposalStatus,
     /// Whether or not the proposal is for a semantic edit.
     pub is_semantic: bool,
+}
+
+fn default_edit_proposal_id() -> Uuid {
+    Uuid::nil()
+}
+
+pub fn derive_edit_proposal_id(request_id: Uuid, call_id: &ArcStr) -> Uuid {
+    Uuid::new_v5(&request_id, format!("edit-proposal:{call_id}").as_bytes())
+}
+
+impl EditProposal {
+    pub fn normalize_proposal_id(&mut self) {
+        if self.proposal_id.is_nil() {
+            self.proposal_id = derive_edit_proposal_id(self.request_id, &self.call_id);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

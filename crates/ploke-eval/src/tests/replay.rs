@@ -10,7 +10,7 @@ use ploke_db::{Database, NodeType};
 use ploke_tui::{
     AppEvent, EventBus, EventBusCaps, EventPriority,
     app::commands::harness::TestRuntime,
-    app_state::{AppState, events::SystemEvent},
+    app_state::{AppState, core::derive_edit_proposal_id, events::SystemEvent},
     rag::{
         tools::apply_code_edit_tool,
         utils::{ApplyCodeEditRequest, Edit, ToolCallParams},
@@ -183,7 +183,7 @@ async fn replay_ns_patch_request(
     state: Arc<AppState>,
     event_bus: Arc<EventBus>,
     request: &ToolRequestRecord,
-) {
+) -> Result<(), ploke_error::Error> {
     let request_id = Uuid::parse_str(&request.request_id).expect("request_id should be a uuid");
     let parent_id = Uuid::parse_str(&request.parent_id).expect("parent_id should be a uuid");
     let ctx = Ctx {
@@ -199,22 +199,21 @@ async fn replay_ns_patch_request(
     let ploke_tui::tools::ToolResult {
         content,
         ui_payload,
-    } = NsPatch::execute(params, ctx.clone())
-        .await
-        .expect("historical non_semantic_patch replay should execute");
+    } = NsPatch::execute(params, ctx.clone()).await?;
     NsPatch::emit_completed(&ctx, content, ui_payload);
+    Ok(())
 }
 
 async fn wait_for_terminal_proposal_status(
     state: &Arc<AppState>,
-    request_id: Uuid,
+    proposal_id: Uuid,
 ) -> ploke_tui::app_state::core::EditProposalStatus {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if let Some(status) = {
                 let proposals = state.proposals.read().await;
                 proposals
-                    .get(&request_id)
+                    .get(&proposal_id)
                     .map(|proposal| proposal.status.clone())
             } {
                 match status {
@@ -761,6 +760,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "historical diagnostic replay of fd-1121 non-semantic patch partial-apply runtime flow"]
 async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow() {
+    init_tracing();
     const RUN_MANIFEST: &str = "/home/brasides/.ploke-eval/runs/sharkdp__fd-1121/run.json";
     const TURN_TRACE: &str =
         "/home/brasides/.ploke-eval/runs/sharkdp__fd-1121/agent-turn-trace.json";
@@ -817,10 +817,15 @@ async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow(
     }
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
 
-    replay_ns_patch_request(Arc::clone(&state), Arc::clone(&event_bus), &job_request).await;
+    replay_ns_patch_request(Arc::clone(&state), Arc::clone(&event_bus), &job_request)
+        .await
+        .expect("historical job non_semantic_patch replay should execute");
+    let job_request_id = Uuid::parse_str(&job_request.request_id).expect("job request id uuid");
+    let job_call_id: ploke_core::ArcStr = job_request.call_id.clone().into();
+    let job_proposal_id = derive_edit_proposal_id(job_request_id, &job_call_id);
     let job_status = wait_for_terminal_proposal_status(
         &state,
-        Uuid::parse_str(&job_request.request_id).expect("job request id uuid"),
+        job_proposal_id,
     )
     .await;
     assert_eq!(
@@ -828,17 +833,25 @@ async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow(
         ploke_tui::app_state::core::EditProposalStatus::Applied
     );
 
-    replay_ns_patch_request(Arc::clone(&state), Arc::clone(&event_bus), &walk_request).await;
-    let walk_status = wait_for_terminal_proposal_status(
-        &state,
-        Uuid::parse_str(&walk_request.request_id).expect("walk request id uuid"),
-    )
-    .await;
-    assert_eq!(
-        walk_status,
-        ploke_tui::app_state::core::EditProposalStatus::Failed(
-            "No non-semantic edits were applied".to_string()
-        )
+    let walk_request_id = Uuid::parse_str(&walk_request.request_id).expect("walk request id uuid");
+    let walk_call_id: ploke_core::ArcStr = walk_request.call_id.clone().into();
+    let walk_proposal_id = derive_edit_proposal_id(walk_request_id, &walk_call_id);
+    let walk_err =
+        replay_ns_patch_request(Arc::clone(&state), Arc::clone(&event_bus), &walk_request)
+            .await
+            .expect_err("historical walk non_semantic_patch replay should fail before staging");
+    let walk_err_text = walk_err.to_string();
+    assert!(
+        walk_err_text.contains("Patch applied partially"),
+        "historical walk replay should fail with partial-apply error, got: {walk_err_text}"
+    );
+    let walk_proposal = {
+        let proposals = state.proposals.read().await;
+        proposals.get(&walk_proposal_id).cloned()
+    };
+    assert!(
+        walk_proposal.is_none(),
+        "historical walk replay should not stage a proposal after strict rejection"
     );
 
     let diff = git_stdout(

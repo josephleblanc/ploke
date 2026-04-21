@@ -18,8 +18,8 @@ use ploke_tui::EventBus;
 use ploke_tui::app::App;
 use ploke_tui::app::types::Mode;
 use ploke_tui::app_state::core::{
-    AppState, ChatState, ConfigState, DiffPreview, EditProposal, EditProposalStatus, RuntimeConfig,
-    SystemState,
+    AppState, ChatState, ConfigState, DiffPreview, EditProposal, EditProposalStatus,
+    RuntimeConfig, SystemState, derive_edit_proposal_id,
 };
 use ploke_tui::event_bus::EventBusCaps;
 use tokio::sync::{RwLock, mpsc, watch};
@@ -56,10 +56,13 @@ async fn make_app_with_proposals() -> (
 
     // Insert a dummy proposal with one file
     let req_id = uuid::Uuid::new_v4();
+    let call_id = ArcStr::from("example_tool_call:0");
+    let proposal_id = derive_edit_proposal_id(req_id, &call_id);
     let proposal = EditProposal {
+        proposal_id,
         request_id: req_id,
         parent_id: uuid::Uuid::new_v4(),
-        call_id: ArcStr::from("example_tool_call:0"),
+        call_id,
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
         edits_ns: vec![],
@@ -72,7 +75,7 @@ async fn make_app_with_proposals() -> (
     };
     {
         let mut guard = state.proposals.write().await;
-        guard.insert(req_id, proposal);
+        guard.insert(proposal_id, proposal);
     }
 
     // Event bus and command channel
@@ -94,7 +97,7 @@ async fn make_app_with_proposals() -> (
     app.mode = Mode::Insert;
     app.approvals_open();
 
-    (app, cmd_rx, req_id)
+    (app, cmd_rx, proposal_id)
 }
 
 async fn make_app_with_proposals_and_editor(
@@ -135,10 +138,13 @@ async fn make_app_with_proposals_and_editor(
 
     // Insert a dummy proposal with one file
     let req_id = uuid::Uuid::new_v4();
+    let call_id = ArcStr::from("example_tool_call:0");
+    let proposal_id = derive_edit_proposal_id(req_id, &call_id);
     let proposal = EditProposal {
+        proposal_id,
         request_id: req_id,
         parent_id: uuid::Uuid::new_v4(),
-        call_id: ArcStr::from("example_tool_call:0"),
+        call_id,
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
         edits_ns: vec![],
@@ -151,7 +157,7 @@ async fn make_app_with_proposals_and_editor(
     };
     {
         let mut guard = state.proposals.write().await;
-        guard.insert(req_id, proposal);
+        guard.insert(proposal_id, proposal);
     }
 
     // Event bus and command channel
@@ -173,7 +179,7 @@ async fn make_app_with_proposals_and_editor(
     app.mode = Mode::Insert;
     app.approvals_open();
 
-    (app, cmd_rx, req_id)
+    (app, cmd_rx, proposal_id)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -188,8 +194,8 @@ async fn approvals_overlay_approve_and_deny_send_commands() {
         .expect("approve command timed out")
         .expect("expected a command");
     match cmd {
-        ploke_tui::app_state::StateCommand::ApproveEdits { request_id } => {
-            assert_eq!(request_id, req_id);
+        ploke_tui::app_state::StateCommand::ApproveEdits { proposal_id } => {
+            assert_eq!(proposal_id, req_id);
         }
         other => panic!("unexpected command: {:?}", other),
     }
@@ -202,8 +208,8 @@ async fn approvals_overlay_approve_and_deny_send_commands() {
         .expect("deny command timed out")
         .expect("expected a command");
     match cmd {
-        ploke_tui::app_state::StateCommand::DenyEdits { request_id } => {
-            assert_eq!(request_id, req_id);
+        ploke_tui::app_state::StateCommand::DenyEdits { proposal_id } => {
+            assert_eq!(proposal_id, req_id);
         }
         other => panic!("unexpected command: {:?}", other),
     }

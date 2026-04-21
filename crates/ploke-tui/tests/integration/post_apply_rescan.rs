@@ -16,7 +16,7 @@ use ploke_tui::{
     EventBus,
     app_state::core::{
         AppState, ChatState, ConfigState, EditProposal, EditProposalStatus, RuntimeConfig,
-        SystemState,
+        SystemState, derive_edit_proposal_id,
     },
     event_bus::EventBusCaps,
     user_config::MessageVerbosityProfile,
@@ -62,14 +62,17 @@ async fn seed_and_approve_semantic_proposal(state: &Arc<AppState>, event_bus: &A
         .expect("compute file hash");
 
     let req_id = uuid::Uuid::new_v4();
+    let call_id = ArcStr::from("test_tool_call:0");
+    let proposal_id = derive_edit_proposal_id(req_id, &call_id);
     {
         let mut guard = state.proposals.write().await;
         guard.insert(
-            req_id,
+            proposal_id,
             EditProposal {
+                proposal_id,
                 request_id: req_id,
                 parent_id: uuid::Uuid::new_v4(),
-                call_id: ArcStr::from("test_tool_call:0"),
+                call_id,
                 proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                 edits: vec![WriteSnippetData {
                     id: uuid::Uuid::new_v4(),
@@ -94,7 +97,7 @@ async fn seed_and_approve_semantic_proposal(state: &Arc<AppState>, event_bus: &A
 
     tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        ploke_tui::rag::editing::approve_edits(&state, &event_bus, req_id),
+        ploke_tui::rag::editing::approve_edits(&state, &event_bus, proposal_id),
     )
     .await
     .expect("approve_edits timed out");

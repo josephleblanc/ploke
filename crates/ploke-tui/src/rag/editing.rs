@@ -9,14 +9,14 @@ use crate::{
 
 use super::*;
 
-pub fn spawn_auto_confirm_edits(state: Arc<AppState>, event_bus: Arc<EventBus>, request_id: Uuid) {
+pub fn spawn_auto_confirm_edits(state: Arc<AppState>, event_bus: Arc<EventBus>, proposal_id: Uuid) {
     tokio::spawn(async move {
-        approve_edits(&state, &event_bus, request_id).await;
+        approve_edits(&state, &event_bus, proposal_id).await;
     });
 }
 
 #[tracing::instrument(skip(state, event_bus))]
-pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
+pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, proposal_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
         chat::add_msg_immediate_background(
@@ -29,10 +29,10 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
         .await
     };
     let reg = state.proposals.write().await;
-    let Some(proposal) = reg.get(&request_id).cloned() else {
+    let Some(proposal) = reg.get(&proposal_id).cloned() else {
         let msg = format!(
-            "No staged edit proposal found for request_id {}",
-            request_id
+            "No staged edit proposal found for proposal_id {}",
+            proposal_id
         );
         drop(reg);
         add_msg_imm(msg).await;
@@ -40,7 +40,7 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
     };
     drop(reg);
 
-    let is_semantic = proposal.is_semantic;
+    let request_id = proposal.request_id;
     // Idempotency checks (without holding lock)
     match proposal.status {
         EditProposalStatus::Pending => {
@@ -71,20 +71,21 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
     // Apply edits via IoManagerHandle
     let file_paths = proposal.files.clone();
     if proposal.is_semantic {
-        apply_semantic_edit(state, event_bus, request_id, proposal, file_paths).await;
+        apply_semantic_edit(state, event_bus, proposal_id, proposal, file_paths).await;
     } else {
-        apply_ns_edit(state, event_bus, request_id, proposal, file_paths).await;
+        apply_ns_edit(state, event_bus, proposal_id, proposal, file_paths).await;
     }
 }
 
-#[tracing::instrument(skip(state, event_bus))]
+#[tracing::instrument(skip(state, event_bus, proposal, file_paths))]
 async fn apply_ns_edit(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
-    request_id: Uuid,
+    proposal_id: Uuid,
     mut proposal: crate::app_state::core::EditProposal,
     file_paths: Vec<PathBuf>,
 ) {
+    let request_id = proposal.request_id;
     let add_msg_imm = async move |msg: String| {
         chat::add_msg_immediate_background(
             state,
@@ -103,6 +104,16 @@ async fn apply_ns_edit(
         edit_count = proposal.edits_ns.len(),
         "starting ns edit apply"
     );
+    tracing::info!(
+        target: "ns-patch",
+        request_id = %request_id,
+        call_id = %proposal.call_id,
+        file_count = file_paths.len(),
+        edit_count = proposal.edits_ns.len(),
+        files = ?file_paths,
+        prior_status = proposal.status.as_str_outer(),
+        "ns_patch applying staged proposal"
+    );
 
     match state
         .io_handle
@@ -110,6 +121,32 @@ async fn apply_ns_edit(
         .await
     {
         Ok(results) => {
+            for (res, path) in results.iter().zip(file_paths.iter()) {
+                match res {
+                    Ok(write_res) => {
+                        tracing::info!(
+                            target: "ns-patch",
+                            request_id = %request_id,
+                            call_id = %proposal.call_id,
+                            file = %path.display(),
+                            outcome = "applied",
+                            new_file_hash = ?write_res.new_file_hash,
+                            "ns_patch file apply result"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "ns-patch",
+                            request_id = %request_id,
+                            call_id = %proposal.call_id,
+                            file = %path.display(),
+                            outcome = "failed",
+                            error = %err,
+                            "ns_patch file apply result"
+                        );
+                    }
+                }
+            }
             let applied = results
                 .iter()
                 .inspect(|r| {
@@ -157,6 +194,16 @@ async fn apply_ns_edit(
                 proposal.status =
                     EditProposalStatus::Failed("No non-semantic edits were applied".to_string());
             }
+            tracing::info!(
+                target: "ns-patch",
+                request_id = %request_id,
+                call_id = %proposal.call_id,
+                applied,
+                file_count,
+                terminal_status = proposal.status.as_str_outer(),
+                elapsed_ms = started_at.elapsed().as_millis(),
+                "ns_patch proposal apply completed"
+            );
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();
             let tool_name = if proposal.is_semantic {
@@ -165,7 +212,7 @@ async fn apply_ns_edit(
                 ToolName::NsPatch
             };
             let mut reg = state.proposals.write().await;
-            reg.insert(request_id, proposal);
+            reg.insert(proposal_id, proposal);
             drop(reg);
             let ui_payload = ToolUiPayload::new(
                 tool_name,
@@ -176,6 +223,7 @@ async fn apply_ns_edit(
                     format!("Failed to apply edits across {} files", file_count)
                 },
             )
+            .with_proposal_id(proposal_id)
             .with_request_id(request_id)
             .with_field("status", if applied_ok { "applied" } else { "failed" })
             .with_field("ok", applied_ok.to_string())
@@ -224,6 +272,14 @@ async fn apply_ns_edit(
                 error = %e,
                 "ns edit apply failed"
             );
+            tracing::error!(
+                target: "ns-patch",
+                request_id = %request_id,
+                call_id = %proposal.call_id,
+                elapsed_ms = started_at.elapsed().as_millis(),
+                error = %e,
+                "ns_patch proposal apply errored"
+            );
             proposal.status = EditProposalStatus::Failed(e.to_string());
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();
@@ -233,11 +289,12 @@ async fn apply_ns_edit(
                 ToolName::NsPatch
             };
             let mut reg = state.proposals.write().await;
-            reg.insert(request_id, proposal);
+            reg.insert(proposal_id, proposal);
             drop(reg);
             let err_str = format!("Failed to apply edits: {}", e);
             let err = ToolError::new(tool_name, ToolErrorCode::Io, err_str.clone());
             let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
+                .with_proposal_id(proposal_id)
                 .with_request_id(request_id)
                 .with_field("status", "failed");
             let ui_payload_for_chat = ui_payload.clone();
@@ -270,10 +327,11 @@ async fn apply_ns_edit(
 async fn apply_semantic_edit(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
-    request_id: Uuid,
+    proposal_id: Uuid,
     mut proposal: crate::app_state::core::EditProposal,
     file_paths: Vec<PathBuf>,
 ) {
+    let request_id = proposal.request_id;
     let add_msg_imm = async move |msg: String| {
         chat::add_msg_immediate_background(
             state,
@@ -330,7 +388,7 @@ async fn apply_semantic_edit(
                 ToolName::NsPatch
             };
             let mut reg = state.proposals.write().await;
-            reg.insert(request_id, proposal);
+            reg.insert(proposal_id, proposal);
             drop(reg);
             let ui_payload = ToolUiPayload::new(
                 tool_name,
@@ -341,6 +399,7 @@ async fn apply_semantic_edit(
                     format!("Failed to apply edits across {} files", file_count)
                 },
             )
+            .with_proposal_id(proposal_id)
             .with_request_id(request_id)
             .with_field("status", if applied_ok { "applied" } else { "failed" })
             .with_field("ok", applied_ok.to_string())
@@ -394,11 +453,12 @@ async fn apply_semantic_edit(
                 ToolName::NsPatch
             };
             let mut reg = state.proposals.write().await;
-            reg.insert(request_id, proposal);
+            reg.insert(proposal_id, proposal);
             drop(reg);
             let err_str = format!("Failed to apply edits: {}", e);
             let err = ToolError::new(tool_name, ToolErrorCode::Io, err_str.clone());
             let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
+                .with_proposal_id(proposal_id)
                 .with_request_id(request_id)
                 .with_field("status", "failed");
             let ui_payload_for_chat = ui_payload.clone();
@@ -427,7 +487,11 @@ async fn apply_semantic_edit(
     }
 }
 
-fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
+fn rescan_for_changes(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    request_id: Uuid,
+) {
     let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
     tokio::spawn({
         let state = Arc::clone(state);
@@ -475,7 +539,7 @@ fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_
     });
 }
 
-pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
+pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, proposal_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
         chat::add_msg_immediate_background(
@@ -488,16 +552,17 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
         .await
     };
     let reg = state.proposals.write().await;
-    let Some(mut proposal) = reg.get(&request_id).cloned() else {
+    let Some(mut proposal) = reg.get(&proposal_id).cloned() else {
         let msg = format!(
-            "No staged edit proposal found for request_id {}",
-            request_id
+            "No staged edit proposal found for proposal_id {}",
+            proposal_id
         );
         drop(reg);
         add_msg_imm(msg).await;
         return;
     };
     drop(reg);
+    let request_id = proposal.request_id;
 
     match proposal.status {
         EditProposalStatus::Pending
@@ -513,13 +578,14 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
                 ToolName::NsPatch
             };
             let mut reg = state.proposals.write().await;
-            reg.insert(request_id, proposal);
+            reg.insert(proposal_id, proposal);
             drop(reg);
 
             // Bridge: mark tool call failed with denial
             let err_msg = "Edit proposal denied by user".to_string();
             let err = ToolError::new(tool_name, ToolErrorCode::Internal, err_msg.clone());
             let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
+                .with_proposal_id(proposal_id)
                 .with_request_id(request_id)
                 .with_field("status", "denied");
             let ui_payload_for_chat = ui_payload.clone();
@@ -590,7 +656,7 @@ pub async fn approve_pending_edits(state: &Arc<AppState>, event_bus: &Arc<EventB
     pending.sort_by(|a, b| {
         b.proposed_at_ms
             .cmp(&a.proposed_at_ms)
-            .then(b.request_id.cmp(&a.request_id))
+            .then(b.proposal_id.cmp(&a.proposal_id))
     });
 
     let mut occupied: HashMap<PathBuf, Vec<(usize, usize)>> = HashMap::new();
@@ -600,33 +666,33 @@ pub async fn approve_pending_edits(state: &Arc<AppState>, event_bus: &Arc<EventB
     for proposal in pending.iter() {
         let ranges = proposal_ranges(proposal);
         if overlaps_existing(&occupied, &ranges) {
-            to_stale.push(proposal.request_id);
+            to_stale.push(proposal.proposal_id);
         } else {
             mark_occupied(&mut occupied, &ranges);
-            to_apply.push(proposal.request_id);
+            to_apply.push(proposal.proposal_id);
         }
     }
 
     if !to_stale.is_empty() {
         let mut reg = state.proposals.write().await;
-        for request_id in &to_stale {
-            if let Some(p) = reg.get_mut(request_id) {
+        for proposal_id in &to_stale {
+            if let Some(p) = reg.get_mut(proposal_id) {
                 p.status =
                     EditProposalStatus::Stale("Overlaps with newer edit proposal".to_string());
             }
         }
         drop(reg);
-        for request_id in &to_stale {
+        for proposal_id in &to_stale {
             add_msg_imm(format!(
-                "Skipped edits for request_id {} (overlaps with newer proposal)",
-                request_id
+                "Skipped edits for proposal_id {} (overlaps with newer proposal)",
+                proposal_id
             ))
             .await;
         }
     }
 
-    for request_id in to_apply {
-        approve_edits(state, event_bus, request_id).await;
+    for proposal_id in to_apply {
+        approve_edits(state, event_bus, proposal_id).await;
     }
 
     crate::app_state::handlers::proposals::save_proposals(state).await;
@@ -653,7 +719,7 @@ pub async fn deny_pending_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>
         let reg = state.proposals.read().await;
         reg.values()
             .filter(|p| matches!(p.status, EditProposalStatus::Pending))
-            .map(|p| p.request_id)
+            .map(|p| p.proposal_id)
             .collect()
     };
 
@@ -662,8 +728,8 @@ pub async fn deny_pending_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>
         return;
     }
 
-    for request_id in pending_ids {
-        deny_edits(state, event_bus, request_id).await;
+    for proposal_id in pending_ids {
+        deny_edits(state, event_bus, proposal_id).await;
     }
 }
 

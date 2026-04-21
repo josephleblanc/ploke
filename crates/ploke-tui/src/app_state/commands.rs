@@ -989,10 +989,10 @@ pub enum StateCommand {
         enabled: bool,
     },
     ApproveEdits {
-        request_id: Uuid,
+        proposal_id: Uuid,
     },
     DenyEdits {
-        request_id: Uuid,
+        proposal_id: Uuid,
     },
     /// Approve all pending edit proposals (newest wins when overlaps exist).
     ApprovePendingEdits,

@@ -22,7 +22,10 @@ use crate::tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload};
 use crate::utils::path_scoping;
 use crate::{
     app_state::{
-        core::{BeforeAfter, CreateProposal, EditProposal, EditProposalStatus, PreviewMode},
+        core::{
+            BeforeAfter, CreateProposal, EditProposal, EditProposalStatus, PreviewMode,
+            derive_edit_proposal_id,
+        },
         handlers::chat,
     },
     chat_history::MessageKind,
@@ -48,6 +51,13 @@ where
 }
 pub trait ToolOutput {}
 
+fn has_duplicate_edit_proposal(
+    reg: &std::collections::HashMap<Uuid, EditProposal>,
+    call_id: &ArcStr,
+) -> bool {
+    reg.values().any(|proposal| proposal.call_id == *call_id)
+}
+
 pub(crate) trait LlmTool<T, R, U>
 where
     T: Send + Sync + Clone + Serialize + for<'sea> Deserialize<'sea> + ToolInput<U>,
@@ -60,7 +70,7 @@ where
 pub async fn stage_semantic_edit_proposal(
     tool_call_params: ToolCallParams,
     edits: Vec<WriteSnippetData>,
-) {
+) -> Option<Uuid> {
     let ToolCallParams {
         state,
         event_bus,
@@ -73,11 +83,11 @@ pub async fn stage_semantic_edit_proposal(
 
     {
         let reg = state.proposals.read().await;
-        if reg.contains_key(&request_id) {
+        if has_duplicate_edit_proposal(&reg, &call_id) {
             let msg = format!(
-                "Duplicate {} request ignored for request_id {}",
+                "Duplicate {} request ignored for call_id {}",
                 name.as_str(),
-                request_id
+                call_id
             );
             tool_call_params.tool_call_failed(msg.clone());
             chat::add_msg_immediate(
@@ -88,13 +98,13 @@ pub async fn stage_semantic_edit_proposal(
                 MessageKind::SysInfo,
             )
             .await;
-            return;
+            return None;
         }
     }
 
     if edits.is_empty() {
         tool_call_params.tool_call_failed("No edits provided".to_string());
-        return;
+        return None;
     }
 
     let primary_root = state
@@ -203,11 +213,13 @@ pub async fn stage_semantic_edit_proposal(
     };
 
     let edit_len = edits.len();
+    let proposal_id = derive_edit_proposal_id(request_id, &call_id);
     {
         let mut reg = state.proposals.write().await;
         reg.insert(
-            request_id,
+            proposal_id,
             EditProposal {
+                proposal_id,
                 request_id,
                 parent_id,
                 call_id: call_id.clone(),
@@ -235,15 +247,16 @@ pub async fn stage_semantic_edit_proposal(
     crate::app_state::handlers::proposals::save_proposals(&state).await;
 
     let summary = format!(
-        r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
+        r#"Staged code edits (proposal_id: {proposal_id}, request_id: {request_id}, call_id: {call_id:?}).
 Files:
     {files}
 
 Preview (mode={preview_label}, context={context_lines} lines, first {max_lines} lines):
 {preview_snippet}
 
-Approve:  edit approve {request_id}
-Deny:     edit deny {request_id}{auto_confirm}"#,
+Approve:  edit approve {proposal_id}
+Deny:     edit deny {proposal_id}{auto_confirm}"#,
+        proposal_id = proposal_id,
         files = display_files.join("\n  "),
         preview_label = preview_label,
         context_lines = CHAT_PREVIEW_CONTEXT_LINES,
@@ -274,6 +287,7 @@ Deny:     edit deny {request_id}{auto_confirm}"#,
             result.files.len()
         ),
     )
+    .with_proposal_id(proposal_id)
     .with_request_id(request_id)
     .with_field("status", "pending")
     .with_field("staged", result.staged.to_string())
@@ -286,7 +300,7 @@ Deny:     edit deny {request_id}{auto_confirm}"#,
         Err(e) => {
             let err = format!("Failed to serialize ApplyCodeEditResult: {}", e);
             tool_call_params.tool_call_failed(err);
-            return;
+            return None;
         }
     };
     let _ = event_bus
@@ -303,9 +317,10 @@ Deny:     edit deny {request_id}{auto_confirm}"#,
         let state2 = Arc::clone(&state);
         let event_bus2 = Arc::clone(&event_bus);
         tokio::spawn(async move {
-            approve_edits(&state2, &event_bus2, request_id).await;
+            approve_edits(&state2, &event_bus2, proposal_id).await;
         });
     }
+    Some(proposal_id)
 }
 
 const CHAT_PREVIEW_CONTEXT_LINES: usize = 2;
@@ -604,7 +619,7 @@ impl ToolInput<serde_json::Value> for GetContextInput {
     }
 }
 
-pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
+pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uuid> {
     let ToolCallParams {
         state,
         event_bus,
@@ -619,7 +634,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         .await
     {
         tool_call_params.tool_call_failed(parse_failure.message.clone());
-        return;
+        return None;
     }
     if typed_req.edits.is_empty() {
         tool_call_params.tool_call_failed("No edits provided".to_string());
@@ -631,7 +646,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
             MessageKind::SysInfo,
         )
         .await;
-        return;
+        return None;
     }
 
     // Resolve each edit by canonical path -> EmbeddingData -> WriteSnippetData
@@ -661,7 +676,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                             Err(err) => {
                                 let msg = format!("invalid path: {}", err);
                                 tool_call_params.tool_call_failed(msg);
-                                return;
+                                return None;
                             }
                         }
                     }
@@ -702,7 +717,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                         node_type.relation_str()
                     );
                     tool_call_params.tool_call_failed(err);
-                    return;
+                    return None;
                 }
                 // TODO: Clean up the next 20 lines or so
                 let p = PathBuf::from(file);
@@ -714,7 +729,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                             Err(err) => {
                                 let msg = format!("invalid path: {}", err);
                                 tool_call_params.tool_call_failed(msg);
-                                return;
+                                return None;
                             }
                         }
                     }
@@ -734,7 +749,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     Ok(target) => target,
                     Err(msg) => {
                         tool_call_params.tool_call_failed(msg);
-                        return;
+                        return None;
                     }
                 };
                 let mod_path_owned = semantic_target.module_path().to_vec();
@@ -750,7 +765,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     Err(e) => {
                         let err = format!("DB resolve failed: {}", e);
                         tool_call_params.tool_call_failed(err);
-                        return;
+                        return None;
                     }
                 };
                 if nodes.is_empty() {
@@ -765,7 +780,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                         Err(e) => {
                             let err = format!("DB relaxed resolve failed: {}", e);
                             tool_call_params.tool_call_failed(err);
-                            return;
+                            return None;
                         }
                     };
                     let filtered: Vec<ploke_core::io_types::EmbeddingData> = cands
@@ -788,7 +803,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                                     Ok(target) => target,
                                     Err(e) => {
                                         tool_call_params.tool_call_failed(e);
-                                        return;
+                                        return None;
                                     }
                                 };
                             let method_nodes = match ploke_db::helpers::graph_resolve_exact(
@@ -802,7 +817,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                                 Err(e) => {
                                     let err = format!("DB method probe failed: {}", e);
                                     tool_call_params.tool_call_failed(err);
-                                    return;
+                                    return None;
                                 }
                             };
                             if method_nodes.len() == 1 {
@@ -815,7 +830,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                                     method_target.item_name(),
                                 );
                                 tool_call_params.tool_call_failed_error(err);
-                                return;
+                                return None;
                             } else if method_nodes.len() > 1 {
                                 let err = ambiguous_method_target_error(
                                     name,
@@ -827,7 +842,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                                     method_nodes.len(),
                                 );
                                 tool_call_params.tool_call_failed_error(err);
-                                return;
+                                return None;
                             }
                         }
                         let cfiles: Vec<String> = filtered
@@ -841,7 +856,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                             cfiles
                         );
                         tool_call_params.tool_call_failed(err);
-                        return;
+                        return None;
                     }
                     if filtered.len() > 1 {
                         let cfiles: Vec<String> = filtered
@@ -856,7 +871,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                             cfiles
                         );
                         tool_call_params.tool_call_failed(err);
-                        return;
+                        return None;
                     }
                     nodes = filtered;
                 }
@@ -871,7 +886,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                         nodes.len(),
                     );
                     tool_call_params.tool_call_failed_error(err);
-                    return;
+                    return None;
                 }
                 let ed = nodes.remove(0);
                 let ws = WriteSnippetData {
@@ -892,12 +907,12 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         }
     }
 
-    stage_semantic_edit_proposal(tool_call_params, edits).await;
+    stage_semantic_edit_proposal(tool_call_params, edits).await
 }
 
 pub async fn apply_ns_code_edit_tool(
     tool_call_params: ToolCallParams,
-) -> Result<(), ploke_error::Error> {
+) -> Result<Uuid, ploke_error::Error> {
     let ToolCallParams {
         state,
         event_bus,
@@ -909,6 +924,28 @@ pub async fn apply_ns_code_edit_tool(
     } = tool_call_params.clone();
     let editing_cfg = { state.config.read().await.editing.clone() };
     let edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
+    {
+        let reg = state.proposals.read().await;
+        if has_duplicate_edit_proposal(&reg, &call_id) {
+            let msg = format!(
+                "Duplicate {} request ignored for call_id {}",
+                name.as_str(),
+                call_id
+            );
+            tool_call_params.tool_call_failed(msg.clone());
+            chat::add_msg_immediate(
+                &state,
+                &event_bus,
+                Uuid::new_v4(),
+                msg,
+                MessageKind::SysInfo,
+            )
+            .await;
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: "Duplicate non-semantic patch request".to_string(),
+            }));
+        }
+    }
     let mut patches: Vec<(String, String, String)> = typed_req
         .edits
         .into_iter()
@@ -923,7 +960,9 @@ pub async fn apply_ns_code_edit_tool(
         .collect();
     if patches.is_empty() {
         tool_call_params.tool_call_failed("No patches provided".to_string());
-        return Ok(());
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "No patches provided".to_string(),
+        }));
     }
 
     let (primary_root, policy) = state
@@ -1018,30 +1057,54 @@ pub async fn apply_ns_code_edit_tool(
         // Pick a namespace. If you really don’t have one yet, re-use your placeholder.
         let namespace = PROJECT_NAMESPACE_UUID;
 
-        let patch_result = mpatch::parse_single_patch(&diff).map_err(|e| {
-            let msg = format!("invalid unified diff: {}", e);
-            tool_call_params.tool_call_failed(msg.clone());
-            ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
-        });
-        let patch = patch_result.map_err(|e| {
-            let msg = format!("failed to patch {}: {}", abs_path.display(), e);
-            tool_call_params.tool_call_failed(msg.clone());
-            ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
-        })?;
+        tracing::info!(
+            target: "ns-patch",
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            exists,
+            byte_len,
+            io_truncated,
+            expected_file_hash = ?file_hash,
+            diff_bytes = diff.len(),
+            fuzz_factor = apply_options.fuzz_factor,
+            dry_run = apply_options.dry_run,
+            "ns_patch staging file"
+        );
 
         tracing::info!(
+            target: "ns-patch",
             request_id = %request_id,
             call_id = %call_id,
             file = %abs_path.display(),
-            "ns_patch: before apply_patch_to_content"
+            patch_api = "try_apply_patch_to_content",
+            "ns_patch: before try_apply_patch_to_content"
         );
         let apply_patch_result =
-            mpatch::apply_patch_to_content(&patch, Some(&content), &apply_options);
+            ploke_io::try_apply_ns_diff_to_content(&diff, &content, state_cfg.editing.patch_cfg)
+                .map_err(|e| {
+                    let msg = format!("failed to patch {}: {}", abs_path.display(), e);
+                    tracing::error!(
+                        target: "ns-patch",
+                        request_id = %request_id,
+                        call_id = %call_id,
+                        file = %abs_path.display(),
+                        patch_api = "try_apply_patch_to_content",
+                        error = %e,
+                        "ns_patch staging rejected patch"
+                    );
+                    tool_call_params.tool_call_failed(msg.clone());
+                    ploke_error::Error::Domain(DomainError::Io { message: msg })
+                })?;
         tracing::info!(
+            target: "ns-patch",
             request_id = %request_id,
             call_id = %call_id,
             file = %abs_path.display(),
-            "ns_patch: after apply_patch_to_content"
+            before_len = content.len(),
+            after_len = apply_patch_result.new_content.len(),
+            changed = apply_patch_result.new_content != content,
+            "ns_patch staging preview computed"
         );
         let display_path = abs_path
             .strip_prefix(&primary_root)
@@ -1096,21 +1159,22 @@ pub async fn apply_ns_code_edit_tool(
     };
 
     tracing::info!(
+        target: "ns-patch",
         request_id = %request_id,
         call_id = %call_id,
         file_count = files.len(),
-        "ns_patch: before proposals.write"
+        files = ?display_files,
+        preview_mode = preview_label,
+        unified_diff_bytes = unified_diff.len(),
+        preview_chars = chat_preview_snippet.len(),
+        "ns_patch staging proposal"
     );
+    let proposal_id = derive_edit_proposal_id(request_id, &call_id);
     let mut reg = state.proposals.write().await;
-    tracing::info!(
-        request_id = %request_id,
-        call_id = %call_id,
-        file_count = files.len(),
-        "ns_patch: after proposals.write"
-    );
     reg.insert(
-        request_id,
+        proposal_id,
         EditProposal {
+            proposal_id,
             request_id,
             parent_id,
             call_id: call_id.clone(),
@@ -1137,29 +1201,25 @@ pub async fn apply_ns_code_edit_tool(
     drop(reg);
 
     tracing::info!(
+        target: "ns-patch",
         request_id = %request_id,
         call_id = %call_id,
         file_count = files.len(),
-        "ns_patch: before save_proposals"
+        "ns_patch persisting staged proposal"
     );
     crate::app_state::handlers::proposals::save_proposals(&state).await;
-    tracing::info!(
-        request_id = %request_id,
-        call_id = %call_id,
-        file_count = files.len(),
-        "ns_patch: after save_proposals"
-    );
 
     let summary = format!(
-        r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
+        r#"Staged code edits (proposal_id: {proposal_id}, request_id: {request_id}, call_id: {call_id:?}).
 Files:
     {files}
 
 Preview (mode={preview_label}, context={context_lines} lines, first {max_lines} lines):
 {preview_snippet}
 
-Approve:  edit approve {request_id}
-Deny:     edit deny {request_id}{auto_confirm}"#,
+Approve:  edit approve {proposal_id}
+Deny:     edit deny {proposal_id}{auto_confirm}"#,
+        proposal_id = proposal_id,
         files = display_files.join("\n  "),
         preview_label = preview_label,
         context_lines = CHAT_PREVIEW_CONTEXT_LINES,
@@ -1172,22 +1232,19 @@ Deny:     edit deny {request_id}{auto_confirm}"#,
         },
     );
     tracing::info!(
+        target: "ns-patch",
         request_id = %request_id,
         call_id = %call_id,
         file_count = files.len(),
-        "ns_patch: before add_msg_immediate_sysinfo_unpinned"
+        auto_confirm = editing_cfg.auto_confirm_edits,
+        "ns_patch publishing staged proposal summary"
     );
     chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
     tracing::info!(
+        target: "ns-patch",
         request_id = %request_id,
         call_id = %call_id,
-        file_count = files.len(),
-        "ns_patch: after add_msg_immediate_sysinfo_unpinned"
+        "ns_patch staging complete"
     );
-    tracing::info!(
-        request_id = %request_id,
-        call_id = %call_id,
-        "ns_patch: apply_ns_code_edit_tool returning"
-    );
-    Ok(())
+    Ok(proposal_id)
 }

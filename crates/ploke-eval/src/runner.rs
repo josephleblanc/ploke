@@ -4329,6 +4329,10 @@ mod tests {
             proposals.insert(
                 ploke_core::PROJECT_NAMESPACE_UUID,
                 EditProposal {
+                    proposal_id: ploke_tui::app_state::core::derive_edit_proposal_id(
+                        ploke_core::PROJECT_NAMESPACE_UUID,
+                        &ploke_core::ArcStr::from("edit-call"),
+                    ),
                     request_id: ploke_core::PROJECT_NAMESPACE_UUID,
                     parent_id: ploke_core::PROJECT_NAMESPACE_UUID,
                     call_id: ploke_core::ArcStr::from("edit-call"),
@@ -4382,6 +4386,10 @@ mod tests {
             proposals.insert(
                 ploke_core::PROJECT_NAMESPACE_UUID,
                 EditProposal {
+                    proposal_id: ploke_tui::app_state::core::derive_edit_proposal_id(
+                        ploke_core::PROJECT_NAMESPACE_UUID,
+                        &ploke_core::ArcStr::from("edit-call"),
+                    ),
                     request_id: ploke_core::PROJECT_NAMESPACE_UUID,
                     parent_id: ploke_core::PROJECT_NAMESPACE_UUID,
                     call_id: ploke_core::ArcStr::from("edit-call"),
@@ -4396,12 +4404,21 @@ mod tests {
                     is_semantic: true,
                 },
             );
+            let failed_request_id = uuid::Uuid::new_v4();
+            let failed_call_id = ploke_core::ArcStr::from("edit-call-failed");
             proposals.insert(
-                uuid::Uuid::new_v4(),
+                ploke_tui::app_state::core::derive_edit_proposal_id(
+                    failed_request_id,
+                    &failed_call_id,
+                ),
                 EditProposal {
-                    request_id: uuid::Uuid::new_v4(),
+                    proposal_id: ploke_tui::app_state::core::derive_edit_proposal_id(
+                        failed_request_id,
+                        &failed_call_id,
+                    ),
+                    request_id: failed_request_id,
                     parent_id: ploke_core::PROJECT_NAMESPACE_UUID,
-                    call_id: ploke_core::ArcStr::from("edit-call-failed"),
+                    call_id: failed_call_id,
                     proposed_at_ms: 2,
                     edits: Vec::new(),
                     files: vec![PathBuf::from("src/lib.rs")],

@@ -35,7 +35,7 @@ use ploke_tui::app::view::components::approvals::{
 };
 use ploke_tui::app_state::core::{
     AppState, ChatState, ConfigState, DiffPreview, EditProposal, EditProposalStatus, RuntimeConfig,
-    SystemState,
+    SystemState, derive_edit_proposal_id,
 };
 use tokio::sync::RwLock;
 
@@ -149,15 +149,18 @@ async fn make_state_with_ids(
     {
         let mut guard = state.proposals.write().await;
         for (i, (id, preview)) in previews.into_iter().enumerate() {
-            ids.push(id);
+            let call_id = ArcStr::from(format!("call-{i}"));
+            let proposal_id = derive_edit_proposal_id(id, &call_id);
+            ids.push(proposal_id);
             // Fixed, descending timestamps to keep list ordering deterministic across runs.
             let ts = 10_000_i64.saturating_sub(i as i64);
             guard.insert(
-                id,
+                proposal_id,
                 EditProposal {
+                    proposal_id,
                     request_id: id,
                     parent_id: uuid::Uuid::new_v4(),
-                    call_id: ArcStr::from(format!("call-{i}")),
+                    call_id,
                     proposed_at_ms: ts,
                     edits: vec![],
                     edits_ns: vec![],
@@ -450,19 +453,32 @@ fn approvals_overlay_filters_and_orders_by_status_and_recency() {
         let ts_mid = 1500;
         let ts_old = 1000;
 
-        let pending_new = uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0001);
-        let failed_mid = uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0002);
-        let pending_old = uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0003);
-        let applied_new = uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0004);
+        let pending_new_request_id =
+            uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0001);
+        let pending_new_call_id = ArcStr::from("p-new");
+        let pending_new = derive_edit_proposal_id(pending_new_request_id, &pending_new_call_id);
+        let failed_mid_request_id =
+            uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0002);
+        let failed_mid_call_id = ArcStr::from("f-mid");
+        let failed_mid = derive_edit_proposal_id(failed_mid_request_id, &failed_mid_call_id);
+        let pending_old_request_id =
+            uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0003);
+        let pending_old_call_id = ArcStr::from("p-old");
+        let pending_old = derive_edit_proposal_id(pending_old_request_id, &pending_old_call_id);
+        let applied_new_request_id =
+            uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0004);
+        let applied_new_call_id = ArcStr::from("a-new");
+        let applied_new = derive_edit_proposal_id(applied_new_request_id, &applied_new_call_id);
 
         {
             let mut guard = state.proposals.write().await;
             guard.insert(
                 pending_new,
                 EditProposal {
-                    request_id: pending_new,
+                    proposal_id: pending_new,
+                    request_id: pending_new_request_id,
                     parent_id: uuid::Uuid::new_v4(),
-                    call_id: ArcStr::from("p-new"),
+                    call_id: pending_new_call_id,
                     proposed_at_ms: ts_new,
                     edits: vec![],
                     edits_ns: vec![],
@@ -475,9 +491,10 @@ fn approvals_overlay_filters_and_orders_by_status_and_recency() {
             guard.insert(
                 failed_mid,
                 EditProposal {
-                    request_id: failed_mid,
+                    proposal_id: failed_mid,
+                    request_id: failed_mid_request_id,
                     parent_id: uuid::Uuid::new_v4(),
-                    call_id: ArcStr::from("f-mid"),
+                    call_id: failed_mid_call_id,
                     proposed_at_ms: ts_mid,
                     edits: vec![],
                     edits_ns: vec![],
@@ -490,9 +507,10 @@ fn approvals_overlay_filters_and_orders_by_status_and_recency() {
             guard.insert(
                 pending_old,
                 EditProposal {
-                    request_id: pending_old,
+                    proposal_id: pending_old,
+                    request_id: pending_old_request_id,
                     parent_id: uuid::Uuid::new_v4(),
-                    call_id: ArcStr::from("p-old"),
+                    call_id: pending_old_call_id,
                     proposed_at_ms: ts_old,
                     edits: vec![],
                     edits_ns: vec![],
@@ -505,9 +523,10 @@ fn approvals_overlay_filters_and_orders_by_status_and_recency() {
             guard.insert(
                 applied_new,
                 EditProposal {
-                    request_id: applied_new,
+                    proposal_id: applied_new,
+                    request_id: applied_new_request_id,
                     parent_id: uuid::Uuid::new_v4(),
-                    call_id: ArcStr::from("a-new"),
+                    call_id: applied_new_call_id,
                     proposed_at_ms: ts_new + 10,
                     edits: vec![],
                     edits_ns: vec![],

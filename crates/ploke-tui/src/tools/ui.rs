@@ -30,6 +30,7 @@ pub struct ToolUiPayload {
     pub tool: ToolName,
     pub call_id: ArcStr,
     pub request_id: Option<Uuid>,
+    pub proposal_id: Option<Uuid>,
     pub summary: String,
     pub fields: Vec<ToolUiField>,
     pub details: Option<String>,
@@ -44,6 +45,7 @@ impl ToolUiPayload {
             tool,
             call_id,
             request_id: None,
+            proposal_id: None,
             summary: summary.into(),
             fields: Vec::new(),
             details: None,
@@ -55,6 +57,11 @@ impl ToolUiPayload {
 
     pub fn with_request_id(mut self, request_id: Uuid) -> Self {
         self.request_id = Some(request_id);
+        self
+    }
+
+    pub fn with_proposal_id(mut self, proposal_id: Uuid) -> Self {
+        self.proposal_id = Some(proposal_id);
         self
     }
 

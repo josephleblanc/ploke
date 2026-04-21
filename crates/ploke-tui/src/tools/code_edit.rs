@@ -120,18 +120,23 @@ impl super::Tool for GatCodeEdit {
             typed_req,
             call_id,
         };
-        apply_code_edit_tool(params_env).await;
+        let proposal_id = apply_code_edit_tool(params_env).await;
         // Build typed result deterministically from proposal registry
-        print_code_edit_results(&ctx, request_id, ToolName::ApplyCodeEdit).await
+        print_code_edit_results(&ctx, proposal_id, request_id, ToolName::ApplyCodeEdit).await
     }
 }
 
 pub async fn print_code_edit_results(
     ctx: &Ctx,
+    proposal_id: Option<Uuid>,
     request_id: Uuid,
     tool_name: ToolName,
 ) -> Result<ToolResult, ploke_error::Error> {
-    let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
+    let proposal_opt = if let Some(proposal_id) = proposal_id {
+        ctx.state.proposals.read().await.get(&proposal_id).cloned()
+    } else {
+        None
+    };
     if let Some(prop) = proposal_opt {
         let primary_root = ctx
             .state
@@ -180,6 +185,7 @@ pub async fn print_code_edit_results(
             structured_result.files.len()
         );
         let ui_payload = super::ToolUiPayload::new(tool_name, ctx.call_id.clone(), summary)
+            .with_proposal_id(prop.proposal_id)
             .with_request_id(request_id)
             .with_field("status", "pending")
             .with_field("staged", structured_result.staged.to_string())

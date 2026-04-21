@@ -6,6 +6,7 @@ use ploke_core::ArcStr;
 use ploke_core::rag_types::ApplyCodeEditResult;
 use ploke_core::tool_types::{FunctionMarker, ToolName};
 use ploke_llm::response::{FunctionCall, ToolCall};
+use ploke_tui::app_state::core::derive_edit_proposal_id;
 use ploke_tui::app_state::events::SystemEvent;
 use ploke_tui::test_utils::new_test_harness::AppHarness;
 use ploke_tui::{AppEvent, EventPriority};
@@ -242,12 +243,13 @@ async fn ns_patch_stages_multiple_files_in_one_request() {
         "completion event should preserve requested relative paths"
     );
 
+    let proposal_id = derive_edit_proposal_id(request_id, &call_id);
     let proposal = harness
         .state
         .proposals
         .read()
         .await
-        .get(&request_id)
+        .get(&proposal_id)
         .cloned()
         .expect("ns_patch should stage a proposal");
     assert_eq!(
@@ -345,12 +347,13 @@ async fn ns_patch_emits_completed_event_for_exact_ripgrep_diff() {
         "completion event should preserve the ripgrep relative file path"
     );
 
+    let proposal_id = derive_edit_proposal_id(request_id, &call_id);
     let proposal = harness
         .state
         .proposals
         .read()
         .await
-        .get(&request_id)
+        .get(&proposal_id)
         .cloned()
         .expect("ns_patch should stage a proposal");
     assert_eq!(
@@ -449,7 +452,7 @@ async fn ns_patch_auto_confirm_applies_staged_patch() {
                 .proposals
                 .read()
                 .await
-                .get(&request_id)
+                .get(&derive_edit_proposal_id(request_id, &call_id))
                 .cloned();
             panic!(
                 "expected auto-confirmed ns_patch to modify file; final proposal state: {proposal:?}"

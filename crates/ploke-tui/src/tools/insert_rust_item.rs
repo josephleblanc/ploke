@@ -175,8 +175,14 @@ impl Tool for InsertRustItem {
             },
             call_id: ctx.call_id.clone(),
         };
-        stage_semantic_edit_proposal(stage_ctx, vec![planned_edit]).await;
-        crate::tools::code_edit::print_code_edit_results(&ctx, ctx.request_id, Self::name()).await
+        let proposal_id = stage_semantic_edit_proposal(stage_ctx, vec![planned_edit]).await;
+        crate::tools::code_edit::print_code_edit_results(
+            &ctx,
+            proposal_id,
+            ctx.request_id,
+            Self::name(),
+        )
+        .await
     }
 }
 
@@ -688,12 +694,15 @@ mod tests {
     async fn insert_rust_item_stages_file_scope_edit() {
         let harness = AppHarness::spawn().await.expect("spawn harness");
         let request_id = Uuid::new_v4();
+        let call_id = ploke_core::ArcStr::from("test_insert_rust_item");
+        let proposal_id =
+            crate::app_state::core::derive_edit_proposal_id(request_id, &call_id);
         let ctx = Ctx {
             state: Arc::clone(&harness.state),
             event_bus: Arc::clone(&harness.event_bus),
             request_id,
             parent_id: request_id,
-            call_id: "test_insert_rust_item".into(),
+            call_id,
         };
 
         let params = InsertRustItemParams {
@@ -712,7 +721,7 @@ mod tests {
         assert!(parsed.files.iter().any(|file| file == "src/structs.rs"));
 
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("proposal");
+        let proposal = proposals.get(&proposal_id).expect("proposal");
         assert_eq!(proposal.edits.len(), 1);
         assert_eq!(
             proposal
