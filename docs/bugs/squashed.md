@@ -1,5 +1,21 @@
 ## Squashed Bugs
 
+### Eval cargo tool can fail on the global Cargo cache path
+
+- Date found: Apr 20, 2026
+- Date fixed: Apr 20, 2026
+
+**Description**:
+During smoke eval on `sharkdp__fd-658`, the model used the Cargo tool for
+`cargo check`, but Cargo tried to write into the global `~/.cargo` path and
+failed under eval sandboxing. That could invalidate the run by breaking model
+verification for reasons unrelated to the candidate patch.
+
+**The Fix**:
+Validated that outer eval env overrides for `CARGO_HOME` and
+`CARGO_TARGET_DIR` fix the failure, then committed the harness-side follow-up
+work so eval runs can stop depending on the user's global Cargo cache path.
+
  ### OpenRouter 500 caused by incorrect message field name
 
 - Date found: Jul 22, 2025
