@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str::FromStr;
@@ -32,6 +32,7 @@ use crate::closure::{
     ClosureClass, ClosureRecomputeRequest, closure_state_path, load_closure_state,
     recompute_closure_state, render_closure_status,
 };
+use crate::inner::registry::RunRegistration;
 use crate::layout::{
     active_model_file, batches_dir, cache_dir, datasets_dir, model_registry_file, models_dir,
     repos_dir, runs_dir, starting_db_cache_dir, workspace_root_for_key,
@@ -66,11 +67,17 @@ use crate::record::{RawFullResponseRecord, read_compressed_record};
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
 use crate::run_history::{
     RunDirPreference, list_finished_record_paths_in_runs_root, preferred_run_dir_for_instance,
-    print_last_run_assistant_messages,
+    print_assistant_messages_from_record_path,
 };
+use crate::run_registry::list_registrations_for_instance;
 use crate::runner::{
     BatchRunSummary, MultiSweBenchSubmissionRecord, ReplayMsbBatchRequest, RunMsbAgentBatchRequest,
     RunMsbAgentSingleRequest, RunMsbBatchRequest, RunMsbSingleRequest, resolve_provider_for_model,
+};
+use crate::selection::{
+    ActiveSelection, ActiveSelectionSlot, clear_active_selection, load_active_selection,
+    load_active_selection_at, render_selection_warnings, save_active_selection,
+    unset_active_selection_slot,
 };
 use crate::spec::{
     EvalBudget, IssueInput, OutputMode, PrepareError, PrepareSingleRunRequest, PrepareWrite,
@@ -94,6 +101,7 @@ Choose an operator path:
   inspect a run      transcript / conversations / inspect
   setup and models   doctor / model
   target inventory   registry
+  active selectors   select
 
 Trust order:
   per-run artifacts > campaign export-submissions > closure state > batch aggregate JSONL
@@ -130,8 +138,8 @@ pub enum Command {
     /// Show and set model/provider defaults for eval runs.
     Model(ModelCommand),
     #[command(display_order = 30)]
-    /// Print assistant messages from the most recent completed run.
-    Transcript,
+    /// Print assistant messages from one resolved run.
+    Transcript(TranscriptCommand),
     #[command(display_order = 31)]
     /// List conversation turns for a run.
     Conversations(ConversationsCommand),
@@ -147,6 +155,9 @@ pub enum Command {
     #[command(display_order = 42)]
     /// Show and recompute the persisted target inventory.
     Registry(RegistryCommand),
+    #[command(display_order = 43)]
+    /// Persist and inspect the active operator selection context.
+    Select(SelectCommand),
     #[command(display_order = 50)]
     /// Check eval setup and point out likely configuration problems.
     Doctor,
@@ -175,6 +186,9 @@ pub enum RunSubcommand {
     #[command(display_order = 20)]
     /// Prepare ad hoc, single-instance, or batch manifests before execution.
     Prepare(RunPrepareCommand),
+    #[command(display_order = 25)]
+    /// List concrete run attempts for one instance and identify the latest attempt.
+    List(RunListCommand),
     #[command(display_order = 30)]
     /// Execute one prepared instance through setup-only or agent-turn paths.
     Single(RunSingleWorkflowCommand),
@@ -394,7 +408,7 @@ impl Cli {
                     ExitCode::FAILURE
                 }
             },
-            Command::Transcript => match print_last_run_assistant_messages().await {
+            Command::Transcript(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
@@ -443,6 +457,13 @@ impl Cli {
                     ExitCode::FAILURE
                 }
             },
+            Command::Select(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
             Command::Closure(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
@@ -460,6 +481,7 @@ impl RunCommand {
             RunSubcommand::Repo(cmd) => cmd.run().await,
             RunSubcommand::Datasets(cmd) => cmd.run().await,
             RunSubcommand::Prepare(cmd) => cmd.run().await,
+            RunSubcommand::List(cmd) => cmd.run().await,
             RunSubcommand::Single(cmd) => cmd.run().await,
             RunSubcommand::Batch(cmd) => cmd.run().await,
             RunSubcommand::Replay(cmd) => cmd.run().await,
@@ -492,6 +514,20 @@ impl RunPrepareCommand {
             RunPrepareSubcommand::Custom(cmd) => cmd.run(),
             RunPrepareSubcommand::Instance(cmd) => cmd.run(),
             RunPrepareSubcommand::Batch(cmd) => cmd.run(),
+        }
+    }
+}
+
+impl SelectCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            SelectSubcommand::Status(cmd) => cmd.run(),
+            SelectSubcommand::Campaign(cmd) => cmd.run(),
+            SelectSubcommand::Batch(cmd) => cmd.run(),
+            SelectSubcommand::Instance(cmd) => cmd.run(),
+            SelectSubcommand::Attempt(cmd) => cmd.run(),
+            SelectSubcommand::Unset(cmd) => cmd.run(),
+            SelectSubcommand::Clear(cmd) => cmd.run(),
         }
     }
 }
@@ -1329,6 +1365,18 @@ async fn set_persisted_provider(
 }
 
 #[derive(Debug, Parser)]
+#[command(about = "List concrete run attempts for one instance")]
+pub struct RunListCommand {
+    /// Benchmark instance id. Defaults to the selected instance when set.
+    #[arg(long)]
+    pub instance: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
 #[command(
     about = "Replay one batch from a prepared Multi-SWE-bench run",
     after_help = "\
@@ -1381,6 +1429,83 @@ pub struct ConversationsCommand {
     #[arg(long, value_enum, default_value_t = ConversationsOutputFormat::Table)]
     pub format: ConversationsOutputFormat,
 }
+
+#[derive(Debug, Parser)]
+#[command(about = "Print assistant messages from one resolved run")]
+pub struct TranscriptCommand {
+    /// Benchmark instance id. Defaults to the selected instance when set.
+    #[arg(long)]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Persist and inspect the active operator selection context")]
+pub struct SelectCommand {
+    #[command(subcommand)]
+    pub command: SelectSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SelectSubcommand {
+    /// Show the current active selection context and any scope conflicts.
+    Status(SelectStatusCommand),
+    /// Select the active campaign context.
+    Campaign(SelectCampaignCommand),
+    /// Select the active batch context.
+    Batch(SelectBatchCommand),
+    /// Select the active instance context. Clears any active attempt.
+    Instance(SelectInstanceCommand),
+    /// Select the active attempt number for the active instance.
+    Attempt(SelectAttemptCommand),
+    /// Unset one active selection scope.
+    Unset(SelectUnsetCommand),
+    /// Clear the entire active selection context.
+    Clear(SelectClearCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct SelectStatusCommand {
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct SelectCampaignCommand {
+    /// Stable campaign identifier.
+    pub campaign: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct SelectBatchCommand {
+    /// Stable batch identifier.
+    pub batch: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct SelectInstanceCommand {
+    /// Stable benchmark instance identifier.
+    pub instance: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct SelectAttemptCommand {
+    /// 1-based attempt number for the selected instance.
+    pub attempt: u32,
+
+    /// Override the active instance while setting the attempt.
+    #[arg(long)]
+    pub instance: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct SelectUnsetCommand {
+    /// Which scope to unset.
+    pub scope: ActiveSelectionSlot,
+}
+
+#[derive(Debug, Parser)]
+pub struct SelectClearCommand;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum ConversationsOutputFormat {
@@ -2413,9 +2538,112 @@ impl ReplayMsbBatchCommand {
     }
 }
 
+impl TranscriptCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let resolution = resolve_record_path(None, self.instance, None)?;
+        print_assistant_messages_from_record_path(&resolution.record_path).await?;
+        print_record_resolution_footer(&resolution);
+        Ok(())
+    }
+}
+
+impl RunListCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let selection = load_active_selection()?;
+        let instance = self
+            .instance
+            .clone()
+            .or_else(|| selection.instance.clone())
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "run_list",
+                detail:
+                    "instance is required (pass --instance or `ploke-eval select instance <id>`)"
+                        .to_string(),
+            })?;
+        let registrations = list_attempt_registrations(&runs_dir()?, &instance)?;
+        let warnings = render_selection_warnings(&selection_with_resolution(
+            &selection,
+            Some(&instance),
+            None,
+        ));
+        let rows: Vec<_> = registrations
+            .iter()
+            .enumerate()
+            .map(|(index, registration)| RunListRow {
+                attempt: (index + 1) as u32,
+                latest: index + 1 == registrations.len(),
+                execution_status: registration.lifecycle.execution_status,
+                submission_status: registration.lifecycle.submission_status,
+                run_arm_id: registration.frozen_spec.run_arm_id.clone(),
+                model_id: registration.frozen_spec.model_id.clone(),
+                provider_slug: registration.frozen_spec.provider_slug.clone(),
+                started_at: registration.lifecycle.started_at.clone(),
+                finished_at: registration.lifecycle.finished_at.clone(),
+                run_root: registration.artifacts.run_root.clone(),
+            })
+            .collect();
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                if rows.is_empty() {
+                    println!("instance {} has no registered attempts.", instance);
+                } else {
+                    println!(
+                        "{:<7} {:<6} {:<11} {:<13} {:<28} {:<12} {:<10} {}",
+                        "Attempt",
+                        "Latest",
+                        "Execution",
+                        "Submission",
+                        "Arm",
+                        "Provider",
+                        "Model",
+                        "Finished"
+                    );
+                    println!("{}", "-".repeat(120));
+                    for row in &rows {
+                        println!(
+                            "{:<7} {:<6} {:<11} {:<13} {:<28} {:<12} {:<10} {}",
+                            row.attempt,
+                            if row.latest { "yes" } else { "" },
+                            execution_status_label(row.execution_status),
+                            submission_status_label(row.submission_status),
+                            truncate_for_table(&row.run_arm_id, 26),
+                            truncate_for_table(row.provider_slug.as_deref().unwrap_or("-"), 10),
+                            truncate_for_table(row.model_id.as_deref().unwrap_or("-"), 8),
+                            row.finished_at.as_deref().unwrap_or("-"),
+                        );
+                    }
+                    println!("\ninstance: {}", instance);
+                    println!(
+                        "latest attempt: {}",
+                        rows.last().map(|row| row.attempt).unwrap_or(0)
+                    );
+                }
+                for warning in warnings {
+                    println!("warning: {warning}");
+                }
+            }
+            InspectOutputFormat::Json => {
+                let payload = serde_json::json!({
+                    "instance": instance,
+                    "selection": selection,
+                    "warnings": warnings,
+                    "runs": rows,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
 impl ConversationsCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
 
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
@@ -2464,6 +2692,7 @@ impl ConversationsCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
@@ -2534,6 +2763,125 @@ impl ClosureAdvanceCommand {
             ClosureAdvanceSubcommand::Protocol(cmd) => cmd.run().await,
             ClosureAdvanceSubcommand::All(cmd) => cmd.run().await,
         }
+    }
+}
+
+impl SelectStatusCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let selection = load_active_selection()?;
+        let warnings = render_selection_warnings(&selection);
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("active selection");
+                println!("{}", "-".repeat(40));
+                println!(
+                    "campaign: {}",
+                    selection.campaign.as_deref().unwrap_or("(none)")
+                );
+                println!("batch: {}", selection.batch.as_deref().unwrap_or("(none)"));
+                println!(
+                    "instance: {}",
+                    selection.instance.as_deref().unwrap_or("(none)")
+                );
+                println!(
+                    "attempt: {}",
+                    selection
+                        .attempt
+                        .map(|attempt| attempt.to_string())
+                        .unwrap_or_else(|| "(latest)".to_string())
+                );
+                for warning in warnings {
+                    println!("warning: {warning}");
+                }
+            }
+            InspectOutputFormat::Json => {
+                let payload = serde_json::json!({
+                    "selection": selection,
+                    "warnings": warnings,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SelectCampaignCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let mut selection = load_active_selection()?;
+        selection.campaign = Some(self.campaign);
+        save_active_selection(&selection)?;
+        print_selection_update(&selection);
+        Ok(())
+    }
+}
+
+impl SelectBatchCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let mut selection = load_active_selection()?;
+        selection.batch = Some(self.batch);
+        save_active_selection(&selection)?;
+        print_selection_update(&selection);
+        Ok(())
+    }
+}
+
+impl SelectInstanceCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let mut selection = load_active_selection()?;
+        selection.instance = Some(self.instance);
+        selection.attempt = None;
+        save_active_selection(&selection)?;
+        print_selection_update(&selection);
+        Ok(())
+    }
+}
+
+impl SelectAttemptCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        if self.attempt == 0 {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "select_attempt",
+                detail: "attempt numbers are 1-based".to_string(),
+            });
+        }
+        let mut selection = load_active_selection()?;
+        if let Some(instance) = self.instance {
+            selection.instance = Some(instance);
+        }
+        if selection.instance.is_none() {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "select_attempt",
+                detail:
+                    "attempt selection requires an active instance (set one first or pass --instance)"
+                        .to_string(),
+            });
+        }
+        selection.attempt = Some(self.attempt);
+        save_active_selection(&selection)?;
+        print_selection_update(&selection);
+        Ok(())
+    }
+}
+
+impl SelectUnsetCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        unset_active_selection_slot(self.scope)?;
+        let selection = load_active_selection()?;
+        print_selection_update(&selection);
+        Ok(())
+    }
+}
+
+impl SelectClearCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        clear_active_selection()?;
+        let selection = load_active_selection()?;
+        print_selection_update(&selection);
+        Ok(())
     }
 }
 
@@ -2878,7 +3226,8 @@ impl ClosureStatusCommand {
 
 impl ProtocolToolCallReviewCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
                 path: record_path.clone(),
@@ -3006,6 +3355,7 @@ impl ProtocolToolCallReviewCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
@@ -3984,7 +4334,8 @@ fn render_advance_all_report(
 
 impl ProtocolToolCallSegmentReviewCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
                 path: record_path.clone(),
@@ -4115,13 +4466,15 @@ impl ProtocolToolCallSegmentReviewCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
 
 impl ProtocolToolCallIntentSegmentsCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
                 path: record_path.clone(),
@@ -4259,13 +4612,15 @@ impl ProtocolToolCallIntentSegmentsCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
 
 impl InspectConversationsCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
                 path: record_path.clone(),
@@ -4336,13 +4691,15 @@ impl InspectConversationsCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
 
 impl InspectToolCallsCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
                 path: record_path.clone(),
@@ -4399,6 +4756,7 @@ impl InspectToolCallsCommand {
                     }
                 },
             }
+            print_record_resolution_footer(&resolution);
             return Ok(());
         }
 
@@ -4448,6 +4806,7 @@ impl InspectToolCallsCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
@@ -4470,7 +4829,8 @@ impl InspectToolOverviewCommand {
 
 impl InspectDbSnapshotsCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
                 path: record_path.clone(),
@@ -4496,13 +4856,15 @@ impl InspectDbSnapshotsCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
 
 impl InspectFailuresCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
                 path: record_path.clone(),
@@ -4543,13 +4905,15 @@ impl InspectFailuresCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
 
 impl InspectConfigCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
                 path: record_path.clone(),
@@ -4579,13 +4943,15 @@ impl InspectConfigCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
 
 impl InspectTurnCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
                 path: record_path.clone(),
@@ -4855,6 +5221,7 @@ impl InspectTurnCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
@@ -4878,7 +5245,8 @@ impl InspectQueryCommand {
         }
 
         // Load the record
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
         let record =
             read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
                 path: record_path.clone(),
@@ -4986,13 +5354,15 @@ impl InspectQueryCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
 
 impl InspectProtocolArtifactsCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let record_path = resolve_record_path(self.record, self.instance)?;
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
         let artifacts = list_protocol_artifacts(&record_path)?;
 
         if let Some(index) = self.index {
@@ -5046,6 +5416,7 @@ impl InspectProtocolArtifactsCommand {
                     }
                 }
             }
+            print_record_resolution_footer(&resolution);
             return Ok(());
         }
 
@@ -5099,6 +5470,7 @@ impl InspectProtocolArtifactsCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
@@ -5143,7 +5515,8 @@ impl InspectProtocolOverviewCommand {
             };
         }
 
-        let record_path = resolve_record_path(self.record.clone(), self.instance.clone())?;
+        let resolution = resolve_record_path(self.record.clone(), self.instance.clone(), None)?;
+        let record_path = resolution.record_path.clone();
         let aggregate =
             load_protocol_aggregate(&record_path).map_err(|err| PrepareError::DatabaseSetup {
                 phase: "inspect_protocol_overview",
@@ -5178,6 +5551,7 @@ impl InspectProtocolOverviewCommand {
             }
         }
 
+        print_record_resolution_footer(&resolution);
         Ok(())
     }
 }
@@ -8081,35 +8455,297 @@ fn tool_error_code_label(code: ploke_tui::tools::ToolErrorCode) -> &'static str 
     }
 }
 
+#[derive(Debug, Clone)]
+struct RecordResolution {
+    record_path: PathBuf,
+    footer: Option<String>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RunListRow {
+    attempt: u32,
+    latest: bool,
+    execution_status: crate::run_registry::RunExecutionStatus,
+    submission_status: crate::run_registry::RunSubmissionStatus,
+    run_arm_id: String,
+    model_id: Option<String>,
+    provider_slug: Option<String>,
+    started_at: Option<String>,
+    finished_at: Option<String>,
+    run_root: PathBuf,
+}
+
 fn resolve_record_path(
     record: Option<PathBuf>,
     instance: Option<String>,
-) -> Result<PathBuf, PrepareError> {
-    resolve_record_path_from_eval_home(record, instance, crate::layout::ploke_eval_home()?)
+    attempt: Option<u32>,
+) -> Result<RecordResolution, PrepareError> {
+    resolve_record_path_from_eval_home(record, instance, attempt, crate::layout::ploke_eval_home()?)
 }
 
 fn resolve_record_path_from_eval_home(
     record: Option<PathBuf>,
     instance: Option<String>,
+    attempt: Option<u32>,
     eval_home: PathBuf,
-) -> Result<PathBuf, PrepareError> {
+) -> Result<RecordResolution, PrepareError> {
     let runs_root = eval_home.join("runs");
+    let selection = load_active_selection_at(&eval_home)?;
     match (record, instance) {
-        (Some(path), None) => Ok(path),
-        (None, Some(instance)) => Ok(preferred_run_dir_for_instance(
-            &runs_root,
-            &instance,
-            RunDirPreference::PreferTreatment,
-        )?
-        .unwrap_or_else(|| runs_root.join(&instance))
-        .join("record.json.gz")),
-        (None, None) => {
+        (Some(path), None) => Ok(RecordResolution {
+            record_path: path,
+            footer: None,
+            warnings: Vec::new(),
+        }),
+        (None, explicit_instance) => {
+            let resolved_instance = explicit_instance.or_else(|| selection.instance.clone());
+            let (resolved_attempt, attempt_warning) =
+                resolve_attempt_override(&selection, resolved_instance.as_deref(), attempt);
+            if let Some(instance_id) = resolved_instance {
+                let mut warnings = render_selection_warnings(&selection_with_resolution(
+                    &selection,
+                    Some(&instance_id),
+                    resolved_attempt,
+                ));
+                if let Some(warning) = attempt_warning {
+                    warnings.push(warning);
+                }
+                return resolve_instance_record_path(
+                    &runs_root,
+                    &instance_id,
+                    resolved_attempt,
+                    warnings,
+                );
+            }
+            if resolved_attempt.is_some() {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "resolve_record_path",
+                    detail: "an active attempt selection requires an active or explicit instance"
+                        .to_string(),
+                });
+            }
             let last_run = crate::run_history::load_last_run_at(&eval_home)?;
-            Ok(last_run.run_dir.join("record.json.gz"))
+            let record_path = last_run.run_dir.join("record.json.gz");
+            let footer =
+                match crate::run_registry::load_registration_for_run_dir(&last_run.run_dir)? {
+                    Some(registration) => {
+                        let attempt = attempt_number_for_registration(
+                            &runs_root,
+                            &registration.frozen_spec.task_id,
+                            &registration.run_id,
+                        )?;
+                        Some(format!(
+                            "resolved run: {} attempt {} (latest)",
+                            registration.frozen_spec.task_id, attempt
+                        ))
+                    }
+                    None => Some("resolved run: most recent completed run".to_string()),
+                };
+            Ok(RecordResolution {
+                record_path,
+                footer,
+                warnings: render_selection_warnings(&selection),
+            })
         }
         (Some(_), Some(_)) => Err(PrepareError::MissingRunManifest(
             runs_root.join("<instance>/record.json.gz"),
         )),
+    }
+}
+
+fn resolve_attempt_override(
+    selection: &ActiveSelection,
+    resolved_instance: Option<&str>,
+    explicit_attempt: Option<u32>,
+) -> (Option<u32>, Option<String>) {
+    if explicit_attempt.is_some() {
+        return (explicit_attempt, None);
+    }
+    let Some(selected_attempt) = selection.attempt else {
+        return (None, None);
+    };
+    let Some(selected_instance) = selection.instance.as_deref() else {
+        return (
+            None,
+            Some("selected attempt was ignored because no selected instance is active".to_string()),
+        );
+    };
+    match resolved_instance {
+        Some(instance) if instance == selected_instance => (Some(selected_attempt), None),
+        Some(instance) => (
+            None,
+            Some(format!(
+                "selected attempt {} for instance {} was ignored because instance {} was requested",
+                selected_attempt, selected_instance, instance
+            )),
+        ),
+        None => (None, None),
+    }
+}
+
+fn selection_with_resolution(
+    selection: &ActiveSelection,
+    instance: Option<&str>,
+    attempt: Option<u32>,
+) -> ActiveSelection {
+    let mut resolved = selection.clone();
+    if let Some(instance) = instance {
+        resolved.instance = Some(instance.to_string());
+        resolved.attempt = attempt;
+    }
+    resolved
+}
+
+fn resolve_instance_record_path(
+    runs_root: &Path,
+    instance_id: &str,
+    attempt: Option<u32>,
+    warnings: Vec<String>,
+) -> Result<RecordResolution, PrepareError> {
+    let registrations = list_attempt_registrations(runs_root, instance_id)?;
+    if !registrations.is_empty() {
+        let selected_index = match attempt {
+            Some(number) if number > 0 => {
+                let index = (number - 1) as usize;
+                if index >= registrations.len() {
+                    return Err(PrepareError::DatabaseSetup {
+                        phase: "resolve_record_path",
+                        detail: format!(
+                            "instance {instance_id} has {} attempt(s); attempt {} is out of range",
+                            registrations.len(),
+                            number
+                        ),
+                    });
+                }
+                index
+            }
+            Some(_) => {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "resolve_record_path",
+                    detail: "attempt numbers are 1-based".to_string(),
+                });
+            }
+            None => registrations.len() - 1,
+        };
+        let selected = &registrations[selected_index];
+        return Ok(RecordResolution {
+            record_path: selected.artifacts.record_path.clone(),
+            footer: attempt.is_none().then(|| {
+                format!(
+                    "resolved run: {} attempt {} (latest)",
+                    instance_id,
+                    selected_index + 1
+                )
+            }),
+            warnings,
+        });
+    }
+
+    if attempt.is_some() {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "resolve_record_path",
+            detail: format!(
+                "instance {instance_id} has no registered attempts; cannot resolve a numbered attempt"
+            ),
+        });
+    }
+
+    let record_path =
+        preferred_run_dir_for_instance(runs_root, instance_id, RunDirPreference::PreferTreatment)?
+            .unwrap_or_else(|| runs_root.join(instance_id))
+            .join("record.json.gz");
+    Ok(RecordResolution {
+        record_path,
+        footer: Some(format!("resolved run: {} latest (legacy)", instance_id)),
+        warnings,
+    })
+}
+
+fn list_attempt_registrations(
+    runs_root: &Path,
+    instance_id: &str,
+) -> Result<Vec<RunRegistration>, PrepareError> {
+    let mut registrations = list_registrations_for_instance(runs_root, instance_id)?;
+    registrations.sort_by(|left, right| {
+        run_registration_sort_key(left).cmp(&run_registration_sort_key(right))
+    });
+    Ok(registrations)
+}
+
+fn attempt_number_for_registration(
+    runs_root: &Path,
+    instance_id: &str,
+    run_id: &str,
+) -> Result<usize, PrepareError> {
+    let registrations = list_attempt_registrations(runs_root, instance_id)?;
+    registrations
+        .iter()
+        .position(|registration| registration.run_id == run_id)
+        .map(|index| index + 1)
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "resolve_record_path",
+            detail: format!("run {run_id} is not registered under instance {instance_id}"),
+        })
+}
+
+fn run_registration_sort_key(registration: &RunRegistration) -> (String, String) {
+    (
+        registration
+            .lifecycle
+            .finished_at
+            .clone()
+            .unwrap_or_else(|| registration.lifecycle.updated_at.clone()),
+        registration.run_id.clone(),
+    )
+}
+
+fn print_record_resolution_footer(resolution: &RecordResolution) {
+    let _ = std::io::stdout().flush();
+    for warning in &resolution.warnings {
+        eprintln!("warning: {warning}");
+    }
+    if let Some(footer) = &resolution.footer {
+        eprintln!("{footer}");
+    }
+}
+
+fn print_selection_update(selection: &ActiveSelection) {
+    println!(
+        "campaign: {}",
+        selection.campaign.as_deref().unwrap_or("(none)")
+    );
+    println!("batch: {}", selection.batch.as_deref().unwrap_or("(none)"));
+    println!(
+        "instance: {}",
+        selection.instance.as_deref().unwrap_or("(none)")
+    );
+    println!(
+        "attempt: {}",
+        selection
+            .attempt
+            .map(|attempt| attempt.to_string())
+            .unwrap_or_else(|| "(latest)".to_string())
+    );
+    for warning in render_selection_warnings(selection) {
+        println!("warning: {warning}");
+    }
+}
+
+fn execution_status_label(status: crate::run_registry::RunExecutionStatus) -> &'static str {
+    match status {
+        crate::run_registry::RunExecutionStatus::Registered => "registered",
+        crate::run_registry::RunExecutionStatus::Running => "running",
+        crate::run_registry::RunExecutionStatus::Completed => "completed",
+        crate::run_registry::RunExecutionStatus::Failed => "failed",
+    }
+}
+
+fn submission_status_label(status: crate::run_registry::RunSubmissionStatus) -> &'static str {
+    match status {
+        crate::run_registry::RunSubmissionStatus::Missing => "missing",
+        crate::run_registry::RunSubmissionStatus::EmptyPatch => "empty_patch",
+        crate::run_registry::RunSubmissionStatus::NonemptyPatch => "nonempty_patch",
     }
 }
 
@@ -8894,6 +9530,43 @@ mod tests {
     }
 
     #[test]
+    fn run_list_parses_instance_selector() {
+        let parsed =
+            Cli::try_parse_from(["ploke-eval", "run", "list", "--instance", "sharkdp__fd-658"])
+                .expect("run list should parse");
+
+        match parsed.command {
+            Command::Run(RunCommand {
+                command: RunSubcommand::List(cmd),
+            }) => assert_eq!(cmd.instance.as_deref(), Some("sharkdp__fd-658")),
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn select_attempt_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "select",
+            "attempt",
+            "3",
+            "--instance",
+            "sharkdp__fd-658",
+        ])
+        .expect("select attempt should parse");
+
+        match parsed.command {
+            Command::Select(SelectCommand {
+                command: SelectSubcommand::Attempt(cmd),
+            }) => {
+                assert_eq!(cmd.attempt, 3);
+                assert_eq!(cmd.instance.as_deref(), Some("sharkdp__fd-658"));
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
     fn registry_show_parses_dataset_selector() {
         let parsed =
             Cli::try_parse_from(["ploke-eval", "registry", "show", "--dataset", "sharkdp__fd"])
@@ -9014,10 +9687,10 @@ mod tests {
         std::fs::create_dir_all(&run_dir).expect("run dir");
         crate::run_history::record_last_run_at(&eval_home, &run_dir).expect("record last run");
 
-        let path = resolve_record_path_from_eval_home(None, None, eval_home)
+        let resolution = resolve_record_path_from_eval_home(None, None, None, eval_home)
             .expect("default record path should resolve");
 
-        assert_eq!(path, run_dir.join("record.json.gz"));
+        assert_eq!(resolution.record_path, run_dir.join("record.json.gz"));
     }
 
     #[test]
@@ -9033,11 +9706,15 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
         std::fs::write(newer_run.join("record.json.gz"), "newer").expect("newer record");
 
-        let path =
-            resolve_record_path_from_eval_home(None, Some("org__repo-1".to_string()), eval_home)
-                .expect("instance record path should resolve");
+        let resolution = resolve_record_path_from_eval_home(
+            None,
+            Some("org__repo-1".to_string()),
+            None,
+            eval_home,
+        )
+        .expect("instance record path should resolve");
 
-        assert_eq!(path, newer_run.join("record.json.gz"));
+        assert_eq!(resolution.record_path, newer_run.join("record.json.gz"));
     }
 
     #[test]
@@ -9059,11 +9736,15 @@ mod tests {
             crate::runner::RunArm::shell_only_control(),
         );
 
-        let path =
-            resolve_record_path_from_eval_home(None, Some("org__repo-1".to_string()), eval_home)
-                .expect("instance record path should resolve");
+        let resolution = resolve_record_path_from_eval_home(
+            None,
+            Some("org__repo-1".to_string()),
+            None,
+            eval_home,
+        )
+        .expect("instance record path should resolve");
 
-        assert_eq!(path, treatment_run.join("record.json.gz"));
+        assert_eq!(resolution.record_path, treatment_run.join("record.json.gz"));
     }
 
     #[test]

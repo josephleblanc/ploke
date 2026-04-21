@@ -16,6 +16,7 @@ pub mod registry;
 pub mod run_history;
 pub mod run_registry;
 pub mod runner;
+pub mod selection;
 pub mod spec;
 pub mod target_registry;
 pub mod tracing_setup;
@@ -56,6 +57,10 @@ pub use run_registry::{
 pub use runner::{
     AgentRunArtifactPaths, AgentTurnArtifact, BatchRunArtifactPaths, RunMsbAgentBatchRequest,
     RunMsbAgentSingleRequest, RunMsbBatchRequest,
+};
+pub use selection::{
+    ActiveSelection, ActiveSelectionSlot, clear_active_selection, load_active_selection,
+    render_selection_warnings, save_active_selection, unset_active_selection_slot,
 };
 pub use spec::{
     EvalBudget, FrameworkConfig, FrameworkToolConfig, IssueInput, MultiSweBenchSource, OutputMode,

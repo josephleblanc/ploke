@@ -242,6 +242,20 @@ pub(crate) fn list_finished_record_paths_in_runs_root(
 pub async fn print_last_run_assistant_messages() -> Result<(), PrepareError> {
     let record = load_last_run()?;
     let snapshot_path = load_final_snapshot_path(&record.run_dir)?;
+    print_assistant_messages_from_snapshot(&snapshot_path).await
+}
+
+pub async fn print_assistant_messages_from_record_path(
+    record_path: &Path,
+) -> Result<(), PrepareError> {
+    let run_dir = record_path
+        .parent()
+        .ok_or_else(|| PrepareError::MissingRunManifest(record_path.to_path_buf()))?;
+    let snapshot_path = load_final_snapshot_path(run_dir)?;
+    print_assistant_messages_from_snapshot(&snapshot_path).await
+}
+
+async fn print_assistant_messages_from_snapshot(snapshot_path: &Path) -> Result<(), PrepareError> {
     let db = ploke_db::Database::create_new_backup_default(&snapshot_path)
         .await
         .map_err(|err| PrepareError::DatabaseSetup {

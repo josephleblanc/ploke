@@ -71,6 +71,10 @@ pub fn last_run_file() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("last-run.json"))
 }
 
+pub fn active_selection_file() -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?.join("selection.json"))
+}
+
 pub fn starting_db_cache_dir() -> Result<PathBuf, PrepareError> {
     Ok(cache_dir()?.join("starting-dbs"))
 }
