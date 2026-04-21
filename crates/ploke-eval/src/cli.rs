@@ -104,26 +104,42 @@ The runner currently:
   - indexes the repo with ploke
   - saves a DB snapshot via the same SaveDb path used by ploke-tui
   - writes run artifacts under the per-instance run directory
+
+Operator defaults:
+  - safest interactive path: fetch-msb-repo -> prepare-msb-single -> run-msb-agent-single
+  - preferred family/campaign path: campaign/closure
+  - strongest local patch truth: per-run multi-swe-bench-submission.jsonl
+  - stronger aggregate export: campaign export-submissions
+  - weakest local patch truth: batch aggregate multi-swe-bench-submission.jsonl
 ";
 
 const CLI_AFTER_HELP: &str = "\
-Quick Start: ripgrep single-run example
+Recommended workflow: one instance
 
   cargo run -p ploke-eval -- fetch-msb-repo --dataset-key ripgrep
   cargo run -p ploke-eval -- prepare-msb-single --dataset-key ripgrep --instance BurntSushi__ripgrep-2209
-  cargo run -p ploke-eval -- run-msb-single --instance BurntSushi__ripgrep-2209
   cargo run -p ploke-eval -- model providers moonshotai/kimi-k2
   cargo run -p ploke-eval -- run-msb-agent-single --instance BurntSushi__ripgrep-2209 --provider chutes
 
-Batch example
+Setup-only variant:
+
+  cargo run -p ploke-eval -- run-msb-single --instance BurntSushi__ripgrep-2209
+
+Recommended workflow: family/campaign progress
+
+  cargo run -p ploke-eval -- campaign show --campaign rust-baseline-grok4-xai
+  cargo run -p ploke-eval -- closure status --campaign rust-baseline-grok4-xai
+  cargo run -p ploke-eval -- closure advance eval --campaign rust-baseline-grok4-xai --dry-run
+  cargo run -p ploke-eval -- closure advance eval --campaign rust-baseline-grok4-xai
+  cargo run -p ploke-eval -- campaign export-submissions --campaign rust-baseline-grok4-xai
+
+Raw batch example
+
+Use this when batch orchestration itself is the point. Prefer per-run submission files or
+campaign export for trustworthy local export.
 
   cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --specific 2209
   cargo run -p ploke-eval -- run-msb-agent-batch --batch-id ripgrep-2209
-
-Export campaign submissions
-
-  cargo run -p ploke-eval -- campaign export-submissions --campaign rust-baseline-grok4-xai
-  cargo run -p ploke-eval -- campaign export-submissions --campaign rust-baseline-grok4-xai --nonempty-only
 
 Health check
 
@@ -175,7 +191,20 @@ Default read/write locations
     execution-log.json
     indexing-status.json
     snapshot-status.json
+    agent-turn-trace.json
+    agent-turn-summary.json
     multi-swe-bench-submission.jsonl
+
+  Campaign state:
+    ~/.ploke-eval/campaigns/<campaign>/campaign.json
+    ~/.ploke-eval/campaigns/<campaign>/closure-state.json
+
+  Campaign export defaults:
+    ~/.ploke-eval/campaigns/<campaign>/multi-swe-bench-submission.jsonl
+    ~/.ploke-eval/campaigns/<campaign>/multi-swe-bench-submission.nonempty.jsonl
+
+  Typed target registry:
+    ~/.ploke-eval/registries/multi-swe-bench-rust.json
 
   Benchmark boundary:
     `multi-swe-bench-submission.jsonl` is a candidate patch artifact for the
@@ -183,6 +212,13 @@ Default read/write locations
     Local `ploke-eval` artifacts are run telemetry, not the benchmark verdict.
     Official pass/fail comes from running the external evaluator on the
     exported submission.
+
+Artifact trust order:
+  1. per-run artifacts under the chosen run directory
+  2. campaign export-submissions output
+  3. closure status/state for campaign progress
+  4. batch aggregate multi-swe-bench-submission.jsonl
+  5. terminal summary strings
 
 Override the root with:
   PLOKE_EVAL_HOME=/some/path
@@ -240,11 +276,11 @@ pub enum Command {
     Protocol(ProtocolCommand),
     /// Manage the cached OpenRouter model registry and active model selection.
     Model(ModelCommand),
-    /// Manage campaign manifests used by closure-driven operator workflows.
+    /// Manage campaign manifests and campaign-scoped export used by closure-driven operator workflows.
     Campaign(CampaignCommand),
-    /// Manage the local typed benchmark target registry.
+    /// Manage the persisted benchmark target inventory (separate from the model registry).
     Registry(RegistryCommand),
-    /// Track staged closure of registry, eval, and protocol coverage for a campaign.
+    /// Track campaign progress across registry inventory, eval work, and protocol coverage.
     Closure(ClosureCommand),
 }
 
@@ -782,6 +818,21 @@ This extends the normal run with a single agentic turn that:
   - writes a turn trace and summary beside the run artifacts
 
 Use `--provider <slug>` to pin a specific OpenRouter provider for the selected model.
+
+Outputs:
+  The prepared instance root is ~/.ploke-eval/runs/<instance>.
+  Each invocation writes a unique nested run directory under:
+    ~/.ploke-eval/runs/<instance>/runs/run-<timestamp>-<arm>-<suffix>
+
+  Key agent-run files inside that nested run directory:
+    execution-log.json
+    repo-state.json
+    indexing-status.json
+    snapshot-status.json
+    agent-turn-trace.json
+    agent-turn-summary.json
+    llm-full-responses.jsonl
+    multi-swe-bench-submission.jsonl
 "
 )]
 pub struct RunMsbAgentSingleCommand {
@@ -831,6 +882,17 @@ This reuses the per-instance run manifests listed by the batch manifest,
 executes one benchmark issue turn per instance, and writes:
   batch-run-summary.json
   multi-swe-bench-submission.jsonl
+
+Paths:
+  Batch summary and batch aggregate submission live under:
+    ~/.ploke-eval/batches/<batch-id>/
+
+Operational caution:
+  Treat the batch aggregate multi-swe-bench-submission.jsonl as a convenience output.
+  For stronger local truth, inspect per-run submission files under:
+    ~/.ploke-eval/runs/<instance>/runs/run-*/multi-swe-bench-submission.jsonl
+  or use:
+    cargo run -p ploke-eval -- campaign export-submissions --campaign <campaign>
 "
 )]
 pub struct RunMsbAgentBatchCommand {
@@ -1293,14 +1355,46 @@ pub struct ProtocolCommand {
 }
 
 #[derive(Debug, Parser)]
-#[command(about = "Manage the local typed benchmark target registry")]
+#[command(
+    about = "Manage the persisted benchmark target inventory",
+    after_help = "\
+This registry is separate from the model registry.
+
+Default path:
+  ~/.ploke-eval/registries/multi-swe-bench-rust.json
+
+Use:
+  registry status
+    inspect the current persisted inventory
+  registry recompute
+    rebuild the inventory from dataset sources
+"
+)]
 pub struct RegistryCommand {
     #[command(subcommand)]
     pub command: RegistrySubcommand,
 }
 
 #[derive(Debug, Parser)]
-#[command(about = "Manage campaign manifests and resolved campaign configuration")]
+#[command(
+    about = "Manage campaign manifests, validation, and campaign-scoped submission export",
+    after_help = "\
+Campaigns are the stateful operator layer for measured work.
+
+Default files:
+  manifest: ~/.ploke-eval/campaigns/<campaign>/campaign.json
+  closure:  ~/.ploke-eval/campaigns/<campaign>/closure-state.json
+
+Typical flow:
+  campaign list
+  campaign init --campaign <campaign> --from-registry
+  campaign show --campaign <campaign>
+  campaign validate --campaign <campaign>
+  closure status --campaign <campaign>
+  closure advance eval --campaign <campaign>
+  campaign export-submissions --campaign <campaign>
+"
+)]
 pub struct CampaignCommand {
     #[command(subcommand)]
     pub command: CampaignSubcommand,
@@ -1413,6 +1507,25 @@ pub struct CampaignValidateCommand {
 }
 
 #[derive(Debug, Parser)]
+#[command(
+    after_help = "\
+Default output path when --output is omitted:
+  ~/.ploke-eval/campaigns/<campaign>/multi-swe-bench-submission.jsonl
+
+If --nonempty-only is set, the default becomes:
+  ~/.ploke-eval/campaigns/<campaign>/multi-swe-bench-submission.nonempty.jsonl
+
+Source of truth:
+  This command exports from completed runs in closure state and reads per-run
+  submission artifacts. It is a stronger export surface than the raw batch
+  aggregate JSONL.
+
+Selection behavior:
+  The export writes one record per completed closure row.
+  If multiple completed runs exist for one instance, the command selects the
+  preferred run that has a per-run submission artifact.
+"
+)]
 pub struct CampaignExportSubmissionsCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
@@ -1462,7 +1575,21 @@ pub struct RegistryStatusCommand {
 }
 
 #[derive(Debug, Parser)]
-#[command(about = "Track staged closure across registry, eval, and protocol layers")]
+#[command(
+    about = "Track campaign progress across registry inventory, eval work, and protocol coverage",
+    after_help = "\
+Default closure state path:
+  ~/.ploke-eval/campaigns/<campaign>/closure-state.json
+
+Use:
+  closure status --campaign <campaign>
+    inspect current reduced campaign progress
+  closure advance eval --campaign <campaign>
+    produce missing eval work from campaign config
+  closure advance protocol --campaign <campaign>
+    produce missing protocol work from completed eval runs
+"
+)]
 pub struct ClosureCommand {
     #[command(subcommand)]
     pub command: ClosureSubcommand,
