@@ -176,7 +176,7 @@ impl RunArm {
         Self {
             id: "shell-only".to_string(),
             role: RunArmRole::Control,
-            command: "run-msb-single".to_string(),
+            command: "run single setup".to_string(),
             execution: "setup-only".to_string(),
         }
     }
@@ -185,7 +185,7 @@ impl RunArm {
         Self {
             id: "structured-current-policy".to_string(),
             role: RunArmRole::Treatment,
-            command: "run-msb-agent-single".to_string(),
+            command: "run single agent".to_string(),
             execution: "agent-single-turn".to_string(),
         }
     }
@@ -3874,9 +3874,9 @@ mod tests {
         let treatment = RunArm::structured_current_policy_treatment();
 
         assert_eq!(control.role, RunArmRole::Control);
-        assert_eq!(control.command, "run-msb-single");
+        assert_eq!(control.command, "run single setup");
         assert_eq!(treatment.role, RunArmRole::Treatment);
-        assert_eq!(treatment.command, "run-msb-agent-single");
+        assert_eq!(treatment.command, "run single agent");
         assert_eq!(RunArm::for_agent_mode(false), control);
         assert_eq!(RunArm::for_agent_mode(true), treatment);
     }
@@ -3904,7 +3904,7 @@ mod tests {
         let value = serde_json::to_value(&log).expect("serialize execution log");
         assert_eq!(value["run_arm"]["id"], "shell-only");
         assert_eq!(value["run_arm"]["role"], "control");
-        assert_eq!(value["run_arm"]["command"], "run-msb-single");
+        assert_eq!(value["run_arm"]["command"], "run single setup");
         assert_eq!(value["selected_endpoint"]["provider_slug"], "friendli");
         assert_eq!(value["selected_endpoint"]["quantization"], "fp4");
         assert_eq!(

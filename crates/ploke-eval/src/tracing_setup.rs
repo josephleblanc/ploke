@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 use std::{fs, str::FromStr};
 
 use chrono::Local;
+use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_tui::tracing_setup::FULL_RESPONSE_TARGET;
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
@@ -28,7 +29,9 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
     let mut filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,embed-pipeline=trace"));
     if debug_tools
-        && let Ok(directive) = tracing_subscriber::filter::Directive::from_str("dbg_tools=debug")
+        && let Ok(directive) = tracing_subscriber::filter::Directive::from_str(&format!(
+            "{EXECUTION_DEBUG_TARGET}=debug"
+        ))
     {
         filter = filter.add_directive(directive);
     }

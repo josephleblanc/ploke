@@ -58,7 +58,7 @@ cargo run -p ploke-eval -- model providers
 Pin a provider for a run:
 
 ```bash
-cargo run -p ploke-eval -- run-msb-agent-single --instance BurntSushi__ripgrep-2209 --provider chutes
+cargo run -p ploke-eval -- run single agent --instance BurntSushi__ripgrep-2209 --provider chutes
 ```
 
 ## Quick start
@@ -66,16 +66,16 @@ cargo run -p ploke-eval -- run-msb-agent-single --instance BurntSushi__ripgrep-2
 Current single-run example for `ripgrep`:
 
 ```bash
-cargo run -p ploke-eval -- fetch-msb-repo --dataset-key ripgrep
-cargo run -p ploke-eval -- prepare-msb-single --dataset-key ripgrep --instance BurntSushi__ripgrep-2209
-cargo run -p ploke-eval -- run-msb-single --instance BurntSushi__ripgrep-2209
+cargo run -p ploke-eval -- run repo fetch --dataset-key ripgrep
+cargo run -p ploke-eval -- run prepare instance --dataset-key ripgrep --instance BurntSushi__ripgrep-2209
+cargo run -p ploke-eval -- run single setup --instance BurntSushi__ripgrep-2209
 ```
 
 Batch example for `ripgrep`:
 
 ```bash
-cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --specific 2209
-cargo run -p ploke-eval -- run-msb-agent-batch --batch-id ripgrep-2209
+cargo run -p ploke-eval -- run prepare batch --dataset-key ripgrep --specific 2209
+cargo run -p ploke-eval -- run batch agent --batch-id ripgrep-2209
 ```
 
 ## What gets read and written
@@ -137,7 +137,7 @@ campaign-scoped JSONL under `~/.ploke-eval/campaigns/<campaign>/`.
 
 ## Current embedding preset
 
-`run-msb-single` currently uses a hardcoded OpenRouter embedding preset:
+`run single setup` currently uses a hardcoded OpenRouter embedding preset:
 
 ```text
 model: mistralai/codestral-embed-2505

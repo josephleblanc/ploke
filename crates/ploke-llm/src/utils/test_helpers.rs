@@ -13,10 +13,7 @@ pub fn default_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     let referer = HeaderName::from_static("http-referer");
     let x_title = HeaderName::from_static("x-title");
-    headers.insert(
-        referer,
-        HeaderValue::from_static(HTTP_REFERER),
-    );
+    headers.insert(referer, HeaderValue::from_static(HTTP_REFERER));
     headers.insert(x_title, HeaderValue::from_static("Ploke TUI E2E Tests"));
     headers
 }

@@ -81,160 +81,36 @@ use crate::target_registry::{
     recompute_target_registry, render_target_registry_status, target_registry_path,
 };
 
-const CLI_LONG_ABOUT: &str = "\
-Minimal evaluation runner scaffolding for ploke.
+const CLI_BEFORE_LONG_HELP: &str = "\
+Minimal evaluation runner and artifact inspector for ploke.
 
-Defaults:
+Default home:
   PLOKE_EVAL_HOME    ~/.ploke-eval
-  datasets cache     ~/.ploke-eval/datasets
-  model registry     ~/.ploke-eval/models/registry.json
-  active model       ~/.ploke-eval/models/active-model.json
-  provider prefs     ~/.ploke-eval/models/provider-preferences.json
-  repo cache         ~/.ploke-eval/repos
-  run artifacts      ~/.ploke-eval/runs
-  batch artifacts    ~/.ploke-eval/batches
 
-The current end-to-end path is:
-  1. fetch a benchmark repo
-  2. prepare a run manifest from Multi-SWE-bench
-  3. run one prepared instance
+Choose an operator path:
+  one instance       run repo fetch -> run prepare instance -> run single agent
+  flat shortcuts     just <favorite>
+  family progress    campaign / closure
+  inspect a run      transcript / conversations / inspect
+  setup and models   doctor / model
+  target inventory   registry
 
-The runner currently:
-  - resets the repo to the benchmark base commit
-  - indexes the repo with ploke
-  - saves a DB snapshot via the same SaveDb path used by ploke-tui
-  - writes run artifacts under the per-instance run directory
+Trust order:
+  per-run artifacts > campaign export-submissions > closure state > batch aggregate JSONL
 
-Operator defaults:
-  - safest interactive path: fetch-msb-repo -> prepare-msb-single -> run-msb-agent-single
-  - preferred family/campaign path: campaign/closure
-  - strongest local patch truth: per-run multi-swe-bench-submission.jsonl
-  - stronger aggregate export: campaign export-submissions
-  - weakest local patch truth: batch aggregate multi-swe-bench-submission.jsonl
-";
-
-const CLI_AFTER_HELP: &str = "\
-Recommended workflow: one instance
-
-  cargo run -p ploke-eval -- fetch-msb-repo --dataset-key ripgrep
-  cargo run -p ploke-eval -- prepare-msb-single --dataset-key ripgrep --instance BurntSushi__ripgrep-2209
-  cargo run -p ploke-eval -- model providers moonshotai/kimi-k2
-  cargo run -p ploke-eval -- run-msb-agent-single --instance BurntSushi__ripgrep-2209 --provider chutes
-
-Setup-only variant:
-
-  cargo run -p ploke-eval -- run-msb-single --instance BurntSushi__ripgrep-2209
-
-Recommended workflow: family/campaign progress
-
-  cargo run -p ploke-eval -- campaign show --campaign rust-baseline-grok4-xai
-  cargo run -p ploke-eval -- closure status --campaign rust-baseline-grok4-xai
-  cargo run -p ploke-eval -- closure advance eval --campaign rust-baseline-grok4-xai --dry-run
-  cargo run -p ploke-eval -- closure advance eval --campaign rust-baseline-grok4-xai
-  cargo run -p ploke-eval -- campaign export-submissions --campaign rust-baseline-grok4-xai
-
-Raw batch example
-
-Use this when batch orchestration itself is the point. Prefer per-run submission files or
-campaign export for trustworthy local export.
-
-  cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --specific 2209
-  cargo run -p ploke-eval -- run-msb-agent-batch --batch-id ripgrep-2209
-
-Health check
-
-  cargo run -p ploke-eval -- doctor
-
-Replay a specific embedding batch from a prepared run
-
-  cargo run -p ploke-eval -- replay-msb-batch --instance BurntSushi__ripgrep-2209 --batch 6
-
-Replay notes:
-  - batch numbers are 1-based
-  - the command writes `replay-batch-<nnn>.json` beside the run manifest
-  - the JSON includes the full serialized `TypedEmbedData` batch
-  - the command then runs only that batch through the normal embed path
-
-Print assistant messages from the most recent completed run
-
-  cargo run -p ploke-eval -- transcript
-
-Inspect providers for a model
-
-  cargo run -p ploke-eval -- model providers
-
-Set the default provider for the current model
-
-  cargo run -p ploke-eval -- model provider set chutes
-
-Pin a provider for one run only
-
-  cargo run -p ploke-eval -- run-msb-agent-single --instance BurntSushi__ripgrep-2209 --provider chutes
-
-Default read/write locations
-
-  Dataset JSONL cache:
-    ~/.ploke-eval/datasets/BurntSushi__ripgrep_dataset.jsonl
-
-  Repo checkout:
-    ~/.ploke-eval/repos/BurntSushi/ripgrep
-
-  Run directory:
-    ~/.ploke-eval/runs/BurntSushi__ripgrep-2209
-
-  Batch directory:
-    ~/.ploke-eval/batches/ripgrep-2209
-
-  Key run artifacts:
-    run.json
-    repo-state.json
-    execution-log.json
-    indexing-status.json
-    snapshot-status.json
-    agent-turn-trace.json
-    agent-turn-summary.json
-    multi-swe-bench-submission.jsonl
-
-  Campaign state:
-    ~/.ploke-eval/campaigns/<campaign>/campaign.json
-    ~/.ploke-eval/campaigns/<campaign>/closure-state.json
-
-  Campaign export defaults:
-    ~/.ploke-eval/campaigns/<campaign>/multi-swe-bench-submission.jsonl
-    ~/.ploke-eval/campaigns/<campaign>/multi-swe-bench-submission.nonempty.jsonl
-
-  Typed target registry:
-    ~/.ploke-eval/registries/multi-swe-bench-rust.json
-
-  Benchmark boundary:
-    `multi-swe-bench-submission.jsonl` is a candidate patch artifact for the
-    official Multi-SWE-bench evaluator.
-    Local `ploke-eval` artifacts are run telemetry, not the benchmark verdict.
-    Official pass/fail comes from running the external evaluator on the
-    exported submission.
-
-Artifact trust order:
-  1. per-run artifacts under the chosen run directory
-  2. campaign export-submissions output
-  3. closure status/state for campaign progress
-  4. batch aggregate multi-swe-bench-submission.jsonl
-  5. terminal summary strings
-
-Override the root with:
-  PLOKE_EVAL_HOME=/some/path
+Use `ploke-eval help <command>` for examples, artifact paths, and command-specific defaults.
 ";
 
 #[derive(Debug, Parser)]
 #[command(
     name = "ploke-eval",
     about = "Run prepared ploke benchmark/eval instances",
-    long_about = CLI_LONG_ABOUT,
-    after_help = CLI_AFTER_HELP,
+    before_long_help = CLI_BEFORE_LONG_HELP,
     version = env!("CARGO_PKG_VERSION"),
     propagate_version = true
 )]
 pub struct Cli {
-    /// Enable low-level dbg_tools tracing for tool dispatch and IO write debugging.
+    /// Enable cross-crate execution debug logs in ~/.ploke-eval/logs.
     #[arg(long, global = true)]
     pub debug_tools: bool,
 
@@ -244,44 +120,205 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Normalize one evaluation instance into a run manifest.
-    PrepareSingle(PrepareSingleCommand),
-    /// Normalize one Multi-SWE-bench instance into a run manifest.
-    PrepareMsbSingle(PrepareMsbSingleCommand),
-    /// Normalize many Multi-SWE-bench instances into a batch manifest and per-instance run manifests.
-    PrepareMsbBatch(PrepareMsbBatchCommand),
-    /// Execute one prepared run through repo reset and initial artifact generation.
-    RunMsbSingle(RunMsbSingleCommand),
-    /// Execute many prepared Multi-SWE-bench runs from one batch manifest.
-    RunMsbBatch(RunMsbBatchCommand),
-    /// Execute one prepared run and then run a single agentic benchmark turn.
-    RunMsbAgentSingle(RunMsbAgentSingleCommand),
-    /// Execute many prepared runs and agentic benchmark turns from one batch manifest.
-    RunMsbAgentBatch(RunMsbAgentBatchCommand),
-    /// Replay one specific batch from a prepared run and print the exact snippets for it.
-    ReplayMsbBatch(ReplayMsbBatchCommand),
-    /// Clone or refresh a benchmark repo into ~/.ploke-eval/repos.
-    FetchMsbRepo(FetchMsbRepoCommand),
-    /// List built-in dataset registry entries.
-    ListMsbDatasets,
-    /// Inspect the current eval setup and report likely configuration issues.
-    Doctor,
-    /// Print only assistant messages from the most recent completed run.
-    Transcript,
-    /// List all agent conversation turns from a run.
-    Conversations(ConversationsCommand),
-    /// Inspect run and turn data (conversations, tool calls, db snapshots, etc.)
-    Inspect(InspectCommand),
-    /// Run bounded review/adjudication protocols over eval artifacts.
-    Protocol(ProtocolCommand),
-    /// Manage the cached OpenRouter model registry and active model selection.
+    #[command(display_order = 10)]
+    /// Traverse the eval execution tree: repo fetch, datasets, prepare, single, batch, replay.
+    Run(RunCommand),
+    #[command(display_order = 11)]
+    /// Flat shortcuts for common eval commands that also exist under `run ...`.
+    Just(JustCommand),
+    #[command(display_order = 20)]
+    /// Show and set model/provider defaults for eval runs.
     Model(ModelCommand),
-    /// Manage campaign manifests and campaign-scoped export used by closure-driven operator workflows.
+    #[command(display_order = 30)]
+    /// Print assistant messages from the most recent completed run.
+    Transcript,
+    #[command(display_order = 31)]
+    /// List conversation turns for a run.
+    Conversations(ConversationsCommand),
+    #[command(display_order = 32)]
+    /// Inspect run artifacts, failures, tool calls, and stored snapshots.
+    Inspect(InspectCommand),
+    #[command(display_order = 40)]
+    /// Operate on named eval campaigns and export campaign-level submissions.
     Campaign(CampaignCommand),
-    /// Manage the persisted benchmark target inventory (separate from the model registry).
-    Registry(RegistryCommand),
-    /// Track campaign progress across registry inventory, eval work, and protocol coverage.
+    #[command(display_order = 41)]
+    /// Show and advance campaign progress across eval and protocol work.
     Closure(ClosureCommand),
+    #[command(display_order = 42)]
+    /// Show and recompute the persisted target inventory.
+    Registry(RegistryCommand),
+    #[command(display_order = 50)]
+    /// Check eval setup and point out likely configuration problems.
+    Doctor,
+    #[command(display_order = 51)]
+    /// Review or adjudicate protocol artifacts from eval runs.
+    Protocol(ProtocolCommand),
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Traverse the eval execution tree for repo fetch, preparation, execution, and replay"
+)]
+pub struct RunCommand {
+    #[command(subcommand)]
+    pub command: RunSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RunSubcommand {
+    #[command(display_order = 10)]
+    /// Fetch or refresh benchmark repo checkouts.
+    Repo(RunRepoCommand),
+    #[command(display_order = 11)]
+    /// List built-in benchmark dataset keys and sources.
+    Datasets(RunDatasetsCommand),
+    #[command(display_order = 20)]
+    /// Prepare ad hoc, single-instance, or batch manifests before execution.
+    Prepare(RunPrepareCommand),
+    #[command(display_order = 30)]
+    /// Execute one prepared instance through setup-only or agent-turn paths.
+    Single(RunSingleWorkflowCommand),
+    #[command(display_order = 31)]
+    /// Execute one prepared batch through setup-only or agent-turn paths.
+    Batch(RunBatchWorkflowCommand),
+    #[command(display_order = 40)]
+    /// Replay a prepared execution artifact such as one embedding batch.
+    Replay(RunReplayCommand),
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Operate on benchmark repo checkouts used by eval runs")]
+pub struct RunRepoCommand {
+    #[command(subcommand)]
+    pub command: RunRepoSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RunRepoSubcommand {
+    /// Fetch or refresh one built-in benchmark repo checkout under ~/.ploke-eval/repos.
+    Fetch(FetchMsbRepoCommand),
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Operate on dataset discovery commands used by eval runs")]
+pub struct RunDatasetsCommand {
+    #[command(subcommand)]
+    pub command: RunDatasetsSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RunDatasetsSubcommand {
+    /// List built-in dataset keys and source URLs.
+    List,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Prepare manifests for custom tasks, one benchmark instance, or a selected batch"
+)]
+pub struct RunPrepareCommand {
+    #[command(subcommand)]
+    pub command: RunPrepareSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RunPrepareSubcommand {
+    /// Prepare one custom run manifest outside Multi-SWE-bench.
+    Custom(PrepareSingleCommand),
+    /// Prepare one Multi-SWE-bench instance for the normal single-run workflow.
+    Instance(PrepareMsbSingleCommand),
+    /// [advanced/manual] Prepare raw Multi-SWE-bench batch manifests.
+    Batch(PrepareMsbBatchCommand),
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Execute one prepared instance either through setup-only or the normal agent-turn path"
+)]
+pub struct RunSingleWorkflowCommand {
+    #[command(subcommand)]
+    pub command: RunSingleWorkflowSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RunSingleWorkflowSubcommand {
+    /// Run one prepared instance through setup only, without the agent turn.
+    Setup(RunMsbSingleCommand),
+    /// Run one prepared instance through the normal agent eval path.
+    Agent(RunMsbAgentSingleCommand),
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Execute one prepared batch either through setup-only or the normal agent-turn path"
+)]
+pub struct RunBatchWorkflowCommand {
+    #[command(subcommand)]
+    pub command: RunBatchWorkflowSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RunBatchWorkflowSubcommand {
+    /// [advanced/manual] Execute a prepared raw batch without agent turns.
+    Setup(RunMsbBatchCommand),
+    /// [advanced/manual] Execute a prepared raw batch with agent turns.
+    Agent(RunMsbAgentBatchCommand),
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Replay one prepared execution artifact for debugging")]
+pub struct RunReplayCommand {
+    #[command(subcommand)]
+    pub command: RunReplaySubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RunReplaySubcommand {
+    /// [debug/manual] Replay one embedding batch from a prepared run.
+    Batch(ReplayMsbBatchCommand),
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Flat shortcut commands for common eval workflows; each mirrors a canonical `run ...` path"
+)]
+pub struct JustCommand {
+    #[command(subcommand)]
+    pub command: JustSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum JustSubcommand {
+    #[command(display_order = 10, alias = "fetch-msb-repo")]
+    /// Shortcut for `run repo fetch`.
+    FetchRepo(FetchMsbRepoCommand),
+    #[command(display_order = 11, alias = "list-msb-datasets")]
+    /// Shortcut for `run datasets list`.
+    ListDatasets,
+    #[command(display_order = 20, alias = "prepare-single")]
+    /// Shortcut for `run prepare custom`.
+    PrepareCustom(PrepareSingleCommand),
+    #[command(display_order = 21, alias = "prepare-msb-single")]
+    /// Shortcut for `run prepare instance`.
+    PrepareInstance(PrepareMsbSingleCommand),
+    #[command(display_order = 22, alias = "prepare-msb-batch")]
+    /// Shortcut for `run prepare batch`.
+    PrepareBatch(PrepareMsbBatchCommand),
+    #[command(display_order = 30, alias = "run-msb-single")]
+    /// Shortcut for `run single setup`.
+    SingleSetup(RunMsbSingleCommand),
+    #[command(display_order = 31, alias = "run-msb-agent-single")]
+    /// Shortcut for `run single agent`.
+    Single(RunMsbAgentSingleCommand),
+    #[command(display_order = 40, alias = "run-msb-batch")]
+    /// Shortcut for `run batch setup`.
+    BatchSetup(RunMsbBatchCommand),
+    #[command(display_order = 41, alias = "run-msb-agent-batch")]
+    /// Shortcut for `run batch agent`.
+    Batch(RunMsbAgentBatchCommand),
+    #[command(display_order = 50, alias = "replay-msb-batch")]
+    /// Shortcut for `run replay batch`.
+    ReplayBatch(ReplayMsbBatchCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -336,75 +373,20 @@ pub struct PrepareSingleCommand {
 impl Cli {
     pub async fn run(self) -> ExitCode {
         match self.command {
-            Command::PrepareSingle(cmd) => match cmd.run() {
+            Command::Run(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
                     ExitCode::FAILURE
                 }
             },
-            Command::PrepareMsbSingle(cmd) => match cmd.run() {
+            Command::Just(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
                     ExitCode::FAILURE
                 }
             },
-            Command::PrepareMsbBatch(cmd) => match cmd.run() {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            },
-            Command::RunMsbSingle(cmd) => match cmd.run().await {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            },
-            Command::RunMsbBatch(cmd) => match cmd.run().await {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            },
-            Command::RunMsbAgentSingle(cmd) => match cmd.run().await {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            },
-            Command::RunMsbAgentBatch(cmd) => match cmd.run().await {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            },
-            Command::ReplayMsbBatch(cmd) => match cmd.run().await {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            },
-            Command::FetchMsbRepo(cmd) => match cmd.run() {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            },
-            Command::ListMsbDatasets => {
-                for entry in builtin_dataset_registry_entries() {
-                    println!("{}\t{}\t{}", entry.key, entry.language, entry.url);
-                }
-                ExitCode::SUCCESS
-            }
             Command::Doctor => match run_doctor() {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
@@ -472,6 +454,100 @@ impl Cli {
     }
 }
 
+impl RunCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            RunSubcommand::Repo(cmd) => cmd.run().await,
+            RunSubcommand::Datasets(cmd) => cmd.run().await,
+            RunSubcommand::Prepare(cmd) => cmd.run().await,
+            RunSubcommand::Single(cmd) => cmd.run().await,
+            RunSubcommand::Batch(cmd) => cmd.run().await,
+            RunSubcommand::Replay(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl RunRepoCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            RunRepoSubcommand::Fetch(cmd) => cmd.run(),
+        }
+    }
+}
+
+impl RunDatasetsCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            RunDatasetsSubcommand::List => {
+                print_builtin_dataset_entries();
+                Ok(())
+            }
+        }
+    }
+}
+
+impl RunPrepareCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            RunPrepareSubcommand::Custom(cmd) => cmd.run(),
+            RunPrepareSubcommand::Instance(cmd) => cmd.run(),
+            RunPrepareSubcommand::Batch(cmd) => cmd.run(),
+        }
+    }
+}
+
+impl RunSingleWorkflowCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            RunSingleWorkflowSubcommand::Setup(cmd) => cmd.run().await,
+            RunSingleWorkflowSubcommand::Agent(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl RunBatchWorkflowCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            RunBatchWorkflowSubcommand::Setup(cmd) => cmd.run().await,
+            RunBatchWorkflowSubcommand::Agent(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl RunReplayCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            RunReplaySubcommand::Batch(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl JustCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            JustSubcommand::FetchRepo(cmd) => cmd.run(),
+            JustSubcommand::ListDatasets => {
+                print_builtin_dataset_entries();
+                Ok(())
+            }
+            JustSubcommand::PrepareCustom(cmd) => cmd.run(),
+            JustSubcommand::PrepareInstance(cmd) => cmd.run(),
+            JustSubcommand::PrepareBatch(cmd) => cmd.run(),
+            JustSubcommand::SingleSetup(cmd) => cmd.run().await,
+            JustSubcommand::Single(cmd) => cmd.run().await,
+            JustSubcommand::BatchSetup(cmd) => cmd.run().await,
+            JustSubcommand::Batch(cmd) => cmd.run().await,
+            JustSubcommand::ReplayBatch(cmd) => cmd.run().await,
+        }
+    }
+}
+
+fn print_builtin_dataset_entries() {
+    for entry in builtin_dataset_registry_entries() {
+        println!("{}\t{}\t{}", entry.key, entry.language, entry.url);
+    }
+}
+
 impl PrepareSingleCommand {
     pub fn run(self) -> Result<(), PrepareError> {
         let request = PrepareSingleRunRequest {
@@ -507,7 +583,7 @@ impl PrepareSingleCommand {
     after_help = "\
 Example:
 
-  cargo run -p ploke-eval -- prepare-msb-single \
+  cargo run -p ploke-eval -- run prepare instance \
     --dataset-key ripgrep \
     --instance BurntSushi__ripgrep-2209
 
@@ -596,9 +672,9 @@ impl PrepareMsbSingleCommand {
     after_help = "\
 Examples:
 
-  cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --all
-  cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --specific 2209
-  cargo run -p ploke-eval -- prepare-msb-batch --dataset-key ripgrep --instance BurntSushi__ripgrep-2209
+  cargo run -p ploke-eval -- run prepare batch --dataset-key ripgrep --all
+  cargo run -p ploke-eval -- run prepare batch --dataset-key ripgrep --specific 2209
+  cargo run -p ploke-eval -- run prepare batch --dataset-key ripgrep --instance BurntSushi__ripgrep-2209
 
 Defaults:
   dataset cache: ~/.ploke-eval/datasets
@@ -711,7 +787,7 @@ impl PrepareMsbBatchCommand {
     after_help = "\
 Example:
 
-  cargo run -p ploke-eval -- run-msb-single --instance BurntSushi__ripgrep-2209
+  cargo run -p ploke-eval -- run single setup --instance BurntSushi__ripgrep-2209
 
 Default manifest path:
   ~/.ploke-eval/runs/<instance>/run.json
@@ -769,8 +845,8 @@ pub struct RunMsbSingleCommand {
     after_help = "\
 Examples:
 
-  cargo run -p ploke-eval -- run-msb-batch --batch-id ripgrep-all
-  cargo run -p ploke-eval -- run-msb-batch --batch ~/.ploke-eval/batches/ripgrep-all/batch.json
+  cargo run -p ploke-eval -- run batch setup --batch-id ripgrep-all
+  cargo run -p ploke-eval -- run batch setup --batch ~/.ploke-eval/batches/ripgrep-all/batch.json
 
 The command reuses the per-instance run manifests listed by the batch manifest,
 executes them sequentially, and writes:
@@ -875,8 +951,8 @@ pub struct RunMsbAgentSingleCommand {
     after_help = "\
 Examples:
 
-  cargo run -p ploke-eval -- run-msb-agent-batch --batch-id ripgrep-all
-  cargo run -p ploke-eval -- run-msb-agent-batch --batch ~/.ploke-eval/batches/ripgrep-all/batch.json
+  cargo run -p ploke-eval -- run batch agent --batch-id ripgrep-all
+  cargo run -p ploke-eval -- run batch agent --batch ~/.ploke-eval/batches/ripgrep-all/batch.json
 
 This reuses the per-instance run manifests listed by the batch manifest,
 executes one benchmark issue turn per instance, and writes:
@@ -1258,7 +1334,7 @@ async fn set_persisted_provider(
     after_help = "\
 Example:
 
-  cargo run -p ploke-eval -- replay-msb-batch --instance BurntSushi__ripgrep-2209 --batch 6
+  cargo run -p ploke-eval -- run replay batch --instance BurntSushi__ripgrep-2209 --batch 6
 
 This reuses the prepared run manifest and executes only the selected batch.
 It writes `replay-batch-<nnn>.json` into the run directory, logs the full node
@@ -1507,8 +1583,7 @@ pub struct CampaignValidateCommand {
 }
 
 #[derive(Debug, Parser)]
-#[command(
-    after_help = "\
+#[command(after_help = "\
 Default output path when --output is omitted:
   ~/.ploke-eval/campaigns/<campaign>/multi-swe-bench-submission.jsonl
 
@@ -1524,8 +1599,7 @@ Selection behavior:
   The export writes one record per completed closure row.
   If multiple completed runs exist for one instance, the command selects the
   preferred run that has a per-run submission artifact.
-"
-)]
+")]
 pub struct CampaignExportSubmissionsCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
@@ -8299,7 +8373,7 @@ fn print_advice(lines: &[&str]) {
     after_help = "\
 Example:
 
-  cargo run -p ploke-eval -- fetch-msb-repo --dataset-key ripgrep
+  cargo run -p ploke-eval -- run repo fetch --dataset-key ripgrep
 
 Default destination:
   ~/.ploke-eval/repos/<org>/<repo>
@@ -8642,6 +8716,67 @@ mod tests {
     fn tool_call_next_step_index_uses_first_real_index() {
         assert_eq!(tool_call_next_step_index(0), None);
         assert_eq!(tool_call_next_step_index(3), Some(0));
+    }
+
+    #[test]
+    fn run_single_agent_path_parses_under_run_tree() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "run",
+            "single",
+            "agent",
+            "--instance",
+            "BurntSushi__ripgrep-2209",
+        ])
+        .expect("run single agent should parse");
+
+        match parsed.command {
+            Command::Run(RunCommand {
+                command:
+                    RunSubcommand::Single(RunSingleWorkflowCommand {
+                        command: RunSingleWorkflowSubcommand::Agent(cmd),
+                    }),
+            }) => assert_eq!(cmd.instance.as_deref(), Some("BurntSushi__ripgrep-2209")),
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn just_single_shortcut_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "just",
+            "single",
+            "--instance",
+            "BurntSushi__ripgrep-2209",
+        ])
+        .expect("just single should parse");
+
+        match parsed.command {
+            Command::Just(JustCommand {
+                command: JustSubcommand::Single(cmd),
+            }) => assert_eq!(cmd.instance.as_deref(), Some("BurntSushi__ripgrep-2209")),
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn just_old_hyphenated_alias_still_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "just",
+            "run-msb-agent-single",
+            "--instance",
+            "BurntSushi__ripgrep-2209",
+        ])
+        .expect("just should keep the old hyphenated alias as a migration path");
+
+        match parsed.command {
+            Command::Just(JustCommand {
+                command: JustSubcommand::Single(cmd),
+            }) => assert_eq!(cmd.instance.as_deref(), Some("BurntSushi__ripgrep-2209")),
+            other => panic!("unexpected command shape: {:?}", other),
+        }
     }
 
     #[test]

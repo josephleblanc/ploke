@@ -12,6 +12,13 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
     0xf7, 0xf4, 0xa9, 0xa0, 0x1b, 0x1a, 0x4b, 0x0e, 0x9c, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a,
 ]);
 
+/// Shared tracing target for cross-crate execution debugging during eval and tool runs.
+///
+/// Operator surfaces such as `ploke-eval --debug-tools` can enable this target to follow one
+/// execution path across crates. Keep durable logs on this target sparse and sanity-oriented;
+/// prefer removing temporary callsites after diagnosis.
+pub const EXECUTION_DEBUG_TARGET: &str = "ploke_exec";
+
 // Add top-level serde imports for derives
 use serde::{Deserialize, Serialize};
 

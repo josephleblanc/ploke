@@ -20,14 +20,14 @@ the `ploke-eval` CLI.
 
 ## Default Operator Stance
 
-- Default execution primitive: `run-msb-agent-single`
+- Default execution primitive: `run single agent`
 - Default setup path:
-  1. `ploke-eval list-msb-datasets`
-  2. `ploke-eval fetch-msb-repo --dataset-key <key>`
+  1. `ploke-eval run datasets list`
+  2. `ploke-eval run repo fetch --dataset-key <key>`
   3. `ploke-eval model current`
   4. `ploke-eval model providers [MODEL_ID]`
-  5. `ploke-eval prepare-msb-single --dataset-key <key> --instance <instance-id>`
-  6. `ploke-eval run-msb-agent-single --instance <instance-id> [--provider ...]`
+  5. `ploke-eval run prepare instance --dataset-key <key> --instance <instance-id>`
+  6. `ploke-eval run single agent --instance <instance-id> [--provider ...]`
 - Default inspection path:
   - `ploke-eval conversations --instance <instance-id>`
   - `ploke-eval inspect failures --instance <instance-id>`
@@ -50,12 +50,20 @@ Operational rule:
 - Do not treat a batch aggregate JSONL as authoritative if the batch may have been rerun,
   interrupted, or overlapped with another live batch process.
 
+## Execution Debug Tracing
+
+- `ploke-eval --debug-tools` is a simple on/off flag.
+- It enables the shared cross-crate tracing target `ploke_core::EXECUTION_DEBUG_TARGET`.
+- Use it when you need one execution-debug stream that follows an eval/tool path across crates.
+- Expect the detailed output in `~/.ploke-eval/logs`, not primarily on stderr.
+- Keep permanent callsites on that target sparse and sanity-oriented; remove temporary ones after diagnosis.
+
 ## Command Groups That Matter
 
 ### Setup
 
-- `list-msb-datasets`
-- `fetch-msb-repo`
+- `run datasets list`
+- `run repo fetch`
 - `doctor`
 - `model refresh`
 - `model list`
@@ -67,18 +75,18 @@ Operational rule:
 
 ### Single-instance execution
 
-- `prepare-msb-single`
-- `run-msb-single`
-- `run-msb-agent-single`
+- `run prepare instance`
+- `run single setup`
+- `run single agent`
 
-Use `run-msb-single` when you want repo reset/indexing/snapshot without the agent turn.
-Use `run-msb-agent-single` for the normal eval path.
+Use `run single setup` when you want repo reset/indexing/snapshot without the agent turn.
+Use `run single agent` for the normal eval path.
 
 ### Batch execution
 
-- `prepare-msb-batch`
-- `run-msb-batch`
-- `run-msb-agent-batch`
+- `run prepare batch`
+- `run batch setup`
+- `run batch agent`
 
 Use batch commands only when batch orchestration is the point. They are not the safest path
 for interactive validity-sensitive work.
@@ -127,9 +135,9 @@ If the task is about why a run used a provider, check those in that order.
 When asked “what should I run?” bias toward these answers:
 
 - One instance:
-  - `fetch-msb-repo`
-  - `prepare-msb-single`
-  - `run-msb-agent-single`
+  - `run repo fetch`
+  - `run prepare instance`
+  - `run single agent`
 - One target family with stateful progress:
   - `campaign show`
   - `closure status`

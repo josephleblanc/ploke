@@ -1,6 +1,6 @@
 use crate::{
-    EmbeddingModelName, EmbeddingResponseId, InputModality, LlmError, Modality, ModelId,
-    OutputModality,
+    EmbeddingModelName, EmbeddingResponseId, HTTP_REFERER, HTTP_TITLE, InputModality, LlmError,
+    Modality, ModelId, OutputModality,
     embeddings::{
         EmbClientConfig, EmbeddingRequest, HasDims, HasEmbeddingModels, HasEmbeddings,
         fetch_and_write_embedding_models_registry as fetch_and_write_registry_generic,
@@ -8,7 +8,6 @@ use crate::{
         write_embedding_models_registry as write_registry_generic,
     },
     router_only::{ApiRoute, Router, openrouter::EmbeddingProviderPrefs},
-    HTTP_REFERER, HTTP_TITLE,
 };
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};

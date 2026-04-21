@@ -5,6 +5,7 @@ use crate::{
     app_state::{core::EditProposalStatus, handlers::chat},
     chat_history::MessageKind,
     tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload},
+    utils::consts::DEBUG_TOOLS,
 };
 
 use super::*;
@@ -98,7 +99,7 @@ async fn apply_ns_edit(
     };
     let started_at = Instant::now();
     tracing::debug!(
-        target: "dbg_tools",
+        target: DEBUG_TOOLS,
         request_id = %request_id,
         file_count = file_paths.len(),
         edit_count = proposal.edits_ns.len(),
@@ -158,7 +159,7 @@ async fn apply_ns_edit(
                 .count();
             let file_count = file_paths.len();
             tracing::debug!(
-                target: "dbg_tools",
+                target: DEBUG_TOOLS,
                 request_id = %request_id,
                 applied,
                 file_count,
@@ -266,7 +267,7 @@ async fn apply_ns_edit(
         }
         Err(e) => {
             tracing::debug!(
-                target: "dbg_tools",
+                target: DEBUG_TOOLS,
                 request_id = %request_id,
                 elapsed_ms = started_at.elapsed().as_millis(),
                 error = %e,
