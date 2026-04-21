@@ -4,6 +4,14 @@ use std::path::PathBuf;
 
 use crate::spec::EvalBudget;
 
+/// Stable role classification for one concrete run attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisteredRunRole {
+    Control,
+    Treatment,
+}
+
 /// Canonical directory roots used to store registration and run artifacts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunStorageRoots {
@@ -65,6 +73,16 @@ pub struct RunIntent {
     /// Optional provider slug requested for the run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_slug: Option<String>,
+    /// Optional campaign that owns this run attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign_id: Option<String>,
+    /// Optional batch that owns this run attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_id: Option<String>,
+    /// Stable run arm identifier for this attempt.
+    pub run_arm_id: String,
+    /// Stable role for this attempt.
+    pub run_role: RegisteredRunRole,
 }
 
 /// Immutable execution configuration captured from a run intent.
@@ -87,6 +105,16 @@ pub struct FrozenRunSpec {
     /// Concrete provider slug, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_slug: Option<String>,
+    /// Concrete campaign context, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign_id: Option<String>,
+    /// Concrete batch context, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_id: Option<String>,
+    /// Stable run arm identifier for this attempt.
+    pub run_arm_id: String,
+    /// Stable role for this attempt.
+    pub run_role: RegisteredRunRole,
 }
 
 impl RunIntent {
@@ -100,6 +128,10 @@ impl RunIntent {
             budget: self.budget.clone(),
             model_id: self.model_id.clone(),
             provider_slug: self.provider_slug.clone(),
+            campaign_id: self.campaign_id.clone(),
+            batch_id: self.batch_id.clone(),
+            run_arm_id: self.run_arm_id.clone(),
+            run_role: self.run_role,
         }
     }
 }
@@ -139,6 +171,10 @@ mod tests {
             },
             model_id: Some("anthropic/claude-sonnet-4".to_string()),
             provider_slug: Some("openrouter".to_string()),
+            campaign_id: Some("baseline-smoke".to_string()),
+            batch_id: Some("ripgrep-2209".to_string()),
+            run_arm_id: "structured-current-policy".to_string(),
+            run_role: RegisteredRunRole::Treatment,
         }
     }
 
@@ -161,6 +197,10 @@ mod tests {
             Some("anthropic/claude-sonnet-4")
         );
         assert_eq!(frozen.provider_slug.as_deref(), Some("openrouter"));
+        assert_eq!(frozen.campaign_id.as_deref(), Some("baseline-smoke"));
+        assert_eq!(frozen.batch_id.as_deref(), Some("ripgrep-2209"));
+        assert_eq!(frozen.run_arm_id, "structured-current-policy");
+        assert_eq!(frozen.run_role, RegisteredRunRole::Treatment);
         assert_eq!(frozen.storage_roots, intent.storage_roots);
     }
 }

@@ -6,6 +6,10 @@ use ploke_db::ObservabilityStore;
 use serde::{Deserialize, Serialize};
 
 use crate::record::read_compressed_record;
+use crate::run_registry::{
+    RunSelectionPreference, completed_record_paths_for_runs_root,
+    preferred_registration_for_instance,
+};
 use crate::runner::RunArmRole;
 use crate::spec::PrepareError;
 
@@ -105,6 +109,16 @@ pub(crate) enum RunDirPreference {
     PreferTreatmentWithSubmission,
 }
 
+fn selection_preference(preference: RunDirPreference) -> RunSelectionPreference {
+    match preference {
+        RunDirPreference::LatestAny => RunSelectionPreference::LatestAny,
+        RunDirPreference::PreferTreatment => RunSelectionPreference::PreferTreatment,
+        RunDirPreference::PreferTreatmentWithSubmission => {
+            RunSelectionPreference::PreferTreatmentWithSubmission
+        }
+    }
+}
+
 fn run_dir_role(run_dir: &Path) -> Option<RunArmRole> {
     let record_path = run_dir.join("record.json.gz");
     read_compressed_record(&record_path)
@@ -129,6 +143,21 @@ fn best_run_dir_for_instance_root(
     instance_root: &Path,
     preference: RunDirPreference,
 ) -> Result<Option<PathBuf>, PrepareError> {
+    let runs_root = instance_root
+        .parent()
+        .ok_or_else(|| PrepareError::MissingRunManifest(instance_root.to_path_buf()))?;
+    let instance_id = instance_root
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .ok_or_else(|| PrepareError::MissingRunManifest(instance_root.to_path_buf()))?;
+    if let Some(registration) = preferred_registration_for_instance(
+        runs_root,
+        &instance_id,
+        selection_preference(preference),
+    )? {
+        return Ok(Some(registration.artifacts.run_root));
+    }
+
     let candidates = candidate_run_dirs_for_instance_root(instance_root)?;
     let mut best_preferred: Option<(std::time::SystemTime, PathBuf)> = None;
     let mut best_any: Option<(std::time::SystemTime, PathBuf)> = None;
@@ -172,6 +201,11 @@ pub(crate) fn preferred_run_dir_for_instance(
 pub(crate) fn list_finished_record_paths_in_runs_root(
     runs_root: &Path,
 ) -> Result<Vec<PathBuf>, PrepareError> {
+    let authority_paths = completed_record_paths_for_runs_root(runs_root)?;
+    if !authority_paths.is_empty() {
+        return Ok(authority_paths);
+    }
+
     let mut paths = Vec::new();
     let entries = match fs::read_dir(runs_root) {
         Ok(entries) => entries,

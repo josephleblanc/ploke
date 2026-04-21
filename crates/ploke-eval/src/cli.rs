@@ -167,7 +167,7 @@ pub struct RunCommand {
 #[derive(Debug, Subcommand)]
 pub enum RunSubcommand {
     #[command(display_order = 10)]
-    /// Fetch or refresh benchmark repo checkouts.
+    /// Ensure benchmark repo checkouts exist and refresh remote refs.
     Repo(RunRepoCommand),
     #[command(display_order = 11)]
     /// List built-in benchmark dataset keys and sources.
@@ -195,7 +195,7 @@ pub struct RunRepoCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum RunRepoSubcommand {
-    /// Fetch or refresh one built-in benchmark repo checkout under ~/.ploke-eval/repos.
+    /// Ensure one built-in benchmark repo exists and refresh its remote refs.
     Fetch(FetchMsbRepoCommand),
 }
 
@@ -290,7 +290,7 @@ pub struct JustCommand {
 #[derive(Debug, Subcommand)]
 pub enum JustSubcommand {
     #[command(display_order = 10, alias = "fetch-msb-repo")]
-    /// Shortcut for `run repo fetch`.
+    /// Shortcut for `run repo fetch` (clone if missing; otherwise fetch remote refs).
     FetchRepo(FetchMsbRepoCommand),
     #[command(display_order = 11, alias = "list-msb-datasets")]
     /// Shortcut for `run datasets list`.
@@ -1442,6 +1442,8 @@ Default path:
 Use:
   registry status
     inspect the current persisted inventory
+  registry show --dataset sharkdp__fd
+    list the concrete instance ids for one dataset family
   registry recompute
     rebuild the inventory from dataset sources
 "
@@ -1624,6 +1626,8 @@ pub enum RegistrySubcommand {
     Recompute(RegistryRecomputeCommand),
     /// Print the current persisted target registry.
     Status(RegistryStatusCommand),
+    /// Show the concrete registry entries for one dataset family.
+    Show(RegistryShowCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -1646,6 +1650,25 @@ pub struct RegistryStatusCommand {
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct RegistryShowCommand {
+    /// Exact dataset family label from `registry status`, for example sharkdp__fd.
+    #[arg(long)]
+    pub dataset: String,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RegistryDatasetView<'a> {
+    dataset: &'a str,
+    state_path: PathBuf,
+    source_paths: Vec<PathBuf>,
+    entries: Vec<&'a RegistryEntry>,
 }
 
 #[derive(Debug, Parser)]
@@ -2272,6 +2295,7 @@ impl RunMsbSingleCommand {
 
         let artifacts = RunMsbSingleRequest {
             run_manifest,
+            batch_id: None,
             index_debug_snapshots: self.index_debug_snapshots,
             use_default_model: self.use_default_model,
             model_id: self.model_id,
@@ -2322,6 +2346,7 @@ impl RunMsbAgentSingleCommand {
 
         let artifacts = RunMsbAgentSingleRequest {
             run_manifest,
+            batch_id: None,
             index_debug_snapshots: self.index_debug_snapshots,
             use_default_model: self.use_default_model,
             model_id: self.model_id,
@@ -2487,6 +2512,7 @@ impl RegistryCommand {
         match self.command {
             RegistrySubcommand::Recompute(cmd) => cmd.run().await,
             RegistrySubcommand::Status(cmd) => cmd.run().await,
+            RegistrySubcommand::Show(cmd) => cmd.run().await,
         }
     }
 }
@@ -2785,6 +2811,24 @@ impl RegistryStatusCommand {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&registry).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl RegistryShowCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let registry = load_target_registry(BenchmarkFamily::MultiSweBenchRust)?;
+        let view = registry_dataset_view(&registry, &self.dataset)?;
+
+        match self.format {
+            InspectOutputFormat::Table => print_registry_dataset_view(&view),
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&view).map_err(PrepareError::Serialize)?
                 );
             }
         }
@@ -3193,14 +3237,18 @@ fn load_submission_record_for_row(
     state: &crate::closure::ClosureState,
     row: &crate::closure::ClosureInstanceRow,
 ) -> Result<MultiSweBenchSubmissionRecord, PrepareError> {
-    let instance_root = state.config.runs_root.join(&row.instance_id);
-    let run_dir = preferred_run_dir_for_instance(
-        &state.config.runs_root,
-        &row.instance_id,
-        RunDirPreference::PreferTreatmentWithSubmission,
-    )?
-    .unwrap_or(instance_root);
-    let path = run_dir.join("multi-swe-bench-submission.jsonl");
+    let path = if let Some(path) = row.artifacts.msb_submission.as_ref() {
+        path.clone()
+    } else {
+        let instance_root = state.config.runs_root.join(&row.instance_id);
+        let run_dir = preferred_run_dir_for_instance(
+            &state.config.runs_root,
+            &row.instance_id,
+            RunDirPreference::PreferTreatmentWithSubmission,
+        )?
+        .unwrap_or(instance_root);
+        run_dir.join("multi-swe-bench-submission.jsonl")
+    };
     let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
         path: path.clone(),
         source,
@@ -8369,7 +8417,7 @@ fn print_advice(lines: &[&str]) {
 
 #[derive(Debug, Parser)]
 #[command(
-    about = "Clone or refresh one built-in benchmark repo under ~/.ploke-eval/repos",
+    about = "Ensure one built-in benchmark repo exists under ~/.ploke-eval/repos",
     after_help = "\
 Example:
 
@@ -8377,6 +8425,14 @@ Example:
 
 Default destination:
   ~/.ploke-eval/repos/<org>/<repo>
+
+Behavior:
+  If the repo checkout is missing, this clones it into the default destination.
+  If the repo checkout already exists, this runs:
+    git fetch --all --tags --prune
+  in that checkout to refresh remote refs.
+
+This does not reset the working tree, switch branches, or check out a benchmark SHA.
 "
 )]
 pub struct FetchMsbRepoCommand {
@@ -8443,6 +8499,64 @@ fn run_git(args: &[&str], command_label: String) -> Result<(), PrepareError> {
             command: command_label,
             status: status.code().unwrap_or(-1),
         })
+    }
+}
+
+fn registry_dataset_view<'a>(
+    registry: &'a TargetRegistry,
+    dataset: &'a str,
+) -> Result<RegistryDatasetView<'a>, PrepareError> {
+    let entries: Vec<_> = registry
+        .entries
+        .iter()
+        .filter(|entry| entry.dataset_label == dataset)
+        .collect();
+    if entries.is_empty() {
+        let available = registry
+            .entries
+            .iter()
+            .map(|entry| entry.dataset_label.as_str())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "registry dataset '{}' not found; available datasets: {}",
+                dataset, available
+            ),
+        });
+    }
+
+    let source_paths = registry
+        .dataset_sources
+        .iter()
+        .filter(|source| source.label == dataset || source.key.as_deref() == Some(dataset))
+        .map(|source| source.path.clone())
+        .collect();
+
+    Ok(RegistryDatasetView {
+        dataset,
+        state_path: target_registry_path(registry.benchmark_family)?,
+        source_paths,
+        entries,
+    })
+}
+
+fn print_registry_dataset_view(view: &RegistryDatasetView<'_>) {
+    println!("dataset: {}", view.dataset);
+    println!("instances: {}", view.entries.len());
+    println!("registry: {}", view.state_path.display());
+    if !view.source_paths.is_empty() {
+        println!("sources:");
+        for path in &view.source_paths {
+            println!("  {}", path.display());
+        }
+    }
+    println!();
+    println!("instance ids:");
+    for entry in &view.entries {
+        println!("  {}", entry.instance_id);
     }
 }
 
@@ -8776,6 +8890,113 @@ mod tests {
                 command: JustSubcommand::Single(cmd),
             }) => assert_eq!(cmd.instance.as_deref(), Some("BurntSushi__ripgrep-2209")),
             other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn registry_show_parses_dataset_selector() {
+        let parsed =
+            Cli::try_parse_from(["ploke-eval", "registry", "show", "--dataset", "sharkdp__fd"])
+                .expect("registry show should parse");
+
+        match parsed.command {
+            Command::Registry(RegistryCommand {
+                command: RegistrySubcommand::Show(cmd),
+            }) => assert_eq!(cmd.dataset, "sharkdp__fd"),
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    fn sample_target_registry() -> TargetRegistry {
+        TargetRegistry {
+            schema_version: crate::target_registry::TARGET_REGISTRY_SCHEMA_VERSION.to_string(),
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            updated_at: "2026-04-21T00:00:00Z".to_string(),
+            dataset_sources: vec![
+                crate::target_registry::RegistryDatasetSource {
+                    key: Some("fd".to_string()),
+                    path: PathBuf::from("/tmp/sharkdp__fd_dataset.jsonl"),
+                    label: "sharkdp__fd".to_string(),
+                    url: Some("https://example.invalid/fd".to_string()),
+                },
+                crate::target_registry::RegistryDatasetSource {
+                    key: Some("ripgrep".to_string()),
+                    path: PathBuf::from("/tmp/BurntSushi__ripgrep_dataset.jsonl"),
+                    label: "BurntSushi__ripgrep".to_string(),
+                    url: Some("https://example.invalid/ripgrep".to_string()),
+                },
+            ],
+            entries: vec![
+                RegistryEntry {
+                    instance_id: "sharkdp__fd-497".to_string(),
+                    dataset_label: "sharkdp__fd".to_string(),
+                    repo_family: "sharkdp__fd".to_string(),
+                    source: crate::target_registry::RegistrySource {
+                        dataset_path: PathBuf::from("/tmp/sharkdp__fd_dataset.jsonl"),
+                        org: "sharkdp".to_string(),
+                        repo: "fd".to_string(),
+                        number: 497,
+                        base_sha: "abc123".to_string(),
+                    },
+                    state: crate::target_registry::RegistryEntryState::Active,
+                },
+                RegistryEntry {
+                    instance_id: "sharkdp__fd-658".to_string(),
+                    dataset_label: "sharkdp__fd".to_string(),
+                    repo_family: "sharkdp__fd".to_string(),
+                    source: crate::target_registry::RegistrySource {
+                        dataset_path: PathBuf::from("/tmp/sharkdp__fd_dataset.jsonl"),
+                        org: "sharkdp".to_string(),
+                        repo: "fd".to_string(),
+                        number: 658,
+                        base_sha: "def456".to_string(),
+                    },
+                    state: crate::target_registry::RegistryEntryState::Active,
+                },
+                RegistryEntry {
+                    instance_id: "BurntSushi__ripgrep-2209".to_string(),
+                    dataset_label: "BurntSushi__ripgrep".to_string(),
+                    repo_family: "BurntSushi__ripgrep".to_string(),
+                    source: crate::target_registry::RegistrySource {
+                        dataset_path: PathBuf::from("/tmp/BurntSushi__ripgrep_dataset.jsonl"),
+                        org: "BurntSushi".to_string(),
+                        repo: "ripgrep".to_string(),
+                        number: 2209,
+                        base_sha: "fedcba".to_string(),
+                    },
+                    state: crate::target_registry::RegistryEntryState::Active,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn registry_dataset_view_filters_to_one_dataset_family() {
+        let registry = sample_target_registry();
+        let view = registry_dataset_view(&registry, "sharkdp__fd").expect("view should resolve");
+
+        assert_eq!(view.dataset, "sharkdp__fd");
+        assert_eq!(view.entries.len(), 2);
+        assert_eq!(view.entries[0].instance_id, "sharkdp__fd-497");
+        assert_eq!(view.entries[1].instance_id, "sharkdp__fd-658");
+        assert_eq!(
+            view.source_paths,
+            vec![PathBuf::from("/tmp/sharkdp__fd_dataset.jsonl")]
+        );
+    }
+
+    #[test]
+    fn registry_dataset_view_reports_available_datasets_on_miss() {
+        let registry = sample_target_registry();
+        let err = registry_dataset_view(&registry, "tokio-rs__tokio").expect_err("missing dataset");
+
+        match err {
+            PrepareError::InvalidBatchSelection { detail } => {
+                assert!(detail.contains("tokio-rs__tokio"));
+                assert!(detail.contains("sharkdp__fd"));
+                assert!(detail.contains("BurntSushi__ripgrep"));
+            }
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 

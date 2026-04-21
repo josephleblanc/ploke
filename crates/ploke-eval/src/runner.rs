@@ -48,6 +48,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::LlmResponseRecord;
+use crate::inner::core::{RegisteredRunRole, RunIntent};
+use crate::inner::registry::{RunLifecyclePhase, RunPhaseStatus, RunRegistration};
 use crate::layout;
 use crate::model_registry::resolve_model_for_run;
 use crate::provider_prefs::load_provider_for_model;
@@ -56,6 +58,7 @@ use crate::record::{
     RunRecordBuilder, RunTimingSummary, SetupPhase, write_compressed_record,
 };
 use crate::run_history::record_last_run;
+use crate::run_registry::{persist_registration, register_live_run, storage_roots_for_instance};
 use crate::spec::{PrepareError, PreparedMsbBatch, PreparedSingleRun, RunSource};
 use crate::tracing_setup::current_full_response_log_path;
 
@@ -93,9 +96,88 @@ fn allocate_run_output_dir(instance_dir: &Path, run_arm: &RunArm) -> Result<Path
     Ok(parent.join(run_id))
 }
 
+fn registered_run_role(run_arm: &RunArm) -> RegisteredRunRole {
+    match run_arm.role {
+        RunArmRole::Control => RegisteredRunRole::Control,
+        RunArmRole::Treatment => RegisteredRunRole::Treatment,
+    }
+}
+
+fn build_run_intent(
+    prepared: &PreparedSingleRun,
+    run_arm: &RunArm,
+    selected_model_id: &impl ToString,
+    selected_provider_slug: &str,
+    batch_id: Option<String>,
+) -> Result<RunIntent, PrepareError> {
+    Ok(RunIntent {
+        task_id: prepared.task_id.clone(),
+        repo_root: prepared.repo_root.clone(),
+        storage_roots: storage_roots_for_instance(&prepared.output_dir)?,
+        base_sha: prepared.base_sha.clone(),
+        budget: prepared.budget.clone(),
+        model_id: Some(selected_model_id.to_string()),
+        provider_slug: Some(selected_provider_slug.to_string()),
+        campaign_id: prepared
+            .campaign
+            .as_ref()
+            .map(|campaign| campaign.campaign_id.clone()),
+        batch_id,
+        run_arm_id: run_arm.id.clone(),
+        run_role: registered_run_role(run_arm),
+    })
+}
+
+fn register_run_attempt(
+    prepared: &PreparedSingleRun,
+    manifest_path: &Path,
+    run_arm: &RunArm,
+    run_output_dir: &Path,
+    selected_model_id: &impl ToString,
+    selected_provider_slug: &str,
+    batch_id: Option<String>,
+) -> Result<RunRegistration, PrepareError> {
+    let run_id = run_output_dir
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .ok_or_else(|| PrepareError::MissingRunManifest(run_output_dir.to_path_buf()))?;
+    let intent = build_run_intent(
+        prepared,
+        run_arm,
+        selected_model_id,
+        selected_provider_slug,
+        batch_id,
+    )?;
+    let mut registration = register_live_run(intent, run_id)?;
+    registration.artifacts.run_manifest = manifest_path.to_path_buf();
+    if matches!(prepared.source, Some(RunSource::MultiSweBench(_)))
+        && run_arm.role == RunArmRole::Treatment
+    {
+        registration.artifacts.msb_submission =
+            Some(run_output_dir.join("multi-swe-bench-submission.jsonl"));
+    }
+    persist_registration(&registration)?;
+    Ok(registration)
+}
+
+fn load_submission_fix_patch(path: &Path) -> Result<String, PrepareError> {
+    let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let record: MultiSweBenchSubmissionRecord =
+        serde_json::from_str(text.trim()).map_err(|source| PrepareError::ParseManifest {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(record.fix_patch)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMsbAgentSingleRequest {
     pub run_manifest: PathBuf,
+    #[serde(default)]
+    pub batch_id: Option<String>,
     pub index_debug_snapshots: bool,
     #[serde(default)]
     pub use_default_model: bool,
@@ -112,6 +194,8 @@ pub struct RunMsbAgentSingleRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMsbSingleRequest {
     pub run_manifest: PathBuf,
+    #[serde(default)]
+    pub batch_id: Option<String>,
     pub index_debug_snapshots: bool,
     #[serde(default)]
     pub use_default_model: bool,
@@ -1571,296 +1655,368 @@ impl RunMsbSingleRequest {
         run_record.metadata.agent.model_id = Some(selected_model_id.clone());
         run_record.metadata.agent.provider = Some(selected_provider.slug.as_str().to_string());
         run_record.metadata.agent.selected_endpoint = Some(selected_endpoint.clone());
+        let mut registration = register_run_attempt(
+            &prepared,
+            &manifest_path,
+            &run_arm,
+            &run_output_dir,
+            &selected_model_id,
+            selected_provider.slug.as_str(),
+            self.batch_id.clone(),
+        )?;
+        registration.mark_execution_started(Some("run setup started".to_string()));
+        persist_registration(&registration)?;
 
-        let mut steps = vec!["load_manifest".to_string()];
-        checkout_repo_to_base(&prepared.repo_root, prepared.base_sha.as_deref())?;
-        steps.push("checkout_base_sha".to_string());
+        let result: Result<RunArtifactPaths, PrepareError> = async {
+            let mut steps = vec!["load_manifest".to_string()];
+            checkout_repo_to_base(&prepared.repo_root, prepared.base_sha.as_deref())?;
+            steps.push("checkout_base_sha".to_string());
 
-        let repo_state = RepoStateArtifact {
-            repo_root: prepared.repo_root.clone(),
-            requested_base_sha: prepared.base_sha.clone(),
-            checked_out_head_sha: git_stdout(
-                &prepared.repo_root,
-                &["rev-parse", "HEAD"],
-                "git rev-parse HEAD",
-            )?
-            .map(|s| s.trim().to_string()),
-            git_status_porcelain: git_stdout(
-                &prepared.repo_root,
-                &["status", "--short"],
-                "git status --short",
-            )?
-            .unwrap_or_default(),
-        };
-        write_json(&repo_state_path, &repo_state)?;
-        steps.push("write_repo_state".to_string());
+            let repo_state = RepoStateArtifact {
+                repo_root: prepared.repo_root.clone(),
+                requested_base_sha: prepared.base_sha.clone(),
+                checked_out_head_sha: git_stdout(
+                    &prepared.repo_root,
+                    &["rev-parse", "HEAD"],
+                    "git rev-parse HEAD",
+                )?
+                .map(|s| s.trim().to_string()),
+                git_status_porcelain: git_stdout(
+                    &prepared.repo_root,
+                    &["status", "--short"],
+                    "git status --short",
+                )?
+                .unwrap_or_default(),
+            };
+            write_json(&repo_state_path, &repo_state)?;
+            steps.push("write_repo_state".to_string());
 
-        let cached_starting_db = match load_cached_starting_db(&prepared, &embedding_selection) {
-            Ok(cached) => cached,
-            Err(err) => {
-                warn!(error = %err, "runner phase: starting db cache lookup failed; falling back to fresh indexing");
-                None
-            }
-        };
-        let mut using_cached_starting_db = false;
-        let runtime_db = if let Some(cache_paths) = cached_starting_db.as_ref() {
-            match Database::create_new_backup_default(&cache_paths.snapshot).await {
-                Ok(db) => {
-                    info!(
-                        snapshot = %cache_paths.snapshot.display(),
-                        "runner phase: restoring cached starting db snapshot"
-                    );
-                    using_cached_starting_db = true;
-                    steps.push("restore_cached_starting_db".to_string());
-                    Arc::new(db)
-                }
+            let cached_starting_db = match load_cached_starting_db(&prepared, &embedding_selection) {
+                Ok(cached) => cached,
                 Err(err) => {
-                    warn!(
-                        snapshot = %cache_paths.snapshot.display(),
-                        error = %err,
-                        "runner phase: cached starting db restore failed; falling back to fresh indexing"
-                    );
-                    let db = init_runtime_db()?;
-                    steps.push("init_runtime_db".to_string());
-                    db
+                    warn!(error = %err, "runner phase: starting db cache lookup failed; falling back to fresh indexing");
+                    None
                 }
-            }
-        } else {
-            let db = init_runtime_db()?;
-            steps.push("init_runtime_db".to_string());
-            db
-        };
+            };
+            let mut using_cached_starting_db = false;
+            let runtime_db = if let Some(cache_paths) = cached_starting_db.as_ref() {
+                match Database::create_new_backup_default(&cache_paths.snapshot).await {
+                    Ok(db) => {
+                        info!(
+                            snapshot = %cache_paths.snapshot.display(),
+                            "runner phase: restoring cached starting db snapshot"
+                        );
+                        using_cached_starting_db = true;
+                        steps.push("restore_cached_starting_db".to_string());
+                        Arc::new(db)
+                    }
+                    Err(err) => {
+                        warn!(
+                            snapshot = %cache_paths.snapshot.display(),
+                            error = %err,
+                            "runner phase: cached starting db restore failed; falling back to fresh indexing"
+                        );
+                        let db = init_runtime_db()?;
+                        steps.push("init_runtime_db".to_string());
+                        db
+                    }
+                }
+            } else {
+                let db = init_runtime_db()?;
+                steps.push("init_runtime_db".to_string());
+                db
+            };
 
-        let config_home = run_output_dir.join("config");
-        fs::create_dir_all(&config_home).map_err(|source| PrepareError::CreateOutputDir {
-            path: config_home.clone(),
-            source,
-        })?;
-        let _config_guard = XdgConfigHomeGuard::set_to(&config_home);
-        steps.push("sandbox_config_home".to_string());
-
-        steps.push("embedding_model_preflight".to_string());
-
-        let embedding_processor = eval_embedding_processor(&embedding_selection)?;
-        steps.push("init_codestral_embedder".to_string());
-
-        let runtime = TestRuntime::new_with_embedding_processor(&runtime_db, embedding_processor)
-            .spawn_file_manager()
-            .spawn_state_manager()
-            .spawn_event_bus();
-        let events = runtime
-            .events_builder()
-            .build_event_bus_only()
-            .event_bus_events;
-        let mut realtime_rx = events.realtime_tx_rx;
-        let mut background_rx = events.background_tx_rx;
-        let mut index_rx =
-            Arc::try_unwrap(events.index_tx_rx).map_err(|_| PrepareError::DatabaseSetup {
-                phase: "subscribe_index_status",
-                detail: "index receiver unexpectedly shared".to_string(),
+            let config_home = run_output_dir.join("config");
+            fs::create_dir_all(&config_home).map_err(|source| PrepareError::CreateOutputDir {
+                path: config_home.clone(),
+                source,
             })?;
-        let state = runtime.state_arc();
-        {
-            let mut cfg = state.config.write().await;
-            cfg.active_model = selected_model_id.clone();
-            cfg.model_registry
-                .select_model_provider(&selected_model_id, Some(&selected_provider));
-        }
-        info!("runner phase: inspect active embedding set before activation");
-        let currently_active_set: EmbeddingSet = runtime_db
-            .with_active_set(|set| set.clone())
-            .expect("active embedding set");
-        info!(
-            ?currently_active_set,
-            "active embedding set before activation"
-        );
+            let _config_guard = XdgConfigHomeGuard::set_to(&config_home);
+            steps.push("sandbox_config_home".to_string());
 
-        activate_eval_embedding_runtime(&state, &embedding_selection)?;
+            steps.push("embedding_model_preflight".to_string());
 
-        let currently_active_set: EmbeddingSet = runtime_db
-            .with_active_set(|set| set.clone())
-            .expect("active embedding set");
-        info!(
-            ?currently_active_set,
-            "active embedding set after activation"
-        );
-        steps.push("activate_codestral_embedding_set".to_string());
-        let mut app = runtime
-            .into_app_with_state_pwd(prepared.repo_root.clone())
-            .await;
-        steps.push("bootstrap_headless_runtime".to_string());
+            let embedding_processor = eval_embedding_processor(&embedding_selection)?;
+            steps.push("init_codestral_embedder".to_string());
 
-        if using_cached_starting_db {
+            let runtime = TestRuntime::new_with_embedding_processor(&runtime_db, embedding_processor)
+                .spawn_file_manager()
+                .spawn_state_manager()
+                .spawn_event_bus();
+            let events = runtime
+                .events_builder()
+                .build_event_bus_only()
+                .event_bus_events;
+            let mut realtime_rx = events.realtime_tx_rx;
+            let mut background_rx = events.background_tx_rx;
+            let mut index_rx =
+                Arc::try_unwrap(events.index_tx_rx).map_err(|_| PrepareError::DatabaseSetup {
+                    phase: "subscribe_index_status",
+                    detail: "index receiver unexpectedly shared".to_string(),
+                })?;
+            let state = runtime.state_arc();
+            {
+                let mut cfg = state.config.write().await;
+                cfg.active_model = selected_model_id.clone();
+                cfg.model_registry
+                    .select_model_provider(&selected_model_id, Some(&selected_provider));
+            }
+            info!("runner phase: inspect active embedding set before activation");
+            let currently_active_set: EmbeddingSet = runtime_db
+                .with_active_set(|set| set.clone())
+                .expect("active embedding set");
             info!(
-                task_id = %prepared.task_id,
-                repo_root = %prepared.repo_root.display(),
-                "runner phase: cached starting db present, skipping indexing"
+                ?currently_active_set,
+                "active embedding set before activation"
             );
-            seed_loaded_workspace_from_repo(&state, &prepared).await?;
-            steps.push("seed_loaded_workspace_from_repo".to_string());
-            app.pump_pending_events().await;
-            steps.push("pump_post_cached_workspace_events".to_string());
-        } else {
-            info!(task_id = %prepared.task_id, repo_root = %prepared.repo_root.display(), "runner phase: start indexing");
-            app.run_command_text("/index").await;
-            steps.push("run_index_command".to_string());
 
-            info!("runner phase: waiting for indexing completion");
-            let mut last_index_progress = None;
-            if let Err(err) = wait_for_indexing_completion(
-                &mut app,
-                &mut realtime_rx,
-                &mut background_rx,
-                &mut index_rx,
+            activate_eval_embedding_runtime(&state, &embedding_selection)?;
+
+            let currently_active_set: EmbeddingSet = runtime_db
+                .with_active_set(|set| set.clone())
+                .expect("active embedding set");
+            info!(
+                ?currently_active_set,
+                "active embedding set after activation"
+            );
+            steps.push("activate_codestral_embedding_set".to_string());
+            let mut app = runtime
+                .into_app_with_state_pwd(prepared.repo_root.clone())
+                .await;
+            steps.push("bootstrap_headless_runtime".to_string());
+
+            if using_cached_starting_db {
+                info!(
+                    task_id = %prepared.task_id,
+                    repo_root = %prepared.repo_root.display(),
+                    "runner phase: cached starting db present, skipping indexing"
+                );
+                seed_loaded_workspace_from_repo(&state, &prepared).await?;
+                steps.push("seed_loaded_workspace_from_repo".to_string());
+                app.pump_pending_events().await;
+                steps.push("pump_post_cached_workspace_events".to_string());
+            } else {
+                info!(task_id = %prepared.task_id, repo_root = %prepared.repo_root.display(), "runner phase: start indexing");
+                app.run_command_text("/index").await;
+                steps.push("run_index_command".to_string());
+
+                info!("runner phase: waiting for indexing completion");
+                let mut last_index_progress = None;
+                if let Err(err) = wait_for_indexing_completion(
+                    &mut app,
+                    &mut realtime_rx,
+                    &mut background_rx,
+                    &mut index_rx,
+                    Arc::clone(&state.db),
+                    indexing_checkpoint_db.clone(),
+                    indexing_failure_db.clone(),
+                    self.index_debug_snapshots,
+                    &mut last_index_progress,
+                )
+                .await
+                {
+                    persist_indexing_failure_status(
+                        &indexing_status_path,
+                        &err,
+                        last_index_progress,
+                    );
+                    persist_parse_failure_artifact(&state, &parse_failure_path).await;
+                    return Err(err);
+                }
+                steps.push("indexing_completed".to_string());
+                info!("runner phase: indexing completed");
+                app.pump_pending_events().await;
+                steps.push("pump_post_index_events".to_string());
+            }
+
+            let indexing_status = IndexingStatusArtifact {
+                status: "completed".to_string(),
+                detail: if using_cached_starting_db {
+                    "Loaded cached starting db snapshot and skipped reindexing.".to_string()
+                } else {
+                    "Indexing completed through the full app command path.".to_string()
+                },
+                last_progress: None,
+            };
+            write_json(&indexing_status_path, &indexing_status)?;
+            steps.push("write_indexing_status".to_string());
+
+            let setup_phase = build_setup_phase(
+                &state.db,
+                &repo_state,
+                &indexing_status,
+                setup_start_time,
+                using_cached_starting_db,
+                &parse_failure_path,
+            )
+            .await?;
+            run_record.phases.setup = Some(setup_phase);
+            steps.push("populate_setup_phase".to_string());
+            registration.update_phase(
+                RunLifecyclePhase::Setup,
+                RunPhaseStatus::Completed,
+                Some(indexing_status.detail.clone()),
+            );
+            registration.update_phase(
+                RunLifecyclePhase::Patching,
+                RunPhaseStatus::Skipped,
+                Some("setup-only control run".to_string()),
+            );
+            persist_registration(&registration)?;
+
+            persist_db_snapshot(
                 Arc::clone(&state.db),
                 indexing_checkpoint_db.clone(),
-                indexing_failure_db.clone(),
-                self.index_debug_snapshots,
-                &mut last_index_progress,
+                "starting snapshot checkpoint",
             )
-            .await
-            {
-                persist_indexing_failure_status(&indexing_status_path, &err, last_index_progress);
-                persist_parse_failure_artifact(&state, &parse_failure_path).await;
-                return Err(err);
+            .await?;
+            steps.push("write_indexing_checkpoint".to_string());
+
+            if !using_cached_starting_db {
+                if let Err(err) = persist_starting_db_cache(
+                    &prepared,
+                    &embedding_selection,
+                    &indexing_checkpoint_db,
+                )
+                .await
+                {
+                    warn!(
+                        snapshot = %indexing_checkpoint_db.display(),
+                        error = %err,
+                        "runner phase: failed to refresh starting db cache"
+                    );
+                }
+                steps.push("refresh_starting_db_cache".to_string());
             }
-            steps.push("indexing_completed".to_string());
-            info!("runner phase: indexing completed");
-            app.pump_pending_events().await;
-            steps.push("pump_post_index_events".to_string());
-        }
 
-        let indexing_status = IndexingStatusArtifact {
-            status: "completed".to_string(),
-            detail: if using_cached_starting_db {
-                "Loaded cached starting db snapshot and skipped reindexing.".to_string()
+            let setup_wall_clock_secs = Some(run_start_instant.elapsed().as_secs_f64());
+
+            let snapshot_file = run_output_dir.join("final-snapshot.db");
+            info!(
+                snapshot = %snapshot_file.display(),
+                "runner phase: persisting final eval snapshot"
+            );
+            persist_db_snapshot(
+                Arc::clone(&state.db),
+                snapshot_file.clone(),
+                "final snapshot",
+            )
+            .await?;
+            steps.push("snapshot_completed".to_string());
+            info!(snapshot_file = %snapshot_file.display(), "runner phase: snapshot completed");
+
+            let snapshot_status = SnapshotStatusArtifact {
+                status: "completed".to_string(),
+                snapshot_file: Some(snapshot_file.clone()),
+                registry_file: snapshot_file.clone(),
+                config_home,
+            };
+            write_json(&snapshot_status_path, &snapshot_status)?;
+            steps.push("write_snapshot_status".to_string());
+
+            registration.update_phase(
+                RunLifecyclePhase::Packaging,
+                RunPhaseStatus::InProgress,
+                Some("writing benchmark submission artifact".to_string()),
+            );
+            persist_registration(&registration)?;
+
+            let msb_submission_path =
+                write_msb_submission_artifact(&prepared, &run_arm, &run_output_dir)?;
+            if let Some(path) = msb_submission_path.as_ref() {
+                steps.push("write_msb_submission".to_string());
+                let fix_patch = load_submission_fix_patch(path)?;
+                registration.update_submission_status(Some(&fix_patch));
+                registration.update_phase(
+                    RunLifecyclePhase::Packaging,
+                    RunPhaseStatus::Completed,
+                    Some("submission artifact written".to_string()),
+                );
             } else {
-                "Indexing completed through the full app command path.".to_string()
-            },
-            last_progress: None,
-        };
-        write_json(&indexing_status_path, &indexing_status)?;
-        steps.push("write_indexing_status".to_string());
-
-        let setup_phase = build_setup_phase(
-            &state.db,
-            &repo_state,
-            &indexing_status,
-            setup_start_time,
-            using_cached_starting_db,
-            &parse_failure_path,
-        )
-        .await?;
-        run_record.phases.setup = Some(setup_phase);
-        steps.push("populate_setup_phase".to_string());
-
-        persist_db_snapshot(
-            Arc::clone(&state.db),
-            indexing_checkpoint_db.clone(),
-            "starting snapshot checkpoint",
-        )
-        .await?;
-        steps.push("write_indexing_checkpoint".to_string());
-
-        if !using_cached_starting_db {
-            if let Err(err) =
-                persist_starting_db_cache(&prepared, &embedding_selection, &indexing_checkpoint_db)
-                    .await
-            {
-                warn!(
-                    snapshot = %indexing_checkpoint_db.display(),
-                    error = %err,
-                    "runner phase: failed to refresh starting db cache"
+                registration.update_submission_status(None);
+                registration.update_phase(
+                    RunLifecyclePhase::Packaging,
+                    RunPhaseStatus::Skipped,
+                    Some("no benchmark packaging for this run".to_string()),
                 );
             }
-            steps.push("refresh_starting_db_cache".to_string());
-        }
-
-        let setup_wall_clock_secs = Some(run_start_instant.elapsed().as_secs_f64());
-
-        let snapshot_file = run_output_dir.join("final-snapshot.db");
-        info!(
-            snapshot = %snapshot_file.display(),
-            "runner phase: persisting final eval snapshot"
-        );
-        persist_db_snapshot(
-            Arc::clone(&state.db),
-            snapshot_file.clone(),
-            "final snapshot",
-        )
-        .await?;
-        steps.push("snapshot_completed".to_string());
-        info!(snapshot_file = %snapshot_file.display(), "runner phase: snapshot completed");
-
-        let snapshot_status = SnapshotStatusArtifact {
-            status: "completed".to_string(),
-            snapshot_file: Some(snapshot_file.clone()),
-            registry_file: snapshot_file.clone(),
-            config_home,
-        };
-        write_json(&snapshot_status_path, &snapshot_status)?;
-        steps.push("write_snapshot_status".to_string());
-
-        let msb_submission_path =
-            write_msb_submission_artifact(&prepared, &run_arm, &run_output_dir)?;
-        if msb_submission_path.is_some() {
-            steps.push("write_msb_submission".to_string());
-        }
-
-        finalize_run_timing(
-            &mut run_record,
-            setup_start_time,
-            run_start_instant,
-            setup_wall_clock_secs,
-            None,
-        );
-
-        let execution_log = ExecutionLog {
-            task_id: prepared.task_id,
-            run_arm: run_arm.clone(),
-            repo_root: prepared.repo_root,
-            output_dir: run_output_dir,
-            selected_model: selected_model_id,
-            selected_provider: Some(selected_provider.slug.as_str().to_string()),
-            selected_endpoint: Some(selected_endpoint),
-            full_response_trace: None,
-            steps,
-        };
-        write_json(&execution_log_path, &execution_log)?;
-        info!(
-            execution_log = %execution_log_path.display(),
-            repo_state = %repo_state_path.display(),
-            indexing_status = %indexing_status_path.display(),
-            indexing_checkpoint_db = %indexing_checkpoint_db.display(),
-            indexing_failure_db = %indexing_failure_db.display(),
-            snapshot_status = %snapshot_status_path.display(),
-            msb_submission = msb_submission_path.as_ref().map(|p| p.display().to_string()),
-            "runner phase: wrote run artifacts"
-        );
-        record_last_run(&execution_log.output_dir)?;
-
-        if let Err(e) = write_compressed_record(&record_path, &run_record) {
-            warn!(
-                path = %record_path.display(),
-                error = %e,
-                "runner phase: failed to write compressed run record"
+            registration.update_phase(
+                RunLifecyclePhase::Validation,
+                RunPhaseStatus::Skipped,
+                Some("validation not executed in setup-only run".to_string()),
             );
-        } else {
-            info!(path = %record_path.display(), "runner phase: wrote compressed run record");
-        }
+            persist_registration(&registration)?;
 
-        Ok(RunArtifactPaths {
-            run_manifest: manifest_path,
-            execution_log: execution_log_path,
-            repo_state: repo_state_path,
-            indexing_status: indexing_status_path,
-            indexing_checkpoint_db,
-            indexing_failure_db,
-            snapshot_status: snapshot_status_path,
-            msb_submission: msb_submission_path,
-            record_path: Some(record_path),
-            full_response_trace: None,
-        })
+            finalize_run_timing(
+                &mut run_record,
+                setup_start_time,
+                run_start_instant,
+                setup_wall_clock_secs,
+                None,
+            );
+
+            let execution_log = ExecutionLog {
+                task_id: prepared.task_id.clone(),
+                run_arm: run_arm.clone(),
+                repo_root: prepared.repo_root.clone(),
+                output_dir: run_output_dir.clone(),
+                selected_model: selected_model_id.clone(),
+                selected_provider: Some(selected_provider.slug.as_str().to_string()),
+                selected_endpoint: Some(selected_endpoint.clone()),
+                full_response_trace: None,
+                steps,
+            };
+            write_json(&execution_log_path, &execution_log)?;
+            info!(
+                execution_log = %execution_log_path.display(),
+                repo_state = %repo_state_path.display(),
+                indexing_status = %indexing_status_path.display(),
+                indexing_checkpoint_db = %indexing_checkpoint_db.display(),
+                indexing_failure_db = %indexing_failure_db.display(),
+                snapshot_status = %snapshot_status_path.display(),
+                msb_submission = msb_submission_path.as_ref().map(|p| p.display().to_string()),
+                "runner phase: wrote run artifacts"
+            );
+            record_last_run(&execution_log.output_dir)?;
+
+            if let Err(e) = write_compressed_record(&record_path, &run_record) {
+                warn!(
+                    path = %record_path.display(),
+                    error = %e,
+                    "runner phase: failed to write compressed run record"
+                );
+            } else {
+                info!(path = %record_path.display(), "runner phase: wrote compressed run record");
+            }
+
+            Ok(RunArtifactPaths {
+                run_manifest: manifest_path.clone(),
+                execution_log: execution_log_path.clone(),
+                repo_state: repo_state_path.clone(),
+                indexing_status: indexing_status_path.clone(),
+                indexing_checkpoint_db: indexing_checkpoint_db.clone(),
+                indexing_failure_db: indexing_failure_db.clone(),
+                snapshot_status: snapshot_status_path.clone(),
+                msb_submission: msb_submission_path,
+                record_path: Some(record_path.clone()),
+                full_response_trace: None,
+            })
+        }
+        .await;
+
+        match result {
+            Ok(artifacts) => {
+                registration.mark_completed();
+                persist_registration(&registration)?;
+                Ok(artifacts)
+            }
+            Err(err) => {
+                registration.mark_failed(err.to_string());
+                persist_registration(&registration)?;
+                Err(err)
+            }
+        }
     }
 }
 
@@ -1917,371 +2073,450 @@ impl RunMsbAgentSingleRequest {
             None => None,
         };
 
-        // Initialize RunRecord for comprehensive run persistence (Phase 1E)
         let mut run_record = RunRecord::new(&prepared, run_arm.clone());
         run_record.metadata.agent.model_id = Some(selected_model_id.clone());
         run_record.metadata.agent.provider = Some(selected_provider.slug.as_str().to_string());
         run_record.metadata.agent.selected_endpoint = Some(selected_endpoint.clone());
-
-        let mut steps = vec!["load_manifest".to_string()];
-        checkout_repo_to_base(&prepared.repo_root, prepared.base_sha.as_deref())?;
-        steps.push("checkout_base_sha".to_string());
-        let expected_file_baselines =
-            snapshot_expected_files(&prepared.repo_root, &expected_patch_files(&prepared))?;
-        steps.push("snapshot_expected_files_before_turn".to_string());
-
-        let repo_state = RepoStateArtifact {
-            repo_root: prepared.repo_root.clone(),
-            requested_base_sha: prepared.base_sha.clone(),
-            checked_out_head_sha: git_stdout(
-                &prepared.repo_root,
-                &["rev-parse", "HEAD"],
-                "git rev-parse HEAD",
-            )?
-            .map(|s| s.trim().to_string()),
-            git_status_porcelain: git_stdout(
-                &prepared.repo_root,
-                &["status", "--short"],
-                "git status --short",
-            )?
-            .unwrap_or_default(),
-        };
-        write_json(&repo_state_path, &repo_state)?;
-        steps.push("write_repo_state".to_string());
-
-        let cached_starting_db = match load_cached_starting_db(&prepared, &embedding_selection) {
-            Ok(cached) => cached,
-            Err(err) => {
-                warn!(error = %err, "runner phase: starting db cache lookup failed; falling back to fresh indexing");
-                None
-            }
-        };
-        let mut using_cached_starting_db = false;
-        let runtime_db = if let Some(cache_paths) = cached_starting_db.as_ref() {
-            match Database::create_new_backup_default(&cache_paths.snapshot).await {
-                Ok(db) => {
-                    info!(
-                        snapshot = %cache_paths.snapshot.display(),
-                        "runner phase: restoring cached starting db snapshot"
-                    );
-                    using_cached_starting_db = true;
-                    steps.push("restore_cached_starting_db".to_string());
-                    Arc::new(db)
-                }
-                Err(err) => {
-                    warn!(
-                        snapshot = %cache_paths.snapshot.display(),
-                        error = %err,
-                        "runner phase: cached starting db restore failed; falling back to fresh indexing"
-                    );
-                    let db = init_runtime_db()?;
-                    steps.push("init_runtime_db".to_string());
-                    db
-                }
-            }
-        } else {
-            let db = init_runtime_db()?;
-            steps.push("init_runtime_db".to_string());
-            db
-        };
-
-        let config_home = run_output_dir.join("config");
-        fs::create_dir_all(&config_home).map_err(|source| PrepareError::CreateOutputDir {
-            path: config_home.clone(),
-            source,
-        })?;
-        let _config_guard = XdgConfigHomeGuard::set_to(&config_home);
-        steps.push("sandbox_config_home".to_string());
-
-        steps.push("embedding_model_preflight".to_string());
-
-        let embedding_processor = eval_embedding_processor(&embedding_selection)?;
-        steps.push("init_codestral_embedder".to_string());
-
-        let runtime = TestRuntime::new_with_embedding_processor(&runtime_db, embedding_processor)
-            .spawn_file_manager()
-            .spawn_state_manager()
-            .spawn_event_bus()
-            .spawn_llm_manager()
-            .spawn_observability();
-        let events = runtime.events_builder().build_all();
-        let mut realtime_rx = events.event_bus_events.realtime_tx_rx;
-        let mut background_rx = events.event_bus_events.background_tx_rx;
-        let mut index_rx = Arc::try_unwrap(events.event_bus_events.index_tx_rx).map_err(|_| {
-            PrepareError::DatabaseSetup {
-                phase: "subscribe_index_status",
-                detail: "index receiver unexpectedly shared".to_string(),
-            }
-        })?;
-        let mut debug_rx =
-            events
-                .app_actor_events
-                .debug_string_rx
-                .ok_or_else(|| PrepareError::DatabaseSetup {
-                    phase: "subscribe_debug_string",
-                    detail: "missing debug string receiver".to_string(),
-                })?;
-        let state = runtime.state_arc();
-        {
-            let mut cfg = state.config.write().await;
-            cfg.editing.auto_confirm_edits = true;
-            cfg.chat_policy = benchmark_chat_policy();
-            cfg.active_model = selected_model_id.clone();
-            cfg.model_registry
-                .select_model_provider(&selected_model_id, Some(&selected_provider));
-        }
-        info!("runner phase: inspect active embedding set before activation");
-        let currently_active_set: EmbeddingSet = runtime_db
-            .with_active_set(|set| set.clone())
-            .expect("active embedding set");
-        info!(
-            ?currently_active_set,
-            "active embedding set before activation"
-        );
-
-        activate_eval_embedding_runtime(&state, &embedding_selection)?;
-
-        let currently_active_set: EmbeddingSet = runtime_db
-            .with_active_set(|set| set.clone())
-            .expect("active embedding set");
-        info!(
-            ?currently_active_set,
-            "active embedding set after activation"
-        );
-        steps.push("activate_codestral_embedding_set".to_string());
-        let mut app = runtime
-            .into_app_with_state_pwd(prepared.repo_root.clone())
-            .await;
-        steps.push("bootstrap_headless_runtime".to_string());
-
-        if using_cached_starting_db {
-            info!(
-                task_id = %prepared.task_id,
-                repo_root = %prepared.repo_root.display(),
-                "runner phase: cached starting db present, skipping indexing"
-            );
-            seed_loaded_workspace_from_repo(&state, &prepared).await?;
-            steps.push("seed_loaded_workspace_from_repo".to_string());
-            app.pump_pending_events().await;
-            steps.push("pump_post_cached_workspace_events".to_string());
-        } else {
-            info!(task_id = %prepared.task_id, repo_root = %prepared.repo_root.display(), "runner phase: start indexing");
-            app.run_command_text("/index").await;
-            steps.push("run_index_command".to_string());
-
-            info!("runner phase: waiting for indexing completion");
-            let mut last_index_progress = None;
-            if let Err(err) = wait_for_indexing_completion(
-                &mut app,
-                &mut realtime_rx,
-                &mut background_rx,
-                &mut index_rx,
-                Arc::clone(&state.db),
-                indexing_checkpoint_db.clone(),
-                indexing_failure_db.clone(),
-                self.index_debug_snapshots,
-                &mut last_index_progress,
-            )
-            .await
-            {
-                persist_indexing_failure_status(&indexing_status_path, &err, last_index_progress);
-                persist_parse_failure_artifact(&state, &parse_failure_path).await;
-                return Err(err);
-            }
-            steps.push("indexing_completed".to_string());
-            info!("runner phase: indexing completed");
-            app.pump_pending_events().await;
-            steps.push("pump_post_index_events".to_string());
-        }
-
-        let indexing_status = IndexingStatusArtifact {
-            status: "completed".to_string(),
-            detail: if using_cached_starting_db {
-                "Loaded cached starting db snapshot and skipped reindexing.".to_string()
-            } else {
-                "Indexing completed through the full app command path.".to_string()
-            },
-            last_progress: None,
-        };
-        write_json(&indexing_status_path, &indexing_status)?;
-        steps.push("write_indexing_status".to_string());
-
-        persist_db_snapshot(
-            Arc::clone(&state.db),
-            indexing_checkpoint_db.clone(),
-            "starting snapshot checkpoint",
-        )
-        .await?;
-        steps.push("write_indexing_checkpoint".to_string());
-
-        if !using_cached_starting_db {
-            if let Err(err) =
-                persist_starting_db_cache(&prepared, &embedding_selection, &indexing_checkpoint_db)
-                    .await
-            {
-                warn!(
-                    snapshot = %indexing_checkpoint_db.display(),
-                    error = %err,
-                    "runner phase: failed to refresh starting db cache"
-                );
-            }
-            steps.push("refresh_starting_db_cache".to_string());
-        }
-
-        // Build SetupPhase with indexed crate information
-        let setup_phase = build_setup_phase(
-            &state.db,
-            &repo_state,
-            &indexing_status,
-            setup_start_time,
-            using_cached_starting_db,
-            &parse_failure_path,
-        )
-        .await?;
-        run_record.phases.setup = Some(setup_phase);
-        steps.push("populate_setup_phase".to_string());
-        let setup_wall_clock_secs = Some(run_start_instant.elapsed().as_secs_f64());
-
-        let agent_execution_start = Instant::now();
-        let turn_artifact = run_benchmark_turn(
+        let mut registration = register_run_attempt(
             &prepared,
-            &state,
-            &mut app,
-            &mut debug_rx,
-            &mut realtime_rx,
-            &mut background_rx,
-            &turn_trace_path,
-            selected_model_id.clone(),
-            &expected_file_baselines,
-        )
-        .await?;
-        write_json(&turn_summary_path, &turn_artifact)?;
-        steps.push("benchmark_turn_completed".to_string());
-        let full_response_trace = match (
-            full_response_trace_source.as_ref(),
-            full_response_trace_start,
-        ) {
-            (Some(source_path), Some(start_offset)) => {
-                if persist_full_response_trace_slice(
-                    source_path,
-                    start_offset,
-                    &full_response_trace_path,
-                )
-                .await?
-                {
-                    steps.push("persist_full_response_trace".to_string());
-                    Some(full_response_trace_path.clone())
-                } else {
+            &manifest_path,
+            &run_arm,
+            &run_output_dir,
+            &selected_model_id,
+            selected_provider.slug.as_str(),
+            self.batch_id.clone(),
+        )?;
+        registration.artifacts.turn_trace = Some(turn_trace_path.clone());
+        registration.artifacts.turn_summary = Some(turn_summary_path.clone());
+        registration.artifacts.full_response_trace = Some(full_response_trace_path.clone());
+        registration.mark_execution_started(Some("run setup started".to_string()));
+        persist_registration(&registration)?;
+
+        let result: Result<AgentRunArtifactPaths, PrepareError> = async {
+            let mut steps = vec!["load_manifest".to_string()];
+            checkout_repo_to_base(&prepared.repo_root, prepared.base_sha.as_deref())?;
+            steps.push("checkout_base_sha".to_string());
+            let expected_file_baselines =
+                snapshot_expected_files(&prepared.repo_root, &expected_patch_files(&prepared))?;
+            steps.push("snapshot_expected_files_before_turn".to_string());
+
+            let repo_state = RepoStateArtifact {
+                repo_root: prepared.repo_root.clone(),
+                requested_base_sha: prepared.base_sha.clone(),
+                checked_out_head_sha: git_stdout(
+                    &prepared.repo_root,
+                    &["rev-parse", "HEAD"],
+                    "git rev-parse HEAD",
+                )?
+                .map(|s| s.trim().to_string()),
+                git_status_porcelain: git_stdout(
+                    &prepared.repo_root,
+                    &["status", "--short"],
+                    "git status --short",
+                )?
+                .unwrap_or_default(),
+            };
+            write_json(&repo_state_path, &repo_state)?;
+            steps.push("write_repo_state".to_string());
+
+            let cached_starting_db = match load_cached_starting_db(&prepared, &embedding_selection) {
+                Ok(cached) => cached,
+                Err(err) => {
+                    warn!(error = %err, "runner phase: starting db cache lookup failed; falling back to fresh indexing");
                     None
                 }
-            }
-            _ => None,
-        };
-        let agent_wall_clock_secs = Some(agent_execution_start.elapsed().as_secs_f64());
+            };
+            let mut using_cached_starting_db = false;
+            let runtime_db = if let Some(cache_paths) = cached_starting_db.as_ref() {
+                match Database::create_new_backup_default(&cache_paths.snapshot).await {
+                    Ok(db) => {
+                        info!(
+                            snapshot = %cache_paths.snapshot.display(),
+                            "runner phase: restoring cached starting db snapshot"
+                        );
+                        using_cached_starting_db = true;
+                        steps.push("restore_cached_starting_db".to_string());
+                        Arc::new(db)
+                    }
+                    Err(err) => {
+                        warn!(
+                            snapshot = %cache_paths.snapshot.display(),
+                            error = %err,
+                            "runner phase: cached starting db restore failed; falling back to fresh indexing"
+                        );
+                        let db = init_runtime_db()?;
+                        steps.push("init_runtime_db".to_string());
+                        db
+                    }
+                }
+            } else {
+                let db = init_runtime_db()?;
+                steps.push("init_runtime_db".to_string());
+                db
+            };
 
-        // Capture Cozo timestamp for time-travel queries and add turn to RunRecord
-        let db_timestamp =
-            state
-                .db
-                .current_validity_micros()
-                .map_err(|e| PrepareError::DatabaseSetup {
-                    phase: "get_db_timestamp",
-                    detail: format!("Failed to get Cozo timestamp: {}", e),
+            let config_home = run_output_dir.join("config");
+            fs::create_dir_all(&config_home).map_err(|source| PrepareError::CreateOutputDir {
+                path: config_home.clone(),
+                source,
+            })?;
+            let _config_guard = XdgConfigHomeGuard::set_to(&config_home);
+            steps.push("sandbox_config_home".to_string());
+
+            steps.push("embedding_model_preflight".to_string());
+
+            let embedding_processor = eval_embedding_processor(&embedding_selection)?;
+            steps.push("init_codestral_embedder".to_string());
+
+            let runtime = TestRuntime::new_with_embedding_processor(&runtime_db, embedding_processor)
+                .spawn_file_manager()
+                .spawn_state_manager()
+                .spawn_event_bus()
+                .spawn_llm_manager()
+                .spawn_observability();
+            let events = runtime.events_builder().build_all();
+            let mut realtime_rx = events.event_bus_events.realtime_tx_rx;
+            let mut background_rx = events.event_bus_events.background_tx_rx;
+            let mut index_rx =
+                Arc::try_unwrap(events.event_bus_events.index_tx_rx).map_err(|_| {
+                    PrepareError::DatabaseSetup {
+                        phase: "subscribe_index_status",
+                        detail: "index receiver unexpectedly shared".to_string(),
+                    }
                 })?;
-        run_record.mark_time_travel(1, db_timestamp, "turn_complete");
-        run_record.add_turn_from_artifact(turn_artifact, db_timestamp);
-
-        let snapshot_file = run_output_dir.join("final-snapshot.db");
-        info!(
-            snapshot = %snapshot_file.display(),
-            "runner phase: persisting final eval snapshot"
-        );
-        persist_db_snapshot(
-            Arc::clone(&state.db),
-            snapshot_file.clone(),
-            "final snapshot",
-        )
-        .await?;
-        steps.push("snapshot_completed".to_string());
-        info!(snapshot_file = %snapshot_file.display(), "runner phase: snapshot completed");
-
-        let snapshot_status = SnapshotStatusArtifact {
-            status: "completed".to_string(),
-            snapshot_file: Some(snapshot_file.clone()),
-            registry_file: snapshot_file.clone(),
-            config_home,
-        };
-        write_json(&snapshot_status_path, &snapshot_status)?;
-        steps.push("write_snapshot_status".to_string());
-
-        let msb_submission_path =
-            write_msb_submission_artifact(&prepared, &run_arm, &run_output_dir)?;
-        if msb_submission_path.is_some() {
-            steps.push("write_msb_submission".to_string());
-        }
-
-        finalize_run_timing(
-            &mut run_record,
-            setup_start_time,
-            run_start_instant,
-            setup_wall_clock_secs,
-            agent_wall_clock_secs,
-        );
-
-        let execution_log = ExecutionLog {
-            task_id: prepared.task_id,
-            run_arm: run_arm.clone(),
-            repo_root: prepared.repo_root,
-            output_dir: run_output_dir,
-            selected_model: selected_model_id,
-            selected_provider: Some(selected_provider.slug.as_str().to_string()),
-            selected_endpoint: Some(selected_endpoint),
-            full_response_trace: full_response_trace.clone(),
-            steps,
-        };
-        write_json(&execution_log_path, &execution_log)?;
-        info!(
-            execution_log = %execution_log_path.display(),
-            repo_state = %repo_state_path.display(),
-            indexing_status = %indexing_status_path.display(),
-            indexing_checkpoint_db = %indexing_checkpoint_db.display(),
-            indexing_failure_db = %indexing_failure_db.display(),
-            snapshot_status = %snapshot_status_path.display(),
-            turn_trace = %turn_trace_path.display(),
-            turn_summary = %turn_summary_path.display(),
-            full_response_trace = full_response_trace.as_ref().map(|p| p.display().to_string()),
-            msb_submission = msb_submission_path.as_ref().map(|p| p.display().to_string()),
-            "runner phase: wrote run artifacts"
-        );
-        record_last_run(&execution_log.output_dir)?;
-
-        // Emit compressed RunRecord (Phase 1E)
-        if let Err(e) = write_compressed_record(&record_path, &run_record) {
-            warn!(
-                path = %record_path.display(),
-                error = %e,
-                "runner phase: failed to write compressed run record"
+            let mut debug_rx =
+                events
+                    .app_actor_events
+                    .debug_string_rx
+                    .ok_or_else(|| PrepareError::DatabaseSetup {
+                        phase: "subscribe_debug_string",
+                        detail: "missing debug string receiver".to_string(),
+                    })?;
+            let state = runtime.state_arc();
+            {
+                let mut cfg = state.config.write().await;
+                cfg.editing.auto_confirm_edits = true;
+                cfg.chat_policy = benchmark_chat_policy();
+                cfg.active_model = selected_model_id.clone();
+                cfg.model_registry
+                    .select_model_provider(&selected_model_id, Some(&selected_provider));
+            }
+            info!("runner phase: inspect active embedding set before activation");
+            let currently_active_set: EmbeddingSet = runtime_db
+                .with_active_set(|set| set.clone())
+                .expect("active embedding set");
+            info!(
+                ?currently_active_set,
+                "active embedding set before activation"
             );
-        } else {
-            info!(path = %record_path.display(), "runner phase: wrote compressed run record");
-        }
 
-        Ok(AgentRunArtifactPaths {
-            base: RunArtifactPaths {
-                run_manifest: manifest_path,
-                execution_log: execution_log_path,
-                repo_state: repo_state_path,
-                indexing_status: indexing_status_path,
-                indexing_checkpoint_db,
-                indexing_failure_db,
-                snapshot_status: snapshot_status_path,
-                msb_submission: msb_submission_path,
-                record_path: Some(record_path),
-                full_response_trace,
-            },
-            turn_trace: turn_trace_path,
-            turn_summary: turn_summary_path,
-        })
+            activate_eval_embedding_runtime(&state, &embedding_selection)?;
+
+            let currently_active_set: EmbeddingSet = runtime_db
+                .with_active_set(|set| set.clone())
+                .expect("active embedding set");
+            info!(
+                ?currently_active_set,
+                "active embedding set after activation"
+            );
+            steps.push("activate_codestral_embedding_set".to_string());
+            let mut app = runtime
+                .into_app_with_state_pwd(prepared.repo_root.clone())
+                .await;
+            steps.push("bootstrap_headless_runtime".to_string());
+
+            if using_cached_starting_db {
+                info!(
+                    task_id = %prepared.task_id,
+                    repo_root = %prepared.repo_root.display(),
+                    "runner phase: cached starting db present, skipping indexing"
+                );
+                seed_loaded_workspace_from_repo(&state, &prepared).await?;
+                steps.push("seed_loaded_workspace_from_repo".to_string());
+                app.pump_pending_events().await;
+                steps.push("pump_post_cached_workspace_events".to_string());
+            } else {
+                info!(task_id = %prepared.task_id, repo_root = %prepared.repo_root.display(), "runner phase: start indexing");
+                app.run_command_text("/index").await;
+                steps.push("run_index_command".to_string());
+
+                info!("runner phase: waiting for indexing completion");
+                let mut last_index_progress = None;
+                if let Err(err) = wait_for_indexing_completion(
+                    &mut app,
+                    &mut realtime_rx,
+                    &mut background_rx,
+                    &mut index_rx,
+                    Arc::clone(&state.db),
+                    indexing_checkpoint_db.clone(),
+                    indexing_failure_db.clone(),
+                    self.index_debug_snapshots,
+                    &mut last_index_progress,
+                )
+                .await
+                {
+                    persist_indexing_failure_status(
+                        &indexing_status_path,
+                        &err,
+                        last_index_progress,
+                    );
+                    persist_parse_failure_artifact(&state, &parse_failure_path).await;
+                    return Err(err);
+                }
+                steps.push("indexing_completed".to_string());
+                info!("runner phase: indexing completed");
+                app.pump_pending_events().await;
+                steps.push("pump_post_index_events".to_string());
+            }
+
+            let indexing_status = IndexingStatusArtifact {
+                status: "completed".to_string(),
+                detail: if using_cached_starting_db {
+                    "Loaded cached starting db snapshot and skipped reindexing.".to_string()
+                } else {
+                    "Indexing completed through the full app command path.".to_string()
+                },
+                last_progress: None,
+            };
+            write_json(&indexing_status_path, &indexing_status)?;
+            steps.push("write_indexing_status".to_string());
+
+            persist_db_snapshot(
+                Arc::clone(&state.db),
+                indexing_checkpoint_db.clone(),
+                "starting snapshot checkpoint",
+            )
+            .await?;
+            steps.push("write_indexing_checkpoint".to_string());
+
+            if !using_cached_starting_db {
+                if let Err(err) = persist_starting_db_cache(
+                    &prepared,
+                    &embedding_selection,
+                    &indexing_checkpoint_db,
+                )
+                .await
+                {
+                    warn!(
+                        snapshot = %indexing_checkpoint_db.display(),
+                        error = %err,
+                        "runner phase: failed to refresh starting db cache"
+                    );
+                }
+                steps.push("refresh_starting_db_cache".to_string());
+            }
+
+            let setup_phase = build_setup_phase(
+                &state.db,
+                &repo_state,
+                &indexing_status,
+                setup_start_time,
+                using_cached_starting_db,
+                &parse_failure_path,
+            )
+            .await?;
+            run_record.phases.setup = Some(setup_phase);
+            steps.push("populate_setup_phase".to_string());
+            registration.update_phase(
+                RunLifecyclePhase::Setup,
+                RunPhaseStatus::Completed,
+                Some(indexing_status.detail.clone()),
+            );
+            registration.update_phase(
+                RunLifecyclePhase::Patching,
+                RunPhaseStatus::InProgress,
+                Some("agent inquiry running".to_string()),
+            );
+            persist_registration(&registration)?;
+            let setup_wall_clock_secs = Some(run_start_instant.elapsed().as_secs_f64());
+
+            let agent_execution_start = Instant::now();
+            let turn_artifact = run_benchmark_turn(
+                &prepared,
+                &state,
+                &mut app,
+                &mut debug_rx,
+                &mut realtime_rx,
+                &mut background_rx,
+                &turn_trace_path,
+                selected_model_id.clone(),
+                &expected_file_baselines,
+            )
+            .await?;
+            write_json(&turn_summary_path, &turn_artifact)?;
+            steps.push("benchmark_turn_completed".to_string());
+            let full_response_trace = match (
+                full_response_trace_source.as_ref(),
+                full_response_trace_start,
+            ) {
+                (Some(source_path), Some(start_offset)) => {
+                    if persist_full_response_trace_slice(
+                        source_path,
+                        start_offset,
+                        &full_response_trace_path,
+                    )
+                    .await?
+                    {
+                        steps.push("persist_full_response_trace".to_string());
+                        Some(full_response_trace_path.clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            let agent_wall_clock_secs = Some(agent_execution_start.elapsed().as_secs_f64());
+
+            let db_timestamp =
+                state
+                    .db
+                    .current_validity_micros()
+                    .map_err(|e| PrepareError::DatabaseSetup {
+                        phase: "get_db_timestamp",
+                        detail: format!("Failed to get Cozo timestamp: {}", e),
+                    })?;
+            run_record.mark_time_travel(1, db_timestamp, "turn_complete");
+            run_record.add_turn_from_artifact(turn_artifact, db_timestamp);
+            registration.update_phase(
+                RunLifecyclePhase::Patching,
+                RunPhaseStatus::Completed,
+                Some("agent benchmark turn completed".to_string()),
+            );
+            registration.artifacts.full_response_trace = full_response_trace.clone();
+            persist_registration(&registration)?;
+
+            let snapshot_file = run_output_dir.join("final-snapshot.db");
+            info!(
+                snapshot = %snapshot_file.display(),
+                "runner phase: persisting final eval snapshot"
+            );
+            persist_db_snapshot(
+                Arc::clone(&state.db),
+                snapshot_file.clone(),
+                "final snapshot",
+            )
+            .await?;
+            steps.push("snapshot_completed".to_string());
+            info!(snapshot_file = %snapshot_file.display(), "runner phase: snapshot completed");
+
+            let snapshot_status = SnapshotStatusArtifact {
+                status: "completed".to_string(),
+                snapshot_file: Some(snapshot_file.clone()),
+                registry_file: snapshot_file.clone(),
+                config_home,
+            };
+            write_json(&snapshot_status_path, &snapshot_status)?;
+            steps.push("write_snapshot_status".to_string());
+
+            registration.update_phase(
+                RunLifecyclePhase::Packaging,
+                RunPhaseStatus::InProgress,
+                Some("writing benchmark submission artifact".to_string()),
+            );
+            persist_registration(&registration)?;
+
+            let msb_submission_path =
+                write_msb_submission_artifact(&prepared, &run_arm, &run_output_dir)?;
+            if let Some(path) = msb_submission_path.as_ref() {
+                steps.push("write_msb_submission".to_string());
+                let fix_patch = load_submission_fix_patch(path)?;
+                registration.update_submission_status(Some(&fix_patch));
+                registration.update_phase(
+                    RunLifecyclePhase::Packaging,
+                    RunPhaseStatus::Completed,
+                    Some("submission artifact written".to_string()),
+                );
+            } else {
+                registration.update_submission_status(None);
+                registration.update_phase(
+                    RunLifecyclePhase::Packaging,
+                    RunPhaseStatus::Skipped,
+                    Some("no benchmark packaging for this run".to_string()),
+                );
+            }
+            registration.update_phase(
+                RunLifecyclePhase::Validation,
+                RunPhaseStatus::Skipped,
+                Some("validation not executed in current run".to_string()),
+            );
+            persist_registration(&registration)?;
+
+            finalize_run_timing(
+                &mut run_record,
+                setup_start_time,
+                run_start_instant,
+                setup_wall_clock_secs,
+                agent_wall_clock_secs,
+            );
+
+            let execution_log = ExecutionLog {
+                task_id: prepared.task_id.clone(),
+                run_arm: run_arm.clone(),
+                repo_root: prepared.repo_root.clone(),
+                output_dir: run_output_dir.clone(),
+                selected_model: selected_model_id.clone(),
+                selected_provider: Some(selected_provider.slug.as_str().to_string()),
+                selected_endpoint: Some(selected_endpoint.clone()),
+                full_response_trace: full_response_trace.clone(),
+                steps,
+            };
+            write_json(&execution_log_path, &execution_log)?;
+            info!(
+                execution_log = %execution_log_path.display(),
+                repo_state = %repo_state_path.display(),
+                indexing_status = %indexing_status_path.display(),
+                indexing_checkpoint_db = %indexing_checkpoint_db.display(),
+                indexing_failure_db = %indexing_failure_db.display(),
+                snapshot_status = %snapshot_status_path.display(),
+                turn_trace = %turn_trace_path.display(),
+                turn_summary = %turn_summary_path.display(),
+                full_response_trace = full_response_trace.as_ref().map(|p| p.display().to_string()),
+                msb_submission = msb_submission_path.as_ref().map(|p| p.display().to_string()),
+                "runner phase: wrote run artifacts"
+            );
+            record_last_run(&execution_log.output_dir)?;
+
+            if let Err(e) = write_compressed_record(&record_path, &run_record) {
+                warn!(
+                    path = %record_path.display(),
+                    error = %e,
+                    "runner phase: failed to write compressed run record"
+                );
+            } else {
+                info!(path = %record_path.display(), "runner phase: wrote compressed run record");
+            }
+
+            Ok(AgentRunArtifactPaths {
+                base: RunArtifactPaths {
+                    run_manifest: manifest_path.clone(),
+                    execution_log: execution_log_path.clone(),
+                    repo_state: repo_state_path.clone(),
+                    indexing_status: indexing_status_path.clone(),
+                    indexing_checkpoint_db: indexing_checkpoint_db.clone(),
+                    indexing_failure_db: indexing_failure_db.clone(),
+                    snapshot_status: snapshot_status_path.clone(),
+                    msb_submission: msb_submission_path,
+                    record_path: Some(record_path.clone()),
+                    full_response_trace,
+                },
+                turn_trace: turn_trace_path.clone(),
+                turn_summary: turn_summary_path.clone(),
+            })
+        }
+        .await;
+
+        match result {
+            Ok(artifacts) => {
+                registration.mark_completed();
+                persist_registration(&registration)?;
+                Ok(artifacts)
+            }
+            Err(err) => {
+                registration.mark_failed(err.to_string());
+                persist_registration(&registration)?;
+                Err(err)
+            }
+        }
     }
 }
 
@@ -2357,6 +2592,7 @@ async fn run_batch(
         if agent_mode {
             match (RunMsbAgentSingleRequest {
                 run_manifest: run_manifest.clone(),
+                batch_id: Some(prepared.batch_id.clone()),
                 index_debug_snapshots,
                 use_default_model,
                 model_id: model_id.clone(),
@@ -2412,6 +2648,7 @@ async fn run_batch(
         } else {
             match (RunMsbSingleRequest {
                 run_manifest: run_manifest.clone(),
+                batch_id: Some(prepared.batch_id.clone()),
                 index_debug_snapshots,
                 use_default_model,
                 model_id: model_id.clone(),

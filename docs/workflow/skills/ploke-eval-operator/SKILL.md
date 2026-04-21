@@ -22,12 +22,13 @@ the `ploke-eval` CLI.
 
 - Default execution primitive: `run single agent`
 - Default setup path:
-  1. `ploke-eval run datasets list`
-  2. `ploke-eval run repo fetch --dataset-key <key>`
-  3. `ploke-eval model current`
-  4. `ploke-eval model providers [MODEL_ID]`
-  5. `ploke-eval run prepare instance --dataset-key <key> --instance <instance-id>`
-  6. `ploke-eval run single agent --instance <instance-id> [--provider ...]`
+  1. `ploke-eval registry status`
+  2. `ploke-eval registry show --dataset <family>`
+  3. `ploke-eval run repo fetch --dataset-key <key>`
+  4. `ploke-eval model current`
+  5. `ploke-eval model providers [MODEL_ID]`
+  6. `ploke-eval run prepare instance --dataset-key <key> --instance <instance-id>`
+  7. `ploke-eval run single agent --instance <instance-id> [--provider ...]`
 - Default inspection path:
   - `ploke-eval conversations --instance <instance-id>`
   - `ploke-eval inspect failures --instance <instance-id>`
@@ -62,6 +63,8 @@ Operational rule:
 
 ### Setup
 
+- `registry status`
+- `registry show --dataset <family>`
 - `run datasets list`
 - `run repo fetch`
 - `doctor`
@@ -135,6 +138,7 @@ If the task is about why a run used a provider, check those in that order.
 When asked “what should I run?” bias toward these answers:
 
 - One instance:
+  - `registry show --dataset <family>`
   - `run repo fetch`
   - `run prepare instance`
   - `run single agent`

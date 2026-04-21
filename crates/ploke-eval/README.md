@@ -66,6 +66,7 @@ cargo run -p ploke-eval -- run single agent --instance BurntSushi__ripgrep-2209 
 Current single-run example for `ripgrep`:
 
 ```bash
+# ensure the repo checkout exists; if it already exists this only refreshes remote refs
 cargo run -p ploke-eval -- run repo fetch --dataset-key ripgrep
 cargo run -p ploke-eval -- run prepare instance --dataset-key ripgrep --instance BurntSushi__ripgrep-2209
 cargo run -p ploke-eval -- run single setup --instance BurntSushi__ripgrep-2209

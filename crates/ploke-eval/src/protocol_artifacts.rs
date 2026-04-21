@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::layout::protocol_artifacts_dir_for_run;
+use crate::run_registry::sync_protocol_registration_status;
 use crate::spec::PrepareError;
 
 pub const PROTOCOL_ARTIFACT_SCHEMA_VERSION: &str = "protocol-artifact.v1";
@@ -186,6 +187,7 @@ where
         path: path.clone(),
         source,
     })?;
+    sync_protocol_registration_status(record_path)?;
     Ok(path)
 }
 

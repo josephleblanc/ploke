@@ -702,6 +702,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
     // fallback enabled.
     let err = RunMsbSingleRequest {
         run_manifest: replay_manifest,
+        batch_id: None,
         index_debug_snapshots: false,
         use_default_model: true,
         model_id: None,
@@ -895,6 +896,7 @@ async fn test_historical_ripgrep_setup_replay_gets_past_indexing_with_convert_ke
     // The only stable contract here is that setup no longer stops at indexing.
     let result = RunMsbSingleRequest {
         run_manifest: replay_manifest,
+        batch_id: None,
         index_debug_snapshots: false,
         use_default_model: true,
         model_id: None,

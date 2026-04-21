@@ -14,6 +14,7 @@ pub mod provider_prefs;
 pub mod record;
 pub mod registry;
 pub mod run_history;
+pub mod run_registry;
 pub mod runner;
 pub mod spec;
 pub mod target_registry;
@@ -44,6 +45,13 @@ pub use record::{
 };
 pub use registry::{
     DatasetRegistryEntry, builtin_dataset_registry_entries, builtin_dataset_registry_entry,
+};
+pub use run_registry::{
+    RunArtifactRefs, RunExecutionStatus, RunLifecycle, RunPhaseLifecycle, RunSelectionPreference,
+    RunSubmissionStatus, completed_record_paths_for_runs_root, list_registrations_for_instance,
+    load_registration_for_record_path, load_registration_for_run_dir, persist_registration,
+    preferred_registration_for_instance, register_live_run, storage_roots_for_instance,
+    sync_protocol_registration_status,
 };
 pub use runner::{
     AgentRunArtifactPaths, AgentTurnArtifact, BatchRunArtifactPaths, RunMsbAgentBatchRequest,

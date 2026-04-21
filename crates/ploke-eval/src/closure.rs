@@ -11,6 +11,7 @@ use crate::protocol::protocol_aggregate::{ProtocolAggregateError, load_protocol_
 use crate::protocol_artifacts::{StoredProtocolArtifactFile, list_protocol_artifacts};
 use crate::record::read_compressed_record;
 use crate::run_history::{RunDirPreference, preferred_run_dir_for_instance};
+use crate::run_registry::preferred_registration_for_instance;
 use crate::runner::{
     BatchRunSummary, ExecutionLog, IndexingStatusArtifact, SnapshotStatusArtifact,
 };
@@ -172,7 +173,11 @@ pub struct ClosureInstanceRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClosureArtifactRefs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_manifest: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_root: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -183,6 +188,10 @@ pub struct ClosureArtifactRefs {
     pub parse_failure: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_status: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub msb_submission: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_artifacts_dir: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol_anchor: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -564,12 +573,34 @@ fn build_instance_row(
     batch_failures: &HashMap<String, BatchFailureInfo>,
 ) -> Result<ClosureInstanceRow, PrepareError> {
     let instance_root = config.runs_root.join(&entry.instance_id);
-    let run_dir = preferred_run_dir_for_instance(
+    let mut artifacts = ClosureArtifactRefs::default();
+    let registration = preferred_registration_for_instance(
         &config.runs_root,
         &entry.instance_id,
-        RunDirPreference::PreferTreatment,
-    )?
-    .unwrap_or_else(|| instance_root.clone());
+        crate::run_registry::RunSelectionPreference::PreferTreatment,
+    )?;
+    let run_dir = if let Some(registration) = registration.as_ref() {
+        artifacts.registration_path = Some(registration.registry_path());
+        artifacts.run_manifest = Some(registration.artifacts.run_manifest.clone());
+        artifacts.run_root = Some(registration.artifacts.run_root.clone());
+        artifacts.record_path = Some(registration.artifacts.record_path.clone());
+        artifacts.execution_log = Some(registration.artifacts.execution_log.clone());
+        artifacts.indexing_status = Some(registration.artifacts.indexing_status.clone());
+        artifacts.parse_failure = Some(registration.artifacts.parse_failure.clone());
+        artifacts.snapshot_status = Some(registration.artifacts.snapshot_status.clone());
+        artifacts.msb_submission = registration.artifacts.msb_submission.clone();
+        artifacts.protocol_artifacts_dir =
+            Some(registration.artifacts.protocol_artifacts_dir.clone());
+        artifacts.protocol_anchor = registration.artifacts.protocol_anchor.clone();
+        registration.artifacts.run_root.clone()
+    } else {
+        preferred_run_dir_for_instance(
+            &config.runs_root,
+            &entry.instance_id,
+            RunDirPreference::PreferTreatment,
+        )?
+        .unwrap_or_else(|| instance_root.clone())
+    };
     let run_manifest = instance_root.join("run.json");
     let record_path = run_dir.join("record.json.gz");
     let execution_log_path = run_dir.join("execution-log.json");
@@ -577,39 +608,56 @@ fn build_instance_row(
     let parse_failure_path = run_dir.join("parse-failure.json");
     let snapshot_status_path = run_dir.join("snapshot-status.json");
 
-    let mut artifacts = ClosureArtifactRefs::default();
-    if run_manifest.exists() {
+    if artifacts.run_manifest.is_none() && run_manifest.exists() {
         artifacts.run_manifest = Some(run_manifest.clone());
     }
-    if record_path.exists() {
+    if artifacts.run_root.is_none() {
+        artifacts.run_root = Some(run_dir.clone());
+    }
+    if artifacts.record_path.is_none() && record_path.exists() {
         artifacts.record_path = Some(record_path.clone());
     }
-    if execution_log_path.exists() {
+    if artifacts.execution_log.is_none() && execution_log_path.exists() {
         artifacts.execution_log = Some(execution_log_path.clone());
     }
-    if indexing_status_path.exists() {
+    if artifacts.indexing_status.is_none() && indexing_status_path.exists() {
         artifacts.indexing_status = Some(indexing_status_path.clone());
     }
-    if parse_failure_path.exists() {
+    if artifacts.parse_failure.is_none() && parse_failure_path.exists() {
         artifacts.parse_failure = Some(parse_failure_path.clone());
     }
-    if snapshot_status_path.exists() {
+    if artifacts.snapshot_status.is_none() && snapshot_status_path.exists() {
         artifacts.snapshot_status = Some(snapshot_status_path.clone());
     }
 
     let registry_status = RegistryInstanceStatus::Mapped;
     let (eval_status, eval_failure, eval_last_event, protocol) = match &entry.state {
         RegistryEntryState::Active => {
-            let (eval_status, eval_failure, eval_last_event) = classify_eval_status(
-                &run_dir,
-                &record_path,
-                &indexing_status_path,
-                &parse_failure_path,
-                &execution_log_path,
-                &snapshot_status_path,
-                batch_failures.get(&entry.instance_id),
-                &mut artifacts,
-            )?;
+            let (eval_status, eval_failure, eval_last_event) =
+                if let Some(registration) = registration.as_ref() {
+                    classify_eval_status_from_registration(
+                        registration,
+                        &run_dir,
+                        &record_path,
+                        &indexing_status_path,
+                        &parse_failure_path,
+                        &execution_log_path,
+                        &snapshot_status_path,
+                        batch_failures.get(&entry.instance_id),
+                        &mut artifacts,
+                    )?
+                } else {
+                    classify_eval_status(
+                        &run_dir,
+                        &record_path,
+                        &indexing_status_path,
+                        &parse_failure_path,
+                        &execution_log_path,
+                        &snapshot_status_path,
+                        batch_failures.get(&entry.instance_id),
+                        &mut artifacts,
+                    )?
+                };
 
             let protocol = if eval_status == ClosureClass::Complete {
                 assess_protocol_state(&record_path, &config.required_procedures)?
@@ -782,6 +830,68 @@ fn classify_eval_status(
     }
 
     Ok((ClosureClass::Missing, None, None))
+}
+
+fn classify_eval_status_from_registration(
+    registration: &crate::inner::registry::RunRegistration,
+    run_dir: &Path,
+    record_path: &Path,
+    indexing_status_path: &Path,
+    parse_failure_path: &Path,
+    execution_log_path: &Path,
+    snapshot_status_path: &Path,
+    batch_failure: Option<&BatchFailureInfo>,
+    artifacts: &mut ClosureArtifactRefs,
+) -> Result<(ClosureClass, Option<String>, Option<String>), PrepareError> {
+    use crate::inner::registry::RunExecutionStatus;
+
+    match registration.lifecycle.execution_status {
+        RunExecutionStatus::Completed => {
+            if record_path.exists() {
+                return Ok((
+                    ClosureClass::Complete,
+                    None,
+                    registration.lifecycle.finished_at.clone(),
+                ));
+            }
+            return Ok((
+                ClosureClass::Partial,
+                Some("run registration completed but record artifact is missing".to_string()),
+                Some(registration.lifecycle.updated_at.clone()),
+            ));
+        }
+        RunExecutionStatus::Failed => {
+            if let Some(batch_failure) = batch_failure {
+                artifacts.batch_failure_sources = batch_failure.sources.clone();
+            }
+            return Ok((
+                ClosureClass::Failed,
+                registration.lifecycle.failure.clone(),
+                registration.lifecycle.finished_at.clone(),
+            ));
+        }
+        RunExecutionStatus::Running | RunExecutionStatus::Registered => {
+            if record_path.exists() || execution_log_path.exists() || snapshot_status_path.exists()
+            {
+                return Ok((
+                    ClosureClass::Partial,
+                    registration.lifecycle.failure.clone(),
+                    Some(registration.lifecycle.updated_at.clone()),
+                ));
+            }
+        }
+    }
+
+    classify_eval_status(
+        run_dir,
+        record_path,
+        indexing_status_path,
+        parse_failure_path,
+        execution_log_path,
+        snapshot_status_path,
+        batch_failure,
+        artifacts,
+    )
 }
 
 fn assess_protocol_state(

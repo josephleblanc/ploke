@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::layout::{datasets_dir, registries_dir};
+use crate::layout::{datasets_dir, registries_dir, repos_dir};
 use crate::registry::builtin_dataset_registry_entry;
 use crate::spec::PrepareError;
 
@@ -166,6 +166,13 @@ pub fn recompute_target_registry(
 }
 
 pub fn render_target_registry_status(registry: &TargetRegistry) -> String {
+    render_target_registry_status_with_repo_cache(registry, repos_dir().ok().as_deref())
+}
+
+fn render_target_registry_status_with_repo_cache(
+    registry: &TargetRegistry,
+    repo_cache: Option<&Path>,
+) -> String {
     let total_entries = registry.entries.len();
     let active_total = registry
         .entries
@@ -174,10 +181,13 @@ pub fn render_target_registry_status(registry: &TargetRegistry) -> String {
         .count();
     let ineligible_total = total_entries.saturating_sub(active_total);
 
-    let mut by_dataset = BTreeMap::<String, usize>::new();
+    let mut by_dataset = BTreeMap::<String, DatasetStatusRow>::new();
     let mut by_repo = BTreeMap::<String, usize>::new();
     for entry in &registry.entries {
-        *by_dataset.entry(entry.dataset_label.clone()).or_default() += 1;
+        by_dataset
+            .entry(entry.dataset_label.clone())
+            .or_insert_with(|| DatasetStatusRow::new(entry, repo_cache))
+            .instances += 1;
         *by_repo.entry(entry.repo_family.clone()).or_default() += 1;
     }
 
@@ -198,11 +208,159 @@ pub fn render_target_registry_status(registry: &TargetRegistry) -> String {
     ));
     out.push('\n');
     out.push_str("by dataset:\n");
-    for (label, count) in by_dataset {
-        out.push_str(&format!("  {:<24} {}\n", label, count));
+    out.push_str(&format!(
+        "  {:<24} {:>9} {:<13} {}\n",
+        "dataset", "instances", "repo status", "repo root"
+    ));
+    for (label, row) in by_dataset {
+        let repo_status = if row.needs_fetch {
+            "needs_fetch"
+        } else {
+            "present"
+        };
+        let repo_root = tilde_display_path(&row.repo_root);
+        out.push_str(&format!(
+            "  {:<24} {:>9} {:<13} {}\n",
+            label, row.instances, repo_status, repo_root
+        ));
     }
 
     out
+}
+
+#[derive(Debug, Clone)]
+struct DatasetStatusRow {
+    instances: usize,
+    needs_fetch: bool,
+    repo_root: PathBuf,
+}
+
+impl DatasetStatusRow {
+    fn new(entry: &RegistryEntry, repo_cache: Option<&Path>) -> Self {
+        let repo_root = repo_cache
+            .map(|root| root.join(&entry.source.org).join(&entry.source.repo))
+            .unwrap_or_else(|| {
+                PathBuf::from(format!("{}/{}", entry.source.org, entry.source.repo))
+            });
+        let needs_fetch = !repo_root.join(".git").exists();
+        Self {
+            instances: 0,
+            needs_fetch,
+            repo_root,
+        }
+    }
+}
+
+fn tilde_display_path(path: &Path) -> String {
+    let Some(home) = dirs::home_dir() else {
+        return path.display().to_string();
+    };
+
+    if path == home {
+        return "~".to_string();
+    }
+
+    if let Ok(stripped) = path.strip_prefix(&home) {
+        return format!("~/{}", stripped.display());
+    }
+
+    path.display().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn sample_registry() -> TargetRegistry {
+        TargetRegistry {
+            schema_version: TARGET_REGISTRY_SCHEMA_VERSION.to_string(),
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            updated_at: "2026-04-21T00:00:00Z".to_string(),
+            dataset_sources: vec![RegistryDatasetSource {
+                key: None,
+                path: PathBuf::from("/tmp/sharkdp__fd_dataset.jsonl"),
+                label: "sharkdp__fd".to_string(),
+                url: None,
+            }],
+            entries: vec![
+                RegistryEntry {
+                    instance_id: "sharkdp__fd-658".to_string(),
+                    dataset_label: "sharkdp__fd".to_string(),
+                    repo_family: "sharkdp__fd".to_string(),
+                    source: RegistrySource {
+                        dataset_path: PathBuf::from("/tmp/sharkdp__fd_dataset.jsonl"),
+                        org: "sharkdp".to_string(),
+                        repo: "fd".to_string(),
+                        number: 658,
+                        base_sha: "abc123".to_string(),
+                    },
+                    state: RegistryEntryState::Active,
+                },
+                RegistryEntry {
+                    instance_id: "sharkdp__fd-1121".to_string(),
+                    dataset_label: "sharkdp__fd".to_string(),
+                    repo_family: "sharkdp__fd".to_string(),
+                    source: RegistrySource {
+                        dataset_path: PathBuf::from("/tmp/sharkdp__fd_dataset.jsonl"),
+                        org: "sharkdp".to_string(),
+                        repo: "fd".to_string(),
+                        number: 1121,
+                        base_sha: "def456".to_string(),
+                    },
+                    state: RegistryEntryState::Active,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn registry_status_marks_repo_as_needing_fetch_when_git_dir_missing() {
+        let repo_cache = tempdir().expect("tempdir");
+        let rendered = render_target_registry_status_with_repo_cache(
+            &sample_registry(),
+            Some(repo_cache.path()),
+        );
+        assert!(rendered.contains("dataset"));
+        assert!(rendered.contains("instances"));
+        assert!(rendered.contains("repo status"));
+        assert!(rendered.contains("sharkdp__fd"));
+        assert!(rendered.contains("needs_fetch"));
+        assert!(
+            rendered.contains(
+                &repo_cache
+                    .path()
+                    .join("sharkdp")
+                    .join("fd")
+                    .display()
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn registry_status_marks_repo_as_present_when_git_dir_exists() {
+        let repo_cache = tempdir().expect("tempdir");
+        let git_dir = repo_cache.path().join("sharkdp").join("fd").join(".git");
+        fs::create_dir_all(&git_dir).expect("create git dir");
+        let rendered = render_target_registry_status_with_repo_cache(
+            &sample_registry(),
+            Some(repo_cache.path()),
+        );
+        assert!(rendered.contains("present"));
+        assert!(!rendered.contains("needs_fetch"));
+    }
+
+    #[test]
+    fn tilde_display_path_rewrites_home_prefix() {
+        let home = dirs::home_dir().expect("home dir");
+        let path = home
+            .join(".ploke-eval")
+            .join("repos")
+            .join("sharkdp")
+            .join("fd");
+        assert_eq!(tilde_display_path(&path), "~/.ploke-eval/repos/sharkdp/fd");
+    }
 }
 
 pub fn resolve_registry_dataset_sources(
