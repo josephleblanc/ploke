@@ -1,5 +1,5 @@
-pub const HTTP_REFERER: &str = "https://github.com/ploke-ai/ploke";
-pub const HTTP_TITLE: &str = "Ploke TUI";
+pub const HTTP_REFERER: &str = "https://ploke.dev/";
+pub const HTTP_TITLE: &str = "Ploke";
 
 #[cfg(test)]
 pub(crate) mod test_consts {

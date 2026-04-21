@@ -8,6 +8,7 @@ use crate::{
         write_embedding_models_registry as write_registry_generic,
     },
     router_only::{ApiRoute, Router, openrouter::EmbeddingProviderPrefs},
+    HTTP_REFERER, HTTP_TITLE,
 };
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -189,8 +190,8 @@ impl super::OpenRouter {
             .bearer_auth(&env.api_key)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
-            .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-            .header("X-Title", "Ploke TUI")
+            .header("HTTP-Referer", HTTP_REFERER)
+            .header("X-Title", HTTP_TITLE)
             .json(req)
             .send()
             .await

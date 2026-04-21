@@ -19,6 +19,7 @@ use super::{
     EndpointKey, EndpointsResponse, LLMParameters, ModelId, ModelKey,
     request::{ChatCompReqCore, endpoint::ToolChoice, models},
 };
+use crate::{HTTP_REFERER, HTTP_TITLE};
 mod anthropic {
     use super::*;
     // Note: Placeholder, just an example for now
@@ -55,8 +56,8 @@ pub trait HasModels: Router {
                 .get(url)
                 .bearer_auth(api_key)
                 .header("Accept", "application/json")
-                .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-                .header("X-Title", "Ploke TUI")
+                .header("HTTP-Referer", HTTP_REFERER)
+                .header("X-Title", HTTP_TITLE)
                 .send()
                 .await?
                 .error_for_status()?;
@@ -157,8 +158,8 @@ pub trait HasEndpoint: Router {
                 .get(url)
                 .bearer_auth(api_key)
                 .header("Accept", "application/json")
-                .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-                .header("X-Title", "Ploke TUI")
+                .header("HTTP-Referer", HTTP_REFERER)
+                .header("X-Title", HTTP_TITLE)
                 .send()
                 .await?
                 .error_for_status()?;

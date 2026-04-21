@@ -86,8 +86,8 @@ pub trait HasEmbeddings: Router {
                 .bearer_auth(api_key)
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
-                .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-                .header("X-Title", "Ploke TUI")
+                .header("HTTP-Referer", HTTP_REFERER)
+                .header("X-Title", HTTP_TITLE)
                 .json(req)
                 .send()
                 .await?

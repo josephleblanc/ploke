@@ -7,13 +7,15 @@ use once_cell::sync::OnceCell;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
+use crate::HTTP_REFERER;
+
 pub fn default_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     let referer = HeaderName::from_static("http-referer");
     let x_title = HeaderName::from_static("x-title");
     headers.insert(
         referer,
-        HeaderValue::from_static("https://github.com/ploke-ai/ploke"),
+        HeaderValue::from_static(HTTP_REFERER),
     );
     headers.insert(x_title, HeaderValue::from_static("Ploke TUI E2E Tests"));
     headers
