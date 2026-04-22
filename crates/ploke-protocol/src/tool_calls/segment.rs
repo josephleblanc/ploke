@@ -7,8 +7,8 @@ use thiserror::Error;
 use crate::core::{Confidence, EvidencePolicy, Measurement};
 use crate::llm::{JsonAdjudicationSpec, JsonAdjudicator, JsonChatPrompt, ProtocolLlmError};
 use crate::procedure::{
-    FanOut, FanOutError, Merge, MergeError, NamedProcedure, Procedure, ProcedureExt, Sequence,
-    SequenceError,
+    FanOut, FanOutError, Merge, MergeError, NamedProcedure, ObservedSubrequest, Procedure,
+    ProcedureExt, Sequence, SequenceError, SubrequestDescriptor,
 };
 use crate::step::{MechanizedExecutor, MechanizedSpec, Step, StepSpec};
 
@@ -412,7 +412,7 @@ impl MechanizedSpec for NormalizeSegments {
 
 pub type ContextBranches = FanOut<
     Step<PreserveSequenceContext, MechanizedExecutor>,
-    Step<SegmentByIntent, JsonAdjudicator>,
+    ObservedSubrequest<Step<SegmentByIntent, JsonAdjudicator>>,
 >;
 
 pub type IntentSegmentationInner = Sequence<
@@ -468,7 +468,14 @@ impl ToolCallIntentSegmentation {
     pub fn new(adjudicator: JsonAdjudicator) -> Self {
         let context = Step::new(ContextualizeSequence, MechanizedExecutor);
         let preserve = Step::new(PreserveSequenceContext, MechanizedExecutor);
-        let segment = Step::new(SegmentByIntent, adjudicator);
+        let segment = ObservedSubrequest::new(
+            Step::new(SegmentByIntent, adjudicator),
+            SubrequestDescriptor {
+                label: "intent_segmentation",
+                request_index: 1,
+                request_total: 1,
+            },
+        );
         let normalize = Step::new(NormalizeSegments, MechanizedExecutor);
 
         Self {

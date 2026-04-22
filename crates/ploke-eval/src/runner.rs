@@ -64,6 +64,7 @@ use crate::tracing_setup::current_full_response_log_path;
 
 const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
+const FINAL_RESPONSE_GRACE_MILLIS: u64 = 750;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
 const STARTING_DB_CACHE_VERSION: u32 = 1;
 static EMBEDDING_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
@@ -3234,6 +3235,27 @@ async fn run_benchmark_turn(
         app.pump_pending_events().await;
 
         if artifact.terminal_record.is_some() {
+            if artifact.llm_response.is_none() {
+                // Keep draining debug_rx here alongside the app event streams.
+                // In the RuntimeHarness relay, debug emission is coupled to
+                // forwarding/proxying StateCommand traffic, including delicate
+                // oneshot relay cases. If we stop draining this receiver as
+                // soon as ChatTurnFinished arrives, a paired oneshot can remain
+                // stuck waiting forever even though the turn is otherwise
+                // terminal. See crates/ploke-tui/src/app/commands/unit_tests/harness.rs
+                // ("Key Design: The Relay Pattern" and RelayStateCmd::run_relay).
+                drain_post_terminal_events(
+                    &mut artifact,
+                    state,
+                    debug_rx,
+                    realtime_rx,
+                    background_rx,
+                    trace_path,
+                    &mut tool_request_started_at,
+                    Duration::from_millis(FINAL_RESPONSE_GRACE_MILLIS),
+                )
+                .await?;
+            }
             break;
         }
 
@@ -3313,6 +3335,80 @@ async fn run_benchmark_turn(
 
     write_json(trace_path, &artifact)?;
     Ok(artifact)
+}
+
+async fn drain_post_terminal_events(
+    artifact: &mut AgentTurnArtifact,
+    state: &Arc<AppState>,
+    debug_rx: &mut mpsc::Receiver<ploke_tui::app::commands::harness::DebugStateCommand>,
+    realtime_rx: &mut broadcast::Receiver<AppEvent>,
+    background_rx: &mut broadcast::Receiver<AppEvent>,
+    trace_path: &Path,
+    tool_request_started_at: &mut HashMap<String, Instant>,
+    grace_period: Duration,
+) -> Result<(), PrepareError> {
+    let deadline = Instant::now() + grace_period;
+
+    loop {
+        let mut observed_event = false;
+
+        loop {
+            match debug_rx.try_recv() {
+                Ok(debug) => {
+                    artifact
+                        .events
+                        .push(ObservedTurnEvent::DebugCommand(debug.as_str().to_string()));
+                    observed_event = true;
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+            }
+        }
+
+        loop {
+            match realtime_rx.try_recv() {
+                Ok(event) => {
+                    handle_benchmark_event(artifact, state, event, tool_request_started_at).await;
+                    observed_event = true;
+                }
+                Err(broadcast::error::TryRecvError::Empty) => break,
+                Err(broadcast::error::TryRecvError::Closed) => break,
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                    observed_event = true;
+                    continue;
+                }
+            }
+        }
+
+        loop {
+            match background_rx.try_recv() {
+                Ok(event) => {
+                    handle_benchmark_event(artifact, state, event, tool_request_started_at).await;
+                    observed_event = true;
+                }
+                Err(broadcast::error::TryRecvError::Empty) => break,
+                Err(broadcast::error::TryRecvError::Closed) => break,
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                    observed_event = true;
+                    continue;
+                }
+            }
+        }
+
+        if observed_event {
+            write_json(trace_path, &artifact)?;
+        }
+
+        if artifact.llm_response.is_some() || Instant::now() >= deadline {
+            break;
+        }
+
+        if !observed_event {
+            sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    Ok(())
 }
 
 async fn handle_benchmark_event(
@@ -5074,6 +5170,103 @@ mod tests {
         let metadata = record.metadata.as_ref().unwrap();
         assert_eq!(metadata.model, "anthropic/claude-3-sonnet");
         assert_eq!(metadata.cost, 0.0024);
+    }
+
+    #[tokio::test]
+    async fn drain_post_terminal_events_captures_late_llm_response() {
+        use ploke_llm::response::FinishReason;
+        use ploke_tui::llm::{ChatEvt, LlmEvent};
+
+        let state = Arc::new(create_mock_app_state());
+        let temp = tempdir().expect("tempdir");
+        let trace_path = temp.path().join("turn-trace.json");
+        let mut artifact = AgentTurnArtifact {
+            task_id: "test".to_string(),
+            selected_model: ploke_llm::ModelId::from(ploke_llm::ModelKey::default()),
+            issue_prompt: "test".to_string(),
+            user_message_id: Uuid::new_v4().to_string(),
+            events: Vec::new(),
+            prompt_debug: None,
+            terminal_record: Some(TurnFinishedRecord {
+                session_id: Uuid::new_v4().to_string(),
+                request_id: Uuid::new_v4().to_string(),
+                parent_id: Uuid::new_v4().to_string(),
+                assistant_message_id: Uuid::new_v4().to_string(),
+                outcome: "completed".to_string(),
+                error_id: None,
+                summary: "done".to_string(),
+                attempts: 1,
+            }),
+            final_assistant_message: None,
+            patch_artifact: PatchArtifact {
+                edit_proposals: Vec::new(),
+                create_proposals: Vec::new(),
+                applied: false,
+                all_proposals_applied: false,
+                expected_file_changes: Vec::new(),
+                any_expected_file_changed: false,
+                all_expected_files_changed: false,
+            },
+            llm_prompt: Vec::new(),
+            llm_response: None,
+        };
+        write_json(&trace_path, &artifact).expect("seed trace");
+
+        let (_debug_tx, mut debug_rx) = mpsc::channel(1);
+        let (realtime_tx, mut realtime_rx) = broadcast::channel(8);
+        let (_background_tx, mut background_rx) = broadcast::channel(8);
+        let mut tool_request_started_at = HashMap::new();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            let _ = realtime_tx.send(AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::Response {
+                request_id: Uuid::new_v4(),
+                parent_id: Uuid::new_v4(),
+                content: "late final answer".to_string(),
+                model: "test-model".to_string(),
+                metadata: ploke_llm::types::meta::LLMMetadata {
+                    model: "test-model".to_string(),
+                    usage: ploke_llm::response::TokenUsage {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        total_tokens: 15,
+                    },
+                    finish_reason: FinishReason::Stop,
+                    processing_time: std::time::Duration::from_millis(50),
+                    cost: 0.0,
+                    performance: ploke_llm::types::meta::PerformanceMetrics {
+                        tokens_per_second: 100.0,
+                        time_to_first_token: std::time::Duration::from_millis(10),
+                        queue_time: std::time::Duration::from_millis(0),
+                    },
+                },
+                usage: ploke_llm::manager::events::UsageMetrics {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                    latency_ms: 50,
+                },
+            })));
+        });
+
+        drain_post_terminal_events(
+            &mut artifact,
+            &state,
+            &mut debug_rx,
+            &mut realtime_rx,
+            &mut background_rx,
+            &trace_path,
+            &mut tool_request_started_at,
+            Duration::from_millis(250),
+        )
+        .await
+        .expect("drain succeeds");
+
+        assert_eq!(artifact.llm_response.as_deref(), Some("late final answer"));
+        assert!(artifact.events.iter().any(|event| matches!(
+            event,
+            ObservedTurnEvent::LlmResponse(record) if record.content == "late final answer"
+        )));
     }
 
     #[test]

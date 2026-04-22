@@ -1,5 +1,8 @@
 use async_trait::async_trait;
 use serde::Serialize;
+use std::env;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 use thiserror::Error;
 
 use crate::core::{
@@ -7,6 +10,192 @@ use crate::core::{
     SequenceArtifact, StateDisposition, StateEnvelope,
 };
 use crate::step::{Step, StepExecutor, StepSpec};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcedureDebugEventKind {
+    ProcedureStarted,
+    ProcedureFinished,
+    ProcedureFailed,
+    SubrequestStarted,
+    SubrequestFinished,
+    SubrequestFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProcedureDebugEvent {
+    pub event: ProcedureDebugEventKind,
+    pub procedure_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_total: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u128>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+pub type ProcedureDebugSink = Arc<dyn Fn(&ProcedureDebugEvent) + Send + Sync + 'static>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SubrequestDescriptor {
+    pub label: &'static str,
+    pub request_index: usize,
+    pub request_total: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ObservedSubrequest<Inner> {
+    pub inner: Inner,
+    pub descriptor: SubrequestDescriptor,
+}
+
+impl<Inner> ObservedSubrequest<Inner> {
+    pub fn new(inner: Inner, descriptor: SubrequestDescriptor) -> Self {
+        Self { inner, descriptor }
+    }
+}
+
+static PROCEDURE_DEBUG_SINK: OnceLock<Mutex<Option<ProcedureDebugSink>>> = OnceLock::new();
+static PROCEDURE_DEBUG_STDERR: OnceLock<bool> = OnceLock::new();
+
+pub fn set_procedure_debug_sink(sink: Option<ProcedureDebugSink>) {
+    let lock = PROCEDURE_DEBUG_SINK.get_or_init(|| Mutex::new(None));
+    *lock.lock().expect("procedure debug sink mutex poisoned") = sink;
+}
+
+fn procedure_debug_stderr_enabled() -> bool {
+    *PROCEDURE_DEBUG_STDERR.get_or_init(|| {
+        env::var("PLOKE_PROTOCOL_DEBUG").is_ok_and(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            !normalized.is_empty() && normalized != "0" && normalized != "false"
+        })
+    })
+}
+
+fn emit_procedure_debug_event(event: ProcedureDebugEvent) {
+    if let Some(sink) = PROCEDURE_DEBUG_SINK
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("procedure debug sink mutex poisoned")
+        .clone()
+    {
+        sink(&event);
+    }
+
+    if procedure_debug_stderr_enabled()
+        && let Ok(line) = serde_json::to_string(&event)
+    {
+        eprintln!("{line}");
+    }
+}
+
+struct ProcedureDebugRun {
+    procedure_name: &'static str,
+    start: Instant,
+}
+
+impl ProcedureDebugRun {
+    fn start(procedure_name: &'static str) -> Self {
+        emit_procedure_debug_event(ProcedureDebugEvent {
+            event: ProcedureDebugEventKind::ProcedureStarted,
+            procedure_name: procedure_name.to_string(),
+            request_label: None,
+            request_index: None,
+            request_total: None,
+            elapsed_ms: None,
+            detail: None,
+        });
+
+        Self {
+            procedure_name,
+            start: Instant::now(),
+        }
+    }
+
+    fn finish(self) {
+        emit_procedure_debug_event(ProcedureDebugEvent {
+            event: ProcedureDebugEventKind::ProcedureFinished,
+            procedure_name: self.procedure_name.to_string(),
+            request_label: None,
+            request_index: None,
+            request_total: None,
+            elapsed_ms: Some(self.start.elapsed().as_millis()),
+            detail: None,
+        });
+    }
+
+    fn fail<Error>(self, error: &Error)
+    where
+        Error: std::fmt::Display,
+    {
+        emit_procedure_debug_event(ProcedureDebugEvent {
+            event: ProcedureDebugEventKind::ProcedureFailed,
+            procedure_name: self.procedure_name.to_string(),
+            request_label: None,
+            request_index: None,
+            request_total: None,
+            elapsed_ms: Some(self.start.elapsed().as_millis()),
+            detail: Some(error.to_string()),
+        });
+    }
+}
+
+struct SubrequestDebugRun {
+    procedure_name: &'static str,
+    descriptor: SubrequestDescriptor,
+    start: Instant,
+}
+
+impl SubrequestDebugRun {
+    fn start(procedure_name: &'static str, descriptor: SubrequestDescriptor) -> Self {
+        emit_procedure_debug_event(ProcedureDebugEvent {
+            event: ProcedureDebugEventKind::SubrequestStarted,
+            procedure_name: procedure_name.to_string(),
+            request_label: Some(descriptor.label.to_string()),
+            request_index: Some(descriptor.request_index),
+            request_total: Some(descriptor.request_total),
+            elapsed_ms: None,
+            detail: None,
+        });
+
+        Self {
+            procedure_name,
+            descriptor,
+            start: Instant::now(),
+        }
+    }
+
+    fn finish(self) {
+        emit_procedure_debug_event(ProcedureDebugEvent {
+            event: ProcedureDebugEventKind::SubrequestFinished,
+            procedure_name: self.procedure_name.to_string(),
+            request_label: Some(self.descriptor.label.to_string()),
+            request_index: Some(self.descriptor.request_index),
+            request_total: Some(self.descriptor.request_total),
+            elapsed_ms: Some(self.start.elapsed().as_millis()),
+            detail: None,
+        });
+    }
+
+    fn fail<Error>(self, error: &Error)
+    where
+        Error: std::fmt::Display,
+    {
+        emit_procedure_debug_event(ProcedureDebugEvent {
+            event: ProcedureDebugEventKind::SubrequestFailed,
+            procedure_name: self.procedure_name.to_string(),
+            request_label: Some(self.descriptor.label.to_string()),
+            request_index: Some(self.descriptor.request_index),
+            request_total: Some(self.descriptor.request_total),
+            elapsed_ms: Some(self.start.elapsed().as_millis()),
+            detail: Some(error.to_string()),
+        });
+    }
+}
 
 #[async_trait]
 pub trait Procedure: Send + Sync {
@@ -56,6 +245,40 @@ where
     }
 }
 
+#[async_trait]
+impl<Inner> Procedure for ObservedSubrequest<Inner>
+where
+    Inner: Procedure,
+    Inner::Artifact: Send,
+    Inner::Error: Send + std::fmt::Display,
+{
+    type Subject = Inner::Subject;
+    type Output = Inner::Output;
+    type Artifact = Inner::Artifact;
+    type Error = Inner::Error;
+
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+
+    async fn run(
+        &self,
+        subject: Self::Subject,
+    ) -> Result<ProcedureRun<Self::Output, Self::Artifact>, Self::Error> {
+        let debug = SubrequestDebugRun::start(self.name(), self.descriptor);
+        match self.inner.run(subject).await {
+            Ok(run) => {
+                debug.finish();
+                Ok(run)
+            }
+            Err(error) => {
+                debug.fail(&error);
+                Err(error)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Sequence<First, Second> {
     pub first: First,
@@ -76,10 +299,10 @@ where
     First: Procedure,
     First::Output: Send,
     First::Artifact: Send,
-    First::Error: Send,
+    First::Error: Send + std::fmt::Display,
     Second: Procedure<Subject = First::Output>,
     Second::Artifact: Send,
-    Second::Error: Send,
+    Second::Error: Send + std::fmt::Display,
 {
     type Subject = First::Subject;
     type Output = Second::Output;
@@ -94,25 +317,32 @@ where
         &self,
         subject: Self::Subject,
     ) -> Result<ProcedureRun<Self::Output, Self::Artifact>, Self::Error> {
-        let first = self
-            .first
-            .run(subject)
-            .await
-            .map_err(SequenceError::First)?;
-        let second = self
-            .second
-            .run(first.output.clone())
-            .await
-            .map_err(SequenceError::Second)?;
+        let debug = ProcedureDebugRun::start(self.name());
+        let first = match self.first.run(subject).await {
+            Ok(first) => first,
+            Err(error) => {
+                debug.fail(&error);
+                return Err(SequenceError::First(error));
+            }
+        };
+        let second = match self.second.run(first.output.clone()).await {
+            Ok(second) => second,
+            Err(error) => {
+                debug.fail(&error);
+                return Err(SequenceError::Second(error));
+            }
+        };
 
-        Ok(ProcedureRun {
+        let run = ProcedureRun {
             procedure_name: self.name().to_string(),
             output: second.output.clone(),
             artifact: SequenceArtifact {
                 first: first.artifact,
                 second: second.artifact,
             },
-        })
+        };
+        debug.finish();
+        Ok(run)
     }
 }
 
@@ -138,10 +368,10 @@ where
     Subject: ProcedureState,
     Left: Procedure<Subject = Subject>,
     Left::Artifact: Send,
-    Left::Error: Send,
+    Left::Error: Send + std::fmt::Display,
     Right: Procedure<Subject = Subject>,
     Right::Artifact: Send,
-    Right::Error: Send,
+    Right::Error: Send + std::fmt::Display,
 {
     type Subject = Subject;
     type Output = ForkState<Subject, Left::Output, Right::Output>;
@@ -156,19 +386,24 @@ where
         &self,
         subject: Self::Subject,
     ) -> Result<ProcedureRun<Self::Output, Self::Artifact>, Self::Error> {
+        let debug = ProcedureDebugRun::start(self.name());
         let captured_input = subject.clone();
-        let left = self
-            .left
-            .run(subject.clone())
-            .await
-            .map_err(FanOutError::Left)?;
-        let right = self
-            .right
-            .run(subject.clone())
-            .await
-            .map_err(FanOutError::Right)?;
+        let left = match self.left.run(subject.clone()).await {
+            Ok(left) => left,
+            Err(error) => {
+                debug.fail(&error);
+                return Err(FanOutError::Left(error));
+            }
+        };
+        let right = match self.right.run(subject.clone()).await {
+            Ok(right) => right,
+            Err(error) => {
+                debug.fail(&error);
+                return Err(FanOutError::Right(error));
+            }
+        };
 
-        Ok(ProcedureRun {
+        let run = ProcedureRun {
             procedure_name: self.name().to_string(),
             output: ForkState {
                 source: subject,
@@ -185,7 +420,9 @@ where
                 left: left.artifact,
                 right: right.artifact,
             },
-        })
+        };
+        debug.finish();
+        Ok(run)
     }
 }
 
@@ -208,10 +445,10 @@ impl<Branches, Join> Procedure for Merge<Branches, Join>
 where
     Branches: Procedure,
     Branches::Artifact: Send,
-    Branches::Error: Send,
+    Branches::Error: Send + std::fmt::Display,
     Join: Procedure<Subject = Branches::Output>,
     Join::Artifact: Send,
-    Join::Error: Send,
+    Join::Error: Send + std::fmt::Display,
 {
     type Subject = Branches::Subject;
     type Output = Join::Output;
@@ -226,25 +463,32 @@ where
         &self,
         subject: Self::Subject,
     ) -> Result<ProcedureRun<Self::Output, Self::Artifact>, Self::Error> {
-        let branches = self
-            .branches
-            .run(subject)
-            .await
-            .map_err(MergeError::Branches)?;
-        let merged = self
-            .join
-            .run(branches.output.clone())
-            .await
-            .map_err(MergeError::Join)?;
+        let debug = ProcedureDebugRun::start(self.name());
+        let branches = match self.branches.run(subject).await {
+            Ok(branches) => branches,
+            Err(error) => {
+                debug.fail(&error);
+                return Err(MergeError::Branches(error));
+            }
+        };
+        let merged = match self.join.run(branches.output.clone()).await {
+            Ok(merged) => merged,
+            Err(error) => {
+                debug.fail(&error);
+                return Err(MergeError::Join(error));
+            }
+        };
 
-        Ok(ProcedureRun {
+        let run = ProcedureRun {
             procedure_name: self.name().to_string(),
             output: merged.output.clone(),
             artifact: MergeArtifact {
                 branches: branches.artifact,
                 merge: merged.artifact,
             },
-        })
+        };
+        debug.finish();
+        Ok(run)
     }
 }
 
@@ -259,7 +503,7 @@ impl<Inner> Procedure for NamedProcedure<Inner>
 where
     Inner: Procedure,
     Inner::Artifact: Send,
-    Inner::Error: Send,
+    Inner::Error: Send + std::fmt::Display,
 {
     type Subject = Inner::Subject;
     type Output = Inner::Output;
@@ -274,15 +518,24 @@ where
         &self,
         subject: Self::Subject,
     ) -> Result<ProcedureRun<Self::Output, Self::Artifact>, Self::Error> {
-        let inner = self.inner.run(subject).await?;
-        Ok(ProcedureRun {
+        let debug = ProcedureDebugRun::start(self.name());
+        let inner = match self.inner.run(subject).await {
+            Ok(inner) => inner,
+            Err(error) => {
+                debug.fail(&error);
+                return Err(error);
+            }
+        };
+        let run = ProcedureRun {
             procedure_name: self.name().to_string(),
             output: inner.output,
             artifact: ProcedureArtifact {
                 procedure_name: self.name().to_string(),
                 artifact: inner.artifact,
             },
-        })
+        };
+        debug.finish();
+        Ok(run)
     }
 }
 
@@ -348,6 +601,8 @@ impl<T> ProcedureExt for T where T: Procedure + Sized {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
     use crate::core::EvidencePolicy;
     use crate::step::{MechanizedExecutor, MechanizedSpec, Step, StepSpec};
 
@@ -495,5 +750,63 @@ mod tests {
         assert_eq!(run.artifact.artifact.merge.input.left, 6);
         assert_eq!(run.artifact.artifact.merge.input.right, 10);
         assert_eq!(run.artifact.artifact.merge.output, 16);
+    }
+
+    #[tokio::test]
+    async fn observed_subrequest_emits_numbered_debug_events() {
+        let events = Arc::new(Mutex::new(Vec::<ProcedureDebugEvent>::new()));
+        let sink_events = Arc::clone(&events);
+        set_procedure_debug_sink(Some(Arc::new(move |event| {
+            sink_events
+                .lock()
+                .expect("test events mutex should not be poisoned")
+                .push(event.clone());
+        })));
+
+        let procedure = ObservedSubrequest::new(
+            Step::new(AddOne, MechanizedExecutor),
+            SubrequestDescriptor {
+                label: "observed_subrequest_test",
+                request_index: 1,
+                request_total: 3,
+            },
+        )
+        .named("observed_debug_test");
+
+        let run = procedure
+            .run(4)
+            .await
+            .expect("observed subrequest should succeed");
+        set_procedure_debug_sink(None);
+
+        assert_eq!(run.output, 5);
+
+        let recorded = events
+            .lock()
+            .expect("test events mutex should not be poisoned")
+            .clone();
+
+        assert!(recorded.iter().any(|event| {
+            event.event == ProcedureDebugEventKind::ProcedureStarted
+                && event.procedure_name == "observed_debug_test"
+        }));
+        assert!(recorded.iter().any(|event| {
+            event.event == ProcedureDebugEventKind::ProcedureFinished
+                && event.procedure_name == "observed_debug_test"
+        }));
+        assert!(recorded.iter().any(|event| {
+            event.event == ProcedureDebugEventKind::SubrequestStarted
+                && event.procedure_name == "add_one"
+                && event.request_label.as_deref() == Some("observed_subrequest_test")
+                && event.request_index == Some(1)
+                && event.request_total == Some(3)
+        }));
+        assert!(recorded.iter().any(|event| {
+            event.event == ProcedureDebugEventKind::SubrequestFinished
+                && event.procedure_name == "add_one"
+                && event.request_label.as_deref() == Some("observed_subrequest_test")
+                && event.request_index == Some(1)
+                && event.request_total == Some(3)
+        }));
     }
 }

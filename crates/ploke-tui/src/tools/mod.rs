@@ -151,6 +151,62 @@ pub struct ToolResult {
     pub ui_payload: Option<ToolUiPayload>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ToolCallPreflightError {
+    pub call_id: ArcStr,
+    pub tool_name: ToolName,
+    pub error: ToolError,
+}
+
+pub fn validate_and_sanitize_tool_calls(
+    tool_calls: &[ToolCall],
+) -> Result<Vec<ToolCall>, ToolCallPreflightError> {
+    tool_calls
+        .iter()
+        .map(validate_and_sanitize_tool_call)
+        .collect()
+}
+
+pub fn validate_and_sanitize_tool_call(
+    tool_call: &ToolCall,
+) -> Result<ToolCall, ToolCallPreflightError> {
+    let mut sanitized = tool_call.clone();
+    sanitized.function.arguments = sanitize_tool_args(&sanitized.function.arguments);
+    validate_tool_args(sanitized.function.name, &sanitized.function.arguments).map_err(
+        |error| ToolCallPreflightError {
+            call_id: sanitized.call_id.clone(),
+            tool_name: sanitized.function.name,
+            error,
+        },
+    )?;
+    Ok(sanitized)
+}
+
+fn validate_tool_args(tool_name: ToolName, args: &str) -> Result<(), ToolError> {
+    match tool_name {
+        ToolName::RequestCodeContext => validate_tool_args_with::<RequestCodeContextGat>(args),
+        ToolName::ApplyCodeEdit => validate_tool_args_with::<GatCodeEdit>(args),
+        ToolName::InsertRustItem => {
+            validate_tool_args_with::<insert_rust_item::InsertRustItem>(args)
+        }
+        ToolName::CreateFile => validate_tool_args_with::<create_file::CreateFile>(args),
+        ToolName::NsPatch => validate_tool_args_with::<ns_patch::NsPatch>(args),
+        ToolName::NsRead => validate_tool_args_with::<ns_read::NsRead>(args),
+        ToolName::CodeItemLookup => {
+            validate_tool_args_with::<code_item_lookup::CodeItemLookup>(args)
+        }
+        ToolName::CodeItemEdges => validate_tool_args_with::<get_code_edges::CodeItemEdges>(args),
+        ToolName::Cargo => validate_tool_args_with::<cargo::CargoTool>(args),
+        ToolName::ListDir => validate_tool_args_with::<list_dir::ListDir>(args),
+    }
+}
+
+fn validate_tool_args_with<T: Tool>(args: &str) -> Result<(), ToolError> {
+    T::deserialize_params(args)
+        .map(|_| ())
+        .map_err(T::adapt_error)
+}
+
 // potential alternative for static dispatch, might be helpful for macro
 pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::Result<()> {
     // TODO: Implement this as the Clone method for Ctx
@@ -621,5 +677,58 @@ mod tests {
             Some("apply_code_edit")
         );
         assert!(f.contains_key("parameters"));
+    }
+
+    #[test]
+    fn validate_and_sanitize_tool_call_strips_suffix_tokens() {
+        let tool_call = ToolCall {
+            call_id: ArcStr::from("call_suffix"),
+            call_type: FunctionMarker,
+            function: ploke_llm::response::FunctionCall {
+                name: ToolName::ListDir,
+                arguments: "{\"dir\":\"src\",\"max_entries\":5}<|tool_call_end|>".to_string(),
+            },
+        };
+
+        let validated = validate_and_sanitize_tool_call(&tool_call).expect("validated tool call");
+
+        assert_eq!(
+            validated.function.arguments,
+            "{\"dir\":\"src\",\"max_entries\":5}"
+        );
+    }
+
+    #[test]
+    fn validate_and_sanitize_tool_call_rejects_malformed_json() {
+        let tool_call = ToolCall {
+            call_id: ArcStr::from("call_bad_json"),
+            call_type: FunctionMarker,
+            function: ploke_llm::response::FunctionCall {
+                name: ToolName::NsRead,
+                arguments: "{\"file\":\"src/lib.rs\",\"start_line\":".to_string(),
+            },
+        };
+
+        let err = validate_and_sanitize_tool_call(&tool_call).expect_err("malformed json");
+
+        assert_eq!(err.tool_name, ToolName::NsRead);
+        assert!(err.error.message.contains("failed to parse tool arguments"));
+    }
+
+    #[test]
+    fn validate_and_sanitize_tool_call_rejects_schema_invalid_args() {
+        let tool_call = ToolCall {
+            call_id: ArcStr::from("call_bad_schema"),
+            call_type: FunctionMarker,
+            function: ploke_llm::response::FunctionCall {
+                name: ToolName::Cargo,
+                arguments: "{\"command\":\"fmt\",\"scope\":\"workspace\"}".to_string(),
+            },
+        };
+
+        let err = validate_and_sanitize_tool_call(&tool_call).expect_err("schema invalid args");
+
+        assert_eq!(err.tool_name, ToolName::Cargo);
+        assert!(err.error.message.contains("unknown variant"));
     }
 }

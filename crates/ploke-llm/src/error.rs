@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use crate::response::{FinishReason, OpenAiResponse};
+use ploke_core::ArcStr;
 use ploke_error::{
     LlmBodyFailure as StableLlmBodyFailure, LlmReceiveFailure as StableLlmReceiveFailure,
     LlmReceivePhase as StableLlmReceivePhase, LlmSendFailure as StableLlmSendFailure,
@@ -166,6 +167,14 @@ impl std::fmt::Display for HttpFailure {
 
 impl std::error::Error for HttpFailure {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiErrorSource {
+    HttpStatusBody,
+    TopLevelError,
+    ChoiceError,
+}
+
 /// Represents errors that can occur during LLM interactions.
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum LlmError {
@@ -183,6 +192,14 @@ pub enum LlmError {
         url: Option<String>,
         /// Truncated body snippet for diagnostics.
         body_snippet: Option<String>,
+        /// Embedded router/provider API error code from the response body, if available.
+        api_code: Option<ArcStr>,
+        /// Raw provider name as returned by the router, if available.
+        provider_name: Option<ArcStr>,
+        /// Best-effort canonical provider slug, if available.
+        provider_slug: Option<ArcStr>,
+        /// The protocol surface where this API error was observed.
+        error_source: ApiErrorSource,
     },
 
     /// The request was rejected due to rate limiting.
@@ -247,8 +264,21 @@ impl LlmError {
                 message,
                 url,
                 body_snippet,
+                api_code,
+                provider_name,
+                provider_slug,
+                error_source,
             } => {
                 let mut msg = format!("API error (status {status}): {message}");
+                msg.push_str(&format!("\nsource: {:?}", error_source));
+                if let Some(code) = api_code {
+                    msg.push_str("\napi_code: ");
+                    msg.push_str(code);
+                }
+                if let Some(provider) = provider_slug.as_ref().or(provider_name.as_ref()) {
+                    msg.push_str("\nprovider: ");
+                    msg.push_str(provider);
+                }
                 if let Some(u) = url {
                     msg.push_str(&format!("\nurl: {u}"));
                 }
@@ -286,11 +316,19 @@ impl From<LlmError> for ploke_error::Error {
                 ploke_error::InternalError::LlmTransport(http.to_ploke_transport_failure()),
             ),
             LlmError::Api {
-                status, message, ..
+                status,
+                message,
+                api_code,
+                ..
             } => ploke_error::Error::Internal(ploke_error::InternalError::EmbedderError(
                 std::sync::Arc::new(std::io::Error::other(format!(
-                    "API error {}: {}",
-                    status, message
+                    "API error {}{}: {}",
+                    status,
+                    api_code
+                        .as_ref()
+                        .map(|code| format!(" (api_code={code})"))
+                        .unwrap_or_default(),
+                    message
                 ))),
             )),
             LlmError::RateLimited => ploke_error::Error::Warning(

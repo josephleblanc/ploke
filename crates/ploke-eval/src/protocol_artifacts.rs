@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::layout::protocol_artifacts_dir_for_run;
-use crate::run_registry::sync_protocol_registration_status;
+use crate::run_registry::{
+    ResolvedProtocolRunIdentity, resolve_protocol_run_identity, sync_protocol_registration_status,
+};
 use crate::spec::PrepareError;
 
 pub const PROTOCOL_ARTIFACT_SCHEMA_VERSION: &str = "protocol-artifact.v1";
@@ -31,6 +33,29 @@ pub struct StoredProtocolArtifact {
 pub struct StoredProtocolArtifactFile {
     pub path: PathBuf,
     pub stored: StoredProtocolArtifact,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProtocolArtifactIdentityMismatch {
+    pub path: PathBuf,
+    pub procedure_name: String,
+    pub field: &'static str,
+    pub expected: String,
+    pub actual: String,
+}
+
+impl std::fmt::Display for ProtocolArtifactIdentityMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "protocol artifact '{}' for procedure '{}' has {}='{}' but expected '{}'",
+            self.path.display(),
+            self.procedure_name,
+            self.field,
+            self.actual,
+            self.expected
+        )
+    }
 }
 
 pub(crate) fn protocol_artifact_summary(entry: &StoredProtocolArtifactFile) -> String {
@@ -145,10 +170,17 @@ where
     Output: Serialize,
     Artifact: Serialize,
 {
-    let run_dir = record_path
-        .parent()
-        .ok_or_else(|| PrepareError::MissingRunManifest(record_path.to_path_buf()))?;
-    let artifacts_dir = protocol_artifacts_dir_for_run(run_dir);
+    let resolved_identity = resolve_protocol_run_identity(record_path)?;
+    if subject_id != resolved_identity.subject_id {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "protocol_artifact_identity",
+            detail: format!(
+                "refusing to write protocol artifact for run '{}' with subject_id='{}'; resolved subject_id is '{}'",
+                resolved_identity.run_id, subject_id, resolved_identity.subject_id
+            ),
+        });
+    }
+    let artifacts_dir = protocol_artifacts_dir_for_run(&resolved_identity.run_dir);
     fs::create_dir_all(&artifacts_dir).map_err(|source| {
         PrepareError::CreateProtocolArtifactDir {
             path: artifacts_dir.clone(),
@@ -157,10 +189,6 @@ where
     })?;
 
     let created_at_ms = now_millis();
-    let run_id = run_dir
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| "run".to_string());
     let file_name = format!(
         "{}_{}_{}.json",
         created_at_ms,
@@ -171,8 +199,8 @@ where
     let stored = StoredProtocolArtifact {
         schema_version: PROTOCOL_ARTIFACT_SCHEMA_VERSION.to_string(),
         procedure_name: procedure_name.to_string(),
-        subject_id: subject_id.to_string(),
-        run_id,
+        subject_id: resolved_identity.subject_id.clone(),
+        run_id: resolved_identity.run_id,
         created_at_ms,
         model_id: model_id.map(str::to_string),
         provider_slug: provider_slug.map(str::to_string),
@@ -194,10 +222,8 @@ where
 pub fn list_protocol_artifacts(
     record_path: &Path,
 ) -> Result<Vec<StoredProtocolArtifactFile>, PrepareError> {
-    let run_dir = record_path
-        .parent()
-        .ok_or_else(|| PrepareError::MissingRunManifest(record_path.to_path_buf()))?;
-    let artifacts_dir = protocol_artifacts_dir_for_run(run_dir);
+    let resolved_identity = resolve_protocol_run_identity(record_path)?;
+    let artifacts_dir = protocol_artifacts_dir_for_run(&resolved_identity.run_dir);
     if !artifacts_dir.exists() {
         return Ok(Vec::new());
     }
@@ -217,7 +243,14 @@ pub fn list_protocol_artifacts(
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        entries.push(load_protocol_artifact(&path)?);
+        let loaded = load_protocol_artifact(&path)?;
+        validate_protocol_artifact_identity(&loaded, &resolved_identity).map_err(|mismatch| {
+            PrepareError::DatabaseSetup {
+                phase: "protocol_artifact_identity",
+                detail: mismatch.to_string(),
+            }
+        })?;
+        entries.push(loaded);
     }
 
     entries.sort_by(|left, right| right.path.cmp(&left.path));
@@ -238,6 +271,72 @@ pub fn load_protocol_artifact(path: &Path) -> Result<StoredProtocolArtifactFile,
         path: path.to_path_buf(),
         stored,
     })
+}
+
+pub(crate) fn validate_protocol_artifact_identity(
+    entry: &StoredProtocolArtifactFile,
+    resolved_identity: &ResolvedProtocolRunIdentity,
+) -> Result<(), ProtocolArtifactIdentityMismatch> {
+    validate_protocol_artifact_field(
+        entry,
+        "stored.run_id",
+        &entry.stored.run_id,
+        &resolved_identity.run_id,
+    )?;
+    validate_protocol_artifact_field(
+        entry,
+        "stored.subject_id",
+        &entry.stored.subject_id,
+        &resolved_identity.subject_id,
+    )?;
+
+    if let Some(output_subject_id) = protocol_output_subject_id(entry) {
+        validate_protocol_artifact_field(
+            entry,
+            "output.subject_id",
+            output_subject_id,
+            &resolved_identity.subject_id,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_protocol_artifact_field(
+    entry: &StoredProtocolArtifactFile,
+    field: &'static str,
+    actual: &str,
+    expected: &str,
+) -> Result<(), ProtocolArtifactIdentityMismatch> {
+    if actual == expected {
+        return Ok(());
+    }
+
+    Err(ProtocolArtifactIdentityMismatch {
+        path: entry.path.clone(),
+        procedure_name: entry.stored.procedure_name.clone(),
+        field,
+        expected: expected.to_string(),
+        actual: actual.to_string(),
+    })
+}
+
+fn protocol_output_subject_id(entry: &StoredProtocolArtifactFile) -> Option<&str> {
+    match entry.stored.procedure_name.as_str() {
+        "tool_call_intent_segmentation" => entry
+            .stored
+            .output
+            .get("sequence")
+            .and_then(|value| value.get("subject_id"))
+            .and_then(Value::as_str),
+        "tool_call_review" | "tool_call_segment_review" => entry
+            .stored
+            .output
+            .get("packet")
+            .and_then(|value| value.get("subject_id"))
+            .and_then(Value::as_str),
+        _ => None,
+    }
 }
 
 fn now_millis() -> u64 {

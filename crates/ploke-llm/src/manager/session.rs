@@ -4,18 +4,26 @@
     reason = "evolving api surface, may be useful, written 2025-12-15"
 )]
 
+use std::env;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
 use ploke_core::ArcStr;
+use reqwest::header::HeaderMap;
+use tokio::time::sleep;
 use tracing::info;
 use tracing::warn;
 
 use crate::HTTP_REFERER;
 use crate::HTTP_TITLE;
+use crate::error::ApiErrorSource;
 use crate::error::{HttpBodyFailure, HttpFailure, HttpReceivePhase, HttpSendFailure};
 use crate::response::FinishReason;
 use crate::response::OpenAiResponse;
 use crate::response::ToolCall;
+use crate::router_only::openrouter::providers::ProviderName;
 use crate::router_only::{ChatCompRequest, Router};
 
 use super::LlmError;
@@ -39,6 +47,9 @@ pub struct ChatHttpConfig {
     referer: &'static str,
     title: &'static str,
     pub timeout: Duration,
+    pub max_attempts: u32,
+    pub initial_backoff: Duration,
+    pub max_backoff: Duration,
 }
 
 impl Default for ChatHttpConfig {
@@ -50,6 +61,29 @@ impl Default for ChatHttpConfig {
             // Setting to 15 secs for now, try using it and getting a feel for the right default
             // timing
             timeout: Duration::from_secs(30),
+            max_attempts: 3,
+            initial_backoff: Duration::from_millis(250),
+            max_backoff: Duration::from_secs(2),
+        }
+    }
+}
+
+static NEXT_CHAT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+static CHAT_HTTP_STDERR: OnceLock<bool> = OnceLock::new();
+
+fn chat_http_stderr_enabled() -> bool {
+    *CHAT_HTTP_STDERR.get_or_init(|| {
+        env::var("PLOKE_PROTOCOL_DEBUG").is_ok_and(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            !normalized.is_empty() && normalized != "0" && normalized != "false"
+        })
+    })
+}
+
+fn emit_chat_http_stderr_line(payload: serde_json::Value) {
+    if chat_http_stderr_enabled() {
+        if let Ok(line) = serde_json::to_string(&payload) {
+            eprintln!("{line}");
         }
     }
 }
@@ -60,6 +94,7 @@ pub async fn chat_step<R: Router>(
     cfg: &ChatHttpConfig,
 ) -> Result<ChatStepData, LlmError> {
     let url = R::COMPLETION_URL;
+    let request_id = NEXT_CHAT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let api_key = R::resolve_api_key().map_err(|e| {
         LlmError::Http(HttpFailure::send(
             None,
@@ -73,88 +108,205 @@ pub async fn chat_step<R: Router>(
     let request_bytes = request_json.as_ref().map_or(0, |body| body.len());
     let message_count = req.core.messages.len();
     let tool_count = req.tools.as_ref().map_or(0, Vec::len);
-    let start = Instant::now();
+    let max_attempts = cfg.max_attempts.max(1);
     if let Some(body) = request_json.as_ref() {
         let _ = log_api_request_json(url, body);
     }
-    trace_chat_http_start(
-        url,
-        &req.core.model.to_string(),
-        cfg.timeout,
-        message_count,
-        tool_count,
-        request_bytes,
-    );
-    let resp = client
-        .post(url)
-        .bearer_auth(api_key)
-        .header("Accept", "application/json")
-        .header("HTTP-Referer", cfg.referer)
-        .header("X-Title", cfg.title)
-        .json(req)
-        .timeout(cfg.timeout)
-        .send()
-        .await
-        .map_err(|e| {
-            trace_chat_http_error("send", url, start.elapsed(), e.is_timeout(), &e.to_string());
-            let phase = if e.is_timeout() {
-                HttpSendFailure::Timeout
-            } else {
-                HttpSendFailure::Failed
-            };
-            LlmError::Http(HttpFailure::send(
-                Some(url.to_string()),
-                Some(start.elapsed().as_millis()),
-                format!("sending request to {url}: {e}"),
-                phase,
-            ))
-        })?;
-
-    let resp_url = resp.url().to_string();
-    let status = resp.status().as_u16();
-    trace_chat_http_headers(&resp_url, status, start.elapsed());
-    let body = resp.text().await.map_err(|e| {
-        trace_chat_http_error(
-            "body",
-            &resp_url,
-            start.elapsed(),
-            e.is_timeout(),
-            &e.to_string(),
+    for attempt in 1..=max_attempts {
+        let start = Instant::now();
+        trace_chat_http_start(
+            request_id,
+            attempt,
+            max_attempts,
+            url,
+            &req.core.model.to_string(),
+            cfg.timeout,
+            message_count,
+            tool_count,
+            request_bytes,
         );
-        let phase = if e.is_timeout() {
-            HttpBodyFailure::Timeout
-        } else if e.is_decode() {
-            HttpBodyFailure::DecodeFailed
-        } else {
-            HttpBodyFailure::ReadFailed
+
+        let resp = match client
+            .post(url)
+            .bearer_auth(&api_key)
+            .header("Accept", "application/json")
+            .header("HTTP-Referer", cfg.referer)
+            .header("X-Title", cfg.title)
+            .json(req)
+            .timeout(cfg.timeout)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(error) => {
+                trace_chat_http_error(
+                    request_id,
+                    attempt,
+                    max_attempts,
+                    "send",
+                    url,
+                    start.elapsed(),
+                    error.is_timeout(),
+                    &error.to_string(),
+                );
+                let phase = if error.is_timeout() {
+                    HttpSendFailure::Timeout
+                } else {
+                    HttpSendFailure::Failed
+                };
+                let failure = LlmError::Http(HttpFailure::send(
+                    Some(url.to_string()),
+                    Some(start.elapsed().as_millis()),
+                    format!("sending request to {url}: {error}"),
+                    phase,
+                ));
+                if should_retry_send_error(&error) && attempt < max_attempts {
+                    let backoff = compute_retry_backoff(cfg, attempt, None);
+                    trace_chat_http_retry_scheduled(
+                        request_id,
+                        attempt,
+                        max_attempts,
+                        url,
+                        "send",
+                        None,
+                        backoff,
+                        start.elapsed(),
+                    );
+                    sleep(backoff).await;
+                    continue;
+                }
+                return Err(failure);
+            }
         };
-        LlmError::Http(HttpFailure::receive(
-            Some(resp_url.clone()),
-            Some(start.elapsed().as_millis()),
-            Some(status),
-            format!("while reading response body (status {status}): {e}"),
-            HttpReceivePhase::Body(phase),
-        ))
-    })?;
 
-    let _ = log_api_raw_response(&resp_url, status, &body);
-
-    if let Ok(parsed) = &serde_json::from_str(&body) {
-        let _ = log_api_parsed_json_response(&resp_url, status, parsed).await;
-    } else {
-        let _ = log_api_raw_response(url, status, &body);
-    }
-
-    if !(200..300).contains(&status) {
-        return Err(LlmError::Api {
+        let resp_url = resp.url().to_string();
+        let status = resp.status().as_u16();
+        let retry_after = parse_retry_after(resp.headers());
+        trace_chat_http_headers(
+            request_id,
+            attempt,
+            max_attempts,
+            &resp_url,
             status,
-            message: body.clone(),
-            url: Some(resp_url),
-            body_snippet: Some(truncate_for_error(&body, 4_096)),
-        });
+            retry_after,
+            start.elapsed(),
+        );
+
+        let body = match resp.text().await {
+            Ok(body) => body,
+            Err(error) => {
+                trace_chat_http_error(
+                    request_id,
+                    attempt,
+                    max_attempts,
+                    "body",
+                    &resp_url,
+                    start.elapsed(),
+                    error.is_timeout(),
+                    &error.to_string(),
+                );
+                let phase = if error.is_timeout() {
+                    HttpBodyFailure::Timeout
+                } else if error.is_decode() {
+                    HttpBodyFailure::DecodeFailed
+                } else {
+                    HttpBodyFailure::ReadFailed
+                };
+                let failure = LlmError::Http(HttpFailure::receive(
+                    Some(resp_url.clone()),
+                    Some(start.elapsed().as_millis()),
+                    Some(status),
+                    format!("while reading response body (status {status}): {error}"),
+                    HttpReceivePhase::Body(phase),
+                ));
+                if should_retry_body_error(&error) && attempt < max_attempts {
+                    let backoff = compute_retry_backoff(cfg, attempt, retry_after);
+                    trace_chat_http_retry_scheduled(
+                        request_id,
+                        attempt,
+                        max_attempts,
+                        &resp_url,
+                        "body",
+                        Some(status),
+                        backoff,
+                        start.elapsed(),
+                    );
+                    sleep(backoff).await;
+                    continue;
+                }
+                return Err(failure);
+            }
+        };
+
+        trace_chat_http_response_body(
+            request_id,
+            attempt,
+            max_attempts,
+            &resp_url,
+            status,
+            body.len(),
+            start.elapsed(),
+        );
+
+        let _ = log_api_raw_response(&resp_url, status, &body);
+
+        if let Ok(parsed) = &serde_json::from_str(&body) {
+            let _ = log_api_parsed_json_response(&resp_url, status, parsed).await;
+        } else {
+            let _ = log_api_raw_response(url, status, &body);
+        }
+
+        if !(200..300).contains(&status) {
+            trace_chat_http_status_error(
+                request_id,
+                attempt,
+                max_attempts,
+                &resp_url,
+                status,
+                retry_after,
+                start.elapsed(),
+            );
+            if should_retry_status(status) && attempt < max_attempts {
+                let backoff = compute_retry_backoff(cfg, attempt, retry_after);
+                trace_chat_http_retry_scheduled(
+                    request_id,
+                    attempt,
+                    max_attempts,
+                    &resp_url,
+                    "status",
+                    Some(status),
+                    backoff,
+                    start.elapsed(),
+                );
+                sleep(backoff).await;
+                continue;
+            }
+            return Err(LlmError::Api {
+                status,
+                message: body.clone(),
+                url: Some(resp_url),
+                body_snippet: Some(truncate_for_error(&body, 4_096)),
+                api_code: extract_api_code_from_body(&body),
+                provider_name: extract_provider_name_from_body(&body)
+                    .map(|name| ArcStr::from(name.as_str())),
+                provider_slug: extract_provider_slug_from_body(&body),
+                error_source: ApiErrorSource::HttpStatusBody,
+            });
+        }
+
+        let parsed = parse_chat_outcome(&body)?;
+        trace_chat_http_completed(
+            request_id,
+            attempt,
+            max_attempts,
+            &resp_url,
+            status,
+            start.elapsed(),
+        );
+        return Ok(parsed);
     }
 
-    parse_chat_outcome(&body)
+    unreachable!("chat_step retry loop should always return")
 }
 
 async fn log_api_parsed_json_response(
@@ -178,6 +330,9 @@ fn log_api_request_json(url: &str, payload: &str) -> color_eyre::Result<()> {
 }
 
 fn trace_chat_http_start(
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
     url: &str,
     model: &str,
     timeout: Duration,
@@ -185,9 +340,24 @@ fn trace_chat_http_start(
     tool_count: usize,
     request_bytes: usize,
 ) {
+    emit_chat_http_stderr_line(serde_json::json!({
+        "event": "chat_http_request_start",
+        "request_id": request_id,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "url": url,
+        "model": model,
+        "timeout_secs": timeout.as_secs(),
+        "message_count": message_count,
+        "tool_count": tool_count,
+        "request_bytes": request_bytes
+    }));
     tracing::info!(
         target: "chat_http",
         event = "chat_http_request_start",
+        request_id,
+        attempt,
+        max_attempts,
         url,
         model,
         timeout_secs = timeout.as_secs(),
@@ -197,26 +367,243 @@ fn trace_chat_http_start(
     );
 }
 
-fn trace_chat_http_headers(url: &str, status: u16, elapsed: Duration) {
+fn trace_chat_http_headers(
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
+    url: &str,
+    status: u16,
+    retry_after: Option<Duration>,
+    elapsed: Duration,
+) {
+    emit_chat_http_stderr_line(serde_json::json!({
+        "event": "chat_http_response_headers",
+        "request_id": request_id,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "url": url,
+        "status": status,
+        "retry_after_ms": retry_after.map(|value| value.as_millis() as u64),
+        "elapsed_ms": elapsed.as_millis()
+    }));
     tracing::info!(
         target: "chat_http",
         event = "chat_http_response_headers",
+        request_id,
+        attempt,
+        max_attempts,
+        url,
+        status,
+        retry_after_ms = retry_after.map(|value| value.as_millis() as u64),
+        elapsed_ms = elapsed.as_millis()
+    );
+}
+
+fn trace_chat_http_response_body(
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
+    url: &str,
+    status: u16,
+    response_bytes: usize,
+    elapsed: Duration,
+) {
+    emit_chat_http_stderr_line(serde_json::json!({
+        "event": "chat_http_response_body",
+        "request_id": request_id,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "url": url,
+        "status": status,
+        "response_bytes": response_bytes,
+        "elapsed_ms": elapsed.as_millis()
+    }));
+    tracing::info!(
+        target: "chat_http",
+        event = "chat_http_response_body",
+        request_id,
+        attempt,
+        max_attempts,
+        url,
+        status,
+        response_bytes,
+        elapsed_ms = elapsed.as_millis()
+    );
+}
+
+fn trace_chat_http_status_error(
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
+    url: &str,
+    status: u16,
+    retry_after: Option<Duration>,
+    elapsed: Duration,
+) {
+    emit_chat_http_stderr_line(serde_json::json!({
+        "event": "chat_http_response_error_status",
+        "request_id": request_id,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "url": url,
+        "status": status,
+        "retry_after_ms": retry_after.map(|value| value.as_millis() as u64),
+        "elapsed_ms": elapsed.as_millis()
+    }));
+    tracing::warn!(
+        target: "chat_http",
+        event = "chat_http_response_error_status",
+        request_id,
+        attempt,
+        max_attempts,
+        url,
+        status,
+        retry_after_ms = retry_after.map(|value| value.as_millis() as u64),
+        elapsed_ms = elapsed.as_millis()
+    );
+}
+
+fn trace_chat_http_retry_scheduled(
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
+    url: &str,
+    phase: &str,
+    status: Option<u16>,
+    backoff: Duration,
+    elapsed: Duration,
+) {
+    emit_chat_http_stderr_line(serde_json::json!({
+        "event": "chat_http_retry_scheduled",
+        "request_id": request_id,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "phase": phase,
+        "url": url,
+        "status": status,
+        "backoff_ms": backoff.as_millis(),
+        "elapsed_ms": elapsed.as_millis()
+    }));
+    tracing::warn!(
+        target: "chat_http",
+        event = "chat_http_retry_scheduled",
+        request_id,
+        attempt,
+        max_attempts,
+        phase,
+        url,
+        status,
+        backoff_ms = backoff.as_millis(),
+        elapsed_ms = elapsed.as_millis()
+    );
+}
+
+fn trace_chat_http_completed(
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
+    url: &str,
+    status: u16,
+    elapsed: Duration,
+) {
+    emit_chat_http_stderr_line(serde_json::json!({
+        "event": "chat_http_request_completed",
+        "request_id": request_id,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "url": url,
+        "status": status,
+        "elapsed_ms": elapsed.as_millis()
+    }));
+    tracing::info!(
+        target: "chat_http",
+        event = "chat_http_request_completed",
+        request_id,
+        attempt,
+        max_attempts,
         url,
         status,
         elapsed_ms = elapsed.as_millis()
     );
 }
 
-fn trace_chat_http_error(phase: &str, url: &str, elapsed: Duration, is_timeout: bool, error: &str) {
+fn trace_chat_http_error(
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
+    phase: &str,
+    url: &str,
+    elapsed: Duration,
+    is_timeout: bool,
+    error: &str,
+) {
+    emit_chat_http_stderr_line(serde_json::json!({
+        "event": "chat_http_request_error",
+        "request_id": request_id,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "phase": phase,
+        "url": url,
+        "elapsed_ms": elapsed.as_millis(),
+        "is_timeout": is_timeout,
+        "error": error
+    }));
     tracing::warn!(
         target: "chat_http",
         event = "chat_http_request_error",
+        request_id,
+        attempt,
+        max_attempts,
         phase,
         url,
         elapsed_ms = elapsed.as_millis(),
         is_timeout,
         error
     );
+}
+
+fn should_retry_send_error(error: &reqwest::Error) -> bool {
+    error.is_timeout() || error.is_connect() || error.is_request() || error.is_body()
+}
+
+fn should_retry_body_error(error: &reqwest::Error) -> bool {
+    error.is_timeout() || error.is_body()
+}
+
+fn should_retry_status(status: u16) -> bool {
+    matches!(status, 408 | 409 | 425 | 429 | 500 | 502 | 503 | 504)
+}
+
+fn compute_retry_backoff(
+    cfg: &ChatHttpConfig,
+    attempt: u32,
+    retry_after: Option<Duration>,
+) -> Duration {
+    if let Some(retry_after) = retry_after {
+        return retry_after.min(cfg.max_backoff);
+    }
+
+    let exponent = attempt.saturating_sub(1);
+    let multiplier = 1u32.checked_shl(exponent.min(16)).unwrap_or(u32::MAX);
+    let backoff = cfg.initial_backoff.saturating_mul(multiplier);
+    backoff.min(cfg.max_backoff)
+}
+
+fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let header = headers.get(reqwest::header::RETRY_AFTER)?;
+    let raw = header.to_str().ok()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    if let Ok(seconds) = raw.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+
+    let retry_at = DateTime::parse_from_rfc2822(raw).ok()?.with_timezone(&Utc);
+    let now = Utc::now();
+    let delta = retry_at.signed_duration_since(now);
+    delta.to_std().ok()
 }
 
 #[derive(Debug)]
@@ -296,39 +683,26 @@ impl ChatStepData {
 pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
     use serde_json::Value;
     let mut builder = ChatStepDataBuilder::new();
+    let mut raw_provider_slug: Option<ArcStr> = None;
 
     // Parse once as JSON so we can cheaply detect embedded errors without double-deserializing.
     // If this fails, we still attempt typed parsing below to produce a more specific error.
-    if let Ok(v) = serde_json::from_str::<Value>(body_text)
-        && let Some(err) = v.get("error")
-    {
-        let msg = err
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("Unknown provider error");
+    if let Ok(v) = serde_json::from_str::<Value>(body_text) {
+        let raw_provider_name = extract_provider_name(&v);
+        raw_provider_slug = raw_provider_name
+            .as_ref()
+            .and_then(ProviderName::to_slug)
+            .map(|slug| ArcStr::from(slug.as_str()));
 
-        // Provider "code" is often not an HTTP status; it may be a string like "invalid_api_key".
-        // Prefer an explicit `status` field if present, otherwise mark as 200 (embedded error).
-        let status = err.get("status").and_then(|s| s.as_u64()).unwrap_or(200) as u16;
-
-        let code_str = match err.get("code") {
-            Some(Value::String(s)) => Some(s.to_string()),
-            Some(Value::Number(n)) => Some(n.to_string()),
-            _ => None,
-        };
-
-        let full_msg = if let Some(code) = code_str {
-            format!("{msg} (code: {code})")
-        } else {
-            msg.to_string()
-        };
-
-        return Err(LlmError::Api {
-            status,
-            message: full_msg,
-            url: None,
-            body_snippet: Some(truncate_for_error(body_text, 4_096)),
-        });
+        if let Some(err) = v.get("error") {
+            return Err(api_error_from_embedded_error(
+                err,
+                raw_provider_name.as_ref(),
+                raw_provider_slug.clone(),
+                body_text,
+                ApiErrorSource::TopLevelError,
+            ));
+        }
     }
 
     let parsed: OpenAiResponse = serde_json::from_str(body_text).map_err(|e| {
@@ -342,6 +716,28 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
 
     // We prefer the first choice that yields a usable outcome.
     for choice in parsed.choices.iter() {
+        if let Some(err) = &choice.error {
+            let status = u16::try_from(err.code).ok().unwrap_or(200);
+            return Err(LlmError::Api {
+                status,
+                message: err.message.clone(),
+                url: None,
+                body_snippet: Some(truncate_for_error(body_text, 4_096)),
+                api_code: Some(ArcStr::from(err.code.to_string())),
+                provider_name: parsed
+                    .provider
+                    .as_ref()
+                    .map(|name| ArcStr::from(name.as_str())),
+                provider_slug: parsed
+                    .provider
+                    .as_ref()
+                    .and_then(ProviderName::to_slug)
+                    .map(|slug| ArcStr::from(slug.as_str()))
+                    .or_else(|| raw_provider_slug.clone()),
+                error_source: ApiErrorSource::ChoiceError,
+            });
+        }
+
         // Case 1: Chat-style `message`
         if let Some(msg) = &choice.message {
             let calls_opt = &msg.tool_calls;
@@ -437,22 +833,91 @@ fn truncate_for_error(s: &str, max: usize) -> String {
     }
 }
 
+fn extract_provider_name(value: &serde_json::Value) -> Option<ProviderName> {
+    value
+        .get("provider")
+        .and_then(serde_json::Value::as_str)
+        .map(ProviderName::new)
+}
+
+fn extract_provider_name_from_body(body_text: &str) -> Option<ProviderName> {
+    serde_json::from_str::<serde_json::Value>(body_text)
+        .ok()
+        .and_then(|value| extract_provider_name(&value))
+}
+
+fn extract_provider_slug_from_body(body_text: &str) -> Option<ArcStr> {
+    extract_provider_name_from_body(body_text)
+        .and_then(|name| name.to_slug())
+        .map(|slug| ArcStr::from(slug.as_str()))
+}
+
+fn extract_api_code(value: &serde_json::Value) -> Option<ArcStr> {
+    match value.get("code") {
+        Some(serde_json::Value::String(s)) => Some(ArcStr::from(s.as_str())),
+        Some(serde_json::Value::Number(n)) => Some(ArcStr::from(n.to_string())),
+        _ => None,
+    }
+}
+
+fn extract_api_code_from_body(body_text: &str) -> Option<ArcStr> {
+    serde_json::from_str::<serde_json::Value>(body_text)
+        .ok()
+        .and_then(|value| value.get("error").and_then(extract_api_code))
+}
+
+fn api_error_from_embedded_error(
+    err: &serde_json::Value,
+    provider_name: Option<&ProviderName>,
+    provider_slug: Option<ArcStr>,
+    body_text: &str,
+    error_source: ApiErrorSource,
+) -> LlmError {
+    let msg = err
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("Unknown provider error");
+
+    let api_code = extract_api_code(err);
+    // Provider "code" is often not an HTTP status; it may be a string like "invalid_api_key".
+    // Prefer an explicit `status` field if present, otherwise mark as 200 (embedded error).
+    let status = err.get("status").and_then(|s| s.as_u64()).unwrap_or(200) as u16;
+
+    let full_msg = if let Some(code) = api_code.as_ref() {
+        format!("{msg} (code: {code})")
+    } else {
+        msg.to_string()
+    };
+
+    LlmError::Api {
+        status,
+        message: full_msg,
+        url: None,
+        body_snippet: Some(truncate_for_error(body_text, 4_096)),
+        api_code,
+        provider_name: provider_name.map(|name| ArcStr::from(name.as_str())),
+        provider_slug,
+        error_source,
+    }
+}
+
 fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
     // Providers sometimes put errors inside a 200 body
     match serde_json::from_str::<serde_json::Value>(body_text) {
         Ok(v) => {
             if let Some(err) = v.get("error") {
-                let msg = err
-                    .get("message")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("Unknown provider error");
-                let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
-                Err(LlmError::Api {
-                    status: code as u16,
-                    message: msg.to_string(),
-                    url: None,
-                    body_snippet: Some(truncate_for_error(body_text, 4_096)),
-                })
+                let provider_name = extract_provider_name(&v);
+                let provider_slug = provider_name
+                    .as_ref()
+                    .and_then(ProviderName::to_slug)
+                    .map(|slug| ArcStr::from(slug.as_str()));
+                Err(api_error_from_embedded_error(
+                    err,
+                    provider_name.as_ref(),
+                    provider_slug,
+                    body_text,
+                    ApiErrorSource::TopLevelError,
+                ))
             } else {
                 Err(LlmError::Deserialization {
                     message: "No choices".into(),
@@ -473,10 +938,6 @@ fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
-    use tracing::Level;
-    use tracing::subscriber::set_default;
-    use tracing_subscriber::fmt::format::FmtSpan;
 
     #[test]
     fn parse_outcome_content_message() {
@@ -508,5 +969,137 @@ mod tests {
             } => assert_eq!(c.as_ref(), "Hello text"),
             _ => panic!("expected content"),
         }
+    }
+
+    #[test]
+    fn parse_outcome_preserves_provider_on_success() {
+        let body = r#"{
+            "provider": "OpenAI",
+            "choices": [
+                { "message": {"role": "assistant", "content": "Hello world"} }
+            ]
+        }"#;
+
+        let r = parse_chat_outcome(body).unwrap();
+        assert_eq!(
+            r.full_response.provider.as_ref().map(ProviderName::as_str),
+            Some("OpenAI")
+        );
+    }
+
+    #[test]
+    fn parse_outcome_choice_error_returns_api_error_with_provider_metadata() {
+        let body = r#"{
+            "provider": "Groq",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Let me create the fix:"},
+                    "error": {
+                        "code": 502,
+                        "message": "Upstream error from Groq: tool call validation failed: parameters for tool cargo did not match schema: errors: [`/command`: value must be one of \"test\", \"check\"]"
+                    }
+                }
+            ]
+        }"#;
+
+        let err = parse_chat_outcome(body).expect_err("choice error should abort parsing");
+        match err {
+            LlmError::Api {
+                status,
+                api_code,
+                provider_name,
+                provider_slug,
+                error_source,
+                ..
+            } => {
+                assert_eq!(status, 502);
+                assert_eq!(api_code.as_deref(), Some("502"));
+                assert_eq!(provider_name.as_deref(), Some("Groq"));
+                assert_eq!(provider_slug.as_deref(), Some("groq"));
+                assert_eq!(error_source, ApiErrorSource::ChoiceError);
+            }
+            other => panic!("expected api error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_outcome_top_level_error_preserves_provider_metadata() {
+        let body = r#"{
+            "provider": "Groq",
+            "error": {
+                "message": "No successful provider responses.",
+                "code": 404
+            }
+        }"#;
+
+        let err = parse_chat_outcome(body).expect_err("top-level error should abort parsing");
+        match err {
+            LlmError::Api {
+                status,
+                api_code,
+                provider_name,
+                provider_slug,
+                error_source,
+                ..
+            } => {
+                assert_eq!(status, 200);
+                assert_eq!(api_code.as_deref(), Some("404"));
+                assert_eq!(provider_name.as_deref(), Some("Groq"));
+                assert_eq!(provider_slug.as_deref(), Some("groq"));
+                assert_eq!(error_source, ApiErrorSource::TopLevelError);
+            }
+            other => panic!("expected api error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_outcome_top_level_rate_limit_preserves_status_and_api_code_separately() {
+        let body = r#"{
+            "provider": "Io Net",
+            "error": {
+                "message": "Provider returned error",
+                "code": 429
+            }
+        }"#;
+
+        let err = parse_chat_outcome(body).expect_err("top-level error should abort parsing");
+        match err {
+            LlmError::Api {
+                status,
+                api_code,
+                provider_name,
+                error_source,
+                ..
+            } => {
+                assert_eq!(status, 200);
+                assert_eq!(api_code.as_deref(), Some("429"));
+                assert_eq!(provider_name.as_deref(), Some("Io Net"));
+                assert_eq!(error_source, ApiErrorSource::TopLevelError);
+            }
+            other => panic!("expected api error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_retry_after_supports_delta_seconds() {
+        let mut headers = HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "2".parse().unwrap());
+
+        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn compute_retry_backoff_caps_retry_after() {
+        let cfg = ChatHttpConfig {
+            max_backoff: Duration::from_secs(2),
+            ..ChatHttpConfig::default()
+        };
+
+        assert_eq!(
+            compute_retry_backoff(&cfg, 2, Some(Duration::from_secs(9))),
+            Duration::from_secs(2)
+        );
+        assert_eq!(compute_retry_backoff(&cfg, 3, None), Duration::from_secs(1));
     }
 }

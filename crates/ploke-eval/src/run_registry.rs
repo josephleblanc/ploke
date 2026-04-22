@@ -11,6 +11,14 @@ use crate::spec::PrepareError;
 pub use crate::inner::registry::{RunArtifactRefs, RunLifecycle, RunPhaseLifecycle};
 pub use crate::inner::registry::{RunExecutionStatus, RunSubmissionStatus};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedProtocolRunIdentity {
+    pub record_path: PathBuf,
+    pub run_dir: PathBuf,
+    pub run_id: String,
+    pub subject_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunSelectionPreference {
     LatestAny,
@@ -62,6 +70,38 @@ pub fn load_registration_for_record_path(
         .parent()
         .ok_or_else(|| PrepareError::MissingRunManifest(record_path.to_path_buf()))?;
     load_registration_for_run_dir(run_dir)
+}
+
+pub fn resolve_protocol_run_identity(
+    record_path: &Path,
+) -> Result<ResolvedProtocolRunIdentity, PrepareError> {
+    let run_dir = record_path
+        .parent()
+        .ok_or_else(|| PrepareError::MissingRunManifest(record_path.to_path_buf()))?;
+
+    if let Some(registration) = load_registration_for_record_path(record_path)? {
+        return Ok(ResolvedProtocolRunIdentity {
+            record_path: registration.artifacts.record_path.clone(),
+            run_dir: registration.artifacts.run_root.clone(),
+            run_id: registration.run_id,
+            subject_id: registration.frozen_spec.task_id,
+        });
+    }
+
+    let run_id = run_id_from_run_dir(run_dir).unwrap_or_else(|| "run".to_string());
+    let record = crate::record::read_compressed_record(record_path).map_err(|source| {
+        PrepareError::ReadManifest {
+            path: record_path.to_path_buf(),
+            source,
+        }
+    })?;
+
+    Ok(ResolvedProtocolRunIdentity {
+        record_path: record_path.to_path_buf(),
+        run_dir: run_dir.to_path_buf(),
+        run_id,
+        subject_id: record.metadata.benchmark.instance_id,
+    })
 }
 
 pub fn list_registrations_for_instance(
@@ -282,7 +322,13 @@ mod tests {
     use super::*;
     use crate::inner::core::RegisteredRunRole;
     use crate::spec::EvalBudget;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn sample_intent(base: &Path, runs_root: &Path) -> RunIntent {
         RunIntent {
@@ -305,6 +351,7 @@ mod tests {
 
     #[test]
     fn preferred_registration_uses_registration_store_before_dir_guessing() {
+        let _env_lock = env_lock().lock().expect("env lock");
         let tmp = tempdir().expect("tmp");
         unsafe {
             std::env::set_var("PLOKE_EVAL_HOME", tmp.path());
@@ -325,5 +372,26 @@ mod tests {
         .expect("preferred")
         .expect("registration");
         assert_eq!(selected.run_id, "run-123");
+    }
+
+    #[test]
+    fn resolve_protocol_run_identity_prefers_registration_authority() {
+        let _env_lock = env_lock().lock().expect("env lock");
+        let tmp = tempdir().expect("tmp");
+        unsafe {
+            std::env::set_var("PLOKE_EVAL_HOME", tmp.path());
+        }
+        let runs_root = tmp.path().join("runs");
+        let intent = sample_intent(tmp.path(), &runs_root);
+        let registration =
+            RunRegistration::register_with_run_id(intent, "run-123").expect("registration");
+        let record_path = registration.artifacts.record_path.clone();
+        registration.persist().expect("persist");
+
+        let resolved = resolve_protocol_run_identity(&record_path).expect("resolved identity");
+        assert_eq!(resolved.run_id, "run-123");
+        assert_eq!(resolved.subject_id, "org__repo-1");
+        assert_eq!(resolved.record_path, record_path);
+        assert_eq!(resolved.run_dir, registration.artifacts.run_root);
     }
 }

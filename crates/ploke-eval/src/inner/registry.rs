@@ -97,6 +97,34 @@ pub struct RunLifecycle {
 }
 
 /// Persisted authority record for one run.
+///
+/// 2026-04-21 transition note:
+/// We are actively trialing `RunRegistration` as the canonical authority surface
+/// for run identity, lifecycle state, and artifact refs before removing the old
+/// artifact-discovery path. Do not delete the legacy path until this has been in
+/// normal eval use for at least a day or two and we have verified that the new
+/// authority records stay consistent with the files they point at.
+///
+/// New authority path:
+/// - this type: `inner::registry::RunRegistration`
+/// - live registry helpers: `run_registry.rs`
+/// - runner writes/updates: `runner.rs`
+/// - authority-first readers: `run_history.rs`, `closure.rs`, campaign export,
+///   and protocol artifact sync
+///
+/// Legacy transition path still present:
+/// - run-dir discovery and latest-run heuristics in `run_history.rs`
+///   (`candidate_run_dirs_for_instance_root`, `best_run_dir_for_instance_root`,
+///   `latest_run_dir_for_instance_root`, `record_last_run`, `load_last_run`)
+/// - artifact-first closure fallback in `closure.rs`
+///   (`build_instance_row`, `classify_eval_status`,
+///   `classify_eval_status_from_registration`)
+/// - compatibility record layer in `record.rs` around `RunRecord` / `record.json.gz`
+///
+/// If a run looks inconsistent, compare `RunRegistration` against the fallback
+/// readers before cleaning up the legacy path. The cleanup we expect later is to
+/// remove or demote the fallback heuristics once this authority surface proves
+/// stable in real eval usage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRegistration {
     /// Registration schema version.

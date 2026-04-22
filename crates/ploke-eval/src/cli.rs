@@ -4,7 +4,7 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str::FromStr;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use clap::{ArgAction, Parser, Subcommand};
@@ -13,6 +13,9 @@ use ploke_llm::request::endpoint::Endpoint;
 use ploke_llm::router_only::HasEndpoint;
 use ploke_llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use ploke_llm::{ModelId, ProviderKey};
+use ploke_protocol::procedure::{
+    ProcedureDebugEvent, ProcedureDebugEventKind, ProcedureDebugSink, set_procedure_debug_sink,
+};
 use ploke_protocol::tool_calls::trace::NeighborhoodSource;
 use ploke_protocol::tool_calls::{review, segment, trace};
 use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure};
@@ -1960,12 +1963,54 @@ pub struct ClosureAdvanceAllCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ProtocolSubcommand {
+    /// Show protocol eligibility, existing artifacts, missing steps, and the next command to run.
+    Status(ProtocolStatusCommand),
+    /// Advance the selected run through the next missing protocol step.
+    Run(ProtocolRunCommand),
     /// Review one indexed tool call using a bounded neighborhood, forked judgments, and merged assessment.
     ToolCallReview(ProtocolToolCallReviewCommand),
     /// Segment an ordered tool-call sequence into contiguous intent episodes.
     ToolCallIntentSegments(ProtocolToolCallIntentSegmentsCommand),
     /// Review one intent segment using the shared local-analysis packet over segmented trace state.
     ToolCallSegmentReview(ProtocolToolCallSegmentReviewCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct ProtocolStatusCommand {
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct ProtocolRunCommand {
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Override the model id. Defaults to the current active eval model.
+    #[arg(long)]
+    pub model_id: Option<String>,
+
+    /// Override the provider slug. Defaults to the persisted provider for the chosen model, if any.
+    #[arg(long)]
+    pub provider: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
 }
 
 #[derive(Debug, Parser)]
@@ -2717,6 +2762,8 @@ impl InspectCommand {
 impl ProtocolCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         match self.command {
+            ProtocolSubcommand::Status(cmd) => cmd.run().await,
+            ProtocolSubcommand::Run(cmd) => cmd.run().await,
             ProtocolSubcommand::ToolCallReview(cmd) => cmd.run().await,
             ProtocolSubcommand::ToolCallIntentSegments(cmd) => cmd.run().await,
             ProtocolSubcommand::ToolCallSegmentReview(cmd) => cmd.run().await,
@@ -3234,7 +3281,7 @@ impl ProtocolToolCallReviewCommand {
                 source,
             })?;
 
-        let subject = build_tool_call_review_subject(&record, &record_path, self.index)?;
+        let subject = build_tool_call_review_subject(&record, self.index)?;
         let subject_id = subject.subject_id.clone();
         let persisted_input = subject.clone();
 
@@ -3360,6 +3407,228 @@ impl ProtocolToolCallReviewCommand {
     }
 }
 
+impl ProtocolStatusCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+        let instance_id = record.metadata.benchmark.instance_id.clone();
+        let mut state = protocol_state_for_run(&instance_id, &record_path)?;
+        state.next_command =
+            protocol_next_command(&instance_id, &record_path, &state.next_step, true, false);
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                print_protocol_state_table(&state);
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&state).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        print_record_resolution_footer(&resolution);
+        Ok(())
+    }
+}
+
+impl ProtocolRunCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+        let instance_id = record.metadata.benchmark.instance_id.clone();
+        let mut before = protocol_state_for_run(&instance_id, &record_path)?;
+        before.next_command =
+            protocol_next_command(&instance_id, &record_path, &before.next_step, true, false);
+
+        let progress_guard = match self.format {
+            InspectOutputFormat::Table => Some(install_protocol_progress_printer()),
+            InspectOutputFormat::Json => None,
+        };
+
+        let executed = match before.next_step.clone() {
+            ProtocolNextStep::Ineligible => None,
+            ProtocolNextStep::IntentSegmentation => {
+                execute_protocol_intent_segments_quiet(
+                    &record_path,
+                    self.model_id.clone(),
+                    self.provider.clone(),
+                )
+                .await?;
+                Some("tool_call_intent_segmentation".to_string())
+            }
+            ProtocolNextStep::ToolCallReview { index } => {
+                execute_protocol_tool_call_review_quiet(
+                    &record_path,
+                    self.model_id.clone(),
+                    self.provider.clone(),
+                    index,
+                )
+                .await?;
+                Some(format!("tool_call_review[{index}]"))
+            }
+            ProtocolNextStep::ToolCallSegmentReview { segment_index } => {
+                execute_protocol_tool_call_segment_review_quiet(
+                    &record_path,
+                    self.model_id.clone(),
+                    self.provider.clone(),
+                    segment_index,
+                )
+                .await?;
+                Some(format!("tool_call_segment_review[{segment_index}]"))
+            }
+            ProtocolNextStep::Complete | ProtocolNextStep::Blocked => None,
+        };
+
+        let mut after = protocol_state_for_run(&instance_id, &record_path)?;
+        after.next_command =
+            protocol_next_command(&instance_id, &record_path, &after.next_step, true, false);
+
+        drop(progress_guard);
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                if let Some(executed) = &executed {
+                    println!("protocol run");
+                    println!("{}", "-".repeat(40));
+                    println!("executed: {}", executed);
+                    println!();
+                } else {
+                    println!("protocol run");
+                    println!("{}", "-".repeat(40));
+                    println!("executed: (none)");
+                    println!();
+                }
+                print_protocol_state_table(&after);
+            }
+            InspectOutputFormat::Json => {
+                let payload = serde_json::json!({
+                    "executed": executed,
+                    "before": before,
+                    "after": after,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        print_record_resolution_footer(&resolution);
+        Ok(())
+    }
+}
+
+struct ProtocolProgressGuard;
+
+impl Drop for ProtocolProgressGuard {
+    fn drop(&mut self) {
+        set_procedure_debug_sink(None);
+    }
+}
+
+fn install_protocol_progress_printer() -> ProtocolProgressGuard {
+    let sink: ProcedureDebugSink = Arc::new(|event: &ProcedureDebugEvent| match event.event {
+        ProcedureDebugEventKind::ProcedureStarted => {
+            if event.request_label.is_none() {
+                eprintln!("protocol progress: {} started", event.procedure_name);
+            }
+        }
+        ProcedureDebugEventKind::ProcedureFinished => {
+            if event.request_label.is_none() {
+                if let Some(elapsed_ms) = event.elapsed_ms {
+                    eprintln!(
+                        "protocol progress: {} finished ({} ms)",
+                        event.procedure_name, elapsed_ms
+                    );
+                } else {
+                    eprintln!("protocol progress: {} finished", event.procedure_name);
+                }
+            }
+        }
+        ProcedureDebugEventKind::ProcedureFailed => {
+            let detail = event.detail.as_deref().unwrap_or("unknown error");
+            if let Some(elapsed_ms) = event.elapsed_ms {
+                eprintln!(
+                    "protocol progress: {} failed after {} ms: {}",
+                    event.procedure_name, elapsed_ms, detail
+                );
+            } else {
+                eprintln!(
+                    "protocol progress: {} failed: {}",
+                    event.procedure_name, detail
+                );
+            }
+        }
+        ProcedureDebugEventKind::SubrequestStarted => {
+            let label = event.request_label.as_deref().unwrap_or("model_request");
+            match (event.request_index, event.request_total) {
+                (Some(index), Some(total)) => {
+                    eprintln!(
+                        "protocol progress: model request {}/{} ({}) sent",
+                        index, total, label
+                    );
+                }
+                _ => eprintln!("protocol progress: model request ({}) sent", label),
+            }
+        }
+        ProcedureDebugEventKind::SubrequestFinished => {
+            let label = event.request_label.as_deref().unwrap_or("model_request");
+            match (event.request_index, event.request_total, event.elapsed_ms) {
+                (Some(index), Some(total), Some(elapsed_ms)) => {
+                    eprintln!(
+                        "protocol progress: model request {}/{} ({}) received ({} ms)",
+                        index, total, label, elapsed_ms
+                    );
+                }
+                (Some(index), Some(total), None) => {
+                    eprintln!(
+                        "protocol progress: model request {}/{} ({}) received",
+                        index, total, label
+                    );
+                }
+                _ => eprintln!("protocol progress: model request ({}) received", label),
+            }
+        }
+        ProcedureDebugEventKind::SubrequestFailed => {
+            let label = event.request_label.as_deref().unwrap_or("model_request");
+            let detail = event.detail.as_deref().unwrap_or("unknown error");
+            match (event.request_index, event.request_total, event.elapsed_ms) {
+                (Some(index), Some(total), Some(elapsed_ms)) => {
+                    eprintln!(
+                        "protocol progress: model request {}/{} ({}) failed after {} ms: {}",
+                        index, total, label, elapsed_ms, detail
+                    );
+                }
+                (Some(index), Some(total), None) => {
+                    eprintln!(
+                        "protocol progress: model request {}/{} ({}) failed: {}",
+                        index, total, label, detail
+                    );
+                }
+                _ => eprintln!(
+                    "protocol progress: model request ({}) failed: {}",
+                    label, detail
+                ),
+            }
+        }
+    });
+
+    set_procedure_debug_sink(Some(sink));
+    ProtocolProgressGuard
+}
+
 impl ClosureAdvanceEvalCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         let resolved = resolve_campaign_config(&self.campaign, &self.overrides.into_overrides())?;
@@ -3472,6 +3741,35 @@ struct ProtocolRunPlan {
     segmentation_needed: bool,
     missing_call_indices: Vec<usize>,
     missing_segment_indices: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProtocolRunState {
+    instance_id: String,
+    tool_calls_total: usize,
+    protocol_eligible: bool,
+    artifact_count: usize,
+    segmentation_present: bool,
+    call_review_count: usize,
+    segment_review_count: usize,
+    aggregate_available: bool,
+    missing_call_indices: Vec<usize>,
+    missing_segment_indices: Vec<usize>,
+    next_step: ProtocolNextStep,
+    next_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aggregate_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ProtocolNextStep {
+    Ineligible,
+    IntentSegmentation,
+    ToolCallReview { index: usize },
+    ToolCallSegmentReview { segment_index: usize },
+    Complete,
+    Blocked,
 }
 
 #[derive(Debug, Clone)]
@@ -4040,6 +4338,215 @@ fn protocol_run_plan(
     }
 }
 
+fn protocol_state_for_run(
+    instance_id: &str,
+    record_path: &Path,
+) -> Result<ProtocolRunState, PrepareError> {
+    let record =
+        read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
+            path: record_path.to_path_buf(),
+            source,
+        })?;
+    let tool_calls_total = record.tool_calls().len();
+    let protocol_eligible = tool_calls_total > 0;
+    let artifacts = list_protocol_artifacts(record_path)?;
+    let artifact_count = artifacts.len();
+    let mut call_review_count = 0usize;
+    let mut segment_review_count = 0usize;
+    let mut segmentation_present = false;
+    for artifact in &artifacts {
+        match artifact.stored.procedure_name.as_str() {
+            "tool_call_intent_segmentation" => segmentation_present = true,
+            "tool_call_review" => call_review_count += 1,
+            "tool_call_segment_review" => segment_review_count += 1,
+            _ => {}
+        }
+    }
+
+    if !protocol_eligible {
+        return Ok(ProtocolRunState {
+            instance_id: instance_id.to_string(),
+            tool_calls_total,
+            protocol_eligible,
+            artifact_count,
+            segmentation_present,
+            call_review_count,
+            segment_review_count,
+            aggregate_available: false,
+            missing_call_indices: Vec::new(),
+            missing_segment_indices: Vec::new(),
+            next_step: ProtocolNextStep::Ineligible,
+            next_command: None,
+            aggregate_error: None,
+        });
+    }
+
+    match load_protocol_aggregate(record_path) {
+        Ok(aggregate) => {
+            let next_step = if let Some(index) = aggregate.coverage.missing_call_indices.first() {
+                ProtocolNextStep::ToolCallReview { index: *index }
+            } else if let Some(segment_index) = aggregate.coverage.missing_segment_indices.first() {
+                ProtocolNextStep::ToolCallSegmentReview {
+                    segment_index: *segment_index,
+                }
+            } else {
+                ProtocolNextStep::Complete
+            };
+            let next_command =
+                protocol_next_command(instance_id, record_path, &next_step, false, false);
+            Ok(ProtocolRunState {
+                instance_id: instance_id.to_string(),
+                tool_calls_total,
+                protocol_eligible,
+                artifact_count,
+                segmentation_present: true,
+                call_review_count,
+                segment_review_count,
+                aggregate_available: true,
+                missing_call_indices: aggregate.coverage.missing_call_indices,
+                missing_segment_indices: aggregate.coverage.missing_segment_indices,
+                next_step,
+                next_command,
+                aggregate_error: None,
+            })
+        }
+        Err(ProtocolAggregateError::MissingAnchor { .. }) => {
+            let next_step = ProtocolNextStep::IntentSegmentation;
+            let next_command =
+                protocol_next_command(instance_id, record_path, &next_step, false, false);
+            Ok(ProtocolRunState {
+                instance_id: instance_id.to_string(),
+                tool_calls_total,
+                protocol_eligible,
+                artifact_count,
+                segmentation_present,
+                call_review_count,
+                segment_review_count,
+                aggregate_available: false,
+                missing_call_indices: Vec::new(),
+                missing_segment_indices: Vec::new(),
+                next_step,
+                next_command,
+                aggregate_error: None,
+            })
+        }
+        Err(err) => {
+            let next_step = ProtocolNextStep::Blocked;
+            let next_command =
+                protocol_next_command(instance_id, record_path, &next_step, false, false);
+            Ok(ProtocolRunState {
+                instance_id: instance_id.to_string(),
+                tool_calls_total,
+                protocol_eligible,
+                artifact_count,
+                segmentation_present,
+                call_review_count,
+                segment_review_count,
+                aggregate_available: false,
+                missing_call_indices: Vec::new(),
+                missing_segment_indices: Vec::new(),
+                next_step,
+                next_command,
+                aggregate_error: Some(err.to_string()),
+            })
+        }
+    }
+}
+
+fn protocol_next_command(
+    _instance_id: &str,
+    _record_path: &Path,
+    next_step: &ProtocolNextStep,
+    prefer_run_wrapper: bool,
+    for_expert_command: bool,
+) -> Option<String> {
+    match next_step {
+        ProtocolNextStep::Ineligible => None,
+        ProtocolNextStep::IntentSegmentation => {
+            if prefer_run_wrapper {
+                Some("ploke-eval protocol run".to_string())
+            } else {
+                Some("ploke-eval protocol tool-call-intent-segments".to_string())
+            }
+        }
+        ProtocolNextStep::ToolCallReview { index } => {
+            if prefer_run_wrapper {
+                Some("ploke-eval protocol run".to_string())
+            } else {
+                Some(format!("ploke-eval protocol tool-call-review {}", index))
+            }
+        }
+        ProtocolNextStep::ToolCallSegmentReview { segment_index } => {
+            if prefer_run_wrapper {
+                Some("ploke-eval protocol run".to_string())
+            } else {
+                Some(format!(
+                    "ploke-eval protocol tool-call-segment-review {}",
+                    segment_index
+                ))
+            }
+        }
+        ProtocolNextStep::Complete => None,
+        ProtocolNextStep::Blocked => {
+            if for_expert_command {
+                Some("ploke-eval inspect protocol-artifacts --full".to_string())
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn print_protocol_state_table(state: &ProtocolRunState) {
+    println!("protocol state");
+    println!("{}", "-".repeat(40));
+    println!("instance: {}", state.instance_id);
+    println!(
+        "eligible: {}",
+        if state.protocol_eligible { "yes" } else { "no" }
+    );
+    println!("tool calls: {}", state.tool_calls_total);
+    println!("protocol artifacts: {}", state.artifact_count);
+    println!(
+        "segmentation: {}",
+        if state.segmentation_present {
+            "present"
+        } else {
+            "(none found)"
+        }
+    );
+    println!("review_calls: {}", state.call_review_count);
+    println!("review_segments: {}", state.segment_review_count);
+    println!(
+        "aggregate overview: {}",
+        if state.aggregate_available {
+            "available"
+        } else {
+            "unavailable"
+        }
+    );
+    if !state.missing_call_indices.is_empty() {
+        println!(
+            "missing call reviews: {}",
+            join_indices(&state.missing_call_indices)
+        );
+    }
+    if !state.missing_segment_indices.is_empty() {
+        println!(
+            "missing segment reviews: {}",
+            join_indices(&state.missing_segment_indices)
+        );
+    }
+    if let Some(error) = &state.aggregate_error {
+        println!("aggregate error: {}", error);
+    }
+    if let Some(next_command) = &state.next_command {
+        println!();
+        println!("next command to advance:");
+        println!("  {next_command}");
+    }
+}
+
 fn batch_summary_has_failure(path: &Path) -> Result<bool, PrepareError> {
     let text = std::fs::read_to_string(path).map_err(|source| PrepareError::ReadBatchManifest {
         path: path.to_path_buf(),
@@ -4063,7 +4570,7 @@ async fn execute_protocol_intent_segments_quiet(
             path: record_path.to_path_buf(),
             source,
         })?;
-    let subject = build_tool_call_sequence_subject(&record, record_path)?;
+    let subject = build_tool_call_sequence_subject(&record)?;
     let subject_id = subject.subject_id.clone();
     let persisted_input = subject.clone();
     let model_id = resolve_protocol_model_id(model_id)?;
@@ -4105,7 +4612,7 @@ async fn execute_protocol_tool_call_review_quiet(
             path: record_path.to_path_buf(),
             source,
         })?;
-    let subject = build_tool_call_review_subject(&record, record_path, index)?;
+    let subject = build_tool_call_review_subject(&record, index)?;
     let subject_id = subject.subject_id.clone();
     let persisted_input = subject.clone();
     let model_id = resolve_protocol_model_id(model_id)?;
@@ -4342,7 +4849,7 @@ impl ProtocolToolCallSegmentReviewCommand {
                 source,
             })?;
 
-        let sequence_subject = build_tool_call_sequence_subject(&record, &record_path)?;
+        let sequence_subject = build_tool_call_sequence_subject(&record)?;
         let model_id = resolve_protocol_model_id(self.model_id)?;
         let provider_slug = resolve_protocol_provider_slug(&model_id, self.provider)?;
         let client = reqwest::Client::new();
@@ -4481,7 +4988,7 @@ impl ProtocolToolCallIntentSegmentsCommand {
                 source,
             })?;
 
-        let subject = build_tool_call_sequence_subject(&record, &record_path)?;
+        let subject = build_tool_call_sequence_subject(&record)?;
         let subject_id = subject.subject_id.clone();
         let persisted_input = subject.clone();
 
@@ -5517,11 +6024,64 @@ impl InspectProtocolOverviewCommand {
 
         let resolution = resolve_record_path(self.record.clone(), self.instance.clone(), None)?;
         let record_path = resolution.record_path.clone();
-        let aggregate =
-            load_protocol_aggregate(&record_path).map_err(|err| PrepareError::DatabaseSetup {
-                phase: "inspect_protocol_overview",
-                detail: err.to_string(),
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
             })?;
+        let instance_id = record.metadata.benchmark.instance_id.clone();
+        let aggregate = match load_protocol_aggregate(&record_path) {
+            Ok(aggregate) => aggregate,
+            Err(ProtocolAggregateError::MissingAnchor { .. }) => {
+                let mut state = protocol_state_for_run(&instance_id, &record_path)?;
+                state.next_command = protocol_next_command(
+                    &instance_id,
+                    &record_path,
+                    &state.next_step,
+                    true,
+                    false,
+                );
+                match self.format {
+                    InspectOutputFormat::Table => {
+                        print_protocol_state_table(&state);
+                    }
+                    InspectOutputFormat::Json => {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&state)
+                                .map_err(PrepareError::Serialize)?
+                        );
+                    }
+                }
+                print_record_resolution_footer(&resolution);
+                return Ok(());
+            }
+            Err(err) => {
+                let mut state = protocol_state_for_run(&instance_id, &record_path)?;
+                state.next_command = protocol_next_command(
+                    &instance_id,
+                    &record_path,
+                    &state.next_step,
+                    true,
+                    false,
+                );
+                state.aggregate_error = Some(err.to_string());
+                match self.format {
+                    InspectOutputFormat::Table => {
+                        print_protocol_state_table(&state);
+                    }
+                    InspectOutputFormat::Json => {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&state)
+                                .map_err(PrepareError::Serialize)?
+                        );
+                    }
+                }
+                print_record_resolution_footer(&resolution);
+                return Ok(());
+            }
+        };
         let mut report = build_protocol_report(&aggregate)?;
         apply_protocol_report_filters(&mut report, &self);
 
@@ -7466,13 +8026,8 @@ fn indexed_tool_calls(
 
 fn build_tool_call_sequence_subject(
     record: &crate::record::RunRecord,
-    record_path: &std::path::Path,
 ) -> Result<trace::ToolCallSequence, PrepareError> {
-    let subject_id = record_path
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| record.manifest_id.clone());
+    let subject_id = record.metadata.benchmark.instance_id.clone();
     let indexed = indexed_tool_calls(record);
 
     let turns = record
@@ -7587,14 +8142,9 @@ impl trace::NeighborhoodSource for RecordToolCallNeighborhoodAdapter<'_> {
 
 fn build_tool_call_review_subject(
     record: &crate::record::RunRecord,
-    record_path: &std::path::Path,
     index: usize,
 ) -> Result<trace::ToolCallNeighborhood, PrepareError> {
-    let subject_id = record_path
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| record.manifest_id.clone());
+    let subject_id = record.metadata.benchmark.instance_id.clone();
     let adapter = RecordToolCallNeighborhoodAdapter { record, subject_id };
     adapter
         .neighborhood(&trace::NeighborhoodRequest::centered(index))
@@ -8130,7 +8680,7 @@ fn print_tool_call_detail(
     println!("Status: {}", tool_status_label(&call.result));
     println!("Latency: {} ms", call.latency_ms);
     println!();
-    println!("Inputs");
+    println!("Parsed Inputs (convenience view from stored raw arguments)");
     println!("{}", "-".repeat(40));
     let rendered_inputs = render_tool_inputs(&call.request.arguments);
     if rendered_inputs.is_empty() {
@@ -8144,7 +8694,7 @@ fn print_tool_call_detail(
     print_tool_result_detail(index, &call.result, full);
     if full {
         println!();
-        println!("Raw Arguments");
+        println!("Stored Raw Arguments");
         println!("{}", "-".repeat(40));
         println!("{}", call.request.arguments);
     }
@@ -8156,37 +8706,54 @@ fn print_tool_result_detail(index: usize, result: &crate::record::ToolResult, fu
     match result {
         crate::record::ToolResult::Completed(completed) => {
             if let Some(ui_payload) = &completed.ui_payload {
-                println!("Summary: {}", ui_payload.summary);
+                println!("UI Summary (convenience only): {}", ui_payload.summary);
                 for field in &ui_payload.fields {
-                    println!("{}: {}", field.name, prettify_field_value(&field.value));
+                    println!("ui.{}: {}", field.name, prettify_field_value(&field.value));
                 }
                 if let Some(details) = &ui_payload.details {
-                    println!("Details:");
-                    println!(
-                        "{}",
-                        format_payload_block(details, if full { 1200 } else { 220 })
-                    );
+                    let rendered = render_payload_block(details, if full { 1200 } else { 220 });
+                    println!("UI Details (convenience only):");
+                    println!("{}", rendered.text);
+                    if let Some(note) = rendered.inspector_truncation_note() {
+                        println!("{}", note);
+                    }
                 }
+                println!();
             }
-            if !completed.content.is_empty() {
-                println!("Output:");
-                println!(
-                    "{}",
-                    format_payload_block(&completed.content, if full { 2400 } else { 220 })
-                );
+            println!("Stored Raw Output:");
+            if completed.content.is_empty() {
+                println!("(empty)");
+            } else {
+                let rendered =
+                    render_payload_block(&completed.content, if full { 2400 } else { 220 });
+                println!("{}", rendered.text);
+                if let Some(note) = summarize_tool_native_truncation(&completed.content) {
+                    println!("{}", note);
+                }
+                if let Some(note) = rendered.inspector_truncation_note() {
+                    println!("{}", note);
+                }
+                println!("Stored raw bytes: {}", rendered.raw_bytes);
             }
         }
         crate::record::ToolResult::Failed(failed) => {
-            println!("Error:");
-            println!(
-                "{}",
-                format_payload_block(&failed.error, if full { 2400 } else { 220 })
-            );
             if let Some(ui_payload) = &failed.ui_payload {
-                println!("UI Summary: {}", ui_payload.summary);
+                println!("UI Summary (convenience only): {}", ui_payload.summary);
                 for field in &ui_payload.fields {
-                    println!("{}: {}", field.name, prettify_field_value(&field.value));
+                    println!("ui.{}: {}", field.name, prettify_field_value(&field.value));
                 }
+                println!();
+            }
+            println!("Stored Raw Error:");
+            if failed.error.is_empty() {
+                println!("(empty)");
+            } else {
+                let rendered = render_payload_block(&failed.error, if full { 2400 } else { 220 });
+                println!("{}", rendered.text);
+                if let Some(note) = rendered.inspector_truncation_note() {
+                    println!("{}", note);
+                }
+                println!("Stored raw bytes: {}", rendered.raw_bytes);
             }
         }
     }
@@ -8200,15 +8767,12 @@ fn render_tool_inputs(arguments: &str) -> Vec<String> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
         return vec![format!(
             "arguments: {}",
-            format_payload_block(arguments, 220)
+            render_payload_block(arguments, 220).text
         )];
     };
 
     match value {
-        serde_json::Value::Object(map) => map
-            .into_iter()
-            .map(|(key, value)| format!("{}: {}", key, summarize_json_value(&key, &value, true)))
-            .collect(),
+        serde_json::Value::Object(map) => render_tool_input_map(&map),
         other => vec![format!(
             "arguments: {}",
             summarize_json_value("arguments", &other, true)
@@ -8230,8 +8794,6 @@ fn summarize_tool_inputs(arguments: &str) -> String {
         "file_path",
         "dir",
         "path",
-        "start_line",
-        "end_line",
         "search_term",
         "canon",
         "symbol",
@@ -8243,13 +8805,23 @@ fn summarize_tool_inputs(arguments: &str) -> String {
     ];
 
     let mut parts = Vec::new();
+    let mut used = BTreeSet::new();
+    if let Some(line_window) = summarize_line_window(object) {
+        parts.push(format!("lines={line_window}"));
+        used.insert("start_line");
+        used.insert("end_line");
+    }
     for key in preferred {
+        if used.contains(key) {
+            continue;
+        }
         if let Some(value) = object.get(key) {
             parts.push(format!(
                 "{}={}",
                 key,
                 summarize_json_value(key, value, false)
             ));
+            used.insert(key);
         }
         if parts.len() >= 3 {
             break;
@@ -8267,6 +8839,62 @@ fn summarize_tool_inputs(arguments: &str) -> String {
     }
 
     parts.join("; ")
+}
+
+fn render_tool_input_map(map: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut rendered = BTreeSet::new();
+
+    if let Some(line_window) = summarize_line_window(map) {
+        lines.push(format!(
+            "lines (derived from start_line/end_line): {}",
+            line_window
+        ));
+        rendered.insert("start_line");
+        rendered.insert("end_line");
+    }
+
+    for key in [
+        "file",
+        "file_path",
+        "dir",
+        "path",
+        "start_line",
+        "end_line",
+        "search_term",
+        "canon",
+        "symbol",
+        "name",
+        "query",
+        "command",
+        "patches",
+        "confidence",
+    ] {
+        if rendered.contains(key) {
+            continue;
+        }
+        if let Some(value) = map.get(key) {
+            lines.push(format!(
+                "{}: {}",
+                key,
+                summarize_json_value(key, value, true)
+            ));
+            rendered.insert(key);
+        }
+    }
+
+    for (key, value) in map {
+        if rendered.contains(key.as_str()) {
+            continue;
+        }
+        lines.push(format!(
+            "{}: {}",
+            key,
+            summarize_json_value(key, value, true)
+        ));
+    }
+
+    lines
 }
 
 fn summarize_tool_result(result: &crate::record::ToolResult) -> String {
@@ -8354,6 +8982,31 @@ fn summarize_json_value(key: &str, value: &serde_json::Value, multiline: bool) -
     }
 }
 
+fn summarize_line_window(object: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    let start = object
+        .get("start_line")
+        .map(compact_json_scalar)
+        .filter(|value| !value.is_empty());
+    let end = object
+        .get("end_line")
+        .map(compact_json_scalar)
+        .filter(|value| !value.is_empty());
+
+    match (start, end) {
+        (Some(start), Some(end)) => Some(format!("{start}-{end}")),
+        (Some(start), None) => Some(format!("{start}-EOF")),
+        (None, Some(end)) => Some(format!("1-{end}")),
+        (None, None) => None,
+    }
+}
+
+fn compact_json_scalar(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
 fn looks_like_path(key: &str, value: &str) -> bool {
     matches!(key, "file" | "file_path" | "dir" | "path" | "root_path")
         || value.starts_with('/')
@@ -8419,14 +9072,75 @@ fn truncate_middle(text: &str, max_len: usize) -> String {
     )
 }
 
-fn format_payload_block(text: &str, max_len: usize) -> String {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenderedPayloadBlock {
+    text: String,
+    raw_bytes: usize,
+    normalized_chars: usize,
+    shown_source_chars: usize,
+    inspector_truncated: bool,
+}
+
+impl RenderedPayloadBlock {
+    fn inspector_truncation_note(&self) -> Option<String> {
+        if !self.inspector_truncated {
+            return None;
+        }
+
+        let omitted = self
+            .normalized_chars
+            .saturating_sub(self.shown_source_chars);
+        Some(format!(
+            "Inspector display truncated the normalized payload: {}/{} source chars shown (+ ellipsis), {} elided; stored raw payload is {} bytes.",
+            self.shown_source_chars, self.normalized_chars, omitted, self.raw_bytes
+        ))
+    }
+}
+
+fn summarize_tool_native_truncation(content: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(content).ok()?;
+    let object = parsed.as_object()?;
+    let truncated = object.get("truncated")?.as_bool()?;
+    if !truncated {
+        return None;
+    }
+
+    let source_bytes = object.get("byte_len")?.as_u64()?;
+    let retained_bytes = object
+        .get("content")
+        .and_then(|value| value.as_str())
+        .map(|text| text.len() as u64)
+        .unwrap_or(0);
+    let omitted_bytes = source_bytes.saturating_sub(retained_bytes);
+
+    Some(format!(
+        "Tool-reported truncation: {} / {} source bytes retained, {} omitted before inspector display.",
+        retained_bytes, source_bytes, omitted_bytes
+    ))
+}
+
+fn render_payload_block(text: &str, max_len: usize) -> RenderedPayloadBlock {
     let trimmed = text.trim();
     let rendered = serde_json::from_str::<serde_json::Value>(trimmed)
         .ok()
         .and_then(|value| serde_json::to_string_pretty(&value).ok())
         .unwrap_or_else(|| trimmed.to_string());
 
-    truncate_middle(&rendered, max_len)
+    let normalized_chars = rendered.chars().count();
+    let inspector_truncated = normalized_chars > max_len;
+    let shown_source_chars = if inspector_truncated {
+        max_len.saturating_sub(3).min(normalized_chars)
+    } else {
+        normalized_chars
+    };
+
+    RenderedPayloadBlock {
+        text: truncate_middle(&rendered, max_len),
+        raw_bytes: trimmed.len(),
+        normalized_chars,
+        shown_source_chars,
+        inspector_truncated,
+    }
 }
 
 fn prettify_field_value(text: &str) -> String {
@@ -9757,10 +10471,36 @@ mod tests {
 
     #[test]
     fn summarize_tool_inputs_prefers_parsed_fields() {
-        let args = r#"{"file":"/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/globset/src/lib.rs","end_line":120}"#;
+        let args = r#"{"file":"/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/globset/src/lib.rs","start_line":80,"end_line":120}"#;
         let summary = summarize_tool_inputs(args);
+        assert!(summary.contains("lines=80-120"));
         assert!(summary.contains("file=.../globset/src/lib.rs"));
-        assert!(summary.contains("end_line=120"));
+    }
+
+    #[test]
+    fn render_tool_inputs_surfaces_derived_line_window() {
+        let lines = render_tool_inputs(
+            r#"{"file":"/tmp/demo.rs","start_line":10,"end_line":24,"symbol":"demo"}"#,
+        );
+        assert_eq!(lines[0], "lines (derived from start_line/end_line): 10-24");
+        assert!(lines.iter().any(|line| line == "file: /tmp/demo.rs"));
+        assert!(lines.iter().any(|line| line == "symbol: demo"));
+    }
+
+    #[test]
+    fn render_payload_block_reports_exact_inspector_truncation_metadata() {
+        let rendered = render_payload_block("abcdefghijklmnopqrstuvwxyz", 10);
+        assert_eq!(rendered.text, "abc...wxyz");
+        assert_eq!(rendered.raw_bytes, 26);
+        assert_eq!(rendered.normalized_chars, 26);
+        assert_eq!(rendered.shown_source_chars, 7);
+        assert!(rendered.inspector_truncated);
+        assert_eq!(
+            rendered.inspector_truncation_note().as_deref(),
+            Some(
+                "Inspector display truncated the normalized payload: 7/26 source chars shown (+ ellipsis), 19 elided; stored raw payload is 26 bytes."
+            )
+        );
     }
 
     #[test]

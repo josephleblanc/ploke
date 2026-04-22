@@ -3,7 +3,8 @@ use std::hash::{Hash, Hasher};
 
 use ploke_core::ArcStr;
 use ploke_llm::{
-    HttpBodyFailure, HttpPhase, HttpReceivePhase, HttpSendFailure, LlmError, response::FinishReason,
+    ApiErrorSource, HttpBodyFailure, HttpPhase, HttpReceivePhase, HttpSendFailure, LlmError,
+    response::FinishReason,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -346,9 +347,19 @@ pub fn classify_llm_error(
                 ),
             },
         },
-        LlmError::Api { status, .. } => {
-            let code = ArcStr::from(format!("HTTP_{}", status));
-            let retry = match *status {
+        LlmError::Api {
+            status,
+            api_code,
+            provider_slug,
+            provider_name,
+            error_source,
+            ..
+        } => {
+            context.provider = provider_slug.clone().or(provider_name.clone());
+            let effective_status =
+                retry_classification_status(*status, error_source, api_code.as_ref());
+            let code = loop_error_api_code(*status, error_source, api_code.as_ref());
+            let retry = match effective_status {
                 429 => RetryAdvice::Yes {
                     strategy: RetryStrategy::Backoff,
                     reason: ArcStr::from("Rate limited"),
@@ -361,7 +372,7 @@ pub fn classify_llm_error(
                     reason: ArcStr::from("Provider returned an error"),
                 },
             };
-            let action = match *status {
+            let action = match effective_status {
                 429 => Some(ArcStr::from("Wait briefly, then retry.")),
                 401 | 403 => Some(ArcStr::from("Verify API credentials and retry.")),
                 _ => None,
@@ -550,6 +561,46 @@ pub fn build_unknown_tool_error(
     }
 }
 
+pub fn build_tool_arg_repair_error(
+    context: ErrorContext,
+    commit_phase: CommitPhase,
+    summary: String,
+    diagnostic: String,
+    repair_details: Option<String>,
+    constraints: Vec<String>,
+) -> LoopError {
+    LoopError {
+        error_id: Uuid::new_v4(),
+        fingerprint: fingerprint_for(
+            &LoopErrorKind::ToolExecution,
+            &ArcStr::from("TOOL_ARGS_REPAIR_REQUIRED"),
+            &context,
+        ),
+        kind: LoopErrorKind::ToolExecution,
+        code: ArcStr::from("TOOL_ARGS_REPAIR_REQUIRED"),
+        severity: ErrorSeverity::Error,
+        retry: RetryAdvice::Yes {
+            strategy: RetryStrategy::Fixed,
+            reason: ArcStr::from("Invalid tool arguments can be repaired and retried"),
+        },
+        commit_phase,
+        summary: ArcStr::from(summary),
+        user_action: Some(ArcStr::from("Request a corrected tool call and retry.")),
+        llm_action: Some(LlmAction {
+            next_steps: vec![LlmNextStep {
+                action: ArcStr::from("repair_tool_args"),
+                details: repair_details.map(ArcStr::from),
+            }],
+            constraints: constraints.into_iter().map(ArcStr::from).collect(),
+            retry_hint: Some(RetryStrategy::Fixed),
+        }),
+        context,
+        diagnostics: Some(Diagnostics {
+            diagnostic: ArcStr::from(diagnostic),
+        }),
+    }
+}
+
 pub fn classify_finish_reason(
     finish_reason: &FinishReason,
     mut context: ErrorContext,
@@ -732,6 +783,40 @@ fn finish_reason_metadata(
     }
 }
 
+fn retry_classification_status(
+    status: u16,
+    error_source: &ApiErrorSource,
+    api_code: Option<&ArcStr>,
+) -> u16 {
+    if matches!(error_source, ApiErrorSource::TopLevelError)
+        && (200..300).contains(&status)
+        && let Some(code) = parse_http_like_api_code(api_code)
+    {
+        return code;
+    }
+    status
+}
+
+fn loop_error_api_code(
+    status: u16,
+    error_source: &ApiErrorSource,
+    api_code: Option<&ArcStr>,
+) -> ArcStr {
+    if matches!(error_source, ApiErrorSource::TopLevelError)
+        && (200..300).contains(&status)
+        && let Some(code) = parse_http_like_api_code(api_code)
+    {
+        return ArcStr::from(format!("EMBEDDED_API_{code}"));
+    }
+    ArcStr::from(format!("HTTP_{status}"))
+}
+
+fn parse_http_like_api_code(api_code: Option<&ArcStr>) -> Option<u16> {
+    let raw = api_code?;
+    let parsed = raw.as_ref().parse::<u16>().ok()?;
+    (100..=599).contains(&parsed).then_some(parsed)
+}
+
 fn finish_reason_summary(finish_reason: &FinishReason) -> ArcStr {
     match finish_reason {
         FinishReason::Error(msg) => ArcStr::from(format!("Finish reason error: {}", msg)),
@@ -759,5 +844,36 @@ fn strategy_str(strategy: &RetryStrategy) -> &'static str {
     match strategy {
         RetryStrategy::Fixed => "fixed",
         RetryStrategy::Backoff => "backoff",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_llm_error_embedded_top_level_rate_limit_is_retryable() {
+        let err = LlmError::Api {
+            status: 200,
+            message: "Provider returned error (code: 429)".to_string(),
+            url: None,
+            body_snippet: None,
+            api_code: Some(ArcStr::from("429")),
+            provider_name: Some(ArcStr::from("Io Net")),
+            provider_slug: None,
+            error_source: ApiErrorSource::TopLevelError,
+        };
+
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+
+        assert_eq!(loop_error.code.as_ref(), "EMBEDDED_API_429");
+        assert!(matches!(
+            loop_error.retry,
+            RetryAdvice::Yes {
+                strategy: RetryStrategy::Backoff,
+                ..
+            }
+        ));
+        assert_eq!(loop_error.context.provider.as_deref(), Some("Io Net"));
     }
 }

@@ -8,7 +8,11 @@ use ploke_protocol::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::protocol_artifacts::{StoredProtocolArtifactFile, list_protocol_artifacts};
+use crate::protocol_artifacts::{
+    ProtocolArtifactIdentityMismatch, StoredProtocolArtifactFile, list_protocol_artifacts,
+    validate_protocol_artifact_identity,
+};
+use crate::run_registry::resolve_protocol_run_identity;
 use crate::spec::PrepareError;
 
 const TOOL_CALL_REVIEW: &str = "tool_call_review";
@@ -228,6 +232,16 @@ pub enum ProtocolAggregateError {
         "protocol segment review '{path}' does not match anchor basis for segment {segment_index}"
     )]
     SegmentBasisMismatch { path: PathBuf, segment_index: usize },
+    #[error(
+        "protocol artifact '{path}' for procedure '{procedure}' has {field}='{actual}' but expected '{expected}'"
+    )]
+    ArtifactIdentityMismatch {
+        path: PathBuf,
+        procedure: String,
+        field: &'static str,
+        expected: String,
+        actual: String,
+    },
     #[error("failed to deserialize protocol artifact '{path}': {source}")]
     DeserializeArtifact {
         path: PathBuf,
@@ -246,15 +260,11 @@ pub(crate) fn load_protocol_aggregate_from_artifacts(
     record_path: &Path,
     artifacts: Vec<StoredProtocolArtifactFile>,
 ) -> Result<ProtocolAggregate, ProtocolAggregateError> {
-    let run_dir = record_path
-        .parent()
-        .ok_or_else(|| ProtocolAggregateError::MissingAnchor {
-            record_path: record_path.to_path_buf(),
-        })?;
-    let run_id = run_dir
-        .file_name()
-        .map(|value| value.to_string_lossy().to_string())
-        .unwrap_or_else(|| "run".to_string());
+    let resolved_identity = resolve_protocol_run_identity(record_path)?;
+    for artifact in &artifacts {
+        validate_protocol_artifact_identity(artifact, &resolved_identity)
+            .map_err(protocol_artifact_identity_error)?;
+    }
 
     let artifact_counts = count_artifacts(&artifacts);
     let anchor_entry =
@@ -374,10 +384,10 @@ pub(crate) fn load_protocol_aggregate_from_artifacts(
 
     Ok(ProtocolAggregate {
         run: ProtocolRunIdentity {
-            record_path: record_path.to_path_buf(),
-            run_dir: run_dir.to_path_buf(),
-            run_id,
-            subject_id: anchor_entry.stored.subject_id.clone(),
+            record_path: resolved_identity.record_path,
+            run_dir: resolved_identity.run_dir,
+            run_id: resolved_identity.run_id,
+            subject_id: resolved_identity.subject_id,
         },
         coverage,
         segmentation: anchor,
@@ -565,6 +575,18 @@ fn describe_segment_mismatch(
     })
 }
 
+fn protocol_artifact_identity_error(
+    mismatch: ProtocolArtifactIdentityMismatch,
+) -> ProtocolAggregateError {
+    ProtocolAggregateError::ArtifactIdentityMismatch {
+        path: mismatch.path,
+        procedure: mismatch.procedure_name,
+        field: mismatch.field,
+        expected: mismatch.expected,
+        actual: mismatch.actual,
+    }
+}
+
 fn artifact_ref(entry: &StoredProtocolArtifactFile) -> ProtocolArtifactRef {
     ProtocolArtifactRef {
         path: entry.path.clone(),
@@ -601,6 +623,9 @@ fn insert_latest_call_review(
     value: ProtocolCallReviewRow,
 ) {
     let index = value.focal_call_index;
+    // Today we collapse to one accepted review per focal call. If we later keep
+    // multiple protocol artifacts for the same tool-call target, widen this key
+    // rather than relaxing identity validation.
     match entries.entry(index) {
         std::collections::btree_map::Entry::Vacant(slot) => {
             slot.insert(value);
@@ -840,7 +865,58 @@ impl From<RawSignals> for ProtocolReviewSignals {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inner::core::{RegisteredRunRole, RunIntent, RunStorageRoots};
+    use crate::inner::registry::RunRegistration;
+    use crate::spec::EvalBudget;
     use serde_json::Value;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use tempfile::TempDir;
+
+    struct TestRunFixture {
+        _env_lock: MutexGuard<'static, ()>,
+        _tmp: TempDir,
+        record_path: PathBuf,
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn registered_run(run_id: &str, subject_id: &str) -> TestRunFixture {
+        let env_lock = env_lock().lock().expect("env lock");
+        let tmp = tempfile::tempdir().expect("tmp");
+        unsafe {
+            std::env::set_var("PLOKE_EVAL_HOME", tmp.path());
+        }
+
+        let intent = RunIntent {
+            task_id: subject_id.to_string(),
+            repo_root: tmp.path().join("repo"),
+            storage_roots: RunStorageRoots::new(
+                tmp.path().join("registries"),
+                tmp.path().join("runs").join(subject_id).join("runs"),
+            ),
+            base_sha: Some("deadbeef".to_string()),
+            budget: EvalBudget::default(),
+            model_id: Some("model".to_string()),
+            provider_slug: Some("provider".to_string()),
+            campaign_id: None,
+            batch_id: None,
+            run_arm_id: "structured-current-policy".to_string(),
+            run_role: RegisteredRunRole::Treatment,
+        };
+        let registration =
+            RunRegistration::register_with_run_id(intent, run_id).expect("registration");
+        let record_path = registration.artifacts.record_path.clone();
+        registration.persist().expect("persist registration");
+
+        TestRunFixture {
+            _env_lock: env_lock,
+            _tmp: tmp,
+            record_path,
+        }
+    }
 
     fn turn_context_json() -> Value {
         serde_json::json!({
@@ -900,9 +976,10 @@ mod tests {
 
     #[test]
     fn normalizes_latest_unique_rows_and_rejects_basis_mismatch() {
-        let run_id = "tokio-rs__tokio-5583";
+        let run_id = "run-tokio-5583";
         let subject_id = "tokio-rs__tokio-5583";
-        let record_path = PathBuf::from(format!("/tmp/{run_id}/record.json.gz"));
+        let fixture = registered_run(run_id, subject_id);
+        let record_path = fixture.record_path.clone();
 
         let anchor = artifact(
             "/tmp/run/1000_tool_call_intent_segmentation_tokio-rs__tokio-5583.json",
@@ -1309,9 +1386,10 @@ mod tests {
 
     #[test]
     fn loads_ambiguous_anchor_segment_without_label() {
-        let run_id = "tokio-rs__tokio-ambiguous";
+        let run_id = "run-tokio-ambiguous";
         let subject_id = "tokio-rs__tokio-ambiguous";
-        let record_path = PathBuf::from(format!("/tmp/{run_id}/record.json.gz"));
+        let fixture = registered_run(run_id, subject_id);
+        let record_path = fixture.record_path.clone();
 
         let anchor = artifact(
             "/tmp/run/1000_tool_call_intent_segmentation_tokio-rs__tokio-ambiguous.json",
@@ -1379,5 +1457,139 @@ mod tests {
             SegmentStatus::Ambiguous
         );
         assert_eq!(aggregate.segmentation.segments[0].label, None);
+    }
+
+    #[test]
+    fn rejects_mixed_artifacts_with_mismatched_identity() {
+        let run_id = "run-tokio-mixed";
+        let subject_id = "tokio-rs__tokio-mixed";
+        let fixture = registered_run(run_id, subject_id);
+        let record_path = fixture.record_path.clone();
+
+        let anchor = artifact(
+            "/tmp/run/1000_tool_call_intent_segmentation_tokio-rs__tokio-mixed.json",
+            TOOL_CALL_INTENT_SEGMENTATION,
+            1000,
+            subject_id,
+            run_id,
+            serde_json::json!({
+                "coverage": {
+                    "ambiguous_calls": 0,
+                    "ambiguous_segments": 0,
+                    "labeled_calls": 1,
+                    "labeled_segments": 1,
+                    "total_calls": 1,
+                    "uncovered_calls": 0
+                },
+                "segments": [
+                    {
+                        "calls": [call_json(0, 1, "rg", "search", "find target")],
+                        "confidence": "high",
+                        "end_index": 0,
+                        "label": "locate_target",
+                        "rationale": "locate",
+                        "segment_index": 0,
+                        "start_index": 0,
+                        "status": "labeled",
+                        "turns": [1]
+                    }
+                ],
+                "sequence": {
+                    "subject_id": subject_id,
+                    "total_turns": 1,
+                    "total_calls_in_run": 1,
+                    "turns": [turn_context_json()],
+                    "calls": [call_json(0, 1, "rg", "search", "find target")]
+                },
+                "signals": {
+                    "browse_calls": 0,
+                    "directory_pivots": 0,
+                    "edit_calls": 0,
+                    "execute_calls": 0,
+                    "failed_calls": 0,
+                    "read_calls": 0,
+                    "repeated_search_runs": 0,
+                    "search_calls": 1,
+                    "search_terms_seen": [],
+                    "total_calls": 1,
+                    "total_turns": 1
+                },
+                "overall_rationale": "single labeled segment"
+            }),
+        );
+
+        let mismatched_call_review = artifact(
+            "/tmp/run/2000_tool_call_review_other.json",
+            TOOL_CALL_REVIEW,
+            2000,
+            "other-subject",
+            "run-other",
+            serde_json::json!({
+                "overall": "mixed",
+                "overall_confidence": "medium",
+                "packet": {
+                    "calls": [{"index": 0}],
+                    "focal_call_index": 0,
+                    "scope_summary": "focal call 0",
+                    "subject_id": "other-subject",
+                    "target_id": "call:0",
+                    "target_kind": "focal_call",
+                    "total_calls_in_run": 1,
+                    "total_calls_in_scope": 1,
+                    "turn_span": [1]
+                },
+                "recoverability": {
+                    "confidence": "high",
+                    "rationale": "recover",
+                    "verdict": "clear_next_step"
+                },
+                "redundancy": {
+                    "confidence": "high",
+                    "rationale": "redundant",
+                    "verdict": "distinct"
+                },
+                "signals": {
+                    "browse_calls_in_scope": 0,
+                    "candidate_concerns": [],
+                    "directory_pivots": 0,
+                    "distinct_tool_count": 1,
+                    "edit_calls_in_scope": 0,
+                    "execute_calls_in_scope": 0,
+                    "failed_calls_in_scope": 0,
+                    "read_calls_in_scope": 0,
+                    "repeated_tool_name_count": 0,
+                    "scope_turn_count": 1,
+                    "search_calls_in_scope": 1,
+                    "similar_search_neighbors": 0
+                },
+                "usefulness": {
+                    "confidence": "medium",
+                    "rationale": "useful",
+                    "verdict": "helpful_but_non_essential"
+                }
+            }),
+        );
+
+        let err = load_protocol_aggregate_from_artifacts(
+            &record_path,
+            vec![anchor, mismatched_call_review],
+        )
+        .expect_err("mixed identity should fail loudly");
+
+        match err {
+            ProtocolAggregateError::ArtifactIdentityMismatch {
+                procedure,
+                field,
+                expected,
+                actual,
+                ..
+            } => {
+                assert_eq!(procedure, TOOL_CALL_REVIEW);
+                assert_eq!(field, "stored.run_id");
+                assert_eq!(expected, run_id);
+                assert_eq!(actual, "run-other");
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 }

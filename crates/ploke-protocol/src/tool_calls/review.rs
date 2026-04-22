@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::core::{Confidence, EvidencePolicy, ForkState, Measurement};
 use crate::llm::{JsonAdjudicationSpec, JsonAdjudicator, JsonChatPrompt, ProtocolLlmError};
 use crate::procedure::{
-    FanOut, FanOutError, Merge, MergeError, NamedProcedure, Procedure, ProcedureExt, Sequence,
-    SequenceError,
+    FanOut, FanOutError, Merge, MergeError, NamedProcedure, ObservedSubrequest, Procedure,
+    ProcedureExt, Sequence, SequenceError, SubrequestDescriptor,
 };
 use crate::step::{MechanizedExecutor, MechanizedSpec, Step, StepSpec};
 
@@ -414,9 +414,12 @@ impl JsonAdjudicationSpec for AssessRecoverability {
     }
 }
 
-pub type BranchPair =
-    FanOut<Step<AssessLocalUsefulness, JsonAdjudicator>, Step<AssessRedundancy, JsonAdjudicator>>;
-pub type BranchSet = FanOut<BranchPair, Step<AssessRecoverability, JsonAdjudicator>>;
+pub type BranchPair = FanOut<
+    ObservedSubrequest<Step<AssessLocalUsefulness, JsonAdjudicator>>,
+    ObservedSubrequest<Step<AssessRedundancy, JsonAdjudicator>>,
+>;
+pub type BranchSet =
+    FanOut<BranchPair, ObservedSubrequest<Step<AssessRecoverability, JsonAdjudicator>>>;
 pub type BranchJudgments = ForkState<
     LocalAnalysisContext,
     ForkState<LocalAnalysisContext, UsefulnessAssessment, RedundancyAssessment>,
@@ -561,9 +564,30 @@ pub struct ToolCallReview {
 impl ToolCallReview {
     pub fn new(adjudicator: JsonAdjudicator) -> Self {
         let context = Step::new(ContextualizeNeighborhood, MechanizedExecutor);
-        let usefulness = Step::new(AssessLocalUsefulness, adjudicator.clone());
-        let redundancy = Step::new(AssessRedundancy, adjudicator.clone());
-        let recoverability = Step::new(AssessRecoverability, adjudicator);
+        let usefulness = ObservedSubrequest::new(
+            Step::new(AssessLocalUsefulness, adjudicator.clone()),
+            SubrequestDescriptor {
+                label: "usefulness",
+                request_index: 1,
+                request_total: 3,
+            },
+        );
+        let redundancy = ObservedSubrequest::new(
+            Step::new(AssessRedundancy, adjudicator.clone()),
+            SubrequestDescriptor {
+                label: "redundancy",
+                request_index: 2,
+                request_total: 3,
+            },
+        );
+        let recoverability = ObservedSubrequest::new(
+            Step::new(AssessRecoverability, adjudicator),
+            SubrequestDescriptor {
+                label: "recoverability",
+                request_index: 3,
+                request_total: 3,
+            },
+        );
         let branches = usefulness
             .fan_out_named("usefulness", "redundancy", redundancy)
             .fan_out_named("judgment_pair", "recoverability", recoverability)
@@ -653,9 +677,30 @@ pub struct ToolCallSegmentReview {
 impl ToolCallSegmentReview {
     pub fn new(adjudicator: JsonAdjudicator) -> Self {
         let context = Step::new(ContextualizeSegment, MechanizedExecutor);
-        let usefulness = Step::new(AssessLocalUsefulness, adjudicator.clone());
-        let redundancy = Step::new(AssessRedundancy, adjudicator.clone());
-        let recoverability = Step::new(AssessRecoverability, adjudicator);
+        let usefulness = ObservedSubrequest::new(
+            Step::new(AssessLocalUsefulness, adjudicator.clone()),
+            SubrequestDescriptor {
+                label: "usefulness",
+                request_index: 1,
+                request_total: 3,
+            },
+        );
+        let redundancy = ObservedSubrequest::new(
+            Step::new(AssessRedundancy, adjudicator.clone()),
+            SubrequestDescriptor {
+                label: "redundancy",
+                request_index: 2,
+                request_total: 3,
+            },
+        );
+        let recoverability = ObservedSubrequest::new(
+            Step::new(AssessRecoverability, adjudicator),
+            SubrequestDescriptor {
+                label: "recoverability",
+                request_index: 3,
+                request_total: 3,
+            },
+        );
         let branches = usefulness
             .fan_out_named("usefulness", "redundancy", redundancy)
             .fan_out_named("judgment_pair", "recoverability", recoverability)

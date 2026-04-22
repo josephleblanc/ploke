@@ -49,11 +49,10 @@ pub(crate) fn load_active_selection_at(eval_home: &Path) -> Result<ActiveSelecti
 
 fn load_active_selection_from_path(path: &Path) -> Result<ActiveSelection, PrepareError> {
     match fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text)
-            .map_err(|source| PrepareError::ParseManifest {
-                path: path.to_path_buf(),
-                source,
-            }),
+        Ok(text) => serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
+            path: path.to_path_buf(),
+            source,
+        }),
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
             Ok(ActiveSelection::default())
         }

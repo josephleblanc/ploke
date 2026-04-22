@@ -11,8 +11,8 @@ pub mod wire;
 pub mod embeddings;
 
 pub use error::{
-    HttpBodyFailure, HttpFailure, HttpPhase, HttpReceiveFailure, HttpReceivePhase, HttpSendFailure,
-    LlmError,
+    ApiErrorSource, HttpBodyFailure, HttpFailure, HttpPhase, HttpReceiveFailure, HttpReceivePhase,
+    HttpSendFailure, LlmError,
 };
 pub use request::endpoint::EndpointsResponse;
 pub use types::enums::*;

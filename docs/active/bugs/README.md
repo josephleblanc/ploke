@@ -29,3 +29,5 @@ for near-term implementation planning.
   Same-file multi-edit apply and result accounting lose per-edit semantics and can under-report failures.
 - [`2026-04-18-arm-agnostic-latest-run-selection.md`](./2026-04-18-arm-agnostic-latest-run-selection.md)
   Read-side run selection still picks the newest run dir without respecting control vs treatment arms.
+- [`2026-04-21-provider-tool-call-argument-malformation-without-repair.md`](./2026-04-21-provider-tool-call-argument-malformation-without-repair.md)
+  Provider-emitted malformed or schema-invalid tool-call arguments are accepted without a repair/retry path.
