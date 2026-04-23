@@ -390,7 +390,14 @@ Current implementation anchors:
   Prototype 1 currently reduces protocol-reviewed call issues into a reviewed
   tool target rather than trying to infer a richer failure family.
 - [intervention/synthesize.rs](/home/brasides/code/ploke/crates/ploke-eval/src/intervention/synthesize.rs)
-  defines the current hand-authored `IssueCase -> InterventionSpec` mapping
+  defines the current fan-out LLM synthesis procedure, which produces a
+  candidate set of full replacement tool-description texts for one already
+  selected target
+- [intervention/apply.rs](/home/brasides/code/ploke/crates/ploke-eval/src/intervention/apply.rs)
+  defines deterministic apply against the expected source content for one
+  selected candidate
+- [intervention/branch_registry.rs](/home/brasides/code/ploke/crates/ploke-eval/src/intervention/branch_registry.rs)
+  defines the loop-scoped branch registry and branch lifecycle/state transitions
 - [intervention/execute.rs](/home/brasides/code/ploke/crates/ploke-eval/src/intervention/execute.rs)
   contains the current prototype-local execution shim
 - [branch_evaluation.rs](/home/brasides/code/ploke/crates/ploke-eval/src/branch_evaluation.rs)
@@ -404,6 +411,8 @@ Current implementation anchors:
   now exposes:
   - `ploke-eval protocol issue-detection`
   - `ploke-eval inspect issue-overview`
+  - `ploke-eval loop prototype1`
+  - `ploke-eval loop prototype1-branch status/show/apply/select/restore/evaluate`
 
 The current Prototype 1 chain is therefore:
 
@@ -414,7 +423,10 @@ RunRecord
 -> IssueDetectionAggregate
 -> select_primary_issue(...)
 -> InterventionSynthesisOutput
--> execute_tool_text_intervention(...)
+-> InterventionCandidateSet
+-> InterventionApplyOutput
+-> branch registry state
+-> branch evaluation artifact/report
 ```
 
 The current issue-detection evidence packet is now:
@@ -433,7 +445,9 @@ This preserves the intended boundary:
 - mechanized metrics and later oracle outcomes remain the branch-control layer
 
 This is still only a partial projection of the intended protocol/controller
-loop, but it is the concrete state of the implementation today.
+loop. The missing live frontier is treatment-arm execution through the full
+loop wrapper on real branches; however, the synthesis/apply/branch/evaluate
+surfaces now exist concretely in code and CLI.
 
 ## Step 4 Clarification
 
