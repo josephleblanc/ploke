@@ -895,7 +895,7 @@ mod tests {
             repo_root: tmp.path().join("repo"),
             storage_roots: RunStorageRoots::new(
                 tmp.path().join("registries"),
-                tmp.path().join("runs").join(subject_id).join("runs"),
+                tmp.path().join("instances").join(subject_id).join("runs"),
             ),
             base_sha: Some("deadbeef".to_string()),
             budget: EvalBudget::default(),

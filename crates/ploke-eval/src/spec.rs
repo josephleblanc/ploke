@@ -114,7 +114,8 @@ pub struct PreparedMsbBatch {
     pub dataset_file: PathBuf,
     pub dataset_url: Option<String>,
     pub repo_cache: PathBuf,
-    pub runs_root: PathBuf,
+    #[serde(alias = "runs_root")]
+    pub instances_root: PathBuf,
     pub output_dir: PathBuf,
     pub budget: EvalBudget,
     pub instances: Vec<String>,

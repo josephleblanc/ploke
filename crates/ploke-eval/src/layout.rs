@@ -27,8 +27,8 @@ pub fn registries_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("registries"))
 }
 
-pub fn runs_dir() -> Result<PathBuf, PrepareError> {
-    Ok(ploke_eval_home()?.join("runs"))
+pub fn instances_dir() -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?.join("instances"))
 }
 
 pub fn protocol_artifacts_dir_for_run(run_dir: &std::path::Path) -> PathBuf {

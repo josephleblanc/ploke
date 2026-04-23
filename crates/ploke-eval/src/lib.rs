@@ -41,8 +41,8 @@ pub use closure::{
     render_closure_status,
 };
 pub use layout::{
-    batches_dir, campaigns_dir, datasets_dir, ploke_eval_home, protocol_artifacts_dir_for_run,
-    registries_dir, repos_dir, runs_dir, workspace_root_for_key,
+    batches_dir, campaigns_dir, datasets_dir, instances_dir, ploke_eval_home,
+    protocol_artifacts_dir_for_run, registries_dir, repos_dir, workspace_root_for_key,
 };
 pub use msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 pub use operational_metrics::{OperationalRunMetrics, PatchApplyState};
@@ -57,10 +57,10 @@ pub use registry::{
 };
 pub use run_registry::{
     RunArtifactRefs, RunExecutionStatus, RunLifecycle, RunPhaseLifecycle, RunSelectionPreference,
-    RunSubmissionStatus, completed_record_paths_for_runs_root, list_registrations_for_instance,
-    load_registration_for_record_path, load_registration_for_run_dir, persist_registration,
-    preferred_registration_for_instance, register_live_run, storage_roots_for_instance,
-    sync_protocol_registration_status,
+    RunSubmissionStatus, completed_record_paths_for_instances_root,
+    list_registrations_for_instance, load_registration_for_record_path,
+    load_registration_for_run_dir, persist_registration, preferred_registration_for_instance,
+    register_live_run, storage_roots_for_instance, sync_protocol_registration_status,
 };
 pub use runner::{
     AgentRunArtifactPaths, AgentTurnArtifact, BatchRunArtifactPaths, RunMsbAgentBatchRequest,

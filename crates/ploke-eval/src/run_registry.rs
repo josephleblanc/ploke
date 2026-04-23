@@ -105,7 +105,7 @@ pub fn resolve_protocol_run_identity(
 }
 
 pub fn list_registrations_for_instance(
-    runs_root: &Path,
+    instances_root: &Path,
     instance_id: &str,
 ) -> Result<Vec<RunRegistration>, PrepareError> {
     let registry_root = registries_dir()?.join("runs");
@@ -121,7 +121,7 @@ pub fn list_registrations_for_instance(
         }
     };
 
-    let expected_runs_dir = runs_root.join(instance_id).join("runs");
+    let expected_runs_dir = instances_root.join(instance_id).join("runs");
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
@@ -150,11 +150,11 @@ pub fn list_registrations_for_instance(
 }
 
 pub fn preferred_registration_for_instance(
-    runs_root: &Path,
+    instances_root: &Path,
     instance_id: &str,
     preference: RunSelectionPreference,
 ) -> Result<Option<RunRegistration>, PrepareError> {
-    let registrations = list_registrations_for_instance(runs_root, instance_id)?;
+    let registrations = list_registrations_for_instance(instances_root, instance_id)?;
     let mut first_any = None;
 
     for registration in registrations {
@@ -169,8 +169,8 @@ pub fn preferred_registration_for_instance(
     Ok(first_any)
 }
 
-pub fn completed_record_paths_for_runs_root(
-    runs_root: &Path,
+pub fn completed_record_paths_for_instances_root(
+    instances_root: &Path,
 ) -> Result<Vec<PathBuf>, PrepareError> {
     let registry_root = registries_dir()?.join("runs");
     let mut paths = Vec::new();
@@ -201,7 +201,7 @@ pub fn completed_record_paths_for_runs_root(
         if registration.lifecycle.execution_status != RunExecutionStatus::Completed {
             continue;
         }
-        if !registration.artifacts.run_root.starts_with(runs_root) {
+        if !registration.artifacts.run_root.starts_with(instances_root) {
             continue;
         }
         paths.push(registration.artifacts.record_path.clone());
@@ -330,13 +330,13 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
-    fn sample_intent(base: &Path, runs_root: &Path) -> RunIntent {
+    fn sample_intent(base: &Path, instances_root: &Path) -> RunIntent {
         RunIntent {
             task_id: "org__repo-1".to_string(),
             repo_root: base.join("repo"),
             storage_roots: RunStorageRoots::new(
                 base.join("registries"),
-                runs_root.join("org__repo-1").join("runs"),
+                instances_root.join("org__repo-1").join("runs"),
             ),
             base_sha: Some("deadbeef".to_string()),
             budget: EvalBudget::default(),
@@ -356,8 +356,8 @@ mod tests {
         unsafe {
             std::env::set_var("PLOKE_EVAL_HOME", tmp.path());
         }
-        let runs_root = tmp.path().join("runs");
-        let intent = sample_intent(tmp.path(), &runs_root);
+        let instances_root = tmp.path().join("instances");
+        let intent = sample_intent(tmp.path(), &instances_root);
         let mut registration =
             RunRegistration::register_with_run_id(intent, "run-123").expect("registration");
         registration.lifecycle.execution_status = RunExecutionStatus::Completed;
@@ -365,7 +365,7 @@ mod tests {
         registration.persist().expect("persist");
 
         let selected = preferred_registration_for_instance(
-            &runs_root,
+            &instances_root,
             "org__repo-1",
             RunSelectionPreference::PreferTreatment,
         )
@@ -381,8 +381,8 @@ mod tests {
         unsafe {
             std::env::set_var("PLOKE_EVAL_HOME", tmp.path());
         }
-        let runs_root = tmp.path().join("runs");
-        let intent = sample_intent(tmp.path(), &runs_root);
+        let instances_root = tmp.path().join("instances");
+        let intent = sample_intent(tmp.path(), &instances_root);
         let registration =
             RunRegistration::register_with_run_id(intent, "run-123").expect("registration");
         let record_path = registration.artifacts.record_path.clone();

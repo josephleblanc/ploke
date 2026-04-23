@@ -24,8 +24,7 @@ pub use state::VisitorState;
 use crate::{
     error::SynParserError,
     parser::{
-        diagnostics::{TRACE_TARGET_INVARIANTS, emit_json_diagnostic},
-        graph::GraphAccess,
+        diagnostics::TRACE_TARGET_INVARIANTS,
         nodes::{ModuleNodeInfo, PrimaryNodeId},
         relations::SyntacticRelation,
     },

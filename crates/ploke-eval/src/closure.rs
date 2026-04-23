@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::layout::{batches_dir, campaigns_dir, runs_dir};
+use crate::layout::{batches_dir, campaigns_dir, instances_dir};
 use crate::protocol::protocol_aggregate::{ProtocolAggregateError, load_protocol_aggregate};
 use crate::protocol_artifacts::{StoredProtocolArtifactFile, list_protocol_artifacts};
 use crate::record::read_compressed_record;
@@ -44,7 +44,7 @@ pub struct ClosureRecomputeRequest {
     pub dataset_keys: Vec<String>,
     pub dataset_files: Vec<PathBuf>,
     pub required_procedures: Vec<String>,
-    pub runs_root: Option<PathBuf>,
+    pub instances_root: Option<PathBuf>,
     pub batches_root: Option<PathBuf>,
     pub framework: Option<FrameworkConfig>,
 }
@@ -73,7 +73,8 @@ pub struct ClosureConfig {
     pub registry_path: Option<PathBuf>,
     pub dataset_sources: Vec<ClosureDatasetSource>,
     pub required_procedures: Vec<String>,
-    pub runs_root: PathBuf,
+    #[serde(alias = "runs_root")]
+    pub instances_root: PathBuf,
     pub batches_root: PathBuf,
     #[serde(default, skip_serializing_if = "FrameworkConfig::is_default")]
     pub framework: FrameworkConfig,
@@ -463,10 +464,10 @@ fn resolve_config(
             .collect()
     };
 
-    let runs_root = request
-        .runs_root
-        .or_else(|| prior.as_ref().map(|config| config.runs_root.clone()))
-        .unwrap_or(runs_dir()?);
+    let instances_root = request
+        .instances_root
+        .or_else(|| prior.as_ref().map(|config| config.instances_root.clone()))
+        .unwrap_or(instances_dir()?);
     let batches_root = request
         .batches_root
         .or_else(|| prior.as_ref().map(|config| config.batches_root.clone()))
@@ -507,7 +508,7 @@ fn resolve_config(
             registry_path: Some(registry_path),
             dataset_sources: registry_source.dataset_sources.clone(),
             required_procedures,
-            runs_root,
+            instances_root,
             batches_root,
             framework: request
                 .framework
@@ -572,10 +573,10 @@ fn build_instance_row(
     entry: &RegistryEntry,
     batch_failures: &HashMap<String, BatchFailureInfo>,
 ) -> Result<ClosureInstanceRow, PrepareError> {
-    let instance_root = config.runs_root.join(&entry.instance_id);
+    let instance_root = config.instances_root.join(&entry.instance_id);
     let mut artifacts = ClosureArtifactRefs::default();
     let registration = preferred_registration_for_instance(
-        &config.runs_root,
+        &config.instances_root,
         &entry.instance_id,
         crate::run_registry::RunSelectionPreference::PreferTreatment,
     )?;
@@ -595,7 +596,7 @@ fn build_instance_row(
         registration.artifacts.run_root.clone()
     } else {
         preferred_run_dir_for_instance(
-            &config.runs_root,
+            &config.instances_root,
             &entry.instance_id,
             RunDirPreference::PreferTreatment,
         )?

@@ -512,7 +512,7 @@ fn diag_probe_name_anywhere(db: &Database, item_name: &str) {
 #[ignore = "historical diagnostic replay of eval-run artifact"]
 async fn test_apply_code_edit_historical_failure_path() {
     const SNAPSHOT_DB: &str =
-        "/home/brasides/.ploke-eval/runs/BurntSushi__ripgrep-2209/final-snapshot.db";
+        "/home/brasides/.ploke-eval/instances/BurntSushi__ripgrep-2209/final-snapshot.db";
     const REPO_ROOT: &str = "/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep";
 
     assert!(
@@ -677,7 +677,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
  {
     init_tracing();
     const SOURCE_MANIFEST: &str =
-        "/home/brasides/.ploke-eval/runs/BurntSushi__ripgrep-1642/run.json";
+        "/home/brasides/.ploke-eval/instances/BurntSushi__ripgrep-1642/run.json";
 
     assert!(
         PathBuf::from(SOURCE_MANIFEST).exists(),
@@ -762,9 +762,9 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
 #[ignore = "historical diagnostic replay of fd-1121 non-semantic patch partial-apply runtime flow"]
 async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow() {
     init_tracing();
-    const RUN_MANIFEST: &str = "/home/brasides/.ploke-eval/runs/sharkdp__fd-1121/run.json";
+    const RUN_MANIFEST: &str = "/home/brasides/.ploke-eval/instances/sharkdp__fd-1121/run.json";
     const TURN_TRACE: &str =
-        "/home/brasides/.ploke-eval/runs/sharkdp__fd-1121/agent-turn-trace.json";
+        "/home/brasides/.ploke-eval/instances/sharkdp__fd-1121/agent-turn-trace.json";
     const JOB_CALL_ID: &str = "call_86042515";
     const WALK_CALL_ID: &str = "call_80363220";
 
@@ -872,7 +872,7 @@ async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow(
 async fn test_historical_ripgrep_setup_replay_gets_past_indexing_with_convert_keyword_2015() {
     init_tracing();
     const SOURCE_MANIFEST: &str =
-        "/home/brasides/.ploke-eval/runs/BurntSushi__ripgrep-1642/run.json";
+        "/home/brasides/.ploke-eval/instances/BurntSushi__ripgrep-1642/run.json";
 
     assert!(
         PathBuf::from(SOURCE_MANIFEST).exists(),

@@ -19,7 +19,7 @@ use ploke_llm::LlmError;
 /// Fixture: qwen/qwen3.6-plus response with reasoning but no content field
 ///
 /// This is a real captured response from the live run at:
-/// ~/.ploke-eval/runs/BurntSushi__ripgrep-2209/
+/// ~/.ploke-eval/instances/BurntSushi__ripgrep-2209/
 ///
 /// The model returned reasoning without content, causing deserialization to fail
 /// with "No usable choice" before the qwen_reasoning_fix feature was implemented.

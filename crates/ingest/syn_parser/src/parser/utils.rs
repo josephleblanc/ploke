@@ -15,8 +15,6 @@ use syn::{
 
 /// Converts a syn1::Type to a syn::Type.
 pub fn convert_type_syn1_to_syn2(ty: &syn1::Type) -> syn::Type {
-    use syn::parse_quote;
-
     match ty {
         syn1::Type::Array(arr) => {
             // Convert element type, stringify the length expression
@@ -56,7 +54,7 @@ pub fn convert_type_syn1_to_syn2(ty: &syn1::Type) -> syn::Type {
                     ty: convert_type_syn1_to_syn2(&b.ty),
                 })
                 .collect(),
-            variadic: bare.variadic.as_ref().map(|v| syn::BareVariadic {
+            variadic: bare.variadic.as_ref().map(|_| syn::BareVariadic {
                 attrs: vec![], // Skip attribute conversion
                 name: None,    // syn1 Variadic doesn't have name, syn2 BareVariadic does
                 dots: syn::token::DotDotDot::default(),
@@ -166,8 +164,6 @@ fn convert_path_syn1_to_syn2(path: &syn1::Path) -> syn::Path {
 
 /// Converts syn1::PathArguments to syn::PathArguments.
 fn convert_path_arguments_syn1_to_syn2(args: &syn1::PathArguments) -> syn::PathArguments {
-    use syn::parse_quote;
-
     match args {
         syn1::PathArguments::None => syn::PathArguments::None,
         syn1::PathArguments::AngleBracketed(angled) => {
@@ -194,8 +190,6 @@ fn convert_path_arguments_syn1_to_syn2(args: &syn1::PathArguments) -> syn::PathA
 
 /// Converts syn1::GenericArgument to syn::GenericArgument.
 fn convert_generic_argument_syn1_to_syn2(arg: &syn1::GenericArgument) -> syn::GenericArgument {
-    use syn::parse_quote;
-
     match arg {
         syn1::GenericArgument::Lifetime(lt) => syn::GenericArgument::Lifetime(syn::Lifetime::new(
             &format!("'{}", lt.ident),
@@ -239,8 +233,6 @@ fn convert_generic_argument_syn1_to_syn2(arg: &syn1::GenericArgument) -> syn::Ge
 
 /// Converts syn1::TypeParamBound to syn::TypeParamBound.
 fn convert_type_param_bound_syn1_to_syn2(bound: &syn1::TypeParamBound) -> syn::TypeParamBound {
-    use syn::parse_quote;
-
     match bound {
         syn1::TypeParamBound::Lifetime(lt) => syn::TypeParamBound::Lifetime(syn::Lifetime::new(
             &format!("'{}", lt.ident),
@@ -291,8 +283,6 @@ fn convert_type_param_bound_syn1_to_syn2(bound: &syn1::TypeParamBound) -> syn::T
 fn convert_trait_bound_modifier_syn1_to_syn2(
     modifier: &syn1::TraitBoundModifier,
 ) -> syn::TraitBoundModifier {
-    use syn::parse_quote;
-
     match modifier {
         syn1::TraitBoundModifier::None => syn::TraitBoundModifier::None,
         syn1::TraitBoundModifier::Maybe(_) => {
@@ -303,8 +293,6 @@ fn convert_trait_bound_modifier_syn1_to_syn2(
 
 /// Converts syn1::ReturnType to syn::ReturnType.
 fn convert_return_type_syn1_to_syn2(ret: &syn1::ReturnType) -> syn::ReturnType {
-    use syn::parse_quote;
-
     match ret {
         syn1::ReturnType::Default => syn::ReturnType::Default,
         syn1::ReturnType::Type(_, ty) => {
@@ -373,8 +361,6 @@ fn convert_macro_syn1_to_syn2(mac: &syn1::Macro) -> syn::Macro {
 
 /// Converts syn1::MacroDelimiter to syn::MacroDelimiter.
 fn convert_macro_delimiter_syn1_to_syn2(del: &syn1::MacroDelimiter) -> syn::MacroDelimiter {
-    use syn::parse_quote;
-
     match del {
         syn1::MacroDelimiter::Paren(_) => syn::MacroDelimiter::Paren(syn::token::Paren::default()),
         syn1::MacroDelimiter::Brace(_) => syn::MacroDelimiter::Brace(syn::token::Brace::default()),

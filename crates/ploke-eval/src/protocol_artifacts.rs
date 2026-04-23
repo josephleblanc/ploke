@@ -160,7 +160,7 @@ pub(crate) fn protocol_artifact_summary(entry: &StoredProtocolArtifactFile) -> S
                 .get("cases")
                 .and_then(|v| v.as_array())
                 .and_then(|cases| cases.first())
-                .and_then(|case| case.get("family"))
+                .and_then(|case| case.get("target_tool"))
                 .and_then(|v| v.as_str())
                 .map(|value| format!("primary={value}"));
             let summary = [case_count, primary]
@@ -170,6 +170,56 @@ pub(crate) fn protocol_artifact_summary(entry: &StoredProtocolArtifactFile) -> S
                 .join(" ");
             if summary.is_empty() {
                 "issue detection artifact".to_string()
+            } else {
+                summary
+            }
+        }
+        "intervention_synthesis" => {
+            let candidate_count = entry
+                .stored
+                .output
+                .get("candidate_set")
+                .and_then(|v| v.get("candidates"))
+                .and_then(|v| v.as_array())
+                .map(|candidates| format!("candidates={}", candidates.len()));
+            let target = entry
+                .stored
+                .output
+                .get("candidate_set")
+                .and_then(|v| v.get("target_relpath"))
+                .and_then(|v| v.as_str())
+                .map(|value| format!("target={value}"));
+            let summary = [candidate_count, target]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if summary.is_empty() {
+                "intervention synthesis artifact".to_string()
+            } else {
+                summary
+            }
+        }
+        "intervention_apply" => {
+            let candidate = entry
+                .stored
+                .output
+                .get("candidate_id")
+                .and_then(|v| v.as_str())
+                .map(|value| format!("candidate={value}"));
+            let changed = entry
+                .stored
+                .output
+                .get("changed")
+                .and_then(|v| v.as_bool())
+                .map(|value| format!("changed={value}"));
+            let summary = [candidate, changed]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if summary.is_empty() {
+                "intervention apply artifact".to_string()
             } else {
                 summary
             }

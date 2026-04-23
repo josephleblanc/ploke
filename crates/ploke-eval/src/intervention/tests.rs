@@ -3,22 +3,26 @@ use std::path::PathBuf;
 
 use ploke_core::ArcStr;
 use ploke_core::tool_types::ToolName;
+use ploke_protocol::JsonLlmConfig;
 use ploke_protocol::tool_calls::segment::{IntentLabel, SegmentStatus};
 use ploke_tui::tools::ToolUiPayload;
 use tempfile::TempDir;
 use uuid::Uuid;
 
 use super::{
-    ArtifactEdit, InterventionExecutionInput, InterventionSpec, InterventionSpecError,
+    ArtifactEdit, INTERVENTION_SYNTHESIS_PROCEDURE, InterventionApplyInput,
+    InterventionExecutionInput, InterventionSpec, InterventionSpecError,
     InterventionSynthesisInput, IssueDetectionInput, IssueSelectionBasis, ValidationPolicy,
-    detect_issue_cases, execute_tool_text_intervention, select_primary_issue,
-    synthesize_intervention,
+    detect_issue_cases, execute_intervention_apply, execute_tool_text_intervention,
+    select_primary_issue, synthesize_intervention, synthesize_intervention_with_llm,
 };
+use crate::model_registry::load_active_model;
 use crate::protocol::protocol_aggregate::{
     ProtocolAggregate, ProtocolArtifactRef, ProtocolBranchAssessment, ProtocolCallReviewRow,
     ProtocolCoverage, ProtocolDerivedMetrics, ProtocolReviewSignals, ProtocolRunIdentity,
     ProtocolSegmentBasis, ProtocolSegmentationAnchor, ProtocolSegmentationCoverage,
 };
+use crate::provider_prefs::load_provider_for_model;
 use crate::record::{
     AgentMetadata, BenchmarkMetadata, RunMetadata, RunPhases, RunRecord, ToolExecutionRecord,
     ToolResult, TurnOutcome, TurnRecord,
@@ -259,6 +263,44 @@ fn protocol_aggregate_with_recovery_review(
     }
 }
 
+fn reviewed_tool_issue_for_ns_patch() -> super::IssueCase {
+    let mut record = base_record();
+    record.phases.agent_turns.push(turn_record(
+        TurnOutcome::Error {
+            message: "aborted".to_string(),
+        },
+        vec![
+            failed_edit_call(
+                ToolName::ApplyCodeEdit,
+                serde_json::json!({"file":"src/bytes_mut.rs"}),
+                "ambiguous canonical target",
+            ),
+            failed_edit_call(
+                ToolName::NsPatch,
+                raw_patch_args("src/bytes_mut.rs"),
+                "Patch applied partially. See report for details.",
+            ),
+            completed_edit_call(
+                ToolName::NsPatch,
+                raw_patch_args("src/bytes_mut.rs"),
+                0,
+                true,
+            ),
+            failed_edit_call(
+                ToolName::NsPatch,
+                raw_patch_args("src/bytes_mut.rs"),
+                "Patch applied partially. See report for details.",
+            ),
+        ],
+    ));
+
+    let detection = detect_issue_cases(&IssueDetectionInput::from_record(
+        record,
+        Some(protocol_aggregate_with_recovery_review(4, 1, 3, 1)),
+    ));
+    select_primary_issue(&detection).expect("select primary issue")
+}
+
 #[test]
 fn tool_text_adapter_materializes_stages_applies_and_validates_replace_whole_text() {
     let repo = seed_repo();
@@ -443,46 +485,24 @@ fn detect_issue_cases_requires_protocol_review_evidence() {
 #[test]
 fn synthesized_reviewed_tool_target_executes_against_tool_text_surface() {
     let repo = seed_repo();
-    let mut record = base_record();
-    record.phases.agent_turns.push(turn_record(
-        TurnOutcome::Error {
-            message: "aborted".to_string(),
-        },
-        vec![
-            failed_edit_call(
-                ToolName::ApplyCodeEdit,
-                serde_json::json!({"file":"src/bytes_mut.rs"}),
-                "ambiguous canonical target",
-            ),
-            failed_edit_call(
-                ToolName::NsPatch,
-                raw_patch_args("src/bytes_mut.rs"),
-                "Patch applied partially. See report for details.",
-            ),
-            completed_edit_call(
-                ToolName::NsPatch,
-                raw_patch_args("src/bytes_mut.rs"),
-                0,
-                true,
-            ),
-            failed_edit_call(
-                ToolName::NsPatch,
-                raw_patch_args("src/bytes_mut.rs"),
-                "Patch applied partially. See report for details.",
-            ),
-        ],
-    ));
-
-    let detection = detect_issue_cases(&IssueDetectionInput::from_record(
-        record,
-        Some(protocol_aggregate_with_recovery_review(4, 1, 3, 1)),
-    ));
-    let issue = select_primary_issue(&detection).expect("select primary issue");
-    let synthesized = synthesize_intervention(&InterventionSynthesisInput { issue })
-        .expect("synthesize intervention");
+    let issue = reviewed_tool_issue_for_ns_patch();
+    let source_content = fs::read_to_string(
+        repo.path()
+            .join("crates/ploke-core/tool_text/non_semantic_patch.md"),
+    )
+    .expect("read source");
+    let synthesized = synthesize_intervention(&InterventionSynthesisInput {
+        issue,
+        source_state_id: "baseline-run-1".to_string(),
+        source_content,
+    })
+    .expect("synthesize intervention");
+    assert_eq!(synthesized.candidate_set.source_state_id, "baseline-run-1");
+    assert_eq!(synthesized.candidate_set.candidates.len(), 1);
+    let candidate = synthesized.primary_candidate().expect("primary candidate");
     let output = execute_tool_text_intervention(&InterventionExecutionInput {
         repo_root: repo.path().to_path_buf(),
-        spec: synthesized.selected_spec,
+        spec: candidate.spec.clone(),
     })
     .expect("execute synthesized intervention");
 
@@ -492,5 +512,139 @@ fn synthesized_reviewed_tool_target_executes_against_tool_text_surface() {
             .join("crates/ploke-core/tool_text/non_semantic_patch.md"),
     )
     .expect("read written");
-    assert!(written.contains("Protocol review targeting note for `non_semantic_patch`."));
+    assert_eq!(written, candidate.proposed_content);
+    assert!(written.contains("Protocol review targeting rewrite for `non_semantic_patch`."));
+}
+
+#[test]
+fn intervention_apply_realizes_candidate_against_expected_source_state() {
+    let repo = seed_repo();
+    let issue = reviewed_tool_issue_for_ns_patch();
+    let source_content = fs::read_to_string(
+        repo.path()
+            .join("crates/ploke-core/tool_text/non_semantic_patch.md"),
+    )
+    .expect("read source");
+    let synthesized = synthesize_intervention(&InterventionSynthesisInput {
+        issue,
+        source_state_id: "baseline-run-1".to_string(),
+        source_content: source_content.clone(),
+    })
+    .expect("synthesize intervention");
+    let candidate = synthesized
+        .primary_candidate()
+        .expect("primary candidate")
+        .clone();
+
+    let output = execute_intervention_apply(&InterventionApplyInput {
+        source_state_id: synthesized.candidate_set.source_state_id.clone(),
+        candidate: candidate.clone(),
+        target_relpath: synthesized.candidate_set.target_relpath.clone(),
+        expected_source_content: synthesized.candidate_set.source_content.clone(),
+        repo_root: repo.path().to_path_buf(),
+    })
+    .expect("apply candidate");
+
+    assert_eq!(output.treatment_state.source_state_id, "baseline-run-1");
+    assert_eq!(output.candidate_id, candidate.candidate_id);
+    assert_eq!(
+        output.target_relpath,
+        PathBuf::from(ToolName::NsPatch.description_artifact_relpath())
+    );
+    assert!(output.changed);
+    assert!(output.validation.ok);
+    assert_ne!(output.source_content_hash, output.applied_content_hash);
+}
+
+#[test]
+fn intervention_apply_rejects_source_content_mismatch() {
+    let repo = seed_repo();
+    let issue = reviewed_tool_issue_for_ns_patch();
+    let source_content = fs::read_to_string(
+        repo.path()
+            .join("crates/ploke-core/tool_text/non_semantic_patch.md"),
+    )
+    .expect("read source");
+    let synthesized = synthesize_intervention(&InterventionSynthesisInput {
+        issue,
+        source_state_id: "baseline-run-1".to_string(),
+        source_content,
+    })
+    .expect("synthesize intervention");
+    let candidate = synthesized
+        .primary_candidate()
+        .expect("primary candidate")
+        .clone();
+    fs::write(
+        repo.path()
+            .join("crates/ploke-core/tool_text/non_semantic_patch.md"),
+        "Header\n\nDrifted body.\n",
+    )
+    .expect("write drifted target");
+
+    let err = execute_intervention_apply(&InterventionApplyInput {
+        source_state_id: synthesized.candidate_set.source_state_id.clone(),
+        candidate,
+        target_relpath: synthesized.candidate_set.target_relpath.clone(),
+        expected_source_content: synthesized.candidate_set.source_content.clone(),
+        repo_root: repo.path().to_path_buf(),
+    })
+    .expect_err("source mismatch should fail");
+
+    assert!(matches!(
+        err,
+        InterventionSpecError::SourceContentMismatch { .. }
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live synthesis smoke test against the active model/provider"]
+async fn live_intervention_synthesis_fans_out_replacement_candidates() {
+    let repo = seed_repo();
+    let issue = reviewed_tool_issue_for_ns_patch();
+    let source_content = fs::read_to_string(
+        repo.path()
+            .join("crates/ploke-core/tool_text/non_semantic_patch.md"),
+    )
+    .expect("read source");
+    let active_model = load_active_model().expect("load active model");
+    let provider = load_provider_for_model(&active_model.model_id)
+        .expect("load provider prefs")
+        .expect("provider configured for active model");
+    let cfg = JsonLlmConfig {
+        model_id: active_model.model_id.to_string(),
+        provider_slug: Some(provider.slug.as_str().to_string()),
+        timeout_secs: 45,
+        max_tokens: 3200,
+    };
+
+    let run = synthesize_intervention_with_llm(
+        InterventionSynthesisInput {
+            issue,
+            source_state_id: "live-baseline-1".to_string(),
+            source_content: source_content.clone(),
+        },
+        cfg,
+    )
+    .await
+    .expect("live synthesis");
+
+    assert_eq!(run.procedure_name, INTERVENTION_SYNTHESIS_PROCEDURE);
+    assert_eq!(run.output.candidate_set.source_state_id, "live-baseline-1");
+    assert_eq!(run.output.candidate_set.source_content, source_content);
+    assert_eq!(
+        run.output.candidate_set.target_relpath,
+        PathBuf::from(ToolName::NsPatch.description_artifact_relpath())
+    );
+    assert!(!run.output.candidate_set.candidates.is_empty());
+    assert!(run.output.candidate_set.candidates.len() <= 3);
+    for candidate in &run.output.candidate_set.candidates {
+        assert!(!candidate.proposed_content.trim().is_empty());
+        match candidate.spec.edit() {
+            ArtifactEdit::ReplaceWholeText { new_text } => {
+                assert_eq!(new_text, &candidate.proposed_content);
+            }
+            other => panic!("expected ReplaceWholeText candidate edit, got {other:?}"),
+        }
+    }
 }

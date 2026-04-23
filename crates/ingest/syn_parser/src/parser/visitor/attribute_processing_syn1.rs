@@ -1,5 +1,3 @@
-use quote::ToTokens;
-
 use crate::parser::nodes::Attribute;
 use crate::parser::utils::convert_attribute_syn1_to_syn2;
 

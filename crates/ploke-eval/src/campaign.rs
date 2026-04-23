@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use ploke_llm::{ModelId, ProviderKey};
 use serde::{Deserialize, Serialize};
 
-use crate::layout::{batches_dir, campaigns_dir, runs_dir};
+use crate::layout::{batches_dir, campaigns_dir, instances_dir};
 use crate::model_registry::{load_active_model, load_model_registry, registry_has_model};
 use crate::provider_prefs::load_provider_for_model;
 use crate::runner::resolve_provider_for_model;
@@ -36,8 +36,8 @@ pub struct CampaignManifest {
     pub provider_slug: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_procedures: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runs_root: Option<PathBuf>,
+    #[serde(default, alias = "runs_root", skip_serializing_if = "Option::is_none")]
+    pub instances_root: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batches_root: Option<PathBuf>,
     #[serde(default)]
@@ -102,7 +102,7 @@ pub struct CampaignOverrides {
     pub model_id: Option<String>,
     pub provider_slug: Option<String>,
     pub required_procedures: Vec<String>,
-    pub runs_root: Option<PathBuf>,
+    pub instances_root: Option<PathBuf>,
     pub batches_root: Option<PathBuf>,
 }
 
@@ -115,7 +115,7 @@ pub struct ResolvedCampaignConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_slug: Option<String>,
     pub required_procedures: Vec<String>,
-    pub runs_root: PathBuf,
+    pub instances_root: PathBuf,
     pub batches_root: PathBuf,
     pub eval: EvalCampaignPolicy,
     pub protocol: ProtocolCampaignPolicy,
@@ -153,8 +153,8 @@ struct StoredClosureConfig {
     provider_slug: Option<String>,
     #[serde(default)]
     required_procedures: Vec<String>,
-    #[serde(default)]
-    runs_root: Option<PathBuf>,
+    #[serde(default, alias = "runs_root")]
+    instances_root: Option<PathBuf>,
     #[serde(default)]
     batches_root: Option<PathBuf>,
     #[serde(default)]
@@ -169,7 +169,7 @@ impl Default for StoredClosureConfig {
             model_id: None,
             provider_slug: None,
             required_procedures: Vec::new(),
-            runs_root: None,
+            instances_root: None,
             batches_root: None,
             framework: FrameworkConfig::default(),
         }
@@ -198,7 +198,7 @@ impl CampaignManifest {
             model_id: None,
             provider_slug: None,
             required_procedures: default_required_procedures(),
-            runs_root: None,
+            instances_root: None,
             batches_root: None,
             eval: EvalCampaignPolicy::default(),
             protocol: ProtocolCampaignPolicy::default(),
@@ -214,7 +214,7 @@ impl CampaignOverrides {
             && self.model_id.is_none()
             && self.provider_slug.is_none()
             && self.required_procedures.is_empty()
-            && self.runs_root.is_none()
+            && self.instances_root.is_none()
             && self.batches_root.is_none()
     }
 }
@@ -318,7 +318,7 @@ pub fn adopt_campaign_manifest_from_closure_state(
         model_id: stored.config.model_id,
         provider_slug: stored.config.provider_slug,
         required_procedures: normalize_required_procedures(&stored.config.required_procedures)?,
-        runs_root: stored.config.runs_root,
+        instances_root: stored.config.instances_root,
         batches_root: stored.config.batches_root,
         eval: EvalCampaignPolicy::default(),
         protocol: ProtocolCampaignPolicy::default(),
@@ -350,7 +350,7 @@ pub fn adopt_campaign_manifest_from_registry(
         model_id: Some(active_model.model_id.to_string()),
         provider_slug,
         required_procedures: default_required_procedures(),
-        runs_root: Some(runs_dir()?),
+        instances_root: Some(instances_dir()?),
         batches_root: Some(batches_dir()?),
         eval: EvalCampaignPolicy::default(),
         protocol: ProtocolCampaignPolicy::default(),
@@ -376,8 +376,8 @@ pub fn apply_campaign_overrides(
         manifest.required_procedures =
             normalize_required_procedures(&overrides.required_procedures)?;
     }
-    if let Some(runs_root) = overrides.runs_root.clone() {
-        manifest.runs_root = Some(runs_root);
+    if let Some(instances_root) = overrides.instances_root.clone() {
+        manifest.instances_root = Some(instances_root);
     }
     if let Some(batches_root) = overrides.batches_root.clone() {
         manifest.batches_root = Some(batches_root);
@@ -473,11 +473,11 @@ pub fn resolve_campaign_config(
         normalize_required_procedures(&overrides.required_procedures)?
     };
 
-    let runs_root = overrides
-        .runs_root
+    let instances_root = overrides
+        .instances_root
         .clone()
-        .or_else(|| manifest.runs_root.clone())
-        .unwrap_or(runs_dir()?);
+        .or_else(|| manifest.instances_root.clone())
+        .unwrap_or(instances_dir()?);
     let batches_root = overrides
         .batches_root
         .clone()
@@ -491,7 +491,7 @@ pub fn resolve_campaign_config(
         model_id,
         provider_slug,
         required_procedures,
-        runs_root,
+        instances_root,
         batches_root,
         eval: manifest.eval,
         protocol: manifest.protocol,
@@ -579,13 +579,13 @@ pub async fn validate_campaign_config(
         },
     });
 
-    fs::create_dir_all(&config.runs_root).map_err(|source| PrepareError::CreateOutputDir {
-        path: config.runs_root.clone(),
+    fs::create_dir_all(&config.instances_root).map_err(|source| PrepareError::CreateOutputDir {
+        path: config.instances_root.clone(),
         source,
     })?;
     checks.push(CampaignValidationCheck {
-        label: "runs_root".to_string(),
-        detail: config.runs_root.display().to_string(),
+        label: "instances_root".to_string(),
+        detail: config.instances_root.display().to_string(),
     });
 
     fs::create_dir_all(&config.batches_root).map_err(|source| PrepareError::CreateOutputDir {
@@ -622,7 +622,10 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
         "provider: {}\n",
         config.provider_slug.as_deref().unwrap_or("auto/openrouter")
     ));
-    out.push_str(&format!("runs_root: {}\n", config.runs_root.display()));
+    out.push_str(&format!(
+        "instances_root: {}\n",
+        config.instances_root.display()
+    ));
     out.push_str(&format!(
         "batches_root: {}\n",
         config.batches_root.display()
@@ -796,7 +799,7 @@ mod tests {
             model_id: "x-ai/grok-4-fast".to_string(),
             provider_slug: None,
             required_procedures: default_required_procedures(),
-            runs_root: PathBuf::from("/tmp/runs"),
+            instances_root: PathBuf::from("/tmp/instances"),
             batches_root: PathBuf::from("/tmp/batches"),
             eval: EvalCampaignPolicy::default(),
             protocol: ProtocolCampaignPolicy::default(),

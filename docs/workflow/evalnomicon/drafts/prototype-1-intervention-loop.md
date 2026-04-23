@@ -105,6 +105,16 @@ eval configuration
 
 Terminology: `eval target` = the slice of benchmark instances to run; `intervention target` = the bounded artifact surface to edit.
 
+| Step | Role | Driver |
+| --- | --- | --- |
+| Eval configuration | choose eval slice and execution settings | programmatic |
+| Baseline arm | run `eval -> protocol` on the chosen slice | mixed: eval may use LLMs internally; protocol includes adjudicated LLM calls |
+| Select intervention target | reduce baseline protocol evidence to one bounded target | programmatic |
+| Intervention synthesis | generate the content of the proposed intervention for the already-selected target | LLM-generated content |
+| Intervention apply | realize the synthesized intervention deterministically and validate it | programmatic |
+| Treatment arm | rerun `eval -> protocol` on the same slice after apply | mixed: eval may use LLMs internally; protocol includes adjudicated LLM calls |
+| Compare baseline vs treatment | decide whether the intervention helped | programmatic |
+
 ```text
 baseline run
   -> RunRecord + protocol artifacts

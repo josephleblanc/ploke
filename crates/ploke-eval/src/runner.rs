@@ -686,7 +686,8 @@ pub struct BatchRunSummary {
     pub output_dir: PathBuf,
     pub dataset_file: PathBuf,
     pub repo_cache: PathBuf,
-    pub runs_root: PathBuf,
+    #[serde(alias = "runs_root")]
+    pub instances_root: PathBuf,
     pub selected_model: Option<ModelId>,
     pub selected_provider: Option<String>,
     pub instances_total: usize,
@@ -2614,7 +2615,7 @@ async fn run_batch(
     let mut instance_results = Vec::with_capacity(prepared.instances.len());
 
     for task_id in &prepared.instances {
-        let run_manifest = prepared.runs_root.join(task_id).join("run.json");
+        let run_manifest = prepared.instances_root.join(task_id).join("run.json");
         if agent_mode {
             match (RunMsbAgentSingleRequest {
                 run_manifest: run_manifest.clone(),
@@ -2754,7 +2755,7 @@ async fn run_batch(
         output_dir: prepared.output_dir,
         dataset_file: prepared.dataset_file,
         repo_cache: prepared.repo_cache,
-        runs_root: prepared.runs_root,
+        instances_root: prepared.instances_root,
         selected_model: Some(selected_model_id),
         selected_provider: Some(selected_provider.slug.as_str().to_string()),
         instances_total: prepared.instances.len(),
@@ -4522,7 +4523,7 @@ mod tests {
     #[test]
     fn allocate_run_output_dir_nests_unique_run_directories() {
         let tmp = tempdir().expect("tempdir");
-        let instance_dir = tmp.path().join("runs").join("org__repo-1");
+        let instance_dir = tmp.path().join("instances").join("org__repo-1");
         fs::create_dir_all(&instance_dir).expect("instance dir");
 
         let first = allocate_run_output_dir(
@@ -4891,7 +4892,7 @@ mod tests {
                 repo_root: prepared.repo_root.clone(),
                 storage_roots: crate::inner::core::RunStorageRoots::new(
                     tmp.path().join("registries"),
-                    tmp.path().join("runs"),
+                    tmp.path().join("instances"),
                 ),
                 base_sha: prepared.base_sha.clone(),
                 budget: prepared.budget.clone(),

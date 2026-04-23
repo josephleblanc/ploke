@@ -5,12 +5,10 @@ use chrono::Utc;
 use ploke_db::ObservabilityStore;
 use serde::{Deserialize, Serialize};
 
-use crate::record::read_compressed_record;
 use crate::run_registry::{
-    RunSelectionPreference, completed_record_paths_for_runs_root,
+    RunSelectionPreference, completed_record_paths_for_instances_root,
     preferred_registration_for_instance,
 };
-use crate::runner::RunArmRole;
 use crate::spec::PrepareError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -30,57 +28,6 @@ pub fn record_last_run(run_dir: impl AsRef<Path>) -> Result<(), PrepareError> {
 
 pub fn load_last_run() -> Result<LastRunRecord, PrepareError> {
     load_last_run_at(crate::layout::ploke_eval_home()?)
-}
-
-fn nested_runs_dir(instance_root: &Path) -> PathBuf {
-    instance_root.join("runs")
-}
-
-fn looks_like_run_dir(path: &Path) -> bool {
-    [
-        "record.json.gz",
-        "execution-log.json",
-        "indexing-status.json",
-        "parse-failure.json",
-        "snapshot-status.json",
-        "repo-state.json",
-    ]
-    .into_iter()
-    .any(|name| path.join(name).exists())
-}
-
-fn candidate_run_dirs_for_instance_root(
-    instance_root: &Path,
-) -> Result<Vec<PathBuf>, PrepareError> {
-    let mut dirs = Vec::new();
-    if looks_like_run_dir(instance_root) {
-        dirs.push(instance_root.to_path_buf());
-    }
-
-    let nested_root = nested_runs_dir(instance_root);
-    let entries = match fs::read_dir(&nested_root) {
-        Ok(entries) => entries,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(dirs),
-        Err(source) => {
-            return Err(PrepareError::ReadManifest {
-                path: nested_root,
-                source,
-            });
-        }
-    };
-
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        if path.is_dir() && looks_like_run_dir(&path) {
-            dirs.push(path);
-        }
-    }
-
-    Ok(dirs)
 }
 
 fn run_dir_sort_key(run_dir: &Path) -> Option<std::time::SystemTime> {
@@ -104,37 +51,15 @@ fn run_dir_sort_key(run_dir: &Path) -> Option<std::time::SystemTime> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RunDirPreference {
-    LatestAny,
     PreferTreatment,
     PreferTreatmentWithSubmission,
 }
 
 fn selection_preference(preference: RunDirPreference) -> RunSelectionPreference {
     match preference {
-        RunDirPreference::LatestAny => RunSelectionPreference::LatestAny,
         RunDirPreference::PreferTreatment => RunSelectionPreference::PreferTreatment,
         RunDirPreference::PreferTreatmentWithSubmission => {
             RunSelectionPreference::PreferTreatmentWithSubmission
-        }
-    }
-}
-
-fn run_dir_role(run_dir: &Path) -> Option<RunArmRole> {
-    let record_path = run_dir.join("record.json.gz");
-    read_compressed_record(&record_path)
-        .ok()
-        .map(|record| record.metadata.run_arm.role)
-}
-
-fn run_dir_matches_preference(run_dir: &Path, preference: RunDirPreference) -> bool {
-    match preference {
-        RunDirPreference::LatestAny => true,
-        RunDirPreference::PreferTreatment => {
-            matches!(run_dir_role(run_dir), Some(RunArmRole::Treatment))
-        }
-        RunDirPreference::PreferTreatmentWithSubmission => {
-            matches!(run_dir_role(run_dir), Some(RunArmRole::Treatment))
-                && run_dir.join("multi-swe-bench-submission.jsonl").exists()
         }
     }
 }
@@ -143,7 +68,7 @@ fn best_run_dir_for_instance_root(
     instance_root: &Path,
     preference: RunDirPreference,
 ) -> Result<Option<PathBuf>, PrepareError> {
-    let runs_root = instance_root
+    let instances_root = instance_root
         .parent()
         .ok_or_else(|| PrepareError::MissingRunManifest(instance_root.to_path_buf()))?;
     let instance_id = instance_root
@@ -151,92 +76,27 @@ fn best_run_dir_for_instance_root(
         .map(|name| name.to_string_lossy().to_string())
         .ok_or_else(|| PrepareError::MissingRunManifest(instance_root.to_path_buf()))?;
     if let Some(registration) = preferred_registration_for_instance(
-        runs_root,
+        instances_root,
         &instance_id,
         selection_preference(preference),
     )? {
         return Ok(Some(registration.artifacts.run_root));
     }
-
-    let candidates = candidate_run_dirs_for_instance_root(instance_root)?;
-    let mut best_preferred: Option<(std::time::SystemTime, PathBuf)> = None;
-    let mut best_any: Option<(std::time::SystemTime, PathBuf)> = None;
-
-    for run_dir in candidates {
-        let Some(modified) = run_dir_sort_key(&run_dir) else {
-            continue;
-        };
-        if best_any
-            .as_ref()
-            .is_none_or(|(best_time, _)| modified > *best_time)
-        {
-            best_any = Some((modified, run_dir.clone()));
-        }
-        if run_dir_matches_preference(&run_dir, preference)
-            && best_preferred
-                .as_ref()
-                .is_none_or(|(best_time, _)| modified > *best_time)
-        {
-            best_preferred = Some((modified, run_dir));
-        }
-    }
-
-    Ok(best_preferred.or(best_any).map(|(_, path)| path))
-}
-
-pub(crate) fn latest_run_dir_for_instance_root(
-    instance_root: &Path,
-) -> Result<Option<PathBuf>, PrepareError> {
-    best_run_dir_for_instance_root(instance_root, RunDirPreference::LatestAny)
+    Ok(None)
 }
 
 pub(crate) fn preferred_run_dir_for_instance(
-    runs_root: &Path,
+    instances_root: &Path,
     instance_id: &str,
     preference: RunDirPreference,
 ) -> Result<Option<PathBuf>, PrepareError> {
-    best_run_dir_for_instance_root(&runs_root.join(instance_id), preference)
+    best_run_dir_for_instance_root(&instances_root.join(instance_id), preference)
 }
 
-pub(crate) fn list_finished_record_paths_in_runs_root(
-    runs_root: &Path,
+pub(crate) fn list_finished_record_paths_in_instances_root(
+    instances_root: &Path,
 ) -> Result<Vec<PathBuf>, PrepareError> {
-    let authority_paths = completed_record_paths_for_runs_root(runs_root)?;
-    if !authority_paths.is_empty() {
-        return Ok(authority_paths);
-    }
-
-    let mut paths = Vec::new();
-    let entries = match fs::read_dir(runs_root) {
-        Ok(entries) => entries,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(paths),
-        Err(source) => {
-            return Err(PrepareError::ReadManifest {
-                path: runs_root.to_path_buf(),
-                source,
-            });
-        }
-    };
-
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
-        let instance_root = entry.path();
-        if !instance_root.is_dir() {
-            continue;
-        }
-        if let Some(run_dir) = latest_run_dir_for_instance_root(&instance_root)? {
-            let record_path = run_dir.join("record.json.gz");
-            if record_path.exists() {
-                paths.push(record_path);
-            }
-        }
-    }
-
-    paths.sort();
-    Ok(paths)
+    completed_record_paths_for_instances_root(instances_root)
 }
 
 pub async fn print_last_run_assistant_messages() -> Result<(), PrepareError> {
@@ -305,7 +165,7 @@ pub(crate) fn load_last_run_at(eval_home: impl AsRef<Path>) -> Result<LastRunRec
                     run_dir,
                     completed_at_ms: 0,
                 })
-                .ok_or(PrepareError::MissingLastRun(eval_home.join("runs")))
+                .ok_or(PrepareError::MissingLastRun(crate::layout::instances_dir()?))
         }
         Err(source) => Err(PrepareError::ReadLastRunRecord { path, source }),
     }
@@ -333,10 +193,10 @@ fn load_final_snapshot_path(run_dir: &Path) -> Result<PathBuf, PrepareError> {
     }
 }
 
-fn discover_last_run_dir(eval_home: impl AsRef<Path>) -> Result<Option<PathBuf>, PrepareError> {
-    let root = eval_home.as_ref().join("runs");
+fn discover_last_run_dir(_eval_home: impl AsRef<Path>) -> Result<Option<PathBuf>, PrepareError> {
+    let root = crate::layout::instances_dir()?;
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    for record_path in list_finished_record_paths_in_runs_root(&root)? {
+    for record_path in list_finished_record_paths_in_instances_root(&root)? {
         let Some(run_dir) = record_path.parent() else {
             continue;
         };
@@ -365,8 +225,8 @@ mod tests {
     async fn prints_only_assistant_messages_from_last_run() {
         let tmp = tempdir().expect("tempdir");
         let eval_home = tmp.path().join("eval-home");
-        let runs_root = eval_home.join("runs");
-        let run_dir = runs_root.join("demo-run");
+        let instances_root = eval_home.join("instances");
+        let run_dir = instances_root.join("demo-run");
         std::fs::create_dir_all(&run_dir).expect("run dir");
 
         let db = Database::init_with_schema().expect("init db");

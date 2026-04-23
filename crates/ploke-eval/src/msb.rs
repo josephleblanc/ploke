@@ -18,7 +18,7 @@ pub struct PrepareMsbSingleRunRequest {
     pub dataset_key: Option<String>,
     pub instance_id: String,
     pub repo_cache: PathBuf,
-    pub runs_root: PathBuf,
+    pub instances_root: PathBuf,
     pub budget: EvalBudget,
 }
 
@@ -32,7 +32,7 @@ pub struct PrepareMsbBatchRequest {
     pub specifics: Vec<String>,
     pub limit: Option<usize>,
     pub repo_cache: PathBuf,
-    pub runs_root: PathBuf,
+    pub instances_root: PathBuf,
     pub batches_root: PathBuf,
     pub budget: EvalBudget,
 }
@@ -79,7 +79,7 @@ impl PrepareMsbSingleRunRequest {
             &dataset_file,
             &record,
             self.repo_cache,
-            self.runs_root,
+            self.instances_root,
             self.budget,
         )
     }
@@ -106,7 +106,7 @@ impl PrepareMsbBatchRequest {
                     &dataset_file,
                     record,
                     self.repo_cache.clone(),
-                    self.runs_root.clone(),
+                    self.instances_root.clone(),
                     self.budget.clone(),
                 )
             })
@@ -117,7 +117,7 @@ impl PrepareMsbBatchRequest {
             dataset_file,
             dataset_url: dataset.url,
             repo_cache: self.repo_cache,
-            runs_root: self.runs_root,
+            instances_root: self.instances_root,
             output_dir: batch_output_dir,
             budget: self.budget,
             instances: runs.iter().map(|run| run.task_id.clone()).collect(),
@@ -132,12 +132,12 @@ fn prepare_record(
     dataset_file: &PathBuf,
     record: &MultiSweBenchRecord,
     repo_cache: PathBuf,
-    runs_root: PathBuf,
+    instances_root: PathBuf,
     budget: EvalBudget,
 ) -> Result<PreparedSingleRun, PrepareError> {
     let task_id = record_task_id(record);
     let repo_root = repo_cache.join(&record.org).join(&record.repo);
-    let output_dir = runs_root.join(&task_id);
+    let output_dir = instances_root.join(&task_id);
     let language = dataset.language.clone().or_else(|| {
         dataset_file
             .parent()
@@ -392,7 +392,7 @@ mod tests {
         let dataset_dir = tmp.path().join("rust");
         let repo_cache = tmp.path().join("repos");
         let repo_root = repo_cache.join("clap-rs").join("clap");
-        let runs_root = tmp.path().join("runs");
+        let instances_root = tmp.path().join("instances");
         let dataset_file = dataset_dir.join("mini.jsonl");
 
         fs::create_dir_all(repo_root.join(".git")).expect("repo");
@@ -409,7 +409,7 @@ mod tests {
             dataset_key: None,
             instance_id: "clap-rs__clap-1234".to_string(),
             repo_cache,
-            runs_root,
+            instances_root,
             budget: EvalBudget::default(),
         }
         .prepare()
@@ -469,7 +469,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         let dataset_dir = tmp.path().join("rust");
         let repo_cache = tmp.path().join("repos");
         let repo_root = repo_cache.join("BurntSushi").join("ripgrep");
-        let runs_root = tmp.path().join("runs");
+        let instances_root = tmp.path().join("instances");
         let batches_root = tmp.path().join("batches");
         let dataset_file = dataset_dir.join("mini.jsonl");
 
@@ -495,7 +495,7 @@ diff --git a/src/lib.rs b/src/lib.rs
             specifics: vec!["2209".to_string()],
             limit: None,
             repo_cache,
-            runs_root: runs_root.clone(),
+            instances_root: instances_root.clone(),
             batches_root: batches_root.clone(),
             budget: EvalBudget::default(),
         }
@@ -512,7 +512,9 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert_eq!(prepared.runs[0].task_id, "BurntSushi__ripgrep-2209");
         assert_eq!(
             prepared.runs[0].manifest_path(),
-            runs_root.join("BurntSushi__ripgrep-2209").join("run.json")
+            instances_root
+                .join("BurntSushi__ripgrep-2209")
+                .join("run.json")
         );
     }
 

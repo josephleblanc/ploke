@@ -122,11 +122,62 @@ impl InterventionSpec {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InterventionSynthesisInput {
     pub issue: IssueCase,
+    pub source_state_id: String,
+    pub source_content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InterventionCandidate {
+    pub candidate_id: String,
+    pub branch_label: String,
+    pub proposed_content: String,
+    pub spec: InterventionSpec,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InterventionCandidateSet {
+    pub source_state_id: String,
+    pub target_relpath: PathBuf,
+    pub source_content: String,
+    pub candidates: Vec<InterventionCandidate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InterventionSynthesisOutput {
-    pub selected_spec: InterventionSpec,
+    pub candidate_set: InterventionCandidateSet,
+}
+
+impl InterventionSynthesisOutput {
+    pub fn primary_candidate(&self) -> Option<&InterventionCandidate> {
+        self.candidate_set.candidates.first()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TreatmentStateRef {
+    pub source_state_id: String,
+    pub apply_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InterventionApplyInput {
+    pub source_state_id: String,
+    pub candidate: InterventionCandidate,
+    pub target_relpath: PathBuf,
+    pub expected_source_content: String,
+    pub repo_root: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InterventionApplyOutput {
+    pub treatment_state: TreatmentStateRef,
+    pub candidate_id: String,
+    pub target_relpath: PathBuf,
+    pub absolute_path: PathBuf,
+    pub changed: bool,
+    pub source_content_hash: String,
+    pub applied_content_hash: String,
+    pub validation: ValidationResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -170,6 +221,10 @@ pub enum InterventionSpecError {
     ReplaceSectionMarkersMissing { target: String },
     #[error("validation failed: {0}")]
     ValidationFailed(String),
+    #[error(
+        "source content mismatch for apply target {target}: expected synthesized source state content"
+    )]
+    SourceContentMismatch { target: String },
     #[error("i/o error at {path}: {source}")]
     Io {
         path: PathBuf,

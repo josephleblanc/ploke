@@ -7,7 +7,9 @@ use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
+use chrono::Utc;
 use clap::{ArgAction, Parser, Subcommand};
+use ploke_core::tool_types::ToolName;
 use ploke_llm::Router;
 use ploke_llm::request::endpoint::Endpoint;
 use ploke_llm::router_only::HasEndpoint;
@@ -23,13 +25,16 @@ use regex::Regex;
 use serde::Serialize;
 use tokio::task::JoinSet;
 
+use crate::branch_evaluation::{
+    BranchDisposition, BranchEvaluationInput, BranchEvaluationResult, evaluate_branch,
+};
 use crate::campaign::{
     CampaignManifest, CampaignOverrides, CampaignValidationCheck, EvalCampaignPolicy,
     ProtocolCampaignPolicy, ResolvedCampaignConfig, adopt_campaign_manifest_from_closure_state,
     adopt_campaign_manifest_from_registry, apply_campaign_overrides, campaign_closure_state_path,
     campaign_manifest_path, dataset_files_from_sources, dataset_keys_from_sources, list_campaigns,
-    render_resolved_campaign_config, resolve_campaign_config, save_campaign_manifest,
-    validate_campaign_config,
+    load_campaign_manifest, render_resolved_campaign_config, resolve_campaign_config,
+    save_campaign_manifest, validate_campaign_config,
 };
 use crate::closure::{
     ClosureClass, ClosureRecomputeRequest, closure_state_path, load_closure_state,
@@ -37,22 +42,30 @@ use crate::closure::{
 };
 use crate::inner::registry::RunRegistration;
 use crate::intervention::{
-    INTERVENTION_ISSUE_DETECTION_PROCEDURE, InterventionSynthesisInput, IssueCase,
-    IssueDetectionInput, IssueDetectionOutput, detect_issue_cases, issue_detection_artifact_input,
-    select_primary_issue, synthesize_intervention,
+    ArtifactEdit, INTERVENTION_APPLY_PROCEDURE, INTERVENTION_ISSUE_DETECTION_PROCEDURE,
+    INTERVENTION_SYNTHESIS_PROCEDURE, InterventionApplyInput, InterventionApplyOutput,
+    InterventionCandidate, InterventionSpec, InterventionSynthesisInput, IssueCase,
+    IssueDetectionInput, IssueDetectionOutput, TreatmentBranchEvaluationSummary, ValidationPolicy,
+    detect_issue_cases, execute_intervention_apply, issue_detection_artifact_input,
+    load_or_default_branch_registry, mark_treatment_branch_applied,
+    prototype1_branch_registry_path, record_synthesized_branches,
+    record_treatment_branch_evaluation, resolve_treatment_branch, restore_treatment_branch,
+    select_primary_issue, select_treatment_branch, synthesize_intervention_with_llm,
+    treatment_branch_id,
 };
 use crate::intervention_issue_aggregate::{
     IssueDetectionAggregate, IssueDetectionAggregateError, load_issue_detection_aggregate,
 };
 use crate::layout::{
-    active_model_file, batches_dir, cache_dir, datasets_dir, model_registry_file, models_dir,
-    repos_dir, runs_dir, starting_db_cache_dir, workspace_root_for_key,
+    active_model_file, batches_dir, cache_dir, datasets_dir, instances_dir, model_registry_file,
+    models_dir, repos_dir, starting_db_cache_dir, workspace_root_for_key,
 };
 use crate::model_registry::{
     find_models, load_active_model, load_model_registry, refresh_model_registry,
-    registry_has_model, save_active_model,
+    registry_has_model, resolve_model_for_run, save_active_model,
 };
 use crate::msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
+use crate::operational_metrics::OperationalRunMetrics;
 use crate::protocol::protocol_aggregate::{
     ProtocolAggregate, ProtocolAggregateError, ProtocolCallReviewRow, load_protocol_aggregate,
     load_protocol_aggregate_from_artifacts,
@@ -77,13 +90,14 @@ use crate::provider_prefs::{
 use crate::record::{RawFullResponseRecord, read_compressed_record};
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
 use crate::run_history::{
-    RunDirPreference, list_finished_record_paths_in_runs_root, preferred_run_dir_for_instance,
+    RunDirPreference, list_finished_record_paths_in_instances_root, preferred_run_dir_for_instance,
     print_assistant_messages_from_record_path,
 };
 use crate::run_registry::list_registrations_for_instance;
 use crate::runner::{
-    BatchRunSummary, MultiSweBenchSubmissionRecord, ReplayMsbBatchRequest, RunMsbAgentBatchRequest,
-    RunMsbAgentSingleRequest, RunMsbBatchRequest, RunMsbSingleRequest, resolve_provider_for_model,
+    BatchRunArtifactPaths, BatchRunSummary, MultiSweBenchSubmissionRecord, ReplayMsbBatchRequest,
+    RunMsbAgentBatchRequest, RunMsbAgentSingleRequest, RunMsbBatchRequest, RunMsbSingleRequest,
+    resolve_provider_for_model,
 };
 use crate::selection::{
     ActiveSelection, ActiveSelectionSlot, clear_active_selection, load_active_selection,
@@ -95,8 +109,9 @@ use crate::spec::{
     PreparedCampaignContext, PreparedMsbBatch,
 };
 use crate::target_registry::{
-    BenchmarkFamily, RegistryEntry, RegistryRecomputeRequest, TargetRegistry, load_target_registry,
-    recompute_target_registry, render_target_registry_status, target_registry_path,
+    BenchmarkFamily, RegistryDatasetSource, RegistryEntry, RegistryRecomputeRequest,
+    TargetRegistry, load_target_registry, recompute_target_registry, render_target_registry_status,
+    target_registry_path,
 };
 
 const CLI_BEFORE_LONG_HELP: &str = "\
@@ -358,8 +373,118 @@ pub struct LoopCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum LoopSubcommand {
-    /// Run Prototype 1 through eval configuration, baseline arm, and target selection.
+    /// Run Prototype 1 through eval configuration, baseline arm, synthesis, and apply.
     Prototype1(Prototype1LoopCommand),
+    /// Inspect and manipulate Prototype 1 treatment-branch state.
+    Prototype1Branch(Prototype1BranchCommand),
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Inspect and manipulate Prototype 1 treatment-branch state")]
+pub struct Prototype1BranchCommand {
+    #[command(subcommand)]
+    pub command: Prototype1BranchSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Prototype1BranchSubcommand {
+    Status(Prototype1BranchStatusCommand),
+    Show(Prototype1BranchShowCommand),
+    Apply(Prototype1BranchApplyCommand),
+    Evaluate(Prototype1BranchEvaluateCommand),
+    Select(Prototype1BranchSelectCommand),
+    Restore(Prototype1BranchRestoreCommand),
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Show the current Prototype 1 branch registry for a loop campaign")]
+pub struct Prototype1BranchStatusCommand {
+    #[arg(long)]
+    pub campaign: String,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Show the stored content and metadata for a synthesized treatment branch")]
+pub struct Prototype1BranchShowCommand {
+    #[arg(long)]
+    pub campaign: String,
+
+    #[arg(long)]
+    pub branch_id: String,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Apply a synthesized treatment branch to a repo root")]
+pub struct Prototype1BranchApplyCommand {
+    #[arg(long)]
+    pub campaign: String,
+
+    #[arg(long)]
+    pub branch_id: String,
+
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Run the treatment arm for one branch on the same slice and compare mechanized metrics against baseline"
+)]
+pub struct Prototype1BranchEvaluateCommand {
+    #[arg(long)]
+    pub campaign: String,
+
+    #[arg(long)]
+    pub branch_id: String,
+
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    #[arg(long)]
+    pub stop_on_error: bool,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Select a synthesized treatment branch as the active branch for its target")]
+pub struct Prototype1BranchSelectCommand {
+    #[arg(long)]
+    pub campaign: String,
+
+    #[arg(long)]
+    pub branch_id: String,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Restore the source content for a treatment branch and clear it from active state"
+)]
+pub struct Prototype1BranchRestoreCommand {
+    #[arg(long)]
+    pub campaign: String,
+
+    #[arg(long)]
+    pub branch_id: String,
+
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, clap::ValueEnum)]
@@ -368,17 +493,18 @@ pub enum Prototype1LoopStopAfter {
     BaselineEval,
     BaselineProtocol,
     TargetSelection,
+    InterventionApply,
 }
 
 #[derive(Debug, Parser)]
 #[command(
-    about = "Run the Prototype 1 loop through the current implementation frontier",
+    about = "Run the Prototype 1 loop through the current apply-stage implementation frontier",
     after_help = "\
 Flow:
   eval configuration
     -> baseline arm (= eval run -> protocol run)
     -> target selection
-    -> [pending] intervention
+    -> intervention apply
     -> [pending] treatment arm
     -> [pending] compare
 
@@ -428,8 +554,8 @@ pub struct Prototype1LoopCommand {
     pub repo_cache: Option<PathBuf>,
 
     /// Root directory where ploke-eval should create per-run directories.
-    #[arg(long, value_name = "PATH")]
-    pub runs_root: Option<PathBuf>,
+    #[arg(long = "instances-root", alias = "runs-root", value_name = "PATH")]
+    pub instances_root: Option<PathBuf>,
 
     /// Root directory where ploke-eval should create batch manifests and summaries.
     #[arg(long, value_name = "PATH")]
@@ -481,8 +607,12 @@ pub struct Prototype1LoopCommand {
     pub protocol_provider: Option<String>,
 
     /// Stop the wrapper after the selected implemented stage.
-    #[arg(long, value_enum, default_value_t = Prototype1LoopStopAfter::TargetSelection)]
+    #[arg(long, value_enum, default_value_t = Prototype1LoopStopAfter::InterventionApply)]
     pub stop_after: Prototype1LoopStopAfter,
+
+    /// Synthesize/select the intervention candidate, but do not overwrite the target file.
+    #[arg(long)]
+    pub dry_run: bool,
 
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -743,6 +873,20 @@ impl LoopCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         match self.command {
             LoopSubcommand::Prototype1(cmd) => cmd.run().await,
+            LoopSubcommand::Prototype1Branch(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl Prototype1BranchCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            Prototype1BranchSubcommand::Status(cmd) => cmd.run(),
+            Prototype1BranchSubcommand::Show(cmd) => cmd.run(),
+            Prototype1BranchSubcommand::Apply(cmd) => cmd.run(),
+            Prototype1BranchSubcommand::Evaluate(cmd) => cmd.run().await,
+            Prototype1BranchSubcommand::Select(cmd) => cmd.run(),
+            Prototype1BranchSubcommand::Restore(cmd) => cmd.run(),
         }
     }
 }
@@ -750,29 +894,155 @@ impl LoopCommand {
 #[derive(Debug, Clone, Serialize)]
 struct Prototype1LoopReport {
     stage_reached: Prototype1LoopStopAfter,
+    dry_run: bool,
     batch_id: String,
     batch_manifest: PathBuf,
-    baseline_summary_path: PathBuf,
+    campaign_id: String,
+    campaign_manifest: PathBuf,
+    closure_state_path: PathBuf,
+    slice_dataset_path: PathBuf,
+    branch_registry_path: PathBuf,
+    trace_path: PathBuf,
+    prepared_instances: Vec<String>,
+    completed_instances: Vec<String>,
+    protocol_task_instances: Vec<String>,
     baseline_instances: Vec<Prototype1LoopInstance>,
     selected_targets: Vec<Prototype1SelectedTarget>,
+    protocol_failures: Vec<String>,
     pending_stages: Vec<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct Prototype1LoopInstance {
     instance_id: String,
-    status: String,
+    eval_status: ClosureClass,
+    protocol_status: ClosureClass,
     record_path: Option<PathBuf>,
-    turn_summary: Option<PathBuf>,
     protocol_completed: bool,
+    protocol_evidence_available: bool,
+    protocol_failure: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct Prototype1SelectedTarget {
     instance_id: String,
     issue: IssueCase,
+    source_state_id: String,
+    selected_branch_id: String,
+    synthesized_candidate_count: usize,
+    selected_candidate_id: String,
     synthesized_spec_id: String,
     synthesized_target_relpath: PathBuf,
+    apply_output: Option<Prototype1AppliedCandidate>,
+    apply_skipped_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1AppliedCandidate {
+    candidate_id: String,
+    apply_id: String,
+    changed: bool,
+    source_content_hash: String,
+    applied_content_hash: String,
+    target_relpath: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1BranchStatusReport {
+    campaign_id: String,
+    branch_registry_path: PathBuf,
+    source_nodes: usize,
+    active_targets: usize,
+    active_target_state: Vec<Prototype1ActiveTargetReport>,
+    branches: Vec<Prototype1BranchStateRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1ActiveTargetReport {
+    target_relpath: PathBuf,
+    source_state_id: String,
+    active_branch_id: Option<String>,
+    active_apply_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1BranchStateRow {
+    instance_id: String,
+    source_state_id: String,
+    target_relpath: PathBuf,
+    source_content_hash: String,
+    selected_branch_id: Option<String>,
+    branch_id: String,
+    candidate_id: String,
+    branch_label: String,
+    status: String,
+    apply_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1BranchShowReport {
+    campaign_id: String,
+    branch_registry_path: PathBuf,
+    instance_id: String,
+    source_state_id: String,
+    target_relpath: PathBuf,
+    source_content_hash: String,
+    selected_branch_id: Option<String>,
+    branch_id: String,
+    candidate_id: String,
+    branch_label: String,
+    status: String,
+    apply_id: Option<String>,
+    proposed_content_hash: String,
+    proposed_content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1BranchApplyReport {
+    campaign_id: String,
+    branch_registry_path: PathBuf,
+    branch_id: String,
+    candidate_id: String,
+    source_state_id: String,
+    target_relpath: PathBuf,
+    absolute_path: PathBuf,
+    changed: bool,
+    apply_id: String,
+    source_content_hash: String,
+    applied_content_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1BranchEvaluationReport {
+    baseline_campaign_id: String,
+    branch_id: String,
+    treatment_campaign_id: String,
+    branch_registry_path: PathBuf,
+    evaluation_artifact_path: PathBuf,
+    treatment_campaign_manifest: PathBuf,
+    treatment_closure_state_path: PathBuf,
+    overall_disposition: BranchDisposition,
+    reasons: Vec<String>,
+    compared_instances: Vec<Prototype1ComparedInstanceReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1ComparedInstanceReport {
+    instance_id: String,
+    baseline_record_path: Option<PathBuf>,
+    treatment_record_path: Option<PathBuf>,
+    baseline_metrics: Option<OperationalRunMetrics>,
+    treatment_metrics: Option<OperationalRunMetrics>,
+    evaluation: Option<BranchEvaluationResult>,
+    status: String,
+}
+
+struct Prototype1LoopCampaign {
+    campaign_id: String,
+    manifest_path: PathBuf,
+    closure_state_path: PathBuf,
+    slice_dataset_path: PathBuf,
+    resolved: ResolvedCampaignConfig,
 }
 
 fn print_builtin_dataset_entries() {
@@ -784,84 +1054,189 @@ fn print_builtin_dataset_entries() {
 impl Prototype1LoopCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         let (batch_manifest, prepared_batch) = prepare_or_load_prototype1_batch(&self)?;
-        let batch_artifacts = RunMsbAgentBatchRequest {
-            batch_manifest: batch_manifest.clone(),
-            index_debug_snapshots: self.index_debug_snapshots,
-            use_default_model: self.use_default_model,
-            model_id: self.model_id.clone(),
-            provider: parse_provider_key(self.provider.clone())?,
-            stop_on_error: self.stop_on_error,
-        }
-        .run()
-        .await?;
-        let baseline_summary = load_batch_run_summary(&batch_artifacts.summary)?;
+        let campaign = prepare_prototype1_loop_campaign(&self, &prepared_batch)?;
+        let trace_path = prototype1_trace_path(&campaign.manifest_path);
+        let branch_registry_path = prototype1_branch_registry_path(&campaign.manifest_path);
 
         let mut baseline_instances = Vec::new();
         let mut selected_targets = Vec::new();
-        let protocol_model_id = resolve_protocol_model_id(self.protocol_model_id.clone())?;
-        let protocol_model_id_string = protocol_model_id.to_string();
-        let protocol_provider_slug =
-            resolve_protocol_provider_slug(&protocol_model_id, self.protocol_provider.clone())?;
+        let mut protocol_failures = Vec::new();
+        let mut protocol_task_instances = Vec::new();
+        let intervention_repo_root =
+            std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
+                path: PathBuf::from("."),
+                source,
+            })?;
 
-        for result in &baseline_summary.instance_results {
-            let mut protocol_completed = false;
-            if self.stop_after >= Prototype1LoopStopAfter::BaselineProtocol
-                && result.status == "completed"
+        let mut eval_policy = campaign.resolved.eval.clone();
+        if self.stop_on_error {
+            eval_policy.stop_on_error = true;
+        }
+        let eval_report = advance_eval_closure(&campaign.resolved, &eval_policy, false).await?;
+
+        if self.stop_after >= Prototype1LoopStopAfter::BaselineProtocol {
+            let mut protocol_policy = campaign.resolved.protocol.clone();
+            if self.stop_on_error {
+                protocol_policy.stop_on_error = true;
+            }
+            let protocol_report =
+                advance_protocol_closure(&campaign.resolved, &protocol_policy, false).await?;
+            protocol_failures = protocol_report.failures;
+            protocol_task_instances = protocol_report
+                .selected_runs
+                .into_iter()
+                .map(|plan| plan.instance_id)
+                .collect();
+        }
+
+        let closure = load_closure_state(&campaign.campaign_id)?;
+
+        for row in &closure.instances {
+            let protocol_failure = protocol_failures
+                .iter()
+                .find(|failure| failure.starts_with(&format!("{}:", row.instance_id)))
+                .cloned();
+            let record_path = row.artifacts.record_path.clone();
+            let protocol_completed = row.protocol_status == ClosureClass::Complete;
+            let protocol_evidence_available = record_path
+                .as_ref()
+                .is_some_and(|path| load_protocol_aggregate(path).is_ok());
+
+            if self.stop_after >= Prototype1LoopStopAfter::TargetSelection
+                && row.eval_status == ClosureClass::Complete
+                && protocol_evidence_available
             {
-                if let Some(record_path) = result.record_path.as_ref() {
-                    run_protocol_to_completion_for_record(
-                        &result.task_id,
-                        record_path,
-                        &protocol_model_id_string,
-                        protocol_provider_slug.clone(),
-                    )
-                    .await?;
-                    protocol_completed = true;
-
-                    if self.stop_after >= Prototype1LoopStopAfter::TargetSelection {
-                        let detection_output = persist_issue_detection_for_record(record_path)?;
-                        if let Some(issue) = select_primary_issue(&detection_output) {
-                            if let Some(synthesis) =
-                                synthesize_intervention(&InterventionSynthesisInput {
-                                    issue: issue.clone(),
-                                })
+                if let Some(record_path) = record_path.as_ref() {
+                    let detection_output = persist_issue_detection_for_record(record_path)?;
+                    if let Some(issue) = select_primary_issue(&detection_output) {
+                        let synthesis = persist_intervention_synthesis_for_record(
+                            record_path,
+                            issue.clone(),
+                            row.artifacts
+                                .run_root
+                                .as_ref()
+                                .map(|path| path.display().to_string())
+                                .unwrap_or_else(|| row.instance_id.clone()),
+                            self.protocol_model_id.clone(),
+                            self.protocol_provider.clone(),
+                        )
+                        .await?;
+                        if let Some(candidate) = synthesis.primary_candidate() {
+                            let selected_branch_id = treatment_branch_id(
+                                &synthesis.candidate_set.source_state_id,
+                                &synthesis.candidate_set.target_relpath,
+                                candidate.candidate_id.as_str(),
+                            );
+                            let _ = record_synthesized_branches(
+                                &campaign.campaign_id,
+                                &campaign.manifest_path,
+                                &row.instance_id,
+                                &synthesis,
+                                Some(candidate.candidate_id.as_str()),
+                            )?;
+                            let apply_output = if self.stop_after
+                                >= Prototype1LoopStopAfter::InterventionApply
+                                && !self.dry_run
                             {
-                                selected_targets.push(Prototype1SelectedTarget {
-                                    instance_id: result.task_id.clone(),
-                                    synthesized_spec_id: synthesis
-                                        .selected_spec
-                                        .spec_id()
-                                        .to_string(),
-                                    synthesized_target_relpath: synthesis
-                                        .selected_spec
-                                        .target_relpath()
-                                        .to_path_buf(),
-                                    issue,
-                                });
-                            }
+                                let output = persist_intervention_apply_for_record(
+                                    record_path,
+                                    &synthesis,
+                                    candidate.candidate_id.as_str(),
+                                    &intervention_repo_root,
+                                )?;
+                                let _ = mark_treatment_branch_applied(
+                                    &campaign.campaign_id,
+                                    &campaign.manifest_path,
+                                    &synthesis.candidate_set.target_relpath,
+                                    &output,
+                                )?;
+                                Some(output)
+                            } else {
+                                None
+                            };
+                            selected_targets.push(Prototype1SelectedTarget {
+                                instance_id: row.instance_id.clone(),
+                                source_state_id: synthesis.candidate_set.source_state_id.clone(),
+                                selected_branch_id,
+                                synthesized_candidate_count: synthesis
+                                    .candidate_set
+                                    .candidates
+                                    .len(),
+                                selected_candidate_id: candidate.candidate_id.clone(),
+                                synthesized_spec_id: candidate.spec.spec_id().to_string(),
+                                synthesized_target_relpath: synthesis
+                                    .candidate_set
+                                    .target_relpath
+                                    .clone(),
+                                apply_output: apply_output.as_ref().map(|output| {
+                                    Prototype1AppliedCandidate {
+                                        candidate_id: output.candidate_id.clone(),
+                                        apply_id: output.treatment_state.apply_id.clone(),
+                                        changed: output.changed,
+                                        source_content_hash: output.source_content_hash.clone(),
+                                        applied_content_hash: output.applied_content_hash.clone(),
+                                        target_relpath: output.target_relpath.clone(),
+                                    }
+                                }),
+                                apply_skipped_reason: if self.stop_after
+                                    >= Prototype1LoopStopAfter::InterventionApply
+                                    && self.dry_run
+                                {
+                                    Some(
+                                        "dry-run: synthesized candidate selected but not applied"
+                                            .to_string(),
+                                    )
+                                } else {
+                                    None
+                                },
+                                issue,
+                            });
                         }
                     }
                 }
             }
 
             baseline_instances.push(Prototype1LoopInstance {
-                instance_id: result.task_id.clone(),
-                status: result.status.clone(),
-                record_path: result.record_path.clone(),
-                turn_summary: result.turn_summary.clone(),
+                instance_id: row.instance_id.clone(),
+                eval_status: row.eval_status,
+                protocol_status: row.protocol_status,
+                record_path,
                 protocol_completed,
+                protocol_evidence_available,
+                protocol_failure,
             });
         }
 
         let report = Prototype1LoopReport {
             stage_reached: self.stop_after,
+            dry_run: self.dry_run,
             batch_id: prepared_batch.batch_id.clone(),
             batch_manifest,
-            baseline_summary_path: batch_artifacts.summary,
+            campaign_id: campaign.campaign_id,
+            campaign_manifest: campaign.manifest_path,
+            closure_state_path: campaign.closure_state_path,
+            slice_dataset_path: campaign.slice_dataset_path,
+            branch_registry_path,
+            trace_path: trace_path.clone(),
+            prepared_instances: prepared_batch.instances.clone(),
+            completed_instances: eval_report
+                .selected_instances
+                .iter()
+                .filter(|instance_id| {
+                    baseline_instances.iter().any(|row| {
+                        row.instance_id == **instance_id
+                            && row.eval_status == ClosureClass::Complete
+                    })
+                })
+                .cloned()
+                .collect(),
+            protocol_task_instances,
             baseline_instances,
             selected_targets,
+            protocol_failures,
             pending_stages: pending_prototype1_stages(self.stop_after),
         };
+        write_json_file_pretty(&trace_path, &report)?;
 
         match self.format {
             InspectOutputFormat::Table => print_prototype1_loop_report(&report),
@@ -875,6 +1250,564 @@ impl Prototype1LoopCommand {
 
         Ok(())
     }
+}
+
+impl Prototype1BranchStatusCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let manifest_path = campaign_manifest_path(&self.campaign)?;
+        let registry = load_or_default_branch_registry(&self.campaign, &manifest_path)?;
+        let report = prototype1_branch_status_report(&self.campaign, &manifest_path, &registry);
+        match self.format {
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                );
+            }
+            InspectOutputFormat::Table => print_prototype1_branch_status_report(&report),
+        }
+        Ok(())
+    }
+}
+
+impl Prototype1BranchShowCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let manifest_path = campaign_manifest_path(&self.campaign)?;
+        let branch_registry_path = prototype1_branch_registry_path(&manifest_path);
+        let resolved = resolve_treatment_branch(&self.campaign, &manifest_path, &self.branch_id)?;
+        let report = Prototype1BranchShowReport {
+            campaign_id: self.campaign,
+            branch_registry_path,
+            instance_id: resolved.instance_id.clone(),
+            source_state_id: resolved.source_state_id.clone(),
+            target_relpath: resolved.target_relpath.clone(),
+            source_content_hash: resolved.source_content_hash.clone(),
+            selected_branch_id: resolved.selected_branch_id.clone(),
+            branch_id: resolved.branch.branch_id.clone(),
+            candidate_id: resolved.branch.candidate_id.clone(),
+            branch_label: resolved.branch.branch_label.clone(),
+            status: format!("{:?}", resolved.branch.status).to_ascii_lowercase(),
+            apply_id: resolved.branch.apply_id.clone(),
+            proposed_content_hash: resolved.branch.proposed_content_hash.clone(),
+            proposed_content: resolved.branch.proposed_content.clone(),
+        };
+        match self.format {
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                );
+            }
+            InspectOutputFormat::Table => print_prototype1_branch_show_report(&report),
+        }
+        Ok(())
+    }
+}
+
+impl Prototype1BranchApplyCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let manifest_path = campaign_manifest_path(&self.campaign)?;
+        let branch_registry_path = prototype1_branch_registry_path(&manifest_path);
+        let repo_root = if let Some(path) = self.repo_root {
+            path
+        } else {
+            std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
+                path: PathBuf::from("."),
+                source,
+            })?
+        };
+        let resolved = resolve_treatment_branch(&self.campaign, &manifest_path, &self.branch_id)?;
+        let tool = tool_name_for_description_relpath(&resolved.target_relpath)?;
+        let candidate = InterventionCandidate {
+            candidate_id: resolved.branch.candidate_id.clone(),
+            branch_label: resolved.branch.branch_label.clone(),
+            proposed_content: resolved.branch.proposed_content.clone(),
+            spec: InterventionSpec::ToolGuidanceMutation {
+                spec_id: resolved.branch.synthesized_spec_id.clone(),
+                evidence_basis: "prototype1_branch_apply".to_string(),
+                intended_effect: "materialize stored treatment branch content".to_string(),
+                tool,
+                edit: ArtifactEdit::ReplaceWholeText {
+                    new_text: resolved.branch.proposed_content.clone(),
+                },
+                validation_policy: ValidationPolicy::for_tool_description_target(tool),
+            },
+        };
+        let input = InterventionApplyInput {
+            source_state_id: resolved.source_state_id.clone(),
+            candidate,
+            target_relpath: resolved.target_relpath.clone(),
+            expected_source_content: resolved.source_content.clone(),
+            repo_root,
+        };
+        let output =
+            execute_intervention_apply(&input).map_err(|source| PrepareError::DatabaseSetup {
+                phase: "prototype1_branch_apply",
+                detail: source.to_string(),
+            })?;
+        let _ = mark_treatment_branch_applied(
+            &self.campaign,
+            &manifest_path,
+            &input.target_relpath,
+            &output,
+        )?;
+        let report = Prototype1BranchApplyReport {
+            campaign_id: self.campaign,
+            branch_registry_path,
+            branch_id: self.branch_id,
+            candidate_id: output.candidate_id.clone(),
+            source_state_id: output.treatment_state.source_state_id.clone(),
+            target_relpath: output.target_relpath.clone(),
+            absolute_path: output.absolute_path.clone(),
+            changed: output.changed,
+            apply_id: output.treatment_state.apply_id.clone(),
+            source_content_hash: output.source_content_hash,
+            applied_content_hash: output.applied_content_hash,
+        };
+        match self.format {
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                );
+            }
+            InspectOutputFormat::Table => print_prototype1_branch_apply_report(&report),
+        }
+        Ok(())
+    }
+}
+
+impl Prototype1BranchEvaluateCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let baseline_manifest_path = campaign_manifest_path(&self.campaign)?;
+        let branch_registry_path = prototype1_branch_registry_path(&baseline_manifest_path);
+        let repo_root = if let Some(path) = self.repo_root {
+            path
+        } else {
+            std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
+                path: PathBuf::from("."),
+                source,
+            })?
+        };
+        let resolved_branch =
+            resolve_treatment_branch(&self.campaign, &baseline_manifest_path, &self.branch_id)?;
+        ensure_treatment_branch_materialized(
+            &self.campaign,
+            &baseline_manifest_path,
+            &resolved_branch,
+            &repo_root,
+        )?;
+
+        let baseline_resolved =
+            resolve_campaign_config(&self.campaign, &CampaignOverrides::default())?;
+        let treatment_campaign =
+            prepare_prototype1_treatment_campaign(&baseline_resolved, &self.branch_id)?;
+        let mut eval_policy = treatment_campaign.resolved.eval.clone();
+        if self.stop_on_error {
+            eval_policy.stop_on_error = true;
+        }
+        let _ = advance_eval_closure(&treatment_campaign.resolved, &eval_policy, false).await?;
+
+        let mut protocol_policy = treatment_campaign.resolved.protocol.clone();
+        if self.stop_on_error {
+            protocol_policy.stop_on_error = true;
+        }
+        let _ =
+            advance_protocol_closure(&treatment_campaign.resolved, &protocol_policy, false).await?;
+
+        let baseline_state = load_closure_state(&self.campaign)?;
+        let treatment_state = load_closure_state(&treatment_campaign.campaign_id)?;
+        let evaluation_artifact_path =
+            prototype1_branch_evaluation_path(&baseline_manifest_path, &self.branch_id);
+        let report = build_prototype1_branch_evaluation_report(
+            &self.campaign,
+            &self.branch_id,
+            &branch_registry_path,
+            &evaluation_artifact_path,
+            &treatment_campaign,
+            &baseline_state,
+            &treatment_state,
+        )?;
+        write_json_file_pretty(&evaluation_artifact_path, &report)?;
+
+        let rejected_instances = report
+            .compared_instances
+            .iter()
+            .filter(|row| {
+                row.evaluation
+                    .as_ref()
+                    .is_some_and(|evaluation| evaluation.disposition == BranchDisposition::Reject)
+                    || row.status != "compared"
+            })
+            .count();
+        let summary = TreatmentBranchEvaluationSummary {
+            baseline_campaign_id: self.campaign.clone(),
+            treatment_campaign_id: report.treatment_campaign_id.clone(),
+            compared_instances: report.compared_instances.len(),
+            rejected_instances,
+            overall_disposition: report.overall_disposition.clone(),
+            evaluated_at: Utc::now().to_rfc3339(),
+        };
+        let _ = record_treatment_branch_evaluation(
+            &self.campaign,
+            &baseline_manifest_path,
+            &self.branch_id,
+            summary,
+        )?;
+
+        match self.format {
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                );
+            }
+            InspectOutputFormat::Table => print_prototype1_branch_evaluation_report(&report),
+        }
+        Ok(())
+    }
+}
+
+impl Prototype1BranchSelectCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let manifest_path = campaign_manifest_path(&self.campaign)?;
+        let registry = select_treatment_branch(&self.campaign, &manifest_path, &self.branch_id)?;
+        let report = prototype1_branch_status_report(&self.campaign, &manifest_path, &registry);
+        match self.format {
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                );
+            }
+            InspectOutputFormat::Table => print_prototype1_branch_status_report(&report),
+        }
+        Ok(())
+    }
+}
+
+impl Prototype1BranchRestoreCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let manifest_path = campaign_manifest_path(&self.campaign)?;
+        let repo_root = if let Some(path) = self.repo_root {
+            path
+        } else {
+            std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
+                path: PathBuf::from("."),
+                source,
+            })?
+        };
+        let restored =
+            restore_treatment_branch(&self.campaign, &manifest_path, &self.branch_id, &repo_root)?;
+        match self.format {
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&restored).map_err(PrepareError::Serialize)?
+                );
+            }
+            InspectOutputFormat::Table => {
+                println!("prototype1 branch restore");
+                println!("{}", "-".repeat(40));
+                println!("campaign_id: {}", self.campaign);
+                println!("branch_id: {}", restored.branch_id);
+                println!("source_state_id: {}", restored.source_state_id);
+                println!("target: {}", restored.target_relpath.display());
+                println!("changed: {}", yes_no(restored.changed));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn prototype1_branch_status_report(
+    campaign_id: &str,
+    campaign_manifest_path: &Path,
+    registry: &crate::intervention::Prototype1BranchRegistry,
+) -> Prototype1BranchStatusReport {
+    let mut branches = Vec::new();
+    for source in &registry.source_nodes {
+        for branch in &source.branches {
+            branches.push(Prototype1BranchStateRow {
+                instance_id: source.instance_id.clone(),
+                source_state_id: source.source_state_id.clone(),
+                target_relpath: source.target_relpath.clone(),
+                source_content_hash: source.source_content_hash.clone(),
+                selected_branch_id: source.selected_branch_id.clone(),
+                branch_id: branch.branch_id.clone(),
+                candidate_id: branch.candidate_id.clone(),
+                branch_label: branch.branch_label.clone(),
+                status: serde_name(&branch.status).to_string(),
+                apply_id: branch.apply_id.clone(),
+            });
+        }
+    }
+
+    Prototype1BranchStatusReport {
+        campaign_id: campaign_id.to_string(),
+        branch_registry_path: prototype1_branch_registry_path(campaign_manifest_path),
+        source_nodes: registry.source_nodes.len(),
+        active_targets: registry.active_targets.len(),
+        active_target_state: registry
+            .active_targets
+            .iter()
+            .map(|entry| Prototype1ActiveTargetReport {
+                target_relpath: entry.target_relpath.clone(),
+                source_state_id: entry.source_state_id.clone(),
+                active_branch_id: entry.active_branch_id.clone(),
+                active_apply_id: entry.active_apply_id.clone(),
+            })
+            .collect(),
+        branches,
+    }
+}
+
+fn tool_name_for_description_relpath(relpath: &Path) -> Result<ToolName, PrepareError> {
+    ToolName::ALL
+        .into_iter()
+        .find(|tool| Path::new(tool.description_artifact_relpath()) == relpath)
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "unsupported branch apply target '{}': expected a known tool description relpath",
+                relpath.display()
+            ),
+        })
+}
+
+fn ensure_treatment_branch_materialized(
+    campaign_id: &str,
+    campaign_manifest_path: &Path,
+    resolved: &crate::intervention::ResolvedTreatmentBranch,
+    repo_root: &Path,
+) -> Result<(), PrepareError> {
+    let absolute_path = repo_root.join(&resolved.target_relpath);
+    let current =
+        fs::read_to_string(&absolute_path).map_err(|source| PrepareError::ReadManifest {
+            path: absolute_path.clone(),
+            source,
+        })?;
+
+    if current == resolved.branch.proposed_content {
+        return Ok(());
+    }
+    if current != resolved.source_content {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "cannot materialize branch '{}' at '{}': current content matches neither the stored source state nor the branch content",
+                resolved.branch.branch_id,
+                absolute_path.display()
+            ),
+        });
+    }
+
+    let tool = tool_name_for_description_relpath(&resolved.target_relpath)?;
+    let candidate = InterventionCandidate {
+        candidate_id: resolved.branch.candidate_id.clone(),
+        branch_label: resolved.branch.branch_label.clone(),
+        proposed_content: resolved.branch.proposed_content.clone(),
+        spec: InterventionSpec::ToolGuidanceMutation {
+            spec_id: resolved.branch.synthesized_spec_id.clone(),
+            evidence_basis: "prototype1_branch_evaluate".to_string(),
+            intended_effect: "materialize stored treatment branch content".to_string(),
+            tool,
+            edit: ArtifactEdit::ReplaceWholeText {
+                new_text: resolved.branch.proposed_content.clone(),
+            },
+            validation_policy: ValidationPolicy::for_tool_description_target(tool),
+        },
+    };
+    let input = InterventionApplyInput {
+        source_state_id: resolved.source_state_id.clone(),
+        candidate,
+        target_relpath: resolved.target_relpath.clone(),
+        expected_source_content: resolved.source_content.clone(),
+        repo_root: repo_root.to_path_buf(),
+    };
+    let output =
+        execute_intervention_apply(&input).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_branch_evaluate_apply",
+            detail: source.to_string(),
+        })?;
+    let _ = mark_treatment_branch_applied(
+        campaign_id,
+        campaign_manifest_path,
+        &input.target_relpath,
+        &output,
+    )?;
+    Ok(())
+}
+
+fn prepare_prototype1_treatment_campaign(
+    baseline: &ResolvedCampaignConfig,
+    branch_id: &str,
+) -> Result<Prototype1LoopCampaign, PrepareError> {
+    let campaign_id = format!(
+        "{}-treatment-{}-{}",
+        baseline.campaign_id,
+        branch_id,
+        Utc::now().timestamp_millis()
+    );
+    let manifest_path = campaign_manifest_path(&campaign_id)?;
+    let baseline_manifest = load_campaign_manifest(&baseline.campaign_id)?;
+
+    let mut manifest = CampaignManifest::new(campaign_id.clone());
+    manifest.dataset_sources = baseline_manifest.dataset_sources.clone();
+    manifest.model_id = Some(baseline.model_id.clone());
+    manifest.provider_slug = baseline.provider_slug.clone();
+    manifest.instances_root = Some(
+        baseline
+            .instances_root
+            .join("treatments")
+            .join(branch_id)
+            .join("instances"),
+    );
+    manifest.batches_root = Some(
+        baseline
+            .batches_root
+            .join("treatments")
+            .join(branch_id)
+            .join("batches"),
+    );
+    manifest.eval = baseline_manifest.eval.clone();
+    manifest.protocol = baseline_manifest.protocol.clone();
+    save_campaign_manifest(&manifest)?;
+    let resolved = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
+    let closure_state_path = campaign_closure_state_path(&campaign_id)?;
+
+    Ok(Prototype1LoopCampaign {
+        campaign_id,
+        manifest_path,
+        closure_state_path,
+        slice_dataset_path: baseline_manifest
+            .dataset_sources
+            .first()
+            .map(|source| source.path.clone())
+            .unwrap_or_else(|| PathBuf::from("<unknown>")),
+        resolved,
+    })
+}
+
+fn prototype1_branch_evaluation_path(campaign_manifest_path: &Path, branch_id: &str) -> PathBuf {
+    campaign_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1")
+        .join("evaluations")
+        .join(format!("{branch_id}.json"))
+}
+
+fn build_prototype1_branch_evaluation_report(
+    baseline_campaign_id: &str,
+    branch_id: &str,
+    branch_registry_path: &Path,
+    evaluation_artifact_path: &Path,
+    treatment_campaign: &Prototype1LoopCampaign,
+    baseline_state: &crate::closure::ClosureState,
+    treatment_state: &crate::closure::ClosureState,
+) -> Result<Prototype1BranchEvaluationReport, PrepareError> {
+    let mut treatment_by_instance = BTreeMap::new();
+    for row in &treatment_state.instances {
+        treatment_by_instance.insert(row.instance_id.clone(), row);
+    }
+
+    let mut compared_instances = Vec::new();
+    let mut reasons = Vec::new();
+
+    for row in &baseline_state.instances {
+        let treatment_row = treatment_by_instance.get(&row.instance_id).copied();
+        let baseline_record_path = row.artifacts.record_path.clone();
+        let treatment_record_path = treatment_row.and_then(|row| row.artifacts.record_path.clone());
+
+        let baseline_metrics = if row.eval_status == ClosureClass::Complete {
+            baseline_record_path
+                .as_ref()
+                .map(|path| {
+                    read_compressed_record(path)
+                        .map(|record| record.operational_metrics())
+                        .map_err(|source| PrepareError::ReadManifest {
+                            path: path.clone(),
+                            source,
+                        })
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let treatment_metrics =
+            if treatment_row.is_some_and(|row| row.eval_status == ClosureClass::Complete) {
+                treatment_record_path
+                    .as_ref()
+                    .map(|path| {
+                        read_compressed_record(path)
+                            .map(|record| record.operational_metrics())
+                            .map_err(|source| PrepareError::ReadManifest {
+                                path: path.clone(),
+                                source,
+                            })
+                    })
+                    .transpose()?
+            } else {
+                None
+            };
+
+        let (status, evaluation) = match (&baseline_metrics, &treatment_metrics) {
+            (Some(baseline_metrics), Some(treatment_metrics)) => {
+                let evaluation = evaluate_branch(&BranchEvaluationInput {
+                    baseline_metrics: baseline_metrics.clone(),
+                    treatment_metrics: treatment_metrics.clone(),
+                });
+                if evaluation.disposition == BranchDisposition::Reject {
+                    for reason in &evaluation.reasons {
+                        reasons.push(format!("{}: {}", row.instance_id, reason));
+                    }
+                }
+                ("compared".to_string(), Some(evaluation))
+            }
+            (Some(_), None) => {
+                reasons.push(format!(
+                    "{}: treatment arm did not produce a complete record",
+                    row.instance_id
+                ));
+                ("missing_treatment_record".to_string(), None)
+            }
+            (None, _) => {
+                reasons.push(format!(
+                    "{}: baseline arm does not have a complete record",
+                    row.instance_id
+                ));
+                ("missing_baseline_record".to_string(), None)
+            }
+        };
+
+        compared_instances.push(Prototype1ComparedInstanceReport {
+            instance_id: row.instance_id.clone(),
+            baseline_record_path,
+            treatment_record_path,
+            baseline_metrics,
+            treatment_metrics,
+            evaluation,
+            status,
+        });
+    }
+
+    let overall_disposition = if reasons.is_empty() {
+        BranchDisposition::Keep
+    } else {
+        BranchDisposition::Reject
+    };
+
+    Ok(Prototype1BranchEvaluationReport {
+        baseline_campaign_id: baseline_campaign_id.to_string(),
+        branch_id: branch_id.to_string(),
+        treatment_campaign_id: treatment_campaign.campaign_id.clone(),
+        branch_registry_path: branch_registry_path.to_path_buf(),
+        evaluation_artifact_path: evaluation_artifact_path.to_path_buf(),
+        treatment_campaign_manifest: treatment_campaign.manifest_path.clone(),
+        treatment_closure_state_path: treatment_campaign.closure_state_path.clone(),
+        overall_disposition,
+        reasons,
+        compared_instances,
+    })
 }
 
 fn prepare_or_load_prototype1_batch(
@@ -905,7 +1838,7 @@ fn prepare_or_load_prototype1_batch(
         specifics: command.specific.clone(),
         limit: command.limit,
         repo_cache: command.repo_cache.clone().unwrap_or(repos_dir()?),
-        runs_root: command.runs_root.clone().unwrap_or(runs_dir()?),
+        instances_root: command.instances_root.clone().unwrap_or(instances_dir()?),
         batches_root: command.batches_root.clone().unwrap_or(batches_dir()?),
         budget: EvalBudget {
             max_turns: command.max_turns,
@@ -951,31 +1884,288 @@ fn load_prepared_batch_for_loop(
     Ok((manifest_path, prepared))
 }
 
-fn load_batch_run_summary(summary_path: &Path) -> Result<BatchRunSummary, PrepareError> {
-    let summary_text =
-        fs::read_to_string(summary_path).map_err(|source| PrepareError::ReadManifest {
-            path: summary_path.to_path_buf(),
+fn prepare_prototype1_loop_campaign(
+    command: &Prototype1LoopCommand,
+    prepared_batch: &PreparedMsbBatch,
+) -> Result<Prototype1LoopCampaign, PrepareError> {
+    let eval_model = resolve_model_for_run(
+        command
+            .model_id
+            .as_deref()
+            .map(ModelId::from_str)
+            .transpose()
+            .map_err(|err| PrepareError::DatabaseSetup {
+                phase: "prototype1_loop_model_id",
+                detail: err.to_string(),
+            })?
+            .as_ref(),
+        command.use_default_model,
+    )?
+    .id;
+    let eval_provider_slug = if let Some(provider) = command.provider.clone() {
+        Some(
+            ProviderKey::new(&provider)
+                .map_err(|err| PrepareError::DatabaseSetup {
+                    phase: "prototype1_loop_provider",
+                    detail: err.to_string(),
+                })?
+                .slug
+                .as_str()
+                .to_string(),
+        )
+    } else {
+        load_provider_for_model(&eval_model)?.map(|provider| provider.slug.as_str().to_string())
+    };
+
+    if command.stop_after >= Prototype1LoopStopAfter::BaselineProtocol {
+        let protocol_model = resolve_protocol_model_id(command.protocol_model_id.clone())?;
+        let protocol_provider =
+            resolve_protocol_provider_slug(&protocol_model, command.protocol_provider.clone())?;
+        if protocol_model != eval_model || protocol_provider != eval_provider_slug {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_loop_campaign",
+                detail: format!(
+                    "prototype1 baseline arm now delegates to closure/campaign and currently requires one shared model/provider; eval={} {:?}, protocol={} {:?}",
+                    eval_model, eval_provider_slug, protocol_model, protocol_provider
+                ),
+            });
+        }
+    }
+
+    let campaign_id = format!(
+        "prototype1-{}-{}",
+        prepared_batch
+            .batch_id
+            .chars()
+            .map(
+                |ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '-'
+                }
+            )
+            .collect::<String>(),
+        Utc::now().timestamp_millis()
+    );
+    let manifest_path = campaign_manifest_path(&campaign_id)?;
+    let campaign_dir = manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let slice_dataset_path = campaign_dir.join("slice.jsonl");
+    write_prototype1_slice_dataset(
+        &prepared_batch.dataset_file,
+        &prepared_batch.instances,
+        &slice_dataset_path,
+    )?;
+
+    let mut manifest = CampaignManifest::new(campaign_id.clone());
+    manifest.dataset_sources = vec![RegistryDatasetSource {
+        key: None,
+        path: slice_dataset_path.clone(),
+        label: format!("prototype1/{}", prepared_batch.batch_id),
+        url: prepared_batch.dataset_url.clone(),
+    }];
+    manifest.model_id = Some(eval_model.to_string());
+    manifest.provider_slug = eval_provider_slug;
+    manifest.instances_root = Some(
+        command
+            .instances_root
+            .clone()
+            .unwrap_or(instances_dir()?)
+            .join("prototype1")
+            .join(&campaign_id),
+    );
+    manifest.batches_root = Some(
+        command
+            .batches_root
+            .clone()
+            .unwrap_or(batches_dir()?)
+            .join("prototype1")
+            .join(&campaign_id),
+    );
+    manifest.eval = EvalCampaignPolicy {
+        include_partial: false,
+        stop_on_error: command.stop_on_error,
+        limit: None,
+        include_dataset_labels: Vec::new(),
+        exclude_dataset_labels: Vec::new(),
+        budget: prepared_batch.budget.clone(),
+        batch_prefix: Some(prepared_batch.batch_id.clone()),
+    };
+    manifest.protocol = ProtocolCampaignPolicy {
+        stop_on_error: command.stop_on_error,
+        ..ProtocolCampaignPolicy::default()
+    };
+    save_campaign_manifest(&manifest)?;
+    let resolved = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
+    let closure_state_path = campaign_closure_state_path(&campaign_id)?;
+
+    Ok(Prototype1LoopCampaign {
+        campaign_id,
+        manifest_path,
+        closure_state_path,
+        slice_dataset_path,
+        resolved,
+    })
+}
+
+fn write_prototype1_slice_dataset(
+    dataset_path: &Path,
+    instances: &[String],
+    output_path: &Path,
+) -> Result<(), PrepareError> {
+    let wanted = instances.iter().cloned().collect::<BTreeSet<_>>();
+    let text = fs::read_to_string(dataset_path).map_err(|source| PrepareError::ReadManifest {
+        path: dataset_path.to_path_buf(),
+        source,
+    })?;
+    let mut kept = Vec::new();
+    let mut found = BTreeSet::new();
+
+    for (line_idx, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(trimmed).map_err(|source| PrepareError::ParseDatasetLine {
+                path: dataset_path.to_path_buf(),
+                line: line_idx + 1,
+                source,
+            })?;
+        let Some(instance_id) = value.get("instance_id").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if wanted.contains(instance_id) {
+            kept.push(trimmed.to_string());
+            found.insert(instance_id.to_string());
+        }
+    }
+
+    let missing = wanted.difference(&found).cloned().collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "prototype1 slice dataset is missing {} selected instances: {}",
+                missing.len(),
+                missing.join(", ")
+            ),
+        });
+    }
+
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
+            path: parent.to_path_buf(),
             source,
         })?;
-    serde_json::from_str(&summary_text).map_err(|source| PrepareError::ParseManifest {
-        path: summary_path.to_path_buf(),
+    }
+    fs::write(output_path, kept.join("\n") + "\n").map_err(|source| PrepareError::WriteManifest {
+        path: output_path.to_path_buf(),
         source,
     })
 }
 
-async fn run_protocol_to_completion_for_record(
-    instance_id: &str,
-    record_path: &Path,
-    model_id: &str,
+async fn execute_batch_eval_for_manifest(
+    batch_manifest: PathBuf,
+    index_debug_snapshots: bool,
+    use_default_model: bool,
+    model_id: Option<String>,
+    provider: Option<ProviderKey>,
+    stop_on_error: bool,
+) -> Result<BatchRunArtifactPaths, PrepareError> {
+    RunMsbAgentBatchRequest {
+        batch_manifest,
+        index_debug_snapshots,
+        use_default_model,
+        model_id,
+        provider,
+        stop_on_error,
+    }
+    .run()
+    .await
+}
+
+#[derive(Debug)]
+struct ProtocolBatchExecution {
+    executions: Vec<ProtocolRunExecution>,
+    failures: Vec<String>,
+}
+
+async fn execute_protocol_run_tasks(
+    tasks: Vec<ProtocolRunTask>,
+    model_id: String,
     provider_slug: Option<String>,
-) -> Result<(), PrepareError> {
-    let task = ProtocolRunTask {
-        instance_id: instance_id.to_string(),
-        record_path: record_path.to_path_buf(),
-    };
-    execute_protocol_run_task(task, model_id.to_string(), provider_slug)
-        .await
-        .map(|_| ())
+    max_concurrency: usize,
+    stop_on_error: bool,
+) -> Result<ProtocolBatchExecution, PrepareError> {
+    let mut executions = Vec::new();
+    let mut failures = Vec::new();
+    let max_concurrency = max_concurrency.max(1);
+    let mut pending = tasks.into_iter().collect::<VecDeque<_>>();
+    let mut join_set = JoinSet::new();
+
+    while join_set.len() < max_concurrency {
+        let Some(task) = pending.pop_front() else {
+            break;
+        };
+        spawn_protocol_run_task(&mut join_set, task, model_id.clone(), provider_slug.clone());
+    }
+
+    while let Some(joined) = join_set.join_next().await {
+        match joined {
+            Ok(Ok(execution)) => {
+                executions.push(execution);
+                if let Some(task) = pending.pop_front() {
+                    spawn_protocol_run_task(
+                        &mut join_set,
+                        task,
+                        model_id.clone(),
+                        provider_slug.clone(),
+                    );
+                }
+            }
+            Ok(Err(err)) => {
+                failures.push(err.to_string());
+                if stop_on_error {
+                    join_set.abort_all();
+                    return Err(err);
+                }
+                if let Some(task) = pending.pop_front() {
+                    spawn_protocol_run_task(
+                        &mut join_set,
+                        task,
+                        model_id.clone(),
+                        provider_slug.clone(),
+                    );
+                }
+            }
+            Err(err) => {
+                let detail = PrepareError::DatabaseSetup {
+                    phase: "protocol_run_tasks",
+                    detail: format!("protocol worker task failed: {err}"),
+                };
+                failures.push(detail.to_string());
+                if stop_on_error {
+                    join_set.abort_all();
+                    return Err(detail);
+                }
+                if let Some(task) = pending.pop_front() {
+                    spawn_protocol_run_task(
+                        &mut join_set,
+                        task,
+                        model_id.clone(),
+                        provider_slug.clone(),
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(ProtocolBatchExecution {
+        executions,
+        failures,
+    })
 }
 
 fn persist_issue_detection_for_record(
@@ -1005,13 +2195,113 @@ fn persist_issue_detection_for_record(
     Ok(output)
 }
 
+async fn persist_intervention_synthesis_for_record(
+    record_path: &Path,
+    issue: IssueCase,
+    source_state_id: String,
+    model_id: Option<String>,
+    provider: Option<String>,
+) -> Result<crate::intervention::InterventionSynthesisOutput, PrepareError> {
+    let record =
+        read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
+            path: record_path.to_path_buf(),
+            source,
+        })?;
+    let subject_id = record.metadata.benchmark.instance_id.clone();
+    let target_relpath = PathBuf::from(issue.target_tool.description_artifact_relpath());
+    let source_content =
+        fs::read_to_string(&target_relpath).map_err(|source| PrepareError::ReadManifest {
+            path: target_relpath.clone(),
+            source,
+        })?;
+    let input = InterventionSynthesisInput {
+        issue,
+        source_state_id,
+        source_content,
+    };
+    let model_id = resolve_protocol_model_id(model_id)?;
+    let provider_slug = resolve_protocol_provider_slug(&model_id, provider)?;
+    let cfg = JsonLlmConfig {
+        model_id: model_id.to_string(),
+        provider_slug,
+        timeout_secs: 45,
+        max_tokens: 3200,
+    };
+    let run = synthesize_intervention_with_llm(input.clone(), cfg.clone())
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "intervention_synthesis",
+            detail: err.to_string(),
+        })?;
+    write_protocol_artifact(
+        record_path,
+        INTERVENTION_SYNTHESIS_PROCEDURE,
+        &subject_id,
+        Some(cfg.model_id.as_str()),
+        cfg.provider_slug.as_deref(),
+        &input,
+        &run.output,
+        &run.artifact,
+    )?;
+    Ok(run.output)
+}
+
+fn persist_intervention_apply_for_record(
+    record_path: &Path,
+    synthesis: &crate::intervention::InterventionSynthesisOutput,
+    candidate_id: &str,
+    repo_root: &Path,
+) -> Result<InterventionApplyOutput, PrepareError> {
+    let record =
+        read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
+            path: record_path.to_path_buf(),
+            source,
+        })?;
+    let subject_id = record.metadata.benchmark.instance_id.clone();
+    let candidate = synthesis
+        .candidate_set
+        .candidates
+        .iter()
+        .find(|candidate| candidate.candidate_id == candidate_id)
+        .cloned()
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "intervention apply candidate '{}' not found for subject '{}'",
+                candidate_id, subject_id
+            ),
+        })?;
+    let input = InterventionApplyInput {
+        source_state_id: synthesis.candidate_set.source_state_id.clone(),
+        candidate,
+        target_relpath: synthesis.candidate_set.target_relpath.clone(),
+        expected_source_content: synthesis.candidate_set.source_content.clone(),
+        repo_root: repo_root.to_path_buf(),
+    };
+    let output =
+        execute_intervention_apply(&input).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "intervention_apply",
+            detail: source.to_string(),
+        })?;
+    write_protocol_artifact(
+        record_path,
+        INTERVENTION_APPLY_PROCEDURE,
+        &subject_id,
+        None,
+        None,
+        &input,
+        &output,
+        &output,
+    )?;
+    Ok(output)
+}
+
 fn pending_prototype1_stages(stage_reached: Prototype1LoopStopAfter) -> Vec<&'static str> {
     match stage_reached {
         Prototype1LoopStopAfter::BaselineEval => {
             vec![
                 "baseline protocol",
                 "target selection",
-                "intervention",
+                "intervention apply",
                 "treatment arm",
                 "compare",
             ]
@@ -1019,14 +2309,15 @@ fn pending_prototype1_stages(stage_reached: Prototype1LoopStopAfter) -> Vec<&'st
         Prototype1LoopStopAfter::BaselineProtocol => {
             vec![
                 "target selection",
-                "intervention",
+                "intervention apply",
                 "treatment arm",
                 "compare",
             ]
         }
         Prototype1LoopStopAfter::TargetSelection => {
-            vec!["intervention", "treatment arm", "compare"]
+            vec!["intervention apply", "treatment arm", "compare"]
         }
+        Prototype1LoopStopAfter::InterventionApply => vec!["treatment arm", "compare"],
     }
 }
 
@@ -1034,27 +2325,38 @@ fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
     println!("prototype1 loop");
     println!("{}", "-".repeat(40));
     println!("stage_reached: {}", serde_name(&report.stage_reached));
+    println!("dry_run: {}", yes_no(report.dry_run));
     println!("batch_id: {}", report.batch_id);
     println!("batch_manifest: {}", report.batch_manifest.display());
+    println!("campaign_id: {}", report.campaign_id);
+    println!("campaign_manifest: {}", report.campaign_manifest.display());
+    println!("closure_state: {}", report.closure_state_path.display());
+    println!("slice_dataset: {}", report.slice_dataset_path.display());
+    println!("branch_registry: {}", report.branch_registry_path.display());
+    println!("trace: {}", report.trace_path.display());
     println!(
-        "baseline_summary: {}",
-        report.baseline_summary_path.display()
+        "prepared/completed/protocol_tasks: {}/{}/{}",
+        report.prepared_instances.len(),
+        report.completed_instances.len(),
+        report.protocol_task_instances.len()
     );
     println!();
     println!("baseline instances");
     println!("{}", "-".repeat(40));
     for instance in &report.baseline_instances {
         println!(
-            "- {} status={} protocol_completed={}",
+            "- {} eval_status={} protocol_status={} protocol_completed={} protocol_evidence={}",
             instance.instance_id,
-            instance.status,
-            yes_no(instance.protocol_completed)
+            serde_name(&instance.eval_status),
+            serde_name(&instance.protocol_status),
+            yes_no(instance.protocol_completed),
+            yes_no(instance.protocol_evidence_available)
         );
         if let Some(record_path) = instance.record_path.as_ref() {
             println!("  record: {}", record_path.display());
         }
-        if let Some(turn_summary) = instance.turn_summary.as_ref() {
-            println!("  turn_summary: {}", turn_summary.display());
+        if let Some(protocol_failure) = instance.protocol_failure.as_ref() {
+            println!("  protocol_failure: {}", protocol_failure);
         }
     }
     println!();
@@ -1066,19 +2368,213 @@ fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
         for target in &report.selected_targets {
             println!("- {}", target.instance_id);
             print_issue_case_block("  primary_issue", &target.issue);
+            println!("  source_state_id: {}", target.source_state_id);
+            println!("  selected_branch_id: {}", target.selected_branch_id);
+            println!(
+                "  synthesized_candidates: {}",
+                target.synthesized_candidate_count
+            );
+            println!("  selected_candidate_id: {}", target.selected_candidate_id);
             println!("  synthesized_spec_id: {}", target.synthesized_spec_id);
             println!(
                 "  synthesized_target: {}",
                 target.synthesized_target_relpath.display()
             );
+            if let Some(apply_output) = target.apply_output.as_ref() {
+                println!("  applied_candidate_id: {}", apply_output.candidate_id);
+                println!("  apply_id: {}", apply_output.apply_id);
+                println!("  apply_changed: {}", yes_no(apply_output.changed));
+                println!("  apply_target: {}", apply_output.target_relpath.display());
+            }
+            if let Some(reason) = target.apply_skipped_reason.as_ref() {
+                println!("  apply_skipped: {reason}");
+            }
         }
     }
     println!();
+    if !report.protocol_failures.is_empty() {
+        println!("protocol failures");
+        println!("{}", "-".repeat(40));
+        for failure in &report.protocol_failures {
+            println!("- {}", failure);
+        }
+        println!();
+    }
     println!("pending");
     println!("{}", "-".repeat(40));
     for stage in &report.pending_stages {
         println!("- {}", stage);
     }
+}
+
+fn print_prototype1_branch_status_report(report: &Prototype1BranchStatusReport) {
+    println!("prototype1 branch state");
+    println!("{}", "-".repeat(40));
+    println!("campaign_id: {}", report.campaign_id);
+    println!("branch_registry: {}", report.branch_registry_path.display());
+    println!(
+        "source_nodes/active_targets/branches: {}/{}/{}",
+        report.source_nodes,
+        report.active_targets,
+        report.branches.len()
+    );
+    println!();
+    println!("active targets");
+    println!("{}", "-".repeat(40));
+    if report.active_target_state.is_empty() {
+        println!("(none)");
+    } else {
+        for target in &report.active_target_state {
+            println!("- {}", target.target_relpath.display());
+            println!("  source_state_id: {}", target.source_state_id);
+            if let Some(branch_id) = target.active_branch_id.as_ref() {
+                println!("  active_branch_id: {}", branch_id);
+            } else {
+                println!("  active_branch_id: (none)");
+            }
+            if let Some(apply_id) = target.active_apply_id.as_ref() {
+                println!("  active_apply_id: {}", apply_id);
+            }
+        }
+    }
+    println!();
+    println!("branches");
+    println!("{}", "-".repeat(40));
+    if report.branches.is_empty() {
+        println!("(none)");
+    } else {
+        for branch in &report.branches {
+            println!("- {}", branch.branch_id);
+            println!("  instance_id: {}", branch.instance_id);
+            println!("  source_state_id: {}", branch.source_state_id);
+            println!("  target: {}", branch.target_relpath.display());
+            println!("  candidate_id: {}", branch.candidate_id);
+            println!("  branch_label: {}", branch.branch_label);
+            println!("  status: {}", branch.status);
+            if let Some(selected_branch_id) = branch.selected_branch_id.as_ref() {
+                println!("  selected_branch_id: {}", selected_branch_id);
+            }
+            if let Some(apply_id) = branch.apply_id.as_ref() {
+                println!("  apply_id: {}", apply_id);
+            }
+        }
+    }
+}
+
+fn print_prototype1_branch_show_report(report: &Prototype1BranchShowReport) {
+    println!("prototype1 branch show");
+    println!("{}", "-".repeat(40));
+    println!("campaign_id: {}", report.campaign_id);
+    println!("branch_id: {}", report.branch_id);
+    println!("candidate_id: {}", report.candidate_id);
+    println!("branch_label: {}", report.branch_label);
+    println!("status: {}", report.status);
+    println!("instance_id: {}", report.instance_id);
+    println!("source_state_id: {}", report.source_state_id);
+    println!("target: {}", report.target_relpath.display());
+    println!(
+        "selected_branch_id: {}",
+        report.selected_branch_id.as_deref().unwrap_or("(none)")
+    );
+    println!(
+        "apply_id: {}",
+        report.apply_id.as_deref().unwrap_or("(none)")
+    );
+    println!("source_content_hash: {}", report.source_content_hash);
+    println!("proposed_content_hash: {}", report.proposed_content_hash);
+    println!("content:");
+    println!("{}", "-".repeat(40));
+    print!("{}", report.proposed_content);
+    if !report.proposed_content.ends_with('\n') {
+        println!();
+    }
+}
+
+fn print_prototype1_branch_apply_report(report: &Prototype1BranchApplyReport) {
+    println!("prototype1 branch apply");
+    println!("{}", "-".repeat(40));
+    println!("campaign_id: {}", report.campaign_id);
+    println!("branch_id: {}", report.branch_id);
+    println!("candidate_id: {}", report.candidate_id);
+    println!("source_state_id: {}", report.source_state_id);
+    println!("target: {}", report.target_relpath.display());
+    println!("absolute_path: {}", report.absolute_path.display());
+    println!("changed: {}", yes_no(report.changed));
+    println!("apply_id: {}", report.apply_id);
+    println!("source_content_hash: {}", report.source_content_hash);
+    println!("applied_content_hash: {}", report.applied_content_hash);
+}
+
+fn print_prototype1_branch_evaluation_report(report: &Prototype1BranchEvaluationReport) {
+    println!("prototype1 branch evaluation");
+    println!("{}", "-".repeat(40));
+    println!("baseline_campaign_id: {}", report.baseline_campaign_id);
+    println!("branch_id: {}", report.branch_id);
+    println!("treatment_campaign_id: {}", report.treatment_campaign_id);
+    println!(
+        "treatment_campaign_manifest: {}",
+        report.treatment_campaign_manifest.display()
+    );
+    println!(
+        "treatment_closure_state: {}",
+        report.treatment_closure_state_path.display()
+    );
+    println!("branch_registry: {}", report.branch_registry_path.display());
+    println!(
+        "evaluation_artifact: {}",
+        report.evaluation_artifact_path.display()
+    );
+    println!(
+        "overall_disposition: {}",
+        serde_name(&report.overall_disposition)
+    );
+    println!();
+    println!("instances");
+    println!("{}", "-".repeat(40));
+    for row in &report.compared_instances {
+        println!("- {} [{}]", row.instance_id, row.status);
+        if let Some(path) = row.baseline_record_path.as_ref() {
+            println!("  baseline_record: {}", path.display());
+        }
+        if let Some(path) = row.treatment_record_path.as_ref() {
+            println!("  treatment_record: {}", path.display());
+        }
+        if let Some(evaluation) = row.evaluation.as_ref() {
+            println!("  disposition: {}", serde_name(&evaluation.disposition));
+            for reason in &evaluation.reasons {
+                println!("  reason: {}", reason);
+            }
+        }
+    }
+    if !report.reasons.is_empty() {
+        println!();
+        println!("reasons");
+        println!("{}", "-".repeat(40));
+        for reason in &report.reasons {
+            println!("- {}", reason);
+        }
+    }
+}
+
+fn prototype1_trace_path(campaign_manifest_path: &Path) -> PathBuf {
+    campaign_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1-loop-trace.json")
+}
+
+fn write_json_file_pretty<T: Serialize>(path: &Path, value: &T) -> Result<(), PrepareError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let bytes = serde_json::to_vec_pretty(value).map_err(PrepareError::Serialize)?;
+    fs::write(path, bytes).map_err(|source| PrepareError::WriteManifest {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 impl PrepareSingleCommand {
@@ -1123,14 +2619,14 @@ Example:
 Defaults:
   dataset cache: ~/.ploke-eval/datasets
   repo cache:    ~/.ploke-eval/repos
-  runs root:     ~/.ploke-eval/runs
+  instances root: ~/.ploke-eval/instances
 
 Reads:
   Multi-SWE-bench dataset JSONL
   repo checkout under <repo-cache>/<org>/<repo>
 
 Writes:
-  ~/.ploke-eval/runs/<instance>/run.json
+  ~/.ploke-eval/instances/<instance>/run.json
 "
 )]
 pub struct PrepareMsbSingleCommand {
@@ -1152,15 +2648,15 @@ pub struct PrepareMsbSingleCommand {
     pub repo_cache: Option<PathBuf>,
 
     /// Root directory where ploke-eval should create per-run directories.
-    /// Defaults to ~/.ploke-eval/runs.
-    #[arg(long, value_name = "PATH")]
-    pub runs_root: Option<PathBuf>,
+    /// Defaults to ~/.ploke-eval/instances.
+    #[arg(long = "instances-root", alias = "runs-root", value_name = "PATH")]
+    pub instances_root: Option<PathBuf>,
 
     /// Print compact or pretty JSON.
     #[arg(long, value_enum, default_value_t = OutputMode::Pretty)]
     pub output_mode: OutputMode,
 
-    /// Write the manifest to stdout instead of runs_root/<task_id>/run.json.
+    /// Write the manifest to stdout instead of instances_root/<task_id>/run.json.
     #[arg(long)]
     pub stdout: bool,
 
@@ -1181,7 +2677,7 @@ impl PrepareMsbSingleCommand {
             dataset_key: self.dataset_key,
             instance_id: self.instance,
             repo_cache: self.repo_cache.unwrap_or(repos_dir()?),
-            runs_root: self.runs_root.unwrap_or(runs_dir()?),
+            instances_root: self.instances_root.unwrap_or(instances_dir()?),
             budget: EvalBudget {
                 max_turns: self.max_turns,
                 max_tool_calls: self.max_tool_calls,
@@ -1212,11 +2708,11 @@ Examples:
 Defaults:
   dataset cache: ~/.ploke-eval/datasets
   repo cache:    ~/.ploke-eval/repos
-  runs root:     ~/.ploke-eval/runs
+  instances root: ~/.ploke-eval/instances
   batches root:  ~/.ploke-eval/batches
 
 Writes:
-  ~/.ploke-eval/runs/<instance>/run.json for each selected instance
+  ~/.ploke-eval/instances/<instance>/run.json for each selected instance
   ~/.ploke-eval/batches/<batch-id>/batch.json
 "
 )]
@@ -1254,8 +2750,8 @@ pub struct PrepareMsbBatchCommand {
     pub repo_cache: Option<PathBuf>,
 
     /// Root directory where ploke-eval should create per-run directories.
-    #[arg(long, value_name = "PATH")]
-    pub runs_root: Option<PathBuf>,
+    #[arg(long = "instances-root", alias = "runs-root", value_name = "PATH")]
+    pub instances_root: Option<PathBuf>,
 
     /// Root directory where ploke-eval should create batch manifests and summaries.
     #[arg(long, value_name = "PATH")]
@@ -1295,7 +2791,7 @@ impl PrepareMsbBatchCommand {
             specifics: self.specific,
             limit: self.limit,
             repo_cache: self.repo_cache.unwrap_or(repos_dir()?),
-            runs_root: self.runs_root.unwrap_or(runs_dir()?),
+            instances_root: self.instances_root.unwrap_or(instances_dir()?),
             batches_root: self.batches_root.unwrap_or(batches_dir()?),
             budget: EvalBudget {
                 max_turns: self.max_turns,
@@ -1323,7 +2819,7 @@ Example:
   cargo run -p ploke-eval -- run single setup --instance BurntSushi__ripgrep-2209
 
 Default manifest path:
-  ~/.ploke-eval/runs/<instance>/run.json
+  ~/.ploke-eval/instances/<instance>/run.json
 
 Default output artifacts under the run directory:
   repo-state.json
@@ -1334,7 +2830,7 @@ Default output artifacts under the run directory:
   indexing-failure.db
 
 The runner also creates a per-run config sandbox at:
-  ~/.ploke-eval/runs/<instance>/config
+  ~/.ploke-eval/instances/<instance>/config
 
 That sandbox is used so SaveDb writes its registry and snapshot files into
 the run directory instead of your normal user config directory.
@@ -1347,11 +2843,11 @@ Use `--provider <slug>` to pin a specific OpenRouter provider for the selected m
 "
 )]
 pub struct RunMsbSingleCommand {
-    /// Path to a prepared run manifest. Defaults to ~/.ploke-eval/runs/<instance>/run.json.
+    /// Path to a prepared run manifest. Defaults to ~/.ploke-eval/instances/<instance>/run.json.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub run: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/run.json.
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/instances/<instance>/run.json.
     #[arg(long, conflicts_with = "run")]
     pub instance: Option<String>,
 
@@ -1429,9 +2925,9 @@ This extends the normal run with a single agentic turn that:
 Use `--provider <slug>` to pin a specific OpenRouter provider for the selected model.
 
 Outputs:
-  The prepared instance root is ~/.ploke-eval/runs/<instance>.
+  The prepared instance root is ~/.ploke-eval/instances/<instance>.
   Each invocation writes a unique nested run directory under:
-    ~/.ploke-eval/runs/<instance>/runs/run-<timestamp>-<arm>-<suffix>
+    ~/.ploke-eval/instances/<instance>/runs/run-<timestamp>-<arm>-<suffix>
 
   Key agent-run files inside that nested run directory:
     execution-log.json
@@ -1445,11 +2941,11 @@ Outputs:
 "
 )]
 pub struct RunMsbAgentSingleCommand {
-    /// Path to a prepared run manifest. Defaults to ~/.ploke-eval/runs/<instance>/run.json.
+    /// Path to a prepared run manifest. Defaults to ~/.ploke-eval/instances/<instance>/run.json.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub run: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/run.json.
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/instances/<instance>/run.json.
     #[arg(long, conflicts_with = "run")]
     pub instance: Option<String>,
 
@@ -1499,7 +2995,7 @@ Paths:
 Operational caution:
   Treat the batch aggregate multi-swe-bench-submission.jsonl as a convenience output.
   For stronger local truth, inspect per-run submission files under:
-    ~/.ploke-eval/runs/<instance>/runs/run-*/multi-swe-bench-submission.jsonl
+    ~/.ploke-eval/instances/<instance>/runs/run-*/multi-swe-bench-submission.jsonl
   or use:
     cargo run -p ploke-eval -- campaign export-submissions --campaign <campaign>
 "
@@ -1888,11 +3384,11 @@ failure surfaces with the exact snippets in the eval log.
 "
 )]
 pub struct ReplayMsbBatchCommand {
-    /// Path to a prepared run manifest. Defaults to ~/.ploke-eval/runs/<instance>/run.json.
+    /// Path to a prepared run manifest. Defaults to ~/.ploke-eval/instances/<instance>/run.json.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub run: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/run.json.
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/instances/<instance>/run.json.
     #[arg(long, conflicts_with = "run")]
     pub instance: Option<String>,
 
@@ -1908,17 +3404,18 @@ pub struct ReplayMsbBatchCommand {
 Example:
 
   cargo run -p ploke-eval -- conversations --instance BurntSushi__ripgrep-2209
-  cargo run -p ploke-eval -- conversations --record ~/.ploke-eval/runs/BurntSushi__ripgrep-2209/record.json.gz
+  cargo run -p ploke-eval -- conversations --record ~/.ploke-eval/instances/BurntSushi__ripgrep-2209/runs/run-<timestamp>-<arm>-<suffix>/record.json.gz
 
 Output includes turn number, timestamps, tool call count, and outcome for each turn.
 "
 )]
 pub struct ConversationsCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2136,9 +3633,9 @@ pub struct CampaignOverrideArgs {
     #[arg(long)]
     pub required_procedure: Vec<String>,
 
-    /// Override the runs root.
-    #[arg(long, value_name = "PATH")]
-    pub runs_root: Option<PathBuf>,
+    /// Override the instances root.
+    #[arg(long = "instances-root", alias = "runs-root", value_name = "PATH")]
+    pub instances_root: Option<PathBuf>,
 
     /// Override the batches root.
     #[arg(long, value_name = "PATH")]
@@ -2473,11 +3970,12 @@ pub enum ProtocolSubcommand {
 
 #[derive(Debug, Parser)]
 pub struct ProtocolStatusCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2488,11 +3986,12 @@ pub struct ProtocolStatusCommand {
 
 #[derive(Debug, Parser)]
 pub struct ProtocolRunCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2511,11 +4010,12 @@ pub struct ProtocolRunCommand {
 
 #[derive(Debug, Parser)]
 pub struct ProtocolIssueDetectionCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2526,11 +4026,12 @@ pub struct ProtocolIssueDetectionCommand {
 
 #[derive(Debug, Parser)]
 pub struct ProtocolToolCallReviewCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2553,11 +4054,12 @@ pub struct ProtocolToolCallReviewCommand {
 
 #[derive(Debug, Parser)]
 pub struct ProtocolToolCallIntentSegmentsCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2576,11 +4078,12 @@ pub struct ProtocolToolCallIntentSegmentsCommand {
 
 #[derive(Debug, Parser)]
 pub struct ProtocolToolCallSegmentReviewCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2648,11 +4151,12 @@ Recommended patterns:
   ploke-eval inspect conversations --instance <id> --format json --full | rg '\"error_id\"|\"call_id\"'
 ")]
 pub struct InspectConversationsCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2667,11 +4171,12 @@ pub struct InspectConversationsCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectToolCallsCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2709,11 +4214,12 @@ pub struct InspectToolOverviewCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectDbSnapshotsCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2724,11 +4230,12 @@ pub struct InspectDbSnapshotsCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectFailuresCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2739,11 +4246,12 @@ pub struct InspectFailuresCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectConfigCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2754,11 +4262,12 @@ pub struct InspectConfigCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectOperationalCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2769,11 +4278,12 @@ pub struct InspectOperationalCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectTurnCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2823,11 +4333,12 @@ Examples:
 "
 )]
 pub struct InspectQueryCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2850,11 +4361,12 @@ pub struct InspectQueryCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectProtocolOverviewCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with_all = ["instance", "all_runs", "campaign"])]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with_all = ["record", "all_runs", "campaign"])]
     pub instance: Option<String>,
 
@@ -2942,11 +4454,12 @@ pub enum ProtocolColorProfileOption {
 
 #[derive(Debug, Parser)]
 pub struct InspectIssueOverviewCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -2967,11 +4480,12 @@ impl From<ProtocolColorProfileOption> for ProtocolColorProfile {
 
 #[derive(Debug, Parser)]
 pub struct InspectProtocolArtifactsCommand {
-    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    /// Path to a run record file (record.json.gz). Defaults to the latest registered attempt's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
 
-    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    /// Benchmark instance id, used to resolve the latest registered attempt's
+    /// ~/.ploke-eval/instances/<instance>/runs/run-*/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
 
@@ -3018,10 +4532,10 @@ impl RunMsbSingleCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         let run_manifest = match (self.run, self.instance) {
             (Some(path), None) => path,
-            (None, Some(instance)) => runs_dir()?.join(instance).join("run.json"),
+            (None, Some(instance)) => instances_dir()?.join(instance).join("run.json"),
             _ => {
                 return Err(PrepareError::MissingRunManifest(
-                    runs_dir()?.join("<instance>/run.json"),
+                    instances_dir()?.join("<instance>/run.json"),
                 ));
             }
         };
@@ -3069,10 +4583,10 @@ impl RunMsbAgentSingleCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         let run_manifest = match (self.run, self.instance) {
             (Some(path), None) => path,
-            (None, Some(instance)) => runs_dir()?.join(instance).join("run.json"),
+            (None, Some(instance)) => instances_dir()?.join(instance).join("run.json"),
             _ => {
                 return Err(PrepareError::MissingRunManifest(
-                    runs_dir()?.join("<instance>/run.json"),
+                    instances_dir()?.join("<instance>/run.json"),
                 ));
             }
         };
@@ -3126,10 +4640,10 @@ impl ReplayMsbBatchCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         let run_manifest = match (self.run, self.instance) {
             (Some(path), None) => path,
-            (None, Some(instance)) => runs_dir()?.join(instance).join("run.json"),
+            (None, Some(instance)) => instances_dir()?.join(instance).join("run.json"),
             _ => {
                 return Err(PrepareError::MissingRunManifest(
-                    runs_dir()?.join("<instance>/run.json"),
+                    instances_dir()?.join("<instance>/run.json"),
                 ));
             }
         };
@@ -3168,12 +4682,17 @@ impl RunListCommand {
                     "instance is required (pass --instance or `ploke-eval select instance <id>`)"
                         .to_string(),
             })?;
-        let registrations = list_attempt_registrations(&runs_dir()?, &instance)?;
-        let warnings = render_selection_warnings(&selection_with_resolution(
+        let registrations = list_attempt_registrations(&instances_dir()?, &instance)?;
+        let mut warnings = render_selection_warnings(&selection_with_resolution(
             &selection,
             Some(&instance),
             None,
         ));
+        if !registrations.is_empty()
+            && has_legacy_instance_root_artifacts(&instances_dir()?, &instance)
+        {
+            warnings.push(legacy_instance_root_warning(&instance));
+        }
         let rows: Vec<_> = registrations
             .iter()
             .enumerate()
@@ -3506,7 +5025,7 @@ impl CampaignOverrideArgs {
             model_id: self.model_id,
             provider_slug: self.provider,
             required_procedures: self.required_procedure,
-            runs_root: self.runs_root,
+            instances_root: self.instances_root,
             batches_root: self.batches_root,
         }
     }
@@ -4396,13 +5915,13 @@ enum ProtocolNextStep {
     Blocked,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct ProtocolRunTask {
     instance_id: String,
     record_path: PathBuf,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 struct ProtocolRunExecution {
     instance_id: String,
     plan: ProtocolRunPlan,
@@ -4442,7 +5961,7 @@ fn closure_request_from_campaign(config: &ResolvedCampaignConfig) -> ClosureReco
         dataset_keys: dataset_keys_from_sources(&config.dataset_sources),
         dataset_files: dataset_files_from_sources(&config.dataset_sources),
         required_procedures: config.required_procedures.clone(),
-        runs_root: Some(config.runs_root.clone()),
+        instances_root: Some(config.instances_root.clone()),
         batches_root: Some(config.batches_root.clone()),
         framework: Some(config.framework.clone()),
     }
@@ -4512,9 +6031,9 @@ fn load_submission_record_for_row(
     let path = if let Some(path) = row.artifacts.msb_submission.as_ref() {
         path.clone()
     } else {
-        let instance_root = state.config.runs_root.join(&row.instance_id);
+        let instance_root = state.config.instances_root.join(&row.instance_id);
         let run_dir = preferred_run_dir_for_instance(
-            &state.config.runs_root,
+            &state.config.instances_root,
             &row.instance_id,
             RunDirPreference::PreferTreatmentWithSubmission,
         )?
@@ -4666,7 +6185,7 @@ async fn advance_eval_closure(
                 specifics: Vec::new(),
                 limit: None,
                 repo_cache: repos_dir()?,
-                runs_root: config.runs_root.clone(),
+                instances_root: config.instances_root.clone(),
                 batches_root: config.batches_root.clone(),
                 budget: policy.budget.clone(),
             }
@@ -4679,15 +6198,14 @@ async fn advance_eval_closure(
             prepared.batch.campaign = Some(campaign_context.clone());
             prepared.batch.write_manifest(OutputMode::Pretty)?;
 
-            let artifacts = RunMsbAgentBatchRequest {
-                batch_manifest: prepared.batch.manifest_path(),
-                index_debug_snapshots: true,
-                use_default_model: false,
-                model_id: Some(config.model_id.clone()),
-                provider: provider.clone(),
-                stop_on_error: policy.stop_on_error,
-            }
-            .run()
+            let artifacts = execute_batch_eval_for_manifest(
+                prepared.batch.manifest_path(),
+                true,
+                false,
+                Some(config.model_id.clone()),
+                provider.clone(),
+                policy.stop_on_error,
+            )
             .await?;
             executed_batches += 1;
 
@@ -4749,73 +6267,21 @@ async fn advance_protocol_closure(
             plans_by_instance.insert(task.instance_id, plan);
         }
     } else {
-        let max_concurrency = policy.max_concurrency.max(1);
-        let mut pending = tasks.into_iter().collect::<VecDeque<_>>();
-        let mut join_set = JoinSet::new();
-        while join_set.len() < max_concurrency {
-            let Some(task) = pending.pop_front() else {
-                break;
-            };
-            spawn_protocol_run_task(
-                &mut join_set,
-                task,
-                config.model_id.clone(),
-                config.provider_slug.clone(),
-            );
-        }
-
-        while let Some(joined) = join_set.join_next().await {
-            match joined {
-                Ok(Ok(execution)) => {
-                    executed_runs += 1;
-                    segmentations_created += execution.segmentations_created;
-                    call_reviews_created += execution.call_reviews_created;
-                    segment_reviews_created += execution.segment_reviews_created;
-                    plans_by_instance.insert(execution.instance_id.clone(), execution.plan);
-                    if let Some(task) = pending.pop_front() {
-                        spawn_protocol_run_task(
-                            &mut join_set,
-                            task,
-                            config.model_id.clone(),
-                            config.provider_slug.clone(),
-                        );
-                    }
-                }
-                Ok(Err(err)) => {
-                    failures.push(err.to_string());
-                    if policy.stop_on_error {
-                        join_set.abort_all();
-                        return Err(err);
-                    }
-                    if let Some(task) = pending.pop_front() {
-                        spawn_protocol_run_task(
-                            &mut join_set,
-                            task,
-                            config.model_id.clone(),
-                            config.provider_slug.clone(),
-                        );
-                    }
-                }
-                Err(err) => {
-                    let detail = PrepareError::DatabaseSetup {
-                        phase: "closure_advance_protocol",
-                        detail: format!("protocol worker task failed: {err}"),
-                    };
-                    failures.push(detail.to_string());
-                    if policy.stop_on_error {
-                        join_set.abort_all();
-                        return Err(detail);
-                    }
-                    if let Some(task) = pending.pop_front() {
-                        spawn_protocol_run_task(
-                            &mut join_set,
-                            task,
-                            config.model_id.clone(),
-                            config.provider_slug.clone(),
-                        );
-                    }
-                }
-            }
+        let execution = execute_protocol_run_tasks(
+            tasks,
+            config.model_id.clone(),
+            config.provider_slug.clone(),
+            policy.max_concurrency,
+            policy.stop_on_error,
+        )
+        .await?;
+        failures = execution.failures;
+        for run in execution.executions {
+            executed_runs += 1;
+            segmentations_created += run.segmentations_created;
+            call_reviews_created += run.call_reviews_created;
+            segment_reviews_created += run.segment_reviews_created;
+            plans_by_instance.insert(run.instance_id.clone(), run.plan);
         }
     }
 
@@ -5189,6 +6655,8 @@ async fn execute_protocol_intent_segments_quiet(
     model_id: Option<String>,
     provider: Option<String>,
 ) -> Result<segment::SegmentedToolCallSequence, PrepareError> {
+    const MAX_SEGMENTATION_ATTEMPTS: usize = 3;
+
     let record =
         read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
             path: record_path.to_path_buf(),
@@ -5206,12 +6674,32 @@ async fn execute_protocol_intent_segments_quiet(
         timeout_secs: 45,
         max_tokens: 1200,
     };
-    let protocol =
-        segment::ToolCallIntentSegmentation::new(JsonAdjudicator::new(client, cfg.clone()));
-    let segmented = protocol
-        .run(subject)
-        .await
-        .map_err(tool_call_intent_segmentation_error_to_prepare)?;
+    let segmented = 'retry: loop {
+        for attempt in 1..=MAX_SEGMENTATION_ATTEMPTS {
+            let protocol = segment::ToolCallIntentSegmentation::new(JsonAdjudicator::new(
+                client.clone(),
+                cfg.clone(),
+            ));
+            match protocol.run(subject.clone()).await {
+                Ok(segmented) => break 'retry segmented,
+                Err(err)
+                    if is_retryable_intent_segmentation_error(&err)
+                        && attempt < MAX_SEGMENTATION_ATTEMPTS =>
+                {
+                    eprintln!(
+                        "protocol progress: retrying tool_call_intent_segmentation attempt {}/{} after invalid adjudicated segmentation: {}",
+                        attempt + 1,
+                        MAX_SEGMENTATION_ATTEMPTS,
+                        err
+                    );
+                }
+                Err(err) => {
+                    return Err(tool_call_intent_segmentation_error_to_prepare(err));
+                }
+            }
+        }
+        unreachable!();
+    };
     write_protocol_artifact(
         record_path,
         &segmented.procedure_name,
@@ -8058,8 +9546,8 @@ fn segment_evidence_counts(aggregate: &ProtocolAggregate) -> SegmentEvidenceCoun
 }
 
 fn collect_finished_record_paths() -> Result<Vec<PathBuf>, PrepareError> {
-    let root = runs_dir()?;
-    list_finished_record_paths_in_runs_root(&root)
+    let root = instances_dir()?;
+    list_finished_record_paths_in_instances_root(&root)
 }
 
 fn build_protocol_report(
@@ -9209,6 +10697,18 @@ fn tool_call_intent_segmentation_error_to_prepare(
     }
 }
 
+fn is_retryable_intent_segmentation_error(err: &segment::IntentSegmentationError) -> bool {
+    matches!(
+        err,
+        segment::IntentSegmentationError::Second(ploke_protocol::MergeError::Join(
+            segment::NormalizeSegmentsError::Overlap { .. }
+                | segment::NormalizeSegmentsError::InvalidRange { .. }
+                | segment::NormalizeSegmentsError::MissingLabel { .. }
+                | segment::NormalizeSegmentsError::AmbiguousWithLabel { .. }
+        ))
+    )
+}
+
 fn tool_call_segment_review_error_to_prepare(
     err: review::ToolCallSegmentReviewError,
 ) -> PrepareError {
@@ -10031,6 +11531,31 @@ struct RecordResolution {
     warnings: Vec<String>,
 }
 
+fn has_legacy_instance_root_artifacts(instances_root: &Path, instance_id: &str) -> bool {
+    let instance_root = instances_root.join(instance_id);
+    [
+        "record.json.gz",
+        "execution-log.json",
+        "repo-state.json",
+        "indexing-status.json",
+        "snapshot-status.json",
+        "final-snapshot.db",
+        "agent-turn-summary.json",
+        "agent-turn-trace.json",
+        "llm-full-responses.jsonl",
+        "multi-swe-bench-submission.jsonl",
+        "protocol-artifacts",
+    ]
+    .iter()
+    .any(|name| instance_root.join(name).exists())
+}
+
+fn legacy_instance_root_warning(instance_id: &str) -> String {
+    format!(
+        "instance {instance_id} still has legacy top-level run artifacts under ~/.ploke-eval/instances/{instance_id}; authoritative attempt data lives under runs/run-* and is selected from registrations"
+    )
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct RunListRow {
     attempt: u32,
@@ -10059,7 +11584,7 @@ fn resolve_record_path_from_eval_home(
     attempt: Option<u32>,
     eval_home: PathBuf,
 ) -> Result<RecordResolution, PrepareError> {
-    let runs_root = eval_home.join("runs");
+    let instances_root = crate::layout::instances_dir()?;
     let selection = load_active_selection_at(&eval_home)?;
     match (record, instance) {
         (Some(path), None) => Ok(RecordResolution {
@@ -10081,7 +11606,7 @@ fn resolve_record_path_from_eval_home(
                     warnings.push(warning);
                 }
                 return resolve_instance_record_path(
-                    &runs_root,
+                    &instances_root,
                     &instance_id,
                     resolved_attempt,
                     warnings,
@@ -10100,7 +11625,7 @@ fn resolve_record_path_from_eval_home(
                 match crate::run_registry::load_registration_for_run_dir(&last_run.run_dir)? {
                     Some(registration) => {
                         let attempt = attempt_number_for_registration(
-                            &runs_root,
+                            &instances_root,
                             &registration.frozen_spec.task_id,
                             &registration.run_id,
                         )?;
@@ -10118,7 +11643,7 @@ fn resolve_record_path_from_eval_home(
             })
         }
         (Some(_), Some(_)) => Err(PrepareError::MissingRunManifest(
-            runs_root.join("<instance>/record.json.gz"),
+            instances_root.join("<instance>/runs/run-*/record.json.gz"),
         )),
     }
 }
@@ -10167,13 +11692,16 @@ fn selection_with_resolution(
 }
 
 fn resolve_instance_record_path(
-    runs_root: &Path,
+    instances_root: &Path,
     instance_id: &str,
     attempt: Option<u32>,
-    warnings: Vec<String>,
+    mut warnings: Vec<String>,
 ) -> Result<RecordResolution, PrepareError> {
-    let registrations = list_attempt_registrations(runs_root, instance_id)?;
+    let registrations = list_attempt_registrations(instances_root, instance_id)?;
     if !registrations.is_empty() {
+        if has_legacy_instance_root_artifacts(instances_root, instance_id) {
+            warnings.push(legacy_instance_root_warning(instance_id));
+        }
         let selected_index = match attempt {
             Some(number) if number > 0 => {
                 let index = (number - 1) as usize;
@@ -10220,22 +11748,19 @@ fn resolve_instance_record_path(
         });
     }
 
-    let record_path =
-        preferred_run_dir_for_instance(runs_root, instance_id, RunDirPreference::PreferTreatment)?
-            .unwrap_or_else(|| runs_root.join(instance_id))
-            .join("record.json.gz");
-    Ok(RecordResolution {
-        record_path,
-        footer: Some(format!("resolved run: {} latest (legacy)", instance_id)),
-        warnings,
+    Err(PrepareError::DatabaseSetup {
+        phase: "resolve_record_path",
+        detail: format!(
+            "instance {instance_id} has no registered attempts; legacy instance-root artifacts are no longer used"
+        ),
     })
 }
 
 fn list_attempt_registrations(
-    runs_root: &Path,
+    instances_root: &Path,
     instance_id: &str,
 ) -> Result<Vec<RunRegistration>, PrepareError> {
-    let mut registrations = list_registrations_for_instance(runs_root, instance_id)?;
+    let mut registrations = list_registrations_for_instance(instances_root, instance_id)?;
     registrations.sort_by(|left, right| {
         run_registration_sort_key(left).cmp(&run_registration_sort_key(right))
     });
@@ -10243,11 +11768,11 @@ fn list_attempt_registrations(
 }
 
 fn attempt_number_for_registration(
-    runs_root: &Path,
+    instances_root: &Path,
     instance_id: &str,
     run_id: &str,
 ) -> Result<usize, PrepareError> {
-    let registrations = list_attempt_registrations(runs_root, instance_id)?;
+    let registrations = list_attempt_registrations(instances_root, instance_id)?;
     registrations
         .iter()
         .position(|registration| registration.run_id == run_id)
@@ -10441,7 +11966,7 @@ fn run_doctor() -> Result<(), PrepareError> {
     );
     check_dir(
         "run artifacts dir",
-        runs_dir()?,
+        instances_dir()?,
         &mut ok,
         &mut warn,
         &mut note,
@@ -10827,8 +12352,12 @@ fn extract_model_size(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inner::core::{RegisteredRunRole, RunIntent, RunStorageRoots};
+    use crate::inner::registry::RunRegistration;
+    use crate::run_registry::RunExecutionStatus;
     use ploke_core::ArcStr;
     use ploke_tui::chat_history::{MessageKind, MessageStatus};
+    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
     use uuid::Uuid;
 
@@ -10873,6 +12402,59 @@ mod tests {
         };
         let record = crate::record::RunRecord::new(&prepared, run_arm);
         crate::record::write_compressed_record(path, &record).expect("write record");
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn hold_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn sample_run_intent(base: &Path, instances_root: &Path) -> RunIntent {
+        RunIntent {
+            task_id: "org__repo-1".to_string(),
+            repo_root: base.join("repo"),
+            storage_roots: RunStorageRoots::new(
+                base.join("registries"),
+                instances_root.join("org__repo-1").join("runs"),
+            ),
+            base_sha: Some("deadbeef".to_string()),
+            budget: crate::spec::EvalBudget::default(),
+            model_id: Some("model".to_string()),
+            provider_slug: Some("provider".to_string()),
+            campaign_id: None,
+            batch_id: None,
+            run_arm_id: "structured-current-policy".to_string(),
+            run_role: RegisteredRunRole::Treatment,
+        }
+    }
+
+    fn register_attempt(
+        eval_home: &Path,
+        run_id: &str,
+        run_arm: crate::runner::RunArm,
+        finished_at: &str,
+    ) -> RunRegistration {
+        let instances_root = eval_home.join("instances");
+        let mut intent = sample_run_intent(eval_home, &instances_root);
+        intent.run_arm_id = run_arm.id.clone();
+        intent.run_role = match run_arm.role {
+            crate::runner::RunArmRole::Control => RegisteredRunRole::Control,
+            crate::runner::RunArmRole::Treatment => RegisteredRunRole::Treatment,
+        };
+        let mut registration =
+            RunRegistration::register_with_run_id(intent, run_id).expect("registration");
+        registration.lifecycle.execution_status = RunExecutionStatus::Completed;
+        registration.lifecycle.finished_at = Some(finished_at.to_string());
+        std::fs::create_dir_all(&registration.artifacts.run_root).expect("run root");
+        write_test_run_record(&registration.artifacts.record_path, run_arm);
+        registration.persist().expect("persist registration");
+        registration
     }
 
     #[test]
@@ -11301,7 +12883,8 @@ mod tests {
             "--instance",
             "clap-rs__clap-3670",
             "--stop-after",
-            "target-selection",
+            "intervention-apply",
+            "--dry-run",
         ])
         .expect("loop prototype1 should parse");
 
@@ -11311,7 +12894,126 @@ mod tests {
             }) => {
                 assert_eq!(cmd.dataset_key.as_deref(), Some("clap-rs__clap"));
                 assert_eq!(cmd.instance, vec!["clap-rs__clap-3670".to_string()]);
-                assert_eq!(cmd.stop_after, Prototype1LoopStopAfter::TargetSelection);
+                assert_eq!(cmd.stop_after, Prototype1LoopStopAfter::InterventionApply);
+                assert!(cmd.dry_run);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_branch_select_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-branch",
+            "select",
+            "--campaign",
+            "prototype1-campaign",
+            "--branch-id",
+            "branch-123",
+        ])
+        .expect("loop prototype1-branch select should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command:
+                    LoopSubcommand::Prototype1Branch(Prototype1BranchCommand {
+                        command: Prototype1BranchSubcommand::Select(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.campaign, "prototype1-campaign");
+                assert_eq!(cmd.branch_id, "branch-123");
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_branch_show_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-branch",
+            "show",
+            "--campaign",
+            "prototype1-campaign",
+            "--branch-id",
+            "branch-123",
+        ])
+        .expect("loop prototype1-branch show should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command:
+                    LoopSubcommand::Prototype1Branch(Prototype1BranchCommand {
+                        command: Prototype1BranchSubcommand::Show(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.campaign, "prototype1-campaign");
+                assert_eq!(cmd.branch_id, "branch-123");
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_branch_apply_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-branch",
+            "apply",
+            "--campaign",
+            "prototype1-campaign",
+            "--branch-id",
+            "branch-123",
+            "--repo-root",
+            "/tmp/scratch",
+        ])
+        .expect("loop prototype1-branch apply should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command:
+                    LoopSubcommand::Prototype1Branch(Prototype1BranchCommand {
+                        command: Prototype1BranchSubcommand::Apply(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.campaign, "prototype1-campaign");
+                assert_eq!(cmd.branch_id, "branch-123");
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/scratch")));
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_branch_evaluate_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-branch",
+            "evaluate",
+            "--campaign",
+            "prototype1-campaign",
+            "--branch-id",
+            "branch-123",
+            "--repo-root",
+            "/tmp/scratch",
+        ])
+        .expect("loop prototype1-branch evaluate should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command:
+                    LoopSubcommand::Prototype1Branch(Prototype1BranchCommand {
+                        command: Prototype1BranchSubcommand::Evaluate(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.campaign, "prototype1-campaign");
+                assert_eq!(cmd.branch_id, "branch-123");
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/scratch")));
             }
             other => panic!("unexpected command shape: {:?}", other),
         }
@@ -11321,7 +13023,7 @@ mod tests {
     fn resolve_record_path_defaults_to_last_run_record() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let eval_home = tmp.path().join("eval-home");
-        let run_dir = eval_home.join("runs").join("demo-run");
+        let run_dir = eval_home.join("instances").join("demo-run");
         std::fs::create_dir_all(&run_dir).expect("run dir");
         crate::run_history::record_last_run_at(&eval_home, &run_dir).expect("record last run");
 
@@ -11332,17 +13034,25 @@ mod tests {
     }
 
     #[test]
-    fn resolve_record_path_prefers_latest_nested_run_for_instance() {
+    fn resolve_record_path_prefers_latest_registered_attempt_for_instance() {
+        let _env_lock = hold_env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let eval_home = tmp.path().join("eval-home");
-        let instance_root = eval_home.join("runs").join("org__repo-1");
-        let older_run = instance_root.join("runs").join("run-older");
-        let newer_run = instance_root.join("runs").join("run-newer");
-        std::fs::create_dir_all(&older_run).expect("older run dir");
-        std::fs::create_dir_all(&newer_run).expect("newer run dir");
-        std::fs::write(older_run.join("record.json.gz"), "older").expect("older record");
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        std::fs::write(newer_run.join("record.json.gz"), "newer").expect("newer record");
+        unsafe {
+            std::env::set_var("PLOKE_EVAL_HOME", &eval_home);
+        }
+        let older = register_attempt(
+            &eval_home,
+            "run-older",
+            crate::runner::RunArm::structured_current_policy_treatment(),
+            "2026-04-23T10:00:00Z",
+        );
+        let newer = register_attempt(
+            &eval_home,
+            "run-newer",
+            crate::runner::RunArm::structured_current_policy_treatment(),
+            "2026-04-23T10:05:00Z",
+        );
 
         let resolution = resolve_record_path_from_eval_home(
             None,
@@ -11352,26 +13062,29 @@ mod tests {
         )
         .expect("instance record path should resolve");
 
-        assert_eq!(resolution.record_path, newer_run.join("record.json.gz"));
+        assert_eq!(resolution.record_path, newer.artifacts.record_path);
+        assert_ne!(resolution.record_path, older.artifacts.record_path);
     }
 
     #[test]
-    fn resolve_record_path_prefers_treatment_run_over_newer_control_run() {
+    fn resolve_record_path_defaults_to_latest_registered_attempt_even_if_control_is_newer() {
+        let _env_lock = hold_env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let eval_home = tmp.path().join("eval-home");
-        let instance_root = eval_home.join("runs").join("org__repo-1");
-        let treatment_run = instance_root.join("runs").join("run-treatment");
-        let control_run = instance_root.join("runs").join("run-control");
-        std::fs::create_dir_all(&treatment_run).expect("treatment run dir");
-        std::fs::create_dir_all(&control_run).expect("control run dir");
-        write_test_run_record(
-            &treatment_run.join("record.json.gz"),
+        unsafe {
+            std::env::set_var("PLOKE_EVAL_HOME", &eval_home);
+        }
+        let _treatment = register_attempt(
+            &eval_home,
+            "run-treatment",
             crate::runner::RunArm::structured_current_policy_treatment(),
+            "2026-04-23T10:00:00Z",
         );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        write_test_run_record(
-            &control_run.join("record.json.gz"),
+        let control = register_attempt(
+            &eval_home,
+            "run-control",
             crate::runner::RunArm::shell_only_control(),
+            "2026-04-23T10:05:00Z",
         );
 
         let resolution = resolve_record_path_from_eval_home(
@@ -11382,7 +13095,31 @@ mod tests {
         )
         .expect("instance record path should resolve");
 
-        assert_eq!(resolution.record_path, treatment_run.join("record.json.gz"));
+        assert_eq!(resolution.record_path, control.artifacts.record_path);
+    }
+
+    #[test]
+    fn resolve_record_path_rejects_legacy_instance_root_without_registration() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let eval_home = tmp.path().join("eval-home");
+        let instance_root = eval_home.join("instances").join("org__repo-1");
+        std::fs::create_dir_all(&instance_root).expect("instance root");
+        write_test_run_record(
+            &instance_root.join("record.json.gz"),
+            crate::runner::RunArm::structured_current_policy_treatment(),
+        );
+
+        let err = resolve_record_path_from_eval_home(
+            None,
+            Some("org__repo-1".to_string()),
+            None,
+            eval_home,
+        )
+        .expect_err("legacy instance-root record should not resolve");
+
+        let detail = err.to_string();
+        assert!(detail.contains("has no registered attempts"));
+        assert!(detail.contains("legacy instance-root artifacts are no longer used"));
     }
 
     #[test]
@@ -11589,7 +13326,7 @@ mod tests {
     }
 
     fn sample_closure_state_for_submission_export(
-        runs_root: PathBuf,
+        instances_root: PathBuf,
     ) -> crate::closure::ClosureState {
         crate::closure::ClosureState {
             schema_version: crate::closure::CLOSURE_STATE_SCHEMA_VERSION.to_string(),
@@ -11602,7 +13339,7 @@ mod tests {
                 registry_path: None,
                 dataset_sources: Vec::new(),
                 required_procedures: Vec::new(),
-                runs_root,
+                instances_root,
                 batches_root: PathBuf::from("/tmp/batches"),
                 framework: crate::spec::FrameworkConfig::default(),
             },
@@ -11687,13 +13424,23 @@ mod tests {
     #[test]
     fn collect_campaign_submission_records_filters_empty_patches_only_when_requested() {
         let tmp = tempdir().expect("tempdir");
-        let runs_root = tmp.path().join("runs");
-        fs::create_dir_all(runs_root.join("org__repo-1").join("runs").join("run-a"))
-            .expect("run dir 1");
-        fs::create_dir_all(runs_root.join("org__repo-2").join("runs").join("run-b"))
-            .expect("run dir 2");
+        let instances_root = tmp.path().join("instances");
+        fs::create_dir_all(
+            instances_root
+                .join("org__repo-1")
+                .join("runs")
+                .join("run-a"),
+        )
+        .expect("run dir 1");
+        fs::create_dir_all(
+            instances_root
+                .join("org__repo-2")
+                .join("runs")
+                .join("run-b"),
+        )
+        .expect("run dir 2");
         fs::write(
-            runs_root
+            instances_root
                 .join("org__repo-1")
                 .join("runs")
                 .join("run-a")
@@ -11702,7 +13449,7 @@ mod tests {
         )
         .expect("write record 1");
         fs::write(
-            runs_root
+            instances_root
                 .join("org__repo-2")
                 .join("runs")
                 .join("run-b")
@@ -11711,7 +13458,7 @@ mod tests {
         )
         .expect("write record 2");
         fs::write(
-            runs_root
+            instances_root
                 .join("org__repo-1")
                 .join("runs")
                 .join("run-a")
@@ -11726,7 +13473,7 @@ mod tests {
         )
         .expect("write submission 1");
         fs::write(
-            runs_root
+            instances_root
                 .join("org__repo-2")
                 .join("runs")
                 .join("run-b")
@@ -11741,7 +13488,7 @@ mod tests {
         )
         .expect("write submission 2");
 
-        let state = sample_closure_state_for_submission_export(runs_root);
+        let state = sample_closure_state_for_submission_export(instances_root);
         let all_records =
             collect_campaign_submission_records(&state, false).expect("all records export");
         let nonempty_records =
@@ -11759,12 +13506,12 @@ mod tests {
     #[test]
     fn collect_campaign_submission_records_prefers_treatment_submission_over_newer_control_run() {
         let tmp = tempdir().expect("tempdir");
-        let runs_root = tmp.path().join("runs");
-        let treatment_run = runs_root
+        let instances_root = tmp.path().join("instances");
+        let treatment_run = instances_root
             .join("org__repo-1")
             .join("runs")
             .join("run-treatment");
-        let control_run = runs_root
+        let control_run = instances_root
             .join("org__repo-1")
             .join("runs")
             .join("run-control");
@@ -11791,7 +13538,7 @@ mod tests {
             crate::runner::RunArm::shell_only_control(),
         );
 
-        let mut state = sample_closure_state_for_submission_export(runs_root);
+        let mut state = sample_closure_state_for_submission_export(instances_root);
         state.instances.truncate(1);
         let records =
             collect_campaign_submission_records(&state, false).expect("all records export");
