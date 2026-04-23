@@ -147,6 +147,33 @@ pub(crate) fn protocol_artifact_summary(entry: &StoredProtocolArtifactFile) -> S
                 summary
             }
         }
+        "intervention_issue_detection" => {
+            let case_count = entry
+                .stored
+                .output
+                .get("cases")
+                .and_then(|v| v.as_array())
+                .map(|cases| format!("cases={}", cases.len()));
+            let primary = entry
+                .stored
+                .output
+                .get("cases")
+                .and_then(|v| v.as_array())
+                .and_then(|cases| cases.first())
+                .and_then(|case| case.get("family"))
+                .and_then(|v| v.as_str())
+                .map(|value| format!("primary={value}"));
+            let summary = [case_count, primary]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if summary.is_empty() {
+                "issue detection artifact".to_string()
+            } else {
+                summary
+            }
+        }
         _ => "persisted protocol artifact".to_string(),
     }
 }

@@ -110,7 +110,7 @@ pub struct ApplyNsPatchResult {
     pub auto_confirmed: bool,
 }
 
-use super::{ToolDescr, ToolError, ToolErrorCode, ToolInvocationError, ToolName};
+use super::{ToolDescription, ToolError, ToolErrorCode, ToolInvocationError, ToolName};
 impl super::Tool for NsPatch {
     type Output = ApplyNsPatchResult;
     type OwnedParams = NsPatchParamsOwned;
@@ -120,8 +120,8 @@ impl super::Tool for NsPatch {
         super::ToolName::NsPatch
     }
 
-    fn description() -> super::ToolDescr {
-        super::ToolDescr::NsPatch
+    fn description() -> super::ToolDescription {
+        Self::name().description()
     }
 
     fn schema() -> &'static serde_json::Value {

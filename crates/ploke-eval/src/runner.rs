@@ -54,8 +54,9 @@ use crate::layout;
 use crate::model_registry::resolve_model_for_run;
 use crate::provider_prefs::load_provider_for_model;
 use crate::record::{
-    CrateIndexStatus, IndexedCrateSummary, ParseErrorSummary, ParseFailureRecord, RunRecord,
-    RunRecordBuilder, RunTimingSummary, SetupPhase, write_compressed_record,
+    CrateIndexStatus, IndexedCrateSummary, PackagingPhase, ParseErrorSummary, ParseFailureRecord,
+    RunRecord, RunRecordBuilder, RunTimingSummary, SetupPhase, SubmissionArtifactState,
+    write_compressed_record,
 };
 use crate::run_history::record_last_run;
 use crate::run_registry::{persist_registration, register_live_run, storage_roots_for_instance};
@@ -159,19 +160,6 @@ fn register_run_attempt(
     }
     persist_registration(&registration)?;
     Ok(registration)
-}
-
-fn load_submission_fix_patch(path: &Path) -> Result<String, PrepareError> {
-    let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let record: MultiSweBenchSubmissionRecord =
-        serde_json::from_str(text.trim()).map_err(|source| PrepareError::ParseManifest {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    Ok(record.fix_patch)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1018,18 +1006,27 @@ fn maybe_build_msb_submission_record(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WrittenMsbSubmissionArtifact {
+    path: PathBuf,
+    fix_patch: String,
+}
+
 fn write_msb_submission_artifact(
     prepared: &PreparedSingleRun,
     run_arm: &RunArm,
     run_output_dir: &Path,
-) -> Result<Option<PathBuf>, PrepareError> {
+) -> Result<Option<WrittenMsbSubmissionArtifact>, PrepareError> {
     let Some(record) = maybe_build_msb_submission_record(prepared, run_arm)? else {
         return Ok(None);
     };
 
     let path = run_output_dir.join("multi-swe-bench-submission.jsonl");
     write_jsonl_line(&path, &record)?;
-    Ok(Some(path))
+    Ok(Some(WrittenMsbSubmissionArtifact {
+        path,
+        fix_patch: record.fix_patch,
+    }))
 }
 
 fn collect_submission_fix_patch(prepared: &PreparedSingleRun) -> Result<String, PrepareError> {
@@ -1923,12 +1920,12 @@ impl RunMsbSingleRequest {
             );
             persist_registration(&registration)?;
 
-            let msb_submission_path =
+            let packaging_started_at = chrono::Utc::now().to_rfc3339();
+            let msb_submission_artifact =
                 write_msb_submission_artifact(&prepared, &run_arm, &run_output_dir)?;
-            if let Some(path) = msb_submission_path.as_ref() {
+            if let Some(submission) = msb_submission_artifact.as_ref() {
                 steps.push("write_msb_submission".to_string());
-                let fix_patch = load_submission_fix_patch(path)?;
-                registration.update_submission_status(Some(&fix_patch));
+                registration.update_submission_status(Some(&submission.fix_patch));
                 registration.update_phase(
                     RunLifecyclePhase::Packaging,
                     RunPhaseStatus::Completed,
@@ -1942,6 +1939,20 @@ impl RunMsbSingleRequest {
                     Some("no benchmark packaging for this run".to_string()),
                 );
             }
+            run_record.phases.packaging = Some(PackagingPhase {
+                started_at: packaging_started_at,
+                ended_at: chrono::Utc::now().to_rfc3339(),
+                submission_artifact_state: match msb_submission_artifact.as_ref() {
+                    Some(submission) if submission.fix_patch.trim().is_empty() => {
+                        SubmissionArtifactState::Empty
+                    }
+                    Some(_) => SubmissionArtifactState::Nonempty,
+                    None => SubmissionArtifactState::NotApplicable,
+                },
+                msb_submission_path: msb_submission_artifact
+                    .as_ref()
+                    .map(|artifact| artifact.path.clone()),
+            });
             registration.update_phase(
                 RunLifecyclePhase::Validation,
                 RunPhaseStatus::Skipped,
@@ -1976,7 +1987,7 @@ impl RunMsbSingleRequest {
                 indexing_checkpoint_db = %indexing_checkpoint_db.display(),
                 indexing_failure_db = %indexing_failure_db.display(),
                 snapshot_status = %snapshot_status_path.display(),
-                msb_submission = msb_submission_path.as_ref().map(|p| p.display().to_string()),
+                msb_submission = msb_submission_artifact.as_ref().map(|artifact| artifact.path.display().to_string()),
                 "runner phase: wrote run artifacts"
             );
             record_last_run(&execution_log.output_dir)?;
@@ -1999,7 +2010,7 @@ impl RunMsbSingleRequest {
                 indexing_checkpoint_db: indexing_checkpoint_db.clone(),
                 indexing_failure_db: indexing_failure_db.clone(),
                 snapshot_status: snapshot_status_path.clone(),
-                msb_submission: msb_submission_path,
+                msb_submission: msb_submission_artifact.map(|artifact| artifact.path),
                 record_path: Some(record_path.clone()),
                 full_response_trace: None,
             })
@@ -2416,12 +2427,12 @@ impl RunMsbAgentSingleRequest {
             );
             persist_registration(&registration)?;
 
-            let msb_submission_path =
+            let packaging_started_at = chrono::Utc::now().to_rfc3339();
+            let msb_submission_artifact =
                 write_msb_submission_artifact(&prepared, &run_arm, &run_output_dir)?;
-            if let Some(path) = msb_submission_path.as_ref() {
+            if let Some(submission) = msb_submission_artifact.as_ref() {
                 steps.push("write_msb_submission".to_string());
-                let fix_patch = load_submission_fix_patch(path)?;
-                registration.update_submission_status(Some(&fix_patch));
+                registration.update_submission_status(Some(&submission.fix_patch));
                 registration.update_phase(
                     RunLifecyclePhase::Packaging,
                     RunPhaseStatus::Completed,
@@ -2435,6 +2446,20 @@ impl RunMsbAgentSingleRequest {
                     Some("no benchmark packaging for this run".to_string()),
                 );
             }
+            run_record.phases.packaging = Some(PackagingPhase {
+                started_at: packaging_started_at,
+                ended_at: chrono::Utc::now().to_rfc3339(),
+                submission_artifact_state: match msb_submission_artifact.as_ref() {
+                    Some(submission) if submission.fix_patch.trim().is_empty() => {
+                        SubmissionArtifactState::Empty
+                    }
+                    Some(_) => SubmissionArtifactState::Nonempty,
+                    None => SubmissionArtifactState::NotApplicable,
+                },
+                msb_submission_path: msb_submission_artifact
+                    .as_ref()
+                    .map(|artifact| artifact.path.clone()),
+            });
             registration.update_phase(
                 RunLifecyclePhase::Validation,
                 RunPhaseStatus::Skipped,
@@ -2472,7 +2497,7 @@ impl RunMsbAgentSingleRequest {
                 turn_trace = %turn_trace_path.display(),
                 turn_summary = %turn_summary_path.display(),
                 full_response_trace = full_response_trace.as_ref().map(|p| p.display().to_string()),
-                msb_submission = msb_submission_path.as_ref().map(|p| p.display().to_string()),
+                msb_submission = msb_submission_artifact.as_ref().map(|artifact| artifact.path.display().to_string()),
                 "runner phase: wrote run artifacts"
             );
             record_last_run(&execution_log.output_dir)?;
@@ -2496,7 +2521,7 @@ impl RunMsbAgentSingleRequest {
                     indexing_checkpoint_db: indexing_checkpoint_db.clone(),
                     indexing_failure_db: indexing_failure_db.clone(),
                     snapshot_status: snapshot_status_path.clone(),
-                    msb_submission: msb_submission_path,
+                    msb_submission: msb_submission_artifact.map(|artifact| artifact.path),
                     record_path: Some(record_path.clone()),
                     full_response_trace,
                 },
@@ -3235,27 +3260,25 @@ async fn run_benchmark_turn(
         app.pump_pending_events().await;
 
         if artifact.terminal_record.is_some() {
-            if artifact.llm_response.is_none() {
-                // Keep draining debug_rx here alongside the app event streams.
-                // In the RuntimeHarness relay, debug emission is coupled to
-                // forwarding/proxying StateCommand traffic, including delicate
-                // oneshot relay cases. If we stop draining this receiver as
-                // soon as ChatTurnFinished arrives, a paired oneshot can remain
-                // stuck waiting forever even though the turn is otherwise
-                // terminal. See crates/ploke-tui/src/app/commands/unit_tests/harness.rs
-                // ("Key Design: The Relay Pattern" and RelayStateCmd::run_relay).
-                drain_post_terminal_events(
-                    &mut artifact,
-                    state,
-                    debug_rx,
-                    realtime_rx,
-                    background_rx,
-                    trace_path,
-                    &mut tool_request_started_at,
-                    Duration::from_millis(FINAL_RESPONSE_GRACE_MILLIS),
-                )
-                .await?;
-            }
+            // Keep draining debug_rx here alongside the app event streams.
+            // In the RuntimeHarness relay, debug emission is coupled to
+            // forwarding/proxying StateCommand traffic, including delicate
+            // oneshot relay cases. If we stop draining this receiver as
+            // soon as ChatTurnFinished arrives, a paired oneshot can remain
+            // stuck waiting forever even though the turn is otherwise
+            // terminal. See crates/ploke-tui/src/app/commands/unit_tests/harness.rs
+            // ("Key Design: The Relay Pattern" and RelayStateCmd::run_relay).
+            drain_post_terminal_events(
+                &mut artifact,
+                state,
+                debug_rx,
+                realtime_rx,
+                background_rx,
+                trace_path,
+                &mut tool_request_started_at,
+                Duration::from_millis(FINAL_RESPONSE_GRACE_MILLIS),
+            )
+            .await?;
             break;
         }
 
@@ -3399,7 +3422,11 @@ async fn drain_post_terminal_events(
             write_json(trace_path, &artifact)?;
         }
 
-        if artifact.llm_response.is_some() || Instant::now() >= deadline {
+        if Instant::now() >= deadline {
+            break;
+        }
+
+        if artifact.llm_response.is_some() && !observed_event {
             break;
         }
 
@@ -3871,12 +3898,21 @@ mod tests {
     use crate::EvalBudget;
     use ploke_db::multi_embedding::schema::EmbeddingSetExt;
     use ploke_llm::response::FunctionCall;
+    use ploke_tui::CancelChatToken;
+    use ploke_tui::app_state::commands::StateCommand;
     use ploke_tui::app_state::core::{CreateProposal, EditProposal};
     use ploke_tui::app_state::events::MessageUpdatedEvent;
+    use ploke_tui::app_state::state_manager;
+    use ploke_tui::event_bus::{EventBus, EventBusCaps, EventPriority};
     use ploke_tui::test_utils::mock::create_mock_app_state;
+    use ploke_tui::tools::ToolVerbosity;
     use ploke_tui::tools::{FunctionMarker, ToolCall, ToolName};
+    use ploke_tui::user_config::CommandStyle;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use tempfile::tempdir;
+    use tokio::sync::{broadcast, mpsc, watch};
+    use tokio::time::Duration;
     use tracing_subscriber::fmt::SubscriberBuilder;
     use uuid::Uuid;
 
@@ -3928,6 +3964,116 @@ mod tests {
             provider: None,
             dimensions: 1536,
         }
+    }
+
+    fn test_prepared_run(temp: &tempfile::TempDir) -> PreparedSingleRun {
+        PreparedSingleRun {
+            task_id: "benchmark-turn-test".to_string(),
+            repo_root: temp.path().to_path_buf(),
+            output_dir: temp.path().join("out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix benchmark turn capture".to_string()),
+                body: Some("repro".to_string()),
+                body_path: None,
+            },
+            base_sha: None,
+            head_sha: None,
+            budget: crate::spec::EvalBudget {
+                max_turns: 4,
+                max_tool_calls: 8,
+                wall_clock_secs: 2,
+            },
+            source: None,
+            campaign: None,
+        }
+    }
+
+    fn test_chat_response_event(content: &str) -> AppEvent {
+        AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::Response {
+            request_id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            content: content.to_string(),
+            model: "test-model".to_string(),
+            metadata: ploke_llm::types::meta::LLMMetadata {
+                model: "test-model".to_string(),
+                usage: ploke_llm::response::TokenUsage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                },
+                finish_reason: ploke_llm::response::FinishReason::Stop,
+                processing_time: std::time::Duration::from_millis(10),
+                cost: 0.0,
+                performance: ploke_llm::types::meta::PerformanceMetrics {
+                    tokens_per_second: 100.0,
+                    time_to_first_token: std::time::Duration::from_millis(1),
+                    queue_time: std::time::Duration::from_millis(0),
+                },
+            },
+            usage: ploke_llm::manager::events::UsageMetrics {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+                latency_ms: 10,
+            },
+        }))
+    }
+
+    fn test_turn_finished_event() -> AppEvent {
+        AppEvent::System(SystemEvent::ChatTurnFinished {
+            session_id: Uuid::new_v4(),
+            request_id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            assistant_message_id: Uuid::new_v4(),
+            outcome: "success".to_string(),
+            error_id: None,
+            summary: "done".to_string(),
+            attempts: 1,
+        })
+    }
+
+    async fn build_benchmark_turn_test_app(
+        state: Arc<AppState>,
+    ) -> (
+        App,
+        mpsc::Sender<ploke_tui::app::commands::harness::DebugStateCommand>,
+        mpsc::Receiver<ploke_tui::app::commands::harness::DebugStateCommand>,
+        broadcast::Receiver<AppEvent>,
+        broadcast::Receiver<AppEvent>,
+        Arc<EventBus>,
+    ) {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (debug_tx, debug_rx) =
+            mpsc::channel::<ploke_tui::app::commands::harness::DebugStateCommand>(8);
+        let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(128);
+        let (rag_tx, _rag_rx) = mpsc::channel(8);
+        let (cancel_tx, _cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        tokio::spawn(state_manager(
+            Arc::clone(&state),
+            cmd_rx,
+            Arc::clone(&event_bus),
+            rag_tx,
+        ));
+        let app = App::new(
+            CommandStyle::Slash,
+            state,
+            cmd_tx,
+            &event_bus,
+            "mock-model".to_string(),
+            ToolVerbosity::Normal,
+            cancel_tx,
+            std::env::current_dir().expect("current dir"),
+        );
+        let realtime_rx = event_bus.subscribe(EventPriority::Realtime);
+        let background_rx = event_bus.subscribe(EventPriority::Background);
+        (
+            app,
+            debug_tx,
+            debug_rx,
+            realtime_rx,
+            background_rx,
+            event_bus,
+        )
     }
 
     fn test_provider_key() -> ProviderKey {
@@ -4533,24 +4679,25 @@ mod tests {
         let run_output_dir = tmp.path().join("out").join("runs").join("run-123");
         fs::create_dir_all(&run_output_dir).expect("run output dir");
 
-        let submission_path = write_msb_submission_artifact(
+        let submission_artifact = write_msb_submission_artifact(
             &prepared,
             &RunArm::structured_current_policy_treatment(),
             &run_output_dir,
         )
         .expect("write submission")
-        .expect("submission path");
+        .expect("submission artifact");
 
         assert_eq!(
-            submission_path,
+            submission_artifact.path,
             run_output_dir.join("multi-swe-bench-submission.jsonl")
         );
-        let line = fs::read_to_string(&submission_path).expect("read submission");
+        let line = fs::read_to_string(&submission_artifact.path).expect("read submission");
         let parsed: MultiSweBenchSubmissionRecord =
             serde_json::from_str(line.trim()).expect("parse submission");
         assert_eq!(parsed.org, "acme");
         assert_eq!(parsed.repo, "repo");
         assert_eq!(parsed.number, 1);
+        assert_eq!(submission_artifact.fix_patch, parsed.fix_patch);
         assert!(
             parsed
                 .fix_patch
@@ -4624,17 +4771,18 @@ mod tests {
         let run_output_dir = tmp.path().join("out").join("runs").join("run-456");
         fs::create_dir_all(&run_output_dir).expect("run output dir");
 
-        let submission_path = write_msb_submission_artifact(
+        let submission_artifact = write_msb_submission_artifact(
             &prepared,
             &RunArm::structured_current_policy_treatment(),
             &run_output_dir,
         )
         .expect("write submission")
-        .expect("submission path");
+        .expect("submission artifact");
 
-        let line = fs::read_to_string(&submission_path).expect("read submission");
+        let line = fs::read_to_string(&submission_artifact.path).expect("read submission");
         let parsed: MultiSweBenchSubmissionRecord =
             serde_json::from_str(line.trim()).expect("parse submission");
+        assert_eq!(submission_artifact.fix_patch, parsed.fix_patch);
         assert!(
             parsed
                 .fix_patch
@@ -4650,6 +4798,141 @@ mod tests {
                 .fix_patch
                 .contains("diff --git a/src/main.rs b/src/main.rs"),
             "submission should not invent a diff for an expected-but-unchanged file"
+        );
+    }
+
+    #[test]
+    fn packaging_write_failure_marks_packaging_phase_failed_after_real_repo_diff_exists() {
+        let tmp = tempdir().expect("tempdir");
+        let repo_root = tmp.path().join("repo");
+        let src_dir = repo_root.join("src");
+        let file = src_dir.join("lib.rs");
+        fs::create_dir_all(&src_dir).expect("src dir");
+
+        run_git_test(&repo_root, &["init"], "git init");
+        run_git_test(
+            &repo_root,
+            &["config", "user.name", "Ploke Eval"],
+            "git config name",
+        );
+        run_git_test(
+            &repo_root,
+            &["config", "user.email", "ploke-eval@example.com"],
+            "git config email",
+        );
+
+        fs::write(&file, "fn main() {}\n").expect("write initial file");
+        run_git_test(&repo_root, &["add", "src/lib.rs"], "git add");
+        run_git_test(&repo_root, &["commit", "-m", "base"], "git commit");
+
+        let base_sha = git_stdout(&repo_root, &["rev-parse", "HEAD"], "git rev-parse HEAD")
+            .expect("base sha")
+            .expect("stdout")
+            .trim()
+            .to_string();
+
+        fs::write(&file, "fn main() {\n    println!(\"hi\");\n}\n").expect("write modified file");
+
+        let prepared = PreparedSingleRun {
+            task_id: "case-packaging-failure".to_string(),
+            repo_root: repo_root.clone(),
+            output_dir: tmp.path().join("out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some(base_sha),
+            head_sha: None,
+            budget: EvalBudget::default(),
+            source: Some(RunSource::MultiSweBench(crate::spec::MultiSweBenchSource {
+                dataset_file: tmp.path().join("dataset.jsonl"),
+                dataset_url: None,
+                instance_id: "acme__repo-3".to_string(),
+                org: "acme".to_string(),
+                repo: "repo".to_string(),
+                number: 3,
+                language: Some("rust".to_string()),
+                expected_patch_files: vec![PathBuf::from("src/lib.rs")],
+            })),
+            campaign: None,
+        };
+
+        let fix_patch = collect_submission_fix_patch(&prepared).expect("submission patch");
+        assert!(
+            fix_patch.contains("diff --git a/src/lib.rs b/src/lib.rs"),
+            "setup should produce a real repo diff before packaging fails"
+        );
+
+        let run_output_dir = tmp
+            .path()
+            .join("out")
+            .join("runs")
+            .join("run-packaging-failure");
+        fs::create_dir_all(&run_output_dir).expect("run output dir");
+        fs::create_dir_all(run_output_dir.join("multi-swe-bench-submission.jsonl"))
+            .expect("poison submission artifact path with directory");
+
+        let packaging_err = write_msb_submission_artifact(
+            &prepared,
+            &RunArm::structured_current_policy_treatment(),
+            &run_output_dir,
+        )
+        .expect_err("submission write should fail when target path is a directory");
+        let packaging_err_text = packaging_err.to_string();
+        assert!(
+            packaging_err_text.contains("multi-swe-bench-submission.jsonl"),
+            "packaging error should mention the submission artifact path: {packaging_err_text}"
+        );
+
+        let mut registration = RunRegistration::register_with_run_id(
+            crate::inner::core::RunIntent {
+                task_id: prepared.task_id.clone(),
+                repo_root: prepared.repo_root.clone(),
+                storage_roots: crate::inner::core::RunStorageRoots::new(
+                    tmp.path().join("registries"),
+                    tmp.path().join("runs"),
+                ),
+                base_sha: prepared.base_sha.clone(),
+                budget: prepared.budget.clone(),
+                model_id: Some("test-model".to_string()),
+                provider_slug: Some("test-provider".to_string()),
+                campaign_id: None,
+                batch_id: None,
+                run_arm_id: RunArm::structured_current_policy_treatment().id,
+                run_role: crate::inner::core::RegisteredRunRole::Treatment,
+            },
+            "run-packaging-failure",
+        )
+        .expect("register run");
+
+        registration.update_phase(
+            RunLifecyclePhase::Packaging,
+            RunPhaseStatus::InProgress,
+            Some("writing benchmark submission artifact".to_string()),
+        );
+        registration.mark_failed(packaging_err_text.clone());
+
+        assert_eq!(
+            registration.lifecycle.execution_status,
+            crate::inner::registry::RunExecutionStatus::Failed
+        );
+        assert_eq!(
+            registration.lifecycle.packaging.status,
+            RunPhaseStatus::Failed
+        );
+        assert_eq!(
+            registration.lifecycle.packaging.detail.as_deref(),
+            Some(packaging_err_text.as_str())
+        );
+        assert_eq!(
+            registration.lifecycle.submission_status,
+            crate::inner::registry::RunSubmissionStatus::Missing
+        );
+        assert_ne!(
+            registration.lifecycle.setup.status,
+            RunPhaseStatus::Failed,
+            "packaging failure should not be misclassified as setup failure"
         );
     }
 
@@ -5266,6 +5549,195 @@ mod tests {
         assert!(artifact.events.iter().any(|event| matches!(
             event,
             ObservedTurnEvent::LlmResponse(record) if record.content == "late final answer"
+        )));
+    }
+
+    #[tokio::test]
+    async fn terminal_branch_still_drains_events_when_llm_response_already_present() {
+        use ploke_core::tool_types::{FunctionMarker, ToolName};
+        use ploke_llm::response::{FunctionCall, ToolCall};
+
+        let mut artifact = AgentTurnArtifact {
+            task_id: "test".to_string(),
+            selected_model: ploke_llm::ModelId::from(ploke_llm::ModelKey::default()),
+            issue_prompt: "test".to_string(),
+            user_message_id: Uuid::new_v4().to_string(),
+            events: Vec::new(),
+            prompt_debug: None,
+            terminal_record: Some(TurnFinishedRecord {
+                session_id: Uuid::new_v4().to_string(),
+                request_id: Uuid::new_v4().to_string(),
+                parent_id: Uuid::new_v4().to_string(),
+                assistant_message_id: Uuid::new_v4().to_string(),
+                outcome: "completed".to_string(),
+                error_id: None,
+                summary: "done".to_string(),
+                attempts: 1,
+            }),
+            final_assistant_message: None,
+            patch_artifact: PatchArtifact {
+                edit_proposals: Vec::new(),
+                create_proposals: Vec::new(),
+                applied: false,
+                all_proposals_applied: false,
+                expected_file_changes: Vec::new(),
+                any_expected_file_changed: false,
+                all_expected_files_changed: false,
+            },
+            llm_prompt: Vec::new(),
+            llm_response: Some("already captured".to_string()),
+        };
+
+        let (_debug_tx, mut debug_rx) =
+            mpsc::channel::<ploke_tui::app::commands::harness::DebugStateCommand>(1);
+        let (realtime_tx, mut realtime_rx) = broadcast::channel(8);
+        let (_background_tx, mut background_rx) = broadcast::channel::<AppEvent>(8);
+        let state = Arc::new(create_mock_app_state());
+        let temp = tempdir().expect("tempdir");
+        let trace_path = temp.path().join("turn-trace.json");
+        let mut tool_request_started_at = HashMap::new();
+
+        let request_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+        let _ = realtime_tx.send(AppEvent::System(SystemEvent::ToolCallRequested {
+            request_id,
+            parent_id,
+            tool_call: ToolCall {
+                call_id: ploke_core::ArcStr::from("queued-after-terminal"),
+                call_type: FunctionMarker,
+                function: FunctionCall {
+                    name: ToolName::ApplyCodeEdit,
+                    arguments: "{}".to_string(),
+                },
+            },
+        }));
+
+        drain_post_terminal_events(
+            &mut artifact,
+            &state,
+            &mut debug_rx,
+            &mut realtime_rx,
+            &mut background_rx,
+            &trace_path,
+            &mut tool_request_started_at,
+            Duration::from_millis(250),
+        )
+        .await
+        .expect("drain succeeds");
+
+        assert_eq!(artifact.llm_response.as_deref(), Some("already captured"));
+        assert!(artifact.events.iter().any(|event| matches!(
+            event,
+            ObservedTurnEvent::ToolRequested(record)
+                if record.request_id == request_id.to_string()
+        )));
+        assert!(matches!(
+            realtime_rx.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn run_benchmark_turn_keeps_response_when_it_arrives_before_turn_finished() {
+        let temp = tempdir().expect("tempdir");
+        let prepared = test_prepared_run(&temp);
+        let trace_path = temp.path().join("turn-trace.json");
+        let state = Arc::new(create_mock_app_state());
+        let (mut app, _debug_tx, mut debug_rx, mut realtime_rx, mut background_rx, event_bus) =
+            build_benchmark_turn_test_app(Arc::clone(&state)).await;
+        let expected_file_baselines = Vec::new();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            event_bus.send(test_chat_response_event("response before terminal"));
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            event_bus.send(test_turn_finished_event());
+        });
+
+        let artifact = run_benchmark_turn(
+            &prepared,
+            &state,
+            &mut app,
+            &mut debug_rx,
+            &mut realtime_rx,
+            &mut background_rx,
+            &trace_path,
+            ploke_llm::ModelId::from(ploke_llm::ModelKey::default()),
+            &expected_file_baselines,
+        )
+        .await
+        .expect("benchmark turn succeeds");
+
+        assert_eq!(
+            artifact.llm_response.as_deref(),
+            Some("response before terminal")
+        );
+        assert_eq!(
+            artifact
+                .terminal_record
+                .as_ref()
+                .map(|record| record.summary.as_str()),
+            Some("done")
+        );
+        assert!(artifact.events.iter().any(|event| matches!(
+            event,
+            ObservedTurnEvent::LlmResponse(record) if record.content == "response before terminal"
+        )));
+        assert!(artifact.events.iter().any(|event| matches!(
+            event,
+            ObservedTurnEvent::TurnFinished(record) if record.summary == "done"
+        )));
+    }
+
+    #[tokio::test]
+    async fn run_benchmark_turn_captures_response_when_it_arrives_after_turn_finished() {
+        let temp = tempdir().expect("tempdir");
+        let prepared = test_prepared_run(&temp);
+        let trace_path = temp.path().join("turn-trace.json");
+        let state = Arc::new(create_mock_app_state());
+        let (mut app, _debug_tx, mut debug_rx, mut realtime_rx, mut background_rx, event_bus) =
+            build_benchmark_turn_test_app(Arc::clone(&state)).await;
+        let expected_file_baselines = Vec::new();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            event_bus.send(test_turn_finished_event());
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            event_bus.send(test_chat_response_event("response after terminal"));
+        });
+
+        let artifact = run_benchmark_turn(
+            &prepared,
+            &state,
+            &mut app,
+            &mut debug_rx,
+            &mut realtime_rx,
+            &mut background_rx,
+            &trace_path,
+            ploke_llm::ModelId::from(ploke_llm::ModelKey::default()),
+            &expected_file_baselines,
+        )
+        .await
+        .expect("benchmark turn succeeds");
+
+        assert_eq!(
+            artifact.llm_response.as_deref(),
+            Some("response after terminal")
+        );
+        assert_eq!(
+            artifact
+                .terminal_record
+                .as_ref()
+                .map(|record| record.summary.as_str()),
+            Some("done")
+        );
+        assert!(artifact.events.iter().any(|event| matches!(
+            event,
+            ObservedTurnEvent::LlmResponse(record) if record.content == "response after terminal"
+        )));
+        assert!(artifact.events.iter().any(|event| matches!(
+            event,
+            ObservedTurnEvent::TurnFinished(record) if record.summary == "done"
         )));
     }
 

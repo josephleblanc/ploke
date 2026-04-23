@@ -4,6 +4,7 @@
 // back, plus what happens to construct those message, and how they are handled after arriving and
 // routed (e.g. to tools or similar), and displaying the UI
 mod loop_error;
+mod semantics;
 mod session;
 // NOTE:ploke-llm 2025-12-14
 // For now moving entirely to `ploke-llm`, but keeping commented here in case we want to bring back

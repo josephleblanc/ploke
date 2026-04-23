@@ -10,6 +10,8 @@ use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
 
+use super::semantics::{RecoveryDecision, SemanticLoopErrorSpec};
+
 #[derive(Clone, Debug, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LoopErrorKind {
@@ -31,7 +33,7 @@ pub enum ErrorSeverity {
     Fatal,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RetryStrategy {
     Fixed,
@@ -120,6 +122,7 @@ pub struct LoopError {
     pub kind: LoopErrorKind,
     pub code: ArcStr,
     pub severity: ErrorSeverity,
+    pub recovery: RecoveryDecision,
     pub retry: RetryAdvice,
     pub commit_phase: CommitPhase,
     pub summary: ArcStr,
@@ -260,6 +263,28 @@ pub fn render_error_view(
             details: None,
             llm_payload: Some(build_llm_payload(error)),
         },
+    }
+}
+
+pub fn build_loop_error_from_semantic_spec(
+    spec: SemanticLoopErrorSpec,
+    commit_phase: CommitPhase,
+) -> LoopError {
+    let retry = retry_advice_from_recovery(&spec.recovery);
+    LoopError {
+        error_id: Uuid::new_v4(),
+        fingerprint: fingerprint_for(&spec.kind, &spec.code, &spec.context),
+        kind: spec.kind,
+        code: spec.code,
+        severity: spec.severity,
+        recovery: spec.recovery,
+        retry,
+        commit_phase,
+        summary: spec.summary,
+        user_action: spec.user_action,
+        llm_action: spec.llm_action,
+        context: spec.context,
+        diagnostics: spec.diagnostics,
     }
 }
 
@@ -458,14 +483,7 @@ pub fn classify_llm_error(
             Some(ArcStr::from(
                 "Review tool output and retry with corrected input.",
             )),
-            Some(LlmAction {
-                next_steps: vec![LlmNextStep {
-                    action: ArcStr::from("repair_tool_args"),
-                    details: None,
-                }],
-                constraints: vec![ArcStr::from("Arguments must be strict JSON.")],
-                retry_hint: None,
-            }),
+            None,
         ),
         LlmError::Conversion(_) | LlmError::Unknown(_) | LlmError::Embedding(_) => (
             LoopErrorKind::StateMachine,
@@ -497,6 +515,7 @@ pub fn classify_llm_error(
     let diagnostics = Some(Diagnostics {
         diagnostic: ArcStr::from(err.diagnostic()),
     });
+    let recovery = recovery_from_retry(&retry);
 
     LoopError {
         error_id: Uuid::new_v4(),
@@ -504,6 +523,7 @@ pub fn classify_llm_error(
         kind,
         code,
         severity,
+        recovery,
         retry,
         commit_phase,
         summary,
@@ -548,6 +568,11 @@ pub fn build_unknown_tool_error(
         kind: LoopErrorKind::ModelBehavior,
         code: ArcStr::from("UNKNOWN_TOOL_NAME"),
         severity: ErrorSeverity::Error,
+        recovery: RecoveryDecision::Repair {
+            strategy: RetryStrategy::Fixed,
+            reason: ArcStr::from("Model must choose a supported tool name"),
+            action: super::semantics::RepairAction::ToolName,
+        },
         retry: RetryAdvice::Yes {
             strategy: RetryStrategy::Fixed,
             reason: ArcStr::from("Model used an unsupported tool name"),
@@ -572,16 +597,21 @@ pub fn build_tool_arg_repair_error(
     LoopError {
         error_id: Uuid::new_v4(),
         fingerprint: fingerprint_for(
-            &LoopErrorKind::ToolExecution,
+            &LoopErrorKind::ModelBehavior,
             &ArcStr::from("TOOL_ARGS_REPAIR_REQUIRED"),
             &context,
         ),
-        kind: LoopErrorKind::ToolExecution,
+        kind: LoopErrorKind::ModelBehavior,
         code: ArcStr::from("TOOL_ARGS_REPAIR_REQUIRED"),
         severity: ErrorSeverity::Error,
+        recovery: RecoveryDecision::Repair {
+            strategy: RetryStrategy::Fixed,
+            reason: ArcStr::from("Invalid tool arguments require a corrected tool call"),
+            action: super::semantics::RepairAction::ToolArgs,
+        },
         retry: RetryAdvice::Yes {
             strategy: RetryStrategy::Fixed,
-            reason: ArcStr::from("Invalid tool arguments can be repaired and retried"),
+            reason: ArcStr::from("Invalid tool arguments require a corrected tool call"),
         },
         commit_phase,
         summary: ArcStr::from(summary),
@@ -610,6 +640,7 @@ pub fn classify_finish_reason(
     let (kind, code, severity, retry, user_action, llm_action) =
         finish_reason_metadata(finish_reason);
     let summary = finish_reason_summary(finish_reason);
+    let recovery = recovery_from_retry(&retry);
 
     LoopError {
         error_id: Uuid::new_v4(),
@@ -617,6 +648,7 @@ pub fn classify_finish_reason(
         kind,
         code,
         severity,
+        recovery,
         retry,
         commit_phase,
         summary,
@@ -641,6 +673,7 @@ fn format_error_context(error: &LoopError) -> String {
     let mut lines = vec![
         format!("kind: {:?}", error.kind),
         format!("severity: {:?}", error.severity),
+        format!("recovery: {:?}", error.recovery),
         format!("retry: {:?}", error.retry),
         format!("commit_phase: {:?}", error.commit_phase),
     ];
@@ -681,12 +714,40 @@ fn build_llm_payload(error: &LoopError) -> serde_json::Value {
         .as_ref()
         .map(|action| action.constraints.clone())
         .unwrap_or_default();
-    let retry = match &error.retry {
-        RetryAdvice::No { reason } => json!({ "allowed": false, "reason": reason }),
-        RetryAdvice::Maybe { reason } => json!({ "allowed": true, "reason": reason }),
-        RetryAdvice::Yes { strategy, reason } => {
-            json!({ "allowed": true, "strategy": strategy_str(strategy), "reason": reason })
+    let recovery = match &error.recovery {
+        RecoveryDecision::Abort { reason } => {
+            json!({ "decision": "abort", "reason": reason })
         }
+        RecoveryDecision::MaybeRetry { reason } => {
+            json!({ "decision": "maybe_retry", "reason": reason })
+        }
+        RecoveryDecision::Retry { strategy, reason } => json!({
+            "decision": "retry",
+            "strategy": strategy_str(strategy),
+            "reason": reason
+        }),
+        RecoveryDecision::Repair {
+            strategy,
+            reason,
+            action,
+        } => json!({
+            "decision": "repair",
+            "strategy": strategy_str(strategy),
+            "reason": reason,
+            "action": repair_action_str(action)
+        }),
+    };
+    let retry = match &error.recovery {
+        RecoveryDecision::Repair { reason, .. } => {
+            json!({ "allowed": false, "reason": format!("Repair required: {reason}") })
+        }
+        _ => match &error.retry {
+            RetryAdvice::No { reason } => json!({ "allowed": false, "reason": reason }),
+            RetryAdvice::Maybe { reason } => json!({ "allowed": true, "reason": reason }),
+            RetryAdvice::Yes { strategy, reason } => {
+                json!({ "allowed": true, "strategy": strategy_str(strategy), "reason": reason })
+            }
+        },
     };
     json!({
         "type": "ploke.error",
@@ -694,6 +755,7 @@ fn build_llm_payload(error: &LoopError) -> serde_json::Value {
         "code": error.code,
         "kind": kind_str(&error.kind),
         "summary": error.summary,
+        "recovery": recovery,
         "where": {
             "phase": error.context.phase,
             "tool_name": error.context.tool_name,
@@ -797,6 +859,58 @@ fn retry_classification_status(
     status
 }
 
+pub fn recovery_from_retry(retry: &RetryAdvice) -> RecoveryDecision {
+    match retry {
+        RetryAdvice::No { reason } => RecoveryDecision::Abort {
+            reason: reason.clone(),
+        },
+        RetryAdvice::Maybe { reason } => RecoveryDecision::MaybeRetry {
+            reason: reason.clone(),
+        },
+        RetryAdvice::Yes { strategy, reason } => RecoveryDecision::Retry {
+            strategy: strategy.clone(),
+            reason: reason.clone(),
+        },
+    }
+}
+
+pub fn retry_advice_from_recovery(recovery: &RecoveryDecision) -> RetryAdvice {
+    match recovery {
+        RecoveryDecision::Abort { reason } => RetryAdvice::No {
+            reason: reason.clone(),
+        },
+        RecoveryDecision::MaybeRetry { reason } => RetryAdvice::Maybe {
+            reason: reason.clone(),
+        },
+        RecoveryDecision::Retry { strategy, reason }
+        | RecoveryDecision::Repair {
+            strategy, reason, ..
+        } => RetryAdvice::Yes {
+            strategy: strategy.clone(),
+            reason: reason.clone(),
+        },
+    }
+}
+
+pub fn mark_repair_budget_exhausted(error: &mut LoopError) {
+    let reason = ArcStr::from("Repair budget exhausted for this chat turn");
+    error.kind = LoopErrorKind::ModelBehavior;
+    error.code = ArcStr::from("REPAIR_BUDGET_EXHAUSTED");
+    error.severity = ErrorSeverity::Error;
+    error.recovery = RecoveryDecision::Abort {
+        reason: reason.clone(),
+    };
+    error.retry = RetryAdvice::No {
+        reason: reason.clone(),
+    };
+    error.summary = ArcStr::from("Repeated repair attempts did not converge to a valid tool call.");
+    error.user_action = Some(ArcStr::from(
+        "Adjust the prompt, inspect the provider output, or switch providers.",
+    ));
+    error.llm_action = None;
+    error.fingerprint = fingerprint_for(&error.kind, &error.code, &error.context);
+}
+
 fn loop_error_api_code(
     status: u16,
     error_source: &ApiErrorSource,
@@ -847,6 +961,13 @@ fn strategy_str(strategy: &RetryStrategy) -> &'static str {
     }
 }
 
+fn repair_action_str(action: &super::semantics::RepairAction) -> &'static str {
+    match action {
+        super::semantics::RepairAction::ToolArgs => "tool_args",
+        super::semantics::RepairAction::ToolName => "tool_name",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -875,5 +996,24 @@ mod tests {
             }
         ));
         assert_eq!(loop_error.context.provider.as_deref(), Some("Io Net"));
+    }
+
+    #[test]
+    fn llm_payload_for_repair_does_not_expose_retry_as_allowed() {
+        let loop_error = build_tool_arg_repair_error(
+            ErrorContext::new(1, 0),
+            CommitPhase::PreCommit,
+            "Invalid tool args.".to_string(),
+            "diagnostic".to_string(),
+            Some("repair details".to_string()),
+            vec!["Arguments must be strict JSON.".to_string()],
+        );
+
+        let payload = render_error_view(&loop_error, ErrorAudience::Llm, Verbosity::Normal)
+            .llm_payload
+            .expect("llm payload");
+
+        assert_eq!(payload["recovery"]["decision"], "repair");
+        assert_eq!(payload["retry"]["allowed"], false);
     }
 }

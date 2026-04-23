@@ -1,0 +1,1 @@
+Request broad code context from the indexed workspace up to a token budget. Best for exploratory retrieval when you have likely identifiers, module names, file names, or error/type names. If it returns 0 snippets or broad irrelevant snippets, narrow the query with exact symbols or switch to code_item_lookup for exact definitions, or use list_dir/read_file once you know the area.

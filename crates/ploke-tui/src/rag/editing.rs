@@ -182,15 +182,21 @@ async fn apply_ns_edit(
                 .collect();
 
             let content = serde_json::json!({
-                "ok": applied > 0,
+                "ok": applied == file_count && file_count > 0,
                 "applied": applied,
+                "partial": applied > 0 && applied < file_count,
                 "results": results_json
             })
             .to_string();
 
-            let applied_ok = applied > 0;
+            let applied_any = applied > 0;
+            let applied_ok = applied == file_count && file_count > 0;
             if applied_ok {
                 proposal.status = EditProposalStatus::Applied;
+            } else if applied_any {
+                proposal.status = EditProposalStatus::Failed(format!(
+                    "Partially applied non-semantic edits: applied {applied}/{file_count} files"
+                ));
             } else {
                 proposal.status =
                     EditProposalStatus::Failed("No non-semantic edits were applied".to_string());
@@ -215,21 +221,24 @@ async fn apply_ns_edit(
             let mut reg = state.proposals.write().await;
             reg.insert(proposal_id, proposal);
             drop(reg);
-            let ui_payload = ToolUiPayload::new(
-                tool_name,
-                call_id_val.clone(),
-                if applied_ok {
-                    format!("Applied {} edits across {} files", applied, file_count)
-                } else {
-                    format!("Failed to apply edits across {} files", file_count)
-                },
-            )
-            .with_proposal_id(proposal_id)
-            .with_request_id(request_id)
-            .with_field("status", if applied_ok { "applied" } else { "failed" })
-            .with_field("ok", applied_ok.to_string())
-            .with_field("applied", applied.to_string())
-            .with_field("files", file_count.to_string());
+            let summary = if applied_ok {
+                format!("Applied {} edits across {} files", applied, file_count)
+            } else if applied_any {
+                format!(
+                    "Partially applied {} edits across {} files",
+                    applied, file_count
+                )
+            } else {
+                format!("Failed to apply edits across {} files", file_count)
+            };
+            let ui_payload = ToolUiPayload::new(tool_name, call_id_val.clone(), summary)
+                .with_proposal_id(proposal_id)
+                .with_request_id(request_id)
+                .with_field("status", if applied_ok { "applied" } else { "failed" })
+                .with_field("ok", applied_ok.to_string())
+                .with_field("applied", applied.to_string())
+                .with_field("partial", (applied_any && !applied_ok).to_string())
+                .with_field("files", file_count.to_string());
             let ui_payload_for_chat = ui_payload.clone();
             let _ = event_bus
                 .realtime_tx
@@ -251,6 +260,8 @@ async fn apply_ns_edit(
 
             let msg = if applied_ok {
                 format!("Applied edits for request_id {}", request_id)
+            } else if applied_any {
+                format!("Partially applied edits for request_id {}", request_id)
             } else {
                 format!("No edits were applied for request_id {}", request_id)
             };
@@ -260,7 +271,7 @@ async fn apply_ns_edit(
             crate::app_state::handlers::proposals::save_proposals(state).await;
 
             // Surface a brief SysInfo so users see that a rescan has been scheduled
-            if applied_ok {
+            if applied_any {
                 let msg = "Scheduled rescan of workspace after applying edits".to_string();
                 add_msg_imm(msg).await;
             }

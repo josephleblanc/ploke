@@ -1,11 +1,15 @@
 pub mod inner;
 
+pub mod branch_evaluation;
 pub mod campaign;
 pub mod cli;
 pub mod closure;
+pub mod intervention;
+pub mod intervention_issue_aggregate;
 pub mod layout;
 pub mod model_registry;
 pub mod msb;
+pub mod operational_metrics;
 pub mod protocol;
 mod protocol_artifacts;
 mod protocol_report;
@@ -21,6 +25,9 @@ pub mod spec;
 pub mod target_registry;
 pub mod tracing_setup;
 
+pub use branch_evaluation::{
+    BranchDisposition, BranchEvaluationInput, BranchEvaluationResult, evaluate_branch,
+};
 pub use campaign::{
     CAMPAIGN_MANIFEST_SCHEMA_VERSION, CampaignManifest, CampaignOverrides, CampaignValidationCheck,
     EvalCampaignPolicy, ProtocolCampaignPolicy, ResolvedCampaignConfig, campaign_manifest_path,
@@ -38,11 +45,12 @@ pub use layout::{
     registries_dir, repos_dir, runs_dir, workspace_root_for_key,
 };
 pub use msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
+pub use operational_metrics::{OperationalRunMetrics, PatchApplyState};
 pub use record::{
-    BuildResult, ConversationMessage, DbState, LlmResponseRecord, NodeInfo,
+    BuildResult, ConversationMessage, DbState, LlmResponseRecord, NodeInfo, PackagingPhase,
     RUN_RECORD_SCHEMA_VERSION, RawFullResponseRecord, ReplayError, ReplayState, RunMetadata,
-    RunOutcomeSummary, RunPhases, RunRecord, RunRecordBuilder, TimeTravelMarker,
-    ToolExecutionRecord, ToolResult, TurnOutcome, TurnRecord, ValidationPhase,
+    RunOutcomeSummary, RunPhases, RunRecord, RunRecordBuilder, SubmissionArtifactState,
+    TimeTravelMarker, ToolExecutionRecord, ToolResult, TurnOutcome, TurnRecord, ValidationPhase,
 };
 pub use registry::{
     DatasetRegistryEntry, builtin_dataset_registry_entries, builtin_dataset_registry_entry,

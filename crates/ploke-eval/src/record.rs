@@ -25,6 +25,7 @@
 //! │   ├── agent_turns         # Vec<TurnRecord> - one per LLM interaction
 //! │   ├── patch               # Edit proposals, applied status
 //! │   └── validation          # Build/test results
+//! │   └── packaging           # Submission artifact packaging summary
 //! ├── db_time_travel_index    # Cozo @ timestamps for historical queries
 //! └── conversation            # Complete message history
 //! ```
@@ -700,6 +701,10 @@ pub struct RunPhases {
     /// Validation phase: build and test results.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub validation: Option<ValidationPhase>,
+
+    /// Packaging phase: benchmark submission artifact summary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub packaging: Option<PackagingPhase>,
 }
 
 /// Per-crate summary for SetupPhase
@@ -1303,6 +1308,51 @@ pub struct ValidationPhase {
     /// Benchmark verdict (e.g., "passed", "failed").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub benchmark_verdict: Option<String>,
+}
+
+/// Coarse packaging result for the benchmark submission artifact emitted by a run.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SubmissionArtifactState {
+    /// Legacy record with no packaging phase persisted.
+    NotRecorded,
+    /// This run intentionally did not produce a benchmark submission artifact.
+    NotApplicable,
+    /// Packaging was expected but no submission artifact was available.
+    Missing,
+    /// A submission artifact was written, but its `fix_patch` payload was empty.
+    Empty,
+    /// A submission artifact was written and its `fix_patch` payload was nonempty.
+    Nonempty,
+}
+
+impl SubmissionArtifactState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SubmissionArtifactState::NotRecorded => "not_recorded",
+            SubmissionArtifactState::NotApplicable => "not_applicable",
+            SubmissionArtifactState::Missing => "missing",
+            SubmissionArtifactState::Empty => "empty",
+            SubmissionArtifactState::Nonempty => "nonempty",
+        }
+    }
+}
+
+/// Packaging phase data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackagingPhase {
+    /// When packaging started.
+    pub started_at: String,
+
+    /// When packaging completed.
+    pub ended_at: String,
+
+    /// Recorded submission artifact state for this run.
+    pub submission_artifact_state: SubmissionArtifactState,
+
+    /// Path to the written benchmark submission artifact, if one exists.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msb_submission_path: Option<PathBuf>,
 }
 
 /// Build validation result.

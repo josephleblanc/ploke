@@ -53,8 +53,8 @@ impl super::Tool for CreateFile {
     fn name() -> super::ToolName {
         super::ToolName::CreateFile
     }
-    fn description() -> super::ToolDescr {
-        super::ToolDescr::CreateFile
+    fn description() -> super::ToolDescription {
+        Self::name().description()
     }
     fn schema() -> &'static serde_json::Value {
         CREATE_FILE_PARAMETERS.deref()

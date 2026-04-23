@@ -9,3 +9,7 @@ into the main evalnomicon book.
 - [`eval-triage-rubric.md`](eval-triage-rubric.md)
   Compact classification rubric for separating harness invalidity, known
   frontier limits, and action-surface failures before baseline.
+- [`prototype-1-intervention-loop.md`](prototype-1-intervention-loop.md)
+  Same-day bounded plan for externalized tool guidance, mechanized pre-oracle
+  metrics, protocol-shaped issue detection/synthesis, and shallow
+  reset/fork/select intervention search.

@@ -369,6 +369,98 @@ async fn ns_patch_emits_completed_event_for_exact_ripgrep_diff() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ns_patch_rejects_duplicate_same_file_entries_in_one_request() {
+    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let temp_dir = tempdir().expect("temp workspace");
+    let workspace_root = temp_dir.path().join("ripgrep");
+    let fixture_path = write_simple_fixture(&workspace_root);
+    configure_temp_workspace(&harness, &workspace_root).await;
+
+    let request_id = Uuid::new_v4();
+    let parent_id = Uuid::new_v4();
+    let call_id = ArcStr::from("ns-patch-duplicate-same-file");
+    let tool_call = ToolCall {
+        call_id: call_id.clone(),
+        call_type: FunctionMarker,
+        function: FunctionCall {
+            name: ToolName::NsPatch,
+            arguments: serde_json::json!({
+                "patches": [
+                    {
+                        "file": "notes.txt",
+                        "diff": SIMPLE_NS_PATCH_DIFF,
+                        "reasoning": "First hunk for notes.txt",
+                    },
+                    {
+                        "file": "notes.txt",
+                        "diff": SIMPLE_NS_PATCH_DIFF,
+                        "reasoning": "Second hunk for notes.txt",
+                    }
+                ]
+            })
+            .to_string(),
+        },
+    };
+
+    let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
+    harness
+        .event_bus
+        .send(AppEvent::System(SystemEvent::ToolCallRequested {
+            tool_call,
+            request_id,
+            parent_id,
+        }));
+
+    let mut failure: Option<String> = None;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match timeout(Duration::from_millis(100), event_rx.recv()).await {
+            Ok(Ok(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id: event_request_id,
+                call_id: event_call_id,
+                error,
+                ..
+            }))) if event_request_id == request_id && event_call_id == call_id => {
+                failure = Some(error);
+                break;
+            }
+            Ok(Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
+                request_id: event_request_id,
+                call_id: event_call_id,
+                ..
+            }))) if event_request_id == request_id && event_call_id == call_id => {
+                panic!("ns_patch unexpectedly completed for duplicate same-file entries");
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) | Err(_) => {}
+        }
+    }
+
+    let failure = failure.expect("expected ToolCallFailed event for duplicate same-file batch");
+    assert!(
+        failure.contains("combine them into one unified diff per file"),
+        "failure should explain the supported same-file contract: {failure}"
+    );
+
+    let proposal_id = derive_edit_proposal_id(request_id, &call_id);
+    assert!(
+        harness
+            .state
+            .proposals
+            .read()
+            .await
+            .get(&proposal_id)
+            .is_none(),
+        "duplicate same-file entries should not stage a proposal"
+    );
+    assert_eq!(
+        fs::read_to_string(&fixture_path).expect("read fixture after failure"),
+        "alpha\nbeta\ngamma\n",
+        "duplicate same-file entries should leave the file unchanged"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ns_patch_auto_confirm_applies_staged_patch() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     {

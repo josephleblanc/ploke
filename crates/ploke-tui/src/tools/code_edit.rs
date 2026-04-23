@@ -58,8 +58,8 @@ impl super::Tool for GatCodeEdit {
     fn name() -> super::ToolName {
         super::ToolName::ApplyCodeEdit
     }
-    fn description() -> super::ToolDescr {
-        super::ToolDescr::ApplyCodeEdit
+    fn description() -> super::ToolDescription {
+        Self::name().description()
     }
     fn schema() -> &'static serde_json::Value {
         CODE_EDIT_PARAMETERS.deref()
@@ -376,10 +376,10 @@ mod gat_tests {
     #[test]
     fn name_desc_and_schema_present() {
         assert!(matches!(GatCodeEdit::name(), ToolName::ApplyCodeEdit));
-        assert!(matches!(
+        assert_eq!(
             GatCodeEdit::description(),
-            ToolDescr::ApplyCodeEdit
-        ));
+            ToolName::ApplyCodeEdit.description()
+        );
         let schema = GatCodeEdit::schema();
         assert!(schema.as_object().unwrap().contains_key("properties"));
     }

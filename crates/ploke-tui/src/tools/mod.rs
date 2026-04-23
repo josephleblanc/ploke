@@ -38,6 +38,9 @@ use syn_parser::parser::nodes::NodePath;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+#[cfg(test)]
+mod tool_tests;
+
 pub mod request_code_context;
 pub use request_code_context::{
     RequestCodeContext, RequestCodeContextGat, RequestCodeContextInput,
@@ -68,9 +71,9 @@ pub use ui::{ToolUiField, ToolUiPayload, ToolVerbosity};
 pub use ploke_core::tool_types::ToolName;
 
 // NOTE:ploke-llm
-// moved ToolDescr into ploke-core to make available to `ploke-llm` as we refactor ploke-tui::llm
-// into ploke-llm
-pub use ploke_core::tool_types::ToolDescr;
+// tool descriptions now live in ploke-core as first-class text artifacts so both ploke-tui and
+// ploke-llm can share the same guidance surface.
+pub use ploke_core::tool_descriptions::ToolDescription;
 
 // NOTE:ploke-llm
 // moved into ploke-core for shared access
@@ -546,7 +549,7 @@ pub trait Tool {
         Self: 'de;
 
     fn name() -> ToolName;
-    fn description() -> ToolDescr;
+    fn description() -> ToolDescription;
     fn schema() -> &'static serde_json::Value;
 
     fn build(ctx: &Ctx) -> Self
@@ -563,7 +566,7 @@ pub trait Tool {
     fn tool_def() -> ToolDefinition {
         ToolFunctionDef {
             name: Self::name(),
-            description: Self::description(),
+            description: Self::description().to_string(),
             parameters: Self::schema().clone(),
         }
         .into()
@@ -661,7 +664,7 @@ mod tests {
             r#type: FunctionMarker,
             function: ToolFunctionDef {
                 name: ToolName::ApplyCodeEdit,
-                description: ToolDescr::ApplyCodeEdit,
+                description: ToolName::ApplyCodeEdit.description().to_string(),
                 parameters: json!({"type": "object"}),
             },
         };

@@ -40,7 +40,7 @@ use tokio::{
 };
 
 use super::{
-    Tool, ToolDescr, ToolError, ToolErrorCode, ToolInvocationError, ToolName, ToolResult,
+    Tool, ToolDescription, ToolError, ToolErrorCode, ToolInvocationError, ToolName, ToolResult,
     ToolUiPayload, ToolVerbosity, tool_io_error, tool_ui_error,
 };
 use crate::tracing_setup::TOOL_CALL_TARGET;
@@ -353,8 +353,8 @@ impl Tool for CargoTool {
         ToolName::Cargo
     }
 
-    fn description() -> ToolDescr {
-        ToolDescr::Cargo
+    fn description() -> ToolDescription {
+        Self::name().description()
     }
 
     fn schema() -> &'static serde_json::Value {

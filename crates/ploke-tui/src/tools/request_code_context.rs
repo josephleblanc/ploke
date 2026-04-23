@@ -86,8 +86,8 @@ impl super::Tool for RequestCodeContextGat {
     fn name() -> ToolName {
         ToolName::RequestCodeContext
     }
-    fn description() -> ToolDescr {
-        ToolDescr::RequestCodeContext
+    fn description() -> ToolDescription {
+        Self::name().description()
     }
     fn schema() -> &'static serde_json::Value {
         REQUEST_CODE_CONTEXT_PARAMETERS.deref()
@@ -240,10 +240,10 @@ mod gat_tests {
             RequestCodeContextGat::name(),
             ToolName::RequestCodeContext
         ));
-        assert!(matches!(
+        assert_eq!(
             RequestCodeContextGat::description(),
-            ToolDescr::RequestCodeContext
-        ));
+            ToolName::RequestCodeContext.description()
+        );
         let schema = RequestCodeContextGat::schema();
         let obj = schema.as_object().expect("schema obj");
         assert!(obj.contains_key("properties"));

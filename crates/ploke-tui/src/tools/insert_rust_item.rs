@@ -72,8 +72,8 @@ impl Tool for InsertRustItem {
         ToolName::InsertRustItem
     }
 
-    fn description() -> super::ToolDescr {
-        super::ToolDescr::InsertRustItem
+    fn description() -> super::ToolDescription {
+        Self::name().description()
     }
 
     fn schema() -> &'static serde_json::Value {

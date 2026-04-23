@@ -36,6 +36,14 @@ use crate::closure::{
     recompute_closure_state, render_closure_status,
 };
 use crate::inner::registry::RunRegistration;
+use crate::intervention::{
+    INTERVENTION_ISSUE_DETECTION_PROCEDURE, InterventionSynthesisInput, IssueCase,
+    IssueDetectionInput, IssueDetectionOutput, detect_issue_cases, issue_detection_artifact_input,
+    select_primary_issue, synthesize_intervention,
+};
+use crate::intervention_issue_aggregate::{
+    IssueDetectionAggregate, IssueDetectionAggregateError, load_issue_detection_aggregate,
+};
 use crate::layout::{
     active_model_file, batches_dir, cache_dir, datasets_dir, model_registry_file, models_dir,
     repos_dir, runs_dir, starting_db_cache_dir, workspace_root_for_key,
@@ -84,7 +92,7 @@ use crate::selection::{
 };
 use crate::spec::{
     EvalBudget, IssueInput, OutputMode, PrepareError, PrepareSingleRunRequest, PrepareWrite,
-    PreparedCampaignContext,
+    PreparedCampaignContext, PreparedMsbBatch,
 };
 use crate::target_registry::{
     BenchmarkFamily, RegistryEntry, RegistryRecomputeRequest, TargetRegistry, load_target_registry,
@@ -167,6 +175,9 @@ pub enum Command {
     #[command(display_order = 51)]
     /// Review or adjudicate protocol artifacts from eval runs.
     Protocol(ProtocolCommand),
+    #[command(display_order = 52)]
+    /// Run the prototype intervention loop through the currently implemented frontier.
+    Loop(LoopCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -339,6 +350,146 @@ pub enum JustSubcommand {
 }
 
 #[derive(Debug, Parser)]
+#[command(about = "Run higher-level loop wrappers over eval, protocol, and intervention stages")]
+pub struct LoopCommand {
+    #[command(subcommand)]
+    pub command: LoopSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LoopSubcommand {
+    /// Run Prototype 1 through eval configuration, baseline arm, and target selection.
+    Prototype1(Prototype1LoopCommand),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1LoopStopAfter {
+    BaselineEval,
+    BaselineProtocol,
+    TargetSelection,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Run the Prototype 1 loop through the current implementation frontier",
+    after_help = "\
+Flow:
+  eval configuration
+    -> baseline arm (= eval run -> protocol run)
+    -> target selection
+    -> [pending] intervention
+    -> [pending] treatment arm
+    -> [pending] compare
+
+Use either an existing prepared batch (--batch/--batch-id) or define the slice
+inline with dataset selectors (--dataset or --dataset-key plus --instance/--specific/--all).
+"
+)]
+pub struct Prototype1LoopCommand {
+    /// Path to a prepared batch manifest. Defaults to ~/.ploke-eval/batches/<batch-id>/batch.json.
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["batch_id", "dataset", "dataset_key"])]
+    pub batch: Option<PathBuf>,
+
+    /// Batch id, used to resolve ~/.ploke-eval/batches/<batch-id>/batch.json.
+    #[arg(long, conflicts_with_all = ["batch", "dataset", "dataset_key"])]
+    pub batch_id: Option<String>,
+
+    /// Multi-SWE-bench dataset JSONL file.
+    #[arg(long, value_name = "PATH", conflicts_with = "dataset_key")]
+    pub dataset: Option<PathBuf>,
+
+    /// Built-in dataset registry key, for example ripgrep.
+    #[arg(long, conflicts_with = "dataset")]
+    pub dataset_key: Option<String>,
+
+    /// Prepare every instance in the dataset.
+    #[arg(long, conflicts_with_all = ["instance", "specific"])]
+    pub all: bool,
+
+    /// Exact benchmark instance id to include. Repeat for multiple instances.
+    #[arg(long)]
+    pub instance: Vec<String>,
+
+    /// Substring selector matched against task id, benchmark id, org, repo, and title.
+    #[arg(long)]
+    pub specific: Vec<String>,
+
+    /// Stop selecting after this many matched instances.
+    #[arg(long)]
+    pub limit: Option<usize>,
+
+    /// Stable identifier for the batch manifest directory when preparing inline.
+    #[arg(long)]
+    pub prepare_batch_id: Option<String>,
+
+    /// Root directory containing repo checkouts at <repo-cache>/<org>/<repo>.
+    #[arg(long, value_name = "PATH")]
+    pub repo_cache: Option<PathBuf>,
+
+    /// Root directory where ploke-eval should create per-run directories.
+    #[arg(long, value_name = "PATH")]
+    pub runs_root: Option<PathBuf>,
+
+    /// Root directory where ploke-eval should create batch manifests and summaries.
+    #[arg(long, value_name = "PATH")]
+    pub batches_root: Option<PathBuf>,
+
+    #[arg(long, default_value_t = 40)]
+    pub max_turns: u32,
+
+    #[arg(long, default_value_t = 200)]
+    pub max_tool_calls: u32,
+
+    #[arg(long, default_value_t = 1800)]
+    pub wall_clock_secs: u32,
+
+    /// Disable eval-only DB checkpoint/failure snapshots during indexing.
+    #[arg(long = "no-index-debug-snapshots", action = ArgAction::SetFalse, default_value_t = true)]
+    pub index_debug_snapshots: bool,
+
+    /// Use the default model instead of the persisted active model selection.
+    #[arg(long)]
+    pub use_default_model: bool,
+
+    /// Explicit model id to use for the baseline eval batch.
+    #[arg(long)]
+    pub model_id: Option<String>,
+
+    /// Explicit provider slug to pin for the selected eval model.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Explicit embedding model id to use for eval indexing/retrieval.
+    #[arg(long)]
+    pub embedding_model_id: Option<String>,
+
+    /// Explicit provider slug to pin for the embedding model.
+    #[arg(long, value_name = "PROVIDER")]
+    pub embedding_provider: Option<String>,
+
+    /// Stop the baseline batch after the first per-instance runner failure.
+    #[arg(long)]
+    pub stop_on_error: bool,
+
+    /// Override the model id used for baseline protocol review.
+    #[arg(long)]
+    pub protocol_model_id: Option<String>,
+
+    /// Override the provider slug used for baseline protocol review.
+    #[arg(long, value_name = "PROVIDER")]
+    pub protocol_provider: Option<String>,
+
+    /// Stop the wrapper after the selected implemented stage.
+    #[arg(long, value_enum, default_value_t = Prototype1LoopStopAfter::TargetSelection)]
+    pub stop_after: Prototype1LoopStopAfter,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
 #[command(about = "Normalize one ad hoc evaluation instance into a run manifest")]
 pub struct PrepareSingleCommand {
     /// Stable task identifier for this run.
@@ -474,6 +625,13 @@ impl Cli {
                     ExitCode::FAILURE
                 }
             },
+            Command::Loop(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
         }
     }
 }
@@ -581,9 +739,345 @@ impl JustCommand {
     }
 }
 
+impl LoopCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            LoopSubcommand::Prototype1(cmd) => cmd.run().await,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1LoopReport {
+    stage_reached: Prototype1LoopStopAfter,
+    batch_id: String,
+    batch_manifest: PathBuf,
+    baseline_summary_path: PathBuf,
+    baseline_instances: Vec<Prototype1LoopInstance>,
+    selected_targets: Vec<Prototype1SelectedTarget>,
+    pending_stages: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1LoopInstance {
+    instance_id: String,
+    status: String,
+    record_path: Option<PathBuf>,
+    turn_summary: Option<PathBuf>,
+    protocol_completed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1SelectedTarget {
+    instance_id: String,
+    issue: IssueCase,
+    synthesized_spec_id: String,
+    synthesized_target_relpath: PathBuf,
+}
+
 fn print_builtin_dataset_entries() {
     for entry in builtin_dataset_registry_entries() {
         println!("{}\t{}\t{}", entry.key, entry.language, entry.url);
+    }
+}
+
+impl Prototype1LoopCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let (batch_manifest, prepared_batch) = prepare_or_load_prototype1_batch(&self)?;
+        let batch_artifacts = RunMsbAgentBatchRequest {
+            batch_manifest: batch_manifest.clone(),
+            index_debug_snapshots: self.index_debug_snapshots,
+            use_default_model: self.use_default_model,
+            model_id: self.model_id.clone(),
+            provider: parse_provider_key(self.provider.clone())?,
+            stop_on_error: self.stop_on_error,
+        }
+        .run()
+        .await?;
+        let baseline_summary = load_batch_run_summary(&batch_artifacts.summary)?;
+
+        let mut baseline_instances = Vec::new();
+        let mut selected_targets = Vec::new();
+        let protocol_model_id = resolve_protocol_model_id(self.protocol_model_id.clone())?;
+        let protocol_model_id_string = protocol_model_id.to_string();
+        let protocol_provider_slug =
+            resolve_protocol_provider_slug(&protocol_model_id, self.protocol_provider.clone())?;
+
+        for result in &baseline_summary.instance_results {
+            let mut protocol_completed = false;
+            if self.stop_after >= Prototype1LoopStopAfter::BaselineProtocol
+                && result.status == "completed"
+            {
+                if let Some(record_path) = result.record_path.as_ref() {
+                    run_protocol_to_completion_for_record(
+                        &result.task_id,
+                        record_path,
+                        &protocol_model_id_string,
+                        protocol_provider_slug.clone(),
+                    )
+                    .await?;
+                    protocol_completed = true;
+
+                    if self.stop_after >= Prototype1LoopStopAfter::TargetSelection {
+                        let detection_output = persist_issue_detection_for_record(record_path)?;
+                        if let Some(issue) = select_primary_issue(&detection_output) {
+                            if let Some(synthesis) =
+                                synthesize_intervention(&InterventionSynthesisInput {
+                                    issue: issue.clone(),
+                                })
+                            {
+                                selected_targets.push(Prototype1SelectedTarget {
+                                    instance_id: result.task_id.clone(),
+                                    synthesized_spec_id: synthesis
+                                        .selected_spec
+                                        .spec_id()
+                                        .to_string(),
+                                    synthesized_target_relpath: synthesis
+                                        .selected_spec
+                                        .target_relpath()
+                                        .to_path_buf(),
+                                    issue,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            baseline_instances.push(Prototype1LoopInstance {
+                instance_id: result.task_id.clone(),
+                status: result.status.clone(),
+                record_path: result.record_path.clone(),
+                turn_summary: result.turn_summary.clone(),
+                protocol_completed,
+            });
+        }
+
+        let report = Prototype1LoopReport {
+            stage_reached: self.stop_after,
+            batch_id: prepared_batch.batch_id.clone(),
+            batch_manifest,
+            baseline_summary_path: batch_artifacts.summary,
+            baseline_instances,
+            selected_targets,
+            pending_stages: pending_prototype1_stages(self.stop_after),
+        };
+
+        match self.format {
+            InspectOutputFormat::Table => print_prototype1_loop_report(&report),
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn prepare_or_load_prototype1_batch(
+    command: &Prototype1LoopCommand,
+) -> Result<(PathBuf, PreparedMsbBatch), PrepareError> {
+    if command.batch.is_some() || command.batch_id.is_some() {
+        return load_prepared_batch_for_loop(resolve_batch_manifest(
+            command.batch.clone(),
+            command.batch_id.clone(),
+        )?);
+    }
+
+    let batch_id = command.prepare_batch_id.clone().unwrap_or_else(|| {
+        default_batch_id(
+            command.dataset_key.as_deref(),
+            command.dataset.as_ref(),
+            command.all,
+            &command.instance,
+            &command.specific,
+        )
+    });
+    let prepared = PrepareMsbBatchRequest {
+        dataset_file: command.dataset.clone(),
+        dataset_key: command.dataset_key.clone(),
+        batch_id,
+        select_all: command.all,
+        instance_ids: command.instance.clone(),
+        specifics: command.specific.clone(),
+        limit: command.limit,
+        repo_cache: command.repo_cache.clone().unwrap_or(repos_dir()?),
+        runs_root: command.runs_root.clone().unwrap_or(runs_dir()?),
+        batches_root: command.batches_root.clone().unwrap_or(batches_dir()?),
+        budget: EvalBudget {
+            max_turns: command.max_turns,
+            max_tool_calls: command.max_tool_calls,
+            wall_clock_secs: command.wall_clock_secs,
+        },
+    }
+    .prepare()?;
+
+    for run in &prepared.runs {
+        run.write_manifest(OutputMode::Pretty, PrepareWrite::File(run.manifest_path()))?;
+    }
+    prepared
+        .batch
+        .write_manifest(OutputMode::Pretty)
+        .map_err(PrepareError::from)?;
+    let manifest_path = prepared.batch.manifest_path();
+    Ok((manifest_path, prepared.batch))
+}
+
+fn load_prepared_batch_for_loop(
+    batch_manifest: PathBuf,
+) -> Result<(PathBuf, PreparedMsbBatch), PrepareError> {
+    let manifest_path = if batch_manifest.exists() {
+        fs::canonicalize(&batch_manifest).map_err(|source| PrepareError::ReadBatchManifest {
+            path: batch_manifest.clone(),
+            source,
+        })?
+    } else {
+        return Err(PrepareError::MissingBatchManifest(batch_manifest));
+    };
+    let manifest_text =
+        fs::read_to_string(&manifest_path).map_err(|source| PrepareError::ReadBatchManifest {
+            path: manifest_path.clone(),
+            source,
+        })?;
+    let prepared = serde_json::from_str(&manifest_text).map_err(|source| {
+        PrepareError::ParseBatchManifest {
+            path: manifest_path.clone(),
+            source,
+        }
+    })?;
+    Ok((manifest_path, prepared))
+}
+
+fn load_batch_run_summary(summary_path: &Path) -> Result<BatchRunSummary, PrepareError> {
+    let summary_text =
+        fs::read_to_string(summary_path).map_err(|source| PrepareError::ReadManifest {
+            path: summary_path.to_path_buf(),
+            source,
+        })?;
+    serde_json::from_str(&summary_text).map_err(|source| PrepareError::ParseManifest {
+        path: summary_path.to_path_buf(),
+        source,
+    })
+}
+
+async fn run_protocol_to_completion_for_record(
+    instance_id: &str,
+    record_path: &Path,
+    model_id: &str,
+    provider_slug: Option<String>,
+) -> Result<(), PrepareError> {
+    let task = ProtocolRunTask {
+        instance_id: instance_id.to_string(),
+        record_path: record_path.to_path_buf(),
+    };
+    execute_protocol_run_task(task, model_id.to_string(), provider_slug)
+        .await
+        .map(|_| ())
+}
+
+fn persist_issue_detection_for_record(
+    record_path: &Path,
+) -> Result<IssueDetectionOutput, PrepareError> {
+    let record =
+        read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
+            path: record_path.to_path_buf(),
+            source,
+        })?;
+    let subject_id = record.metadata.benchmark.instance_id.clone();
+    let protocol_aggregate = load_protocol_aggregate(record_path).ok();
+    let detection_input = IssueDetectionInput::from_record(record, protocol_aggregate);
+    let persisted_input = issue_detection_artifact_input(&detection_input);
+    let output = detect_issue_cases(&detection_input);
+    let artifact = build_issue_detection_artifact(&output);
+    write_protocol_artifact(
+        record_path,
+        INTERVENTION_ISSUE_DETECTION_PROCEDURE,
+        &subject_id,
+        None,
+        None,
+        &persisted_input,
+        &output,
+        &artifact,
+    )?;
+    Ok(output)
+}
+
+fn pending_prototype1_stages(stage_reached: Prototype1LoopStopAfter) -> Vec<&'static str> {
+    match stage_reached {
+        Prototype1LoopStopAfter::BaselineEval => {
+            vec![
+                "baseline protocol",
+                "target selection",
+                "intervention",
+                "treatment arm",
+                "compare",
+            ]
+        }
+        Prototype1LoopStopAfter::BaselineProtocol => {
+            vec![
+                "target selection",
+                "intervention",
+                "treatment arm",
+                "compare",
+            ]
+        }
+        Prototype1LoopStopAfter::TargetSelection => {
+            vec!["intervention", "treatment arm", "compare"]
+        }
+    }
+}
+
+fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
+    println!("prototype1 loop");
+    println!("{}", "-".repeat(40));
+    println!("stage_reached: {}", serde_name(&report.stage_reached));
+    println!("batch_id: {}", report.batch_id);
+    println!("batch_manifest: {}", report.batch_manifest.display());
+    println!(
+        "baseline_summary: {}",
+        report.baseline_summary_path.display()
+    );
+    println!();
+    println!("baseline instances");
+    println!("{}", "-".repeat(40));
+    for instance in &report.baseline_instances {
+        println!(
+            "- {} status={} protocol_completed={}",
+            instance.instance_id,
+            instance.status,
+            yes_no(instance.protocol_completed)
+        );
+        if let Some(record_path) = instance.record_path.as_ref() {
+            println!("  record: {}", record_path.display());
+        }
+        if let Some(turn_summary) = instance.turn_summary.as_ref() {
+            println!("  turn_summary: {}", turn_summary.display());
+        }
+    }
+    println!();
+    println!("selected targets");
+    println!("{}", "-".repeat(40));
+    if report.selected_targets.is_empty() {
+        println!("(none)");
+    } else {
+        for target in &report.selected_targets {
+            println!("- {}", target.instance_id);
+            print_issue_case_block("  primary_issue", &target.issue);
+            println!("  synthesized_spec_id: {}", target.synthesized_spec_id);
+            println!(
+                "  synthesized_target: {}",
+                target.synthesized_target_relpath.display()
+            );
+        }
+    }
+    println!();
+    println!("pending");
+    println!("{}", "-".repeat(40));
+    for stage in &report.pending_stages {
+        println!("- {}", stage);
     }
 }
 
@@ -1967,6 +2461,8 @@ pub enum ProtocolSubcommand {
     Status(ProtocolStatusCommand),
     /// Advance the selected run through the next missing protocol step.
     Run(ProtocolRunCommand),
+    /// Detect bounded intervention issue cases from one completed run and persist the result.
+    IssueDetection(ProtocolIssueDetectionCommand),
     /// Review one indexed tool call using a bounded neighborhood, forked judgments, and merged assessment.
     ToolCallReview(ProtocolToolCallReviewCommand),
     /// Segment an ordered tool-call sequence into contiguous intent episodes.
@@ -2007,6 +2503,21 @@ pub struct ProtocolRunCommand {
     /// Override the provider slug. Defaults to the persisted provider for the chosen model, if any.
     #[arg(long)]
     pub provider: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct ProtocolIssueDetectionCommand {
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
 
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -2105,6 +2616,9 @@ pub enum InspectSubcommand {
     Failures(InspectFailuresCommand),
     /// Show run configuration (run.config())
     Config(InspectConfigCommand),
+    /// Show compact mechanized operational metrics for one run.
+    #[command(alias = "metrics")]
+    Operational(InspectOperationalCommand),
     /// Inspect a specific turn (turn-level inspection)
     Turn(InspectTurnCommand),
     /// Run Cozo queries against historical DB snapshots at turn timestamps
@@ -2115,9 +2629,24 @@ pub enum InspectSubcommand {
     /// Aggregate persisted protocol artifacts into a human-facing report.
     #[command(alias = "proto", alias = "pview")]
     ProtocolOverview(InspectProtocolOverviewCommand),
+    /// Show the latest persisted intervention issue-detection artifact for one run.
+    #[command(alias = "issues")]
+    IssueOverview(InspectIssueOverviewCommand),
 }
 
 #[derive(Debug, Parser)]
+#[command(after_help = "\
+WARNING:
+  `inspect conversations --format json` can emit a very large payload and overwhelm
+  interactive terminals, logs, or agent context windows.
+
+  Use `--format json --full` only when you intend to filter the output immediately.
+
+Recommended patterns:
+  ploke-eval inspect conversations --instance <id>
+  ploke-eval inspect conversations --instance <id> --format json --full | jq '.[0].patch_artifact'
+  ploke-eval inspect conversations --instance <id> --format json --full | rg '\"error_id\"|\"call_id\"'
+")]
 pub struct InspectConversationsCommand {
     /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
@@ -2126,6 +2655,10 @@ pub struct InspectConversationsCommand {
     /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
     #[arg(long, conflicts_with = "record")]
     pub instance: Option<String>,
+
+    /// Acknowledge that full JSON output may be very large. Required with `--format json`.
+    #[arg(long)]
+    pub full: bool,
 
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -2206,6 +2739,21 @@ pub struct InspectFailuresCommand {
 
 #[derive(Debug, Parser)]
 pub struct InspectConfigCommand {
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectOperationalCommand {
     /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
     #[arg(long, value_name = "PATH", conflicts_with = "instance")]
     pub record: Option<PathBuf>,
@@ -2390,6 +2938,21 @@ pub enum ProtocolColorProfileOption {
     TokioNight,
     Gruvbox,
     MonoDark,
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectIssueOverviewCommand {
+    /// Path to a run record file (record.json.gz). Defaults to the most recent run's record.json.gz.
+    #[arg(long, value_name = "PATH", conflicts_with = "instance")]
+    pub record: Option<PathBuf>,
+
+    /// Benchmark instance id, used to resolve ~/.ploke-eval/runs/<instance>/record.json.gz.
+    #[arg(long, conflicts_with = "record")]
+    pub instance: Option<String>,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
 }
 
 impl From<ProtocolColorProfileOption> for ProtocolColorProfile {
@@ -2751,10 +3314,12 @@ impl InspectCommand {
             InspectSubcommand::DbSnapshots(cmd) => cmd.run().await,
             InspectSubcommand::Failures(cmd) => cmd.run().await,
             InspectSubcommand::Config(cmd) => cmd.run().await,
+            InspectSubcommand::Operational(cmd) => cmd.run().await,
             InspectSubcommand::Turn(cmd) => cmd.run().await,
             InspectSubcommand::Query(cmd) => cmd.run().await,
             InspectSubcommand::ProtocolArtifacts(cmd) => cmd.run().await,
             InspectSubcommand::ProtocolOverview(cmd) => cmd.run().await,
+            InspectSubcommand::IssueOverview(cmd) => cmd.run().await,
         }
     }
 }
@@ -2764,6 +3329,7 @@ impl ProtocolCommand {
         match self.command {
             ProtocolSubcommand::Status(cmd) => cmd.run().await,
             ProtocolSubcommand::Run(cmd) => cmd.run().await,
+            ProtocolSubcommand::IssueDetection(cmd) => cmd.run().await,
             ProtocolSubcommand::ToolCallReview(cmd) => cmd.run().await,
             ProtocolSubcommand::ToolCallIntentSegments(cmd) => cmd.run().await,
             ProtocolSubcommand::ToolCallSegmentReview(cmd) => cmd.run().await,
@@ -3517,6 +4083,64 @@ impl ProtocolRunCommand {
                     "executed": executed,
                     "before": before,
                     "after": after,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        print_record_resolution_footer(&resolution);
+        Ok(())
+    }
+}
+
+impl ProtocolIssueDetectionCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+
+        let subject_id = record.metadata.benchmark.instance_id.clone();
+        let protocol_aggregate = load_protocol_aggregate(&record_path).ok();
+        let detection_input = IssueDetectionInput::from_record(record, protocol_aggregate);
+        let persisted_input = issue_detection_artifact_input(&detection_input);
+        let output = detect_issue_cases(&detection_input);
+        let artifact = build_issue_detection_artifact(&output);
+        let persisted_path = write_protocol_artifact(
+            &record_path,
+            INTERVENTION_ISSUE_DETECTION_PROCEDURE,
+            &subject_id,
+            None,
+            None,
+            &persisted_input,
+            &output,
+            &artifact,
+        )?;
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("Protocol: {}", INTERVENTION_ISSUE_DETECTION_PROCEDURE);
+                println!("{}", "-".repeat(40));
+                println!("Artifact: {}", persisted_path.display());
+                println!("Cases: {}", output.cases.len());
+                if let Some(primary) = select_primary_issue(&output) {
+                    print_issue_case_block("Primary issue", &primary);
+                } else {
+                    println!("Primary issue: (none)");
+                }
+            }
+            InspectOutputFormat::Json => {
+                let payload = serde_json::json!({
+                    "procedure": INTERVENTION_ISSUE_DETECTION_PROCEDURE,
+                    "persisted_artifact_path": persisted_path,
+                    "output": output,
+                    "artifact": artifact,
                 });
                 println!(
                     "{}",
@@ -4705,6 +5329,130 @@ async fn execute_protocol_tool_call_segment_review_quiet(
     Ok(())
 }
 
+fn build_issue_detection_artifact(output: &IssueDetectionOutput) -> serde_json::Value {
+    serde_json::json!({
+        "case_count": output.cases.len(),
+        "primary_issue": select_primary_issue(output),
+    })
+}
+
+fn issue_aggregate_error_to_prepare(err: IssueDetectionAggregateError) -> PrepareError {
+    match err {
+        IssueDetectionAggregateError::Source(source) => source,
+        IssueDetectionAggregateError::MissingArtifact { record_path } => {
+            PrepareError::DatabaseSetup {
+                phase: "inspect_issue_overview",
+                detail: format!(
+                    "no persisted issue-detection artifact found for '{}'; run `ploke-eval protocol issue-detection --record {}` first",
+                    record_path.display(),
+                    record_path.display()
+                ),
+            }
+        }
+        IssueDetectionAggregateError::DeserializeOutput { path, detail } => {
+            PrepareError::DatabaseSetup {
+                phase: "inspect_issue_overview",
+                detail: format!(
+                    "failed to deserialize issue-detection output from '{}': {}",
+                    path.display(),
+                    detail
+                ),
+            }
+        }
+        IssueDetectionAggregateError::DeserializeInput { path, detail } => {
+            PrepareError::DatabaseSetup {
+                phase: "inspect_issue_overview",
+                detail: format!(
+                    "failed to deserialize issue-detection input from '{}': {}",
+                    path.display(),
+                    detail
+                ),
+            }
+        }
+    }
+}
+
+fn serde_name<T>(value: &T) -> String
+where
+    T: Serialize,
+{
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "<unknown>".to_string())
+}
+
+fn print_issue_case_block(label: &str, issue: &IssueCase) {
+    println!("{}:", label);
+    println!("  selection_basis: {}", serde_name(&issue.selection_basis));
+    println!("  target_tool: {}", issue.target_tool.as_str());
+    println!(
+        "  target_file: {}",
+        issue.target_tool.description_artifact_relpath()
+    );
+    println!(
+        "  evidence: reviewed_calls={} reviewed_issue_calls={}",
+        issue.evidence.reviewed_call_count, issue.evidence.reviewed_issue_call_count
+    );
+    let protocol = &issue.evidence.protocol;
+    if !protocol.reviewed_call_indices.is_empty() {
+        println!("  reviewed_calls: {:?}", protocol.reviewed_call_indices);
+    }
+    if !protocol.reviewed_segment_indices.is_empty() {
+        println!(
+            "  reviewed_segments: {:?}",
+            protocol.reviewed_segment_indices
+        );
+    }
+    if !protocol.nearby_segment_labels.is_empty() {
+        println!(
+            "  nearby_segment_labels: {:?}",
+            protocol.nearby_segment_labels
+        );
+    }
+    if !protocol.candidate_concerns.is_empty() {
+        println!("  candidate_concerns:");
+        for concern in &protocol.candidate_concerns {
+            println!("    - {}", concern);
+        }
+    }
+}
+
+fn print_issue_detection_aggregate(aggregate: &IssueDetectionAggregate) {
+    println!("issue overview");
+    println!("{}", "-".repeat(40));
+    println!("Procedure: {}", aggregate.artifact.procedure_name);
+    println!("Artifact: {}", aggregate.artifact.path.display());
+    println!("Run: {}", aggregate.run.run_id);
+    println!("Subject: {}", aggregate.run.subject_id);
+    println!("Cases: {}", aggregate.output.cases.len());
+    println!(
+        "Protocol coverage: total_calls={} anchor_segments={} reviewed_calls={} reviewed_segments={} scanned_artifacts={}",
+        aggregate.input.total_calls_in_run,
+        aggregate.input.anchor_segment_count,
+        aggregate.input.protocol_reviewed_call_count,
+        aggregate.input.protocol_reviewed_segment_count,
+        aggregate.input.protocol_artifact_count
+    );
+
+    if let Some(primary) = &aggregate.primary_issue {
+        print_issue_case_block("Primary issue", primary);
+    } else {
+        println!("Primary issue: (none)");
+    }
+
+    if aggregate.output.cases.len() > 1 {
+        println!("Other cases:");
+        for issue in aggregate.output.cases.iter().skip(1) {
+            println!(
+                "  - {} ({})",
+                issue.target_tool.as_str(),
+                serde_name(&issue.selection_basis)
+            );
+        }
+    }
+}
+
 fn render_advance_eval_report(
     report: ClosureAdvanceEvalReport,
     format: InspectOutputFormat,
@@ -5126,6 +5874,13 @@ impl ProtocolToolCallIntentSegmentsCommand {
 
 impl InspectConversationsCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
+        if matches!(self.format, InspectOutputFormat::Json) && !self.full {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "inspect_conversations",
+                detail: "refusing to emit full conversation JSON without --full; this output can be very large. Re-run with `--format json --full` and pipe to `jq` or `rg`.".to_string(),
+            });
+        }
+
         let resolution = resolve_record_path(self.record, self.instance, None)?;
         let record_path = resolution.record_path.clone();
         let record =
@@ -5446,6 +6201,82 @@ impl InspectConfigCommand {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(config).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        print_record_resolution_footer(&resolution);
+        Ok(())
+    }
+}
+
+impl InspectOperationalCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
+        let record =
+            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+                path: record_path.clone(),
+                source,
+            })?;
+        let metrics = record.operational_metrics();
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                println!("Operational Metrics");
+                println!("{}", "-".repeat(40));
+                println!("Instance ID: {}", record.metadata.benchmark.instance_id);
+                println!("Run arm: {}", record.metadata.run_arm.id);
+                println!(
+                    "Role: {}",
+                    format!("{:?}", record.metadata.run_arm.role).to_lowercase()
+                );
+                println!("Patch apply state: {}", metrics.patch_apply_state.as_str());
+                println!(
+                    "Submission artifact: {}",
+                    metrics.submission_artifact_state.as_str()
+                );
+                println!("Patch attempted: {}", yes_no(metrics.patch_attempted));
+                println!("Aborted: {}", yes_no(metrics.aborted));
+                println!(
+                    "Aborted repair loop: {}",
+                    yes_no(metrics.aborted_repair_loop)
+                );
+                println!(
+                    "Nonempty valid patch: {}",
+                    yes_no(metrics.nonempty_valid_patch)
+                );
+                println!("Convergence: {}", yes_no(metrics.convergence));
+                println!("Oracle eligible: {}", yes_no(metrics.oracle_eligible));
+                println!();
+                println!("Counts");
+                println!("{}", "-".repeat(40));
+                println!("Tool calls total: {}", metrics.tool_calls_total);
+                println!("Tool calls failed: {}", metrics.tool_calls_failed);
+                println!("Partial patch failures: {}", metrics.partial_patch_failures);
+                println!(
+                    "Same-file patch retries: {}",
+                    metrics.same_file_patch_retry_count
+                );
+                println!(
+                    "Same-file max streak: {}",
+                    metrics.same_file_patch_max_streak
+                );
+            }
+            InspectOutputFormat::Json => {
+                let payload = serde_json::json!({
+                    "instance_id": record.metadata.benchmark.instance_id,
+                    "run_arm": {
+                        "id": record.metadata.run_arm.id,
+                        "role": record.metadata.run_arm.role,
+                        "command": record.metadata.run_arm.command,
+                        "execution": record.metadata.run_arm.execution,
+                    },
+                    "metrics": metrics,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
                 );
             }
         }
@@ -5973,6 +6804,30 @@ impl InspectProtocolArtifactsCommand {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        print_record_resolution_footer(&resolution);
+        Ok(())
+    }
+}
+
+impl InspectIssueOverviewCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let resolution = resolve_record_path(self.record, self.instance, None)?;
+        let record_path = resolution.record_path.clone();
+        let aggregate = load_issue_detection_aggregate(&record_path)
+            .map_err(issue_aggregate_error_to_prepare)?;
+
+        match self.format {
+            InspectOutputFormat::Table => {
+                print_issue_detection_aggregate(&aggregate);
+            }
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&aggregate).map_err(PrepareError::Serialize)?
                 );
             }
         }
@@ -9463,6 +10318,10 @@ fn submission_status_label(status: crate::run_registry::RunSubmissionStatus) -> 
     }
 }
 
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
 fn resolve_batch_manifest(
     batch: Option<PathBuf>,
     batch_id: Option<String>,
@@ -10394,6 +11253,71 @@ mod tests {
     }
 
     #[test]
+    fn protocol_issue_detection_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "protocol",
+            "issue-detection",
+            "--instance",
+            "tokio-rs__bytes-543",
+        ])
+        .expect("protocol issue-detection should parse");
+
+        match parsed.command {
+            Command::Protocol(ProtocolCommand {
+                command: ProtocolSubcommand::IssueDetection(cmd),
+            }) => assert_eq!(cmd.instance.as_deref(), Some("tokio-rs__bytes-543")),
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inspect_issue_overview_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "inspect",
+            "issue-overview",
+            "--instance",
+            "tokio-rs__bytes-543",
+        ])
+        .expect("inspect issue-overview should parse");
+
+        match parsed.command {
+            Command::Inspect(InspectCommand {
+                command: InspectSubcommand::IssueOverview(cmd),
+            }) => assert_eq!(cmd.instance.as_deref(), Some("tokio-rs__bytes-543")),
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1",
+            "--dataset-key",
+            "clap-rs__clap",
+            "--instance",
+            "clap-rs__clap-3670",
+            "--stop-after",
+            "target-selection",
+        ])
+        .expect("loop prototype1 should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1(cmd),
+            }) => {
+                assert_eq!(cmd.dataset_key.as_deref(), Some("clap-rs__clap"));
+                assert_eq!(cmd.instance, vec!["clap-rs__clap-3670".to_string()]);
+                assert_eq!(cmd.stop_after, Prototype1LoopStopAfter::TargetSelection);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
     fn resolve_record_path_defaults_to_last_run_record() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let eval_home = tmp.path().join("eval-home");
@@ -10536,6 +11460,19 @@ mod tests {
                 assert_eq!(cmd.campaign, "rust-baseline-grok4-xai");
                 assert_eq!(cmd.tool.as_deref(), Some("apply_code_edit"));
             }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inspect_operational_accepts_metrics_alias() {
+        let parsed = Cli::try_parse_from(["ploke-eval", "inspect", "metrics"])
+            .expect("operational metrics should accept the metrics alias");
+
+        match parsed.command {
+            Command::Inspect(InspectCommand {
+                command: InspectSubcommand::Operational(_),
+            }) => {}
             other => panic!("unexpected command shape: {:?}", other),
         }
     }

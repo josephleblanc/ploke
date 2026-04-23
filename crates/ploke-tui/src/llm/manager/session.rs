@@ -36,62 +36,28 @@ use ploke_llm::types::meta::{LLMMetadata, PerformanceMetrics};
 use super::{format_tokens_payload, tokens_logging_enabled};
 use crate::llm::manager::loop_error::{
     ChatSessionReport, CommitPhase, ErrorAudience, ErrorContext, LoopError, RetryAdvice,
-    RetryStrategy, SessionOutcome, Verbosity, build_tool_arg_repair_error,
-    build_unknown_tool_error, classify_finish_reason, classify_llm_error, render_error_view,
+    RetryStrategy, SessionOutcome, Verbosity, build_loop_error_from_semantic_spec,
+    classify_finish_reason, classify_llm_error, mark_repair_budget_exhausted, recovery_from_retry,
+    render_error_view,
 };
+use crate::llm::manager::semantics::{self, RecoveryDecision};
 use crate::tools::{
     ToolCallPreflightError, ToolError, ToolErrorCode, ToolErrorWire, ToolUiPayload,
     allowed_tool_names, validate_and_sanitize_tool_calls,
 };
-use ploke_llm::{ApiErrorSource, LlmError};
+use ploke_llm::LlmError;
 use tokio::time::sleep;
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
 const OPENROUTER_RESPONSE_LOG_RAW: &str = "logs/openrouter/session/last_response_raw.txt";
+const MAX_REPAIR_ATTEMPTS_PER_SESSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FullResponseTraceRecord {
     assistant_message_id: Uuid,
     response_index: usize,
     response: OpenAiResponse,
-}
-
-fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
-    // Providers sometimes put errors inside a 200 body
-    match serde_json::from_str::<serde_json::Value>(body_text) {
-        Ok(v) => {
-            if let Some(err) = v.get("error") {
-                let msg = err
-                    .get("message")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("Unknown provider error");
-                let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
-                Err(LlmError::Api {
-                    status: code as u16,
-                    message: msg.to_string(),
-                    url: None,
-                    body_snippet: Some(truncate_for_error(body_text, 4_096)),
-                    api_code: Some(ploke_core::ArcStr::from(code.to_string())),
-                    provider_name: None,
-                    provider_slug: None,
-                    error_source: ApiErrorSource::TopLevelError,
-                })
-            } else {
-                Err(LlmError::Deserialization {
-                    message: "No choices".into(),
-                    body_snippet: Some(truncate_for_error(body_text, 512)),
-                })
-            }
-        }
-        Err(e) => {
-            let err_msg = format!("Failed to Deserialize to json: {e}");
-            Err(LlmError::Deserialization {
-                message: err_msg,
-                body_snippet: Some(truncate_for_error(body_text, 512)),
-            })
-        }
-    }
 }
 
 /// Generic per-request session over a router-specific ApiRoute.
@@ -298,6 +264,24 @@ fn should_retry_length(policy: TuiLengthPolicy, retried_lengths: &mut u32) -> bo
     }
 }
 
+fn repair_budget_exhausted(state: &ChatLoopState) -> bool {
+    // Keep repair bounded independently from generic request retries and from the broader
+    // tool-call chain cap so repeated provider/model repair loops cannot dominate the turn.
+    state.repair_attempts >= MAX_REPAIR_ATTEMPTS_PER_SESSION
+}
+
+fn consume_repair_budget(state: &mut ChatLoopState, loop_error: &mut LoopError) -> bool {
+    if !matches!(loop_error.recovery, RecoveryDecision::Repair { .. }) {
+        return true;
+    }
+    if repair_budget_exhausted(state) {
+        mark_repair_budget_exhausted(loop_error);
+        return false;
+    }
+    state.repair_attempts = state.repair_attempts.saturating_add(1);
+    true
+}
+
 /// Outcome of finish-reason evaluation for a single response.
 ///
 /// Continue variants tell the caller to retry the chat step, optionally with
@@ -328,6 +312,7 @@ struct ChatLoopState {
     retried_lengths: u32,
     timeout_attempts: usize,
     request_error_retries: u32,
+    repair_attempts: u32,
 }
 
 /// Borrowed context required to evaluate finish reasons.
@@ -686,41 +671,34 @@ pub async fn run_chat_session<R: Router>(
         } {
             Ok(step) => step,
             Err(err) => {
-                if let Some(unknown_tool) = extract_unknown_tool_name(&err) {
-                    let allowed = allowed_tool_names();
-                    let context = base_error_context(
-                        attempts,
-                        chain_index,
-                        "parse_response",
-                        &model_key,
-                        assistant_message_id,
-                    );
-                    let loop_error = build_unknown_tool_error(
-                        &unknown_tool,
-                        &allowed,
-                        context,
-                        commit_phase.clone(),
-                    );
-                    emit_loop_error(
-                        &state_cmd_tx,
-                        assistant_message_id,
-                        &mut initial_message_updated,
-                        &loop_error,
-                    )
-                    .await;
-                    push_llm_payload(&mut req, &loop_error);
-                    report.record_error(loop_error);
-                    continue;
-                }
-                if let Some(provider_error) = extract_provider_tool_call_validation_error(&err) {
-                    let loop_error = build_provider_tool_call_repair_error(
-                        provider_error,
-                        attempts,
-                        chain_index,
-                        &model_key,
-                        assistant_message_id,
-                        commit_phase.clone(),
-                    );
+                let allowed = allowed_tool_names();
+                let semantic_context = base_error_context(
+                    attempts,
+                    chain_index,
+                    "parse_response",
+                    &model_key,
+                    assistant_message_id,
+                );
+                if let Some(spec) = semantics::normalize_llm_error(&err, &allowed, semantic_context)
+                {
+                    let mut loop_error =
+                        build_loop_error_from_semantic_spec(spec, commit_phase.clone());
+                    if !consume_repair_budget(&mut loop_state, &mut loop_error) {
+                        emit_loop_error(
+                            &state_cmd_tx,
+                            assistant_message_id,
+                            &mut initial_message_updated,
+                            &loop_error,
+                        )
+                        .await;
+                        report.record_error(loop_error.clone());
+                        report.outcome = SessionOutcome::Aborted {
+                            error_id: loop_error.error_id,
+                        };
+                        report.commit_phase = commit_phase;
+                        report.attempts = attempts;
+                        return report;
+                    }
                     emit_loop_error(
                         &state_cmd_tx,
                         assistant_message_id,
@@ -740,22 +718,22 @@ pub async fn run_chat_session<R: Router>(
                     assistant_message_id,
                 );
                 let loop_error = classify_llm_error(&err, context, commit_phase.clone());
-                if matches!(&loop_error.retry, RetryAdvice::Yes { .. })
+                if matches!(&loop_error.recovery, RecoveryDecision::Retry { .. })
                     && loop_state.request_error_retries < chat_policy.error_retry_limit
                 {
                     loop_state.request_error_retries =
                         loop_state.request_error_retries.saturating_add(1);
                     report.record_error(loop_error.clone());
 
-                    let retry_delay = match &loop_error.retry {
-                        RetryAdvice::Yes {
+                    let retry_delay = match &loop_error.recovery {
+                        RecoveryDecision::Retry {
                             strategy: RetryStrategy::Fixed,
                             ..
                         } => finish_policy
                             .timeout
                             .duration
                             .unwrap_or_else(|| Duration::from_secs(0)),
-                        RetryAdvice::Yes {
+                        RecoveryDecision::Retry {
                             strategy: RetryStrategy::Backoff,
                             ..
                         } => finish_policy
@@ -837,15 +815,36 @@ pub async fn run_chat_session<R: Router>(
                 let calls = match validate_and_sanitize_tool_calls(&calls) {
                     Ok(validated) => validated,
                     Err(preflight_error) => {
-                        let loop_error = build_preflight_tool_call_repair_error(
-                            preflight_error,
-                            provider_slug_from_response(&full_response),
+                        let context = base_error_context(
                             attempts,
                             chain_index,
+                            "tool_call_preflight",
                             &model_key,
                             assistant_message_id,
-                            commit_phase.clone(),
                         );
+                        let spec = semantics::normalize_tool_call_preflight_error(
+                            preflight_error,
+                            provider_slug_from_response(&full_response),
+                            context,
+                        );
+                        let mut loop_error =
+                            build_loop_error_from_semantic_spec(spec, commit_phase.clone());
+                        if !consume_repair_budget(&mut loop_state, &mut loop_error) {
+                            emit_loop_error(
+                                &state_cmd_tx,
+                                assistant_message_id,
+                                &mut initial_message_updated,
+                                &loop_error,
+                            )
+                            .await;
+                            report.record_error(loop_error.clone());
+                            report.outcome = SessionOutcome::Aborted {
+                                error_id: loop_error.error_id,
+                            };
+                            report.commit_phase = commit_phase;
+                            report.attempts = attempts;
+                            return report;
+                        }
                         emit_loop_error(
                             &state_cmd_tx,
                             assistant_message_id,
@@ -1108,10 +1107,12 @@ pub async fn run_chat_session<R: Router>(
                         apply_prompt_hint(&mut loop_error, prompt);
                     }
                     if !matches!(loop_error.retry, RetryAdvice::Yes { .. }) {
-                        loop_error.retry = RetryAdvice::Yes {
+                        let retry = RetryAdvice::Yes {
                             strategy: RetryStrategy::Fixed,
                             reason: ploke_core::ArcStr::from("Retrying within session"),
                         };
+                        loop_error.recovery = recovery_from_retry(&retry);
+                        loop_error.retry = retry;
                     }
                     push_llm_payload(&mut req, &loop_error);
                     report.record_error(loop_error);
@@ -1372,191 +1373,12 @@ fn base_error_context(
     context
 }
 
-fn extract_unknown_tool_name(err: &LlmError) -> Option<String> {
-    let message = match err {
-        LlmError::Deserialization { message, .. } => message.as_str(),
-        _ => return None,
-    };
-    let needle = "unknown variant `";
-    if let Some(start) = message.find(needle) {
-        let rest = &message[start + needle.len()..];
-        if let Some(end) = rest.find('`') {
-            return Some(rest[..end].to_string());
-        }
-    }
-    let needle = "unknown variant \"";
-    if let Some(start) = message.find(needle) {
-        let rest = &message[start + needle.len()..];
-        if let Some(end) = rest.find('"') {
-            return Some(rest[..end].to_string());
-        }
-    }
-    None
-}
-
 fn provider_slug_from_response(response: &OpenAiResponse) -> Option<ploke_core::ArcStr> {
     response
         .provider
         .as_ref()
         .and_then(|name| name.to_slug())
         .map(|slug| ploke_core::ArcStr::from(slug.as_str()))
-}
-
-fn build_preflight_tool_call_repair_error(
-    preflight_error: ToolCallPreflightError,
-    provider_slug: Option<ploke_core::ArcStr>,
-    attempts: u32,
-    chain_index: usize,
-    model_key: &Option<ploke_llm::ModelKey>,
-    assistant_message_id: Uuid,
-    commit_phase: CommitPhase,
-) -> LoopError {
-    let mut context = base_error_context(
-        attempts,
-        chain_index,
-        "tool_call_preflight",
-        model_key,
-        assistant_message_id,
-    );
-    context.provider = provider_slug;
-    context.tool_call_id = Some(preflight_error.call_id.clone());
-    context.tool_name = Some(ploke_core::ArcStr::from(preflight_error.tool_name.as_str()));
-
-    let summary = format!(
-        "Provider emitted invalid arguments for tool `{}`.",
-        preflight_error.tool_name.as_str()
-    );
-    let repair_details = preflight_error
-        .error
-        .format_for_audience(crate::tools::Audience::Llm);
-    let diagnostic = preflight_error
-        .error
-        .format_for_audience(crate::tools::Audience::System);
-    let mut constraints = vec![
-        "Arguments must be strict JSON.".to_string(),
-        "Arguments must match the tool schema.".to_string(),
-        format!(
-            "Retry the same tool name: {}",
-            preflight_error.tool_name.as_str()
-        ),
-    ];
-    if let Some(retry_hint) = &preflight_error.error.retry_hint {
-        constraints.push(format!("Hint: {retry_hint}"));
-    }
-
-    build_tool_arg_repair_error(
-        context,
-        commit_phase,
-        summary,
-        diagnostic,
-        Some(repair_details),
-        constraints,
-    )
-}
-
-#[derive(Debug, Clone)]
-struct ProviderToolCallValidationError {
-    provider_slug: ploke_core::ArcStr,
-    tool_name: Option<String>,
-    detail: String,
-}
-
-fn extract_provider_tool_call_validation_error(
-    err: &LlmError,
-) -> Option<ProviderToolCallValidationError> {
-    let LlmError::Api {
-        message,
-        body_snippet,
-        provider_slug,
-        error_source,
-        ..
-    } = err
-    else {
-        return None;
-    };
-    if *error_source != ApiErrorSource::ChoiceError {
-        return None;
-    }
-    let provider_slug = provider_slug.as_ref()?;
-    if provider_slug.as_ref() != "groq" {
-        return None;
-    }
-
-    let mut source = None;
-    for candidate in [
-        message.as_str(),
-        body_snippet.as_deref().unwrap_or_default(),
-    ] {
-        if candidate.contains("tool call validation failed")
-            || candidate.contains("parameters for tool ")
-        {
-            source = Some(candidate);
-            break;
-        }
-    }
-    let source = source?;
-
-    let tool_name = source
-        .split("parameters for tool ")
-        .nth(1)
-        .and_then(|tail| tail.split(" did not match schema").next())
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(ToOwned::to_owned);
-
-    let detail = if let Some((_, tail)) = source.split_once("did not match schema:") {
-        format!("Tool arguments rejected by provider: {}", tail.trim())
-    } else {
-        source.trim().to_string()
-    };
-
-    Some(ProviderToolCallValidationError {
-        provider_slug: provider_slug.clone(),
-        tool_name,
-        detail,
-    })
-}
-
-fn build_provider_tool_call_repair_error(
-    provider_error: ProviderToolCallValidationError,
-    attempts: u32,
-    chain_index: usize,
-    model_key: &Option<ploke_llm::ModelKey>,
-    assistant_message_id: Uuid,
-    commit_phase: CommitPhase,
-) -> LoopError {
-    let mut context = base_error_context(
-        attempts,
-        chain_index,
-        "provider_tool_validation",
-        model_key,
-        assistant_message_id,
-    );
-    context.provider = Some(provider_error.provider_slug.clone());
-    if let Some(tool_name) = &provider_error.tool_name {
-        context.tool_name = Some(ploke_core::ArcStr::from(tool_name.clone()));
-    }
-
-    let summary = match &provider_error.tool_name {
-        Some(tool_name) => format!("Provider rejected arguments for tool `{tool_name}`."),
-        None => "Provider rejected tool arguments.".to_string(),
-    };
-    let mut constraints = vec![
-        "Arguments must be strict JSON.".to_string(),
-        "Arguments must match the tool schema.".to_string(),
-    ];
-    if let Some(tool_name) = &provider_error.tool_name {
-        constraints.push(format!("Retry the same tool name: {tool_name}"));
-    }
-
-    build_tool_arg_repair_error(
-        context,
-        commit_phase,
-        summary,
-        provider_error.detail.clone(),
-        Some(provider_error.detail),
-        constraints,
-    )
 }
 
 /// Placeholder cost estimator using usage counts.
@@ -1780,16 +1602,6 @@ fn write_payload(rel_path: &str, payload: &str) {
     let _ = fs::write(path, payload);
 }
 
-fn truncate_for_error(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        let head = &s[..max.saturating_sub(200)];
-        let tail = &s[s.len().saturating_sub(200)..];
-        format!("{head}…<snip>…{tail}")
-    }
-}
-
 #[tracing::instrument]
 async fn add_sysinfo_message(
     call_id: &ploke_core::ArcStr,
@@ -1826,15 +1638,328 @@ async fn add_tool_failed_message(
 
 #[cfg(test)]
 mod tests {
-    use ploke_llm::manager::parse_chat_outcome;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+
+    use once_cell::sync::Lazy;
+    use ploke_llm::manager::parse_chat_outcome;
+    use ploke_llm::router_only::ChatCompRequest;
+    use ploke_llm::router_only::Router;
+    use ploke_llm::router_only::openrouter::ChatCompFields;
+    use ploke_llm::router_only::openrouter::OpenRouterModelId;
+    use serde::{Deserialize, Serialize};
+    use serde_json::json;
 
     use super::*;
     use crate::EventBus;
     use crate::event_bus::EventBusCaps;
-    use crate::llm::router_only::openrouter::OpenRouter;
     use crate::tools::ToolName;
+    use crate::user_config::ChatPolicy;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::{Mutex, mpsc, watch};
     use tokio::time::timeout;
+
+    static TEST_ROUTER_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    const TEST_ROUTER_URL: &str = "http://127.0.0.1:39181/v1/chat/completions";
+    const TEST_ROUTER_URL_ALT: &str = "http://127.0.0.1:39182/v1/chat/completions";
+
+    #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default, Eq)]
+    struct TestRouter;
+
+    impl Router for TestRouter {
+        type CompletionFields = ChatCompFields;
+        type RouterModelId = OpenRouterModelId;
+
+        const BASE_URL: &str = "http://127.0.0.1:39181/v1";
+        const COMPLETION_URL: &str = TEST_ROUTER_URL;
+        const MODELS_URL: &str = "http://127.0.0.1:39181/v1/models";
+        const ENDPOINTS_TAIL: &str = "endpoints";
+        const API_KEY_NAME: &str = "PLOKE_TEST_ROUTER_API_KEY";
+        const PROVIDERS_URL: &str = "http://127.0.0.1:39181/v1/providers";
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default, Eq)]
+    struct TestRouterAlt;
+
+    impl Router for TestRouterAlt {
+        type CompletionFields = ChatCompFields;
+        type RouterModelId = OpenRouterModelId;
+
+        const BASE_URL: &str = "http://127.0.0.1:39182/v1";
+        const COMPLETION_URL: &str = TEST_ROUTER_URL_ALT;
+        const MODELS_URL: &str = "http://127.0.0.1:39182/v1/models";
+        const ENDPOINTS_TAIL: &str = "endpoints";
+        const API_KEY_NAME: &str = "PLOKE_TEST_ROUTER_API_KEY";
+        const PROVIDERS_URL: &str = "http://127.0.0.1:39182/v1/providers";
+    }
+
+    struct ApiKeyGuard {
+        previous: Option<String>,
+    }
+
+    impl ApiKeyGuard {
+        fn set(key: &str) -> Self {
+            let previous = std::env::var(TestRouter::API_KEY_NAME).ok();
+            unsafe {
+                std::env::set_var(TestRouter::API_KEY_NAME, key);
+            }
+            Self { previous }
+        }
+    }
+
+    impl Drop for ApiKeyGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                unsafe {
+                    std::env::set_var(TestRouter::API_KEY_NAME, previous);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(TestRouter::API_KEY_NAME);
+                }
+            }
+        }
+    }
+
+    async fn read_http_request(stream: &mut TcpStream) {
+        let mut buf = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        let mut header_end = None;
+        let mut content_length = 0usize;
+
+        loop {
+            let read = stream.read(&mut chunk).await.expect("read request");
+            if read == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..read]);
+
+            if header_end.is_none()
+                && let Some(pos) = buf.windows(4).position(|window| window == b"\r\n\r\n")
+            {
+                let end = pos + 4;
+                header_end = Some(end);
+                let headers = String::from_utf8_lossy(&buf[..end]);
+                content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        if name.eq_ignore_ascii_case("content-length") {
+                            value.trim().parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+            }
+
+            if let Some(end) = header_end
+                && buf.len() >= end + content_length
+            {
+                break;
+            }
+        }
+    }
+
+    async fn spawn_test_router_server(
+        bind_addr: &'static str,
+        responses: Vec<String>,
+        request_count: std::sync::Arc<AtomicUsize>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let listener = TcpListener::bind(bind_addr)
+                .await
+                .expect("bind test router");
+            for body in responses {
+                let Ok(Ok((mut stream, _))) =
+                    timeout(Duration::from_millis(500), listener.accept()).await
+                else {
+                    break;
+                };
+                request_count.fetch_add(1, Ordering::SeqCst);
+                read_http_request(&mut stream).await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write response");
+                stream.shutdown().await.expect("shutdown");
+            }
+        })
+    }
+
+    fn malformed_tool_call_response(index: usize) -> String {
+        json!({
+            "id": format!("repair-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": format!("call_{index}"),
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"file\":1}"
+                        }
+                    }]
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
+    fn content_response(content: &str) -> String {
+        json!({
+            "id": "final",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": content
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_can_converge_after_four_tool_arg_repairs() {
+        let _guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+
+        let responses = vec![
+            malformed_tool_call_response(1),
+            malformed_tool_call_response(2),
+            malformed_tool_call_response(3),
+            malformed_tool_call_response(4),
+            content_response("final answer"),
+        ];
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let server =
+            spawn_test_router_server("127.0.0.1:39181", responses, request_count.clone()).await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        assert_eq!(TestRouter::COMPLETION_URL, TEST_ROUTER_URL);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            5,
+        )
+        .await;
+
+        server.await.expect("server task");
+        drain.abort();
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.attempts, 5);
+        assert_eq!(request_count.load(Ordering::SeqCst), 5);
+        assert_eq!(report.errors.len(), 4);
+        assert!(
+            report
+                .errors
+                .iter()
+                .all(|error| { error.code.as_ref() == "TOOL_ARGS_REPAIR_REQUIRED" })
+        );
+        assert!(
+            report
+                .errors
+                .iter()
+                .all(|error| error.code.as_ref() != "REPAIR_BUDGET_EXHAUSTED")
+        );
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_aborts_when_a_fifth_repair_would_be_required() {
+        let _guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+
+        let responses = vec![
+            malformed_tool_call_response(1),
+            malformed_tool_call_response(2),
+            malformed_tool_call_response(3),
+            malformed_tool_call_response(4),
+            malformed_tool_call_response(5),
+            content_response("would have recovered"),
+        ];
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let server =
+            spawn_test_router_server("127.0.0.1:39182", responses, request_count.clone()).await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+
+        let req = ChatCompRequest::<TestRouterAlt>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            5,
+        )
+        .await;
+
+        server.await.expect("server task");
+        drain.await.expect("drain task");
+
+        assert!(matches!(report.outcome, SessionOutcome::Aborted { .. }));
+        assert_eq!(report.attempts, 5);
+        assert_eq!(request_count.load(Ordering::SeqCst), 5);
+        assert_eq!(report.errors.len(), 5);
+        assert_eq!(
+            report.errors.last().map(|error| error.code.as_ref()),
+            Some("REPAIR_BUDGET_EXHAUSTED")
+        );
+    }
 
     #[test]
     fn parse_chat_outcome_content_message() {
@@ -1960,47 +2085,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_provider_tool_call_validation_error_parses_tool_name_and_detail() {
-        let err = LlmError::Api {
-            status: 502,
-            message: "Upstream error from Groq: tool call validation failed: parameters for tool cargo did not match schema: errors: [`/command`: value must be one of \"test\", \"check\"]".to_string(),
-            url: None,
-            body_snippet: None,
-            api_code: Some(ploke_core::ArcStr::from("502")),
-            provider_name: Some(ploke_core::ArcStr::from("Groq")),
-            provider_slug: Some(ploke_core::ArcStr::from("groq")),
-            error_source: ApiErrorSource::ChoiceError,
-        };
-
-        let extracted =
-            extract_provider_tool_call_validation_error(&err).expect("provider tool validation");
-
-        assert_eq!(extracted.provider_slug.as_ref(), "groq");
-        assert_eq!(extracted.tool_name.as_deref(), Some("cargo"));
-        assert!(extracted.detail.contains("/command"));
-        assert!(extracted.detail.contains("\"test\", \"check\""));
-    }
-
-    #[test]
-    fn extract_provider_tool_call_validation_error_ignores_generic_api_errors() {
-        let err = LlmError::Api {
-            status: 400,
-            message: "Provider returned error".to_string(),
-            url: None,
-            body_snippet: Some(
-                "{\"detail\":\"Invalid request. Please check your input and try again.\"}"
-                    .to_string(),
-            ),
-            api_code: Some(ploke_core::ArcStr::from("400")),
-            provider_name: Some(ploke_core::ArcStr::from("Groq")),
-            provider_slug: Some(ploke_core::ArcStr::from("groq")),
-            error_source: ApiErrorSource::HttpStatusBody,
-        };
-
-        assert!(extract_provider_tool_call_validation_error(&err).is_none());
-    }
-
-    #[test]
     fn build_preflight_tool_call_repair_error_marks_retryable() {
         let preflight_error = ToolCallPreflightError {
             call_id: ploke_core::ArcStr::from("call_preflight"),
@@ -2012,17 +2096,18 @@ mod tests {
             ),
         };
 
-        let loop_error = build_preflight_tool_call_repair_error(
-            preflight_error,
-            None,
-            1,
-            0,
-            &None,
-            Uuid::new_v4(),
-            CommitPhase::PreCommit,
-        );
+        let context = base_error_context(1, 0, "tool_call_preflight", &None, Uuid::new_v4());
+        let spec = semantics::normalize_tool_call_preflight_error(preflight_error, None, context);
+        let loop_error = build_loop_error_from_semantic_spec(spec, CommitPhase::PreCommit);
 
         assert_eq!(loop_error.code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        assert!(matches!(
+            loop_error.recovery,
+            RecoveryDecision::Repair {
+                strategy: RetryStrategy::Fixed,
+                ..
+            }
+        ));
         assert!(matches!(
             loop_error.retry,
             RetryAdvice::Yes {
@@ -2039,6 +2124,57 @@ mod tests {
                 .map(|step| step.action.as_ref()),
             Some("repair_tool_args")
         );
+    }
+
+    #[test]
+    fn repair_budget_is_bounded_locally() {
+        let mut state = ChatLoopState::default();
+        for _ in 0..MAX_REPAIR_ATTEMPTS_PER_SESSION {
+            assert!(!repair_budget_exhausted(&state));
+            state.repair_attempts = state.repair_attempts.saturating_add(1);
+        }
+        assert!(repair_budget_exhausted(&state));
+    }
+
+    #[test]
+    fn consume_repair_budget_marks_error_exhausted_after_limit() {
+        let mut state = ChatLoopState::default();
+
+        for _ in 0..MAX_REPAIR_ATTEMPTS_PER_SESSION {
+            let preflight_error = ToolCallPreflightError {
+                call_id: ploke_core::ArcStr::from("call_preflight"),
+                tool_name: ToolName::NsRead,
+                error: ToolError::new(
+                    ToolName::NsRead,
+                    ToolErrorCode::WrongType,
+                    "failed to parse tool arguments: EOF while parsing a value",
+                ),
+            };
+
+            let context = base_error_context(1, 0, "tool_call_preflight", &None, Uuid::new_v4());
+            let spec =
+                semantics::normalize_tool_call_preflight_error(preflight_error, None, context);
+            let mut loop_error = build_loop_error_from_semantic_spec(spec, CommitPhase::PreCommit);
+
+            assert!(consume_repair_budget(&mut state, &mut loop_error));
+            assert_eq!(loop_error.code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        }
+
+        let preflight_error = ToolCallPreflightError {
+            call_id: ploke_core::ArcStr::from("call_preflight"),
+            tool_name: ToolName::NsRead,
+            error: ToolError::new(
+                ToolName::NsRead,
+                ToolErrorCode::WrongType,
+                "failed to parse tool arguments: EOF while parsing a value",
+            ),
+        };
+        let context = base_error_context(1, 0, "tool_call_preflight", &None, Uuid::new_v4());
+        let spec = semantics::normalize_tool_call_preflight_error(preflight_error, None, context);
+        let mut loop_error = build_loop_error_from_semantic_spec(spec, CommitPhase::PreCommit);
+
+        assert!(!consume_repair_budget(&mut state, &mut loop_error));
+        assert_eq!(loop_error.code.as_ref(), "REPAIR_BUDGET_EXHAUSTED");
     }
 
     #[tokio::test]

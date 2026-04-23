@@ -39,6 +39,8 @@ pub mod workspace;
 pub mod workspace_glob;
 
 #[cfg(feature = "json")]
+pub mod tool_descriptions;
+#[cfg(feature = "json")]
 pub mod tool_types;
 
 pub use arc_str::ArcStr;

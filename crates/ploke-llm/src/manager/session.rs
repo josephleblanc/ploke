@@ -684,6 +684,7 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
     use serde_json::Value;
     let mut builder = ChatStepDataBuilder::new();
     let mut raw_provider_slug: Option<ArcStr> = None;
+    let mut first_choice_error: Option<LlmError> = None;
 
     // Parse once as JSON so we can cheaply detect embedded errors without double-deserializing.
     // If this fails, we still attempt typed parsing below to produce a more specific error.
@@ -717,25 +718,15 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
     // We prefer the first choice that yields a usable outcome.
     for choice in parsed.choices.iter() {
         if let Some(err) = &choice.error {
-            let status = u16::try_from(err.code).ok().unwrap_or(200);
-            return Err(LlmError::Api {
-                status,
-                message: err.message.clone(),
-                url: None,
-                body_snippet: Some(truncate_for_error(body_text, 4_096)),
-                api_code: Some(ArcStr::from(err.code.to_string())),
-                provider_name: parsed
-                    .provider
-                    .as_ref()
-                    .map(|name| ArcStr::from(name.as_str())),
-                provider_slug: parsed
-                    .provider
-                    .as_ref()
-                    .and_then(ProviderName::to_slug)
-                    .map(|slug| ArcStr::from(slug.as_str()))
-                    .or_else(|| raw_provider_slug.clone()),
-                error_source: ApiErrorSource::ChoiceError,
-            });
+            if first_choice_error.is_none() {
+                first_choice_error = Some(api_error_from_choice_error(
+                    err,
+                    parsed.provider.as_ref(),
+                    raw_provider_slug.clone(),
+                    body_text,
+                ));
+            }
+            continue;
         }
 
         // Case 1: Chat-style `message`
@@ -813,6 +804,10 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
                 body_snippet: Some(truncate_for_error(body_text, 512)),
             });
         }
+    }
+
+    if let Some(err) = first_choice_error {
+        return Err(err);
     }
 
     Err(LlmError::Deserialization {
@@ -898,6 +893,28 @@ fn api_error_from_embedded_error(
         provider_name: provider_name.map(|name| ArcStr::from(name.as_str())),
         provider_slug,
         error_source,
+    }
+}
+
+fn api_error_from_choice_error(
+    err: &crate::response::ErrorResponse,
+    provider_name: Option<&ProviderName>,
+    raw_provider_slug: Option<ArcStr>,
+    body_text: &str,
+) -> LlmError {
+    let api_code = ArcStr::from(err.code.to_string());
+    LlmError::Api {
+        status: 200,
+        message: format!("{} (code: {})", err.message, err.code),
+        url: None,
+        body_snippet: Some(truncate_for_error(body_text, 4_096)),
+        api_code: Some(api_code),
+        provider_name: provider_name.map(|name| ArcStr::from(name.as_str())),
+        provider_slug: provider_name
+            .and_then(ProviderName::to_slug)
+            .map(|slug| ArcStr::from(slug.as_str()))
+            .or(raw_provider_slug),
+        error_source: ApiErrorSource::ChoiceError,
     }
 }
 
@@ -1013,13 +1030,45 @@ mod tests {
                 error_source,
                 ..
             } => {
-                assert_eq!(status, 502);
+                assert_eq!(status, 200);
                 assert_eq!(api_code.as_deref(), Some("502"));
                 assert_eq!(provider_name.as_deref(), Some("Groq"));
                 assert_eq!(provider_slug.as_deref(), Some("groq"));
                 assert_eq!(error_source, ApiErrorSource::ChoiceError);
             }
             other => panic!("expected api error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_outcome_skips_errored_choice_when_later_choice_is_valid() {
+        let body = r#"{
+            "provider": "Groq",
+            "choices": [
+                {
+                    "index": 0,
+                    "error": {
+                        "code": 502,
+                        "message": "bad first choice"
+                    }
+                },
+                {
+                    "index": 1,
+                    "message": {
+                        "role": "assistant",
+                        "content": "usable second choice"
+                    }
+                }
+            ]
+        }"#;
+
+        let parsed = parse_chat_outcome(body).expect("later valid choice should still be accepted");
+        match parsed.outcome {
+            ChatStepOutcome::Content {
+                content: Some(content),
+                ..
+            } => assert_eq!(content.as_ref(), "usable second choice"),
+            other => panic!("expected content outcome, got {other:?}"),
         }
     }
 

@@ -3,7 +3,8 @@ use std::{ops::Deref, path::Path};
 use itertools::Itertools;
 use ploke_core::{
     rag_types::{CanonPath, ConciseContext, NodeFilepath},
-    tool_types::{ToolDescr, ToolName},
+    tool_descriptions::ToolDescription,
+    tool_types::ToolName,
 };
 use ploke_db::{
     helpers::{graph_resolve_edges, graph_resolve_exact},
@@ -84,8 +85,8 @@ impl Tool for CodeItemEdges {
         ToolName::CodeItemEdges
     }
 
-    fn description() -> ploke_core::tool_types::ToolDescr {
-        ToolDescr::CodeItemEdges
+    fn description() -> ToolDescription {
+        Self::name().description()
     }
 
     fn schema() -> &'static serde_json::Value {
