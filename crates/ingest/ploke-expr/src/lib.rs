@@ -28,8 +28,8 @@ extern crate rustc_driver as _;
 #[cfg(feature = "in-rust-tree")]
 extern crate rustc_lexer;
 
-mod event;
 mod edition;
+mod event;
 mod frontmatter;
 mod grammar;
 mod input;
@@ -39,8 +39,8 @@ mod parser;
 mod parsing;
 mod shortcuts;
 mod syntax_error;
-mod syntax_node;
 mod syntax_kind;
+mod syntax_node;
 mod token_set;
 
 pub use T_ as T;
@@ -57,11 +57,11 @@ pub use crate::{
     output::{Output, Step},
     shortcuts::StrStep,
     syntax_error::SyntaxError,
+    syntax_kind::SyntaxKind,
     syntax_node::{
         PreorderWithTokens, RustLanguage, SyntaxElement, SyntaxElementChildren, SyntaxNode,
         SyntaxNodeChildren, SyntaxToken, SyntaxTreeBuilder,
     },
-    syntax_kind::SyntaxKind,
 };
 pub use rowan::{TextRange, TextSize};
 
@@ -127,9 +127,9 @@ impl TopEntryPoint {
                 match step {
                     Step::Enter { .. } => depth += 1,
                     Step::Exit => depth -= 1,
-                    Step::FloatSplit { ends_in_dot: has_pseudo_dot } => {
-                        depth -= 1 + !has_pseudo_dot as usize
-                    }
+                    Step::FloatSplit {
+                        ends_in_dot: has_pseudo_dot,
+                    } => depth -= 1 + !has_pseudo_dot as usize,
                     Step::Token { .. } | Step::Error { .. } => (),
                 }
             }
@@ -220,13 +220,21 @@ pub struct Parse<T> {
 
 impl<T> Clone for Parse<T> {
     fn clone(&self) -> Self {
-        Self { green: self.green.clone(), errors: self.errors.clone(), _ty: PhantomData }
+        Self {
+            green: self.green.clone(),
+            errors: self.errors.clone(),
+            _ty: PhantomData,
+        }
     }
 }
 
 impl<T> Parse<T> {
     pub(crate) fn new(green: syntax_node::GreenNode, errors: Vec<SyntaxError>) -> Self {
-        Self { green, errors, _ty: PhantomData }
+        Self {
+            green,
+            errors,
+            _ty: PhantomData,
+        }
     }
 
     pub fn syntax_node(&self) -> SyntaxNode {

@@ -65,6 +65,7 @@ impl SyntaxTreeBuilder {
     }
 
     pub fn error(&mut self, error: String, text_pos: TextSize) {
-        self.errors.push(SyntaxError::new_at_offset(error, text_pos));
+        self.errors
+            .push(SyntaxError::new_at_offset(error, text_pos));
     }
 }

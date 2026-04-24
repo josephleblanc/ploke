@@ -17,7 +17,10 @@ pub(super) enum Semicolon {
 const EXPR_FIRST: TokenSet = LHS_FIRST;
 
 pub(super) fn expr(p: &mut Parser<'_>) -> Option<CompletedMarker> {
-    let r = Restrictions { forbid_structs: false, prefer_stmt: false };
+    let r = Restrictions {
+        forbid_structs: false,
+        prefer_stmt: false,
+    };
     expr_bp(p, None, r, 1).map(|(m, _)| m)
 }
 
@@ -25,12 +28,18 @@ pub(super) fn expr_stmt(
     p: &mut Parser<'_>,
     m: Option<Marker>,
 ) -> Option<(CompletedMarker, BlockLike)> {
-    let r = Restrictions { forbid_structs: false, prefer_stmt: true };
+    let r = Restrictions {
+        forbid_structs: false,
+        prefer_stmt: true,
+    };
     expr_bp(p, m, r, 1)
 }
 
 fn expr_no_struct(p: &mut Parser<'_>) {
-    let r = Restrictions { forbid_structs: true, prefer_stmt: false };
+    let r = Restrictions {
+        forbid_structs: true,
+        prefer_stmt: false,
+    };
     expr_bp(p, None, r, 1);
 }
 
@@ -39,7 +48,10 @@ fn expr_no_struct(p: &mut Parser<'_>) {
 /// `if let true = true && false` is parsed as `if (let true = true) && (true)`
 /// and not `if let true = (true && true)`.
 fn expr_let(p: &mut Parser<'_>) {
-    let r = Restrictions { forbid_structs: true, prefer_stmt: false };
+    let r = Restrictions {
+        forbid_structs: true,
+        prefer_stmt: false,
+    };
     expr_bp(p, None, r, 5);
 }
 
@@ -317,7 +329,15 @@ fn expr_bp(
 
         // test binop_resets_statementness
         // fn f() { v = {1}&2; }
-        expr_bp(p, None, Restrictions { prefer_stmt: false, ..r }, op_bp);
+        expr_bp(
+            p,
+            None,
+            Restrictions {
+                prefer_stmt: false,
+                ..r
+            },
+            op_bp,
+        );
         lhs = m.complete(p, if is_range { RANGE_EXPR } else { BIN_EXPR });
     }
     Some((lhs, BlockLike::NotBlock))
@@ -677,7 +697,10 @@ fn path_expr(p: &mut Parser<'_>, r: Restrictions) -> (CompletedMarker, BlockLike
         }
         T![!] if !p.at(T![!=]) => {
             let block_like = items::macro_call_after_excl(p);
-            (m.complete(p, MACRO_CALL).precede(p).complete(p, MACRO_EXPR), block_like)
+            (
+                m.complete(p, MACRO_CALL).precede(p).complete(p, MACRO_EXPR),
+                block_like,
+            )
         }
         _ => (m.complete(p, PATH_EXPR), BlockLike::NotBlock),
     }

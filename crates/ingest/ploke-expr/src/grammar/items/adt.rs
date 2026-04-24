@@ -47,7 +47,11 @@ fn struct_or_union(p: &mut Parser<'_>, m: Marker, is_struct: bool) {
             generic_params::opt_where_clause(p);
             p.expect(T![;]);
         }
-        _ => p.error(if is_struct { "expected `;`, `{`, or `(`" } else { "expected `{`" }),
+        _ => p.error(if is_struct {
+            "expected `;`, `{`, or `(`"
+        } else {
+            "expected `{`"
+        }),
     }
     m.complete(p, if is_struct { STRUCT } else { UNION });
 }
@@ -153,8 +157,9 @@ pub(crate) fn record_field_list(p: &mut Parser<'_>) {
     }
 }
 
-const TUPLE_FIELD_FIRST: TokenSet =
-    types::TYPE_FIRST.union(ATTRIBUTE_FIRST).union(VISIBILITY_FIRST);
+const TUPLE_FIELD_FIRST: TokenSet = types::TYPE_FIRST
+    .union(ATTRIBUTE_FIRST)
+    .union(VISIBILITY_FIRST);
 
 // test_err tuple_field_list_recovery
 // struct S(struct S;

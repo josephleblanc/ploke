@@ -68,16 +68,22 @@ impl LexedStr<'_> {
         output: &crate::Output,
         sink: &mut dyn FnMut(StrStep<'_>),
     ) -> bool {
-        let mut builder = Builder { lexed: self, pos: 0, state: State::PendingEnter, sink };
+        let mut builder = Builder {
+            lexed: self,
+            pos: 0,
+            state: State::PendingEnter,
+            sink,
+        };
 
         for event in output.iter() {
             match event {
-                Step::Token { kind, n_input_tokens: n_raw_tokens } => {
-                    builder.token(kind, n_raw_tokens)
-                }
-                Step::FloatSplit { ends_in_dot: has_pseudo_dot } => {
-                    builder.float_split(has_pseudo_dot)
-                }
+                Step::Token {
+                    kind,
+                    n_input_tokens: n_raw_tokens,
+                } => builder.token(kind, n_raw_tokens),
+                Step::FloatSplit {
+                    ends_in_dot: has_pseudo_dot,
+                } => builder.float_split(has_pseudo_dot),
                 Step::Enter { kind } => builder.enter(kind),
                 Step::Exit => builder.exit(),
                 Step::Error { msg } => {
@@ -146,12 +152,15 @@ impl Builder<'_, '_> {
             State::Normal => (),
         }
 
-        let n_trivias =
-            (self.pos..self.lexed.len()).take_while(|&it| self.lexed.kind(it).is_trivia()).count();
+        let n_trivias = (self.pos..self.lexed.len())
+            .take_while(|&it| self.lexed.kind(it).is_trivia())
+            .count();
         let leading_trivias = self.pos..self.pos + n_trivias;
         let n_attached_trivias = n_attached_trivias(
             kind,
-            leading_trivias.rev().map(|it| (self.lexed.kind(it), self.lexed.text(it))),
+            leading_trivias
+                .rev()
+                .map(|it| (self.lexed.kind(it), self.lexed.text(it))),
         );
         self.eat_n_trivias(n_trivias - n_attached_trivias);
         (self.sink)(StrStep::Enter { kind });
@@ -196,22 +205,35 @@ impl Builder<'_, '_> {
         match text.split_once('.') {
             Some((left, right)) => {
                 assert!(!left.is_empty());
-                (self.sink)(StrStep::Enter { kind: SyntaxKind::NAME_REF });
-                (self.sink)(StrStep::Token { kind: SyntaxKind::INT_NUMBER, text: left });
+                (self.sink)(StrStep::Enter {
+                    kind: SyntaxKind::NAME_REF,
+                });
+                (self.sink)(StrStep::Token {
+                    kind: SyntaxKind::INT_NUMBER,
+                    text: left,
+                });
                 (self.sink)(StrStep::Exit);
 
                 // here we move the exit up, the original exit has been deleted in process
                 (self.sink)(StrStep::Exit);
 
-                (self.sink)(StrStep::Token { kind: SyntaxKind::DOT, text: "." });
+                (self.sink)(StrStep::Token {
+                    kind: SyntaxKind::DOT,
+                    text: ".",
+                });
 
                 if has_pseudo_dot {
                     assert!(right.is_empty(), "{left}.{right}");
                     self.state = State::Normal;
                 } else {
                     assert!(!right.is_empty(), "{left}.{right}");
-                    (self.sink)(StrStep::Enter { kind: SyntaxKind::NAME_REF });
-                    (self.sink)(StrStep::Token { kind: SyntaxKind::INT_NUMBER, text: right });
+                    (self.sink)(StrStep::Enter {
+                        kind: SyntaxKind::NAME_REF,
+                    });
+                    (self.sink)(StrStep::Token {
+                        kind: SyntaxKind::INT_NUMBER,
+                        text: right,
+                    });
                     (self.sink)(StrStep::Exit);
 
                     // the parser creates an unbalanced start node, we are required to close it here
@@ -221,15 +243,27 @@ impl Builder<'_, '_> {
             None => {
                 // illegal float literal which doesn't have dot in form (like 1e0)
                 // we should emit an error node here
-                (self.sink)(StrStep::Error { msg: "illegal float literal", pos: self.pos });
-                (self.sink)(StrStep::Enter { kind: SyntaxKind::ERROR });
-                (self.sink)(StrStep::Token { kind: SyntaxKind::FLOAT_NUMBER, text });
+                (self.sink)(StrStep::Error {
+                    msg: "illegal float literal",
+                    pos: self.pos,
+                });
+                (self.sink)(StrStep::Enter {
+                    kind: SyntaxKind::ERROR,
+                });
+                (self.sink)(StrStep::Token {
+                    kind: SyntaxKind::FLOAT_NUMBER,
+                    text,
+                });
                 (self.sink)(StrStep::Exit);
 
                 // move up
                 (self.sink)(StrStep::Exit);
 
-                self.state = if has_pseudo_dot { State::Normal } else { State::PendingExit };
+                self.state = if has_pseudo_dot {
+                    State::Normal
+                } else {
+                    State::PendingExit
+                };
             }
         }
 

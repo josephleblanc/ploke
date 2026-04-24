@@ -59,7 +59,10 @@ fn parse_expr_cst_handles_field_chain_after_float_split() {
 fn parse_expr_cst_reports_invalid_expression_errors() {
     let parse = parse_expr_cst("foo(", Edition::CURRENT);
 
-    assert!(!parse.errors().is_empty(), "expected parse errors for invalid expression");
+    assert!(
+        !parse.errors().is_empty(),
+        "expected parse errors for invalid expression"
+    );
 }
 
 #[test]

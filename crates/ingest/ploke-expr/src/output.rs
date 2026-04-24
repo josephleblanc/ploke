@@ -25,11 +25,20 @@ pub struct Output {
 
 #[derive(Debug)]
 pub enum Step<'a> {
-    Token { kind: SyntaxKind, n_input_tokens: u8 },
-    FloatSplit { ends_in_dot: bool },
-    Enter { kind: SyntaxKind },
+    Token {
+        kind: SyntaxKind,
+        n_input_tokens: u8,
+    },
+    FloatSplit {
+        ends_in_dot: bool,
+    },
+    Enter {
+        kind: SyntaxKind,
+    },
     Exit,
-    Error { msg: &'a str },
+    Error {
+        msg: &'a str,
+    },
 }
 
 impl Output {
@@ -62,7 +71,10 @@ impl Output {
                         (((event & Self::KIND_MASK) >> Self::KIND_SHIFT) as u16).into();
                     let n_input_tokens =
                         ((event & Self::N_INPUT_TOKEN_MASK) >> Self::N_INPUT_TOKEN_SHIFT) as u8;
-                    Step::Token { kind, n_input_tokens }
+                    Step::Token {
+                        kind,
+                        n_input_tokens,
+                    }
                 }
                 Self::ENTER_EVENT => {
                     let kind: SyntaxKind =
@@ -70,9 +82,9 @@ impl Output {
                     Step::Enter { kind }
                 }
                 Self::EXIT_EVENT => Step::Exit,
-                Self::SPLIT_EVENT => {
-                    Step::FloatSplit { ends_in_dot: event & Self::N_INPUT_TOKEN_MASK != 0 }
-                }
+                Self::SPLIT_EVENT => Step::FloatSplit {
+                    ends_in_dot: event & Self::N_INPUT_TOKEN_MASK != 0,
+                },
                 _ => unreachable!(),
             }
         })

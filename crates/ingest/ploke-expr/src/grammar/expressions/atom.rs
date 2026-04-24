@@ -40,32 +40,34 @@ pub(crate) fn literal(p: &mut Parser<'_>) -> Option<CompletedMarker> {
 
 // E.g. for after the break in `if break {}`, this should not match
 pub(super) const ATOM_EXPR_FIRST: TokenSet =
-    LITERAL_FIRST.union(paths::PATH_FIRST).union(TokenSet::new(&[
-        T!['('],
-        T!['{'],
-        T!['['],
-        T![|],
-        T![async],
-        T![break],
-        T![const],
-        T![continue],
-        T![do],
-        T![gen],
-        T![for],
-        T![if],
-        T![let],
-        T![loop],
-        T![match],
-        T![move],
-        T![return],
-        T![become],
-        T![static],
-        T![try],
-        T![unsafe],
-        T![while],
-        T![yield],
-        LIFETIME_IDENT,
-    ]));
+    LITERAL_FIRST
+        .union(paths::PATH_FIRST)
+        .union(TokenSet::new(&[
+            T!['('],
+            T!['{'],
+            T!['['],
+            T![|],
+            T![async],
+            T![break],
+            T![const],
+            T![continue],
+            T![do],
+            T![gen],
+            T![for],
+            T![if],
+            T![let],
+            T![loop],
+            T![match],
+            T![move],
+            T![return],
+            T![become],
+            T![static],
+            T![try],
+            T![unsafe],
+            T![while],
+            T![yield],
+            LIFETIME_IDENT,
+        ]));
 
 pub(in crate::grammar) const EXPR_RECOVERY_SET: TokenSet =
     TokenSet::new(&[T!['}'], T![')'], T![']'], T![,]]);
@@ -197,8 +199,11 @@ pub(super) fn atom_expr(
             return None;
         }
     };
-    let blocklike =
-        if BlockLike::is_blocklike(done.kind()) { BlockLike::Block } else { BlockLike::NotBlock };
+    let blocklike = if BlockLike::is_blocklike(done.kind()) {
+        BlockLike::Block
+    } else {
+        BlockLike::NotBlock
+    };
     Some((done, blocklike))
 }
 
@@ -240,7 +245,14 @@ fn tuple_expr(p: &mut Parser<'_>) -> CompletedMarker {
         }
     }
     p.expect(T![')']);
-    m.complete(p, if saw_expr && !saw_comma { PAREN_EXPR } else { TUPLE_EXPR })
+    m.complete(
+        p,
+        if saw_expr && !saw_comma {
+            PAREN_EXPR
+        } else {
+            TUPLE_EXPR
+        },
+    )
 }
 
 // test builtin_expr

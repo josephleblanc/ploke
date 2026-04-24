@@ -1,7 +1,8 @@
 use super::*;
 
-pub(super) const PATTERN_FIRST: TokenSet =
-    expressions::LITERAL_FIRST.union(paths::PATH_FIRST).union(TokenSet::new(&[
+pub(super) const PATTERN_FIRST: TokenSet = expressions::LITERAL_FIRST
+    .union(paths::PATH_FIRST)
+    .union(TokenSet::new(&[
         T![box],
         T![ref],
         T![mut],
@@ -17,8 +18,9 @@ pub(super) const PATTERN_FIRST: TokenSet =
 const PAT_TOP_FIRST: TokenSet = PATTERN_FIRST.union(TokenSet::new(&[T![|]]));
 
 /// Set of possible tokens at the start of a range pattern's end bound.
-const RANGE_PAT_END_FIRST: TokenSet =
-    expressions::LITERAL_FIRST.union(paths::PATH_FIRST).union(TokenSet::new(&[T![-], T![const]]));
+const RANGE_PAT_END_FIRST: TokenSet = expressions::LITERAL_FIRST
+    .union(paths::PATH_FIRST)
+    .union(TokenSet::new(&[T![-], T![const]]));
 
 /// Parses a pattern list separated by pipes `|`.
 pub(crate) fn pattern(p: &mut Parser<'_>) {
@@ -455,7 +457,14 @@ fn tuple_pat(p: &mut Parser<'_>) -> CompletedMarker {
     }
     p.expect(T![')']);
 
-    m.complete(p, if !has_comma && !has_rest && has_pat { PAREN_PAT } else { TUPLE_PAT })
+    m.complete(
+        p,
+        if !has_comma && !has_rest && has_pat {
+            PAREN_PAT
+        } else {
+            TUPLE_PAT
+        },
+    )
 }
 
 // test slice_pat

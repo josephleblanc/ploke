@@ -135,10 +135,15 @@ impl<'s> ScriptSource<'s> {
         source.close = Some(close_start..close_end);
 
         let nl = input.find_slice("\n");
-        let after_closing_fence =
-            input.next_slice(nl.map(|span| span.end).unwrap_or_else(|| input.eof_offset()));
+        let after_closing_fence = input.next_slice(
+            nl.map(|span| span.end)
+                .unwrap_or_else(|| input.eof_offset()),
+        );
         let content_start = input.current_token_start();
-        let extra_dashes = after_closing_fence.chars().take_while(|b| *b == FENCE_CHAR).count();
+        let extra_dashes = after_closing_fence
+            .chars()
+            .take_while(|b| *b == FENCE_CHAR)
+            .count();
         if 0 < extra_dashes {
             let extra_start = close_end;
             let extra_end = extra_start + extra_dashes;
@@ -306,7 +311,9 @@ fn is_horizontal_whitespace(c: char) -> bool {
 }
 
 fn strip_newline(text: &str) -> &str {
-    text.strip_suffix("\r\n").or_else(|| text.strip_suffix('\n')).unwrap_or(text)
+    text.strip_suffix("\r\n")
+        .or_else(|| text.strip_suffix('\n'))
+        .unwrap_or(text)
 }
 
 #[derive(Debug)]
@@ -318,7 +325,11 @@ pub struct FrontmatterError {
 
 impl FrontmatterError {
     pub fn new(message: impl Into<String>, span: Span) -> Self {
-        Self { message: message.into(), primary_span: span, visible_spans: Vec::new() }
+        Self {
+            message: message.into(),
+            primary_span: span,
+            visible_spans: Vec::new(),
+        }
     }
 
     pub fn push_visible_span(mut self, span: Span) -> Self {

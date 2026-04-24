@@ -42,7 +42,11 @@ impl<'a> LexedStr<'a> {
                 conv.push(SHEBANG, shebang.end - shebang.start, Vec::new());
             }
             if script.frontmatter().is_some() {
-                conv.push(FRONTMATTER, script.content_span().start - conv.offset, Vec::new());
+                conv.push(
+                    FRONTMATTER,
+                    script.content_span().start - conv.offset,
+                    Vec::new(),
+                );
             }
         } else if let Some(shebang_len) = rustc_lexer::strip_shebang(text) {
             // Leave error reporting to `rustc_lexer`
@@ -127,12 +131,17 @@ impl<'a> LexedStr<'a> {
 
     pub fn error(&self, i: usize) -> Option<&str> {
         assert!(i < self.len());
-        let err = self.error.binary_search_by_key(&(i as u32), |i| i.token).ok()?;
+        let err = self
+            .error
+            .binary_search_by_key(&(i as u32), |i| i.token)
+            .ok()?;
         Some(self.error[err].msg.as_str())
     }
 
     pub fn errors(&self) -> impl Iterator<Item = (usize, &str)> + '_ {
-        self.error.iter().map(|it| (it.token as usize, it.msg.as_str()))
+        self.error
+            .iter()
+            .map(|it| (it.token as usize, it.msg.as_str()))
     }
 
     fn push(&mut self, kind: SyntaxKind, offset: usize) {
@@ -163,12 +172,19 @@ impl<'a> Converter<'a> {
 
     /// Check for likely unterminated string by analyzing STRING token content
     fn has_likely_unterminated_string(&self) -> bool {
-        let Some(last_idx) = self.res.kind.len().checked_sub(1) else { return false };
+        let Some(last_idx) = self.res.kind.len().checked_sub(1) else {
+            return false;
+        };
 
         for i in (0..=last_idx).rev().take(5) {
             if self.res.kind[i] == STRING {
                 let start = self.res.start[i] as usize;
-                let end = self.res.start.get(i + 1).map(|&s| s as usize).unwrap_or(self.offset);
+                let end = self
+                    .res
+                    .start
+                    .get(i + 1)
+                    .map(|&s| s as usize)
+                    .unwrap_or(self.offset);
                 let content = &self.res.text[start..end];
 
                 if content.contains('(') && (content.contains("//") || content.contains(";\n")) {
@@ -190,7 +206,10 @@ impl<'a> Converter<'a> {
 
         for msg in errors {
             if !msg.is_empty() {
-                self.res.error.push(LexError { msg, token: self.res.len() as u32 });
+                self.res.error.push(LexError {
+                    msg,
+                    token: self.res.len() as u32,
+                });
             }
         }
     }
@@ -205,7 +224,10 @@ impl<'a> Converter<'a> {
         let syntax_kind = {
             match kind {
                 rustc_lexer::TokenKind::LineComment { doc_style: _ } => COMMENT,
-                rustc_lexer::TokenKind::BlockComment { doc_style: _, terminated } => {
+                rustc_lexer::TokenKind::BlockComment {
+                    doc_style: _,
+                    terminated,
+                } => {
                     if !terminated {
                         errors.push(
                             "Missing trailing `*/` symbols to terminate the block comment".into(),
@@ -321,7 +343,9 @@ impl<'a> Converter<'a> {
 
         let mut errors = vec![];
         let mut no_end_quote = |c: char, kind: &str| {
-            errors.push(format!("Missing trailing `{c}` symbol to terminate the {kind} literal"));
+            errors.push(format!(
+                "Missing trailing `{c}` symbol to terminate the {kind} literal"
+            ));
         };
 
         let syntax_kind = match *kind {
@@ -331,7 +355,10 @@ impl<'a> Converter<'a> {
                 }
                 INT_NUMBER
             }
-            rustc_lexer::LiteralKind::Float { empty_exponent, base: _ } => {
+            rustc_lexer::LiteralKind::Float {
+                empty_exponent,
+                base: _,
+            } => {
                 if empty_exponent {
                     errors.push("Missing digits after the exponent symbol".into());
                 }

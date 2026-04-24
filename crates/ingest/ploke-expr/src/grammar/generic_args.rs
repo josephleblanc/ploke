@@ -109,7 +109,9 @@ pub(crate) fn generic_arg(p: &mut Parser<'_>) -> bool {
                     } else {
                         m.precede(p).complete(p, PATH_TYPE)
                     };
-                    types::opt_type_bounds_as_dyn_trait_type(p, m).precede(p).complete(p, TYPE_ARG);
+                    types::opt_type_bounds_as_dyn_trait_type(p, m)
+                        .precede(p)
+                        .complete(p, TYPE_ARG);
                 }
             }
         }
@@ -163,7 +165,10 @@ pub(super) fn const_arg_expr(p: &mut Parser<'_>) {
         _ => {
             // test_err recover_from_missing_const_default
             // struct A<const N: i32 = , const M: i32 =>;
-            p.err_recover("expected a generic const argument", GENERIC_ARG_RECOVERY_SET);
+            p.err_recover(
+                "expected a generic const argument",
+                GENERIC_ARG_RECOVERY_SET,
+            );
         }
     }
 }

@@ -80,7 +80,10 @@ impl Input {
         self.kind.get(idx).copied().unwrap_or(SyntaxKind::EOF)
     }
     pub(crate) fn contextual_kind(&self, idx: usize) -> SyntaxKind {
-        self.contextual_kind.get(idx).copied().unwrap_or(SyntaxKind::EOF)
+        self.contextual_kind
+            .get(idx)
+            .copied()
+            .unwrap_or(SyntaxKind::EOF)
     }
     pub(crate) fn edition(&self, idx: usize) -> Edition {
         self.edition[idx]

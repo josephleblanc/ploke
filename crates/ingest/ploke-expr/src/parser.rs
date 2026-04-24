@@ -28,11 +28,20 @@ pub(crate) struct Parser<'t> {
     steps: Cell<u32>,
 }
 
-const PARSER_STEP_LIMIT: usize = if cfg!(debug_assertions) { 150_000 } else { 15_000_000 };
+const PARSER_STEP_LIMIT: usize = if cfg!(debug_assertions) {
+    150_000
+} else {
+    15_000_000
+};
 
 impl<'t> Parser<'t> {
     pub(super) fn new(inp: &'t Input) -> Parser<'t> {
-        Parser { inp, pos: 0, events: Vec::with_capacity(2 * inp.len()), steps: Cell::new(0) }
+        Parser {
+            inp,
+            pos: 0,
+            events: Vec::with_capacity(2 * inp.len()),
+            steps: Cell::new(0),
+        }
     }
 
     pub(crate) fn finish(self) -> Vec<Event> {
@@ -52,7 +61,10 @@ impl<'t> Parser<'t> {
         assert!(n <= 3);
 
         let steps = self.steps.get();
-        assert!((steps as usize) < PARSER_STEP_LIMIT, "the parser seems stuck");
+        assert!(
+            (steps as usize) < PARSER_STEP_LIMIT,
+            "the parser seems stuck"
+        );
         self.steps.set(steps + 1);
 
         self.inp.kind(self.pos + n)
@@ -204,7 +216,10 @@ impl<'t> Parser<'t> {
             let new_marker = self.start();
             let idx = marker.pos as usize;
             match &mut self.events[idx] {
-                Event::Start { forward_parent, kind } => {
+                Event::Start {
+                    forward_parent,
+                    kind,
+                } => {
                     *kind = SyntaxKind::FIELD_EXPR;
                     *forward_parent = Some(new_marker.pos - marker.pos);
                 }
@@ -303,7 +318,10 @@ pub(crate) struct Marker {
 
 impl Marker {
     fn new(pos: u32) -> Marker {
-        Marker { pos, bomb: DropBomb::new("Marker must be either completed or abandoned") }
+        Marker {
+            pos,
+            bomb: DropBomb::new("Marker must be either completed or abandoned"),
+        }
     }
 
     /// Finishes the syntax tree node and assigns `kind` to it,
@@ -331,7 +349,10 @@ impl Marker {
         if idx == p.events.len() - 1 {
             assert!(matches!(
                 p.events.pop(),
-                Some(Event::Start { kind: TOMBSTONE, forward_parent: None })
+                Some(Event::Start {
+                    kind: TOMBSTONE,
+                    forward_parent: None
+                })
             ));
         }
     }
@@ -345,7 +366,11 @@ pub(crate) struct CompletedMarker {
 
 impl CompletedMarker {
     fn new(start_pos: u32, end_pos: u32, kind: SyntaxKind) -> Self {
-        CompletedMarker { start_pos, end_pos, kind }
+        CompletedMarker {
+            start_pos,
+            end_pos,
+            kind,
+        }
     }
 
     /// This method allows to create a new node which starts
@@ -393,9 +418,12 @@ impl CompletedMarker {
     pub(crate) fn last_token(&self, p: &Parser<'_>) -> Option<SyntaxKind> {
         let end_pos = self.end_pos as usize;
         debug_assert_eq!(p.events[end_pos - 1], Event::Finish);
-        p.events[..end_pos].iter().rev().find_map(|event| match event {
-            Event::Token { kind, .. } => Some(*kind),
-            _ => None,
-        })
+        p.events[..end_pos]
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                Event::Token { kind, .. } => Some(*kind),
+                _ => None,
+            })
     }
 }
