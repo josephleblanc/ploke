@@ -695,6 +695,34 @@ macro_rules! paranoid_test_setup {
     };
 }
 
+/// Generate a tree-relation test that asserts an exact relation variant exists exactly once.
+///
+/// Intended for Phase 3 relation coverage where the fixture graph/tree are usually cached via
+/// `lazy_static!` in the test module.
+#[macro_export]
+macro_rules! paranoid_tree_relation_case {
+    (
+        $test_name:ident,
+        graph: $graph:expr,
+        tree: $tree:expr,
+        expected: $expected:expr
+    ) => {
+        #[test]
+        fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
+            let _ = env_logger::builder()
+                .is_test(true)
+                .format_timestamp(None)
+                .try_init();
+
+            $crate::common::relation_paranoid::assert_tree_relation_once(
+                $graph, $tree, &$expected,
+            )?;
+
+            Ok(())
+        }
+    };
+}
+
 #[macro_export]
 macro_rules! run_paranoid_test {
     ($setup:ident, $test_name:ident $(, $test_body:expr)?) => {

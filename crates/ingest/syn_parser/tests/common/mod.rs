@@ -22,6 +22,7 @@ pub mod debug_printers;
 pub mod macro_rule_tests;
 pub mod paranoid;
 pub mod parsed_fixtures;
+pub mod relation_paranoid;
 pub use assoc_paranoid::{AssocOwner, AssocParanoidArgs, AssocTestInfo};
 pub use parsed_fixtures::{
     PARSED_FIXTURE_CRATE_DIR_DETECTION, PARSED_FIXTURE_CRATE_NODES, PARSED_FIXTURE_CRATE_TYPES,
