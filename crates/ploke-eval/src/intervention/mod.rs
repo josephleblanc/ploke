@@ -11,6 +11,7 @@ mod apply;
 mod branch_registry;
 mod execute;
 mod issue;
+mod scheduler;
 mod spec;
 mod synthesize;
 
@@ -29,6 +30,13 @@ pub use issue::{
     INTERVENTION_ISSUE_DETECTION_PROCEDURE, IssueCase, IssueDetectionArtifactInput,
     IssueDetectionInput, IssueDetectionOutput, IssueEvidence, IssueProtocolEvidence,
     IssueSelectionBasis, detect_issue_cases, issue_detection_artifact_input, select_primary_issue,
+};
+pub use scheduler::{
+    PROTOTYPE1_SCHEDULER_SCHEMA_VERSION, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+    Prototype1NodeRecord, Prototype1NodeStatus, Prototype1RunnerRequest, Prototype1SchedulerState,
+    load_node_record, load_or_default_scheduler_state, load_runner_request, prototype1_node_dir,
+    prototype1_node_id, prototype1_node_record_path, prototype1_runner_request_path,
+    prototype1_runner_result_path, prototype1_scheduler_path, register_treatment_evaluation_node,
 };
 pub use spec::{
     AppliedEdit, ArtifactEdit, InterventionApplyInput, InterventionApplyOutput,

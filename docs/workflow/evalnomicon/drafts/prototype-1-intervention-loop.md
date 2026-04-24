@@ -307,8 +307,8 @@ Important implementation details:
   keeps `nonempty_valid_patch` as a conservative pre-oracle proxy rather than
   proof that a nonempty submission patch artifact exists on disk
 - [operational_metrics.rs](/home/brasides/code/ploke/crates/ploke-eval/src/operational_metrics.rs:118)
-  keeps `oracle_eligible` tied to the Prototype 1 operational gate rather than
-  silently redefining it in terms of packaging output
+  now treats `oracle_eligible` as the stricter adjudication gate:
+  convergence plus a concrete nonempty submission artifact
 
 The concrete packaging/output fact is persisted separately in the run record:
 

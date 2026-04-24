@@ -32,3 +32,60 @@ pub fn tool_description_artifact_relpath(name: ToolName) -> ToolDescriptionArtif
         ToolName::ListDir => "crates/ploke-core/tool_text/list_dir.md",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{tool_description, tool_description_artifact_relpath};
+    use crate::tool_types::ToolName;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
+
+    static TOOL_DESCRIPTION_FILE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct RestoreFileGuard {
+        path: PathBuf,
+        original: String,
+    }
+
+    impl Drop for RestoreFileGuard {
+        fn drop(&mut self) {
+            let _ = fs::write(&self.path, &self.original);
+        }
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crate dir should have workspace parent")
+            .parent()
+            .expect("workspace dir should have parent")
+            .to_path_buf()
+    }
+
+    #[test]
+    #[ignore = "known regression: tool descriptions are baked in with include_str!, so runtime file edits are invisible until rebuild"]
+    fn tool_description_reflects_runtime_file_edits() {
+        let _guard = TOOL_DESCRIPTION_FILE_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock poisoned");
+
+        let tool = ToolName::RequestCodeContext;
+        let path = repo_root().join(tool_description_artifact_relpath(tool));
+        let original = fs::read_to_string(&path).expect("read tool description artifact");
+        let _restore = RestoreFileGuard {
+            path: path.clone(),
+            original: original.clone(),
+        };
+
+        let updated = format!("{original}\n\nTEST_SENTINEL_RUNTIME_RELOAD\n");
+        fs::write(&path, &updated).expect("write modified tool description artifact");
+
+        assert_eq!(
+            tool_description(tool),
+            updated,
+            "tool descriptions used by the runtime must reflect on-disk edits without requiring a rebuild"
+        );
+    }
+}

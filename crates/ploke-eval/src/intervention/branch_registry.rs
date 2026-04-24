@@ -52,6 +52,8 @@ pub struct TreatmentBranchNode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InterventionSourceNode {
     pub source_state_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_branch_id: Option<String>,
     pub instance_id: String,
     pub target_relpath: PathBuf,
     pub source_content: String,
@@ -102,6 +104,8 @@ pub struct ActiveBranchSelection {
 pub struct ResolvedTreatmentBranch {
     pub instance_id: String,
     pub source_state_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_branch_id: Option<String>,
     pub target_relpath: PathBuf,
     pub source_content: String,
     pub source_content_hash: String,
@@ -186,6 +190,7 @@ pub fn record_synthesized_branches(
     instance_id: &str,
     synthesis: &InterventionSynthesisOutput,
     selected_candidate_id: Option<&str>,
+    parent_branch_id: Option<&str>,
 ) -> Result<Prototype1BranchRegistry, PrepareError> {
     let mut registry = load_or_default_branch_registry(campaign_id, campaign_manifest_path)?;
     let selected_branch_id = selected_candidate_id.map(|candidate_id| {
@@ -204,6 +209,7 @@ pub fn record_synthesized_branches(
     } else {
         registry.source_nodes.push(InterventionSourceNode {
             source_state_id: synthesis.candidate_set.source_state_id.clone(),
+            parent_branch_id: parent_branch_id.map(ToOwned::to_owned),
             instance_id: instance_id.to_string(),
             target_relpath: synthesis.candidate_set.target_relpath.clone(),
             source_content: synthesis.candidate_set.source_content.clone(),
@@ -218,6 +224,9 @@ pub fn record_synthesized_branches(
     };
 
     source_node.instance_id = instance_id.to_string();
+    if let Some(parent_branch_id) = parent_branch_id {
+        source_node.parent_branch_id = Some(parent_branch_id.to_string());
+    }
     source_node.source_content = synthesis.candidate_set.source_content.clone();
     source_node.source_content_hash = sha256_hex(&synthesis.candidate_set.source_content);
     source_node.selected_branch_id = selected_branch_id.clone();
@@ -438,6 +447,7 @@ pub fn resolve_treatment_branch(
             return Ok(ResolvedTreatmentBranch {
                 instance_id: source_node.instance_id,
                 source_state_id: source_node.source_state_id,
+                parent_branch_id: source_node.parent_branch_id,
                 target_relpath: source_node.target_relpath,
                 source_content: source_node.source_content,
                 source_content_hash: source_node.source_content_hash,
@@ -628,12 +638,14 @@ mod tests {
             "clap-rs__clap-3670",
             &synthesis,
             Some("candidate-2"),
+            None,
         )
         .expect("record synthesis");
 
         assert_eq!(registry.source_nodes.len(), 1);
         let source = &registry.source_nodes[0];
         assert_eq!(source.instance_id, "clap-rs__clap-3670");
+        assert_eq!(source.parent_branch_id, None);
         assert_eq!(source.branches.len(), 2);
         assert!(source.selected_branch_id.is_some());
         let selected = source
@@ -661,6 +673,7 @@ mod tests {
             "clap-rs__clap-3670",
             &synthesis,
             Some("candidate-1"),
+            None,
         )
         .expect("record synthesis");
         let source = &registry.source_nodes[0];
@@ -723,6 +736,7 @@ mod tests {
             "clap-rs__clap-3670",
             &synthesis,
             Some("candidate-1"),
+            None,
         )
         .expect("record synthesis");
         let branch_id = registry.source_nodes[0].branches[1].branch_id.clone();
@@ -755,6 +769,7 @@ mod tests {
             "clap-rs__clap-3670",
             &synthesis,
             Some("candidate-2"),
+            Some("branch-parent"),
         )
         .expect("record synthesis");
         let branch_id = registry.source_nodes[0].branches[1].branch_id.clone();
@@ -762,6 +777,7 @@ mod tests {
         let resolved =
             resolve_treatment_branch("test-campaign", &manifest, &branch_id).expect("resolve");
         assert_eq!(resolved.instance_id, "clap-rs__clap-3670");
+        assert_eq!(resolved.parent_branch_id.as_deref(), Some("branch-parent"));
         assert_eq!(resolved.source_content, "old text\n");
         assert_eq!(resolved.branch.candidate_id, "candidate-2");
         assert_eq!(resolved.branch.proposed_content, "new text b\n");

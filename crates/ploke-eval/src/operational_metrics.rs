@@ -59,12 +59,11 @@ pub struct OperationalRunMetrics {
     /// Keep this distinction explicit until the metric is tightened against recorded submission or
     /// diff artifacts.
     pub nonempty_valid_patch: bool,
-    /// Prototype-1 eligibility gate derived from operational workflow health.
+    /// Prototype-1 eligibility gate for sending a candidate fix to oracle adjudication.
     ///
-    /// Important: this intentionally does not require
-    /// `submission_artifact_state == nonempty`. Keep the oracle-eligibility proxy separate from
-    /// packaging/output facts so we do not silently redefine "usable candidate fix" to mean
-    /// "submission artifact already written".
+    /// Unlike `convergence`, this requires a concrete nonempty submission artifact. Keep the
+    /// distinction explicit: workflow health can improve without yet producing an oracle-usable
+    /// candidate patch.
     pub convergence: bool,
     pub oracle_eligible: bool,
 }
@@ -115,10 +114,8 @@ impl OperationalRunMetrics {
             && patch_apply_state == PatchApplyState::Applied
             && nonempty_valid_patch
             && !aborted_repair_loop;
-        // Important: keep oracle eligibility tied to the operational Prototype-1 gate rather than
-        // the packaging/output metric. `submission_artifact_state` is a concrete recorded fact, but
-        // it should not silently narrow or widen the pre-oracle workflow-health signal here.
-        let oracle_eligible = convergence;
+        let oracle_eligible =
+            convergence && submission_artifact_state == SubmissionArtifactState::Nonempty;
 
         Self {
             tool_calls_total,
@@ -416,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn applied_edit_run_converges_and_is_oracle_eligible() {
+    fn applied_edit_run_with_nonempty_submission_is_oracle_eligible() {
         let mut record = base_record();
         record.phases.packaging = Some(PackagingPhase {
             started_at: "2026-04-23T00:00:02Z".to_string(),
@@ -560,5 +557,7 @@ mod tests {
             SubmissionArtifactState::Empty
         );
         assert!(metrics.nonempty_valid_patch);
+        assert!(metrics.convergence);
+        assert!(!metrics.oracle_eligible);
     }
 }
