@@ -9,7 +9,7 @@
 //! evaluation. It exists to keep the dangerous parts of the workflow
 //! concentrated in one place:
 //!
-//! - mutating the live source tree to materialize a branch
+//! - realizing one node-owned workspace for a branch
 //! - building a fresh child binary from that source state
 //! - spawning exactly one child runner process
 //! - waiting for that child to finish
@@ -23,7 +23,7 @@
 //! # End-to-end flow
 //!
 //! 1. The parent controller registers a node for a branch.
-//! 2. The parent materializes that branch into the live source tree.
+//! 2. The parent realizes that branch into a node-owned workspace.
 //! 3. The parent builds a fresh `ploke-eval` child binary from that source
 //!    state.
 //! 4. The parent spawns the child runner and waits for it to exit.
@@ -39,9 +39,8 @@
 //!   descendants.
 //! - Compile failures and treatment failures are persisted as runner results
 //!   instead of becoming implicit control-flow loss.
-//! - Source-tree restoration is intentionally not handled here; the controller
-//!   remains responsible for applying branch restore semantics around calls into
-//!   this module.
+//! - The controller's parent workspace is not mutated during child evaluation;
+//!   each node is realized in its own backend-managed workspace root.
 //!
 //! # Failure fallout
 //!
@@ -81,7 +80,16 @@ use ploke_core::EXECUTION_DEBUG_TARGET;
 use tracing::{debug, instrument};
 
 use super::*;
-use crate::intervention::{load_runner_result_at, write_runner_result_at};
+use crate::cli::prototype1_state::backend::{GitWorktreeBackend, RealizeRequest, WorkspaceBackend};
+use crate::intervention::{
+    Prototype1ContinuationDisposition, decide_node_successor_continuation, load_runner_result_at,
+    load_scheduler_state, update_node_workspace_root, write_runner_result_at,
+};
+
+const SUCCESSOR_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const SUCCESSOR_READY_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+pub(crate) const SUCCESSOR_STANDBY_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(300);
 
 /// Outcome of one parent-side node execution attempt.
 ///
@@ -92,6 +100,13 @@ use crate::intervention::{load_runner_result_at, write_runner_result_at};
 pub(super) enum Prototype1NodeExecutionOutcome {
     Evaluated(Prototype1BranchEvaluationReport),
     Failed(Prototype1RunnerResult),
+}
+
+/// Parent-observed result of one successor bootstrap attempt.
+pub(crate) struct Prototype1SuccessorHandoff {
+    pub runtime_id: crate::cli::prototype1_state::event::RuntimeId,
+    pub pid: u32,
+    pub ready_path: PathBuf,
 }
 
 #[must_use = "node build outcomes must be checked before attempting to spawn a child binary"]
@@ -200,6 +215,51 @@ fn record_prototype1_child_ready_if_configured(
     )
 }
 
+fn record_prototype1_successor_ready(
+    invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
+    manifest_path: &Path,
+) -> Result<crate::cli::prototype1_state::invocation::SuccessorReadyRecord, PrepareError> {
+    let node = load_node_record(manifest_path, invocation.node_id())?;
+    let ready_path = crate::cli::prototype1_state::invocation::successor_ready_path(
+        &node.node_dir,
+        invocation.runtime_id(),
+    );
+    let record = crate::cli::prototype1_state::invocation::SuccessorReadyRecord {
+        schema_version: crate::cli::prototype1_state::invocation::SUCCESSOR_READY_SCHEMA_VERSION
+            .to_string(),
+        campaign_id: invocation.campaign_id().to_string(),
+        node_id: invocation.node_id().to_string(),
+        runtime_id: invocation.runtime_id(),
+        pid: std::process::id(),
+        recorded_at: Utc::now().to_rfc3339(),
+    };
+    crate::cli::prototype1_state::invocation::write_successor_ready_record(&ready_path, &record)?;
+    Ok(record)
+}
+
+fn validate_prototype1_successor_continuation(
+    invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
+    manifest_path: &Path,
+) -> Result<(), PrepareError> {
+    let scheduler = load_scheduler_state(manifest_path)?;
+    let node = load_node_record(manifest_path, invocation.node_id())?;
+    let decision = decide_node_successor_continuation(&scheduler, &node, Some("keep"));
+
+    if decision.disposition == Prototype1ContinuationDisposition::ContinueReady {
+        return Ok(());
+    }
+
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "successor continuation rejected for node '{}' with disposition {:?} (next_generation={}, total_nodes_after_continue={})",
+            invocation.node_id(),
+            decision.disposition,
+            decision.next_generation,
+            decision.total_nodes_after_continue
+        ),
+    })
+}
+
 fn load_prototype1_branch_evaluation_report(
     path: &Path,
 ) -> Result<Prototype1BranchEvaluationReport, PrepareError> {
@@ -229,6 +289,132 @@ fn spawn_prototype1_child_runner(
             phase: "prototype1_runner_spawn",
             detail: source.to_string(),
         })
+}
+
+fn spawn_prototype1_successor(
+    binary_path: &Path,
+    repo_root: &Path,
+    invocation_path: &Path,
+    invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
+) -> Result<std::process::Child, PrepareError> {
+    crate::cli::prototype1_state::invocation::write_successor_invocation(
+        invocation_path,
+        invocation,
+    )?;
+    let child_argv = invocation.launch_args(invocation_path);
+    let mut command = ProcessCommand::new(binary_path);
+    command
+        .args(&child_argv)
+        .current_dir(repo_root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    command
+        .spawn()
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_spawn",
+            detail: source.to_string(),
+        })
+}
+
+fn wait_for_prototype1_successor_ready(
+    child: &mut std::process::Child,
+    ready_path: &Path,
+) -> Result<Option<crate::cli::prototype1_state::invocation::SuccessorReadyRecord>, PrepareError> {
+    let start = std::time::Instant::now();
+    loop {
+        if ready_path.exists() {
+            let ready =
+                crate::cli::prototype1_state::invocation::load_successor_ready_record(ready_path)?;
+            return Ok(Some(ready));
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "prototype1_successor_poll",
+                detail: source.to_string(),
+            })?
+        {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_successor_ready",
+                detail: format!(
+                    "successor exited before acknowledging handoff (exit_code={:?})",
+                    status.code()
+                ),
+            });
+        }
+        if start.elapsed() >= SUCCESSOR_READY_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        std::thread::sleep(SUCCESSOR_READY_POLL);
+    }
+}
+
+pub(crate) fn spawn_and_handoff_prototype1_successor(
+    campaign_id: &str,
+    node_id: &str,
+) -> Result<Option<Prototype1SuccessorHandoff>, PrepareError> {
+    let manifest_path = campaign_manifest_path(campaign_id)?;
+    let node = load_node_record(&manifest_path, node_id)?;
+    // Successor bootstrap is controller authority. Launch the currently
+    // running controller binary so persisted branch worktrees do not need to
+    // already understand the latest successor invocation contract.
+    let successor_binary_path =
+        std::env::current_exe().map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_binary",
+            detail: source.to_string(),
+        })?;
+    let runtime_id = crate::cli::prototype1_state::event::RuntimeId::new();
+    let invocation_path =
+        crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
+    let invocation = crate::cli::prototype1_state::invocation::SuccessorInvocation::new(
+        campaign_id.to_string(),
+        node.node_id.clone(),
+        runtime_id,
+        prototype1_transition_journal_path(&manifest_path),
+    );
+    let ready_path =
+        crate::cli::prototype1_state::invocation::successor_ready_path(&node.node_dir, runtime_id);
+    if ready_path.exists() {
+        fs::remove_file(&ready_path).map_err(|source| PrepareError::WriteManifest {
+            path: ready_path.clone(),
+            source,
+        })?;
+    }
+
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %campaign_id,
+        node_id = %node_id,
+        runtime_id = %runtime_id,
+        successor_binary_path = %successor_binary_path.display(),
+        invocation_path = %invocation_path.display(),
+        ready_path = %ready_path.display(),
+        "spawning detached prototype1 successor"
+    );
+
+    let mut child = spawn_prototype1_successor(
+        &successor_binary_path,
+        &node.workspace_root,
+        &invocation_path,
+        &invocation,
+    )?;
+    let pid = child.id();
+    match wait_for_prototype1_successor_ready(&mut child, &ready_path)? {
+        Some(_) => Ok(Some(Prototype1SuccessorHandoff {
+            runtime_id,
+            pid,
+            ready_path,
+        })),
+        None => Ok(None),
+    }
 }
 
 /// Construct a persisted runner result for child-binary build failure.
@@ -325,14 +511,12 @@ fn record_attempt_runner_result(
     Ok(result)
 }
 
-/// Materialize the selected branch into the live source tree for a node.
-///
-/// This function deliberately mutates the shared source tree used for building
-/// the child binary. It relies on the controller's existing branch restore
-/// semantics to recover the source tree after evaluation.
+/// Realize the selected branch into one node-owned workspace for a node.
 ///
 /// Side effects:
-/// - writes the branch's proposed content into the target file
+/// - realizes or reuses a backend-managed child workspace under the node dir
+/// - writes the branch's proposed content into the node workspace target file
+/// - persists the realized workspace root onto the node and runner request
 /// - updates node status to `workspace_staged`
 fn stage_prototype1_runner_node(
     campaign_id: &str,
@@ -342,23 +526,31 @@ fn stage_prototype1_runner_node(
 ) -> Result<crate::intervention::Prototype1NodeRecord, PrepareError> {
     let node = load_node_record(campaign_manifest_path, node_id)?;
     let resolved = resolve_treatment_branch(campaign_id, campaign_manifest_path, &node.branch_id)?;
-    ensure_treatment_branch_materialized(
-        campaign_id,
-        campaign_manifest_path,
-        &resolved,
-        repo_root,
-    )?;
-    let (_, updated) = update_node_status(
+    let realized = GitWorktreeBackend
+        .realize(&RealizeRequest {
+            repo_root: repo_root.to_path_buf(),
+            node_id: node.node_id.clone(),
+            node_dir: node.node_dir.clone(),
+            target_relpath: resolved.target_relpath.clone(),
+            source_content: resolved.source_content.clone(),
+            proposed_content: resolved.branch.proposed_content.clone(),
+        })
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_runner_realize",
+            detail: source.to_string(),
+        })?;
+    let _ = update_node_status(
         campaign_id,
         campaign_manifest_path,
         node_id,
         Prototype1NodeStatus::WorkspaceStaged,
     )?;
+    let (_, updated, _) =
+        update_node_workspace_root(campaign_id, campaign_manifest_path, node_id, realized.root)?;
     Ok(updated)
 }
 
-/// Build the child binary for one node from the currently materialized source
-/// tree.
+/// Build the child binary for one node from its realized workspace root.
 ///
 /// Cargo scratch artifacts are isolated under `node/target/` so the build does
 /// not pollute the repo-level `target/`. The promoted executable is copied to
@@ -371,7 +563,6 @@ fn build_prototype1_runner_binary(
     campaign_id: &str,
     campaign_manifest_path: &Path,
     node_id: &str,
-    repo_root: &Path,
 ) -> Result<Prototype1NodeBuildOutcome, PrepareError> {
     let node = load_node_record(campaign_manifest_path, node_id)?;
     // Keep Cargo's full build scratch (deps, fingerprints, incremental state, and the raw
@@ -395,7 +586,7 @@ fn build_prototype1_runner_binary(
         .arg("--bin")
         .arg("ploke-eval")
         .env("CARGO_TARGET_DIR", &target_dir)
-        .current_dir(repo_root)
+        .current_dir(&node.workspace_root)
         .output()
         .map_err(|source| PrepareError::DatabaseSetup {
             phase: "prototype1_runner_build",
@@ -638,8 +829,21 @@ pub(super) async fn execute_prototype1_runner_node(
 pub(super) async fn execute_prototype1_runner_invocation(
     invocation_path: &Path,
 ) -> Result<Prototype1RunnerResult, PrepareError> {
-    let invocation =
-        crate::cli::prototype1_state::invocation::load_executable_child(invocation_path)?;
+    let invocation = match crate::cli::prototype1_state::invocation::load_executable(
+        invocation_path,
+    )? {
+        crate::cli::prototype1_state::invocation::InvocationAuthority::Child(invocation) => {
+            invocation
+        }
+        crate::cli::prototype1_state::invocation::InvocationAuthority::Successor(_) => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor invocation '{}' must be executed via execute_prototype1_successor_invocation",
+                    invocation_path.display()
+                ),
+            });
+        }
+    };
     let manifest_path = campaign_manifest_path(invocation.campaign_id())?;
     let node = load_node_record(&manifest_path, invocation.node_id())?;
     let request = load_runner_request(&manifest_path, invocation.node_id())?;
@@ -705,6 +909,46 @@ pub(super) async fn execute_prototype1_runner_invocation(
     Ok(result)
 }
 
+#[instrument(
+    target = "ploke_exec",
+    level = "debug",
+    skip(invocation_path),
+    fields(invocation_path = %invocation_path.display())
+)]
+pub(super) async fn execute_prototype1_successor_invocation(
+    invocation_path: &Path,
+) -> Result<crate::cli::prototype1_state::invocation::SuccessorReadyRecord, PrepareError> {
+    let invocation = match crate::cli::prototype1_state::invocation::load_executable(
+        invocation_path,
+    )? {
+        crate::cli::prototype1_state::invocation::InvocationAuthority::Successor(invocation) => {
+            invocation
+        }
+        crate::cli::prototype1_state::invocation::InvocationAuthority::Child(_) => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "child invocation '{}' must be executed via execute_prototype1_runner_invocation",
+                    invocation_path.display()
+                ),
+            });
+        }
+    };
+    let manifest_path = campaign_manifest_path(invocation.campaign_id())?;
+    validate_prototype1_successor_continuation(&invocation, &manifest_path)?;
+    let ready = record_prototype1_successor_ready(&invocation, &manifest_path)?;
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %invocation.campaign_id(),
+        node_id = %invocation.node_id(),
+        runtime_id = %invocation.runtime_id(),
+        pid = ready.pid,
+        standby_secs = SUCCESSOR_STANDBY_TIMEOUT.as_secs(),
+        "prototype1 successor acknowledged handoff"
+    );
+    std::thread::sleep(SUCCESSOR_STANDBY_TIMEOUT);
+    Ok(ready)
+}
+
 /// Parent-side staged execution path for one treatment branch.
 ///
 /// This is the main controller-facing process helper. It:
@@ -768,7 +1012,7 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
         "registered prototype1 child-eval node"
     );
 
-    let _ = stage_prototype1_runner_node(
+    let node = stage_prototype1_runner_node(
         baseline_campaign_id,
         &baseline_manifest_path,
         &node.node_id,
@@ -778,7 +1022,6 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
         baseline_campaign_id,
         &baseline_manifest_path,
         &node.node_id,
-        repo_root,
     )? {
         Prototype1NodeBuildOutcome::CompileFailed(result) => {
             return Ok(Prototype1NodeExecutionOutcome::Failed(result));
@@ -804,11 +1047,16 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
         node_id = %node.node_id,
         runtime_id = %runtime_id,
         binary_path = %node.binary_path.display(),
+        workspace_root = %node.workspace_root.display(),
         invocation_path = %invocation_path.display(),
         "spawning prototype1 leaf child runner"
     );
-    let output =
-        spawn_prototype1_child_runner(&node.binary_path, repo_root, &invocation_path, &invocation)?;
+    let output = spawn_prototype1_child_runner(
+        &node.binary_path,
+        &node.workspace_root,
+        &invocation_path,
+        &invocation,
+    )?;
 
     let attempt_result_path =
         crate::cli::prototype1_state::invocation::result_path(&node.node_dir, runtime_id);

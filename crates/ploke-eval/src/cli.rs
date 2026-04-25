@@ -125,8 +125,9 @@ use crate::target_registry::{
 };
 use prototype1_process::{
     Prototype1NodeExecutionOutcome, execute_prototype1_runner_invocation,
-    execute_prototype1_runner_node, run_prototype1_branch_evaluation,
-    run_prototype1_branch_evaluation_via_child,
+    execute_prototype1_runner_node, execute_prototype1_successor_invocation,
+    run_prototype1_branch_evaluation, run_prototype1_branch_evaluation_via_child,
+    spawn_and_handoff_prototype1_successor,
 };
 use prototype1_state::c1::{C1, MaterializeBranch};
 use prototype1_state::c2::BuildChild;
@@ -396,10 +397,12 @@ pub enum LoopSubcommand {
     /// Run Prototype 1 through eval configuration, baseline arm, synthesis, treatment, and compare.
     Prototype1(Prototype1LoopCommand),
     /// Drive the new typed Prototype 1 runtime path for one staged node.
+    #[command(hide = true)]
     Prototype1State(Prototype1StateCommand),
     /// Inspect and manipulate Prototype 1 treatment-branch state.
     Prototype1Branch(Prototype1BranchCommand),
     /// Inspect one staged Prototype 1 runner node for trampoline execution.
+    #[command(hide = true)]
     Prototype1Runner(Prototype1RunnerCommand),
 }
 
@@ -1140,6 +1143,9 @@ struct Prototype1StateReport {
     workspace_root: PathBuf,
     binary_path: PathBuf,
     child_runtime: Option<String>,
+    successor_runtime: Option<String>,
+    successor_pid: Option<u32>,
+    successor_ready_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1940,24 +1946,50 @@ impl Prototype1RunnerCommand {
             }
 
             if self.execute {
-                let result = execute_prototype1_runner_invocation(&invocation_path).await?;
-                match self.format {
-                    InspectOutputFormat::Json => {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&result)
-                                .map_err(PrepareError::Serialize)?
-                        );
+                match crate::cli::prototype1_state::invocation::load_executable(&invocation_path)? {
+                    crate::cli::prototype1_state::invocation::InvocationAuthority::Child(_) => {
+                        let result = execute_prototype1_runner_invocation(&invocation_path).await?;
+                        match self.format {
+                            InspectOutputFormat::Json => {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&result)
+                                        .map_err(PrepareError::Serialize)?
+                                );
+                            }
+                            InspectOutputFormat::Table => {
+                                println!("prototype1 runner invocation");
+                                println!("{}", "-".repeat(40));
+                                println!("invocation: {}", invocation_path.display());
+                                println!("campaign_id: {}", result.campaign_id);
+                                println!("node_id: {}", result.node_id);
+                                println!("branch_id: {}", result.branch_id);
+                                println!("status: {:?}", result.status);
+                                println!("disposition: {:?}", result.disposition);
+                            }
+                        }
                     }
-                    InspectOutputFormat::Table => {
-                        println!("prototype1 runner invocation");
-                        println!("{}", "-".repeat(40));
-                        println!("invocation: {}", invocation_path.display());
-                        println!("campaign_id: {}", result.campaign_id);
-                        println!("node_id: {}", result.node_id);
-                        println!("branch_id: {}", result.branch_id);
-                        println!("status: {:?}", result.status);
-                        println!("disposition: {:?}", result.disposition);
+                    crate::cli::prototype1_state::invocation::InvocationAuthority::Successor(_) => {
+                        let ready =
+                            execute_prototype1_successor_invocation(&invocation_path).await?;
+                        match self.format {
+                            InspectOutputFormat::Json => {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&ready)
+                                        .map_err(PrepareError::Serialize)?
+                                );
+                            }
+                            InspectOutputFormat::Table => {
+                                println!("prototype1 successor invocation");
+                                println!("{}", "-".repeat(40));
+                                println!("invocation: {}", invocation_path.display());
+                                println!("campaign_id: {}", ready.campaign_id);
+                                println!("node_id: {}", ready.node_id);
+                                println!("runtime_id: {}", ready.runtime_id);
+                                println!("pid: {}", ready.pid);
+                            }
+                        }
                     }
                 }
                 return Ok(());
@@ -2094,7 +2126,6 @@ impl Prototype1StateCommand {
             journal_path = %journal_path.display(),
             "starting typed prototype1 state run"
         );
-
         let c1 = C1::load(
             self.campaign.clone(),
             manifest_path.clone(),
@@ -2126,105 +2157,158 @@ impl Prototype1StateCommand {
             Outcome::Rejected(never) => match never {},
         };
 
-        let (outcome, child_runtime) = if self.stop_after == Prototype1StateStopAfter::Materialize {
-            ("materialized".to_string(), None)
-        } else {
-            match BuildChild::new()
-                .transition(c2, &mut journal)
-                .map_err(|err| {
-                    prototype1_state_transition_error("prototype1_state_build", format!("{err:?}"))
-                })? {
-                Outcome::Rejected(rejected) => {
-                    debug!(
-                        target: EXECUTION_DEBUG_TARGET,
-                        campaign = %self.campaign,
-                        node_id = %self.node_id,
-                        rejected = ?rejected,
-                        "build rejected"
-                    );
-                    (format!("build_rejected:{rejected:?}"), None)
-                }
-                Outcome::Advanced(c3) => {
-                    debug!(
-                        target: EXECUTION_DEBUG_TARGET,
-                        campaign = %self.campaign,
-                        node_id = %self.node_id,
-                        binary_path = %c3.binary.child_path.display(),
-                        "build completed"
-                    );
-                    if self.stop_after == Prototype1StateStopAfter::Build {
-                        ("built".to_string(), None)
-                    } else {
-                        match SpawnChild::new()
-                            .transition(c3, &mut journal)
-                            .map_err(|err| {
-                                prototype1_state_transition_error(
-                                    "prototype1_state_spawn",
-                                    format!("{err:?}"),
-                                )
-                            })? {
-                            Outcome::Rejected(rejected) => {
-                                debug!(
-                                    target: EXECUTION_DEBUG_TARGET,
-                                    campaign = %self.campaign,
-                                    node_id = %self.node_id,
-                                    rejected = ?rejected,
-                                    "spawn rejected"
-                                );
-                                (format!("spawn_rejected:{rejected:?}"), None)
-                            }
-                            Outcome::Advanced(c4) => {
-                                let child_runtime = c4.binary.child_runtime.map(
-                                    |id: crate::cli::prototype1_state::event::RuntimeId| {
-                                        id.to_string()
-                                    },
-                                );
-                                debug!(
-                                    target: EXECUTION_DEBUG_TARGET,
-                                    campaign = %self.campaign,
-                                    node_id = %self.node_id,
-                                    child_runtime = ?child_runtime,
-                                    "spawn completed"
-                                );
-                                if self.stop_after == Prototype1StateStopAfter::Spawn {
-                                    ("spawned".to_string(), child_runtime)
-                                } else {
-                                    match ObserveChild::new().transition(c4, &mut journal).map_err(
-                                        |err| {
-                                            prototype1_state_transition_error(
-                                                "prototype1_state_complete",
-                                                format!("{err:?}"),
-                                            )
+        let (outcome, child_runtime, successor_runtime, successor_pid, successor_ready_path) =
+            if self.stop_after == Prototype1StateStopAfter::Materialize {
+                ("materialized".to_string(), None, None, None, None)
+            } else {
+                match BuildChild::new()
+                    .transition(c2, &mut journal)
+                    .map_err(|err| {
+                        prototype1_state_transition_error(
+                            "prototype1_state_build",
+                            format!("{err:?}"),
+                        )
+                    })? {
+                    Outcome::Rejected(rejected) => {
+                        debug!(
+                            target: EXECUTION_DEBUG_TARGET,
+                            campaign = %self.campaign,
+                            node_id = %self.node_id,
+                            rejected = ?rejected,
+                            "build rejected"
+                        );
+                        (
+                            format!("build_rejected:{rejected:?}"),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    }
+                    Outcome::Advanced(c3) => {
+                        debug!(
+                            target: EXECUTION_DEBUG_TARGET,
+                            campaign = %self.campaign,
+                            node_id = %self.node_id,
+                            binary_path = %c3.binary.child_path.display(),
+                            "build completed"
+                        );
+                        if self.stop_after == Prototype1StateStopAfter::Build {
+                            ("built".to_string(), None, None, None, None)
+                        } else {
+                            match SpawnChild::new()
+                                .transition(c3, &mut journal)
+                                .map_err(|err| {
+                                    prototype1_state_transition_error(
+                                        "prototype1_state_spawn",
+                                        format!("{err:?}"),
+                                    )
+                                })? {
+                                Outcome::Rejected(rejected) => {
+                                    debug!(
+                                        target: EXECUTION_DEBUG_TARGET,
+                                        campaign = %self.campaign,
+                                        node_id = %self.node_id,
+                                        rejected = ?rejected,
+                                        "spawn rejected"
+                                    );
+                                    (
+                                        format!("spawn_rejected:{rejected:?}"),
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                    )
+                                }
+                                Outcome::Advanced(c4) => {
+                                    let child_runtime = c4.binary.child_runtime.map(
+                                        |id: crate::cli::prototype1_state::event::RuntimeId| {
+                                            id.to_string()
                                         },
-                                    )? {
-                                        Outcome::Rejected(rejected) => {
-                                            debug!(
-                                                target: EXECUTION_DEBUG_TARGET,
-                                                campaign = %self.campaign,
-                                                node_id = %self.node_id,
-                                                rejected = ?rejected,
-                                                "child completion rejected"
-                                            );
-                                            (
-                                                format!("completion_rejected:{rejected:?}"),
-                                                child_runtime,
-                                            )
-                                        }
-                                        Outcome::Advanced(c5) => {
-                                            debug!(
-                                                target: EXECUTION_DEBUG_TARGET,
-                                                campaign = %self.campaign,
-                                                node_id = %self.node_id,
-                                                disposition = ?c5.report.overall_disposition,
-                                                "child completion observed"
-                                            );
-                                            (
-                                                format!(
-                                                    "completed:{:?}",
-                                                    c5.report.overall_disposition
-                                                ),
-                                                child_runtime,
-                                            )
+                                    );
+                                    debug!(
+                                        target: EXECUTION_DEBUG_TARGET,
+                                        campaign = %self.campaign,
+                                        node_id = %self.node_id,
+                                        child_runtime = ?child_runtime,
+                                        "spawn completed"
+                                    );
+                                    if self.stop_after == Prototype1StateStopAfter::Spawn {
+                                        ("spawned".to_string(), child_runtime, None, None, None)
+                                    } else {
+                                        match ObserveChild::new()
+                                            .transition(c4, &mut journal)
+                                            .map_err(|err| {
+                                                prototype1_state_transition_error(
+                                                    "prototype1_state_complete",
+                                                    format!("{err:?}"),
+                                                )
+                                            })? {
+                                            Outcome::Rejected(rejected) => {
+                                                debug!(
+                                                    target: EXECUTION_DEBUG_TARGET,
+                                                    campaign = %self.campaign,
+                                                    node_id = %self.node_id,
+                                                    rejected = ?rejected,
+                                                    "child completion rejected"
+                                                );
+                                                (
+                                                    format!("completion_rejected:{rejected:?}"),
+                                                    child_runtime,
+                                                    None,
+                                                    None,
+                                                    None,
+                                                )
+                                            }
+                                            Outcome::Advanced(c5) => {
+                                                debug!(
+                                                    target: EXECUTION_DEBUG_TARGET,
+                                                    campaign = %self.campaign,
+                                                    node_id = %self.node_id,
+                                                    disposition = ?c5.report.overall_disposition,
+                                                    "child completion observed"
+                                                );
+                                                if c5.report.overall_disposition
+                                                    == BranchDisposition::Keep
+                                                {
+                                                    match spawn_and_handoff_prototype1_successor(
+                                                        &self.campaign,
+                                                        &self.node_id,
+                                                    )? {
+                                                        Some(successor) => (
+                                                            format!(
+                                                                "completed:{:?};successor_handoff=acknowledged",
+                                                                c5.report.overall_disposition
+                                                            ),
+                                                            child_runtime,
+                                                            Some(successor.runtime_id.to_string()),
+                                                            Some(successor.pid),
+                                                            Some(successor.ready_path),
+                                                        ),
+                                                        None => (
+                                                            format!(
+                                                                "completed:{:?};successor_handoff=timed_out",
+                                                                c5.report.overall_disposition
+                                                            ),
+                                                            child_runtime,
+                                                            None,
+                                                            None,
+                                                            None,
+                                                        ),
+                                                    }
+                                                } else {
+                                                    (
+                                                        format!(
+                                                            "completed:{:?}",
+                                                            c5.report.overall_disposition
+                                                        ),
+                                                        child_runtime,
+                                                        None,
+                                                        None,
+                                                        None,
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -2232,8 +2316,7 @@ impl Prototype1StateCommand {
                         }
                     }
                 }
-            }
-        };
+            };
 
         let node = load_node_record(&manifest_path, &self.node_id)?;
         let report = Prototype1StateReport {
@@ -2247,6 +2330,9 @@ impl Prototype1StateCommand {
             workspace_root: node.workspace_root,
             binary_path: node.binary_path,
             child_runtime,
+            successor_runtime,
+            successor_pid,
+            successor_ready_path,
         };
 
         match self.format {
@@ -2271,6 +2357,25 @@ impl Prototype1StateCommand {
                 println!(
                     "child_runtime: {}",
                     report.child_runtime.as_deref().unwrap_or("-")
+                );
+                println!(
+                    "successor_runtime: {}",
+                    report.successor_runtime.as_deref().unwrap_or("-")
+                );
+                println!(
+                    "successor_pid: {}",
+                    report
+                        .successor_pid
+                        .map(|pid| pid.to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                );
+                println!(
+                    "successor_ready_path: {}",
+                    report
+                        .successor_ready_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "-".to_string())
                 );
             }
         }
@@ -13468,9 +13573,11 @@ mod tests {
     use super::*;
     use crate::inner::core::{RegisteredRunRole, RunIntent, RunStorageRoots};
     use crate::inner::registry::RunRegistration;
+    use crate::record::read_compressed_record;
     use crate::run_registry::RunExecutionStatus;
     use ploke_core::ArcStr;
     use ploke_tui::chat_history::{MessageKind, MessageStatus};
+    use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
     use uuid::Uuid;
@@ -13667,6 +13774,59 @@ mod tests {
             }),
             latency_ms: 17,
         }
+    }
+
+    #[test]
+    #[ignore = "diagnostic prompt dump for tool-call intent segmentation context"]
+    fn diagnostic_dump_tool_call_segmentation_prompt() {
+        let record_path = PathBuf::from(
+            "/home/brasides/.ploke-eval/instances/prototype1/prototype1-typed-bridge-test-1777120923237/treatments/branch-c766961d14708d45/instances/clap-rs__clap-3670/runs/run-1777136748312-structured-current-policy-a9cd20b3/record.json.gz",
+        );
+        let record = read_compressed_record(&record_path).expect("read diagnostic record");
+        let sequence =
+            build_tool_call_sequence_subject(&record).expect("build tool-call sequence subject");
+        let context = ploke_protocol::SequenceReviewContext {
+            sequence,
+            signals: ploke_protocol::tool_calls::segment::derive_sequence_signals_for_diagnostics(
+                &build_tool_call_sequence_subject(&record)
+                    .expect("rebuild tool-call sequence subject"),
+            ),
+        };
+        let rendered =
+            ploke_protocol::tool_calls::segment::render_sequence_context_for_diagnostics(&context);
+
+        eprintln!("SEGMENT_DIAG record_path={}", record_path.display());
+        eprintln!("SEGMENT_DIAG rendered_chars={}", rendered.len());
+        eprintln!("SEGMENT_DIAG total_calls={}", context.sequence.calls.len());
+        for call in &context.sequence.calls {
+            eprintln!(
+                "SEGMENT_DIAG call={} tool={} kind={:?} failed={} summary_len={} args_len={} result_len={} search_term_len={} path_hint_len={}",
+                call.index,
+                call.tool_name,
+                call.tool_kind,
+                call.failed,
+                call.summary.len(),
+                call.args_preview.len(),
+                call.result_preview.len(),
+                call.search_term
+                    .as_ref()
+                    .map(|value| value.len())
+                    .unwrap_or(0),
+                call.path_hint
+                    .as_ref()
+                    .map(|value| value.len())
+                    .unwrap_or(0),
+            );
+            eprintln!("SEGMENT_DIAG summary[{}]={}", call.index, call.summary);
+            eprintln!("SEGMENT_DIAG args[{}]={}", call.index, call.args_preview);
+            eprintln!(
+                "SEGMENT_DIAG result[{}]={}",
+                call.index, call.result_preview
+            );
+        }
+        eprintln!("SEGMENT_DIAG rendered_begin");
+        eprintln!("{rendered}");
+        eprintln!("SEGMENT_DIAG rendered_end");
     }
 
     fn sample_tool_call_failed(
