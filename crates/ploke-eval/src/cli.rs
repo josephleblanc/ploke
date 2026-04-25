@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use chrono::Utc;
 use clap::{ArgAction, Parser, Subcommand};
+use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_core::tool_types::ToolName;
 use ploke_llm::Router;
 use ploke_llm::request::endpoint::Endpoint;
@@ -24,6 +25,7 @@ use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
+use tracing::{debug, instrument};
 
 mod prototype1_process;
 mod prototype1_state;
@@ -46,9 +48,9 @@ use crate::closure::{
 use crate::inner::registry::RunRegistration;
 use crate::intervention::{
     ArtifactEdit, INTERVENTION_APPLY_PROCEDURE, INTERVENTION_ISSUE_DETECTION_PROCEDURE,
-    INTERVENTION_SYNTHESIS_PROCEDURE, InterventionApplyInput, InterventionApplyOutput,
-    InterventionCandidate, InterventionSpec, InterventionSynthesisInput, IssueCase,
-    IssueDetectionInput, IssueDetectionOutput, Prototype1BranchRegistry,
+    INTERVENTION_SYNTHESIS_PROCEDURE, Intervention, InterventionApplyInput,
+    InterventionApplyOutput, InterventionCandidate, InterventionSpec, InterventionSynthesisInput,
+    IssueCase, IssueDetectionInput, IssueDetectionOutput, Outcome, Prototype1BranchRegistry,
     Prototype1ContinuationDecision, Prototype1NodeStatus, Prototype1RunnerDisposition,
     Prototype1RunnerResult, Prototype1SearchPolicy, TreatmentBranchEvaluationSummary,
     ValidationPolicy, detect_issue_cases, execute_intervention_apply,
@@ -125,6 +127,10 @@ use prototype1_process::{
     Prototype1NodeExecutionOutcome, execute_prototype1_runner_node,
     run_prototype1_branch_evaluation, run_prototype1_branch_evaluation_via_child,
 };
+use prototype1_state::c1::{C1, MaterializeBranch};
+use prototype1_state::c2::BuildChild;
+use prototype1_state::c3::SpawnChild;
+use prototype1_state::journal::{PrototypeJournal, prototype1_transition_journal_path};
 
 const CLI_BEFORE_LONG_HELP: &str = "\
 Minimal evaluation runner and artifact inspector for ploke.
@@ -387,10 +393,39 @@ pub struct LoopCommand {
 pub enum LoopSubcommand {
     /// Run Prototype 1 through eval configuration, baseline arm, synthesis, treatment, and compare.
     Prototype1(Prototype1LoopCommand),
+    /// Drive the new typed Prototype 1 runtime path for one staged node.
+    Prototype1State(Prototype1StateCommand),
     /// Inspect and manipulate Prototype 1 treatment-branch state.
     Prototype1Branch(Prototype1BranchCommand),
     /// Inspect one staged Prototype 1 runner node for trampoline execution.
     Prototype1Runner(Prototype1RunnerCommand),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1StateStopAfter {
+    Materialize,
+    Build,
+    Spawn,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Run the new typed Prototype 1 state transitions for one staged node")]
+pub struct Prototype1StateCommand {
+    #[arg(long)]
+    pub campaign: String,
+
+    #[arg(long)]
+    pub node_id: String,
+
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Spawn)]
+    pub stop_after: Prototype1StateStopAfter,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
 }
 
 #[derive(Debug, Parser)]
@@ -931,6 +966,7 @@ impl LoopCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         match self.command {
             LoopSubcommand::Prototype1(cmd) => cmd.run().await,
+            LoopSubcommand::Prototype1State(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Branch(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Runner(cmd) => cmd.run().await,
         }
@@ -1084,6 +1120,20 @@ struct Prototype1RunnerNodeReport {
     binary_exists: bool,
     runner_result_exists: bool,
     runner_args: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct Prototype1StateReport {
+    campaign_id: String,
+    node_id: String,
+    repo_root: PathBuf,
+    journal_path: PathBuf,
+    stop_after: Prototype1StateStopAfter,
+    outcome: String,
+    node_status: Prototype1NodeStatus,
+    workspace_root: PathBuf,
+    binary_path: PathBuf,
+    child_runtime: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1930,6 +1980,187 @@ impl Prototype1RunnerCommand {
                 );
             }
             InspectOutputFormat::Table => print_prototype1_runner_report(&report),
+        }
+        Ok(())
+    }
+}
+
+fn prototype1_state_transition_error(
+    phase: &'static str,
+    detail: impl Into<String>,
+) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase,
+        detail: detail.into(),
+    }
+}
+
+impl Prototype1StateCommand {
+    #[instrument(
+        target = "ploke_exec",
+        level = "debug",
+        skip(self),
+        fields(campaign = %self.campaign, node_id = %self.node_id, stop_after = ?self.stop_after)
+    )]
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let manifest_path = campaign_manifest_path(&self.campaign)?;
+        let repo_root = if let Some(path) = self.repo_root.clone() {
+            path
+        } else {
+            std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
+                path: PathBuf::from("."),
+                source,
+            })?
+        };
+        let journal_path = prototype1_transition_journal_path(&manifest_path);
+        let mut journal = PrototypeJournal::new(journal_path.clone());
+
+        debug!(
+            target: EXECUTION_DEBUG_TARGET,
+            campaign = %self.campaign,
+            node_id = %self.node_id,
+            repo_root = %repo_root.display(),
+            journal_path = %journal_path.display(),
+            "starting typed prototype1 state run"
+        );
+
+        let c1 = C1::load(
+            self.campaign.clone(),
+            manifest_path.clone(),
+            &self.node_id,
+            repo_root.clone(),
+        )
+        .map_err(|err| {
+            prototype1_state_transition_error("prototype1_state_load_c1", err.to_string())
+        })?;
+
+        let c2 = match MaterializeBranch::new()
+            .transition(c1, &mut journal)
+            .map_err(|err| {
+                prototype1_state_transition_error(
+                    "prototype1_state_materialize",
+                    format!("{err:?}"),
+                )
+            })? {
+            Outcome::Advanced(next) => {
+                debug!(
+                    target: EXECUTION_DEBUG_TARGET,
+                    campaign = %self.campaign,
+                    node_id = %self.node_id,
+                    workspace_root = %next.artifact.repo_root.display(),
+                    "materialize completed"
+                );
+                next
+            }
+            Outcome::Rejected(never) => match never {},
+        };
+
+        let (outcome, child_runtime) = if self.stop_after == Prototype1StateStopAfter::Materialize {
+            ("materialized".to_string(), None)
+        } else {
+            match BuildChild::new()
+                .transition(c2, &mut journal)
+                .map_err(|err| {
+                    prototype1_state_transition_error("prototype1_state_build", format!("{err:?}"))
+                })? {
+                Outcome::Rejected(rejected) => {
+                    debug!(
+                        target: EXECUTION_DEBUG_TARGET,
+                        campaign = %self.campaign,
+                        node_id = %self.node_id,
+                        rejected = ?rejected,
+                        "build rejected"
+                    );
+                    (format!("build_rejected:{rejected:?}"), None)
+                }
+                Outcome::Advanced(c3) => {
+                    debug!(
+                        target: EXECUTION_DEBUG_TARGET,
+                        campaign = %self.campaign,
+                        node_id = %self.node_id,
+                        binary_path = %c3.binary.child_path.display(),
+                        "build completed"
+                    );
+                    if self.stop_after == Prototype1StateStopAfter::Build {
+                        ("built".to_string(), None)
+                    } else {
+                        match SpawnChild::new()
+                            .transition(c3, &mut journal)
+                            .map_err(|err| {
+                                prototype1_state_transition_error(
+                                    "prototype1_state_spawn",
+                                    format!("{err:?}"),
+                                )
+                            })? {
+                            Outcome::Rejected(rejected) => {
+                                debug!(
+                                    target: EXECUTION_DEBUG_TARGET,
+                                    campaign = %self.campaign,
+                                    node_id = %self.node_id,
+                                    rejected = ?rejected,
+                                    "spawn rejected"
+                                );
+                                (format!("spawn_rejected:{rejected:?}"), None)
+                            }
+                            Outcome::Advanced(c4) => {
+                                let child_runtime = c4.binary.child_runtime.map(
+                                    |id: crate::cli::prototype1_state::event::RuntimeId| {
+                                        id.to_string()
+                                    },
+                                );
+                                debug!(
+                                    target: EXECUTION_DEBUG_TARGET,
+                                    campaign = %self.campaign,
+                                    node_id = %self.node_id,
+                                    child_runtime = ?child_runtime,
+                                    "spawn completed"
+                                );
+                                ("spawned".to_string(), child_runtime)
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        let node = load_node_record(&manifest_path, &self.node_id)?;
+        let report = Prototype1StateReport {
+            campaign_id: self.campaign,
+            node_id: self.node_id,
+            repo_root,
+            journal_path,
+            stop_after: self.stop_after,
+            outcome,
+            node_status: node.status,
+            workspace_root: node.workspace_root,
+            binary_path: node.binary_path,
+            child_runtime,
+        };
+
+        match self.format {
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                );
+            }
+            InspectOutputFormat::Table => {
+                println!("prototype1 state");
+                println!("{}", "-".repeat(40));
+                println!("campaign_id: {}", report.campaign_id);
+                println!("node_id: {}", report.node_id);
+                println!("repo_root: {}", report.repo_root.display());
+                println!("journal_path: {}", report.journal_path.display());
+                println!("stop_after: {:?}", report.stop_after);
+                println!("outcome: {}", report.outcome);
+                println!("node_status: {:?}", report.node_status);
+                println!("workspace_root: {}", report.workspace_root.display());
+                println!("binary_path: {}", report.binary_path.display());
+                println!(
+                    "child_runtime: {}",
+                    report.child_runtime.as_deref().unwrap_or("-")
+                );
+            }
         }
         Ok(())
     }
@@ -13701,6 +13932,33 @@ mod tests {
                 assert_eq!(cmd.source_campaign.as_deref(), Some("prototype1-campaign"));
                 assert_eq!(cmd.source_branch_id.as_deref(), Some("branch-123"));
                 assert_eq!(cmd.stop_after, Prototype1LoopStopAfter::Compare);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_state_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-state",
+            "--campaign",
+            "prototype1-campaign",
+            "--node-id",
+            "branch-abc-g1",
+            "--stop-after",
+            "build",
+        ])
+        .expect("loop prototype1-state should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1State(cmd),
+            }) => {
+                assert_eq!(cmd.campaign, "prototype1-campaign");
+                assert_eq!(cmd.node_id, "branch-abc-g1");
+                assert_eq!(cmd.stop_after, Prototype1StateStopAfter::Build);
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

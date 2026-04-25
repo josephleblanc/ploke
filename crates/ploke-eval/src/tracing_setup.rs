@@ -91,16 +91,20 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
         .with_file(true)
         .with_line_number(true)
         .with_ansi(true)
-        .with_writer(std::io::stderr)
-        // Keep the human-facing CLI surface clean; detailed info-level traces
-        // still go to the log files configured above.
-        .with_filter(filter::LevelFilter::WARN);
+        .with_writer(std::io::stderr);
+    let console_filter = if debug_tools {
+        filter::Targets::new()
+            .with_default(filter::LevelFilter::WARN)
+            .with_target(EXECUTION_DEBUG_TARGET, Level::DEBUG)
+    } else {
+        filter::Targets::new().with_default(filter::LevelFilter::WARN)
+    };
 
     if tracing_subscriber::registry()
         .with(filter)
         .with(file_layer)
         .with(full_response_layer.with_filter(only_full_response))
-        .with(console_layer)
+        .with(console_layer.with_filter(console_filter))
         .try_init()
         .is_ok()
     {

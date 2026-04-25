@@ -3,15 +3,10 @@
 //! Explicit `C1 -> C2` prototype configuration transition.
 //!
 //! Temporary note:
-//! This file still leaks the old artifact-apply implementation into the new
-//! typed transition layer. In particular, the `MaterializeBranch`
-//! implementation still depends on legacy `Intervention*` artifact-mutation
-//! carriers and `execute_intervention_apply(...)`.
-//!
-//! That leakage is intentional for now so the scaffold can stay grounded in the
-//! current working path. When the old implementation is rewritten around the
-//! new configuration/intervention model, this file should stop constructing the
-//! legacy artifact-apply objects directly.
+//! This file now treats child realization as a backend-mediated workspace
+//! operation rather than as an in-place mutation of the parent workspace. Git
+//! worktrees are the first backend, but the transition logic should stay
+//! independent of that concrete choice.
 //!
 //! `C1` is the aligned parent state:
 //! - the parent process is running
@@ -19,7 +14,7 @@
 //!
 //! `C2` is the diverged parent state:
 //! - the same parent process is still running
-//! - the artifact world has been materialized to the selected branch content
+//! - the child artifact world has been realized in a separate workspace
 //!
 //! The transition is move-only and the state distinction is carried in the type
 //! parameters:
@@ -32,32 +27,23 @@
 
 use std::fs;
 use std::marker::PhantomData;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use thiserror::Error;
-
-use ploke_core::tool_types::ToolName;
+use tracing::{debug, instrument};
 
 use crate::intervention::{
-    ArtifactEdit, CommitError, CommitPhase, Configuration, Intervention, InterventionApplyInput,
-    InterventionCandidate, InterventionSpec, InterventionSpecError, Outcome, Prototype1NodeRecord,
-    Prototype1NodeStatus, RecordStore, ResolvedTreatmentBranch, Surface, ValidationPolicy,
-    execute_intervention_apply, load_node_record, mark_treatment_branch_applied,
+    CommitError, CommitPhase, Configuration, Intervention, Outcome, Prototype1NodeRecord,
+    Prototype1NodeStatus, RecordStore, ResolvedTreatmentBranch, Surface, load_node_record,
     resolve_treatment_branch, update_node_status,
 };
 use crate::spec::PrepareError;
 
+use super::backend::{BackendError, GitWorktreeBackend, RealizeRequest, WorkspaceBackend};
 use super::event::{
     ContentHash, Hashes, LineageMark, Paths, RecordedAt, Refs, RuntimeId, TransitionId, World,
 };
 use super::journal::{Entry, JournalEntry, PrototypeJournal};
-
-fn tool_name_for_description_relpath(relpath: &Path) -> Result<ToolName, MaterializeBranchError> {
-    ToolName::ALL
-        .into_iter()
-        .find(|tool| Path::new(tool.description_artifact_relpath()) == relpath)
-        .ok_or_else(|| MaterializeBranchError::UnsupportedTarget(relpath.to_path_buf()))
-}
 
 /// Marker for the currently running parent lineage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +213,7 @@ impl<
             },
             paths: Paths {
                 repo_root: self.artifact.repo_root.clone(),
-                workspace_root: self.node.workspace_root.clone(),
+                workspace_root: self.artifact.repo_root.clone(),
                 binary_path: self.node.binary_path.clone(),
                 target_relpath: self.artifact.target_relpath.clone(),
                 absolute_path: self.artifact.repo_root.join(&self.artifact.target_relpath),
@@ -274,8 +260,6 @@ pub(crate) enum MaterializeBranchError {
         path: PathBuf,
         source: std::io::Error,
     },
-    #[error("unsupported branch target '{0}'")]
-    UnsupportedTarget(PathBuf),
     #[error(
         "expected live artifact at '{path}' to match stored source content before materialization"
     )]
@@ -284,20 +268,11 @@ pub(crate) enum MaterializeBranchError {
         expected_source_hash: ContentHash,
         observed_hash: ContentHash,
     },
-    #[error(
-        "failed to apply branch '{branch_id}' to target '{target_relpath}' during C1 -> C2 materialization"
-    )]
-    Apply {
-        branch_id: String,
-        target_relpath: PathBuf,
-        #[source]
-        source: InterventionSpecError,
-    },
-    #[error("failed to mark branch '{branch_id}' as applied")]
-    MarkApplied {
+    #[error("failed to realize child workspace for branch '{branch_id}'")]
+    RealizeWorkspace {
         branch_id: String,
         #[source]
-        source: PrepareError,
+        source: BackendError,
     },
     #[error("failed to update node '{node_id}' status to workspace_staged")]
     UpdateNodeStatus {
@@ -403,29 +378,48 @@ impl Surface<Prototype<Parent, Parent, Absent, Unacknowledged>> for ToolDescript
 /// `Prototype<Parent, Parent, Absent, Unacknowledged> ->
 /// Prototype<Parent, Child, Absent, Unacknowledged>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MaterializeBranch {
+pub(crate) struct MaterializeBranch<B = GitWorktreeBackend> {
     transition_id: TransitionId,
+    backend: B,
 }
 
-impl MaterializeBranch {
+impl MaterializeBranch<GitWorktreeBackend> {
     pub(crate) fn new() -> Self {
         Self {
             transition_id: TransitionId::new(),
+            backend: GitWorktreeBackend,
         }
     }
 }
 
-impl
+impl<B> MaterializeBranch<B> {
+    pub(crate) fn with_backend(backend: B) -> Self {
+        Self {
+            transition_id: TransitionId::new(),
+            backend,
+        }
+    }
+}
+
+impl<B>
     Intervention<
         Prototype<Parent, Parent, Absent, Unacknowledged>,
         Prototype<Parent, Child, Absent, Unacknowledged>,
-    > for MaterializeBranch
+    > for MaterializeBranch<B>
+where
+    B: WorkspaceBackend<Root = PathBuf>,
 {
     type Surface = ToolDescriptionSurface;
     type Journal = PrototypeJournal;
     type Error = MaterializeBranchError;
     type Rejected = std::convert::Infallible;
 
+    #[instrument(
+        target = "ploke_exec",
+        level = "debug",
+        skip(self, records),
+        fields(node_id = %from.node.node_id, branch_id = %from.resolved.branch.branch_id)
+    )]
     fn transition(
         &self,
         from: Prototype<Parent, Parent, Absent, Unacknowledged>,
@@ -457,51 +451,30 @@ impl
                 phase: CommitPhase::Before,
                 source,
             })?;
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            "recorded materialize before entry"
+        );
 
-        let tool = tool_name_for_description_relpath(&from.resolved.target_relpath)
-            .map_err(CommitError::Transition)?;
-        let candidate = InterventionCandidate {
-            candidate_id: from.resolved.branch.candidate_id.clone(),
-            branch_label: from.resolved.branch.branch_label.clone(),
-            proposed_content: from.resolved.branch.proposed_content.clone(),
-            spec: InterventionSpec::ToolGuidanceMutation {
-                spec_id: from.resolved.branch.synthesized_spec_id.clone(),
-                evidence_basis: "prototype1_c1_materialize".to_string(),
-                intended_effect: "materialize stored treatment branch content".to_string(),
-                tool,
-                edit: ArtifactEdit::ReplaceWholeText {
-                    new_text: from.resolved.branch.proposed_content.clone(),
-                },
-                validation_policy: ValidationPolicy::for_tool_description_target(tool),
-            },
-        };
-        let input = InterventionApplyInput {
-            source_state_id: from.resolved.source_state_id.clone(),
-            candidate,
-            target_relpath: from.resolved.target_relpath.clone(),
-            expected_source_content: from.resolved.source_content.clone(),
-            repo_root: from.artifact.repo_root.clone(),
-        };
-        let output = execute_intervention_apply(&input).map_err(|source| {
-            CommitError::Transition(MaterializeBranchError::Apply {
-                branch_id: from.resolved.branch.branch_id.clone(),
+        let realized = self
+            .backend
+            .realize(&RealizeRequest {
+                repo_root: from.artifact.repo_root.clone(),
+                node_id: from.node.node_id.clone(),
+                node_dir: from.node.node_dir.clone(),
                 target_relpath: from.resolved.target_relpath.clone(),
-                source,
+                source_content: from.resolved.source_content.clone(),
+                proposed_content: from.resolved.branch.proposed_content.clone(),
             })
-        })?;
-        let _ = mark_treatment_branch_applied(
-            &from.campaign_id,
-            &from.campaign_manifest_path,
-            &input.target_relpath,
-            &output,
-        )
-        .map_err(|source| {
-            CommitError::Transition(MaterializeBranchError::MarkApplied {
-                branch_id: from.resolved.branch.branch_id.clone(),
-                source,
-            })
-        })?;
-        let (_, updated_node) = update_node_status(
+            .map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::RealizeWorkspace {
+                    branch_id: from.resolved.branch.branch_id.clone(),
+                    source,
+                })
+            })?;
+        let (_, mut updated_node) = update_node_status(
             &from.campaign_id,
             &from.campaign_manifest_path,
             &from.node.node_id,
@@ -513,6 +486,14 @@ impl
                 source,
             })
         })?;
+        updated_node.workspace_root = realized.root.clone();
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            workspace_root = %realized.root.display(),
+            "realized child workspace"
+        );
 
         let next = Prototype {
             campaign_id: from.campaign_id,
@@ -520,10 +501,12 @@ impl
             node: updated_node,
             resolved: from.resolved.clone(),
             artifact: Artifact {
-                repo_root: from.artifact.repo_root,
+                repo_root: realized.root,
                 target_relpath: from.resolved.target_relpath.clone(),
                 source_content_hash: ContentHash(from.resolved.source_content_hash.clone()),
-                current_content_hash: ContentHash(output.applied_content_hash),
+                current_content_hash: ContentHash(
+                    from.resolved.branch.proposed_content_hash.clone(),
+                ),
                 proposed_content_hash: ContentHash(
                     from.resolved.branch.proposed_content_hash.clone(),
                 ),
@@ -547,6 +530,13 @@ impl
                 phase: CommitPhase::After,
                 source,
             })?;
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %next.node.node_id,
+            branch_id = %next.resolved.branch.branch_id,
+            workspace_root = %next.artifact.repo_root.display(),
+            "recorded materialize after entry"
+        );
 
         Ok(Outcome::Advanced(next))
     }

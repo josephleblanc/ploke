@@ -24,6 +24,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
+use tracing::{debug, instrument};
 
 use crate::intervention::{
     CommitError, Intervention, Outcome, Prototype1NodeStatus, Prototype1RunnerRequest, RecordStore,
@@ -84,7 +85,7 @@ where
         },
         paths: Paths {
             repo_root: config.artifact.repo_root.clone(),
-            workspace_root: config.node.workspace_root.clone(),
+            workspace_root: config.artifact.repo_root.clone(),
             binary_path: config.binary.child_path.clone(),
             target_relpath: config.artifact.target_relpath.clone(),
             absolute_path: config
@@ -174,10 +175,23 @@ impl HandoffTxn {
 
 /// Child-side helper for later wiring. This writes the ready witness without
 /// leaving any journal handle alive after the closure returns.
+#[instrument(
+    target = "ploke_exec",
+    level = "debug",
+    skip(journal_path, entry),
+    fields(runtime_id = %entry.runtime_id)
+)]
 pub(crate) fn record_child_ready(
     journal_path: impl Into<PathBuf>,
     entry: ReadyEntry,
 ) -> Result<(), PrototypeJournalError> {
+    let journal_path = journal_path.into();
+    debug!(
+        target: ploke_core::EXECUTION_DEBUG_TARGET,
+        runtime_id = %entry.runtime_id,
+        journal_path = %journal_path.display(),
+        "appending child ready entry"
+    );
     Handoff::new(journal_path).with_txn(|txn| txn.record_ready(entry))
 }
 
@@ -385,6 +399,12 @@ impl Intervention<C3, C4> for SpawnChild {
     type Error = SpawnChildError;
     type Rejected = Rejected;
 
+    #[instrument(
+        target = "ploke_exec",
+        level = "debug",
+        skip(self, records),
+        fields(node_id = %from.node.node_id, branch_id = %from.resolved.branch.branch_id, runtime_id = %self.runtime_id)
+    )]
     fn transition(
         &self,
         from: C3,
@@ -416,7 +436,7 @@ impl Intervention<C3, C4> for SpawnChild {
         let parent_pid = std::process::id();
         let mut child = ProcessCommand::new(&binary_path)
             .args(&request.runner_args)
-            .current_dir(&request.workspace_root)
+            .current_dir(&from.artifact.repo_root)
             .env(RUNTIME_ID_ENV, self.runtime_id.to_string())
             .env(JOURNAL_PATH_ENV, handoff.path.as_os_str())
             .spawn()
@@ -427,6 +447,15 @@ impl Intervention<C3, C4> for SpawnChild {
                 })
             })?;
         let child_pid = child.id();
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            runtime_id = %self.runtime_id,
+            child_pid,
+            journal_path = %handoff.path.display(),
+            "spawned child runtime"
+        );
 
         handoff
             .with_txn(|txn| {
@@ -495,10 +524,26 @@ impl Intervention<C3, C4> for SpawnChild {
                         phase: crate::intervention::CommitPhase::After,
                         source,
                     })?;
+                debug!(
+                    target: ploke_core::EXECUTION_DEBUG_TARGET,
+                    node_id = %next.node.node_id,
+                    branch_id = %next.resolved.branch.branch_id,
+                    runtime_id = %self.runtime_id,
+                    child_pid,
+                    "recorded spawn observed entry"
+                );
 
                 Ok(Outcome::Advanced(next))
             }
             WaitOutcome::Rejected(rejected) => {
+                debug!(
+                    target: ploke_core::EXECUTION_DEBUG_TARGET,
+                    node_id = %from.node.node_id,
+                    branch_id = %from.resolved.branch.branch_id,
+                    runtime_id = %self.runtime_id,
+                    rejected = ?rejected,
+                    "spawn handshake rejected"
+                );
                 let (_, failed_node) = update_node_status(
                     &from.campaign_id,
                     &from.campaign_manifest_path,
@@ -559,6 +604,12 @@ fn wait_for_ready(
             .find_ready(runtime_id)
             .map_err(|source| SpawnChildError::ReadJournal { source })?
         {
+            debug!(
+                target: ploke_core::EXECUTION_DEBUG_TARGET,
+                runtime_id = %runtime_id,
+                pid = ready.pid,
+                "observed child ready handshake"
+            );
             return Ok(WaitOutcome::Ready(Box::new(ready)));
         }
 

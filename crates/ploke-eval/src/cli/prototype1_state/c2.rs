@@ -23,6 +23,7 @@ use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Output};
 
 use thiserror::Error;
+use tracing::{debug, instrument};
 
 use crate::intervention::{
     CommitError, CommitPhase, Intervention, Outcome, Prototype1NodeStatus, RecordStore, Surface,
@@ -103,7 +104,7 @@ where
         },
         paths: Paths {
             repo_root: config.artifact.repo_root.clone(),
-            workspace_root: config.node.workspace_root.clone(),
+            workspace_root: config.artifact.repo_root.clone(),
             binary_path: config.binary.child_path.clone(),
             target_relpath: config.artifact.target_relpath.clone(),
             absolute_path: config
@@ -325,6 +326,12 @@ impl Intervention<C2, C3> for BuildChild {
     type Error = BuildChildError;
     type Rejected = Rejected;
 
+    #[instrument(
+        target = "ploke_exec",
+        level = "debug",
+        skip(self, records),
+        fields(node_id = %from.node.node_id, branch_id = %from.resolved.branch.branch_id)
+    )]
     fn transition(
         &self,
         from: C2,
@@ -360,6 +367,13 @@ impl Intervention<C2, C3> for BuildChild {
                 phase: CommitPhase::Before,
                 source,
             })?;
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            scratch_dir = %scratch_dir.display(),
+            "recorded build before entry"
+        );
 
         fs::create_dir_all(&scratch_dir).map_err(|source| {
             CommitError::Transition(BuildChildError::CreateScratchDir {
@@ -389,6 +403,13 @@ impl Intervention<C2, C3> for BuildChild {
 
         if !check.status.success() {
             let rejected = Rejected::CheckFailed(failure(&check));
+            debug!(
+                target: ploke_core::EXECUTION_DEBUG_TARGET,
+                node_id = %from.node.node_id,
+                branch_id = %from.resolved.branch.branch_id,
+                rejected = ?rejected,
+                "cargo check rejected child build"
+            );
             let (_, node) = update_node_status(
                 &from.campaign_id,
                 &from.campaign_manifest_path,
@@ -436,6 +457,13 @@ impl Intervention<C2, C3> for BuildChild {
 
         if !build.status.success() {
             let rejected = Rejected::BuildFailed(failure(&build));
+            debug!(
+                target: ploke_core::EXECUTION_DEBUG_TARGET,
+                node_id = %from.node.node_id,
+                branch_id = %from.resolved.branch.branch_id,
+                rejected = ?rejected,
+                "cargo build rejected child build"
+            );
             let (_, node) = update_node_status(
                 &from.campaign_id,
                 &from.campaign_manifest_path,
@@ -522,6 +550,13 @@ impl Intervention<C2, C3> for BuildChild {
                 phase: CommitPhase::After,
                 source,
             })?;
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %next.node.node_id,
+            branch_id = %next.resolved.branch.branch_id,
+            binary_path = %next.binary.child_path.display(),
+            "recorded build after entry"
+        );
 
         Ok(Outcome::Advanced(next))
     }

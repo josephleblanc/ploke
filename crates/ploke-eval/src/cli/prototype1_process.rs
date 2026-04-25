@@ -77,6 +77,9 @@
 //! ```
 //!
 //! Keeping this path local makes it easier to audit for runaway-process risks.
+use ploke_core::EXECUTION_DEBUG_TARGET;
+use tracing::{debug, instrument};
+
 use super::*;
 
 /// Outcome of one parent-side node execution attempt.
@@ -116,6 +119,67 @@ fn process_output_excerpt(bytes: &[u8]) -> Option<String> {
         text
     };
     Some(excerpt)
+}
+
+fn record_prototype1_child_ready_if_configured(
+    campaign_id: &str,
+    manifest_path: &Path,
+    node: &crate::intervention::Prototype1NodeRecord,
+    request: &crate::intervention::Prototype1RunnerRequest,
+) -> Result<(), PrepareError> {
+    let Some(runtime_id) = std::env::var(crate::cli::prototype1_state::c3::RUNTIME_ID_ENV)
+        .ok()
+        .and_then(|value| uuid::Uuid::parse_str(&value).ok())
+        .map(crate::cli::prototype1_state::event::RuntimeId)
+    else {
+        return Ok(());
+    };
+    let Some(journal_path) =
+        std::env::var_os(crate::cli::prototype1_state::c3::JOURNAL_PATH_ENV).map(PathBuf::from)
+    else {
+        return Ok(());
+    };
+
+    let resolved = resolve_treatment_branch(campaign_id, manifest_path, &node.branch_id)?;
+    let entry = crate::cli::prototype1_state::journal::ReadyEntry {
+        runtime_id,
+        recorded_at: crate::cli::prototype1_state::event::RecordedAt::now(),
+        generation: node.generation,
+        refs: crate::cli::prototype1_state::event::Refs {
+            campaign_id: campaign_id.to_string(),
+            node_id: node.node_id.clone(),
+            instance_id: node.instance_id.clone(),
+            source_state_id: node.source_state_id.clone(),
+            branch_id: node.branch_id.clone(),
+            candidate_id: node.candidate_id.clone(),
+            branch_label: resolved.branch.branch_label.clone(),
+            spec_id: resolved.branch.synthesized_spec_id.clone(),
+        },
+        paths: crate::cli::prototype1_state::event::Paths {
+            repo_root: request.workspace_root.clone(),
+            workspace_root: request.workspace_root.clone(),
+            binary_path: node.binary_path.clone(),
+            target_relpath: node.target_relpath.clone(),
+            absolute_path: request.workspace_root.join(&node.target_relpath),
+        },
+        pid: std::process::id(),
+    };
+
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %campaign_id,
+        node_id = %node.node_id,
+        runtime_id = %runtime_id,
+        journal_path = %journal_path.display(),
+        "recording child ready handshake"
+    );
+
+    crate::cli::prototype1_state::c3::record_child_ready(journal_path, entry).map_err(|err| {
+        PrepareError::DatabaseSetup {
+            phase: "prototype1_child_ready",
+            detail: err.to_string(),
+        }
+    })
 }
 
 fn load_prototype1_branch_evaluation_report(
@@ -449,6 +513,12 @@ pub(super) async fn run_prototype1_branch_evaluation(
 /// returns that result to its caller.
 ///
 /// This function does not recurse and does not choose any follow-on work.
+#[instrument(
+    target = "ploke_exec",
+    level = "debug",
+    skip(stop_on_error),
+    fields(campaign = %campaign_id, node_id = %node_id, stop_on_error)
+)]
 pub(super) async fn execute_prototype1_runner_node(
     campaign_id: &str,
     node_id: &str,
@@ -457,12 +527,21 @@ pub(super) async fn execute_prototype1_runner_node(
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let node = load_node_record(&manifest_path, node_id)?;
     let request = load_runner_request(&manifest_path, node_id)?;
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %campaign_id,
+        node_id = %node_id,
+        workspace_root = %request.workspace_root.display(),
+        binary_path = %node.binary_path.display(),
+        "loaded prototype1 runner node"
+    );
     let _ = update_node_status(
         campaign_id,
         &manifest_path,
         node_id,
         Prototype1NodeStatus::Running,
     )?;
+    record_prototype1_child_ready_if_configured(campaign_id, &manifest_path, &node, &request)?;
 
     let outcome = run_prototype1_branch_evaluation(
         campaign_id,
@@ -484,6 +563,14 @@ pub(super) async fn execute_prototype1_runner_node(
         ),
     };
     let _ = record_runner_result(campaign_id, &manifest_path, result.clone())?;
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %campaign_id,
+        node_id = %node_id,
+        disposition = ?result.disposition,
+        status = ?result.status,
+        "prototype1 runner node completed"
+    );
     Ok(result)
 }
 
@@ -505,6 +592,12 @@ pub(super) async fn execute_prototype1_runner_node(
 ///
 /// This function is the single explicit child-process spawn site for the
 /// Prototype 1 treatment path.
+#[instrument(
+    target = "ploke_exec",
+    level = "debug",
+    skip(repo_root),
+    fields(campaign = %baseline_campaign_id, branch_id = %branch_id, repo_root = %repo_root.display(), stop_on_error)
+)]
 pub(super) async fn run_prototype1_branch_evaluation_via_child(
     baseline_campaign_id: &str,
     branch_id: &str,
@@ -536,6 +629,13 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
         repo_root,
         stop_on_error,
     )?;
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %baseline_campaign_id,
+        branch_id = %branch_id,
+        node_id = %node.node_id,
+        "registered prototype1 child-eval node"
+    );
 
     let _ = stage_prototype1_runner_node(
         baseline_campaign_id,
@@ -556,6 +656,14 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
     }
 
     let request = load_runner_request(&baseline_manifest_path, &node.node_id)?;
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %baseline_campaign_id,
+        branch_id = %branch_id,
+        node_id = %node.node_id,
+        binary_path = %node.binary_path.display(),
+        "spawning legacy prototype1 child runner"
+    );
     let output = ProcessCommand::new(&node.binary_path)
         .args(&request.runner_args)
         .current_dir(repo_root)
@@ -606,5 +714,12 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
                 ),
             })?;
     let report = load_prototype1_branch_evaluation_report(evaluation_artifact_path)?;
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %baseline_campaign_id,
+        branch_id = %branch_id,
+        node_id = %node.node_id,
+        "legacy prototype1 child runner succeeded"
+    );
     Ok(Prototype1NodeExecutionOutcome::Evaluated(report))
 }
