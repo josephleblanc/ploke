@@ -11,6 +11,47 @@ use crate::spec::PrepareError;
 pub const PROTOTYPE1_SCHEDULER_SCHEMA_VERSION: &str = "prototype1-scheduler.v1";
 pub const PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION: &str = "prototype1-treatment-node.v1";
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Prototype1SearchPolicy {
+    pub max_generations: u32,
+    pub max_total_nodes: u32,
+    pub stop_on_first_keep: bool,
+    pub require_keep_for_continuation: bool,
+}
+
+impl Default for Prototype1SearchPolicy {
+    fn default() -> Self {
+        Self {
+            max_generations: 1,
+            max_total_nodes: 32,
+            stop_on_first_keep: false,
+            require_keep_for_continuation: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1ContinuationDisposition {
+    ContinueReady,
+    StopMaxGenerations,
+    StopMaxTotalNodes,
+    StopNoSelectedBranch,
+    StopOnFirstKeepSatisfied,
+    StopSelectedBranchRejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[must_use = "continuation decisions must be inspected before advancing or stopping the prototype loop"]
+pub struct Prototype1ContinuationDecision {
+    pub disposition: Prototype1ContinuationDisposition,
+    pub selected_next_branch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_branch_disposition: Option<String>,
+    pub next_generation: u32,
+    pub total_nodes_after_continue: u32,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1NodeStatus {
@@ -20,6 +61,14 @@ pub enum Prototype1NodeStatus {
     Running,
     Succeeded,
     Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1RunnerDisposition {
+    Succeeded,
+    CompileFailed,
+    TreatmentFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -47,6 +96,31 @@ pub struct Prototype1NodeRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[must_use = "runner results must be checked so node failures are not silently ignored"]
+pub struct Prototype1RunnerResult {
+    pub schema_version: String,
+    pub campaign_id: String,
+    pub node_id: String,
+    pub generation: u32,
+    pub branch_id: String,
+    pub status: Prototype1NodeStatus,
+    pub disposition: Prototype1RunnerDisposition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub treatment_campaign_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluation_artifact_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_excerpt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_excerpt: Option<String>,
+    pub recorded_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Prototype1RunnerRequest {
     pub schema_version: String,
     pub campaign_id: String,
@@ -58,6 +132,8 @@ pub struct Prototype1RunnerRequest {
     pub target_relpath: PathBuf,
     pub workspace_root: PathBuf,
     pub binary_path: PathBuf,
+    #[serde(default)]
+    pub stop_on_error: bool,
     pub runner_args: Vec<String>,
 }
 
@@ -67,11 +143,15 @@ pub struct Prototype1SchedulerState {
     pub campaign_id: String,
     pub updated_at: String,
     #[serde(default)]
+    pub policy: Prototype1SearchPolicy,
+    #[serde(default)]
     pub frontier_node_ids: Vec<String>,
     #[serde(default)]
     pub completed_node_ids: Vec<String>,
     #[serde(default)]
     pub failed_node_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_continuation_decision: Option<Prototype1ContinuationDecision>,
     #[serde(default)]
     pub nodes: Vec<Prototype1NodeRecord>,
 }
@@ -122,9 +202,11 @@ fn default_scheduler_state(campaign_id: &str) -> Prototype1SchedulerState {
         schema_version: PROTOTYPE1_SCHEDULER_SCHEMA_VERSION.to_string(),
         campaign_id: campaign_id.to_string(),
         updated_at: Utc::now().to_rfc3339(),
+        policy: Prototype1SearchPolicy::default(),
         frontier_node_ids: Vec::new(),
         completed_node_ids: Vec::new(),
         failed_node_ids: Vec::new(),
+        last_continuation_decision: None,
         nodes: Vec::new(),
     }
 }
@@ -187,7 +269,7 @@ fn save_node_record(record: &Prototype1NodeRecord) -> Result<(), PrepareError> {
     })
 }
 
-fn save_runner_request(request: &Prototype1RunnerRequest) -> Result<(), PrepareError> {
+fn save_runner_request(request: &Prototype1RunnerRequest, path: &Path) -> Result<(), PrepareError> {
     if let Some(parent) = request.binary_path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
             path: parent.to_path_buf(),
@@ -198,13 +280,25 @@ fn save_runner_request(request: &Prototype1RunnerRequest) -> Result<(), PrepareE
         path: request.workspace_root.clone(),
         source,
     })?;
-    let path = request
-        .workspace_root
-        .parent()
-        .unwrap_or(&request.workspace_root)
-        .join("runner-request.json");
     let bytes = serde_json::to_vec_pretty(request).map_err(PrepareError::Serialize)?;
-    fs::write(&path, bytes).map_err(|source| PrepareError::WriteManifest { path, source })
+    fs::write(path, bytes).map_err(|source| PrepareError::WriteManifest {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn save_runner_result(result: &Prototype1RunnerResult, path: &Path) -> Result<(), PrepareError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let bytes = serde_json::to_vec_pretty(result).map_err(PrepareError::Serialize)?;
+    fs::write(path, bytes).map_err(|source| PrepareError::WriteManifest {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 pub fn load_node_record(
@@ -231,11 +325,147 @@ pub fn load_runner_request(
     serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest { path, source })
 }
 
+pub fn load_runner_result(
+    campaign_manifest_path: &Path,
+    node_id: &str,
+) -> Result<Prototype1RunnerResult, PrepareError> {
+    let path = prototype1_runner_result_path(campaign_manifest_path, node_id);
+    let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
+        path: path.clone(),
+        source,
+    })?;
+    serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest { path, source })
+}
+
+pub fn update_scheduler_policy(
+    campaign_id: &str,
+    campaign_manifest_path: &Path,
+    policy: Prototype1SearchPolicy,
+) -> Result<Prototype1SchedulerState, PrepareError> {
+    let mut scheduler = load_or_default_scheduler_state(campaign_id, campaign_manifest_path)?;
+    scheduler.policy = policy;
+    scheduler.updated_at = Utc::now().to_rfc3339();
+    save_scheduler_state(campaign_manifest_path, &scheduler)?;
+    Ok(scheduler)
+}
+
+pub fn update_node_status(
+    campaign_id: &str,
+    campaign_manifest_path: &Path,
+    node_id: &str,
+    status: Prototype1NodeStatus,
+) -> Result<(Prototype1SchedulerState, Prototype1NodeRecord), PrepareError> {
+    let mut scheduler = load_or_default_scheduler_state(campaign_id, campaign_manifest_path)?;
+    let now = Utc::now().to_rfc3339();
+    let Some(node) = scheduler
+        .nodes
+        .iter_mut()
+        .find(|node| node.node_id == node_id)
+    else {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!("prototype1 node '{node_id}' not found in scheduler"),
+        });
+    };
+    node.status = status;
+    node.updated_at = now.clone();
+    let record = node.clone();
+    save_node_record(&record)?;
+
+    if matches!(status, Prototype1NodeStatus::Succeeded) {
+        if !scheduler.completed_node_ids.iter().any(|id| id == node_id) {
+            scheduler.completed_node_ids.push(node_id.to_string());
+        }
+        scheduler.failed_node_ids.retain(|id| id != node_id);
+        scheduler.frontier_node_ids.retain(|id| id != node_id);
+    } else if matches!(status, Prototype1NodeStatus::Failed) {
+        if !scheduler.failed_node_ids.iter().any(|id| id == node_id) {
+            scheduler.failed_node_ids.push(node_id.to_string());
+        }
+        scheduler.completed_node_ids.retain(|id| id != node_id);
+        scheduler.frontier_node_ids.retain(|id| id != node_id);
+    } else {
+        if !scheduler.frontier_node_ids.iter().any(|id| id == node_id) {
+            scheduler.frontier_node_ids.push(node_id.to_string());
+        }
+        scheduler.completed_node_ids.retain(|id| id != node_id);
+        scheduler.failed_node_ids.retain(|id| id != node_id);
+    }
+
+    scheduler.updated_at = now;
+    save_scheduler_state(campaign_manifest_path, &scheduler)?;
+    Ok((scheduler, record))
+}
+
+pub fn record_runner_result(
+    campaign_id: &str,
+    campaign_manifest_path: &Path,
+    result: Prototype1RunnerResult,
+) -> Result<(Prototype1SchedulerState, Prototype1NodeRecord), PrepareError> {
+    let path = prototype1_runner_result_path(campaign_manifest_path, &result.node_id);
+    save_runner_result(&result, &path)?;
+    update_node_status(
+        campaign_id,
+        campaign_manifest_path,
+        &result.node_id,
+        result.status,
+    )
+}
+
+pub fn decide_continuation(
+    scheduler: &Prototype1SchedulerState,
+    current_generation: u32,
+    selected_next_branch_id: Option<&str>,
+    selected_branch_disposition: Option<&str>,
+) -> Prototype1ContinuationDecision {
+    let next_generation = current_generation.saturating_add(1);
+    let total_nodes_after_continue = scheduler.nodes.len() as u32;
+
+    let disposition = if selected_next_branch_id.is_none() {
+        Prototype1ContinuationDisposition::StopNoSelectedBranch
+    } else if scheduler.policy.require_keep_for_continuation
+        && selected_branch_disposition.is_some_and(|value| value != "keep")
+    {
+        Prototype1ContinuationDisposition::StopSelectedBranchRejected
+    } else if scheduler.policy.stop_on_first_keep
+        && selected_branch_disposition.is_some_and(|value| value == "keep")
+    {
+        Prototype1ContinuationDisposition::StopOnFirstKeepSatisfied
+    } else if next_generation > scheduler.policy.max_generations {
+        Prototype1ContinuationDisposition::StopMaxGenerations
+    } else if total_nodes_after_continue >= scheduler.policy.max_total_nodes {
+        Prototype1ContinuationDisposition::StopMaxTotalNodes
+    } else {
+        Prototype1ContinuationDisposition::ContinueReady
+    };
+
+    Prototype1ContinuationDecision {
+        disposition,
+        selected_next_branch_id: selected_next_branch_id.map(ToOwned::to_owned),
+        selected_branch_disposition: selected_branch_disposition.map(ToOwned::to_owned),
+        next_generation,
+        total_nodes_after_continue,
+    }
+}
+
+pub fn record_continuation_decision(
+    campaign_id: &str,
+    campaign_manifest_path: &Path,
+    decision: Prototype1ContinuationDecision,
+) -> Result<Prototype1SchedulerState, PrepareError> {
+    let mut scheduler = load_or_default_scheduler_state(campaign_id, campaign_manifest_path)?;
+    scheduler.last_continuation_decision = Some(decision);
+    scheduler.updated_at = Utc::now().to_rfc3339();
+    save_scheduler_state(campaign_manifest_path, &scheduler)?;
+    Ok(scheduler)
+}
+
 pub fn register_treatment_evaluation_node(
     campaign_id: &str,
     campaign_manifest_path: &Path,
     branch: &ResolvedTreatmentBranch,
     generation: u32,
+    repo_root: &Path,
+    stop_on_error: bool,
 ) -> Result<
     (
         Prototype1SchedulerState,
@@ -247,7 +477,7 @@ pub fn register_treatment_evaluation_node(
     let mut scheduler = load_or_default_scheduler_state(campaign_id, campaign_manifest_path)?;
     let node_id = prototype1_node_id(&branch.branch.branch_id, generation);
     let node_dir = prototype1_node_dir(campaign_manifest_path, &node_id);
-    let workspace_root = node_dir.join("workspace");
+    let workspace_root = repo_root.to_path_buf();
     let binary_path = node_dir.join("bin/ploke-eval");
     let runner_request_path = prototype1_runner_request_path(campaign_manifest_path, &node_id);
     let runner_result_path = prototype1_runner_result_path(campaign_manifest_path, &node_id);
@@ -303,6 +533,7 @@ pub fn register_treatment_evaluation_node(
         target_relpath: branch.target_relpath.clone(),
         workspace_root,
         binary_path,
+        stop_on_error,
         runner_args: vec![
             "loop".to_string(),
             "prototype1-runner".to_string(),
@@ -310,6 +541,9 @@ pub fn register_treatment_evaluation_node(
             campaign_id.to_string(),
             "--node-id".to_string(),
             node_id.clone(),
+            "--execute".to_string(),
+            "--stop-on-error".to_string(),
+            stop_on_error.to_string(),
             "--format".to_string(),
             "json".to_string(),
         ],
@@ -319,14 +553,8 @@ pub fn register_treatment_evaluation_node(
         path: node_dir.join("bin"),
         source,
     })?;
-    fs::create_dir_all(node_dir.join("workspace")).map_err(|source| {
-        PrepareError::WriteManifest {
-            path: node_dir.join("workspace"),
-            source,
-        }
-    })?;
     save_node_record(&record)?;
-    save_runner_request(&request)?;
+    save_runner_request(&request, &runner_request_path)?;
 
     match scheduler
         .nodes
@@ -341,6 +569,7 @@ pub fn register_treatment_evaluation_node(
     }
     scheduler.completed_node_ids.retain(|id| id != &node_id);
     scheduler.failed_node_ids.retain(|id| id != &node_id);
+    scheduler.last_continuation_decision = None;
     scheduler.updated_at = now;
     save_scheduler_state(campaign_manifest_path, &scheduler)?;
 
@@ -389,11 +618,18 @@ mod tests {
         let tmp = tempdir().expect("tmp");
         let manifest = campaign_manifest_path(tmp.path());
 
-        let (scheduler, node, request) =
-            register_treatment_evaluation_node("test-campaign", &manifest, &resolved_branch(), 2)
-                .expect("register node");
+        let (scheduler, node, request) = register_treatment_evaluation_node(
+            "test-campaign",
+            &manifest,
+            &resolved_branch(),
+            2,
+            tmp.path(),
+            false,
+        )
+        .expect("register node");
 
         assert_eq!(scheduler.nodes.len(), 1);
+        assert_eq!(scheduler.policy, Prototype1SearchPolicy::default());
         assert_eq!(scheduler.frontier_node_ids, vec![node.node_id.clone()]);
         assert_eq!(node.status, Prototype1NodeStatus::Planned);
         let expected_parent = prototype1_node_id("branch-parent", 1);
@@ -401,7 +637,7 @@ mod tests {
             node.parent_node_id.as_deref(),
             Some(expected_parent.as_str())
         );
-        assert!(node.workspace_root.exists());
+        assert_eq!(node.workspace_root, tmp.path());
         assert!(node.binary_path.parent().expect("bin parent").exists());
         assert_eq!(request.runner_args[0], "loop");
         assert_eq!(request.runner_args[1], "prototype1-runner");
@@ -416,5 +652,66 @@ mod tests {
         assert_eq!(loaded_node.branch_id, "branch-123");
         assert_eq!(loaded_request.node_id, node.node_id);
         assert_eq!(loaded_request.binary_path, node.binary_path);
+    }
+
+    #[test]
+    fn continuation_decision_stops_on_generation_limit_and_rejects_non_keep() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let policy = Prototype1SearchPolicy {
+            max_generations: 2,
+            max_total_nodes: 8,
+            stop_on_first_keep: false,
+            require_keep_for_continuation: true,
+        };
+        let scheduler = update_scheduler_policy("test-campaign", &manifest, policy.clone())
+            .expect("persist policy");
+
+        let reject = decide_continuation(&scheduler, 1, Some("branch-1"), Some("reject"));
+        assert_eq!(
+            reject.disposition,
+            Prototype1ContinuationDisposition::StopSelectedBranchRejected
+        );
+
+        let generation_limit = decide_continuation(&scheduler, 2, Some("branch-1"), Some("keep"));
+        assert_eq!(
+            generation_limit.disposition,
+            Prototype1ContinuationDisposition::StopMaxGenerations
+        );
+
+        let continue_ready = decide_continuation(&scheduler, 1, Some("branch-1"), Some("keep"));
+        assert_eq!(
+            continue_ready.disposition,
+            Prototype1ContinuationDisposition::ContinueReady
+        );
+        assert_eq!(continue_ready.next_generation, 2);
+        assert_eq!(
+            continue_ready.selected_next_branch_id.as_deref(),
+            Some("branch-1")
+        );
+        assert_eq!(
+            continue_ready.selected_branch_disposition.as_deref(),
+            Some("keep")
+        );
+
+        let stop_on_first_keep_scheduler = update_scheduler_policy(
+            "test-campaign",
+            &manifest,
+            Prototype1SearchPolicy {
+                stop_on_first_keep: true,
+                ..policy
+            },
+        )
+        .expect("persist stop-on-first-keep policy");
+        let stop_on_keep = decide_continuation(
+            &stop_on_first_keep_scheduler,
+            1,
+            Some("branch-1"),
+            Some("keep"),
+        );
+        assert_eq!(
+            stop_on_keep.disposition,
+            Prototype1ContinuationDisposition::StopOnFirstKeepSatisfied
+        );
     }
 }

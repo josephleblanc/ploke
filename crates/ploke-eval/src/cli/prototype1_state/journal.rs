@@ -1,0 +1,1157 @@
+#![allow(dead_code)]
+// REMOVE BY 2026-04-26: prototype transition journal scaffold is not wired into the live controller yet
+
+//! Append-only journal and replay helpers for typed prototype1 transitions.
+//!
+//! Temporary note:
+//! This journal is the new committed-event seam for the typed prototype-state
+//! scaffold, but it is still fed by transitions that may delegate part of
+//! their work to the legacy artifact-apply path.
+//!
+//! When the old implementation is replaced, this journal should remain the
+//! durable event stream while the transition producers stop depending on the
+//! legacy `Intervention*` artifact-mutation layer.
+//!
+//! Journal discipline:
+//! Every transition family recorded in [`JournalEntry`] should also have a
+//! replay classifier here so restart/recovery semantics stay symmetric with the
+//! forward transition contract.
+
+use std::collections::BTreeMap;
+use std::fs::{self, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use super::event::{ContentHash, Hashes, Paths, RecordedAt, Refs, RuntimeId, TransitionId, World};
+use crate::intervention::{CommitPhase, RecordStore};
+
+/// Append-only machine-readable journal entry for `C1 -> C2`
+/// materialization.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct Entry {
+    pub transition_id: TransitionId,
+    pub phase: CommitPhase,
+    pub recorded_at: RecordedAt,
+    pub generation: u32,
+    pub refs: Refs,
+    pub paths: Paths,
+    pub world: World,
+    pub hashes: Hashes,
+}
+
+/// Machine-readable detail for a rejected build transition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct FailureInfo {
+    pub exit_code: Option<i32>,
+    pub stdout_excerpt: Option<String>,
+    pub stderr_excerpt: Option<String>,
+}
+
+/// Committed result for the `C2 -> C3` build transition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BuildResult {
+    Built,
+    CheckFailed(FailureInfo),
+    BuildFailed(FailureInfo),
+}
+
+/// Append-only machine-readable journal entry for `C2 -> C3` build.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct BuildEntry {
+    pub transition_id: TransitionId,
+    pub phase: CommitPhase,
+    pub recorded_at: RecordedAt,
+    pub generation: u32,
+    pub refs: Refs,
+    pub paths: Paths,
+    pub world: World,
+    pub hashes: Hashes,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<BuildResult>,
+}
+
+/// Parent-side runtime handoff phase for `C3 -> C4`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SpawnPhase {
+    Spawned,
+    Observed,
+}
+
+/// Committed result for the `C3 -> C4` spawn-and-handshake transition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SpawnResult {
+    Acknowledged,
+    ExitedBeforeReady { exit_code: Option<i32> },
+    ReadyTimedOut { waited_ms: u64 },
+}
+
+/// Append-only machine-readable journal entry for `C3 -> C4` child spawn and
+/// observation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct SpawnEntry {
+    pub runtime_id: RuntimeId,
+    pub phase: SpawnPhase,
+    pub recorded_at: RecordedAt,
+    pub generation: u32,
+    pub refs: Refs,
+    pub paths: Paths,
+    pub world: World,
+    pub parent_pid: u32,
+    pub child_pid: Option<u32>,
+    pub argv: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<SpawnResult>,
+}
+
+/// Child-side handshake witness for one spawned runtime.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ReadyEntry {
+    pub runtime_id: RuntimeId,
+    pub recorded_at: RecordedAt,
+    pub generation: u32,
+    pub refs: Refs,
+    pub paths: Paths,
+    pub pid: u32,
+}
+
+/// Single append-only journal entry for typed prototype1 transitions.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum JournalEntry {
+    MaterializeBranch(Entry),
+    BuildChild(BuildEntry),
+    SpawnChild(SpawnEntry),
+    ChildReady(ReadyEntry),
+}
+
+/// Durable append-only JSONL journal for prototype1 transition records.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PrototypeJournal {
+    path: PathBuf,
+}
+
+impl PrototypeJournal {
+    pub(crate) fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn load_entries(&self) -> Result<Vec<JournalEntry>, PrototypeJournalError> {
+        if !self.path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let file = fs::File::open(&self.path).map_err(|source| PrototypeJournalError::Read {
+            path: self.path.clone(),
+            source,
+        })?;
+        let reader = BufReader::new(file);
+        let mut entries = Vec::new();
+
+        for (line_number, line) in reader.lines().enumerate() {
+            let line = line.map_err(|source| PrototypeJournalError::Read {
+                path: self.path.clone(),
+                source,
+            })?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let entry = serde_json::from_str(trimmed).map_err(|source| {
+                PrototypeJournalError::ParseLine {
+                    path: self.path.clone(),
+                    line_number: line_number + 1,
+                    source,
+                }
+            })?;
+            entries.push(entry);
+        }
+
+        Ok(entries)
+    }
+
+    pub(crate) fn replay_materialize_branch(
+        &self,
+    ) -> Result<Vec<MaterializeBranchReplay>, PrototypeJournalError> {
+        let mut grouped = BTreeMap::<TransitionId, MaterializeBranchPhases>::new();
+
+        for entry in self.load_entries()? {
+            let JournalEntry::MaterializeBranch(entry) = entry else {
+                continue;
+            };
+            grouped
+                .entry(entry.transition_id)
+                .or_default()
+                .record(entry)?;
+        }
+
+        let mut replay = Vec::new();
+        for (transition_id, phases) in grouped {
+            match (phases.before, phases.after) {
+                (Some(before), Some(after)) => {
+                    replay.push(MaterializeBranchReplay {
+                        before,
+                        outcome: MaterializeBranchOutcome::Committed {
+                            after: Box::new(after),
+                        },
+                    });
+                }
+                (Some(before), None) => {
+                    let (observed_hash, disposition) =
+                        classify_pending_materialization(&before.paths.absolute_path, &before)?;
+                    replay.push(MaterializeBranchReplay {
+                        before,
+                        outcome: MaterializeBranchOutcome::Pending {
+                            observed_hash,
+                            disposition,
+                        },
+                    });
+                }
+                (None, Some(_)) => {
+                    return Err(PrototypeJournalError::AfterWithoutBefore { transition_id });
+                }
+                (None, None) => {}
+            }
+        }
+
+        Ok(replay)
+    }
+
+    pub(crate) fn replay_build_child(&self) -> Result<Vec<BuildReplay>, PrototypeJournalError> {
+        let mut grouped = BTreeMap::<TransitionId, BuildPhases>::new();
+
+        for entry in self.load_entries()? {
+            let JournalEntry::BuildChild(entry) = entry else {
+                continue;
+            };
+            grouped
+                .entry(entry.transition_id)
+                .or_default()
+                .record(entry)?;
+        }
+
+        let mut replay = Vec::new();
+        for (transition_id, phases) in grouped {
+            match (phases.before, phases.after) {
+                (Some(before), Some(after)) => {
+                    replay.push(BuildReplay {
+                        before,
+                        outcome: BuildOutcome::Committed {
+                            after: Box::new(after),
+                        },
+                    });
+                }
+                (Some(before), None) => {
+                    let (binary_present, disposition) =
+                        classify_pending_build(&before.paths.binary_path);
+                    replay.push(BuildReplay {
+                        before,
+                        outcome: BuildOutcome::Pending {
+                            binary_present,
+                            disposition,
+                        },
+                    });
+                }
+                (None, Some(_)) => {
+                    return Err(PrototypeJournalError::AfterWithoutBefore { transition_id });
+                }
+                (None, None) => {}
+            }
+        }
+
+        Ok(replay)
+    }
+
+    pub(crate) fn replay_spawn_child(&self) -> Result<Vec<SpawnReplay>, PrototypeJournalError> {
+        let mut grouped = BTreeMap::<RuntimeId, SpawnPhases>::new();
+
+        for entry in self.load_entries()? {
+            match entry {
+                JournalEntry::SpawnChild(entry) => {
+                    grouped
+                        .entry(entry.runtime_id)
+                        .or_default()
+                        .record_spawn(entry)?;
+                }
+                JournalEntry::ChildReady(entry) => {
+                    grouped
+                        .entry(entry.runtime_id)
+                        .or_default()
+                        .record_ready(entry)?;
+                }
+                JournalEntry::MaterializeBranch(_) | JournalEntry::BuildChild(_) => {}
+            }
+        }
+
+        let mut replay = Vec::new();
+        for (runtime_id, phases) in grouped {
+            match (phases.spawned, phases.observed, phases.ready) {
+                (Some(spawned), Some(observed), ready) => {
+                    replay.push(SpawnReplay {
+                        spawned,
+                        outcome: SpawnOutcome::Committed {
+                            observed: Box::new(observed),
+                            ready,
+                        },
+                    });
+                }
+                (Some(spawned), None, ready) => {
+                    let disposition = if ready.is_some() {
+                        PendingSpawn::ReadyUnobserved
+                    } else {
+                        PendingSpawn::SpawnedUnacknowledged
+                    };
+                    replay.push(SpawnReplay {
+                        spawned,
+                        outcome: SpawnOutcome::Pending { ready, disposition },
+                    });
+                }
+                (None, Some(_), _) => {
+                    return Err(PrototypeJournalError::ObservedWithoutSpawned { runtime_id });
+                }
+                (None, None, Some(_)) => {
+                    return Err(PrototypeJournalError::ReadyWithoutSpawned { runtime_id });
+                }
+                (None, None, None) => {}
+            }
+        }
+
+        Ok(replay)
+    }
+
+    pub(crate) fn replay_all(&self) -> Result<ReplayLog, PrototypeJournalError> {
+        Ok(ReplayLog {
+            materialize: self.replay_materialize_branch()?,
+            build: self.replay_build_child()?,
+            spawn: self.replay_spawn_child()?,
+        })
+    }
+}
+
+pub(crate) fn prototype1_transition_journal_path(campaign_manifest_path: &Path) -> PathBuf {
+    campaign_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1")
+        .join("transition-journal.jsonl")
+}
+
+impl RecordStore for PrototypeJournal {
+    type Entry = JournalEntry;
+    type Error = PrototypeJournalError;
+
+    fn append(&mut self, entry: Self::Entry) -> Result<(), Self::Error> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|source| PrototypeJournalError::CreateDir {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .map_err(|source| PrototypeJournalError::Open {
+                path: self.path.clone(),
+                source,
+            })?;
+        let mut line = serde_json::to_string(&entry).map_err(PrototypeJournalError::Serialize)?;
+        line.push('\n');
+        file.write_all(line.as_bytes())
+            .map_err(|source| PrototypeJournalError::Write {
+                path: self.path.clone(),
+                source,
+            })?;
+        file.sync_data()
+            .map_err(|source| PrototypeJournalError::Sync {
+                path: self.path.clone(),
+                source,
+            })?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct MaterializeBranchPhases {
+    before: Option<Entry>,
+    after: Option<Entry>,
+}
+
+impl MaterializeBranchPhases {
+    fn record(&mut self, entry: Entry) -> Result<(), PrototypeJournalError> {
+        record_commit_phase(
+            &mut self.before,
+            &mut self.after,
+            entry.transition_id,
+            entry.phase,
+            entry,
+        )
+    }
+}
+
+#[derive(Debug, Default)]
+struct BuildPhases {
+    before: Option<BuildEntry>,
+    after: Option<BuildEntry>,
+}
+
+impl BuildPhases {
+    fn record(&mut self, entry: BuildEntry) -> Result<(), PrototypeJournalError> {
+        record_commit_phase(
+            &mut self.before,
+            &mut self.after,
+            entry.transition_id,
+            entry.phase,
+            entry,
+        )
+    }
+}
+
+#[derive(Debug, Default)]
+struct SpawnPhases {
+    spawned: Option<SpawnEntry>,
+    observed: Option<SpawnEntry>,
+    ready: Option<ReadyEntry>,
+}
+
+impl SpawnPhases {
+    fn record_spawn(&mut self, entry: SpawnEntry) -> Result<(), PrototypeJournalError> {
+        match entry.phase {
+            SpawnPhase::Spawned => record_unique(
+                &mut self.spawned,
+                entry.runtime_id,
+                DuplicateKey::SpawnPhase(SpawnPhase::Spawned),
+                entry,
+            ),
+            SpawnPhase::Observed => record_unique(
+                &mut self.observed,
+                entry.runtime_id,
+                DuplicateKey::SpawnPhase(SpawnPhase::Observed),
+                entry,
+            ),
+        }
+    }
+
+    fn record_ready(&mut self, entry: ReadyEntry) -> Result<(), PrototypeJournalError> {
+        record_unique(
+            &mut self.ready,
+            entry.runtime_id,
+            DuplicateKey::Ready,
+            entry,
+        )
+    }
+}
+
+fn record_commit_phase<T>(
+    before: &mut Option<T>,
+    after: &mut Option<T>,
+    transition_id: TransitionId,
+    phase: CommitPhase,
+    entry: T,
+) -> Result<(), PrototypeJournalError> {
+    match phase {
+        CommitPhase::Before => record_unique(
+            before,
+            transition_id,
+            DuplicateKey::CommitPhase(CommitPhase::Before),
+            entry,
+        ),
+        CommitPhase::After => record_unique(
+            after,
+            transition_id,
+            DuplicateKey::CommitPhase(CommitPhase::After),
+            entry,
+        ),
+    }
+}
+
+enum DuplicateKey {
+    CommitPhase(CommitPhase),
+    SpawnPhase(SpawnPhase),
+    Ready,
+}
+
+fn record_unique<T, I: Copy>(
+    slot: &mut Option<T>,
+    id: I,
+    duplicate: DuplicateKey,
+    entry: T,
+) -> Result<(), PrototypeJournalError>
+where
+    PrototypeJournalError: FromDuplicate<I>,
+{
+    if slot.is_some() {
+        return Err(PrototypeJournalError::from_duplicate(id, duplicate));
+    }
+    *slot = Some(entry);
+    Ok(())
+}
+
+trait FromDuplicate<I> {
+    fn from_duplicate(id: I, duplicate: DuplicateKey) -> Self;
+}
+
+impl FromDuplicate<TransitionId> for PrototypeJournalError {
+    fn from_duplicate(id: TransitionId, duplicate: DuplicateKey) -> Self {
+        match duplicate {
+            DuplicateKey::CommitPhase(phase) => Self::DuplicatePhase {
+                transition_id: id,
+                phase,
+            },
+            DuplicateKey::SpawnPhase(_) | DuplicateKey::Ready => {
+                unreachable!("spawn duplicate keys do not use TransitionId")
+            }
+        }
+    }
+}
+
+impl FromDuplicate<RuntimeId> for PrototypeJournalError {
+    fn from_duplicate(id: RuntimeId, duplicate: DuplicateKey) -> Self {
+        match duplicate {
+            DuplicateKey::SpawnPhase(phase) => Self::DuplicateSpawnPhase {
+                runtime_id: id,
+                phase,
+            },
+            DuplicateKey::Ready => Self::DuplicateReady { runtime_id: id },
+            DuplicateKey::CommitPhase(_) => {
+                unreachable!("commit-phase duplicate keys do not use RuntimeId")
+            }
+        }
+    }
+}
+
+fn classify_pending_materialization(
+    absolute_path: &Path,
+    before: &Entry,
+) -> Result<(Option<ContentHash>, PendingMaterialization), PrototypeJournalError> {
+    let text = match fs::read_to_string(absolute_path) {
+        Ok(text) => text,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((None, PendingMaterialization::MissingTarget));
+        }
+        Err(source) => {
+            return Err(PrototypeJournalError::Read {
+                path: absolute_path.to_path_buf(),
+                source,
+            });
+        }
+    };
+
+    let observed_hash = ContentHash::of(&text);
+    let disposition = if observed_hash == before.hashes.current {
+        PendingMaterialization::NotApplied
+    } else if observed_hash == before.hashes.proposed {
+        PendingMaterialization::AppliedUncommitted
+    } else {
+        PendingMaterialization::Inconsistent
+    };
+
+    Ok((Some(observed_hash), disposition))
+}
+
+fn classify_pending_build(binary_path: &Path) -> (bool, PendingBuild) {
+    let binary_present = binary_path.exists();
+    let disposition = if binary_present {
+        PendingBuild::BuiltUncommitted
+    } else {
+        PendingBuild::NotBuilt
+    };
+    (binary_present, disposition)
+}
+
+/// Replay view over all currently known typed transition families.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReplayLog {
+    pub materialize: Vec<MaterializeBranchReplay>,
+    pub build: Vec<BuildReplay>,
+    pub spawn: Vec<SpawnReplay>,
+}
+
+/// Replay classification for one materialize-branch transition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MaterializeBranchReplay {
+    pub before: Entry,
+    pub outcome: MaterializeBranchOutcome,
+}
+
+/// Replay outcome for one materialize-branch transition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MaterializeBranchOutcome {
+    Committed {
+        after: Box<Entry>,
+    },
+    Pending {
+        observed_hash: Option<ContentHash>,
+        disposition: PendingMaterialization,
+    },
+}
+
+/// Recovery-relevant disposition for a `before` record without a matching
+/// `after`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingMaterialization {
+    MissingTarget,
+    NotApplied,
+    AppliedUncommitted,
+    Inconsistent,
+}
+
+/// Replay classification for one build-child transition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BuildReplay {
+    pub before: BuildEntry,
+    pub outcome: BuildOutcome,
+}
+
+/// Replay outcome for one build-child transition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BuildOutcome {
+    Committed {
+        after: Box<BuildEntry>,
+    },
+    Pending {
+        binary_present: bool,
+        disposition: PendingBuild,
+    },
+}
+
+/// Recovery-relevant disposition for a build `before` record without a
+/// matching `after`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingBuild {
+    NotBuilt,
+    BuiltUncommitted,
+}
+
+/// Replay classification for one spawn-child runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SpawnReplay {
+    pub spawned: SpawnEntry,
+    pub outcome: SpawnOutcome,
+}
+
+/// Replay outcome for one spawn-child runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SpawnOutcome {
+    Committed {
+        observed: Box<SpawnEntry>,
+        ready: Option<ReadyEntry>,
+    },
+    Pending {
+        ready: Option<ReadyEntry>,
+        disposition: PendingSpawn,
+    },
+}
+
+/// Recovery-relevant disposition for a spawn that has not yet been fully
+/// observed by the parent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingSpawn {
+    SpawnedUnacknowledged,
+    ReadyUnobserved,
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum PrototypeJournalError {
+    #[error("failed to create journal directory '{path}': {source}")]
+    CreateDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to open journal '{path}': {source}")]
+    Open {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to serialize journal entry: {0}")]
+    Serialize(serde_json::Error),
+    #[error("failed to write journal '{path}': {source}")]
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to sync journal '{path}': {source}")]
+    Sync {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to read journal '{path}': {source}")]
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to parse journal '{path}' at line {line_number}: {source}")]
+    ParseLine {
+        path: PathBuf,
+        line_number: usize,
+        source: serde_json::Error,
+    },
+    #[error("duplicate '{phase:?}' entry for transition '{transition_id}'")]
+    DuplicatePhase {
+        transition_id: TransitionId,
+        phase: CommitPhase,
+    },
+    #[error(
+        "found an after entry without a matching before entry for transition '{transition_id}'"
+    )]
+    AfterWithoutBefore { transition_id: TransitionId },
+    #[error("duplicate '{phase:?}' spawn entry for runtime '{runtime_id}'")]
+    DuplicateSpawnPhase {
+        runtime_id: RuntimeId,
+        phase: SpawnPhase,
+    },
+    #[error("duplicate child-ready entry for runtime '{runtime_id}'")]
+    DuplicateReady { runtime_id: RuntimeId },
+    #[error(
+        "found an observed spawn entry without a matching spawned entry for runtime '{runtime_id}'"
+    )]
+    ObservedWithoutSpawned { runtime_id: RuntimeId },
+    #[error(
+        "found a child-ready entry without a matching spawned entry for runtime '{runtime_id}'"
+    )]
+    ReadyWithoutSpawned { runtime_id: RuntimeId },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use tempfile::tempdir;
+
+    use crate::cli::prototype1_state::event::{
+        Hashes, LineageMark, Paths, RecordedAt, Refs, RuntimeId, World,
+    };
+
+    fn sample_entry(
+        transition_id: TransitionId,
+        phase: CommitPhase,
+        absolute_path: &Path,
+        current_hash: &str,
+        proposed_hash: &str,
+    ) -> Entry {
+        Entry {
+            transition_id,
+            phase,
+            recorded_at: RecordedAt(1_777_091_200_000),
+            generation: 1,
+            refs: Refs {
+                campaign_id: "campaign".to_string(),
+                node_id: "node-1".to_string(),
+                instance_id: "instance".to_string(),
+                source_state_id: "state-1".to_string(),
+                branch_id: "branch-1".to_string(),
+                candidate_id: "candidate-1".to_string(),
+                branch_label: "minimal".to_string(),
+                spec_id: "spec-1".to_string(),
+            },
+            paths: Paths {
+                repo_root: absolute_path.parent().unwrap().to_path_buf(),
+                workspace_root: absolute_path.parent().unwrap().to_path_buf(),
+                binary_path: absolute_path.parent().unwrap().join("ploke-eval"),
+                target_relpath: PathBuf::from("target.md"),
+                absolute_path: absolute_path.to_path_buf(),
+            },
+            world: World {
+                node_status: crate::intervention::Prototype1NodeStatus::Planned,
+                running_binary: true,
+                running_lineage: LineageMark::Parent,
+                artifact_lineage: LineageMark::Parent,
+                child_binary_present: false,
+                child_running: false,
+            },
+            hashes: Hashes {
+                source: ContentHash(current_hash.to_string()),
+                current: ContentHash(current_hash.to_string()),
+                proposed: ContentHash(proposed_hash.to_string()),
+            },
+        }
+    }
+
+    fn sample_build_entry(
+        transition_id: TransitionId,
+        phase: CommitPhase,
+        binary_path: &Path,
+        result: Option<BuildResult>,
+    ) -> BuildEntry {
+        BuildEntry {
+            transition_id,
+            phase,
+            recorded_at: RecordedAt(1_777_091_200_000),
+            generation: 1,
+            refs: Refs {
+                campaign_id: "campaign".to_string(),
+                node_id: "node-2".to_string(),
+                instance_id: "instance".to_string(),
+                source_state_id: "state-2".to_string(),
+                branch_id: "branch-2".to_string(),
+                candidate_id: "candidate-2".to_string(),
+                branch_label: "build".to_string(),
+                spec_id: "spec-2".to_string(),
+            },
+            paths: Paths {
+                repo_root: binary_path.parent().unwrap().to_path_buf(),
+                workspace_root: binary_path.parent().unwrap().to_path_buf(),
+                binary_path: binary_path.to_path_buf(),
+                target_relpath: PathBuf::from("target.md"),
+                absolute_path: binary_path.parent().unwrap().join("target.md"),
+            },
+            world: World {
+                node_status: crate::intervention::Prototype1NodeStatus::WorkspaceStaged,
+                running_binary: true,
+                running_lineage: LineageMark::Parent,
+                artifact_lineage: LineageMark::Child,
+                child_binary_present: false,
+                child_running: false,
+            },
+            hashes: Hashes {
+                source: ContentHash("source".to_string()),
+                current: ContentHash("proposed".to_string()),
+                proposed: ContentHash("proposed".to_string()),
+            },
+            result,
+        }
+    }
+
+    fn sample_spawn_entry(
+        runtime_id: RuntimeId,
+        phase: SpawnPhase,
+        binary_path: &Path,
+        result: Option<SpawnResult>,
+    ) -> SpawnEntry {
+        SpawnEntry {
+            runtime_id,
+            phase,
+            recorded_at: RecordedAt(1_777_091_200_000),
+            generation: 1,
+            refs: Refs {
+                campaign_id: "campaign".to_string(),
+                node_id: "node-3".to_string(),
+                instance_id: "instance".to_string(),
+                source_state_id: "state-3".to_string(),
+                branch_id: "branch-3".to_string(),
+                candidate_id: "candidate-3".to_string(),
+                branch_label: "spawn".to_string(),
+                spec_id: "spec-3".to_string(),
+            },
+            paths: Paths {
+                repo_root: binary_path.parent().unwrap().to_path_buf(),
+                workspace_root: binary_path.parent().unwrap().to_path_buf(),
+                binary_path: binary_path.to_path_buf(),
+                target_relpath: PathBuf::from("target.md"),
+                absolute_path: binary_path.parent().unwrap().join("target.md"),
+            },
+            world: World {
+                node_status: crate::intervention::Prototype1NodeStatus::BinaryBuilt,
+                running_binary: true,
+                running_lineage: LineageMark::Parent,
+                artifact_lineage: LineageMark::Child,
+                child_binary_present: true,
+                child_running: matches!(result, Some(SpawnResult::Acknowledged)),
+            },
+            parent_pid: 111,
+            child_pid: Some(222),
+            argv: vec!["prototype1-runner".to_string()],
+            result,
+        }
+    }
+
+    fn sample_ready_entry(runtime_id: RuntimeId, binary_path: &Path) -> ReadyEntry {
+        ReadyEntry {
+            runtime_id,
+            recorded_at: RecordedAt(1_777_091_200_100),
+            generation: 1,
+            refs: Refs {
+                campaign_id: "campaign".to_string(),
+                node_id: "node-3".to_string(),
+                instance_id: "instance".to_string(),
+                source_state_id: "state-3".to_string(),
+                branch_id: "branch-3".to_string(),
+                candidate_id: "candidate-3".to_string(),
+                branch_label: "spawn".to_string(),
+                spec_id: "spec-3".to_string(),
+            },
+            paths: Paths {
+                repo_root: binary_path.parent().unwrap().to_path_buf(),
+                workspace_root: binary_path.parent().unwrap().to_path_buf(),
+                binary_path: binary_path.to_path_buf(),
+                target_relpath: PathBuf::from("target.md"),
+                absolute_path: binary_path.parent().unwrap().join("target.md"),
+            },
+            pid: 222,
+        }
+    }
+
+    #[test]
+    fn replay_marks_before_only_source_hash_as_not_applied() {
+        let tmp = tempdir().expect("tempdir");
+        let artifact_path = tmp.path().join("target.md");
+        fs::write(&artifact_path, "source").expect("write source");
+        let current_hash = ContentHash::of("source");
+        let proposed_hash = ContentHash::of("proposed");
+        let transition_id = TransitionId::new();
+
+        let mut journal = PrototypeJournal::new(tmp.path().join("transition-journal.jsonl"));
+        journal
+            .append(JournalEntry::MaterializeBranch(sample_entry(
+                transition_id,
+                CommitPhase::Before,
+                &artifact_path,
+                &current_hash.0,
+                &proposed_hash.0,
+            )))
+            .expect("append before");
+
+        let replay = journal
+            .replay_materialize_branch()
+            .expect("replay materialize branch");
+
+        assert_eq!(replay.len(), 1);
+        assert!(matches!(
+            &replay[0],
+            MaterializeBranchReplay {
+                outcome: MaterializeBranchOutcome::Pending {
+                    disposition: PendingMaterialization::NotApplied,
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn replay_marks_before_only_proposed_hash_as_applied_uncommitted() {
+        let tmp = tempdir().expect("tempdir");
+        let artifact_path = tmp.path().join("target.md");
+        fs::write(&artifact_path, "proposed").expect("write proposed");
+        let current_hash = ContentHash::of("source");
+        let proposed_hash = ContentHash::of("proposed");
+        let transition_id = TransitionId::new();
+
+        let mut journal = PrototypeJournal::new(tmp.path().join("transition-journal.jsonl"));
+        journal
+            .append(JournalEntry::MaterializeBranch(sample_entry(
+                transition_id,
+                CommitPhase::Before,
+                &artifact_path,
+                &current_hash.0,
+                &proposed_hash.0,
+            )))
+            .expect("append before");
+
+        let replay = journal
+            .replay_materialize_branch()
+            .expect("replay materialize branch");
+
+        assert_eq!(replay.len(), 1);
+        assert!(matches!(
+            &replay[0],
+            MaterializeBranchReplay {
+                outcome: MaterializeBranchOutcome::Pending {
+                    disposition: PendingMaterialization::AppliedUncommitted,
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn replay_marks_matching_before_after_as_committed() {
+        let tmp = tempdir().expect("tempdir");
+        let artifact_path = tmp.path().join("target.md");
+        fs::write(&artifact_path, "proposed").expect("write proposed");
+        let current_hash = ContentHash::of("source");
+        let proposed_hash = ContentHash::of("proposed");
+        let transition_id = TransitionId::new();
+
+        let mut journal = PrototypeJournal::new(tmp.path().join("transition-journal.jsonl"));
+        journal
+            .append(JournalEntry::MaterializeBranch(sample_entry(
+                transition_id,
+                CommitPhase::Before,
+                &artifact_path,
+                &current_hash.0,
+                &proposed_hash.0,
+            )))
+            .expect("append before");
+        journal
+            .append(JournalEntry::MaterializeBranch(sample_entry(
+                transition_id,
+                CommitPhase::After,
+                &artifact_path,
+                &current_hash.0,
+                &proposed_hash.0,
+            )))
+            .expect("append after");
+
+        let replay = journal
+            .replay_materialize_branch()
+            .expect("replay materialize branch");
+
+        assert_eq!(replay.len(), 1);
+        assert!(matches!(
+            &replay[0],
+            MaterializeBranchReplay {
+                outcome: MaterializeBranchOutcome::Committed { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn replay_marks_before_only_missing_binary_as_not_built() {
+        let tmp = tempdir().expect("tempdir");
+        let binary_path = tmp.path().join("ploke-eval");
+        let transition_id = TransitionId::new();
+
+        let mut journal = PrototypeJournal::new(tmp.path().join("transition-journal.jsonl"));
+        journal
+            .append(JournalEntry::BuildChild(sample_build_entry(
+                transition_id,
+                CommitPhase::Before,
+                &binary_path,
+                None,
+            )))
+            .expect("append build before");
+
+        let replay = journal.replay_build_child().expect("replay build child");
+
+        assert_eq!(replay.len(), 1);
+        assert!(matches!(
+            &replay[0],
+            BuildReplay {
+                outcome: BuildOutcome::Pending {
+                    binary_present: false,
+                    disposition: PendingBuild::NotBuilt,
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn replay_marks_ready_without_observed_as_ready_unobserved() {
+        let tmp = tempdir().expect("tempdir");
+        let binary_path = tmp.path().join("ploke-eval");
+        let runtime_id = RuntimeId::new();
+
+        let mut journal = PrototypeJournal::new(tmp.path().join("transition-journal.jsonl"));
+        journal
+            .append(JournalEntry::SpawnChild(sample_spawn_entry(
+                runtime_id,
+                SpawnPhase::Spawned,
+                &binary_path,
+                None,
+            )))
+            .expect("append spawned");
+        journal
+            .append(JournalEntry::ChildReady(sample_ready_entry(
+                runtime_id,
+                &binary_path,
+            )))
+            .expect("append ready");
+
+        let replay = journal.replay_spawn_child().expect("replay spawn child");
+
+        assert_eq!(replay.len(), 1);
+        assert!(matches!(
+            &replay[0],
+            SpawnReplay {
+                outcome: SpawnOutcome::Pending {
+                    ready: Some(_),
+                    disposition: PendingSpawn::ReadyUnobserved,
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn replay_all_collects_each_transition_family() {
+        let tmp = tempdir().expect("tempdir");
+        let artifact_path = tmp.path().join("target.md");
+        let binary_path = tmp.path().join("ploke-eval");
+        fs::write(&artifact_path, "proposed").expect("write proposed");
+        fs::write(&binary_path, "binary").expect("write binary");
+
+        let current_hash = ContentHash::of("source");
+        let proposed_hash = ContentHash::of("proposed");
+        let transition_id = TransitionId::new();
+        let build_id = TransitionId::new();
+        let runtime_id = RuntimeId::new();
+
+        let mut journal = PrototypeJournal::new(tmp.path().join("transition-journal.jsonl"));
+        journal
+            .append(JournalEntry::MaterializeBranch(sample_entry(
+                transition_id,
+                CommitPhase::Before,
+                &artifact_path,
+                &current_hash.0,
+                &proposed_hash.0,
+            )))
+            .expect("append materialize before");
+        journal
+            .append(JournalEntry::MaterializeBranch(sample_entry(
+                transition_id,
+                CommitPhase::After,
+                &artifact_path,
+                &current_hash.0,
+                &proposed_hash.0,
+            )))
+            .expect("append materialize after");
+        journal
+            .append(JournalEntry::BuildChild(sample_build_entry(
+                build_id,
+                CommitPhase::Before,
+                &binary_path,
+                None,
+            )))
+            .expect("append build before");
+        journal
+            .append(JournalEntry::BuildChild(sample_build_entry(
+                build_id,
+                CommitPhase::After,
+                &binary_path,
+                Some(BuildResult::Built),
+            )))
+            .expect("append build after");
+        journal
+            .append(JournalEntry::SpawnChild(sample_spawn_entry(
+                runtime_id,
+                SpawnPhase::Spawned,
+                &binary_path,
+                None,
+            )))
+            .expect("append spawned");
+        journal
+            .append(JournalEntry::ChildReady(sample_ready_entry(
+                runtime_id,
+                &binary_path,
+            )))
+            .expect("append ready");
+        journal
+            .append(JournalEntry::SpawnChild(sample_spawn_entry(
+                runtime_id,
+                SpawnPhase::Observed,
+                &binary_path,
+                Some(SpawnResult::Acknowledged),
+            )))
+            .expect("append observed");
+
+        let replay = journal.replay_all().expect("replay all");
+
+        assert_eq!(replay.materialize.len(), 1);
+        assert_eq!(replay.build.len(), 1);
+        assert_eq!(replay.spawn.len(), 1);
+    }
+}

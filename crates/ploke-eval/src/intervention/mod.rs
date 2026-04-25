@@ -7,6 +7,7 @@
 //! treated as replaceable once intervention execution is rewired to delegate to
 //! `ploke-tui`.
 
+pub mod algebra;
 mod apply;
 mod branch_registry;
 mod execute;
@@ -15,6 +16,9 @@ mod scheduler;
 mod spec;
 mod synthesize;
 
+pub use algebra::{
+    CommitError, CommitPhase, Configuration, Intervention, Outcome, RecordStore, Surface,
+};
 pub use apply::{INTERVENTION_APPLY_PROCEDURE, execute_intervention_apply};
 pub use branch_registry::{
     ActiveBranchSelection, ActiveInterventionTarget, InterventionRestoreOutput,
@@ -33,10 +37,14 @@ pub use issue::{
 };
 pub use scheduler::{
     PROTOTYPE1_SCHEDULER_SCHEMA_VERSION, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
-    Prototype1NodeRecord, Prototype1NodeStatus, Prototype1RunnerRequest, Prototype1SchedulerState,
-    load_node_record, load_or_default_scheduler_state, load_runner_request, prototype1_node_dir,
-    prototype1_node_id, prototype1_node_record_path, prototype1_runner_request_path,
-    prototype1_runner_result_path, prototype1_scheduler_path, register_treatment_evaluation_node,
+    Prototype1ContinuationDecision, Prototype1ContinuationDisposition, Prototype1NodeRecord,
+    Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerRequest,
+    Prototype1RunnerResult, Prototype1SchedulerState, Prototype1SearchPolicy, decide_continuation,
+    load_node_record, load_or_default_scheduler_state, load_runner_request, load_runner_result,
+    prototype1_node_dir, prototype1_node_id, prototype1_node_record_path,
+    prototype1_runner_request_path, prototype1_runner_result_path, prototype1_scheduler_path,
+    record_continuation_decision, record_runner_result, register_treatment_evaluation_node,
+    update_node_status, update_scheduler_policy,
 };
 pub use spec::{
     AppliedEdit, ArtifactEdit, InterventionApplyInput, InterventionApplyOutput,
