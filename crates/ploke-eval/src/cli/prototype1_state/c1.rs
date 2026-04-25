@@ -35,7 +35,7 @@ use tracing::{debug, instrument};
 use crate::intervention::{
     CommitError, CommitPhase, Configuration, Intervention, Outcome, Prototype1NodeRecord,
     Prototype1NodeStatus, RecordStore, ResolvedTreatmentBranch, Surface, load_node_record,
-    resolve_treatment_branch, update_node_status,
+    resolve_treatment_branch, update_node_status, update_node_workspace_root,
 };
 use crate::spec::PrepareError;
 
@@ -474,7 +474,7 @@ where
                     source,
                 })
             })?;
-        let (_, mut updated_node) = update_node_status(
+        let _ = update_node_status(
             &from.campaign_id,
             &from.campaign_manifest_path,
             &from.node.node_id,
@@ -486,13 +486,24 @@ where
                 source,
             })
         })?;
-        updated_node.workspace_root = realized.root.clone();
+        let (_, updated_node, _) = update_node_workspace_root(
+            &from.campaign_id,
+            &from.campaign_manifest_path,
+            &from.node.node_id,
+            realized.root.clone(),
+        )
+        .map_err(|source| {
+            CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
+                node_id: from.node.node_id.clone(),
+                source,
+            })
+        })?;
         debug!(
             target: ploke_core::EXECUTION_DEBUG_TARGET,
             node_id = %from.node.node_id,
             branch_id = %from.resolved.branch.branch_id,
             workspace_root = %realized.root.display(),
-            "realized child workspace"
+            "realized child workspace and persisted runner workspace root"
         );
 
         let next = Prototype {

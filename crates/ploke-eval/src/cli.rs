@@ -53,15 +53,15 @@ use crate::intervention::{
     IssueCase, IssueDetectionInput, IssueDetectionOutput, Outcome, Prototype1BranchRegistry,
     Prototype1ContinuationDecision, Prototype1NodeStatus, Prototype1RunnerDisposition,
     Prototype1RunnerResult, Prototype1SearchPolicy, TreatmentBranchEvaluationSummary,
-    ValidationPolicy, detect_issue_cases, execute_intervention_apply,
+    ValidationPolicy, clear_runner_result, detect_issue_cases, execute_intervention_apply,
     issue_detection_artifact_input, load_node_record, load_or_default_branch_registry,
-    load_or_default_scheduler_state, load_runner_request, load_runner_result,
-    mark_treatment_branch_applied, prototype1_branch_registry_path, prototype1_scheduler_path,
-    record_continuation_decision, record_runner_result, record_synthesized_branches,
-    record_treatment_branch_evaluation, register_treatment_evaluation_node,
-    resolve_treatment_branch, restore_treatment_branch, select_primary_issue,
-    select_treatment_branch, synthesize_intervention_with_llm, treatment_branch_id,
-    update_node_status, update_scheduler_policy,
+    load_or_default_scheduler_state, load_or_register_treatment_evaluation_node,
+    load_runner_request, load_runner_result, mark_treatment_branch_applied,
+    prototype1_branch_registry_path, prototype1_scheduler_path, record_continuation_decision,
+    record_runner_result, record_synthesized_branches, record_treatment_branch_evaluation,
+    register_treatment_evaluation_node, resolve_treatment_branch, restore_treatment_branch,
+    select_primary_issue, select_treatment_branch, synthesize_intervention_with_llm,
+    treatment_branch_id, update_node_status, update_scheduler_policy,
 };
 use crate::intervention_issue_aggregate::{
     IssueDetectionAggregate, IssueDetectionAggregateError, load_issue_detection_aggregate,
@@ -124,12 +124,14 @@ use crate::target_registry::{
     target_registry_path,
 };
 use prototype1_process::{
-    Prototype1NodeExecutionOutcome, execute_prototype1_runner_node,
-    run_prototype1_branch_evaluation, run_prototype1_branch_evaluation_via_child,
+    Prototype1NodeExecutionOutcome, execute_prototype1_runner_invocation,
+    execute_prototype1_runner_node, run_prototype1_branch_evaluation,
+    run_prototype1_branch_evaluation_via_child,
 };
 use prototype1_state::c1::{C1, MaterializeBranch};
 use prototype1_state::c2::BuildChild;
 use prototype1_state::c3::SpawnChild;
+use prototype1_state::c4::ObserveChild;
 use prototype1_state::journal::{PrototypeJournal, prototype1_transition_journal_path};
 
 const CLI_BEFORE_LONG_HELP: &str = "\
@@ -407,6 +409,7 @@ pub enum Prototype1StateStopAfter {
     Materialize,
     Build,
     Spawn,
+    Complete,
 }
 
 #[derive(Debug, Parser)]
@@ -421,7 +424,7 @@ pub struct Prototype1StateCommand {
     #[arg(long, value_name = "PATH")]
     pub repo_root: Option<PathBuf>,
 
-    #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Spawn)]
+    #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Complete)]
     pub stop_after: Prototype1StateStopAfter,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -537,13 +540,16 @@ pub struct Prototype1BranchRestoreCommand {
 }
 
 #[derive(Debug, Parser)]
-#[command(about = "Inspect or execute one staged Prototype 1 runner node")]
+#[command(about = "Inspect one Prototype 1 runner node or execute one persisted invocation")]
 pub struct Prototype1RunnerCommand {
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: Option<String>,
 
     #[arg(long)]
-    pub node_id: String,
+    pub node_id: Option<String>,
+
+    #[arg(long, value_name = "PATH")]
+    pub invocation: Option<PathBuf>,
 
     #[arg(long, default_value_t = false)]
     pub execute: bool,
@@ -1925,23 +1931,88 @@ impl Prototype1BranchRestoreCommand {
 
 impl Prototype1RunnerCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let manifest_path = campaign_manifest_path(&self.campaign)?;
-        if self.execute {
-            let _ =
-                execute_prototype1_runner_node(&self.campaign, &self.node_id, self.stop_on_error)
-                    .await?;
+        if let Some(invocation_path) = self.invocation.clone() {
+            if self.campaign.is_some() || self.node_id.is_some() {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: "prototype1-runner expects either --invocation or --campaign/--node-id, not both"
+                        .to_string(),
+                });
+            }
+
+            if self.execute {
+                let result = execute_prototype1_runner_invocation(&invocation_path).await?;
+                match self.format {
+                    InspectOutputFormat::Json => {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&result)
+                                .map_err(PrepareError::Serialize)?
+                        );
+                    }
+                    InspectOutputFormat::Table => {
+                        println!("prototype1 runner invocation");
+                        println!("{}", "-".repeat(40));
+                        println!("invocation: {}", invocation_path.display());
+                        println!("campaign_id: {}", result.campaign_id);
+                        println!("node_id: {}", result.node_id);
+                        println!("branch_id: {}", result.branch_id);
+                        println!("status: {:?}", result.status);
+                        println!("disposition: {:?}", result.disposition);
+                    }
+                }
+                return Ok(());
+            }
+
+            let invocation = crate::cli::prototype1_state::invocation::load(&invocation_path)?;
+            match self.format {
+                InspectOutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&invocation)
+                            .map_err(PrepareError::Serialize)?
+                    );
+                }
+                InspectOutputFormat::Table => {
+                    println!("prototype1 runner invocation");
+                    println!("{}", "-".repeat(40));
+                    println!("path: {}", invocation_path.display());
+                    println!("role: {:?}", invocation.role);
+                    println!("campaign_id: {}", invocation.campaign_id);
+                    println!("node_id: {}", invocation.node_id);
+                    println!("runtime_id: {}", invocation.runtime_id);
+                    println!("journal_path: {}", invocation.journal_path.display());
+                }
+            }
+            return Ok(());
         }
-        let scheduler = load_or_default_scheduler_state(&self.campaign, &manifest_path)?;
-        let node = load_node_record(&manifest_path, &self.node_id)?;
-        let request = load_runner_request(&manifest_path, &self.node_id)?;
+
+        let campaign = self
+            .campaign
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "prototype1-runner requires --invocation or both --campaign and --node-id"
+                    .to_string(),
+            })?;
+        let node_id = self
+            .node_id
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "prototype1-runner requires --invocation or both --campaign and --node-id"
+                    .to_string(),
+            })?;
+        let manifest_path = campaign_manifest_path(&campaign)?;
+        if self.execute {
+            let _ = execute_prototype1_runner_node(&campaign, &node_id, self.stop_on_error).await?;
+        }
+        let scheduler = load_or_default_scheduler_state(&campaign, &manifest_path)?;
+        let node = load_node_record(&manifest_path, &node_id)?;
+        let request = load_runner_request(&manifest_path, &node_id)?;
         let runner_result = if node.runner_result_path.exists() {
-            Some(load_runner_result(&manifest_path, &self.node_id)?)
+            Some(load_runner_result(&manifest_path, &node_id)?)
         } else {
             None
         };
 
         let report = Prototype1RunnerReport {
-            campaign_id: self.campaign,
+            campaign_id: campaign,
             scheduler_path: prototype1_scheduler_path(&manifest_path),
             search_policy: scheduler.policy.clone(),
             continuation_decision: scheduler.last_continuation_decision.clone(),
@@ -2115,7 +2186,48 @@ impl Prototype1StateCommand {
                                     child_runtime = ?child_runtime,
                                     "spawn completed"
                                 );
-                                ("spawned".to_string(), child_runtime)
+                                if self.stop_after == Prototype1StateStopAfter::Spawn {
+                                    ("spawned".to_string(), child_runtime)
+                                } else {
+                                    match ObserveChild::new().transition(c4, &mut journal).map_err(
+                                        |err| {
+                                            prototype1_state_transition_error(
+                                                "prototype1_state_complete",
+                                                format!("{err:?}"),
+                                            )
+                                        },
+                                    )? {
+                                        Outcome::Rejected(rejected) => {
+                                            debug!(
+                                                target: EXECUTION_DEBUG_TARGET,
+                                                campaign = %self.campaign,
+                                                node_id = %self.node_id,
+                                                rejected = ?rejected,
+                                                "child completion rejected"
+                                            );
+                                            (
+                                                format!("completion_rejected:{rejected:?}"),
+                                                child_runtime,
+                                            )
+                                        }
+                                        Outcome::Advanced(c5) => {
+                                            debug!(
+                                                target: EXECUTION_DEBUG_TARGET,
+                                                campaign = %self.campaign,
+                                                node_id = %self.node_id,
+                                                disposition = ?c5.report.overall_disposition,
+                                                "child completion observed"
+                                            );
+                                            (
+                                                format!(
+                                                    "completed:{:?}",
+                                                    c5.report.overall_disposition
+                                                ),
+                                                child_runtime,
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -14101,11 +14213,37 @@ mod tests {
             Command::Loop(LoopCommand {
                 command: LoopSubcommand::Prototype1Runner(cmd),
             }) => {
-                assert_eq!(cmd.campaign, "prototype1-campaign");
-                assert_eq!(cmd.node_id, "node-123");
+                assert_eq!(cmd.campaign.as_deref(), Some("prototype1-campaign"));
+                assert_eq!(cmd.node_id.as_deref(), Some("node-123"));
+                assert!(cmd.invocation.is_none());
                 assert!(!cmd.execute);
                 assert!(!cmd.stop_on_error);
                 assert_eq!(cmd.format, InspectOutputFormat::Json);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_runner_invocation_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-runner",
+            "--invocation",
+            "/tmp/runtime.json",
+            "--execute",
+        ])
+        .expect("loop prototype1-runner --invocation should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Runner(cmd),
+            }) => {
+                assert!(cmd.campaign.is_none());
+                assert!(cmd.node_id.is_none());
+                assert_eq!(cmd.invocation, Some(PathBuf::from("/tmp/runtime.json")));
+                assert!(cmd.execute);
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

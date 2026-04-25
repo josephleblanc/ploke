@@ -14,8 +14,8 @@
 //! - `C3` means the child binary exists but has not yet acknowledged itself
 //! - `C4` means the parent has observed a matching child-ready witness
 //! - the handshake is mediated through the shared transition journal
-//! - child launch metadata is passed via environment variables rather than by
-//!   widening the CLI surface first
+//! - the fresh child process bootstraps from one persisted invocation record
+//!   written before spawn
 
 use std::fs;
 use std::path::PathBuf;
@@ -27,13 +27,15 @@ use thiserror::Error;
 use tracing::{debug, instrument};
 
 use crate::intervention::{
-    CommitError, Intervention, Outcome, Prototype1NodeStatus, Prototype1RunnerRequest, RecordStore,
-    Surface, load_node_record, load_runner_request, resolve_treatment_branch, update_node_status,
+    CommitError, Intervention, Outcome, Prototype1NodeStatus, RecordStore, Surface,
+    clear_runner_result, load_node_record, load_runner_request, resolve_treatment_branch,
+    update_node_status,
 };
 use crate::spec::PrepareError;
 
 use super::c1::{Acknowledged, Artifact, Binary, Child, ChildAckState, Parent, Present, Prototype};
 use super::event::{ContentHash, Paths, RecordedAt, Refs, RuntimeId};
+use super::invocation::{Invocation, invocation_path, launch_args, write_invocation};
 use super::journal::{
     JournalEntry, PrototypeJournal, PrototypeJournalError, ReadyEntry, SpawnEntry, SpawnPhase,
     SpawnResult,
@@ -60,7 +62,7 @@ fn spawn_entry<AckState>(
     config: &Prototype<Parent, Child, Present, AckState>,
     runtime_id: RuntimeId,
     phase: SpawnPhase,
-    request: &Prototype1RunnerRequest,
+    argv: Vec<String>,
     parent_pid: u32,
     child_pid: Option<u32>,
     result: Option<SpawnResult>,
@@ -103,7 +105,7 @@ where
         },
         parent_pid,
         child_pid,
-        argv: request.runner_args.clone(),
+        argv,
         result,
     }
 }
@@ -210,6 +212,12 @@ pub(crate) enum SpawnChildError {
         #[source]
         source: PrepareError,
     },
+    #[error("failed to clear prior runner result for node '{node_id}'")]
+    ClearRunnerResult {
+        node_id: String,
+        #[source]
+        source: PrepareError,
+    },
     #[error("failed to resolve treatment branch '{branch_id}' for node '{node_id}'")]
     ResolveBranch {
         node_id: String,
@@ -241,6 +249,12 @@ pub(crate) enum SpawnChildError {
     SpawnInvoke {
         path: PathBuf,
         source: std::io::Error,
+    },
+    #[error("failed to persist invocation for node '{node_id}'")]
+    WriteInvocation {
+        node_id: String,
+        #[source]
+        source: PrepareError,
     },
     #[error("failed to query child runtime status for runtime '{runtime_id}': {source}")]
     PollChildStatus {
@@ -431,14 +445,34 @@ impl Intervention<C3, C4> for SpawnChild {
                 },
             ));
         }
+        let _ = clear_runner_result(&from.campaign_manifest_path, &from.node.node_id).map_err(
+            |source| {
+                CommitError::Transition(SpawnChildError::ClearRunnerResult {
+                    node_id: from.node.node_id.clone(),
+                    source,
+                })
+            },
+        )?;
+        let invocation_path = invocation_path(&from.node.node_dir, self.runtime_id);
+        let invocation = Invocation::child(
+            from.campaign_id.clone(),
+            from.node.node_id.clone(),
+            self.runtime_id,
+            records.path().to_path_buf(),
+        );
+        write_invocation(&invocation_path, &invocation).map_err(|source| {
+            CommitError::Transition(SpawnChildError::WriteInvocation {
+                node_id: from.node.node_id.clone(),
+                source,
+            })
+        })?;
+        let child_argv = launch_args(&invocation_path);
 
         let handoff = Handoff::new(records.path().to_path_buf());
         let parent_pid = std::process::id();
         let mut child = ProcessCommand::new(&binary_path)
-            .args(&request.runner_args)
+            .args(&child_argv)
             .current_dir(&from.artifact.repo_root)
-            .env(RUNTIME_ID_ENV, self.runtime_id.to_string())
-            .env(JOURNAL_PATH_ENV, handoff.path.as_os_str())
             .spawn()
             .map_err(|source| {
                 CommitError::Transition(SpawnChildError::SpawnInvoke {
@@ -463,7 +497,7 @@ impl Intervention<C3, C4> for SpawnChild {
                     &from,
                     self.runtime_id,
                     SpawnPhase::Spawned,
-                    &request,
+                    child_argv.clone(),
                     parent_pid,
                     Some(child_pid),
                     None,
@@ -514,7 +548,7 @@ impl Intervention<C3, C4> for SpawnChild {
                             &next,
                             self.runtime_id,
                             SpawnPhase::Observed,
-                            &request,
+                            child_argv.clone(),
                             parent_pid,
                             Some(child_pid),
                             Some(SpawnResult::Acknowledged),
@@ -571,7 +605,7 @@ impl Intervention<C3, C4> for SpawnChild {
                             &failed,
                             self.runtime_id,
                             SpawnPhase::Observed,
-                            &request,
+                            child_argv.clone(),
                             parent_pid,
                             Some(child_pid),
                             Some(rejected.clone().into_result()),

@@ -8,6 +8,7 @@
 
 use std::fmt;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -47,6 +48,14 @@ impl RuntimeId {
 impl fmt::Display for RuntimeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+impl FromStr for RuntimeId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(Uuid::parse_str(s)?))
     }
 }
 

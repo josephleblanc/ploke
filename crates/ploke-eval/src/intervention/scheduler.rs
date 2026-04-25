@@ -301,6 +301,13 @@ fn save_runner_result(result: &Prototype1RunnerResult, path: &Path) -> Result<()
     })
 }
 
+pub fn write_runner_result_at(
+    path: &Path,
+    result: &Prototype1RunnerResult,
+) -> Result<(), PrepareError> {
+    save_runner_result(result, path)
+}
+
 pub fn load_node_record(
     campaign_manifest_path: &Path,
     node_id: &str,
@@ -330,11 +337,26 @@ pub fn load_runner_result(
     node_id: &str,
 ) -> Result<Prototype1RunnerResult, PrepareError> {
     let path = prototype1_runner_result_path(campaign_manifest_path, node_id);
+    load_runner_result_at(&path)
+}
+
+pub fn load_runner_result_at(path: &Path) -> Result<Prototype1RunnerResult, PrepareError> {
     let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
-        path: path.clone(),
+        path: path.to_path_buf(),
         source,
     })?;
-    serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest { path, source })
+    serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn is_not_found(err: &PrepareError) -> bool {
+    matches!(
+        err,
+        PrepareError::ReadManifest { source, .. }
+            if source.kind() == std::io::ErrorKind::NotFound
+    )
 }
 
 pub fn update_scheduler_policy(
@@ -396,6 +418,44 @@ pub fn update_node_status(
     Ok((scheduler, record))
 }
 
+pub fn update_node_workspace_root(
+    campaign_id: &str,
+    campaign_manifest_path: &Path,
+    node_id: &str,
+    workspace_root: PathBuf,
+) -> Result<
+    (
+        Prototype1SchedulerState,
+        Prototype1NodeRecord,
+        Prototype1RunnerRequest,
+    ),
+    PrepareError,
+> {
+    let mut scheduler = load_or_default_scheduler_state(campaign_id, campaign_manifest_path)?;
+    let now = Utc::now().to_rfc3339();
+    let Some(node) = scheduler
+        .nodes
+        .iter_mut()
+        .find(|node| node.node_id == node_id)
+    else {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!("prototype1 node '{node_id}' not found in scheduler"),
+        });
+    };
+    node.workspace_root = workspace_root.clone();
+    node.updated_at = now.clone();
+    let record = node.clone();
+    save_node_record(&record)?;
+
+    let mut request = load_runner_request(campaign_manifest_path, node_id)?;
+    request.workspace_root = workspace_root;
+    save_runner_request(&request, &record.runner_request_path)?;
+
+    scheduler.updated_at = now;
+    save_scheduler_state(campaign_manifest_path, &scheduler)?;
+    Ok((scheduler, record, request))
+}
+
 pub fn record_runner_result(
     campaign_id: &str,
     campaign_manifest_path: &Path,
@@ -409,6 +469,18 @@ pub fn record_runner_result(
         &result.node_id,
         result.status,
     )
+}
+
+pub fn clear_runner_result(
+    campaign_manifest_path: &Path,
+    node_id: &str,
+) -> Result<bool, PrepareError> {
+    let path = prototype1_runner_result_path(campaign_manifest_path, node_id);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(PrepareError::WriteManifest { path, source }),
+    }
 }
 
 pub fn decide_continuation(
@@ -576,6 +648,101 @@ pub fn register_treatment_evaluation_node(
     Ok((scheduler, record, request))
 }
 
+pub fn load_or_register_treatment_evaluation_node(
+    campaign_id: &str,
+    campaign_manifest_path: &Path,
+    branch: &ResolvedTreatmentBranch,
+    generation: u32,
+    repo_root: &Path,
+    stop_on_error: bool,
+) -> Result<
+    (
+        Prototype1SchedulerState,
+        Prototype1NodeRecord,
+        Prototype1RunnerRequest,
+    ),
+    PrepareError,
+> {
+    let node_id = prototype1_node_id(&branch.branch.branch_id, generation);
+    let mut scheduler = load_or_default_scheduler_state(campaign_id, campaign_manifest_path)?;
+
+    let node = match load_node_record(campaign_manifest_path, &node_id) {
+        Ok(node) => node,
+        Err(err) if is_not_found(&err) => {
+            return register_treatment_evaluation_node(
+                campaign_id,
+                campaign_manifest_path,
+                branch,
+                generation,
+                repo_root,
+                stop_on_error,
+            );
+        }
+        Err(err) => return Err(err),
+    };
+    let request = match load_runner_request(campaign_manifest_path, &node_id) {
+        Ok(request) => request,
+        Err(err) if is_not_found(&err) => {
+            return register_treatment_evaluation_node(
+                campaign_id,
+                campaign_manifest_path,
+                branch,
+                generation,
+                repo_root,
+                stop_on_error,
+            );
+        }
+        Err(err) => return Err(err),
+    };
+
+    if node.branch_id != branch.branch.branch_id
+        || node.generation != generation
+        || node.instance_id != branch.instance_id
+        || node.source_state_id != branch.source_state_id
+        || node.target_relpath != branch.target_relpath
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "existing prototype1 node '{}' does not match requested branch/generation identity",
+                node_id
+            ),
+        });
+    }
+    if request.node_id != node.node_id
+        || request.branch_id != node.branch_id
+        || request.generation != node.generation
+        || request.instance_id != node.instance_id
+        || request.source_state_id != node.source_state_id
+        || request.target_relpath != node.target_relpath
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "existing prototype1 runner request for node '{}' does not match persisted node identity",
+                node_id
+            ),
+        });
+    }
+
+    match scheduler
+        .nodes
+        .iter_mut()
+        .find(|existing| existing.node_id == node_id)
+    {
+        Some(existing) => *existing = node.clone(),
+        None => scheduler.nodes.push(node.clone()),
+    }
+    if !scheduler.frontier_node_ids.iter().any(|id| id == &node_id)
+        && !scheduler.completed_node_ids.iter().any(|id| id == &node_id)
+        && !scheduler.failed_node_ids.iter().any(|id| id == &node_id)
+    {
+        scheduler.frontier_node_ids.push(node_id);
+    }
+    scheduler.updated_at = Utc::now().to_rfc3339();
+    save_scheduler_state(campaign_manifest_path, &scheduler)?;
+
+    Ok((scheduler, node, request))
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::tempdir;
@@ -713,5 +880,37 @@ mod tests {
             stop_on_keep.disposition,
             Prototype1ContinuationDisposition::StopOnFirstKeepSatisfied
         );
+    }
+
+    #[test]
+    fn load_or_register_reuses_existing_node_request() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let resolved = resolved_branch();
+
+        let (_scheduler, node, request) = register_treatment_evaluation_node(
+            "test-campaign",
+            &manifest,
+            &resolved,
+            2,
+            tmp.path(),
+            false,
+        )
+        .expect("register node");
+
+        let (loaded_scheduler, loaded_node, loaded_request) =
+            load_or_register_treatment_evaluation_node(
+                "test-campaign",
+                &manifest,
+                &resolved,
+                2,
+                tmp.path(),
+                true,
+            )
+            .expect("load existing node");
+
+        assert_eq!(loaded_scheduler.nodes.len(), 1);
+        assert_eq!(loaded_node, node);
+        assert_eq!(loaded_request, request);
     }
 }

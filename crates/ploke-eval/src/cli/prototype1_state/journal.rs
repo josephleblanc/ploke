@@ -26,7 +26,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::event::{ContentHash, Hashes, Paths, RecordedAt, Refs, RuntimeId, TransitionId, World};
-use crate::intervention::{CommitPhase, RecordStore};
+use crate::branch_evaluation::BranchDisposition;
+use crate::intervention::{CommitPhase, Prototype1RunnerDisposition, RecordStore};
 
 /// Append-only machine-readable journal entry for `C1 -> C2`
 /// materialization.
@@ -120,6 +121,42 @@ pub(crate) struct ReadyEntry {
     pub pid: u32,
 }
 
+/// Committed result for the parent-side child-completion observation
+/// transition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CompletionResult {
+    Succeeded {
+        evaluation_artifact_path: PathBuf,
+        overall_disposition: BranchDisposition,
+    },
+    Failed {
+        disposition: Prototype1RunnerDisposition,
+        detail: Option<String>,
+        exit_code: Option<i32>,
+    },
+    TimedOut {
+        waited_ms: u64,
+    },
+}
+
+/// Append-only machine-readable journal entry for parent-side observation of
+/// one child runtime's persisted evaluation result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct CompletionEntry {
+    pub transition_id: TransitionId,
+    pub runtime_id: RuntimeId,
+    pub phase: CommitPhase,
+    pub recorded_at: RecordedAt,
+    pub generation: u32,
+    pub refs: Refs,
+    pub paths: Paths,
+    pub world: World,
+    pub runner_result_path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<CompletionResult>,
+}
+
 /// Single append-only journal entry for typed prototype1 transitions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -128,6 +165,7 @@ pub(crate) enum JournalEntry {
     BuildChild(BuildEntry),
     SpawnChild(SpawnEntry),
     ChildReady(ReadyEntry),
+    ObserveChild(CompletionEntry),
 }
 
 /// Durable append-only JSONL journal for prototype1 transition records.
@@ -288,7 +326,9 @@ impl PrototypeJournal {
                         .or_default()
                         .record_ready(entry)?;
                 }
-                JournalEntry::MaterializeBranch(_) | JournalEntry::BuildChild(_) => {}
+                JournalEntry::MaterializeBranch(_)
+                | JournalEntry::BuildChild(_)
+                | JournalEntry::ObserveChild(_) => {}
             }
         }
 
@@ -333,7 +373,55 @@ impl PrototypeJournal {
             materialize: self.replay_materialize_branch()?,
             build: self.replay_build_child()?,
             spawn: self.replay_spawn_child()?,
+            completion: self.replay_observe_child()?,
         })
+    }
+
+    pub(crate) fn replay_observe_child(
+        &self,
+    ) -> Result<Vec<CompletionReplay>, PrototypeJournalError> {
+        let mut grouped = BTreeMap::<TransitionId, CompletionPhases>::new();
+
+        for entry in self.load_entries()? {
+            let JournalEntry::ObserveChild(entry) = entry else {
+                continue;
+            };
+            grouped
+                .entry(entry.transition_id)
+                .or_default()
+                .record(entry)?;
+        }
+
+        let mut replay = Vec::new();
+        for (transition_id, phases) in grouped {
+            match (phases.before, phases.after) {
+                (Some(before), Some(after)) => {
+                    replay.push(CompletionReplay {
+                        before,
+                        outcome: CompletionOutcome::Committed {
+                            after: Box::new(after),
+                        },
+                    });
+                }
+                (Some(before), None) => {
+                    let disposition = if before.runner_result_path.exists() {
+                        PendingCompletion::ResultWrittenUnobserved
+                    } else {
+                        PendingCompletion::ResultPending
+                    };
+                    replay.push(CompletionReplay {
+                        before,
+                        outcome: CompletionOutcome::Pending { disposition },
+                    });
+                }
+                (None, Some(_)) => {
+                    return Err(PrototypeJournalError::AfterWithoutBefore { transition_id });
+                }
+                (None, None) => {}
+            }
+        }
+
+        Ok(replay)
     }
 }
 
@@ -447,6 +535,24 @@ impl SpawnPhases {
             &mut self.ready,
             entry.runtime_id,
             DuplicateKey::Ready,
+            entry,
+        )
+    }
+}
+
+#[derive(Debug, Default)]
+struct CompletionPhases {
+    before: Option<CompletionEntry>,
+    after: Option<CompletionEntry>,
+}
+
+impl CompletionPhases {
+    fn record(&mut self, entry: CompletionEntry) -> Result<(), PrototypeJournalError> {
+        record_commit_phase(
+            &mut self.before,
+            &mut self.after,
+            entry.transition_id,
+            entry.phase,
             entry,
         )
     }
@@ -575,6 +681,7 @@ pub(crate) struct ReplayLog {
     pub materialize: Vec<MaterializeBranchReplay>,
     pub build: Vec<BuildReplay>,
     pub spawn: Vec<SpawnReplay>,
+    pub completion: Vec<CompletionReplay>,
 }
 
 /// Replay classification for one materialize-branch transition.
@@ -659,6 +766,28 @@ pub(crate) enum SpawnOutcome {
 pub(crate) enum PendingSpawn {
     SpawnedUnacknowledged,
     ReadyUnobserved,
+}
+
+/// Replay classification for one child-completion observation transition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CompletionReplay {
+    pub before: CompletionEntry,
+    pub outcome: CompletionOutcome,
+}
+
+/// Replay outcome for one child-completion observation transition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CompletionOutcome {
+    Committed { after: Box<CompletionEntry> },
+    Pending { disposition: PendingCompletion },
+}
+
+/// Recovery-relevant disposition for a completion observation that has not yet
+/// been fully recorded by the parent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingCompletion {
+    ResultPending,
+    ResultWrittenUnobserved,
 }
 
 #[derive(Debug, Error)]
