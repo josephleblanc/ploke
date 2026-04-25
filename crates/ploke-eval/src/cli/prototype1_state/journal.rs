@@ -25,9 +25,15 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::event::{ContentHash, Hashes, Paths, RecordedAt, Refs, RuntimeId, TransitionId, World};
+use super::event::{
+    ChildRuntimeLifecycle, ContentHash, Hashes, ObservedChildTerminal, Paths, RecordedAt, Refs,
+    RuntimeId, TransitionId, World,
+};
 use crate::branch_evaluation::BranchDisposition;
-use crate::intervention::{CommitPhase, Prototype1RunnerDisposition, RecordStore};
+use crate::intervention::{
+    CommitPhase, Prototype1RunnerDisposition, RecordStore, load_runner_result_at,
+};
+use crate::spec::PrepareError;
 
 /// Append-only machine-readable journal entry for `C1 -> C2`
 /// materialization.
@@ -86,10 +92,9 @@ pub(crate) enum SpawnPhase {
 /// Committed result for the `C3 -> C4` spawn-and-handshake transition.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SpawnResult {
+pub(crate) enum SpawnObservation {
     Acknowledged,
-    ExitedBeforeReady { exit_code: Option<i32> },
-    ReadyTimedOut { waited_ms: u64 },
+    TerminatedBeforeAcknowledged { exit_code: Option<i32> },
 }
 
 /// Append-only machine-readable journal entry for `C3 -> C4` child spawn and
@@ -103,11 +108,12 @@ pub(crate) struct SpawnEntry {
     pub refs: Refs,
     pub paths: Paths,
     pub world: World,
+    pub child_lifecycle: ChildRuntimeLifecycle,
     pub parent_pid: u32,
     pub child_pid: Option<u32>,
     pub argv: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<SpawnResult>,
+    pub result: Option<SpawnObservation>,
 }
 
 /// Child-side handshake witness for one spawned runtime.
@@ -121,11 +127,10 @@ pub(crate) struct ReadyEntry {
     pub pid: u32,
 }
 
-/// Committed result for the parent-side child-completion observation
-/// transition.
+/// Committed result for parent-side observation of one terminal child state.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum CompletionResult {
+pub(crate) enum ObservedChildResult {
     Succeeded {
         evaluation_artifact_path: PathBuf,
         overall_disposition: BranchDisposition,
@@ -134,9 +139,6 @@ pub(crate) enum CompletionResult {
         disposition: Prototype1RunnerDisposition,
         detail: Option<String>,
         exit_code: Option<i32>,
-    },
-    TimedOut {
-        waited_ms: u64,
     },
 }
 
@@ -152,9 +154,10 @@ pub(crate) struct CompletionEntry {
     pub refs: Refs,
     pub paths: Paths,
     pub world: World,
+    pub child_lifecycle: ChildRuntimeLifecycle,
     pub runner_result_path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<CompletionResult>,
+    pub result: Option<ObservedChildResult>,
 }
 
 /// Single append-only journal entry for typed prototype1 transitions.
@@ -346,7 +349,7 @@ impl PrototypeJournal {
                 }
                 (Some(spawned), None, ready) => {
                     let disposition = if ready.is_some() {
-                        PendingSpawn::ReadyUnobserved
+                        PendingSpawn::AcknowledgedUnobserved
                     } else {
                         PendingSpawn::SpawnedUnacknowledged
                     };
@@ -405,7 +408,9 @@ impl PrototypeJournal {
                 }
                 (Some(before), None) => {
                     let disposition = if before.runner_result_path.exists() {
-                        PendingCompletion::ResultWrittenUnobserved
+                        PendingCompletion::TerminalResultWrittenUnobserved(
+                            classify_pending_completion(&before.runner_result_path)?,
+                        )
                     } else {
                         PendingCompletion::ResultPending
                     };
@@ -675,6 +680,23 @@ fn classify_pending_build(binary_path: &Path) -> (bool, PendingBuild) {
     (binary_present, disposition)
 }
 
+fn classify_pending_completion(
+    runner_result_path: &Path,
+) -> Result<ObservedChildTerminal, PrototypeJournalError> {
+    let runner_result = load_runner_result_at(runner_result_path).map_err(|source| {
+        PrototypeJournalError::LoadRunnerResult {
+            path: runner_result_path.to_path_buf(),
+            source,
+        }
+    })?;
+    let terminal = match runner_result.disposition {
+        Prototype1RunnerDisposition::Succeeded => ObservedChildTerminal::Succeeded,
+        Prototype1RunnerDisposition::CompileFailed
+        | Prototype1RunnerDisposition::TreatmentFailed => ObservedChildTerminal::Failed,
+    };
+    Ok(terminal)
+}
+
 /// Replay view over all currently known typed transition families.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReplayLog {
@@ -765,7 +787,7 @@ pub(crate) enum SpawnOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PendingSpawn {
     SpawnedUnacknowledged,
-    ReadyUnobserved,
+    AcknowledgedUnobserved,
 }
 
 /// Replay classification for one child-completion observation transition.
@@ -787,7 +809,7 @@ pub(crate) enum CompletionOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PendingCompletion {
     ResultPending,
-    ResultWrittenUnobserved,
+    TerminalResultWrittenUnobserved(ObservedChildTerminal),
 }
 
 #[derive(Debug, Error)]
@@ -825,6 +847,8 @@ pub(crate) enum PrototypeJournalError {
         line_number: usize,
         source: serde_json::Error,
     },
+    #[error("failed to load runner result '{path}': {source}")]
+    LoadRunnerResult { path: PathBuf, source: PrepareError },
     #[error("duplicate '{phase:?}' entry for transition '{transition_id}'")]
     DuplicatePhase {
         transition_id: TransitionId,
@@ -895,8 +919,7 @@ mod tests {
                 running_binary: true,
                 running_lineage: LineageMark::Parent,
                 artifact_lineage: LineageMark::Parent,
-                child_binary_present: false,
-                child_running: false,
+                child_lifecycle: None,
             },
             hashes: Hashes {
                 source: ContentHash(current_hash.to_string()),
@@ -939,8 +962,7 @@ mod tests {
                 running_binary: true,
                 running_lineage: LineageMark::Parent,
                 artifact_lineage: LineageMark::Child,
-                child_binary_present: false,
-                child_running: false,
+                child_lifecycle: None,
             },
             hashes: Hashes {
                 source: ContentHash("source".to_string()),
@@ -955,8 +977,15 @@ mod tests {
         runtime_id: RuntimeId,
         phase: SpawnPhase,
         binary_path: &Path,
-        result: Option<SpawnResult>,
+        result: Option<SpawnObservation>,
     ) -> SpawnEntry {
+        let child_lifecycle = match result {
+            Some(SpawnObservation::Acknowledged) => ChildRuntimeLifecycle::Acknowledged,
+            Some(SpawnObservation::TerminatedBeforeAcknowledged { .. }) => {
+                ChildRuntimeLifecycle::Terminated
+            }
+            None => ChildRuntimeLifecycle::Spawned,
+        };
         SpawnEntry {
             runtime_id,
             phase,
@@ -984,9 +1013,9 @@ mod tests {
                 running_binary: true,
                 running_lineage: LineageMark::Parent,
                 artifact_lineage: LineageMark::Child,
-                child_binary_present: true,
-                child_running: matches!(result, Some(SpawnResult::Acknowledged)),
+                child_lifecycle: Some(child_lifecycle),
             },
+            child_lifecycle,
             parent_pid: 111,
             child_pid: Some(222),
             argv: vec!["prototype1-runner".to_string()],
@@ -1017,6 +1046,57 @@ mod tests {
                 absolute_path: binary_path.parent().unwrap().join("target.md"),
             },
             pid: 222,
+        }
+    }
+
+    fn sample_completion_entry(
+        transition_id: TransitionId,
+        phase: CommitPhase,
+        runtime_id: RuntimeId,
+        runner_result_path: &Path,
+        result: Option<ObservedChildResult>,
+    ) -> CompletionEntry {
+        CompletionEntry {
+            transition_id,
+            runtime_id,
+            phase,
+            recorded_at: RecordedAt(1_777_091_200_000),
+            generation: 1,
+            refs: Refs {
+                campaign_id: "campaign".to_string(),
+                node_id: "node-4".to_string(),
+                instance_id: "instance".to_string(),
+                source_state_id: "state-4".to_string(),
+                branch_id: "branch-4".to_string(),
+                candidate_id: "candidate-4".to_string(),
+                branch_label: "observe".to_string(),
+                spec_id: "spec-4".to_string(),
+            },
+            paths: Paths {
+                repo_root: runner_result_path.parent().unwrap().to_path_buf(),
+                workspace_root: runner_result_path.parent().unwrap().to_path_buf(),
+                binary_path: runner_result_path.parent().unwrap().join("ploke-eval"),
+                target_relpath: PathBuf::from("target.md"),
+                absolute_path: runner_result_path.parent().unwrap().join("target.md"),
+            },
+            world: World {
+                node_status: crate::intervention::Prototype1NodeStatus::Running,
+                running_binary: true,
+                running_lineage: LineageMark::Parent,
+                artifact_lineage: LineageMark::Child,
+                child_lifecycle: Some(if result.is_some() {
+                    ChildRuntimeLifecycle::Terminated
+                } else {
+                    ChildRuntimeLifecycle::Acknowledged
+                }),
+            },
+            child_lifecycle: if result.is_some() {
+                ChildRuntimeLifecycle::Terminated
+            } else {
+                ChildRuntimeLifecycle::Acknowledged
+            },
+            runner_result_path: runner_result_path.to_path_buf(),
+            result,
         }
     }
 
@@ -1198,7 +1278,65 @@ mod tests {
             SpawnReplay {
                 outcome: SpawnOutcome::Pending {
                     ready: Some(_),
-                    disposition: PendingSpawn::ReadyUnobserved,
+                    disposition: PendingSpawn::AcknowledgedUnobserved,
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn replay_marks_written_runner_result_as_terminal_unobserved() {
+        let tmp = tempdir().expect("tempdir");
+        let runner_result_path = tmp.path().join("runner-result.json");
+        let transition_id = TransitionId::new();
+        let runtime_id = RuntimeId::new();
+
+        let runner_result = crate::intervention::Prototype1RunnerResult {
+            schema_version: "prototype1_runner_result.v1".to_string(),
+            campaign_id: "campaign".to_string(),
+            node_id: "node-4".to_string(),
+            generation: 1,
+            branch_id: "branch-4".to_string(),
+            status: crate::intervention::Prototype1NodeStatus::Failed,
+            disposition: Prototype1RunnerDisposition::TreatmentFailed,
+            treatment_campaign_id: None,
+            evaluation_artifact_path: None,
+            detail: Some("child failed".to_string()),
+            exit_code: Some(1),
+            stdout_excerpt: None,
+            stderr_excerpt: None,
+            recorded_at: "2026-04-25T00:00:00Z".to_string(),
+        };
+        fs::write(
+            &runner_result_path,
+            serde_json::to_string(&runner_result).expect("serialize runner result"),
+        )
+        .expect("write runner result");
+
+        let mut journal = PrototypeJournal::new(tmp.path().join("transition-journal.jsonl"));
+        journal
+            .append(JournalEntry::ObserveChild(sample_completion_entry(
+                transition_id,
+                CommitPhase::Before,
+                runtime_id,
+                &runner_result_path,
+                None,
+            )))
+            .expect("append completion before");
+
+        let replay = journal
+            .replay_observe_child()
+            .expect("replay observe child");
+
+        assert_eq!(replay.len(), 1);
+        assert!(matches!(
+            &replay[0],
+            CompletionReplay {
+                outcome: CompletionOutcome::Pending {
+                    disposition: PendingCompletion::TerminalResultWrittenUnobserved(
+                        ObservedChildTerminal::Failed
+                    ),
                 },
                 ..
             }
@@ -1273,7 +1411,7 @@ mod tests {
                 runtime_id,
                 SpawnPhase::Observed,
                 &binary_path,
-                Some(SpawnResult::Acknowledged),
+                Some(SpawnObservation::Acknowledged),
             )))
             .expect("append observed");
 

@@ -82,6 +82,15 @@ where
     ChildState: ChildBinaryState,
     AckState: ChildAckState,
 {
+    let child_lifecycle = if ChildState::PRESENT {
+        if AckState::ACKNOWLEDGED {
+            Some(super::event::ChildRuntimeLifecycle::Acknowledged)
+        } else {
+            Some(super::event::ChildRuntimeLifecycle::Built)
+        }
+    } else {
+        None
+    };
     BuildEntry {
         transition_id,
         phase,
@@ -117,8 +126,7 @@ where
             running_binary: config.binary.parent_running,
             running_lineage: super::event::LineageMark::Parent,
             artifact_lineage: super::event::LineageMark::Child,
-            child_binary_present: ChildState::PRESENT,
-            child_running: AckState::ACKNOWLEDGED,
+            child_lifecycle,
         },
         hashes: Hashes {
             // TODO(2026-04-26): Same temporary ownership smell as `c1.rs`:

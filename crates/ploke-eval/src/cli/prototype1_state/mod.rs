@@ -3,6 +3,9 @@
 //! These states are not wired into the live controller yet. They exist so the
 //! parent/child seam can be modeled explicitly as move-only configuration
 //! transitions before the runtime path is rewritten to use them.
+//! Live configuration values should be constructed through trusted
+//! loaders/transitions in their defining modules rather than by ad hoc struct
+//! literals elsewhere.
 //!
 //! ## Contents
 //!
@@ -84,6 +87,11 @@
 //! Candidate Runtime:
 //!     - promotes to Parent Runtime
 //!     - performs handoff with Parent Runtime
+//!
+//! The persisted invocation contract for the live Prototype 1 seam is
+//! narrower than this role vocabulary: only the leaf `Child` runner is
+//! executable today. A `Successor` remains explicit controller-side authority
+//! state, not an executable fresh-binary role.
 //!
 //! ## Actions
 //!

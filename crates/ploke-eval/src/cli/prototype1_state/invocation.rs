@@ -3,12 +3,21 @@
 //! This record is intentionally smaller than a node record or runner request.
 //! It is the attempt-scoped overlay a fresh binary needs in order to:
 //! - identify which durable node it belongs to
-//! - know which role it should play
+//! - know which authority contract it carries
 //! - participate in the current handoff attempt
 //!
 //! The invocation should not duplicate stable execution context that already
 //! belongs to durable node/request state. Doing so would turn this type into a
 //! second runner request instead of a true bootstrap contract.
+//!
+//! The important seam is that Prototype 1 currently has exactly one
+//! executable fresh-binary role:
+//!
+//! - `Child`: leaf evaluator, executes one node, records, exits
+//! - `Successor`: non-executable continuation authority contract placeholder
+//!
+//! Keeping that split explicit here prevents the live parent/child runner seam
+//! from quietly drifting into a generic "fresh binary can do anything" surface.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,6 +28,18 @@ use serde::{Deserialize, Serialize};
 use crate::spec::PrepareError;
 
 use super::event::RuntimeId;
+
+fn leaf_runner_argv(invocation_path: &Path) -> Vec<String> {
+    vec![
+        "loop".to_string(),
+        "prototype1-runner".to_string(),
+        "--invocation".to_string(),
+        invocation_path.display().to_string(),
+        "--execute".to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+    ]
+}
 
 /// Durable schema version for runtime invocations.
 pub(crate) const SCHEMA_VERSION: &str = "prototype1-invocation.v1";
@@ -45,9 +66,34 @@ pub(crate) struct Invocation {
     pub created_at: String,
 }
 
+/// Executable leaf-child invocation.
+///
+/// This is the only invocation authority the live Prototype 1 runner may
+/// execute today.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChildInvocation {
+    inner: Invocation,
+}
+
+/// Non-executable successor authority contract.
+///
+/// A successor may be recorded as future controller state, but it must not be
+/// passed to the current leaf child runner entrypoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SuccessorInvocation {
+    inner: Invocation,
+}
+
+/// Classified invocation authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InvocationAuthority {
+    Child(ChildInvocation),
+    Successor(SuccessorInvocation),
+}
+
 impl Invocation {
     /// Child-evaluator bootstrap contract.
-    pub(crate) fn child(
+    fn child(
         campaign_id: String,
         node_id: String,
         runtime_id: RuntimeId,
@@ -61,6 +107,94 @@ impl Invocation {
             runtime_id,
             journal_path,
             created_at: Utc::now().to_rfc3339(),
+        }
+    }
+
+    /// Selected-successor bootstrap contract placeholder.
+    ///
+    /// This is intentionally not executable through the live child runner
+    /// path. Its purpose is to make successor authority explicit in persisted
+    /// state without implying that successor continuation exists yet.
+    #[allow(dead_code)]
+    fn successor(
+        campaign_id: String,
+        node_id: String,
+        runtime_id: RuntimeId,
+        journal_path: PathBuf,
+    ) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION.to_string(),
+            role: Role::Successor,
+            campaign_id,
+            node_id,
+            runtime_id,
+            journal_path,
+            created_at: Utc::now().to_rfc3339(),
+        }
+    }
+
+    /// Classify the persisted invocation by its runtime authority.
+    fn classify(self) -> InvocationAuthority {
+        match self.role {
+            Role::Child => InvocationAuthority::Child(ChildInvocation { inner: self }),
+            Role::Successor => InvocationAuthority::Successor(SuccessorInvocation { inner: self }),
+        }
+    }
+}
+
+impl ChildInvocation {
+    /// Create the executable leaf-child invocation used by the live runner.
+    pub(crate) fn new(
+        campaign_id: String,
+        node_id: String,
+        runtime_id: RuntimeId,
+        journal_path: PathBuf,
+    ) -> Self {
+        Self {
+            inner: Invocation::child(campaign_id, node_id, runtime_id, journal_path),
+        }
+    }
+
+    /// Access the persisted wire record.
+    pub(crate) fn as_invocation(&self) -> &Invocation {
+        &self.inner
+    }
+
+    /// Campaign this child leaf run belongs to.
+    pub(crate) fn campaign_id(&self) -> &str {
+        &self.inner.campaign_id
+    }
+
+    /// Durable node this child leaf run evaluates.
+    pub(crate) fn node_id(&self) -> &str {
+        &self.inner.node_id
+    }
+
+    /// Runtime identity for this concrete child attempt.
+    pub(crate) fn runtime_id(&self) -> RuntimeId {
+        self.inner.runtime_id
+    }
+
+    /// Shared journal path used for child acknowledgement.
+    pub(crate) fn journal_path(&self) -> &Path {
+        &self.inner.journal_path
+    }
+
+    /// CLI argv for launching exactly one leaf child evaluation.
+    pub(crate) fn launch_args(&self, invocation_path: &Path) -> Vec<String> {
+        leaf_runner_argv(invocation_path)
+    }
+}
+
+impl SuccessorInvocation {
+    /// Error returned when code attempts to treat successor authority as an
+    /// executable child runner contract.
+    pub(crate) fn non_executable_error(&self, invocation_path: &Path) -> PrepareError {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor invocation '{}' is controller authority, not an executable leaf runner",
+                invocation_path.display()
+            ),
         }
     }
 }
@@ -86,7 +220,7 @@ pub(crate) fn result_path(node_dir: &Path, runtime_id: RuntimeId) -> PathBuf {
 }
 
 /// Persist one invocation record.
-pub(crate) fn write_invocation(path: &Path, invocation: &Invocation) -> Result<(), PrepareError> {
+fn write_invocation(path: &Path, invocation: &Invocation) -> Result<(), PrepareError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
             path: parent.to_path_buf(),
@@ -112,15 +246,23 @@ pub(crate) fn load(path: &Path) -> Result<Invocation, PrepareError> {
     })
 }
 
-/// CLI argv for launching a fresh binary from one invocation record.
-pub(crate) fn launch_args(invocation_path: &Path) -> Vec<String> {
-    vec![
-        "loop".to_string(),
-        "prototype1-runner".to_string(),
-        "--invocation".to_string(),
-        invocation_path.display().to_string(),
-        "--execute".to_string(),
-        "--format".to_string(),
-        "json".to_string(),
-    ]
+/// Load and classify one persisted invocation by authority.
+pub(crate) fn load_authority(path: &Path) -> Result<InvocationAuthority, PrepareError> {
+    Ok(load(path)?.classify())
+}
+
+/// Load the only invocation type executable by the live Prototype 1 runner.
+pub(crate) fn load_executable_child(path: &Path) -> Result<ChildInvocation, PrepareError> {
+    match load_authority(path)? {
+        InvocationAuthority::Child(invocation) => Ok(invocation),
+        InvocationAuthority::Successor(invocation) => Err(invocation.non_executable_error(path)),
+    }
+}
+
+/// Persist one executable leaf-child invocation.
+pub(crate) fn write_child_invocation(
+    path: &Path,
+    invocation: &ChildInvocation,
+) -> Result<(), PrepareError> {
+    write_invocation(path, invocation.as_invocation())
 }

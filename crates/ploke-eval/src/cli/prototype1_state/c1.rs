@@ -27,7 +27,7 @@
 
 use std::fs;
 use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 use tracing::{debug, instrument};
@@ -45,6 +45,10 @@ use super::event::{
 };
 use super::journal::{Entry, JournalEntry, PrototypeJournal};
 
+mod sealed {
+    pub trait Sealed {}
+}
+
 /// Marker for the currently running parent lineage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Parent;
@@ -54,25 +58,29 @@ pub(crate) struct Parent;
 pub(crate) struct Child;
 
 /// Shared marker family for prototype lineage states.
-pub(crate) trait Lineage {
+pub(crate) trait Lineage: sealed::Sealed {
     const MARK: LineageMark;
 }
+
+impl sealed::Sealed for Parent {}
 
 impl Lineage for Parent {
     const MARK: LineageMark = LineageMark::Parent;
 }
+
+impl sealed::Sealed for Child {}
 
 impl Lineage for Child {
     const MARK: LineageMark = LineageMark::Child;
 }
 
 /// Shared marker family for whether the promoted child binary exists.
-pub(crate) trait ChildBinaryState {
+pub(crate) trait ChildBinaryState: sealed::Sealed {
     const PRESENT: bool;
 }
 
 /// Shared marker family for whether the child runtime has acknowledged itself.
-pub(crate) trait ChildAckState {
+pub(crate) trait ChildAckState: sealed::Sealed {
     const ACKNOWLEDGED: bool;
 }
 
@@ -84,9 +92,13 @@ pub(crate) struct Absent;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Present;
 
+impl sealed::Sealed for Absent {}
+
 impl ChildBinaryState for Absent {
     const PRESENT: bool = false;
 }
+
+impl sealed::Sealed for Present {}
 
 impl ChildBinaryState for Present {
     const PRESENT: bool = true;
@@ -102,16 +114,20 @@ pub(crate) struct Unacknowledged;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Acknowledged;
 
+impl sealed::Sealed for Unacknowledged {}
+
 impl ChildAckState for Unacknowledged {
     const ACKNOWLEDGED: bool = false;
 }
+
+impl sealed::Sealed for Acknowledged {}
 
 impl ChildAckState for Acknowledged {
     const ACKNOWLEDGED: bool = true;
 }
 
 /// Artifact-bearing payload of a prototype configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Artifact<L: Lineage> {
     /// Repo root containing the live artifact world.
     pub repo_root: PathBuf,
@@ -127,7 +143,7 @@ pub(crate) struct Artifact<L: Lineage> {
 }
 
 /// Binary-bearing payload of a prototype configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Binary<L: Lineage, ChildState: ChildBinaryState, AckState: ChildAckState> {
     /// Whether the currently active parent process is still running.
     pub parent_running: bool,
@@ -142,17 +158,17 @@ pub(crate) struct Binary<L: Lineage, ChildState: ChildBinaryState, AckState: Chi
 
 /// One prototype configuration indexed by running-binary lineage and
 /// artifact-world lineage.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Prototype<
     Running: Lineage,
     ArtifactWorld: Lineage,
     ChildState: ChildBinaryState,
     AckState: ChildAckState,
 > {
-    pub(crate) campaign_id: String,
-    pub(crate) campaign_manifest_path: PathBuf,
-    pub(crate) node: Prototype1NodeRecord,
-    pub(crate) resolved: ResolvedTreatmentBranch,
+    pub(in crate::cli::prototype1_state) campaign_id: String,
+    pub(in crate::cli::prototype1_state) campaign_manifest_path: PathBuf,
+    pub(in crate::cli::prototype1_state) node: Prototype1NodeRecord,
+    pub(in crate::cli::prototype1_state) resolved: ResolvedTreatmentBranch,
     pub(crate) artifact: Artifact<ArtifactWorld>,
     pub(crate) binary: Binary<Running, ChildState, AckState>,
 }
@@ -189,6 +205,41 @@ impl<
     AckState: ChildAckState,
 > Prototype<Running, ArtifactWorld, ChildState, AckState>
 {
+    pub(crate) fn campaign_id(&self) -> &str {
+        &self.campaign_id
+    }
+
+    pub(crate) fn campaign_manifest_path(&self) -> &Path {
+        &self.campaign_manifest_path
+    }
+
+    pub(crate) fn node(&self) -> &Prototype1NodeRecord {
+        &self.node
+    }
+
+    pub(crate) fn resolved(&self) -> &ResolvedTreatmentBranch {
+        &self.resolved
+    }
+
+    pub(crate) fn artifact(&self) -> &Artifact<ArtifactWorld> {
+        &self.artifact
+    }
+
+    pub(crate) fn binary(&self) -> &Binary<Running, ChildState, AckState> {
+        &self.binary
+    }
+
+    fn child_lifecycle(&self) -> Option<super::event::ChildRuntimeLifecycle> {
+        if !ChildState::PRESENT {
+            return None;
+        }
+        if AckState::ACKNOWLEDGED {
+            Some(super::event::ChildRuntimeLifecycle::Acknowledged)
+        } else {
+            Some(super::event::ChildRuntimeLifecycle::Built)
+        }
+    }
+
     fn entry(&self, transition_id: TransitionId, phase: CommitPhase) -> Entry {
         Entry {
             transition_id,
@@ -223,8 +274,7 @@ impl<
                 running_binary: self.binary.parent_running,
                 running_lineage: Running::MARK,
                 artifact_lineage: ArtifactWorld::MARK,
-                child_binary_present: ChildState::PRESENT,
-                child_running: AckState::ACKNOWLEDGED,
+                child_lifecycle: self.child_lifecycle(),
             },
             hashes: Hashes {
                 // TODO(2026-04-26): These clones are downstream of
@@ -236,6 +286,44 @@ impl<
                 proposed: self.artifact.proposed_content_hash.clone(),
             },
         }
+    }
+}
+
+impl<L: Lineage> Artifact<L> {
+    pub(crate) fn repo_root(&self) -> &Path {
+        &self.repo_root
+    }
+
+    pub(crate) fn target_relpath(&self) -> &Path {
+        &self.target_relpath
+    }
+
+    pub(crate) fn source_content_hash(&self) -> &ContentHash {
+        &self.source_content_hash
+    }
+
+    pub(crate) fn current_content_hash(&self) -> &ContentHash {
+        &self.current_content_hash
+    }
+
+    pub(crate) fn proposed_content_hash(&self) -> &ContentHash {
+        &self.proposed_content_hash
+    }
+}
+
+impl<L: Lineage, ChildState: ChildBinaryState, AckState: ChildAckState>
+    Binary<L, ChildState, AckState>
+{
+    pub(crate) fn parent_running(&self) -> bool {
+        self.parent_running
+    }
+
+    pub(crate) fn child_path(&self) -> &Path {
+        &self.child_path
+    }
+
+    pub(crate) fn child_runtime(&self) -> Option<RuntimeId> {
+        self.child_runtime
     }
 }
 

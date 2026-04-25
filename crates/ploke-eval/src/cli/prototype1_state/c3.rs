@@ -34,11 +34,11 @@ use crate::intervention::{
 use crate::spec::PrepareError;
 
 use super::c1::{Acknowledged, Artifact, Binary, Child, ChildAckState, Parent, Present, Prototype};
-use super::event::{ContentHash, Paths, RecordedAt, Refs, RuntimeId};
-use super::invocation::{Invocation, invocation_path, launch_args, write_invocation};
+use super::event::{ChildRuntimeLifecycle, ContentHash, Paths, RecordedAt, Refs, RuntimeId};
+use super::invocation::{ChildInvocation, invocation_path, write_child_invocation};
 use super::journal::{
-    JournalEntry, PrototypeJournal, PrototypeJournalError, ReadyEntry, SpawnEntry, SpawnPhase,
-    SpawnResult,
+    JournalEntry, PrototypeJournal, PrototypeJournalError, ReadyEntry, SpawnEntry,
+    SpawnObservation, SpawnPhase,
 };
 
 /// Environment key used to tell the child which runtime instance it is.
@@ -65,11 +65,16 @@ fn spawn_entry<AckState>(
     argv: Vec<String>,
     parent_pid: u32,
     child_pid: Option<u32>,
-    result: Option<SpawnResult>,
+    result: Option<SpawnObservation>,
 ) -> SpawnEntry
 where
     AckState: ChildAckState,
 {
+    let child_lifecycle = match result {
+        Some(SpawnObservation::Acknowledged) => ChildRuntimeLifecycle::Acknowledged,
+        Some(SpawnObservation::TerminatedBeforeAcknowledged { .. }) => ChildRuntimeLifecycle::Terminated,
+        None => ChildRuntimeLifecycle::Spawned,
+    };
     SpawnEntry {
         runtime_id,
         phase,
@@ -100,9 +105,9 @@ where
             running_binary: config.binary.parent_running,
             running_lineage: crate::cli::prototype1_state::event::LineageMark::Parent,
             artifact_lineage: crate::cli::prototype1_state::event::LineageMark::Child,
-            child_binary_present: true,
-            child_running: AckState::ACKNOWLEDGED,
+            child_lifecycle: Some(child_lifecycle),
         },
+        child_lifecycle,
         parent_pid,
         child_pid,
         argv,
@@ -290,12 +295,14 @@ pub(crate) enum Rejected {
 }
 
 impl Rejected {
-    fn into_result(self) -> SpawnResult {
+    fn exited_before_ready_result(&self) -> Option<SpawnObservation> {
         match self {
             Self::ExitedBeforeReady { exit_code, .. } => {
-                SpawnResult::ExitedBeforeReady { exit_code }
+                Some(SpawnObservation::TerminatedBeforeAcknowledged {
+                    exit_code: *exit_code,
+                })
             }
-            Self::ReadyTimedOut { waited_ms, .. } => SpawnResult::ReadyTimedOut { waited_ms },
+            Self::ReadyTimedOut { .. } => None,
         }
     }
 }
@@ -454,19 +461,19 @@ impl Intervention<C3, C4> for SpawnChild {
             },
         )?;
         let invocation_path = invocation_path(&from.node.node_dir, self.runtime_id);
-        let invocation = Invocation::child(
+        let invocation = ChildInvocation::new(
             from.campaign_id.clone(),
             from.node.node_id.clone(),
             self.runtime_id,
             records.path().to_path_buf(),
         );
-        write_invocation(&invocation_path, &invocation).map_err(|source| {
+        write_child_invocation(&invocation_path, &invocation).map_err(|source| {
             CommitError::Transition(SpawnChildError::WriteInvocation {
                 node_id: from.node.node_id.clone(),
                 source,
             })
         })?;
-        let child_argv = launch_args(&invocation_path);
+        let child_argv = invocation.launch_args(&invocation_path);
 
         let handoff = Handoff::new(records.path().to_path_buf());
         let parent_pid = std::process::id();
@@ -551,7 +558,7 @@ impl Intervention<C3, C4> for SpawnChild {
                             child_argv.clone(),
                             parent_pid,
                             Some(child_pid),
-                            Some(SpawnResult::Acknowledged),
+                            Some(SpawnObservation::Acknowledged),
                         ))
                     })
                     .map_err(|source| CommitError::Record {
@@ -578,43 +585,45 @@ impl Intervention<C3, C4> for SpawnChild {
                     rejected = ?rejected,
                     "spawn handshake rejected"
                 );
-                let (_, failed_node) = update_node_status(
-                    &from.campaign_id,
-                    &from.campaign_manifest_path,
-                    &from.node.node_id,
-                    Prototype1NodeStatus::Failed,
-                )
-                .map_err(|source| {
-                    CommitError::Transition(SpawnChildError::UpdateNodeStatus {
-                        node_id: from.node.node_id.clone(),
-                        source,
-                    })
-                })?;
-                let failed = Prototype {
-                    campaign_id: from.campaign_id,
-                    campaign_manifest_path: from.campaign_manifest_path,
-                    node: failed_node,
-                    resolved: from.resolved,
-                    artifact: from.artifact,
-                    binary: from.binary,
-                };
-
-                handoff
-                    .with_txn(|txn| {
-                        txn.record_observed(spawn_entry(
-                            &failed,
-                            self.runtime_id,
-                            SpawnPhase::Observed,
-                            child_argv.clone(),
-                            parent_pid,
-                            Some(child_pid),
-                            Some(rejected.clone().into_result()),
-                        ))
-                    })
-                    .map_err(|source| CommitError::Record {
-                        phase: crate::intervention::CommitPhase::After,
-                        source,
+                if let Some(result) = rejected.exited_before_ready_result() {
+                    let (_, failed_node) = update_node_status(
+                        &from.campaign_id,
+                        &from.campaign_manifest_path,
+                        &from.node.node_id,
+                        Prototype1NodeStatus::Failed,
+                    )
+                    .map_err(|source| {
+                        CommitError::Transition(SpawnChildError::UpdateNodeStatus {
+                            node_id: from.node.node_id.clone(),
+                            source,
+                        })
                     })?;
+                    let failed = Prototype {
+                        campaign_id: from.campaign_id,
+                        campaign_manifest_path: from.campaign_manifest_path,
+                        node: failed_node,
+                        resolved: from.resolved,
+                        artifact: from.artifact,
+                        binary: from.binary,
+                    };
+
+                    handoff
+                        .with_txn(|txn| {
+                            txn.record_observed(spawn_entry(
+                                &failed,
+                                self.runtime_id,
+                                SpawnPhase::Observed,
+                                child_argv.clone(),
+                                parent_pid,
+                                Some(child_pid),
+                                Some(result),
+                            ))
+                        })
+                        .map_err(|source| CommitError::Record {
+                            phase: crate::intervention::CommitPhase::After,
+                            source,
+                        })?;
+                }
 
                 Ok(Outcome::Rejected(rejected))
             }

@@ -213,6 +213,24 @@ fn load_prototype1_branch_evaluation_report(
     })
 }
 
+fn spawn_prototype1_child_runner(
+    binary_path: &Path,
+    repo_root: &Path,
+    invocation_path: &Path,
+    invocation: &crate::cli::prototype1_state::invocation::ChildInvocation,
+) -> Result<std::process::Output, PrepareError> {
+    crate::cli::prototype1_state::invocation::write_child_invocation(invocation_path, invocation)?;
+    let child_argv = invocation.launch_args(invocation_path);
+    ProcessCommand::new(binary_path)
+        .args(&child_argv)
+        .current_dir(repo_root)
+        .output()
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_runner_spawn",
+            detail: source.to_string(),
+        })
+}
+
 /// Construct a persisted runner result for child-binary build failure.
 ///
 /// This keeps compile failure in the explicit node/result state machine instead
@@ -620,50 +638,38 @@ pub(super) async fn execute_prototype1_runner_node(
 pub(super) async fn execute_prototype1_runner_invocation(
     invocation_path: &Path,
 ) -> Result<Prototype1RunnerResult, PrepareError> {
-    let invocation = crate::cli::prototype1_state::invocation::load(invocation_path)?;
-    let manifest_path = campaign_manifest_path(&invocation.campaign_id)?;
-    let node = load_node_record(&manifest_path, &invocation.node_id)?;
-    let request = load_runner_request(&manifest_path, &invocation.node_id)?;
+    let invocation =
+        crate::cli::prototype1_state::invocation::load_executable_child(invocation_path)?;
+    let manifest_path = campaign_manifest_path(invocation.campaign_id())?;
+    let node = load_node_record(&manifest_path, invocation.node_id())?;
+    let request = load_runner_request(&manifest_path, invocation.node_id())?;
 
     debug!(
         target: EXECUTION_DEBUG_TARGET,
-        campaign = %invocation.campaign_id,
-        node_id = %invocation.node_id,
-        role = ?invocation.role,
+        campaign = %invocation.campaign_id(),
+        node_id = %invocation.node_id(),
         workspace_root = %request.workspace_root.display(),
         invocation_path = %invocation_path.display(),
-        "loaded prototype1 runner invocation"
+        "loaded executable prototype1 child invocation"
     );
 
-    match invocation.role {
-        crate::cli::prototype1_state::invocation::Role::Child => {}
-        crate::cli::prototype1_state::invocation::Role::Successor => {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "successor invocation '{}' is not executable yet",
-                    invocation_path.display()
-                ),
-            });
-        }
-    }
-
     let _ = update_node_status(
-        &invocation.campaign_id,
+        invocation.campaign_id(),
         &manifest_path,
-        &invocation.node_id,
+        invocation.node_id(),
         Prototype1NodeStatus::Running,
     )?;
     record_prototype1_child_ready(
-        &invocation.campaign_id,
+        invocation.campaign_id(),
         &manifest_path,
         &node,
         &request.workspace_root,
-        invocation.runtime_id,
-        &invocation.journal_path,
+        invocation.runtime_id(),
+        invocation.journal_path(),
     )?;
 
     let outcome = run_prototype1_branch_evaluation(
-        &invocation.campaign_id,
+        invocation.campaign_id(),
         &request.branch_id,
         &request.workspace_root,
         request.stop_on_error,
@@ -671,9 +677,9 @@ pub(super) async fn execute_prototype1_runner_invocation(
     .await;
 
     let result = match outcome {
-        Ok(report) => build_succeeded_runner_result(&invocation.campaign_id, &node, &report),
+        Ok(report) => build_succeeded_runner_result(invocation.campaign_id(), &node, &report),
         Err(err) => build_treatment_failed_runner_result(
-            &invocation.campaign_id,
+            invocation.campaign_id(),
             &node,
             err.to_string(),
             None,
@@ -682,19 +688,19 @@ pub(super) async fn execute_prototype1_runner_invocation(
         ),
     };
     let result = record_attempt_runner_result(
-        &invocation.campaign_id,
+        invocation.campaign_id(),
         &manifest_path,
         &node,
-        invocation.runtime_id,
+        invocation.runtime_id(),
         result,
     )?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
-        campaign = %invocation.campaign_id,
-        node_id = %invocation.node_id,
+        campaign = %invocation.campaign_id(),
+        node_id = %invocation.node_id(),
         disposition = ?result.disposition,
         status = ?result.status,
-        "prototype1 runner invocation completed"
+        "prototype1 child invocation completed"
     );
     Ok(result)
 }
@@ -785,14 +791,12 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
     let journal_path = prototype1_transition_journal_path(&baseline_manifest_path);
     let invocation_path =
         crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
-    let invocation = crate::cli::prototype1_state::invocation::Invocation::child(
+    let invocation = crate::cli::prototype1_state::invocation::ChildInvocation::new(
         baseline_campaign_id.to_string(),
         node.node_id.clone(),
         runtime_id,
         journal_path.clone(),
     );
-    crate::cli::prototype1_state::invocation::write_invocation(&invocation_path, &invocation)?;
-    let child_argv = crate::cli::prototype1_state::invocation::launch_args(&invocation_path);
     debug!(
         target: EXECUTION_DEBUG_TARGET,
         campaign = %baseline_campaign_id,
@@ -801,16 +805,10 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
         runtime_id = %runtime_id,
         binary_path = %node.binary_path.display(),
         invocation_path = %invocation_path.display(),
-        "spawning legacy prototype1 child runner"
+        "spawning prototype1 leaf child runner"
     );
-    let output = ProcessCommand::new(&node.binary_path)
-        .args(&child_argv)
-        .current_dir(repo_root)
-        .output()
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_runner_spawn",
-            detail: source.to_string(),
-        })?;
+    let output =
+        spawn_prototype1_child_runner(&node.binary_path, repo_root, &invocation_path, &invocation)?;
 
     let attempt_result_path =
         crate::cli::prototype1_state::invocation::result_path(&node.node_dir, runtime_id);

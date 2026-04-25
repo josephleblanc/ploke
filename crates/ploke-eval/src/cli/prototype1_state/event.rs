@@ -78,6 +78,24 @@ pub(crate) enum LineageMark {
     Child,
 }
 
+/// Closed lifecycle carrier for one child runtime after the child binary exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ChildRuntimeLifecycle {
+    Built,
+    Spawned,
+    Acknowledged,
+    Terminated,
+}
+
+/// Closed terminal observation carrier for one observed child evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ObservedChildTerminal {
+    Succeeded,
+    Failed,
+}
+
 /// Stable content hash witness for artifact state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -131,8 +149,8 @@ pub(crate) struct World {
     pub running_binary: bool,
     pub running_lineage: LineageMark,
     pub artifact_lineage: LineageMark,
-    pub child_binary_present: bool,
-    pub child_running: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_lifecycle: Option<ChildRuntimeLifecycle>,
 }
 
 /// Hash witnesses captured around one transition boundary.

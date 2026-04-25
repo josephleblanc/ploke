@@ -48,6 +48,9 @@ pub enum Outcome<To, Rejected> {
 /// - the binary state currently associated with that artifact world
 ///
 /// If either side changes, the system has moved to a different configuration.
+///
+/// Implementations should prefer move-only carriers with private fields and
+/// trusted transition constructors over broadly forgeable record structs.
 pub trait Configuration {
     /// The underlying artifact-bearing state, such as a source tree snapshot.
     type ArtifactState;

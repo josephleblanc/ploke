@@ -10,29 +10,56 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tracing::{debug, instrument};
 
+use crate::branch_evaluation::BranchDisposition;
 use crate::cli::Prototype1BranchEvaluationReport;
 use crate::intervention::{
     CommitError, CommitPhase, Configuration, Intervention, Outcome, Prototype1NodeRecord,
-    Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerResult, RecordStore,
-    Surface, load_node_record, load_runner_result_at, update_node_status,
+    Prototype1RunnerDisposition, Prototype1RunnerResult, RecordStore, Surface, load_node_record,
+    load_runner_result_at,
 };
 use crate::spec::PrepareError;
 
 use super::c3::C4;
-use super::event::{Paths, RecordedAt, Refs, RuntimeId, TransitionId, World};
+use super::event::{
+    ChildRuntimeLifecycle, ObservedChildTerminal, Paths, RecordedAt, Refs, RuntimeId,
+    TransitionId, World,
+};
 use super::invocation::result_path;
-use super::journal::{CompletionEntry, CompletionResult, JournalEntry, PrototypeJournal};
+use super::journal::{CompletionEntry, JournalEntry, ObservedChildResult, PrototypeJournal};
 
 const RESULT_TIMEOUT: Duration = Duration::from_secs(300);
 const RESULT_POLL: Duration = Duration::from_millis(100);
 
-/// `C5`: parent has observed a successful child self-evaluation and loaded the
-/// resulting evaluation artifact.
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Report {
+    pub overall_disposition: BranchDisposition,
+}
+
+#[derive(Debug)]
+pub(crate) struct SuccessfulObservation {
+    pub runner_result: Prototype1RunnerResult,
+    pub evaluation: Prototype1BranchEvaluationReport,
+}
+
+#[derive(Debug)]
+pub(crate) struct FailedObservation {
+    pub runner_result: Prototype1RunnerResult,
+}
+
+/// Explicit observed child family after `C4`.
+#[derive(Debug)]
+pub(crate) enum ObservedChild {
+    Succeeded(SuccessfulObservation),
+    Failed(FailedObservation),
+}
+
+/// `C5`: parent has observed one terminal child state and reduced it to a
+/// policy-facing report without selecting or promoting anything yet.
+#[derive(Debug)]
 pub(crate) struct C5 {
     pub base: C4,
-    pub runner_result: Prototype1RunnerResult,
-    pub report: Prototype1BranchEvaluationReport,
+    pub report: Report,
+    pub observed: ObservedChild,
 }
 
 impl Configuration for C5 {
@@ -53,12 +80,17 @@ fn completion_entry(
     node: &Prototype1NodeRecord,
     transition_id: TransitionId,
     phase: CommitPhase,
-    result: Option<CompletionResult>,
+    result: Option<ObservedChildResult>,
 ) -> CompletionEntry {
     let runtime_id = config
         .binary
         .child_runtime
         .expect("C4 must carry a concrete child runtime");
+    let child_lifecycle = if result.is_some() {
+        ChildRuntimeLifecycle::Terminated
+    } else {
+        ChildRuntimeLifecycle::Acknowledged
+    };
     CompletionEntry {
         transition_id,
         runtime_id,
@@ -87,9 +119,9 @@ fn completion_entry(
             running_binary: config.binary.parent_running,
             running_lineage: super::event::LineageMark::Parent,
             artifact_lineage: super::event::LineageMark::Child,
-            child_binary_present: true,
-            child_running: result.is_none(),
+            child_lifecycle: Some(child_lifecycle),
         },
+        child_lifecycle,
         runner_result_path: result_path(&node.node_dir, runtime_id),
         result,
     }
@@ -124,12 +156,6 @@ pub(crate) enum ObserveChildError {
         #[source]
         source: PrepareError,
     },
-    #[error("failed to update node '{node_id}' status")]
-    UpdateNodeStatus {
-        node_id: String,
-        #[source]
-        source: PrepareError,
-    },
     #[error("runner result for node '{node_id}' did not include an evaluation artifact path")]
     MissingEvaluationArtifactPath { node_id: String },
     #[error("failed to read evaluation report '{path}': {source}")]
@@ -142,39 +168,6 @@ pub(crate) enum ObserveChildError {
         path: PathBuf,
         source: serde_json::Error,
     },
-}
-
-/// Committed non-success result for parent-side child completion observation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Rejected {
-    ResultTimedOut {
-        runtime_id: RuntimeId,
-        waited_ms: u64,
-    },
-    RunnerFailed {
-        runtime_id: RuntimeId,
-        disposition: Prototype1RunnerDisposition,
-        detail: Option<String>,
-        exit_code: Option<i32>,
-    },
-}
-
-impl Rejected {
-    fn into_result(self) -> CompletionResult {
-        match self {
-            Self::ResultTimedOut { waited_ms, .. } => CompletionResult::TimedOut { waited_ms },
-            Self::RunnerFailed {
-                disposition,
-                detail,
-                exit_code,
-                ..
-            } => CompletionResult::Failed {
-                disposition,
-                detail,
-                exit_code,
-            },
-        }
-    }
 }
 
 /// Surface over the runner result path used by child-completion observation.
@@ -207,6 +200,29 @@ impl ObserveChild {
             transition_id: TransitionId::new(),
         }
     }
+}
+
+impl Report {
+    fn reject() -> Self {
+        Self {
+            overall_disposition: BranchDisposition::Reject,
+        }
+    }
+}
+
+fn terminal_from_result(result: &ObservedChildResult) -> ObservedChildTerminal {
+    match result {
+        ObservedChildResult::Succeeded { .. } => ObservedChildTerminal::Succeeded,
+        ObservedChildResult::Failed { .. } => ObservedChildTerminal::Failed,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Rejected {
+    ResultTimedOut {
+        runtime_id: RuntimeId,
+        waited_ms: u64,
+    },
 }
 
 impl Intervention<C4, C5> for ObserveChild {
@@ -276,19 +292,23 @@ impl Intervention<C4, C5> for ObserveChild {
                     })?;
 
                 if runner_result.disposition != Prototype1RunnerDisposition::Succeeded {
-                    let rejected = Rejected::RunnerFailed {
-                        runtime_id,
+                    let result = ObservedChildResult::Failed {
                         disposition: runner_result.disposition,
                         detail: runner_result.detail.clone(),
                         exit_code: runner_result.exit_code,
                     };
+                    let next = C5 {
+                        base: C4 { node, ..from },
+                        report: Report::reject(),
+                        observed: ObservedChild::Failed(FailedObservation { runner_result }),
+                    };
                     records
                         .append(JournalEntry::ObserveChild(completion_entry(
-                            &from,
-                            &node,
+                            &next.base,
+                            &next.base.node,
                             self.transition_id,
                             CommitPhase::After,
-                            Some(rejected.clone().into_result()),
+                            Some(result.clone()),
                         )))
                         .map_err(|source| CommitError::Record {
                             phase: CommitPhase::After,
@@ -296,12 +316,12 @@ impl Intervention<C4, C5> for ObserveChild {
                         })?;
                     debug!(
                         target: ploke_core::EXECUTION_DEBUG_TARGET,
-                        node_id = %from.node.node_id,
+                        node_id = %next.base.node.node_id,
                         runtime_id = %runtime_id,
-                        rejected = ?rejected,
+                        terminal = ?terminal_from_result(&result),
                         "observed failed child runner result"
                     );
-                    return Ok(Outcome::Rejected(rejected));
+                    return Ok(Outcome::Advanced(next));
                 }
 
                 let evaluation_artifact_path =
@@ -314,8 +334,17 @@ impl Intervention<C4, C5> for ObserveChild {
                     load_report(&evaluation_artifact_path).map_err(CommitError::Transition)?;
                 let next = C5 {
                     base: C4 { node, ..from },
-                    runner_result: runner_result.clone(),
-                    report: report.clone(),
+                    report: Report {
+                        overall_disposition: report.overall_disposition.clone(),
+                    },
+                    observed: ObservedChild::Succeeded(SuccessfulObservation {
+                        runner_result,
+                        evaluation: report.clone(),
+                    }),
+                };
+                let result = ObservedChildResult::Succeeded {
+                    evaluation_artifact_path,
+                    overall_disposition: report.overall_disposition.clone(),
                 };
 
                 records
@@ -324,10 +353,7 @@ impl Intervention<C4, C5> for ObserveChild {
                         &next.base.node,
                         self.transition_id,
                         CommitPhase::After,
-                        Some(CompletionResult::Succeeded {
-                            evaluation_artifact_path,
-                            overall_disposition: report.overall_disposition.clone(),
-                        }),
+                        Some(result.clone()),
                     )))
                     .map_err(|source| CommitError::Record {
                         phase: CommitPhase::After,
@@ -349,30 +375,6 @@ impl Intervention<C4, C5> for ObserveChild {
                     runtime_id,
                     waited_ms: waited.as_millis() as u64,
                 };
-                let (_, failed_node) = update_node_status(
-                    &from.campaign_id,
-                    &from.campaign_manifest_path,
-                    &from.node.node_id,
-                    Prototype1NodeStatus::Failed,
-                )
-                .map_err(|source| {
-                    CommitError::Transition(ObserveChildError::UpdateNodeStatus {
-                        node_id: from.node.node_id.clone(),
-                        source,
-                    })
-                })?;
-                records
-                    .append(JournalEntry::ObserveChild(completion_entry(
-                        &from,
-                        &failed_node,
-                        self.transition_id,
-                        CommitPhase::After,
-                        Some(rejected.clone().into_result()),
-                    )))
-                    .map_err(|source| CommitError::Record {
-                        phase: CommitPhase::After,
-                        source,
-                    })?;
                 debug!(
                     target: ploke_core::EXECUTION_DEBUG_TARGET,
                     node_id = %from.node.node_id,
