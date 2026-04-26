@@ -39,10 +39,12 @@
 //! 2. The parent launches the binary built from that selected node's artifact
 //!    state.
 //! 3. The successor validates the continuation policy, writes a ready
-//!    acknowledgement, and idles only within a bounded standby window.
+//!    acknowledgement, rehydrates the controller, and runs one bounded next
+//!    generation.
 //!
-//! The current successor path is a bootstrap/handoff smoke path. It is not yet
-//! the full rehydrating controller that starts the next generation itself.
+//! The current successor path is a bounded rehydration path. It runs one next
+//! generation after handoff instead of looping forever or recursively spawning
+//! descendants.
 //!
 //! # Safety invariants
 //!
@@ -50,8 +52,8 @@
 //!   in this module.
 //! - The child runner executes one node and does not recurse or spawn further
 //!   descendants.
-//! - The successor runner is bounded by scheduler continuation policy and
-//!   standby timeout.
+//! - The successor runner is bounded by scheduler continuation policy and one
+//!   rehydrated generation.
 //! - Compile failures and treatment failures are persisted as runner results
 //!   instead of becoming implicit control-flow loss.
 //! - The controller's parent workspace is not mutated during child evaluation;
@@ -73,9 +75,9 @@
 //! # Non-goals
 //!
 //! This module is not the scheduler and is not yet the full self-continuing
-//! trampoline. It can bootstrap a selected successor, but it does not choose
-//! among siblings or rehydrate the successor as a new generation controller.
-//! Those remain controller/state-model concerns.
+//! trampoline. It can bootstrap a selected successor and delegate one
+//! rehydrated generation to the controller, but sibling selection and durable
+//! parent authority remain controller/state-model concerns.
 //!
 //! Current process tree:
 //!
@@ -96,7 +98,7 @@
 //! successor: loop prototype1-runner --execute
 //!   -> validate continuation
 //!   -> write successor-ready acknowledgement
-//!   -> bounded standby
+//!   -> rehydrate controller for one bounded next generation
 //! ```
 //!
 //! Keeping this path local makes it easier to audit for runaway-process risks.
@@ -111,16 +113,21 @@ use crate::cli::prototype1_state::cli_facing::{
     Prototype1BranchEvaluationReport, build_prototype1_branch_evaluation_report,
     ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
     prototype1_branch_evaluation_path, prototype1_source_generation,
+    prototype1_successor_trace_path, run_prototype1_successor_controller,
 };
 use crate::cli::prototype1_state::journal::prototype1_transition_journal_path;
 use crate::intervention::{
-    Prototype1ContinuationDisposition, Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerResult, TreatmentBranchEvaluationSummary, clear_runner_result, decide_node_successor_continuation, load_node_record, load_or_default_branch_registry, load_or_register_treatment_evaluation_node, load_runner_request, load_runner_result_at, load_scheduler_state, prototype1_branch_registry_path, record_runner_result, record_treatment_branch_evaluation, resolve_treatment_branch, update_node_status, update_node_workspace_root, write_runner_result_at
+    Prototype1ContinuationDisposition, Prototype1NodeStatus, Prototype1RunnerDisposition,
+    Prototype1RunnerResult, TreatmentBranchEvaluationSummary, clear_runner_result,
+    load_node_record, load_or_default_branch_registry, load_or_register_treatment_evaluation_node,
+    load_runner_request, load_runner_result_at, load_scheduler_state,
+    prototype1_branch_registry_path, record_runner_result, record_treatment_branch_evaluation,
+    resolve_treatment_branch, update_node_status, update_node_workspace_root,
+    write_runner_result_at,
 };
 
 const SUCCESSOR_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const SUCCESSOR_READY_POLL: std::time::Duration = std::time::Duration::from_millis(50);
-pub(crate) const SUCCESSOR_STANDBY_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(300);
 
 /// Outcome of one parent-side node execution attempt.
 ///
@@ -268,23 +275,66 @@ fn record_prototype1_successor_ready(
     Ok(record)
 }
 
+fn record_prototype1_successor_completion(
+    invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
+    manifest_path: &Path,
+    status: crate::cli::prototype1_state::invocation::SuccessorCompletionStatus,
+    trace_path: Option<PathBuf>,
+    detail: Option<String>,
+) -> Result<crate::cli::prototype1_state::invocation::SuccessorCompletionRecord, PrepareError> {
+    let node = load_node_record(manifest_path, invocation.node_id())?;
+    let completion_path = crate::cli::prototype1_state::invocation::successor_completion_path(
+        &node.node_dir,
+        invocation.runtime_id(),
+    );
+    let record = crate::cli::prototype1_state::invocation::SuccessorCompletionRecord {
+        schema_version:
+            crate::cli::prototype1_state::invocation::SUCCESSOR_COMPLETION_SCHEMA_VERSION
+                .to_string(),
+        campaign_id: invocation.campaign_id().to_string(),
+        node_id: invocation.node_id().to_string(),
+        runtime_id: invocation.runtime_id(),
+        status,
+        trace_path,
+        detail,
+        recorded_at: Utc::now().to_rfc3339(),
+    };
+    crate::cli::prototype1_state::invocation::write_successor_completion_record(
+        &completion_path,
+        &record,
+    )?;
+    Ok(record)
+}
+
 fn validate_prototype1_successor_continuation(
     invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
     manifest_path: &Path,
 ) -> Result<(), PrepareError> {
     let scheduler = load_scheduler_state(manifest_path)?;
     let node = load_node_record(manifest_path, invocation.node_id())?;
-    let decision = decide_node_successor_continuation(&scheduler, &node, Some("keep"));
+    let decision = scheduler
+        .last_continuation_decision
+        .as_ref()
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor continuation for node '{}' has no recorded continuation decision",
+                invocation.node_id()
+            ),
+        })?;
 
-    if decision.disposition == Prototype1ContinuationDisposition::ContinueReady {
+    if decision.disposition == Prototype1ContinuationDisposition::ContinueReady
+        && decision.selected_next_branch_id.as_deref() == Some(node.branch_id.as_str())
+    {
         return Ok(());
     }
 
     Err(PrepareError::InvalidBatchSelection {
         detail: format!(
-            "successor continuation rejected for node '{}' with disposition {:?} (next_generation={}, total_nodes_after_continue={})",
+            "successor continuation rejected for node '{}' with disposition {:?} selected_next_branch_id={:?} node_branch_id={} (next_generation={}, total_nodes_after_continue={})",
             invocation.node_id(),
             decision.disposition,
+            decision.selected_next_branch_id,
+            node.branch_id,
             decision.next_generation,
             decision.total_nodes_after_continue
         ),
@@ -977,10 +1027,47 @@ pub(super) async fn execute_prototype1_successor_invocation(
         node_id = %invocation.node_id(),
         runtime_id = %invocation.runtime_id(),
         pid = ready.pid,
-        standby_secs = SUCCESSOR_STANDBY_TIMEOUT.as_secs(),
         "prototype1 successor acknowledged handoff"
     );
-    std::thread::sleep(SUCCESSOR_STANDBY_TIMEOUT);
+    let trace_path = prototype1_successor_trace_path(
+        &manifest_path,
+        invocation.node_id(),
+        invocation.runtime_id(),
+    );
+    match run_prototype1_successor_controller(
+        invocation.campaign_id(),
+        invocation.node_id(),
+        invocation.runtime_id(),
+    )
+    .await
+    {
+        Ok(_report) => {
+            let _ = record_prototype1_successor_completion(
+                &invocation,
+                &manifest_path,
+                crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Succeeded,
+                Some(trace_path),
+                None,
+            )?;
+        }
+        Err(err) => {
+            let _ = record_prototype1_successor_completion(
+                &invocation,
+                &manifest_path,
+                crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Failed,
+                Some(trace_path),
+                Some(err.to_string()),
+            )?;
+            return Err(err);
+        }
+    }
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %invocation.campaign_id(),
+        node_id = %invocation.node_id(),
+        runtime_id = %invocation.runtime_id(),
+        "prototype1 successor completed one rehydrated generation"
+    );
     Ok(ready)
 }
 
