@@ -1,8 +1,6 @@
-#![allow(dead_code)] // REMOVE BY 2026-04-26: worktree backend scaffold is not wired into the live controller yet
-
 //! Workspace realization backends for Prototype 1.
 //!
-//! This module keeps branch/workspace management behind a narrow trait so the
+//! This module keeps branch/workspace management behind an adapter trait so the
 //! active generation's logic does not depend directly on git. Git worktrees
 //! are the first backend because they solve the current workspace
 //! branching/restore problem cheaply, but they are not the semantic model.
@@ -144,8 +142,25 @@ pub(crate) enum BackendError {
         path: PathBuf,
         dirty_paths: Vec<PathBuf>,
     },
+    #[error("active checkout '{path}' has local changes and cannot be switched: {dirty_paths:?}")]
+    DirtyActiveCheckout {
+        path: PathBuf,
+        dirty_paths: Vec<PathBuf>,
+    },
+    #[error("node worktree path '{observed}' did not match expected managed path '{expected}'")]
+    WorkspacePathMismatch {
+        expected: PathBuf,
+        observed: PathBuf,
+    },
     #[error("target file '{path}' is missing from the realized worktree")]
     MissingTarget { path: PathBuf },
+    #[error(
+        "branch '{branch}' target '{target_relpath}' does not match the expected artifact content"
+    )]
+    BranchTargetMismatch {
+        branch: GitBranch,
+        target_relpath: PathBuf,
+    },
     #[error(
         "target file '{path}' did not match stored source or proposed content before reuse \
          (observed={observed_hash}, source={source_hash}, proposed={proposed_hash})"
@@ -172,9 +187,9 @@ pub(crate) enum BackendError {
 /// Backend for realizing descendant workspaces.
 ///
 /// The backend owns the operational mechanics of descendant workspace
-/// materialization. The active generation should not need to know whether the
-/// child is realized by git worktree, a virtual workspace layer, or some other
-/// mechanism.
+/// materialization, artifact persistence, active-checkout installation, and
+/// cleanup. The active generation should not need to know whether a child is
+/// realized by git worktree, a virtual workspace layer, or another mechanism.
 pub(crate) trait WorkspaceBackend {
     /// Backend-specific branch identity for one realized child workspace.
     type Branch: Clone + std::fmt::Debug + PartialEq + Eq;
@@ -204,6 +219,50 @@ pub(crate) trait WorkspaceBackend {
         repo_root: &Path,
         workspace: &Workspace<Self::Branch, Self::Head, Self::Root>,
     ) -> Result<(), BackendError>;
+
+    /// Reconstruct the backend-owned workspace handle for one persisted node.
+    ///
+    /// This lets cleanup and handoff paths verify that a stored workspace root
+    /// is the backend-managed child workspace for that node before performing
+    /// any destructive operation.
+    fn workspace_for_node(
+        &self,
+        node_id: &str,
+        node_dir: &Path,
+        workspace_root: &Path,
+    ) -> Result<Workspace<Self::Branch, Self::Head, Self::Root>, BackendError>;
+
+    /// Persist the realized child workspace as a durable Artifact.
+    ///
+    /// For git this commits the mediated target on the child branch. Other
+    /// backends may snapshot, content-address, or otherwise record the same
+    /// semantic event.
+    fn persist_workspace_target(
+        &self,
+        workspace: &Workspace<Self::Branch, Self::Head, Self::Root>,
+        target_relpath: &Path,
+        message: &str,
+    ) -> Result<Self::Head, BackendError>;
+
+    /// Verify that the durable Artifact handle carries the expected bounded
+    /// target content before a caller installs or evaluates it.
+    fn verify_artifact_target(
+        &self,
+        repo_root: &Path,
+        artifact: &Self::Branch,
+        target_relpath: &Path,
+        expected_content: &str,
+    ) -> Result<(), BackendError>;
+
+    /// Install the selected durable Artifact into the stable active checkout.
+    ///
+    /// The active checkout path remains the parent runtime home; this operation
+    /// changes the Artifact hosted there.
+    fn install_artifact_in_active_checkout(
+        &self,
+        active_parent_root: &Path,
+        artifact: &Self::Branch,
+    ) -> Result<Self::Head, BackendError>;
 }
 
 /// Git worktree realization backend.
@@ -497,6 +556,157 @@ impl WorkspaceBackend for GitWorktreeBackend {
             ],
             format!("git worktree remove --force {}", workspace.root.display()),
         )
+    }
+
+    /// Reconstruct the managed child workspace identity for cleanup or
+    /// handoff.
+    ///
+    /// This is intentionally stricter than accepting an arbitrary persisted
+    /// path. A node-owned child worktree is only cleanup-eligible when the
+    /// persisted workspace root still matches the backend's deterministic
+    /// allocation under that node directory.
+    fn workspace_for_node(
+        &self,
+        node_id: &str,
+        node_dir: &Path,
+        workspace_root: &Path,
+    ) -> Result<Workspace<Self::Branch, Self::Head, Self::Root>, BackendError> {
+        let expected = self.workspace_root(node_dir);
+        if workspace_root != expected {
+            return Err(BackendError::WorkspacePathMismatch {
+                expected,
+                observed: workspace_root.to_path_buf(),
+            });
+        }
+        Ok(Workspace {
+            parent_root: PathBuf::new(),
+            parent_head: GitCommit(String::new()),
+            branch: self.branch_name(node_id),
+            root: workspace_root.to_path_buf(),
+            head: GitCommit(String::new()),
+        })
+    }
+
+    /// Commit the mediated target in one child workspace so the branch becomes
+    /// a recoverable artifact before the temporary worktree is removed.
+    fn persist_workspace_target(
+        &self,
+        workspace: &Workspace<Self::Branch, Self::Head, Self::Root>,
+        target_relpath: &Path,
+        message: &str,
+    ) -> Result<Self::Head, BackendError> {
+        let dirty_paths = dirty_paths(&workspace.root)?;
+        let unexpected: Vec<_> = dirty_paths
+            .into_iter()
+            .filter(|path| path != target_relpath)
+            .collect();
+        if !unexpected.is_empty() {
+            return Err(BackendError::DirtyWorktree {
+                path: workspace.root.clone(),
+                dirty_paths: unexpected,
+            });
+        }
+
+        let target_arg = target_relpath.to_string_lossy();
+        run_git(
+            &workspace.root,
+            &["add", "--", target_arg.as_ref()],
+            format!("git add -- {}", target_relpath.display()),
+        )?;
+
+        let diff = Command::new("git")
+            .current_dir(&workspace.root)
+            .args(["diff", "--cached", "--quiet", "--", target_arg.as_ref()])
+            .status()
+            .map_err(|source| BackendError::GitCommand {
+                command: format!("git diff --cached --quiet -- {}", target_relpath.display()),
+                source,
+            })?;
+        if diff.success() {
+            return self.head_commit(&workspace.root);
+        }
+        if diff.code() != Some(1) {
+            return Err(BackendError::GitCommandStatus {
+                command: format!("git diff --cached --quiet -- {}", target_relpath.display()),
+                status: diff.code().unwrap_or(-1),
+                stderr: String::new(),
+            });
+        }
+
+        run_git(
+            &workspace.root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                message,
+                "--",
+                target_arg.as_ref(),
+            ],
+            format!(
+                "git commit --no-gpg-sign -m <message> -- {}",
+                target_relpath.display()
+            ),
+        )?;
+        self.head_commit(&workspace.root)
+    }
+
+    /// Verify that a branch already carries the expected target content.
+    fn verify_artifact_target(
+        &self,
+        repo_root: &Path,
+        artifact: &Self::Branch,
+        target_relpath: &Path,
+        expected_content: &str,
+    ) -> Result<(), BackendError> {
+        let spec = format!("{}:{}", artifact.0, target_relpath.to_string_lossy());
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args(["show", &spec])
+            .output()
+            .map_err(|source| BackendError::GitCommand {
+                command: format!("git show {spec}"),
+                source,
+            })?;
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: format!("git show {spec}"),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+        if output.stdout != expected_content.as_bytes() {
+            return Err(BackendError::BranchTargetMismatch {
+                branch: artifact.clone(),
+                target_relpath: target_relpath.to_path_buf(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Move the stable parent checkout to a selected durable branch.
+    ///
+    /// This intentionally refuses to switch a dirty active checkout. The loop
+    /// should preserve operator work and prior generation state rather than
+    /// carrying stray local changes across parent authority handoff.
+    fn install_artifact_in_active_checkout(
+        &self,
+        active_parent_root: &Path,
+        artifact: &Self::Branch,
+    ) -> Result<Self::Head, BackendError> {
+        let dirty_paths = dirty_paths(active_parent_root)?;
+        if !dirty_paths.is_empty() {
+            return Err(BackendError::DirtyActiveCheckout {
+                path: active_parent_root.to_path_buf(),
+                dirty_paths,
+            });
+        }
+        run_git(
+            active_parent_root,
+            &["switch", &artifact.0],
+            format!("git switch {artifact}"),
+        )?;
+        self.head_commit(active_parent_root)
     }
 }
 

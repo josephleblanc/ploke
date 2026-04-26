@@ -33,19 +33,23 @@
 //! Configuration: The operating world of one runtime. This includes type-state information that
 //! determines what is and is not an admissible intervention in that runtime.
 //!
-//! Artifact: An Artifact is the collection of files used to generate a Runtime. This is not an
-//! immutable object, and can be operated over by a Runtime by making an Intervention that applies a
-//! Patch. Applying a Patch to an Artifact produces another Artifact.
+//! Artifact: An Artifact is a checkout state: the collection of files that can
+//! hydrate a Runtime. Every checkout is an Artifact, including the stable
+//! active parent checkout and temporary child worktrees. A worktree path is a
+//! handle to an Artifact, not the Artifact's semantic identity. Applying a
+//! Patch to an Artifact produces another Artifact.
 //!
-//! Runtime: An executing process from a binary. A Runtime is built from an Artifact, and shares an
-//! "Identity" relationship with the Artifact that generated it. A Runtime may perform any
-//! Intervention, but the admissible Interventions are restricted by the current Configuration in
-//! which the Runtime exists. A Runtime may operate over the Surface of an Artifact to produce a
-//! Patch, and apply the Patch to create a new Artifact. The Artifact the Runtime operates over to
-//! produce a Patch may or may not be the same Artifact with created the Runtime. Notably, a Runtime
-//! cannot be evaluated externally, and must itself produce the Record containing the metrics used
-//! to evaluate it. This is because the Metrics are of a Procedure the Runtime is the operational
-//! environment for.
+//! Runtime: An executing process hydrated from an Artifact. Every Artifact is a
+//! dehydrated Runtime, and every Runtime is a potential Parent if it is granted
+//! parent authority. A Runtime may perform any Intervention, but the admissible
+//! Interventions are restricted by the current Configuration in which the
+//! Runtime exists. A Runtime may operate over the Surface of an Artifact to
+//! produce a Patch, and apply the Patch to create a new Artifact. The Artifact
+//! the Runtime operates over to produce a Patch may or may not be the same
+//! Artifact that hydrated the Runtime. Notably, a Runtime cannot be evaluated
+//! externally, and must itself produce the Record containing the metrics used
+//! to evaluate it. This is because the Metrics are of a Procedure the Runtime
+//! is the operational environment for.
 //!
 //! Journal: The append-only group of Records that are produced by all Runtimes. The Journal
 //! contains evaluations, handoff documents, Records of Interventions, and Journals of a given
@@ -60,6 +64,41 @@
 //! A Tree is operated over by a Runtime through an Intervention when the Runtime performs actions
 //! like checking out a branch, restoring an Artifact, or commiting a new Artifact. These operations
 //! also change the Artifact, and therefore are Interventions over the Configuration.
+//!
+//! ## Role and checkout model
+//!
+//! Roles are runtime authority states, not permanent filesystem locations.
+//! The same stable checkout path can host a sequence of Parent runtimes as the
+//! loop advances through selected Artifacts.
+//!
+//! The active parent root is the stable checkout a Parent currently controls.
+//! In the single-parent prototype path this is the operator-provided repo root.
+//! A Parent may create temporary child worktrees for candidate Artifacts, but
+//! those worktrees are leaf evaluation/build surfaces. They are not where the
+//! successor Parent should keep living after handoff.
+//!
+//! The intended single-successor loop is:
+//!
+//! ```text
+//! Parent R1 running from active checkout A1
+//!   -> create temporary child checkout A2
+//!   -> hydrate/evaluate child runtime C2 from A2
+//!   -> select A2 under policy
+//!   -> update stable active checkout from A1 to A2
+//!   -> hydrate successor runtime R2 from the active checkout
+//!   -> hand off parent authority to R2
+//!   -> R1 exits
+//!   -> cleanup temporary child checkout/build products
+//! ```
+//!
+//! This ordering is intentionally heavier than a one-child, one-branch demo.
+//! It is the constrained case of the intended larger model: arbitrary
+//! concurrent Parents may advance arbitrary branches in the same Tree while
+//! arbitrary child leaf runtimes evaluate candidate Artifacts. Cleanup and
+//! explicit handoff are therefore part of the semantic protocol, not optional
+//! polish. Without updating the stable active checkout before handoff, a long
+//! run would create one parent worktree per generation and eventually exhaust
+//! disk.
 //!
 //! ## Planning note: generative graph, not only git ancestry
 //!
@@ -141,7 +180,9 @@
 //!   -> generate A2, A3, A4
 //!   -> hydrate/evaluate R2, R3, R4
 //!   -> select A3/R3
-//!   -> hand off to parent actor at (R3, A3)
+//!   -> update the active checkout to A3
+//!   -> hydrate R3 from that active checkout
+//!   -> hand off parent authority to R3
 //! ```
 //!
 //! Later policies may select from local children, local lineage, ancestor
@@ -180,6 +221,10 @@
 //! - Dirty worktrees are provisional candidates. Promotion, selection,
 //!   successor handoff, and cross-lineage reuse should refer to durable
 //!   Artifacts, not uncommitted filesystem state.
+//! - Temporary child worktrees are cleanup targets after selection and handoff.
+//!   The selected Artifact should be moved into the stable active checkout
+//!   before the successor becomes Parent; the child worktree should not become
+//!   the next Parent's long-lived home.
 //! - Runtime provenance may be degraded but should not be erased. If a Runtime
 //!   exists but its source Artifact is missing, records should say that
 //!   directly instead of inventing or implying a recoverable source node.
@@ -233,11 +278,15 @@
 //!     - select: determine the next Runtime to become the Parent Runtime. This involves accessing
 //!     Child self-evaluations through the Journal, executing a Policy over the view of that
 //!     Journal, and choosing the Artifact in the Tree to become the next Parent Runtime.
-//!     - update: changes the Configuration from the previous Artifact to the next Artifact used to
-//!     generate the Parent Runtime. This involves checking out that Artifact from the Tree.
-//!     - build: builds a Successor Runtime from the selected Artifact in the Configuration, and
-//!     launches the Successor Runtime that may become the next Parent Runtime.
-//!     - cleanup: cleans up child worktrees
+//!     - update: changes the active parent checkout from the previous Artifact
+//!     to the selected next Artifact. This involves checking out that Artifact
+//!     from the Tree in the stable active root, not moving the Parent into the
+//!     child worktree.
+//!     - build: hydrates a Successor Runtime from the selected Artifact in the
+//!     active checkout and launches the Successor Runtime that may become the
+//!     next Parent Runtime.
+//!     - cleanup: cleans up temporary child worktrees and build products after
+//!     they are no longer needed by evaluation or handoff policy.
 //!     - exit: Parent Runtime terminates, possibly after performing the handshake with the next
 //!     Parent Runtime. If no next Parent Runtime is selected, the looping protocol is over.
 //!
@@ -258,19 +307,19 @@
 //!     - does not mutate Tree state
 //!
 //! Successor Runtime:
-//!     - fresh binary built from the selected Child artifact
+//!     - fresh runtime hydrated from the selected Artifact in the active checkout
 //!     - acknowledges handoff with Parent Runtime
 //!     - becomes the next Parent only after policy and bootstrap validation
 //!
 //! The persisted invocation contract for the live Prototype 1 seam is
 //! narrower than the full long-term role vocabulary but already has two
-//! executable fresh-binary roles:
+//! executable runtime roles:
 //!
 //! - `Child`: leaf evaluator that records one self-evaluation and exits.
 //! - `Successor`: selected-continuation bootstrap that acknowledges handoff
 //!   and runs one bounded rehydrated controller generation. It is not yet an
-//!   unbounded autonomous trampoline, but it must be built from the selected
-//!   artifact rather than reusing the old parent binary.
+//!   unbounded autonomous trampoline, but it must be hydrated from the selected
+//!   Artifact after that Artifact has been installed in the active checkout.
 //!
 //! ## Actions
 //!
@@ -285,7 +334,7 @@
 //!     - on fail, follow policy
 //! - validate patch in worktree with cargo check?
 //!     - on fail, follow policy
-//! - build child binary in worktree?
+//! - hydrate/build child runtime in temporary child worktree?
 //!     - on fail, follow policy
 //! - commit patch in worktree?
 //!     - on fail, follow policy
@@ -298,7 +347,7 @@
 //! - read evaluation of Child in Journal
 //!     - await on Child termination with timeout
 //!     - on fail, follow policy
-//! - optionally clean up worktree as per Policy
+//! - clean up temporary child worktree/build products as per Policy
 //!     - on fail, follow policy
 //!
 //! ### select
@@ -307,14 +356,15 @@
 //! 2. executes a Policy to choose the Successor
 //!
 //! ### update
-//! 1. checkout Successor Artifact branch/node from Tree
+//! 1. checkout Successor Artifact branch/node from Tree into the stable active
+//!    parent root
 //!
 //! ## build
 //! 1. use cargo check
 //!     - on fail, follow Policy
 //! 2. use cargo build
 //!     - on fail, follow Policy
-//! 3. execute Successor Runtime
+//! 3. execute Successor Runtime from the stable active parent root
 //! 4. handoff with Successor Runtime
 //!     - await on acknowledge
 //!     - on fail, follow Policy
@@ -334,9 +384,10 @@
 //!   Operator-facing `loop prototype1` command surface and the live controller
 //!   orchestration around campaigns, branches, and scheduler policy.
 //! - [`crate::cli::prototype1_process`]
-//!   Parent/child/successor process seam: stage one node workspace, build one
-//!   child binary, spawn one runner, read back persisted results, and bootstrap
-//!   the selected successor binary after policy accepts it.
+//!   Parent/child/successor process seam: stage one temporary node workspace,
+//!   hydrate one child runtime, spawn one runner, read back persisted results,
+//!   update the active checkout, bootstrap the selected successor runtime, and
+//!   clean up temporary child workspaces/build products after policy permits it.
 //! - [`crate::intervention`]
 //!   Durable scheduler-owned records for node registration, runner requests and
 //!   results, branch registry, continuation policy, and evaluation summaries.

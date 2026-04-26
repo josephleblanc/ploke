@@ -31,8 +31,8 @@ use crate::{
         prototype1_process::{
             Prototype1NodeExecutionOutcome, execute_prototype1_runner_invocation,
             execute_prototype1_runner_node, execute_prototype1_successor_invocation,
-            run_prototype1_branch_evaluation, run_prototype1_branch_evaluation_via_child,
-            spawn_and_handoff_prototype1_successor,
+            persist_prototype1_buildable_child_artifact, run_prototype1_branch_evaluation,
+            run_prototype1_branch_evaluation_via_child, spawn_and_handoff_prototype1_successor,
         },
         prototype1_state::{
             c1::{C1, MaterializeBranch},
@@ -48,8 +48,9 @@ use crate::{
     intervention::{
         ArtifactEdit, Intervention, InterventionApplyInput, InterventionCandidate,
         InterventionSpec, IssueCase, Outcome, Prototype1BranchRegistry,
-        Prototype1ContinuationDecision, Prototype1NodeRecord, Prototype1NodeStatus,
-        Prototype1RunnerResult, Prototype1SchedulerState, Prototype1SearchPolicy, ValidationPolicy,
+        Prototype1ContinuationDecision, Prototype1ContinuationDisposition, Prototype1NodeRecord,
+        Prototype1NodeStatus, Prototype1RunnerResult, Prototype1SchedulerState,
+        Prototype1SearchPolicy, ValidationPolicy, decide_node_successor_continuation,
         execute_intervention_apply, load_node_record, load_or_default_branch_registry,
         load_or_default_scheduler_state, load_runner_request, load_runner_result,
         mark_treatment_branch_applied, prototype1_branch_registry_path, prototype1_scheduler_path,
@@ -144,6 +145,7 @@ impl Prototype1LoopControllerInput {
         scheduler: &Prototype1SchedulerState,
         stop_on_error: bool,
         runtime_id: crate::cli::prototype1_state::event::RuntimeId,
+        active_parent_root: PathBuf,
     ) -> Result<Self, PrepareError> {
         let manifest = load_campaign_manifest(campaign_id)?;
         let resolved = resolve_campaign_config(campaign_id, &CampaignOverrides::default())?;
@@ -177,7 +179,7 @@ impl Prototype1LoopControllerInput {
             search_policy: scheduler.policy.clone(),
             source_campaign: Some(campaign_id.to_string()),
             source_branch_id: Some(node.branch_id.clone()),
-            repo_root: node.workspace_root.clone(),
+            repo_root: active_parent_root,
             trace_path: prototype1_successor_trace_path(&manifest_path, &node.node_id, runtime_id),
             batch_id,
             batch_manifest: manifest_path.clone(),
@@ -197,6 +199,7 @@ pub(crate) async fn run_prototype1_successor_controller(
     campaign_id: &str,
     node_id: &str,
     runtime_id: crate::cli::prototype1_state::event::RuntimeId,
+    active_parent_root: PathBuf,
 ) -> Result<Prototype1LoopReport, PrepareError> {
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let node = load_node_record(&manifest_path, node_id)?;
@@ -209,6 +212,7 @@ pub(crate) async fn run_prototype1_successor_controller(
         &scheduler,
         request.stop_on_error,
         runtime_id,
+        active_parent_root,
     )?;
     run_prototype1_loop_controller(input).await
 }
@@ -504,18 +508,6 @@ async fn run_prototype1_loop_controller(
                         )
                     }
                 });
-                {
-                    let _scope = TimingTrace::scope(format!(
-                        "loop.prototype1.branch_restore.{}.{}",
-                        source_node.instance_id, branch.branch_id
-                    ));
-                    let _ = restore_treatment_branch(
-                        &campaign.campaign_id,
-                        &campaign.manifest_path,
-                        &branch.branch_id,
-                        &intervention_repo_root,
-                    )?;
-                }
             }
         }
 
@@ -523,20 +515,6 @@ async fn run_prototype1_loop_controller(
         if let Some(branch_id) = selected_next_branch_id.as_deref() {
             let _ =
                 select_treatment_branch(&campaign.campaign_id, &campaign.manifest_path, branch_id)?;
-            let resolved = resolve_treatment_branch(
-                &campaign.campaign_id,
-                &campaign.manifest_path,
-                branch_id,
-            )?;
-            {
-                let _scope = TimingTrace::scope("loop.prototype1.materialize_selected_next_branch");
-                ensure_treatment_branch_materialized(
-                    &campaign.campaign_id,
-                    &campaign.manifest_path,
-                    &resolved,
-                    &intervention_repo_root,
-                )?;
-            }
         }
 
         let current_generation = selected_targets
@@ -1115,6 +1093,12 @@ impl Prototype1StateCommand {
                         )
                     }
                     Outcome::Advanced(c3) => {
+                        persist_prototype1_buildable_child_artifact(
+                            &self.campaign,
+                            &manifest_path,
+                            &repo_root,
+                            c3.node(),
+                        )?;
                         debug!(
                             target: EXECUTION_DEBUG_TARGET,
                             campaign = %self.campaign,
@@ -1200,30 +1184,70 @@ impl Prototype1StateCommand {
                                                 if c5.report.overall_disposition
                                                     == BranchDisposition::Keep
                                                 {
-                                                    match spawn_and_handoff_prototype1_successor(
-                                                        &self.campaign,
+                                                    let node = load_node_record(
+                                                        &manifest_path,
                                                         &self.node_id,
-                                                    )? {
-                                                        Some(successor) => (
+                                                    )?;
+                                                    let scheduler =
+                                                        load_or_default_scheduler_state(
+                                                            &self.campaign,
+                                                            &manifest_path,
+                                                        )?;
+                                                    let selected_disposition =
+                                                        serde_name(&c5.report.overall_disposition)
+                                                            .to_string();
+                                                    let decision =
+                                                        decide_node_successor_continuation(
+                                                            &scheduler,
+                                                            &node,
+                                                            Some(&selected_disposition),
+                                                        );
+                                                    let _ = record_continuation_decision(
+                                                        &self.campaign,
+                                                        &manifest_path,
+                                                        decision.clone(),
+                                                    )?;
+                                                    if decision.disposition
+                                                        == Prototype1ContinuationDisposition::ContinueReady
+                                                    {
+                                                        match spawn_and_handoff_prototype1_successor(
+                                                            &self.campaign,
+                                                            &self.node_id,
+                                                            &repo_root,
+                                                        )? {
+                                                            Some(successor) => (
+                                                                format!(
+                                                                    "completed:{:?};successor_handoff=acknowledged",
+                                                                    c5.report.overall_disposition
+                                                                ),
+                                                                child_runtime,
+                                                                Some(successor.runtime_id.to_string()),
+                                                                Some(successor.pid),
+                                                                Some(successor.ready_path),
+                                                            ),
+                                                            None => (
+                                                                format!(
+                                                                    "completed:{:?};successor_handoff=timed_out",
+                                                                    c5.report.overall_disposition
+                                                                ),
+                                                                child_runtime,
+                                                                None,
+                                                                None,
+                                                                None,
+                                                            ),
+                                                        }
+                                                    } else {
+                                                        (
                                                             format!(
-                                                                "completed:{:?};successor_handoff=acknowledged",
-                                                                c5.report.overall_disposition
+                                                                "completed:{:?};successor_handoff=skipped:{:?}",
+                                                                c5.report.overall_disposition,
+                                                                decision.disposition
                                                             ),
                                                             child_runtime,
-                                                            Some(successor.runtime_id.to_string()),
-                                                            Some(successor.pid),
-                                                            Some(successor.ready_path),
-                                                        ),
-                                                        None => (
-                                                            format!(
-                                                                "completed:{:?};successor_handoff=timed_out",
-                                                                c5.report.overall_disposition
-                                                            ),
-                                                            child_runtime,
                                                             None,
                                                             None,
                                                             None,
-                                                        ),
+                                                        )
                                                     }
                                                 } else {
                                                     (
@@ -1982,6 +2006,12 @@ pub(crate) struct Prototype1LoopReport {
     selected_next_branch_id: Option<String>,
     protocol_failures: Vec<String>,
     pending_stages: Vec<&'static str>,
+}
+
+impl Prototype1LoopReport {
+    pub(crate) fn continuation_decision(&self) -> Option<&Prototype1ContinuationDecision> {
+        self.continuation_decision.as_ref()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

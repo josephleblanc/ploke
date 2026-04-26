@@ -1,7 +1,7 @@
-//! Persisted fresh-binary bootstrap contract for prototype1 runtimes.
+//! Persisted bootstrap contract for prototype1 runtime attempts.
 //!
 //! This record is intentionally smaller than a node record or runner request.
-//! It is the attempt-scoped overlay a fresh binary needs in order to:
+//! It is the attempt-scoped overlay a runtime needs in order to:
 //! - identify which durable node it belongs to
 //! - know which authority contract it carries
 //! - participate in the current handoff attempt
@@ -11,14 +11,18 @@
 //! second runner request instead of a true bootstrap contract.
 //!
 //! The important seam is that Prototype 1 currently has two narrow executable
-//! fresh-binary roles:
+//! runtime roles. These roles describe authority and bounded behavior, not a
+//! permanent storage location for the process:
 //!
 //! - `Child`: leaf evaluator, executes one node, records, exits
 //! - `Successor`: acknowledges successor bootstrap, then runs one bounded
 //!   rehydrated controller generation
 //!
 //! Keeping that split explicit here prevents the live runner seam from
-//! quietly drifting into a generic "fresh binary can do anything" surface.
+//! quietly drifting into a generic "fresh binary can do anything" surface. A
+//! successor should be launched from the stable active checkout after it has
+//! been advanced to the selected Artifact; temporary child worktrees remain
+//! cleanup targets.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -57,7 +61,7 @@ fn successor_runner_argv(invocation_path: &Path) -> Vec<String> {
 /// Durable schema version for runtime invocations.
 pub(crate) const SCHEMA_VERSION: &str = "prototype1-invocation.v1";
 
-/// Runtime role for one fresh-binary invocation.
+/// Runtime role for one invocation attempt.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Role {
@@ -67,7 +71,7 @@ pub(crate) enum Role {
     Successor,
 }
 
-/// Persisted bootstrap record for one fresh prototype1 runtime.
+/// Persisted bootstrap record for one prototype1 runtime attempt.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Invocation {
     pub schema_version: String,
@@ -76,13 +80,14 @@ pub(crate) struct Invocation {
     pub node_id: String,
     pub runtime_id: RuntimeId,
     pub journal_path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_parent_root: Option<PathBuf>,
     pub created_at: String,
 }
 
 /// Executable leaf-child invocation.
 ///
-/// This is the only invocation authority the live Prototype 1 runner may
-/// execute today.
+/// This authority is limited to leaf evaluation and must not recurse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ChildInvocation {
     inner: Invocation,
@@ -116,6 +121,7 @@ impl Invocation {
             node_id,
             runtime_id,
             journal_path,
+            active_parent_root: None,
             created_at: Utc::now().to_rfc3339(),
         }
     }
@@ -126,6 +132,7 @@ impl Invocation {
         node_id: String,
         runtime_id: RuntimeId,
         journal_path: PathBuf,
+        active_parent_root: PathBuf,
     ) -> Self {
         Self {
             schema_version: SCHEMA_VERSION.to_string(),
@@ -134,6 +141,7 @@ impl Invocation {
             node_id,
             runtime_id,
             journal_path,
+            active_parent_root: Some(active_parent_root),
             created_at: Utc::now().to_rfc3339(),
         }
     }
@@ -199,9 +207,16 @@ impl SuccessorInvocation {
         node_id: String,
         runtime_id: RuntimeId,
         journal_path: PathBuf,
+        active_parent_root: PathBuf,
     ) -> Self {
         Self {
-            inner: Invocation::successor(campaign_id, node_id, runtime_id, journal_path),
+            inner: Invocation::successor(
+                campaign_id,
+                node_id,
+                runtime_id,
+                journal_path,
+                active_parent_root,
+            ),
         }
     }
 
@@ -223,6 +238,11 @@ impl SuccessorInvocation {
     /// Runtime identity for this successor bootstrap attempt.
     pub(crate) fn runtime_id(&self) -> RuntimeId {
         self.inner.runtime_id
+    }
+
+    /// Stable active parent checkout root for this successor runtime.
+    pub(crate) fn active_parent_root(&self) -> Option<&Path> {
+        self.inner.active_parent_root.as_deref()
     }
 
     /// CLI argv for launching exactly one successor bootstrap.
