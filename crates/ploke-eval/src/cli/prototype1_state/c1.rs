@@ -362,6 +362,11 @@ pub(crate) enum MaterializeBranchError {
         #[source]
         source: BackendError,
     },
+    #[error("failed to remove stale child binary '{path}': {source}")]
+    RemoveStaleChildBinary {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("failed to update node '{node_id}' status to workspace_staged")]
     UpdateNodeStatus {
         node_id: String,
@@ -562,6 +567,14 @@ where
                     source,
                 })
             })?;
+        if from.node.binary_path.exists() {
+            fs::remove_file(&from.node.binary_path).map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::RemoveStaleChildBinary {
+                    path: from.node.binary_path.clone(),
+                    source,
+                })
+            })?;
+        }
         let _ = update_node_status(
             &from.campaign_id,
             &from.campaign_manifest_path,

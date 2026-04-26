@@ -136,10 +136,15 @@ crates/ploke-eval/src/
 `prototype1/` owns:
 
 - the first concrete control policy
-- one-generation orchestration
+- one-generation orchestration for the currently active Parent runtime
 - the staged build/spawn/wait leaf seam
 - report rendering
 - continuation/handoff behavior for this concrete prototype
+
+"One-generation orchestration" is a bounded controller slice, not a semantic
+ban on fan-out. The substrate should support a frontier of child nodes, bounded
+concurrent child execution, durable child observations, and a policy that
+selects exactly one successor from the generation/history view before handoff.
 
 `cli.rs` owns:
 

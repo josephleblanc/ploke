@@ -579,6 +579,8 @@ pub struct ChatPolicy {
     pub length_retry_limit: u32,
     #[serde(default = "default_length_continue_prompt")]
     pub length_continue_prompt: String,
+    #[serde(default)]
+    pub tool_replay: ToolReplayPolicy,
 }
 
 impl Default for ChatPolicy {
@@ -592,6 +594,7 @@ impl Default for ChatPolicy {
             error_retry_limit: default_error_retry_limit(),
             length_retry_limit: default_length_retry_limit(),
             length_continue_prompt: default_length_continue_prompt(),
+            tool_replay: ToolReplayPolicy::default(),
         }
     }
 }
@@ -614,6 +617,29 @@ impl ChatPolicy {
             error_retry_limit,
             length_retry_limit,
             length_continue_prompt: self.length_continue_prompt,
+            tool_replay: self.tool_replay.validated(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ToolReplayPolicy {
+    #[serde(default = "default_tool_replay_max_file_lines")]
+    pub max_file_lines: usize,
+}
+
+impl Default for ToolReplayPolicy {
+    fn default() -> Self {
+        Self {
+            max_file_lines: default_tool_replay_max_file_lines(),
+        }
+    }
+}
+
+impl ToolReplayPolicy {
+    fn validated(self) -> Self {
+        Self {
+            max_file_lines: self.max_file_lines.clamp(20, 2_000),
         }
     }
 }
@@ -854,6 +880,10 @@ fn default_tool_call_chain_limit() -> usize {
     100
 }
 
+fn default_tool_replay_max_file_lines() -> usize {
+    200
+}
+
 fn default_chat_timeout_strategy() -> ChatTimeoutStrategy {
     ChatTimeoutStrategy::FixedRetry { attempts: 3 }
 }
@@ -928,6 +958,7 @@ mod tests {
             length_retry_limit = 2
             length_continue_prompt = "go on"
             timeout_strategy = { FixedRetry = { attempts = 2 } }
+            tool_replay = { max_file_lines = 120 }
 
             [rag]
             top_k = 20
@@ -953,6 +984,7 @@ mod tests {
         let cfg: UserConfig = toml::from_str(toml).expect("toml parses");
         assert_eq!(cfg.tool_retries, 3);
         assert_eq!(cfg.chat_policy.tool_call_chain_limit, 50);
+        assert_eq!(cfg.chat_policy.tool_replay.max_file_lines, 120);
         assert_eq!(cfg.rag.top_k, 20);
         assert_eq!(cfg.rag.per_part_max_tokens, 160);
         assert_eq!(cfg.context_management.mode, CtxMode::Light);
@@ -973,5 +1005,24 @@ mod tests {
     fn runtime_config_preserves_default_llm_timeout() {
         let runtime_cfg: RuntimeConfig = UserConfig::default().into();
         assert_eq!(runtime_cfg.llm_timeout_secs, ploke_llm::LLM_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn chat_policy_validation_clamps_tool_replay_limits() {
+        let validated = ChatPolicy {
+            tool_replay: ToolReplayPolicy { max_file_lines: 5 },
+            ..ChatPolicy::default()
+        }
+        .validated();
+        assert_eq!(validated.tool_replay.max_file_lines, 20);
+
+        let validated = ChatPolicy {
+            tool_replay: ToolReplayPolicy {
+                max_file_lines: 10_000,
+            },
+            ..ChatPolicy::default()
+        }
+        .validated();
+        assert_eq!(validated.tool_replay.max_file_lines, 2_000);
     }
 }

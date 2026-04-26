@@ -11,7 +11,7 @@ use thiserror::Error;
 use tracing::{debug, instrument};
 
 use crate::branch_evaluation::BranchDisposition;
-use crate::cli::Prototype1BranchEvaluationReport;
+use crate::cli::prototype1_state::cli_facing::Prototype1BranchEvaluationReport;
 use crate::intervention::{
     CommitError, CommitPhase, Configuration, Intervention, Outcome, Prototype1NodeRecord,
     Prototype1RunnerDisposition, Prototype1RunnerResult, RecordStore, Surface, load_node_record,
@@ -21,8 +21,8 @@ use crate::spec::PrepareError;
 
 use super::c3::C4;
 use super::event::{
-    ChildRuntimeLifecycle, ObservedChildTerminal, Paths, RecordedAt, Refs, RuntimeId,
-    TransitionId, World,
+    ChildRuntimeLifecycle, ObservedChildTerminal, Paths, RecordedAt, Refs, RuntimeId, TransitionId,
+    World,
 };
 use super::invocation::result_path;
 use super::journal::{CompletionEntry, JournalEntry, ObservedChildResult, PrototypeJournal};

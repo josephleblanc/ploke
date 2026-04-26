@@ -228,6 +228,17 @@ pub fn load_or_default_scheduler_state(
     }
 }
 
+pub fn load_scheduler_state(
+    campaign_manifest_path: &Path,
+) -> Result<Prototype1SchedulerState, PrepareError> {
+    let path = prototype1_scheduler_path(campaign_manifest_path);
+    let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
+        path: path.clone(),
+        source,
+    })?;
+    serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest { path, source })
+}
+
 fn save_scheduler_state(
     campaign_manifest_path: &Path,
     scheduler: &Prototype1SchedulerState,
@@ -517,6 +528,19 @@ pub fn decide_continuation(
         next_generation,
         total_nodes_after_continue,
     }
+}
+
+pub fn decide_node_successor_continuation(
+    scheduler: &Prototype1SchedulerState,
+    node: &Prototype1NodeRecord,
+    selected_branch_disposition: Option<&str>,
+) -> Prototype1ContinuationDecision {
+    decide_continuation(
+        scheduler,
+        node.generation,
+        Some(&node.branch_id),
+        selected_branch_disposition,
+    )
 }
 
 pub fn record_continuation_decision(

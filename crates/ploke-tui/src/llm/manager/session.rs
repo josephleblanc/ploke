@@ -52,12 +52,65 @@ const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json"
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
 const OPENROUTER_RESPONSE_LOG_RAW: &str = "logs/openrouter/session/last_response_raw.txt";
 const MAX_REPAIR_ATTEMPTS_PER_SESSION: u32 = 4;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FullResponseTraceRecord {
     assistant_message_id: Uuid,
     response_index: usize,
     response: OpenAiResponse,
+}
+
+fn compact_tool_content_for_llm_replay(content: &str, max_file_lines: usize) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return content.to_string();
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return content.to_string();
+    };
+    if !obj.contains_key("file_path") {
+        return content.to_string();
+    }
+    let Some(file_content) = obj.get_mut("content") else {
+        return content.to_string();
+    };
+    let Some(file_text) = file_content.as_str() else {
+        return content.to_string();
+    };
+
+    let mut kept = Vec::new();
+    let mut line_count = 0usize;
+    let mut truncated = false;
+    for line in file_text.lines() {
+        if line_count >= max_file_lines {
+            truncated = true;
+            break;
+        }
+        kept.push(line);
+        line_count += 1;
+    }
+
+    if !truncated {
+        return content.to_string();
+    }
+
+    let mut truncated_content = kept.join("\n");
+    if file_text.ends_with('\n') && !truncated_content.is_empty() {
+        truncated_content.push('\n');
+    }
+    truncated_content.push_str(&format!(
+        "... [truncated for LLM replay after {max_file_lines} lines]"
+    ));
+
+    *file_content = serde_json::Value::String(truncated_content);
+    obj.insert(
+        "llm_replay_truncated".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    obj.insert(
+        "llm_replay_max_lines".to_string(),
+        serde_json::Value::from(max_file_lines as u64),
+    );
+
+    serde_json::to_string(&value).unwrap_or_else(|_| content.to_string())
 }
 
 /// Generic per-request session over a router-specific ApiRoute.
@@ -919,10 +972,13 @@ pub async fn run_chat_session<R: Router>(
                     let call_id_for_state = call_id.clone();
                     match tool_json_result {
                         Ok(tool_result) => {
-                            req.core.messages.push(RequestMessage::new_tool(
-                                tool_result.content.clone(),
-                                call_id.clone(),
-                            ));
+                            let replay_content = compact_tool_content_for_llm_replay(
+                                &tool_result.content,
+                                chat_policy.tool_replay.max_file_lines,
+                            );
+                            req.core
+                                .messages
+                                .push(RequestMessage::new_tool(replay_content, call_id.clone()));
                             state_cmd_tx
                                 .send(StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
@@ -1638,11 +1694,13 @@ async fn add_tool_failed_message(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use once_cell::sync::Lazy;
-    use ploke_llm::manager::parse_chat_outcome;
+    use ploke_llm::manager::{ApproxCharTokenizer, Role, TokenCounter, parse_chat_outcome};
     use ploke_llm::router_only::ChatCompRequest;
     use ploke_llm::router_only::Router;
     use ploke_llm::router_only::openrouter::ChatCompFields;
@@ -1835,6 +1893,227 @@ mod tests {
             "object": "chat.completion"
         })
         .to_string()
+    }
+
+    #[test]
+    fn compact_tool_content_for_llm_replay_truncates_file_payloads_to_configured_limit() {
+        let file_text = (1..=250)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let payload = json!({
+            "ok": true,
+            "file_path": "/tmp/example.rs",
+            "exists": true,
+            "byte_len": file_text.len(),
+            "truncated": false,
+            "content": file_text,
+        })
+        .to_string();
+
+        let replay = compact_tool_content_for_llm_replay(&payload, 200);
+        let replay_json: serde_json::Value =
+            serde_json::from_str(&replay).expect("replay payload must be json");
+        let replay_content = replay_json
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .expect("replay content must be string");
+
+        assert!(replay_json["llm_replay_truncated"].as_bool() == Some(true));
+        assert_eq!(replay_json["llm_replay_max_lines"].as_u64(), Some(200));
+        assert!(replay_content.contains("line 1"));
+        assert!(replay_content.contains("line 200"));
+        assert!(!replay_content.contains("line 201"));
+        assert!(replay_content.contains("truncated for LLM replay after 200 lines"));
+    }
+
+    #[test]
+    fn compact_tool_content_for_llm_replay_leaves_non_file_payloads_unchanged() {
+        let payload = json!({
+            "ok": true,
+            "search_term": "fn build",
+            "context": [
+                {"file_path": "/tmp/example.rs", "snippet": "fn build() {}"}
+            ]
+        })
+        .to_string();
+
+        assert_eq!(compact_tool_content_for_llm_replay(&payload, 200), payload);
+    }
+
+    #[test]
+    fn compact_tool_content_for_llm_replay_respects_custom_line_limit() {
+        let file_text = (1..=20)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let payload = json!({
+            "ok": true,
+            "file_path": "/tmp/example.rs",
+            "exists": true,
+            "byte_len": file_text.len(),
+            "truncated": false,
+            "content": file_text,
+        })
+        .to_string();
+
+        let replay = compact_tool_content_for_llm_replay(&payload, 7);
+        let replay_json: serde_json::Value =
+            serde_json::from_str(&replay).expect("replay payload must be json");
+        let replay_content = replay_json["content"]
+            .as_str()
+            .expect("replay content must be string");
+
+        assert_eq!(replay_json["llm_replay_max_lines"].as_u64(), Some(7));
+        assert!(replay_content.contains("line 7"));
+        assert!(!replay_content.contains("line 8"));
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct CapturedChatRequest {
+        messages: Vec<RequestMessage>,
+    }
+
+    fn summarize_tool_payload(content: &str) -> String {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+            return "non-json tool payload".to_string();
+        };
+        let Some(obj) = value.as_object() else {
+            return format!("json {}", value_type_name(&value));
+        };
+
+        if obj.contains_key("file_path") && obj.contains_key("content") {
+            let file_path = obj
+                .get("file_path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("<unknown>");
+            let byte_len = obj
+                .get("byte_len")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let content_chars = obj
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                .map(str::chars)
+                .map(Iterator::count)
+                .unwrap_or(0);
+            let truncated = obj
+                .get("truncated")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            return format!(
+                "file payload path={file_path} byte_len={byte_len} content_chars={content_chars} truncated={truncated}"
+            );
+        }
+
+        if let Some(context) = obj.get("context").and_then(serde_json::Value::as_array) {
+            let snippet_chars: usize = context
+                .iter()
+                .filter_map(|entry| entry.get("snippet"))
+                .filter_map(serde_json::Value::as_str)
+                .map(|snippet| snippet.chars().count())
+                .sum();
+            let search_term = obj
+                .get("search_term")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("<none>");
+            return format!(
+                "context payload search_term={search_term:?} entries={} snippet_chars={snippet_chars}",
+                context.len()
+            );
+        }
+
+        if let Some(error) = obj.get("error") {
+            let preview = error
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| error.to_string());
+            return format!("error payload chars={}", preview.chars().count());
+        }
+
+        let keys = obj.keys().cloned().collect::<Vec<_>>().join(", ");
+        format!("json object keys=[{keys}]")
+    }
+
+    fn value_type_name(value: &serde_json::Value) -> &'static str {
+        match value {
+            serde_json::Value::Null => "null",
+            serde_json::Value::Bool(_) => "bool",
+            serde_json::Value::Number(_) => "number",
+            serde_json::Value::String(_) => "string",
+            serde_json::Value::Array(_) => "array",
+            serde_json::Value::Object(_) => "object",
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic: inspect captured large chat request payload"]
+    fn diagnostic_dump_captured_request_blowup() {
+        let path = std::env::var("PLOKE_DIAG_REQUEST_PATH")
+            .unwrap_or_else(|_| "/tmp/request16.json".to_string());
+        let raw = fs::read_to_string(&path).unwrap_or_else(|err| {
+            panic!("failed to read diagnostic request fixture {path}: {err}")
+        });
+        let request: CapturedChatRequest = serde_json::from_str(&raw).unwrap_or_else(|err| {
+            panic!("failed to parse diagnostic request fixture {path}: {err}")
+        });
+
+        let tokenizer = ApproxCharTokenizer::default();
+        let mut role_counts = BTreeMap::<&'static str, usize>::new();
+        let mut role_chars = BTreeMap::<&'static str, usize>::new();
+        let mut indexed = Vec::new();
+
+        for (idx, message) in request.messages.iter().enumerate() {
+            let role = match message.role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+                Role::System => "system",
+                Role::Tool => "tool",
+            };
+            let chars = message.content.chars().count();
+            *role_counts.entry(role).or_default() += 1;
+            *role_chars.entry(role).or_default() += chars;
+            indexed.push((chars, idx, role, message));
+        }
+
+        indexed.sort_by(|a, b| b.0.cmp(&a.0));
+
+        let total_chars: usize = request
+            .messages
+            .iter()
+            .map(|message| message.content.chars().count())
+            .sum();
+        let total_tokens: usize = request
+            .messages
+            .iter()
+            .map(|message| tokenizer.count(&message.content))
+            .sum();
+
+        println!("diagnostic request path: {path}");
+        println!("message_count: {}", request.messages.len());
+        println!("total_chars: {total_chars}");
+        println!("estimated_tokens: {total_tokens}");
+        println!("role_counts: {role_counts:?}");
+        println!("role_chars: {role_chars:?}");
+        println!();
+        println!("top contributors:");
+
+        for (chars, idx, role, message) in indexed.into_iter().take(15) {
+            let detail = if message.role == Role::Tool {
+                summarize_tool_payload(&message.content)
+            } else {
+                let preview = message
+                    .content
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(120)
+                    .collect::<String>();
+                format!("preview={preview:?}")
+            };
+            println!("[{idx}] role={role} chars={chars} {detail}");
+        }
     }
 
     #[tokio::test]

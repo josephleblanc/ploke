@@ -3,24 +3,25 @@
 #![deny(rustdoc::invalid_rust_codeblocks)]
 #![forbid(unsafe_code)]
 
-//! Prototype 1 treatment-evaluation process path.
+//! Prototype 1 treatment-evaluation and successor-bootstrap process path.
 //!
-//! This module owns the parent/child execution seam for Prototype 1 branch
-//! evaluation. It exists to keep the dangerous parts of the workflow
-//! concentrated in one place:
+//! This module owns the parent/child/successor execution seam for Prototype 1.
+//! It exists to keep the dangerous parts of the workflow concentrated in one
+//! place:
 //!
 //! - realizing one node-owned workspace for a branch
 //! - building a fresh child binary from that source state
 //! - spawning exactly one child runner process
 //! - waiting for that child to finish
 //! - reading back the persisted runner/evaluation artifacts
+//! - spawning the selected successor binary for bounded handoff acknowledgement
 //!
 //! The key semantic boundary is that the parent process remains the already
 //! compiled "current generation", while the child binary is compiled after the
 //! branch materialization and therefore represents the candidate next
 //! generation for this bounded surface.
 //!
-//! # End-to-end flow
+//! # Child evaluation flow
 //!
 //! 1. The parent controller registers a node for a branch.
 //! 2. The parent realizes that branch into a node-owned workspace.
@@ -32,11 +33,25 @@
 //! 7. The parent reads the runner result and, on success, reads the persisted
 //!    branch-evaluation artifact.
 //!
+//! # Successor handoff flow
+//!
+//! 1. The parent selects one kept child/node as the successor candidate.
+//! 2. The parent launches the binary built from that selected node's artifact
+//!    state.
+//! 3. The successor validates the continuation policy, writes a ready
+//!    acknowledgement, and idles only within a bounded standby window.
+//!
+//! The current successor path is a bootstrap/handoff smoke path. It is not yet
+//! the full rehydrating controller that starts the next generation itself.
+//!
 //! # Safety invariants
 //!
-//! - This module has a single explicit child-process spawn site.
+//! - Process creation for child evaluation and successor bootstrap is localized
+//!   in this module.
 //! - The child runner executes one node and does not recurse or spawn further
 //!   descendants.
+//! - The successor runner is bounded by scheduler continuation policy and
+//!   standby timeout.
 //! - Compile failures and treatment failures are persisted as runner results
 //!   instead of becoming implicit control-flow loss.
 //! - The controller's parent workspace is not mutated during child evaluation;
@@ -57,9 +72,10 @@
 //!
 //! # Non-goals
 //!
-//! This module is not the scheduler and is not yet a self-continuing
-//! trampoline. It does not choose the next branch, recurse to a new generation,
-//! or decide global continuation policy. Those remain controller concerns.
+//! This module is not the scheduler and is not yet the full self-continuing
+//! trampoline. It can bootstrap a selected successor, but it does not choose
+//! among siblings or rehydrate the successor as a new generation controller.
+//! Those remain controller/state-model concerns.
 //!
 //! Current process tree:
 //!
@@ -68,22 +84,37 @@
 //!   -> build child binary
 //!   -> spawn child runner
 //!   -> wait
+//!   -> select successor elsewhere in controller/state path
+//!   -> spawn selected successor binary
+//!   -> wait for ready acknowledgement
 //!
 //! child: loop prototype1-runner --execute
 //!   -> run one treatment evaluation
 //!   -> write runner-result.json
 //!   -> exit
+//!
+//! successor: loop prototype1-runner --execute
+//!   -> validate continuation
+//!   -> write successor-ready acknowledgement
+//!   -> bounded standby
 //! ```
 //!
 //! Keeping this path local makes it easier to audit for runaway-process risks.
 use ploke_core::EXECUTION_DEBUG_TARGET;
+use std::process::Command as ProcessCommand;
 use tracing::{debug, instrument};
 
 use super::*;
+use crate::BranchDisposition;
 use crate::cli::prototype1_state::backend::{GitWorktreeBackend, RealizeRequest, WorkspaceBackend};
+use crate::cli::prototype1_state::cli_facing::{
+    Prototype1BranchEvaluationReport, build_prototype1_branch_evaluation_report,
+    ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
+    prototype1_branch_evaluation_path, prototype1_source_generation,
+};
+use crate::cli::prototype1_state::journal::prototype1_transition_journal_path;
 use crate::intervention::{
-    Prototype1ContinuationDisposition, decide_node_successor_continuation, load_runner_result_at,
-    load_scheduler_state, update_node_workspace_root, write_runner_result_at,
+    Prototype1ContinuationDisposition, Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerResult, TreatmentBranchEvaluationSummary, clear_runner_result, decide_node_successor_continuation, load_node_record, load_or_default_branch_registry, load_or_register_treatment_evaluation_node, load_runner_request, load_runner_result_at, load_scheduler_state, prototype1_branch_registry_path, record_runner_result, record_treatment_branch_evaluation, resolve_treatment_branch, update_node_status, update_node_workspace_root, write_runner_result_at
 };
 
 const SUCCESSOR_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -363,14 +394,18 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
 ) -> Result<Option<Prototype1SuccessorHandoff>, PrepareError> {
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let node = load_node_record(&manifest_path, node_id)?;
-    // Successor bootstrap is controller authority. Launch the currently
-    // running controller binary so persisted branch worktrees do not need to
-    // already understand the latest successor invocation contract.
-    let successor_binary_path =
-        std::env::current_exe().map_err(|source| PrepareError::DatabaseSetup {
+    // Successor bootstrap must execute the binary built from the selected
+    // node artifact, not the original parent controller binary.
+    let successor_binary_path = node.binary_path.clone();
+    if !successor_binary_path.is_file() {
+        return Err(PrepareError::DatabaseSetup {
             phase: "prototype1_successor_binary",
-            detail: source.to_string(),
-        })?;
+            detail: format!(
+                "selected successor binary '{}' was not found",
+                successor_binary_path.display()
+            ),
+        });
+    }
     let runtime_id = crate::cli::prototype1_state::event::RuntimeId::new();
     let invocation_path =
         crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);

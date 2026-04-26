@@ -1,7 +1,8 @@
 # Prototype 1 Intervention Loop V2
 
-Updated bounded plan for Prototype 1 after the parent/child runtime seam became
-explicit in the implementation. The material change from v1 is:
+Current semantic source for Prototype 1 runtime/trampoline behavior after the
+parent/child/successor runtime seam became explicit in the implementation. The
+material change from v1 is:
 
 ```text
 the modified state is not fully evaluable by the parent runtime
@@ -25,12 +26,17 @@ baseline parent runtime
   -> descendant evaluates itself
   -> record outcome
   -> active runtime applies policy over recorded outcomes/history
+  -> selected successor binary acknowledges handoff
 ```
 
-This remains a narrow prototype. It still limits the editable surface to
-tool-description artifacts loaded into the binary with `include_str!`, and it
-still keeps branch-control decisions grounded in mechanized evaluation rather
-than LLM self-judgment.
+This remains a narrow prototype, but the narrowness is a safety/budget choice,
+not a semantic limit of the trampoline model. The current implementation has
+focused on tool-description artifacts loaded into the binary with
+`include_str!`; the long-term direction is a bounded source-edit surface that
+may include the analysis protocol, evaluator framework, and other code used to
+build future successors. Branch-control decisions still remain grounded in
+mechanized evaluation and external oracle signals rather than LLM self-judgment
+or child self-promotion.
 
 ## Framework Anchors
 
@@ -74,14 +80,17 @@ history survives across generations
 Prototype 1 remains intentionally narrow.
 
 - use programmatic pre-oracle metrics
-- keep the editable surface bounded
+- keep the editable surface explicitly bounded
 - keep search shallow
 - defer merge/union over disjoint edits
-- defer arbitrary source mutation
+- defer unbounded arbitrary source mutation
 - defer distributed/multi-machine consensus
 
 The goal is still to prove one real end-to-end self-modifying loop over a small
-surface before broadening the target class.
+surface before broadening the target class. The intended broadening is still
+source-level self-editing: the valid patch target set may grow to include the
+runtime, analysis protocols, and evaluation framework, provided the selected
+successor compiles and passes the configured validation/oracle gates.
 
 ## Core Evaluation Boundary
 
@@ -148,9 +157,11 @@ active generation runtime
        -> wait for descendant acknowledgement
        -> descendant runs treatment eval/protocol
        -> descendant records outcome
-       -> restore or continue according to policy
   -> compare candidate outcomes
-  -> choose next active branch or stop
+  -> choose one successor branch/runtime or stop
+  -> materialize/build selected successor if needed
+  -> hand off authority to selected successor
+  -> old parent exits
 ```
 
 This is still one active generation governing the loop. There is no permanent
@@ -160,7 +171,12 @@ external controller above the generations. The currently active runtime owns:
 - realization of descendants
 - policy application
 - restore/revisit behavior
-- authority handoff to the selected child
+- authority handoff to the selected successor
+
+The concurrency invariant should be stated explicitly: a generation may propose
+or realize many children, and future implementations may run a bounded set of
+children concurrently, but at most one successor receives parent authority for
+the next generation.
 
 ## Descendant State Distinctions
 
@@ -181,6 +197,13 @@ acknowledged child runtime
 
 evaluated child
   descendant has completed one treatment run and recorded its result
+
+selected successor
+  one evaluated child chosen by parent policy as the next authoritative lineage
+
+successor runtime
+  fresh binary built from the selected artifact state; it acknowledges handoff,
+  becomes the next Parent, and continues only if policy/budget checks permit
 ```
 
 These distinctions are exactly where typestate is useful.
@@ -257,6 +280,23 @@ intervention = local typed transition between configurations
 
 ## Current Implementation Status
 
+There are currently two overlapping implementation paths. They should not be
+treated as equivalent.
+
+The older `loop prototype1` path owns most of the practical branch machinery:
+candidate registration, branch evaluation, metric summaries, and simple branch
+selection. It can evaluate multiple branches in one controller run, but it is
+not the long-term runtime-succession design because it does not make the
+selected successor binary become the next authoritative parent.
+
+The newer `prototype1_state` / invocation path is the intended replacement for
+runtime succession. It models the Parent -> Child -> Completed child ->
+Selected successor -> Successor bootstrap object explicitly, but currently only
+implements the single-child path plus bounded successor acknowledgement. The
+next cleanup work is to move the older path's useful policy/history/evaluation
+pieces behind the newer typed trampoline carriers rather than extending the old
+non-trampoline controller as the primary architecture.
+
 The current live implementation already answers several practical Prototype 1
 questions:
 
@@ -282,15 +322,17 @@ More concretely:
   already records node identity, runner request/result paths, node status, and
   continuation policy.
 - `prototype1_process.rs`
-  already owns the dangerous parent/child seam:
-  materialize -> build -> spawn -> wait -> read result.
+  already owns the dangerous process seam:
+  materialize -> build -> spawn child -> wait -> read result, plus bounded
+  successor bootstrap after selection.
 - `branch_evaluation.rs`
   already defines the mechanized keep/reject rule over baseline vs treatment
   metrics.
 
 ## Current Replacement Status
 
-The new scaffold does not yet replace the entire live implementation.
+The new scaffold does not yet replace the entire live implementation, but it is
+the architectural direction for multi-generation self-improvement.
 
 What it already replaces well:
 
@@ -307,6 +349,8 @@ What it does not yet replace:
 - child-side result completion and post-`C4` states
 - full evaluation artifact/result integration
 - policy-driven sibling comparison in the new layer
+- durable selected-successor decisions
+- successor rehydration as a real Parent entrypoint
 - restore/fork behavior as explicit typed transitions
 - full consolidation of branch registry + scheduler + journal into one coherent
   history substrate
@@ -314,10 +358,10 @@ What it does not yet replace:
 So the current state is:
 
 ```text
-old implementation still owns the full live loop
-new implementation already owns the clean local transition model
-next work is to connect the old policy/history/evaluation pieces to the new
-typed transition structure
+old implementation still owns most multi-branch evaluation machinery
+new implementation owns the intended runtime-succession/trampoline model
+next work is to migrate useful old policy/history/evaluation pieces into the
+new typed transition structure, not to treat the old path as the final loop
 ```
 
 ## Capability Seams Still Required
@@ -358,7 +402,9 @@ is the realization mechanism needed to let the child evaluate itself.
 The near-term replacement target is:
 
 1. Preserve the existing mechanized evaluation and branch-policy logic.
-2. Keep the current bounded tool-description artifact surface.
+2. Keep the editable surface bounded, starting with the current
+   tool-description artifacts and later admitting wider source surfaces only
+   through explicit validation gates.
 3. Move local node realization behind typed `Intervention`s.
 4. Re-home shared history/journal concerns so generations can reason over a
    common durable substrate.
@@ -370,6 +416,9 @@ The near-term replacement target is:
 6. Extend the typestate family past `C4` to cover:
    - child-completed
    - result-observed
+   - successor-selected
+   - successor-bootstrapped
+   - parent-exited
    - restore-ready
 
 ## Summary

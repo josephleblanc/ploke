@@ -247,7 +247,7 @@ impl OpenRouterBackend {
         }
 
         if !resp.model.matches_request(&req.model) {
-            tracing::warn!(
+            tracing::trace!(
                 "OpenRouter response model mismatch: requested={}, got={}",
                 req.model,
                 resp.model

@@ -586,6 +586,11 @@ fn derive_sequence_signals(sequence: &ToolCallSequence) -> SequenceSignals {
     }
 }
 
+#[doc(hidden)]
+pub fn derive_sequence_signals_for_diagnostics(sequence: &ToolCallSequence) -> SequenceSignals {
+    derive_sequence_signals(sequence)
+}
+
 fn render_sequence_context(context: &SequenceReviewContext) -> String {
     let mut rendered = String::new();
     rendered.push_str("Sequence summary\n");
@@ -636,6 +641,11 @@ fn render_sequence_context(context: &SequenceReviewContext) -> String {
     }
 
     rendered
+}
+
+#[doc(hidden)]
+pub fn render_sequence_context_for_diagnostics(context: &SequenceReviewContext) -> String {
+    render_sequence_context(context)
 }
 
 fn build_uncovered_spans(indices: &[usize]) -> Vec<UncoveredCallSpan> {

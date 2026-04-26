@@ -9,14 +9,14 @@ into the main evalnomicon book.
 - [`eval-triage-rubric.md`](eval-triage-rubric.md)
   Compact classification rubric for separating harness invalidity, known
   frontier limits, and action-surface failures before baseline.
-- [`prototype-1-intervention-loop.md`](prototype-1-intervention-loop.md)
-  Same-day bounded plan for externalized tool guidance, mechanized pre-oracle
-  metrics, protocol-shaped issue detection/synthesis, and shallow
-  reset/fork/select intervention search.
 - [`prototype-1-intervention-loop-v2.md`](prototype-1-intervention-loop-v2.md)
-  Updated Prototype 1 draft after making the parent/child runtime seam
-  explicit, with child self-evaluation, typed runtime-succession states, and
-  current implementation status.
+  Current semantic source for Prototype 1 trampoline behavior after making the
+  parent/child/successor runtime seam explicit, with child self-evaluation,
+  typed runtime-succession states, and current implementation status.
+- [`prototype-1-intervention-loop.md`](prototype-1-intervention-loop.md)
+  Historical v1 plan for the old non-trampoline loop shape. Still useful for
+  mechanized metric and branch-policy background, but superseded by v2 for
+  runtime succession semantics.
 - [`trait-first-reification.md`](trait-first-reification.md)
   Restart-safe note on representing formal kinds as trait-level algebras and
   concrete implementations as structs, with references to the framework drafts

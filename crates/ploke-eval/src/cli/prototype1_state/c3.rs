@@ -72,7 +72,9 @@ where
 {
     let child_lifecycle = match result {
         Some(SpawnObservation::Acknowledged) => ChildRuntimeLifecycle::Acknowledged,
-        Some(SpawnObservation::TerminatedBeforeAcknowledged { .. }) => ChildRuntimeLifecycle::Terminated,
+        Some(SpawnObservation::TerminatedBeforeAcknowledged { .. }) => {
+            ChildRuntimeLifecycle::Terminated
+        }
         None => ChildRuntimeLifecycle::Spawned,
     };
     SpawnEntry {

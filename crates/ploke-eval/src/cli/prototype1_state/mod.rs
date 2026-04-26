@@ -1,8 +1,9 @@
 //! Typed prototype1 configuration states.
 //!
-//! These states are not wired into the live controller yet. They exist so the
-//! parent/child seam can be modeled explicitly as move-only configuration
-//! transitions before the runtime path is rewritten to use them.
+//! These states are only partially wired into the live controller. They exist
+//! so the Parent -> Child -> Completed child -> Selected successor -> Successor
+//! bootstrap seam can be modeled explicitly as move-only configuration
+//! transitions while the older non-trampoline controller is being replaced.
 //! Live configuration values should be constructed through trusted
 //! loaders/transitions in their defining modules rather than by ad hoc struct
 //! literals elsewhere.
@@ -11,6 +12,17 @@
 //!
 //! This crate contains the defining types and transitions that govern the self-improvement loop
 //! protocol.
+//!
+//! ## Design constraints imposed by long-term planning
+//!
+//!  - Do not assume one global active Parent.
+//!  - Do not store “current best branch” as a singleton.
+//!  - Do not overwrite evaluation state; append observations and decisions.
+//!  - Do not store scores without evaluator/eval-set/policy identity.
+//!  - Do not make the analysis engine part of the trusted root.
+//!  - Do not let a runtime’s self-report become promotion without independent verification.
+//!  - Do not couple worktree layout to the semantic tree.
+//!  - Do not make successor authority imply global authority.
 //!
 //! ## Key terms and types
 //!
@@ -59,39 +71,46 @@
 //!     Configuration of which Artifact the Runtime is operating over. A 'create' may or may not
 //!     generate a worktree for the Child Runtime.
 //!     - select: determine the next Runtime to become the Parent Runtime. This involves accessing
-//!     the Candidate Runtime's self-evaluation through the Journal, executing a Policy over the
-//!     view of that Journal, and choosing the Artifact in the Tree to become the next Parent Runtime.
+//!     Child self-evaluations through the Journal, executing a Policy over the view of that
+//!     Journal, and choosing the Artifact in the Tree to become the next Parent Runtime.
 //!     - update: changes the Configuration from the previous Artifact to the next Artifact used to
 //!     generate the Parent Runtime. This involves checking out that Artifact from the Tree.
-//!     - build: builds a Candidate Runtime from the Artifact in the Configuration, and launches the
-//!     Candidate Runtime that will become the next Parent Runtime.
+//!     - build: builds a Successor Runtime from the selected Artifact in the Configuration, and
+//!     launches the Successor Runtime that may become the next Parent Runtime.
 //!     - cleanup: cleans up child worktrees
 //!     - exit: Parent Runtime terminates, possibly after performing the handshake with the next
 //!     Parent Runtime. If no next Parent Runtime is selected, the looping protocol is over.
 //!
 //!
-//! ## Runtime: Parent/Child/Candidate
+//! ## Runtime: Parent/Child/Successor
 //!
 //! Responsibilities for different roles of runtime.
 //!
 //! Parent Runtime:
 //!     - creates, selects, updates, builds, cleans up, exits
-//!     - mutates Tree state
+//!     - mutates Tree state, but must not destructively mutate Tree history
+//!         - (e.g. change branch, remove worktree, but not "reset --hard")
 //!
 //! Child Runtime:
 //!     - self-evaluates
 //!     - records evaluations
-//!     - performs handoffs with Parent
+//!     - acknowledges its invocation
 //!     - does not mutate Tree state
 //!
-//! Candidate Runtime:
-//!     - promotes to Parent Runtime
-//!     - performs handoff with Parent Runtime
+//! Successor Runtime:
+//!     - fresh binary built from the selected Child artifact
+//!     - acknowledges handoff with Parent Runtime
+//!     - becomes the next Parent only after policy and bootstrap validation
 //!
 //! The persisted invocation contract for the live Prototype 1 seam is
-//! narrower than this role vocabulary: only the leaf `Child` runner is
-//! executable today. A `Successor` remains explicit controller-side authority
-//! state, not an executable fresh-binary role.
+//! narrower than the full long-term role vocabulary but already has two
+//! executable fresh-binary roles:
+//!
+//! - `Child`: leaf evaluator that records one self-evaluation and exits.
+//! - `Successor`: selected-continuation bootstrap that acknowledges handoff
+//!   within a bounded standby window. The successor is not yet a fully
+//!   autonomous next-generation controller, but it must be built from the
+//!   selected artifact rather than reusing the old parent binary.
 //!
 //! ## Actions
 //!
@@ -143,13 +162,118 @@
 //! ### exit
 //! 1. record final status
 //! 2. terminate
-
+//!
+//! Prototype 1 persisted state is rooted under
+//! `~/.ploke-eval/campaigns/<campaign-id>/prototype1/`.
+//!
+//! ## Implementation map
+//!
+//! Prototype 1 currently spans two overlapping implementation paths:
+//!
+//! - [`crate::cli`]
+//!   Operator-facing `loop prototype1` command surface and the live controller
+//!   orchestration around campaigns, branches, and scheduler policy.
+//! - [`crate::cli::prototype1_process`]
+//!   Parent/child/successor process seam: stage one node workspace, build one
+//!   child binary, spawn one runner, read back persisted results, and bootstrap
+//!   the selected successor binary after policy accepts it.
+//! - [`crate::intervention`]
+//!   Durable scheduler-owned records for node registration, runner requests and
+//!   results, branch registry, continuation policy, and evaluation summaries.
+//! - [`crate::cli::prototype1_state::c1`] through [`crate::cli::prototype1_state::c4`]
+//!   Typed transition sketch for materialize -> build -> spawn -> observe.
+//! - [`crate::cli::prototype1_state::backend`]
+//!   Backend-managed child workspace realization, currently implemented with
+//!   git worktrees rooted under each node directory.
+//! - [`crate::cli::prototype1_state::invocation`]
+//!   Attempt-scoped bootstrap contracts for fresh binaries, including child and
+//!   successor invocations plus successor-ready acknowledgements.
+//! - [`crate::cli::prototype1_state::journal`]
+//!   Append-only typed transition journal and replay helpers.
+//!
+//! The important current split is:
+//!
+//! - the older `loop prototype1` controller still owns much of the multi-branch
+//!   evaluation, ranking, and reporting machinery
+//! - the typed state path defines the intended trampoline authority carriers and
+//!   attempt-level protocol surface
+//! - cleanup work should migrate useful policy/history/evaluation pieces from
+//!   the old controller into the typed state model rather than extending the old
+//!   non-trampoline path as the final architecture
+//!
+//! ## Persisted artifact map
+//!
+//! Campaign-scoped Prototype 1 state lives under:
+//!
+//! ```text
+//! ~/.ploke-eval/campaigns/<campaign-id>/prototype1/
+//! ```
+//!
+//! The main durable files and directories there are:
+//!
+//! - `scheduler.json`
+//!   Scheduler frontier, completed/failed node ids, node summaries, and search
+//!   policy.
+//! - `branches.json`
+//!   Synthesized branch registry for one source state, including proposed
+//!   content, apply ids, and latest evaluation summaries.
+//! - `evaluations/<branch-id>.json`
+//!   Persisted branch-vs-baseline comparison results for treatment campaigns.
+//! - `transition-journal.jsonl`
+//!   Append-only typed transition log for child-ready and successor-handoff
+//!   events.
+//! - `nodes/<node-id>/node.json`
+//!   Durable node summary owned by the scheduler.
+//! - `nodes/<node-id>/runner-request.json`
+//!   Mutable node-level request used by the live runner seam.
+//! - `nodes/<node-id>/runner-result.json`
+//!   Latest node-level runner outcome used by the live controller.
+//! - `nodes/<node-id>/invocations/<runtime-id>.json`
+//!   Attempt-scoped bootstrap contract for one fresh child or successor
+//!   process.
+//! - `nodes/<node-id>/results/<runtime-id>.json`
+//!   Attempt-scoped result record for one invocation runtime.
+//! - `nodes/<node-id>/successor-ready/<runtime-id>.json`
+//!   Successor acknowledgement file written after detached successor handoff.
+//! - `nodes/<node-id>/worktree/`
+//!   Backend-managed node-owned child workspace root when the worktree path is
+//!   realized through [`backend`].
+//! - `nodes/<node-id>/bin/` and `nodes/<node-id>/target/`
+//!   Build artifacts from the live child-build path rather than authoritative
+//!   scheduler state.
+//!
+//! Related state also exists outside the campaign-local `prototype1/` subtree:
+//!
+//! - `~/.ploke-eval/campaigns/<campaign-id>/campaign.json`
+//!   Baseline campaign manifest reused by the live controller path.
+//! - `~/.ploke-eval/campaigns/<campaign-id>/closure-state.json`
+//!   Closure-derived campaign state reused by the live controller path.
+//! - `~/.ploke-eval/instances/prototype1/<campaign-id>/...`
+//!   Baseline and treatment run records referenced by evaluation artifacts.
+//!
+//! ## Current persistence gaps
+//!
+//! The persisted surface above is enough to recover individual node outcomes,
+//! but it is not yet the full state model needed for safe fan-out. In
+//! particular, the live implementation still lacks:
+//!
+//! - a controller lease or epoch proving which parent owns the campaign
+//! - a first-class attempt record that unifies invocation, pid, workspace
+//!   lease, heartbeat, and terminal status
+//! - a durable scheduler decision for selected successors distinct from
+//!   per-node `keep` evaluations
+//! - explicit bounded fan-out policy state such as concurrent-child budget,
+//!   total-completed budget, and absolute deadline
+//!
+pub(crate) mod authority;
 pub(crate) mod backend;
 pub(crate) mod c1;
 pub(crate) mod c2;
 pub(crate) mod c3;
 pub(crate) mod c4;
+pub(crate) mod cli_facing;
 pub(crate) mod event;
 pub(crate) mod invocation;
 pub(crate) mod journal;
+pub(crate) mod record;
 pub(crate) mod workspace;

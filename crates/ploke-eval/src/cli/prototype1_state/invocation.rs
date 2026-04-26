@@ -10,14 +10,15 @@
 //! belongs to durable node/request state. Doing so would turn this type into a
 //! second runner request instead of a true bootstrap contract.
 //!
-//! The important seam is that Prototype 1 currently has exactly one
-//! executable fresh-binary role:
+//! The important seam is that Prototype 1 currently has two narrow executable
+//! fresh-binary roles:
 //!
 //! - `Child`: leaf evaluator, executes one node, records, exits
-//! - `Successor`: non-executable continuation authority contract placeholder
+//! - `Successor`: acknowledges successor bootstrap, then idles only within a
+//!   bounded standby window
 //!
-//! Keeping that split explicit here prevents the live parent/child runner seam
-//! from quietly drifting into a generic "fresh binary can do anything" surface.
+//! Keeping that split explicit here prevents the live runner seam from
+//! quietly drifting into a generic "fresh binary can do anything" surface.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -41,6 +42,18 @@ fn leaf_runner_argv(invocation_path: &Path) -> Vec<String> {
     ]
 }
 
+fn successor_runner_argv(invocation_path: &Path) -> Vec<String> {
+    vec![
+        "loop".to_string(),
+        "prototype1-runner".to_string(),
+        "--invocation".to_string(),
+        invocation_path.display().to_string(),
+        "--execute".to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+    ]
+}
+
 /// Durable schema version for runtime invocations.
 pub(crate) const SCHEMA_VERSION: &str = "prototype1-invocation.v1";
 
@@ -50,7 +63,7 @@ pub(crate) const SCHEMA_VERSION: &str = "prototype1-invocation.v1";
 pub(crate) enum Role {
     /// Leaf evaluator child: acknowledge, self-evaluate, record, exit.
     Child,
-    /// Selected continuation runtime that becomes the next active authority.
+    /// Selected continuation runtime for bounded successor bootstrap.
     Successor,
 }
 
@@ -75,10 +88,7 @@ pub(crate) struct ChildInvocation {
     inner: Invocation,
 }
 
-/// Non-executable successor authority contract.
-///
-/// A successor may be recorded as future controller state, but it must not be
-/// passed to the current leaf child runner entrypoint.
+/// Executable selected-successor bootstrap contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SuccessorInvocation {
     inner: Invocation,
@@ -110,12 +120,7 @@ impl Invocation {
         }
     }
 
-    /// Selected-successor bootstrap contract placeholder.
-    ///
-    /// This is intentionally not executable through the live child runner
-    /// path. Its purpose is to make successor authority explicit in persisted
-    /// state without implying that successor continuation exists yet.
-    #[allow(dead_code)]
+    /// Selected-successor bootstrap contract.
     fn successor(
         campaign_id: String,
         node_id: String,
@@ -187,15 +192,42 @@ impl ChildInvocation {
 }
 
 impl SuccessorInvocation {
-    /// Error returned when code attempts to treat successor authority as an
-    /// executable child runner contract.
-    pub(crate) fn non_executable_error(&self, invocation_path: &Path) -> PrepareError {
-        PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "successor invocation '{}' is controller authority, not an executable leaf runner",
-                invocation_path.display()
-            ),
+    /// Create the executable successor invocation used by the detached
+    /// handoff path.
+    pub(crate) fn new(
+        campaign_id: String,
+        node_id: String,
+        runtime_id: RuntimeId,
+        journal_path: PathBuf,
+    ) -> Self {
+        Self {
+            inner: Invocation::successor(campaign_id, node_id, runtime_id, journal_path),
         }
+    }
+
+    /// Access the persisted wire record.
+    pub(crate) fn as_invocation(&self) -> &Invocation {
+        &self.inner
+    }
+
+    /// Campaign this successor bootstrap belongs to.
+    pub(crate) fn campaign_id(&self) -> &str {
+        &self.inner.campaign_id
+    }
+
+    /// Durable node this successor bootstrap belongs to.
+    pub(crate) fn node_id(&self) -> &str {
+        &self.inner.node_id
+    }
+
+    /// Runtime identity for this successor bootstrap attempt.
+    pub(crate) fn runtime_id(&self) -> RuntimeId {
+        self.inner.runtime_id
+    }
+
+    /// CLI argv for launching exactly one successor bootstrap.
+    pub(crate) fn launch_args(&self, invocation_path: &Path) -> Vec<String> {
+        successor_runner_argv(invocation_path)
     }
 }
 
@@ -251,12 +283,9 @@ pub(crate) fn load_authority(path: &Path) -> Result<InvocationAuthority, Prepare
     Ok(load(path)?.classify())
 }
 
-/// Load the only invocation type executable by the live Prototype 1 runner.
-pub(crate) fn load_executable_child(path: &Path) -> Result<ChildInvocation, PrepareError> {
-    match load_authority(path)? {
-        InvocationAuthority::Child(invocation) => Ok(invocation),
-        InvocationAuthority::Successor(invocation) => Err(invocation.non_executable_error(path)),
-    }
+/// Load an executable invocation for the live Prototype 1 runner.
+pub(crate) fn load_executable(path: &Path) -> Result<InvocationAuthority, PrepareError> {
+    load_authority(path)
 }
 
 /// Persist one executable leaf-child invocation.
@@ -265,4 +294,68 @@ pub(crate) fn write_child_invocation(
     invocation: &ChildInvocation,
 ) -> Result<(), PrepareError> {
     write_invocation(path, invocation.as_invocation())
+}
+
+/// Persist one executable branch-successor invocation.
+pub(crate) fn write_successor_invocation(
+    path: &Path,
+    invocation: &SuccessorInvocation,
+) -> Result<(), PrepareError> {
+    write_invocation(path, invocation.as_invocation())
+}
+
+/// Successor-ready acknowledgement written by a detached successor runtime.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct SuccessorReadyRecord {
+    pub schema_version: String,
+    pub campaign_id: String,
+    pub node_id: String,
+    pub runtime_id: RuntimeId,
+    pub pid: u32,
+    pub recorded_at: String,
+}
+
+/// Durable schema version for successor-ready acknowledgements.
+pub(crate) const SUCCESSOR_READY_SCHEMA_VERSION: &str = "prototype1-successor-ready.v1";
+
+/// Directory containing successor-ready acknowledgements for one node.
+pub(crate) fn successor_ready_dir(node_dir: &Path) -> PathBuf {
+    node_dir.join("successor-ready")
+}
+
+/// Successor-ready acknowledgement path for one concrete runtime.
+pub(crate) fn successor_ready_path(node_dir: &Path, runtime_id: RuntimeId) -> PathBuf {
+    successor_ready_dir(node_dir).join(format!("{runtime_id}.json"))
+}
+
+/// Persist one successor-ready acknowledgement.
+pub(crate) fn write_successor_ready_record(
+    path: &Path,
+    record: &SuccessorReadyRecord,
+) -> Result<(), PrepareError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let bytes = serde_json::to_vec_pretty(record).map_err(PrepareError::Serialize)?;
+    fs::write(path, bytes).map_err(|source| PrepareError::WriteManifest {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Load one persisted successor-ready acknowledgement.
+pub(crate) fn load_successor_ready_record(
+    path: &Path,
+) -> Result<SuccessorReadyRecord, PrepareError> {
+    let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
+        path: path.to_path_buf(),
+        source,
+    })
 }

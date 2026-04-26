@@ -17,6 +17,7 @@
 
 use std::path::PathBuf;
 
+use super::authority::{ActiveRoot, ChildRoot, Cleaned, Completed, Selected, SharedRoot};
 use super::backend::{Workspace, WorkspaceBackend};
 use super::event::RuntimeId;
 
@@ -27,6 +28,7 @@ use super::event::RuntimeId;
 /// here rather than inside any git-tracked workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SharedPaths {
+    pub root: SharedRoot,
     pub journal: PathBuf,
     pub scheduler_root: PathBuf,
     pub runner_root: PathBuf,
@@ -42,7 +44,7 @@ pub(crate) struct SharedPaths {
 pub(crate) struct ActiveCheckout<B: WorkspaceBackend> {
     pub branch: B::Branch,
     pub head: B::Head,
-    pub root: B::Root,
+    pub root: ActiveRoot,
 }
 
 /// One ephemeral child realization used for parallel child evaluation.
@@ -52,6 +54,7 @@ pub(crate) struct ActiveCheckout<B: WorkspaceBackend> {
 /// on disk is a cache decision, not the durable lineage model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ChildWorktree<B: WorkspaceBackend> {
+    pub root: ChildRoot<B::Branch>,
     pub workspace: Workspace<B::Branch, B::Head, B::Root>,
     pub binary_path: PathBuf,
     pub committed: bool,
@@ -96,19 +99,22 @@ pub(crate) struct Create<B: WorkspaceBackend> {
 /// Choose which branch should continue as the next active lineage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Select<B: WorkspaceBackend> {
-    pub successor: B::Branch,
+    pub completed: Vec<Completed<B::Branch>>,
+    pub successor: Selected<B::Branch>,
 }
 
 /// Update the active checkout to the selected successor branch/state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Update<B: WorkspaceBackend> {
-    pub successor: B::Branch,
+    pub successor: Selected<B::Branch>,
+    pub active_after_update: ActiveRoot,
 }
 
 /// Build the runtime that will execute from the selected successor state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Build<B: WorkspaceBackend> {
-    pub successor: B::Branch,
+    pub successor: Selected<B::Branch>,
+    pub active_root: ActiveRoot,
 }
 
 /// Prune one child worktree once its result has been recorded and policy
@@ -116,6 +122,7 @@ pub(crate) struct Build<B: WorkspaceBackend> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cleanup<B: WorkspaceBackend> {
     pub branch: B::Branch,
+    pub cleaned: Option<Cleaned<B::Branch>>,
 }
 
 /// Terminate the current authoritative parent runtime, optionally after a

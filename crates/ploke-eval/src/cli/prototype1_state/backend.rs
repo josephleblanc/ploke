@@ -220,7 +220,10 @@ pub(crate) struct GitWorktreeBackend;
 impl GitWorktreeBackend {
     /// Deterministic branch allocation for one scheduler node.
     fn branch_name(&self, node_id: &str) -> GitBranch {
-        GitBranch(format!("prototype1/{node_id}"))
+        // Use a flat ref name rather than a nested namespace. Nested names
+        // like `prototype1/<node>` are fragile because any existing flat ref
+        // at an intermediate path segment blocks creation of descendant refs.
+        GitBranch(format!("prototype1-{node_id}"))
     }
 
     /// Deterministic child workspace location under the node-owned storage
@@ -646,7 +649,7 @@ branch refs/heads/main
 
 worktree /repo/node/worktree
 HEAD 123456
-branch refs/heads/prototype1/node-1
+branch refs/heads/prototype1-node-1
 ";
 
         let entries = parse_worktree_list(stdout);
@@ -660,11 +663,20 @@ branch refs/heads/prototype1/node-1
                 WorktreeEntry {
                     root: PathBuf::from("/repo/node/worktree"),
                     branch: Some(super::GitBranchRef(
-                        "refs/heads/prototype1/node-1".to_string(),
+                        "refs/heads/prototype1-node-1".to_string(),
                     )),
                 },
             ]
         );
+    }
+
+    #[test]
+    fn allocates_flat_child_branch_names() {
+        let backend = super::GitWorktreeBackend;
+        let branch = backend.branch_name("node-1");
+
+        assert_eq!(branch.0, "prototype1-node-1".to_string());
+        assert!(!branch.0.contains('/'));
     }
 
     #[test]

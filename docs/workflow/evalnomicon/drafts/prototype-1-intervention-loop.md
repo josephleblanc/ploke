@@ -1,5 +1,14 @@
 # Prototype 1 Intervention Loop
 
+> Historical v1 note. This document preserves the original non-trampoline
+> branch/evaluation plan and remains useful background for mechanized metrics,
+> issue selection, and shallow branch policy. It is superseded for runtime-loop
+> semantics by
+> [prototype-1-intervention-loop-v2.md](prototype-1-intervention-loop-v2.md),
+> because the parent binary cannot fully evaluate descendants whose source
+> changes are only present after rebuilding and spawning a child/successor
+> binary.
+
 Small bounded plan for a same-day proof of concept that connects protocol
 artifacts, mechanized pre-oracle metrics, and shallow intervention search over
 real editable artifacts.
@@ -92,7 +101,7 @@ mechanized evaluation answers "should we keep this branch?"
 
 ## Prototype Loop Shape
 
-The intended Prototype 1 loop is:
+The original non-trampoline loop shape was:
 
 ```text
 eval configuration
@@ -104,6 +113,12 @@ eval configuration
 ```
 
 Terminology: `eval target` = the slice of benchmark instances to run; `intervention target` = the bounded artifact surface to edit.
+
+This shape is no longer the authoritative runtime model. The current Prototype
+1 direction is a trampoline: a Parent builds a Child/Successor binary from the
+patched artifact state, the fresh binary evaluates or bootstraps under its own
+compiled semantics, and branch control is grounded in recorded mechanized
+outcomes rather than the original parent re-running treatment in place.
 
 | Step | Role | Driver |
 | --- | --- | --- |

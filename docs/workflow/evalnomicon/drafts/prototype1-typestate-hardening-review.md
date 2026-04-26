@@ -27,7 +27,7 @@ The previous high-severity timeout/terminality issue appears addressed in the cu
 - [c4.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/c4.rs:89) still equates “runner result observed” with `ChildRuntimeLifecycle::Terminated`. The child writes its runner result before process return in [prototype1_process.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_process.rs:690), so the lifecycle name is still slightly stronger than what the parent has actually observed.
 - [invocation.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/invocation.rs:59) still exposes `Invocation` fields publicly. The constructor/persistence path is much tighter now, but the wire type itself is not yet a private/trusted carrier.
 - I did not find tests covering:
-  `load_executable_child` rejecting a persisted `Successor`, timeout restart behavior, or contradictory `Spawned + Observed(TerminatedBeforeAcknowledged) + ChildReady` replay.
+  child-evaluation entrypoints rejecting a persisted `Successor`, successor-bootstrap entrypoints rejecting a persisted `Child`, timeout restart behavior, or contradictory `Spawned + Observed(TerminatedBeforeAcknowledged) + ChildReady` replay.
 
 ## Recommended Next Steps
 
@@ -36,4 +36,4 @@ The previous high-severity timeout/terminality issue appears addressed in the cu
 2. Teach spawn replay to reject contradictory histories.
    In particular, `ready` should not coexist with `Observed(TerminatedBeforeAcknowledged)` without being flagged inconsistent.
 3. Decide whether `ChildRuntimeLifecycle::Terminated` means “process exit observed” or “terminal result observed,” then rename or tighten the carrier accordingly.
-4. Add tests for successor rejection, timeout recovery, and contradictory spawn history replay.
+4. Add tests for role-specific invocation rejection, timeout recovery, and contradictory spawn history replay.
