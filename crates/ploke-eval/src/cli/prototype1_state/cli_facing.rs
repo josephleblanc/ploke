@@ -99,6 +99,26 @@ impl Prototype1LoopCommand {
 
         Ok(())
     }
+
+    pub async fn run_setup(self) -> Result<(), PrepareError> {
+        let format = self.format;
+        let mut input = Prototype1LoopControllerInput::from_command(&self)?;
+        input.stop_after = Prototype1LoopStopAfter::TargetSelection;
+        input.dry_run = true;
+        let report = run_prototype1_loop_controller(input).await?;
+
+        match format {
+            InspectOutputFormat::Table => print_prototype1_loop_report(&report),
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
 
 struct Prototype1LoopControllerInput {

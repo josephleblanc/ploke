@@ -371,6 +371,8 @@ pub struct LoopCommand {
 pub enum LoopSubcommand {
     /// Run Prototype 1 through eval configuration, baseline arm, synthesis, treatment, and compare.
     Prototype1(Prototype1LoopCommand),
+    /// Prepare Prototype 1 baseline/synthesis state, then stop before applying or running children.
+    Prototype1Setup(Prototype1LoopCommand),
     /// Drive the new typed Prototype 1 runtime path for one staged node.
     #[command(hide = true)]
     Prototype1State(Prototype1StateCommand),
@@ -1009,6 +1011,7 @@ impl LoopCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         match self.command {
             LoopSubcommand::Prototype1(cmd) => cmd.run().await,
+            LoopSubcommand::Prototype1Setup(cmd) => cmd.run_setup().await,
             LoopSubcommand::Prototype1State(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Branch(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Runner(cmd) => cmd.run().await,
@@ -11761,6 +11764,36 @@ mod tests {
                 assert_eq!(cmd.source_campaign.as_deref(), Some("prototype1-campaign"));
                 assert_eq!(cmd.source_branch_id.as_deref(), Some("branch-123"));
                 assert_eq!(cmd.stop_after, Prototype1LoopStopAfter::Compare);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_setup_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-setup",
+            "--dataset-key",
+            "clap-rs__clap",
+            "--instance",
+            "clap-rs__clap-3670",
+            "--model-id",
+            "x-ai/grok-4-fast",
+            "--provider",
+            "xai",
+        ])
+        .expect("loop prototype1-setup should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Setup(cmd),
+            }) => {
+                assert_eq!(cmd.dataset_key.as_deref(), Some("clap-rs__clap"));
+                assert_eq!(cmd.instance, vec!["clap-rs__clap-3670".to_string()]);
+                assert_eq!(cmd.model_id.as_deref(), Some("x-ai/grok-4-fast"));
+                assert_eq!(cmd.provider.as_deref(), Some("xai"));
             }
             other => panic!("unexpected command shape: {:?}", other),
         }
