@@ -1,6 +1,6 @@
 ---
 name: ploke-eval-operator
-description: Use this skill when you need to operate `ploke-eval` from the CLI without re-reading its source, especially to choose the right command path, treat the right artifacts as authoritative, avoid misleading batch assumptions, and recover a sane eval workflow.
+description: Use this skill when operating or changing `ploke-eval` CLI workflows, campaigns, closure state, active `select` context, prototype loop commands, or eval artifact paths. Inspect the existing CLI and persisted operator context before proposing new flags, shell variables, config files, or long commands.
 ---
 
 # Ploke Eval Operator
@@ -11,6 +11,7 @@ the `ploke-eval` CLI.
 ## Boundaries
 
 - Start from the CLI surface first: `ploke-eval --help` and `ploke-eval help <subcommand>`.
+- Check active operator context early with `ploke-eval select status`.
 - Do not read `crates/ploke-eval/src/` unless the CLI surface fails to answer the operator
   question and the task explicitly requires code-level verification.
 - Prefer one target family at a time for interactive work.
@@ -21,6 +22,11 @@ the `ploke-eval` CLI.
 ## Default Operator Stance
 
 - Default execution primitive: `run single agent`
+- Default state resolution order:
+  1. active `select` context
+  2. campaign manifest
+  3. closure/prototype scheduler state
+  4. explicit CLI arguments
 - Default setup path:
   1. `ploke-eval registry status`
   2. `ploke-eval registry show --dataset <family>`
@@ -60,6 +66,26 @@ Operational rule:
 - Keep permanent callsites on that target sparse and sanity-oriented; remove temporary ones after diagnosis.
 
 ## Command Groups That Matter
+
+### Active selection
+
+- `select status`
+- `select campaign <campaign>`
+- `select batch <batch>`
+- `select instance <instance-id>`
+- `select attempt <n>`
+- `select unset <scope>`
+- `select clear`
+
+Use `select` as the persisted operator context. Before adding flags, shell variables,
+or a new config file, ask whether the command can resolve the value from active
+selection.
+
+Practical rule:
+- If a command needs `--campaign`, first check whether `select campaign` should supply it.
+- If a command needs `--instance`, first check whether `select instance` should supply it.
+- If a command needs both and they conflict, report the selection warning and do not
+  silently choose one.
 
 ### Setup
 
@@ -117,6 +143,37 @@ for interactive validity-sensitive work.
 For measured work, campaign + closure is often the right operator layer even if top-level help
 does not emphasize that enough.
 
+### Prototype loop
+
+Before proposing or running a prototype loop command, inspect:
+
+- `ploke-eval loop --help`
+- `ploke-eval loop <prototype-command> --help`
+- `ploke-eval select status`
+- `ploke-eval campaign show --campaign <campaign>`
+- `ploke-eval campaign validate --campaign <campaign>`
+
+Expected prototype state locations:
+
+- `~/.ploke-eval/campaigns/<campaign>/campaign.json`
+- `~/.ploke-eval/campaigns/<campaign>/closure-state.json`
+- `~/.ploke-eval/campaigns/<campaign>/prototype1/scheduler.json`
+- `~/.ploke-eval/campaigns/<campaign>/prototype1/branches.json`
+- `<repo-root>/.ploke/prototype1/parent_identity.json`
+
+Do not make humans pass IDs already present in campaign/prototype state unless the
+CLI genuinely lacks a resolver. Prefer command shapes like:
+
+```bash
+ploke-eval select campaign <campaign>
+ploke-eval select instance <instance-id>
+ploke-eval loop prototype1-state --repo-root .
+```
+
+For prototype branch/runtime work, keep `--repo-root` explicit until the command has
+strong guardrails; repo checkout selection is operationally risky and should not be
+silently inferred from global state.
+
 ## Model / Provider Semantics
 
 There are four different knobs:
@@ -143,6 +200,7 @@ When asked “what should I run?” bias toward these answers:
   - `run prepare instance`
   - `run single agent`
 - One target family with stateful progress:
+  - `select campaign <campaign>`
   - `campaign show`
   - `closure status`
   - `closure advance eval`

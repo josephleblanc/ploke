@@ -373,8 +373,7 @@ pub enum LoopSubcommand {
     Prototype1(Prototype1LoopCommand),
     /// Prepare Prototype 1 baseline/synthesis state, then stop before applying or running children.
     Prototype1Setup(Prototype1LoopCommand),
-    /// Drive the new typed Prototype 1 runtime path for one staged node.
-    #[command(hide = true)]
+    /// Drive the typed Prototype 1 parent runtime path.
     Prototype1State(Prototype1StateCommand),
     /// Inspect and manipulate Prototype 1 treatment-branch state.
     Prototype1Branch(Prototype1BranchCommand),
@@ -395,14 +394,17 @@ pub enum Prototype1StateStopAfter {
 }
 
 #[derive(Debug, Parser)]
-#[command(about = "Run the new typed Prototype 1 state transitions for one staged node")]
+#[command(about = "Run the typed Prototype 1 state transitions for the active parent checkout")]
 pub struct Prototype1StateCommand {
+    /// Campaign id. Defaults to parent identity, then active `select campaign`.
     #[arg(long)]
     pub campaign: Option<String>,
 
+    /// Staged node id. Defaults to the selected branch/node in the campaign scheduler.
     #[arg(long)]
     pub node_id: Option<String>,
 
+    /// Parent checkout root. Defaults to the current directory.
     #[arg(long, value_name = "PATH")]
     pub repo_root: Option<PathBuf>,
 
@@ -662,6 +664,10 @@ pub struct Prototype1LoopCommand {
     /// Stable identifier for the batch manifest directory when preparing inline.
     #[arg(long)]
     pub prepare_batch_id: Option<String>,
+
+    /// Stable human campaign/profile id for Prototype 1 state.
+    #[arg(long)]
+    pub campaign: Option<String>,
 
     /// Root directory containing repo checkouts at <repo-cache>/<org>/<repo>.
     #[arg(long, value_name = "PATH")]
@@ -11783,6 +11789,8 @@ mod tests {
             "x-ai/grok-4-fast",
             "--provider",
             "xai",
+            "--campaign",
+            "p1-clap",
         ])
         .expect("loop prototype1-setup should parse");
 
@@ -11794,6 +11802,7 @@ mod tests {
                 assert_eq!(cmd.instance, vec!["clap-rs__clap-3670".to_string()]);
                 assert_eq!(cmd.model_id.as_deref(), Some("x-ai/grok-4-fast"));
                 assert_eq!(cmd.provider.as_deref(), Some("xai"));
+                assert_eq!(cmd.campaign.as_deref(), Some("p1-clap"));
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

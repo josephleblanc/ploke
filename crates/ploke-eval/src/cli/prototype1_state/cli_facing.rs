@@ -55,7 +55,7 @@ use crate::{
             },
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
-        serde_name, write_json_file_pretty, yes_no,
+        sanitize_batch_component, serde_name, write_json_file_pretty, yes_no,
     },
     evaluate_branch, instances_dir,
     intervention::{
@@ -78,6 +78,7 @@ use crate::{
     provider_prefs::load_provider_for_model,
     record::read_compressed_record,
     repos_dir, resolve_campaign_config, save_campaign_manifest,
+    selection::load_active_selection,
     spec::PrepareError,
 };
 
@@ -1407,20 +1408,18 @@ fn resolve_prototype1_state_campaign(
     if let Some(campaign) = command.campaign.as_ref() {
         return Ok(campaign.clone());
     }
-    if command.init_parent_identity {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail:
-                "--init-parent-identity requires --campaign because no parent identity exists yet"
-                    .to_string(),
-        });
+    if let Some(campaign) = infer_campaign_from_parent_identity(repo_root)? {
+        return Ok(campaign);
     }
-    infer_campaign_from_parent_identity(repo_root)?.ok_or_else(|| {
-        PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "--campaign was omitted and no parent identity exists at '{}'",
-                crate::cli::prototype1_state::identity::parent_identity_path(repo_root).display()
-            ),
-        }
+    if let Some(campaign) = load_active_selection()?.campaign {
+        return Ok(campaign);
+    }
+
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "--campaign was omitted, no parent identity exists at '{}', and no active campaign is selected. Run `ploke-eval select campaign <campaign>` or pass --campaign.",
+            crate::cli::prototype1_state::identity::parent_identity_path(repo_root).display()
+        ),
     })
 }
 
@@ -1431,14 +1430,140 @@ fn resolve_prototype1_monitor_campaign(
     if let Some(campaign) = command.campaign.as_ref() {
         return Ok(campaign.clone());
     }
-    infer_campaign_from_parent_identity(repo_root)?.ok_or_else(|| {
-        PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "--campaign was omitted and no parent identity exists at '{}'",
-                crate::cli::prototype1_state::identity::parent_identity_path(repo_root).display()
-            ),
-        }
+    if let Some(campaign) = infer_campaign_from_parent_identity(repo_root)? {
+        return Ok(campaign);
+    }
+    if let Some(campaign) = load_active_selection()?.campaign {
+        return Ok(campaign);
+    }
+
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "--campaign was omitted, no parent identity exists at '{}', and no active campaign is selected. Run `ploke-eval select campaign <campaign>` or pass --campaign.",
+            crate::cli::prototype1_state::identity::parent_identity_path(repo_root).display()
+        ),
     })
+}
+
+fn active_selected_instance_for_campaign(
+    campaign_id: &str,
+) -> Result<Option<String>, PrepareError> {
+    let selection = load_active_selection()?;
+    if selection.campaign.as_deref() == Some(campaign_id) {
+        Ok(selection.instance)
+    } else {
+        Ok(None)
+    }
+}
+
+fn resolve_prototype1_state_node_id(
+    command: &Prototype1StateCommand,
+    campaign_id: &str,
+    manifest_path: &Path,
+    required_generation: Option<u32>,
+    purpose: &str,
+) -> Result<String, PrepareError> {
+    if let Some(node_id) = command.node_id.as_ref() {
+        return Ok(node_id.clone());
+    }
+
+    let selected_instance = active_selected_instance_for_campaign(campaign_id)?;
+    let scheduler = load_or_default_scheduler_state(campaign_id, manifest_path)?;
+    let frontier: BTreeSet<&str> = scheduler
+        .frontier_node_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+
+    let mut candidates: Vec<&Prototype1NodeRecord> = scheduler
+        .nodes
+        .iter()
+        .filter(|node| {
+            required_generation
+                .map(|generation| node.generation == generation)
+                .unwrap_or(true)
+        })
+        .filter(|node| {
+            selected_instance
+                .as_deref()
+                .map(|instance| node.instance_id == instance)
+                .unwrap_or(true)
+        })
+        .filter(|node| {
+            if frontier.is_empty() {
+                !matches!(
+                    node.status,
+                    Prototype1NodeStatus::Succeeded | Prototype1NodeStatus::Failed
+                )
+            } else {
+                frontier.contains(node.node_id.as_str())
+            }
+        })
+        .collect();
+
+    let registry = load_or_default_branch_registry(campaign_id, manifest_path)?;
+    let selected_branch_ids: BTreeSet<&str> = registry
+        .source_nodes
+        .iter()
+        .filter(|source| {
+            selected_instance
+                .as_deref()
+                .map(|instance| source.instance_id == instance)
+                .unwrap_or(true)
+        })
+        .filter_map(|source| source.selected_branch_id.as_deref())
+        .collect();
+    if !selected_branch_ids.is_empty() {
+        let selected_candidates: Vec<&Prototype1NodeRecord> = candidates
+            .iter()
+            .copied()
+            .filter(|node| selected_branch_ids.contains(node.branch_id.as_str()))
+            .collect();
+        if !selected_candidates.is_empty() {
+            candidates = selected_candidates;
+        }
+    }
+
+    match candidates.as_slice() {
+        [node] => Ok(node.node_id.clone()),
+        [] => {
+            let generation_detail = required_generation
+                .map(|generation| format!(" generation {generation}"))
+                .unwrap_or_default();
+            let instance_detail = selected_instance
+                .as_deref()
+                .map(|instance| format!(" for selected instance '{instance}'"))
+                .unwrap_or_default();
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "could not infer --node-id for {purpose}: no runnable{generation_detail} Prototype 1 nodes{instance_detail} were found in '{}'",
+                    prototype1_scheduler_path(manifest_path).display()
+                ),
+            })
+        }
+        many => {
+            let listed = many
+                .iter()
+                .take(8)
+                .map(|node| {
+                    format!(
+                        "{}:{}:{}",
+                        node.node_id,
+                        node.branch_id,
+                        serde_name(&node.status)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let suffix = if many.len() > 8 { ", ..." } else { "" };
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "could not infer --node-id for {purpose}: {} runnable Prototype 1 nodes matched. Pass --node-id explicitly. candidates: {listed}{suffix}",
+                    many.len()
+                ),
+            })
+        }
+    }
 }
 
 fn initialize_prototype1_parent_identity(
@@ -1447,14 +1572,13 @@ fn initialize_prototype1_parent_identity(
     manifest_path: &Path,
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
-    let node_id =
-        command
-            .node_id
-            .as_deref()
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "--init-parent-identity requires --node-id for the bootstrap parent"
-                    .to_string(),
-            })?;
+    let node_id = resolve_prototype1_state_node_id(
+        command,
+        campaign_id,
+        manifest_path,
+        Some(0),
+        "initial parent identity",
+    )?;
     let Some(branch) = command.identity_branch.as_deref() else {
         return Err(PrepareError::InvalidBatchSelection {
             detail:
@@ -1463,7 +1587,7 @@ fn initialize_prototype1_parent_identity(
         });
     };
     let backend = GitWorktreeBackend;
-    let node = load_node_record(manifest_path, node_id)?;
+    let node = load_node_record(manifest_path, &node_id)?;
     if node.generation != 0 {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -1512,18 +1636,16 @@ fn resolve_prototype1_parent_identity(
         return Ok(identity);
     }
 
-    let node_id =
-        command
-            .node_id
-            .as_deref()
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "parent identity is missing at '{}' and --node-id was not provided",
-                    crate::cli::prototype1_state::identity::parent_identity_path(repo_root)
-                        .display()
-                ),
-            })?;
-    let node = load_node_record(manifest_path, node_id)?;
+    let node_id = command.node_id.clone().map(Ok).unwrap_or_else(|| {
+        resolve_prototype1_state_node_id(
+            command,
+            campaign_id,
+            manifest_path,
+            None,
+            "parent identity fallback",
+        )
+    })?;
+    let node = load_node_record(manifest_path, &node_id)?;
     Ok(ParentIdentity::from_node(
         campaign_id.to_string(),
         &node,
@@ -2522,22 +2644,22 @@ fn prepare_prototype1_loop_campaign(
         }
     }
 
-    let campaign_id = format!(
-        "prototype1-{}-{}",
-        prepared_batch
-            .batch_id
-            .chars()
-            .map(
-                |ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                    ch
-                } else {
-                    '-'
-                }
-            )
-            .collect::<String>(),
-        Utc::now().timestamp_millis()
-    );
+    let campaign_id = command.campaign.clone().unwrap_or_else(|| {
+        format!(
+            "prototype1-{}",
+            sanitize_batch_component(&prepared_batch.batch_id)
+        )
+    });
     let manifest_path = campaign_manifest_path(&campaign_id)?;
+    if manifest_path.exists() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "campaign '{}' already has a manifest at '{}'; choose a new --campaign or run the existing campaign",
+                campaign_id,
+                manifest_path.display()
+            ),
+        });
+    }
     let campaign_dir = manifest_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -3334,4 +3456,125 @@ fn prototype1_trace_path(campaign_manifest_path: &Path) -> PathBuf {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("prototype1-loop-trace.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intervention::{
+        InterventionSourceNode, PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION,
+        PROTOTYPE1_SCHEDULER_SCHEMA_VERSION, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+    };
+
+    fn state_command_without_ids() -> Prototype1StateCommand {
+        Prototype1StateCommand {
+            campaign: None,
+            node_id: None,
+            repo_root: None,
+            init_parent_identity: false,
+            identity_branch: None,
+            handoff_invocation: None,
+            stop_after: Prototype1StateStopAfter::Complete,
+            format: InspectOutputFormat::Table,
+        }
+    }
+
+    fn test_node(
+        campaign_root: &Path,
+        node_id: &str,
+        branch_id: &str,
+        candidate_id: &str,
+    ) -> Prototype1NodeRecord {
+        let node_dir = campaign_root.join("prototype1").join("nodes").join(node_id);
+        Prototype1NodeRecord {
+            schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+            node_id: node_id.to_string(),
+            parent_node_id: None,
+            generation: 1,
+            instance_id: "clap-rs__clap-3670".to_string(),
+            source_state_id: "baseline-run".to_string(),
+            operation_target: None,
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            parent_branch_id: None,
+            branch_id: branch_id.to_string(),
+            candidate_id: candidate_id.to_string(),
+            target_relpath: PathBuf::from("crates/ploke-core/tool_text/read_file.md"),
+            node_dir: node_dir.clone(),
+            workspace_root: PathBuf::from("/tmp/repo"),
+            binary_path: node_dir.join("bin/ploke-eval"),
+            runner_request_path: node_dir.join("runner-request.json"),
+            runner_result_path: node_dir.join("runner-result.json"),
+            status: Prototype1NodeStatus::Planned,
+            created_at: "2026-04-26T00:00:00Z".to_string(),
+            updated_at: "2026-04-26T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn state_node_inference_prefers_selected_branch_registry_node() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let selected = test_node(
+            tmp.path(),
+            "node-selected",
+            "branch-selected",
+            "candidate-1",
+        );
+        let alternate = test_node(tmp.path(), "node-other", "branch-other", "candidate-2");
+        let scheduler = Prototype1SchedulerState {
+            schema_version: PROTOTYPE1_SCHEDULER_SCHEMA_VERSION.to_string(),
+            campaign_id: "campaign".to_string(),
+            updated_at: "2026-04-26T00:00:00Z".to_string(),
+            policy: Prototype1SearchPolicy::default(),
+            frontier_node_ids: vec![selected.node_id.clone(), alternate.node_id.clone()],
+            completed_node_ids: Vec::new(),
+            failed_node_ids: Vec::new(),
+            last_continuation_decision: None,
+            nodes: vec![selected.clone(), alternate],
+        };
+        fs::create_dir_all(manifest_path.parent().unwrap().join("prototype1"))
+            .expect("prototype dir");
+        fs::write(
+            prototype1_scheduler_path(&manifest_path),
+            serde_json::to_vec_pretty(&scheduler).expect("scheduler json"),
+        )
+        .expect("write scheduler");
+
+        let registry = Prototype1BranchRegistry {
+            schema_version: PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION.to_string(),
+            campaign_id: "campaign".to_string(),
+            updated_at: "2026-04-26T00:00:00Z".to_string(),
+            source_nodes: vec![InterventionSourceNode {
+                source_state_id: "baseline-run".to_string(),
+                parent_branch_id: None,
+                source_artifact_id: None,
+                operation_target: None,
+                instance_id: "clap-rs__clap-3670".to_string(),
+                target_relpath: PathBuf::from("crates/ploke-core/tool_text/read_file.md"),
+                source_content: "old".to_string(),
+                source_content_hash: "old-hash".to_string(),
+                selected_branch_id: Some("branch-selected".to_string()),
+                branches: Vec::new(),
+            }],
+            active_targets: Vec::new(),
+        };
+        fs::write(
+            prototype1_branch_registry_path(&manifest_path),
+            serde_json::to_vec_pretty(&registry).expect("registry json"),
+        )
+        .expect("write registry");
+
+        let resolved = resolve_prototype1_state_node_id(
+            &state_command_without_ids(),
+            "campaign",
+            &manifest_path,
+            None,
+            "test",
+        )
+        .expect("selected node should resolve");
+
+        assert_eq!(resolved, selected.node_id);
+    }
 }
