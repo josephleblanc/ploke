@@ -43,7 +43,7 @@ use crate::{
             c1::{C1, MaterializeBranch},
             c2::BuildChild,
             c3::SpawnChild,
-            c4::ObserveChild,
+            c4::{ObserveChild, ObservedChild},
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
                 parent_identity_relpath, write_parent_identity,
@@ -1750,9 +1750,17 @@ impl Prototype1StateCommand {
                                                     disposition = ?c5.report.overall_disposition,
                                                     "child completion observed"
                                                 );
-                                                if c5.report.overall_disposition
-                                                    == BranchDisposition::Keep
-                                                {
+                                                // TEMPORARY SHORT-CIRCUIT ADDED 2026-04-26 13:41:53 PDT.
+                                                // Revert by 2026-04-26 14:41:53 PDT at the latest:
+                                                // this deliberately treats any completed child
+                                                // evaluation as successor-eligible even when the
+                                                // evaluator disposition is Reject. This is only for
+                                                // live loop handoff testing; compile/build failures
+                                                // must still block continuation.
+                                                if matches!(
+                                                    &c5.observed,
+                                                    ObservedChild::Succeeded(_)
+                                                ) {
                                                     let node =
                                                         load_node_record(&manifest_path, &node_id)?;
                                                     let scheduler =
@@ -1760,14 +1768,9 @@ impl Prototype1StateCommand {
                                                             &self.campaign,
                                                             &manifest_path,
                                                         )?;
-                                                    let selected_disposition =
-                                                        serde_name(&c5.report.overall_disposition)
-                                                            .to_string();
                                                     let decision =
                                                         decide_node_successor_continuation(
-                                                            &scheduler,
-                                                            &node,
-                                                            Some(&selected_disposition),
+                                                            &scheduler, &node, None,
                                                         );
                                                     let _ = record_continuation_decision(
                                                         &self.campaign,
