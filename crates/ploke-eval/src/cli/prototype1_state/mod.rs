@@ -61,6 +61,166 @@
 //! like checking out a branch, restoring an Artifact, or commiting a new Artifact. These operations
 //! also change the Artifact, and therefore are Interventions over the Configuration.
 //!
+//! ## Planning note: generative graph, not only git ancestry
+//!
+//! The current prototype deliberately starts with an artificial editing
+//! boundary: patch generation targets text included in a binary with
+//! `include_str!`. That keeps the first loop small enough to observe. The
+//! longer-term loop should not bake in that boundary. Patch generation should
+//! become a backend-agnostic editing trait that can be driven by another
+//! harness, including the `ploke-tui` coding-agent harness.
+//!
+//! In that fuller model, the Runtime does not merely mutate "its own" source
+//! tree. A Runtime is an operator over an Artifact surface:
+//!
+//! ```text
+//! Runtime -> Surface(Artifact) -> PatchAttempt
+//! PatchAttempt + base Artifact -> derived Artifact
+//! derived Artifact -> hydrated Runtime
+//! ```
+//!
+//! Patch generation is probabilistic because it contains LLM calls. Repeating
+//! the same operation coordinate can produce different patches:
+//!
+//! ```text
+//! GeneratePatch(runtime=R1, target=A1, attempt=1) -> P1
+//! GeneratePatch(runtime=R1, target=A1, attempt=2) -> P2
+//! GeneratePatch(runtime=R1, target=A1, attempt=3) -> P3
+//!
+//! ApplyPatch(base=A1, patch=P1) -> A2
+//! ApplyPatch(base=A1, patch=P2) -> A3
+//! ApplyPatch(base=A1, patch=P3) -> A4
+//! ```
+//!
+//! The important coordinate is therefore not just an Artifact. It is the pair
+//! of the generator and the target:
+//!
+//! ```text
+//! OperationCoordinate = (generator Runtime, target Artifact)
+//! ```
+//!
+//! The common self-improvement path uses a generator that was hydrated from
+//! the same Artifact it is operating over:
+//!
+//! ```text
+//! (R1, A1) -> P1 -> A2 -> R2
+//! (R2, A2) -> P2 -> A3 -> R3
+//! ```
+//!
+//! but the graph must also admit cross-lineage operations:
+//!
+//! ```text
+//! (R2, A1) -> P4 -> A5
+//! ```
+//!
+//! Git ancestry can explain `A1 -> A5`, but it cannot explain that `R2` was
+//! the generator. That provenance has to live in Prototype 1 records, not in
+//! branch names or worktree layout.
+//!
+//! This implies three related graphs rather than one tree:
+//!
+//! - artifact graph: durable Artifact states connected by applied patches
+//! - runtime derivation graph: which Artifact hydrated each Runtime
+//! - operation graph: which Runtime operated over which Artifact to create a
+//!   patch attempt
+//!
+//! A dirty worktree is only a provisional Artifact candidate. It should not be
+//! treated as a durable graph node until it has a recoverable identity such as
+//! a git commit, git tree id, content hash, or artifact manifest id. A binary
+//! built from an uncommitted worktree may still run as a Runtime, but if the
+//! source Artifact is later lost then that Runtime has degraded provenance. It
+//! can still generate patches, but the system must not silently pretend the
+//! missing Artifact is recoverable.
+//!
+//! Successor selection should eventually promote a graph coordinate or graph
+//! node under a policy, not a global "current branch". The single-successor
+//! path is a constrained case:
+//!
+//! ```text
+//! parent actor at (R1, A1)
+//!   -> generate A2, A3, A4
+//!   -> hydrate/evaluate R2, R3, R4
+//!   -> select A3/R3
+//!   -> hand off to parent actor at (R3, A3)
+//! ```
+//!
+//! Later policies may select from local children, local lineage, ancestor
+//! lineage leaves, or the wider campaign graph. The persisted handoff and
+//! selection records should therefore preserve generator runtime, target
+//! artifact, selected artifact, selected runtime, candidate scope, oracle
+//! identity, evaluation policy, and attempt identity.
+//!
+//! ### Near-term invariants implied by the future graph
+//!
+//! The full graph model is future work, but it should constrain the prototype
+//! being built now. The point is not to implement every later capability in
+//! the first loop. The point is to avoid storing state in a shape that will
+//! make the later graph impossible or misleading.
+//!
+//! Prototype 1 code should preserve these invariants even while only one
+//! successor lineage is executing:
+//!
+//! - Branch names and worktree paths are handles, not semantic identity. Any
+//!   durable record that needs to identify an Artifact should carry an explicit
+//!   artifact identity or enough backend identity to recover it.
+//! - A child node is not just "the next branch". It is the result of a patch
+//!   generation attempt by a specific Runtime over a specific target Artifact.
+//!   Records should keep those identities separate when the information is
+//!   available.
+//! - Scheduler reports are not authority. A continuation or successor handoff
+//!   should be represented by an immutable attempt-scoped selection record, not
+//!   by the latest mutable scheduler field.
+//! - Parent authority is actor-scoped, not campaign-global. The first live path
+//!   may enforce one active parent as policy, but persisted leases and handoff
+//!   records should be shaped so multiple parent actors can later advance
+//!   different lineages in the same campaign graph.
+//! - Evaluation records must name the evaluated Runtime or Artifact, the oracle
+//!   or external task set, and the policy used to interpret the result. A score
+//!   without evaluator and policy identity is not comparable evidence.
+//! - Dirty worktrees are provisional candidates. Promotion, selection,
+//!   successor handoff, and cross-lineage reuse should refer to durable
+//!   Artifacts, not uncommitted filesystem state.
+//! - Runtime provenance may be degraded but should not be erased. If a Runtime
+//!   exists but its source Artifact is missing, records should say that
+//!   directly instead of inventing or implying a recoverable source node.
+//! - Append observations and decisions rather than overwriting them. Later
+//!   graph traversal, recovery, and cross-lineage selection need the historical
+//!   sequence of generation attempts, evaluations, selections, handoffs, and
+//!   failures.
+//!
+//! In practical terms, new Prototype 1 state should prefer explicit records
+//! like `PatchAttempt`, `ArtifactNode`, `RuntimeDerivation`,
+//! [`crate::loop_graph::Coordinate`], [`crate::loop_graph::OperationTarget`],
+//! `EvaluationRecord`, `ParentLease`, and `SuccessorSelection` over
+//! convenience DTOs that mirror the current CLI report. The live controller can
+//! still use narrow views for display, but the persisted model should retain
+//! provenance and authority.
+//!
+//! The first in-code carriers for this model live in [`crate::loop_graph`].
+//! They are wired into the current prototype at these entry points:
+//!
+//! - [`crate::intervention::spec::InterventionSynthesisInput`] and
+//!   [`crate::intervention::spec::InterventionCandidate`]: patch-generation
+//!   inputs/candidates can carry an [`crate::loop_graph::OperationTarget`] and
+//!   [`crate::loop_graph::PatchId`].
+//! - [`crate::intervention::apply::execute_intervention_apply`]: apply records
+//!   preserve base artifact, patch, and derived artifact ids when available.
+//! - [`crate::intervention::branch_registry::record_synthesized_branches`] and
+//!   [`crate::intervention::branch_registry::mark_treatment_branch_applied`]:
+//!   the branch registry keeps graph provenance beside the legacy branch
+//!   handles.
+//! - [`crate::intervention::scheduler::register_treatment_evaluation_node`]:
+//!   scheduled nodes and runner requests copy graph provenance already visible
+//!   in the registry without minting artifact ids from branch names.
+//!
+//! Current caveats are also intentional: most live CLI synthesis paths still
+//! pass `operation_target: None`; `generation_coordinate` is usually absent
+//! because generator runtime identity is not yet carried into synthesis; and
+//! text-file fallback ids are surface identities, not whole-worktree or
+//! whole-repository artifact ids. Future work should replace those fallbacks
+//! with durable git/tree/manifest identities as the backend stops being a
+//! single `include_str!` text target.
+//!
 //! Intervention: Any change to the Configuration. This means changing the Artifact or Runtime.
 //! Every Intervention must include a Record before and after the Intervention, which is added to
 //! the Journal.
@@ -108,9 +268,9 @@
 //!
 //! - `Child`: leaf evaluator that records one self-evaluation and exits.
 //! - `Successor`: selected-continuation bootstrap that acknowledges handoff
-//!   within a bounded standby window. The successor is not yet a fully
-//!   autonomous next-generation controller, but it must be built from the
-//!   selected artifact rather than reusing the old parent binary.
+//!   and runs one bounded rehydrated controller generation. It is not yet an
+//!   unbounded autonomous trampoline, but it must be built from the selected
+//!   artifact rather than reusing the old parent binary.
 //!
 //! ## Actions
 //!
@@ -235,6 +395,8 @@
 //!   Attempt-scoped result record for one invocation runtime.
 //! - `nodes/<node-id>/successor-ready/<runtime-id>.json`
 //!   Successor acknowledgement file written after detached successor handoff.
+//! - `nodes/<node-id>/successor-completion/<runtime-id>.json`
+//!   Terminal record for the successor's bounded rehydrated controller turn.
 //! - `nodes/<node-id>/worktree/`
 //!   Backend-managed node-owned child workspace root when the worktree path is
 //!   realized through [`backend`].

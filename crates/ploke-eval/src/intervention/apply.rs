@@ -1,20 +1,16 @@
 use std::fs;
 use std::path::Path;
 
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::intervention::execute::execute_tool_text_intervention;
 use crate::intervention::spec::{
     InterventionApplyInput, InterventionApplyOutput, InterventionExecutionInput,
-    InterventionSpecError, TreatmentStateRef,
+    InterventionSpecError, TreatmentStateRef, sha256_hex, text_file_artifact_id,
+    text_replacement_patch_id,
 };
 
 pub const INTERVENTION_APPLY_PROCEDURE: &str = "intervention_apply";
-
-fn sha256_hex(payload: &str) -> String {
-    format!("{:x}", Sha256::digest(payload.as_bytes()))
-}
 
 fn read_target(path: &Path) -> Result<String, InterventionSpecError> {
     fs::read_to_string(path).map_err(|source| {
@@ -46,6 +42,20 @@ pub fn execute_intervention_apply(
     })?;
     let after = read_target(&absolute_path)?;
     let apply_id = format!("apply-{}", Uuid::new_v4());
+    let base_artifact_id = input
+        .base_artifact_id
+        .clone()
+        .or_else(|| Some(text_file_artifact_id(&input.target_relpath, &before)));
+    let patch_id = input.patch_id.clone().or_else(|| {
+        input.candidate.patch_id.clone().or_else(|| {
+            Some(text_replacement_patch_id(
+                &input.target_relpath,
+                &before,
+                &after,
+            ))
+        })
+    });
+    let derived_artifact_id = Some(text_file_artifact_id(&input.target_relpath, &after));
 
     Ok(InterventionApplyOutput {
         treatment_state: TreatmentStateRef {
@@ -59,5 +69,8 @@ pub fn execute_intervention_apply(
         source_content_hash: sha256_hex(&before),
         applied_content_hash: sha256_hex(&after),
         validation: execution.validation,
+        base_artifact_id,
+        patch_id,
+        derived_artifact_id,
     })
 }

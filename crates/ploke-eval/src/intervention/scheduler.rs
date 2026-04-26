@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::ResolvedTreatmentBranch;
+use crate::loop_graph::{ArtifactId, OperationTarget, PatchId};
 use crate::spec::PrepareError;
 
 pub const PROTOTYPE1_SCHEDULER_SCHEMA_VERSION: &str = "prototype1-scheduler.v1";
@@ -81,6 +82,14 @@ pub struct Prototype1NodeRecord {
     pub instance_id: String,
     pub source_state_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) operation_target: Option<OperationTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) base_artifact_id: Option<ArtifactId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) patch_id: Option<PatchId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) derived_artifact_id: Option<ArtifactId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_branch_id: Option<String>,
     pub branch_id: String,
     pub candidate_id: String,
@@ -128,6 +137,14 @@ pub struct Prototype1RunnerRequest {
     pub generation: u32,
     pub instance_id: String,
     pub source_state_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) operation_target: Option<OperationTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) base_artifact_id: Option<ArtifactId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) patch_id: Option<PatchId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) derived_artifact_id: Option<ArtifactId>,
     pub branch_id: String,
     pub target_relpath: PathBuf,
     pub workspace_root: PathBuf,
@@ -165,6 +182,18 @@ fn scheduler_dir(campaign_manifest_path: &Path) -> PathBuf {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("prototype1")
+}
+
+fn operation_target_base_artifact_id(target: &OperationTarget) -> Option<&ArtifactId> {
+    match target {
+        OperationTarget::Artifact { artifact_id } => Some(artifact_id),
+        OperationTarget::PatchSet {
+            base_artifact_id, ..
+        } => Some(base_artifact_id),
+        OperationTarget::ArtifactSet {
+            base_artifact_id, ..
+        } => base_artifact_id.as_ref(),
+    }
 }
 
 pub fn prototype1_scheduler_path(campaign_manifest_path: &Path) -> PathBuf {
@@ -587,6 +616,26 @@ pub fn register_treatment_evaluation_node(
         });
     let now = Utc::now().to_rfc3339();
 
+    // Only copy graph provenance already carried by the branch registry. The
+    // scheduler is not the authority that decides what counts as a durable
+    // Artifact, so it must not mint ArtifactIds from branch names,
+    // source_state_id, or dirty worktree state. As runtime coordinates become
+    // available upstream, this is the entry point that should preserve them on
+    // node and runner-request records.
+    let operation_target = branch.branch.generation_target.clone().or_else(|| {
+        branch
+            .branch
+            .generation_coordinate
+            .as_ref()
+            .map(|coordinate| coordinate.target.clone())
+    });
+    let base_artifact_id = operation_target
+        .as_ref()
+        .and_then(operation_target_base_artifact_id)
+        .cloned();
+    let patch_id = branch.branch.patch_id.clone();
+    let derived_artifact_id = branch.branch.derived_artifact_id.clone();
+
     let record = Prototype1NodeRecord {
         schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
         node_id: node_id.clone(),
@@ -594,6 +643,10 @@ pub fn register_treatment_evaluation_node(
         generation,
         instance_id: branch.instance_id.clone(),
         source_state_id: branch.source_state_id.clone(),
+        operation_target: operation_target.clone(),
+        base_artifact_id: base_artifact_id.clone(),
+        patch_id: patch_id.clone(),
+        derived_artifact_id: derived_artifact_id.clone(),
         parent_branch_id: branch.parent_branch_id.clone(),
         branch_id: branch.branch.branch_id.clone(),
         candidate_id: branch.branch.candidate_id.clone(),
@@ -625,6 +678,10 @@ pub fn register_treatment_evaluation_node(
         generation,
         instance_id: branch.instance_id.clone(),
         source_state_id: branch.source_state_id.clone(),
+        operation_target,
+        base_artifact_id,
+        patch_id,
+        derived_artifact_id,
         branch_id: branch.branch.branch_id.clone(),
         target_relpath: branch.target_relpath.clone(),
         workspace_root,
@@ -792,16 +849,31 @@ mod tests {
             branch: TreatmentBranchNode {
                 branch_id: "branch-123".to_string(),
                 candidate_id: "candidate-1".to_string(),
+                patch_id: None,
                 branch_label: "minimal_rewrite".to_string(),
                 synthesized_spec_id: "spec-1".to_string(),
                 proposed_content: "new text\n".to_string(),
                 proposed_content_hash: "new-hash".to_string(),
+                generation_target: None,
+                generation_coordinate: None,
                 status: TreatmentBranchStatus::Synthesized,
                 apply_id: None,
                 applied_content_hash: None,
+                derived_artifact_id: None,
                 latest_evaluation: None,
             },
         }
+    }
+
+    fn resolved_branch_with_graph() -> ResolvedTreatmentBranch {
+        let mut resolved = resolved_branch();
+        let source_artifact = ArtifactId::new("git-tree:source");
+        resolved.branch.patch_id = Some(PatchId::new("patch:attempt-1"));
+        resolved.branch.generation_target = Some(OperationTarget::Artifact {
+            artifact_id: source_artifact,
+        });
+        resolved.branch.derived_artifact_id = Some(ArtifactId::new("git-commit:derived"));
+        resolved
     }
 
     #[test]
@@ -843,6 +915,127 @@ mod tests {
         assert_eq!(loaded_node.branch_id, "branch-123");
         assert_eq!(loaded_request.node_id, node.node_id);
         assert_eq!(loaded_request.binary_path, node.binary_path);
+    }
+
+    #[test]
+    fn register_treatment_node_propagates_visible_graph_provenance() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+
+        let (_scheduler, node, request) = register_treatment_evaluation_node(
+            "test-campaign",
+            &manifest,
+            &resolved_branch_with_graph(),
+            2,
+            tmp.path(),
+            false,
+        )
+        .expect("register node");
+
+        assert_eq!(node.operation_target, request.operation_target);
+        assert_eq!(node.base_artifact_id, request.base_artifact_id);
+        assert_eq!(node.patch_id, request.patch_id);
+        assert_eq!(node.derived_artifact_id, request.derived_artifact_id);
+        assert_eq!(
+            node.base_artifact_id,
+            Some(ArtifactId::new("git-tree:source"))
+        );
+        assert_eq!(node.patch_id, Some(PatchId::new("patch:attempt-1")));
+        assert_eq!(
+            node.derived_artifact_id,
+            Some(ArtifactId::new("git-commit:derived"))
+        );
+    }
+
+    #[test]
+    fn graph_provenance_fields_are_backward_compatible_json() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+
+        let (_scheduler, node, request) = register_treatment_evaluation_node(
+            "test-campaign",
+            &manifest,
+            &resolved_branch(),
+            2,
+            tmp.path(),
+            false,
+        )
+        .expect("register node");
+
+        let node_json = serde_json::to_value(&node).expect("serialize node");
+        assert!(node_json.get("operation_target").is_none());
+        assert!(node_json.get("base_artifact_id").is_none());
+        assert!(node_json.get("patch_id").is_none());
+        assert!(node_json.get("derived_artifact_id").is_none());
+        let node_round_trip: Prototype1NodeRecord =
+            serde_json::from_value(node_json).expect("deserialize node without provenance");
+        assert_eq!(node_round_trip.operation_target, None);
+        assert_eq!(node_round_trip.base_artifact_id, None);
+        assert_eq!(node_round_trip.patch_id, None);
+        assert_eq!(node_round_trip.derived_artifact_id, None);
+
+        let request_json = serde_json::to_value(&request).expect("serialize request");
+        assert!(request_json.get("operation_target").is_none());
+        assert!(request_json.get("base_artifact_id").is_none());
+        assert!(request_json.get("patch_id").is_none());
+        assert!(request_json.get("derived_artifact_id").is_none());
+        let request_round_trip: Prototype1RunnerRequest =
+            serde_json::from_value(request_json).expect("deserialize request without provenance");
+        assert_eq!(request_round_trip.operation_target, None);
+        assert_eq!(request_round_trip.base_artifact_id, None);
+        assert_eq!(request_round_trip.patch_id, None);
+        assert_eq!(request_round_trip.derived_artifact_id, None);
+    }
+
+    #[test]
+    fn graph_provenance_fields_serialize_when_present() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+
+        let (_scheduler, mut node, mut request) = register_treatment_evaluation_node(
+            "test-campaign",
+            &manifest,
+            &resolved_branch(),
+            2,
+            tmp.path(),
+            false,
+        )
+        .expect("register node");
+
+        let source_artifact = ArtifactId::new("git-tree:source");
+        let patch = PatchId::new("patch:attempt-1");
+        let derived_artifact = ArtifactId::new("git-commit:derived");
+        node.operation_target = Some(OperationTarget::Artifact {
+            artifact_id: source_artifact.clone(),
+        });
+        node.base_artifact_id = Some(source_artifact.clone());
+        node.patch_id = Some(patch.clone());
+        node.derived_artifact_id = Some(derived_artifact.clone());
+        request.operation_target = node.operation_target.clone();
+        request.base_artifact_id = Some(source_artifact);
+        request.patch_id = Some(patch);
+        request.derived_artifact_id = Some(derived_artifact);
+
+        let node_json = serde_json::to_value(&node).expect("serialize node");
+        assert_eq!(
+            node_json["operation_target"],
+            serde_json::json!({
+                "kind": "artifact",
+                "artifact_id": "git-tree:source",
+            })
+        );
+        assert_eq!(node_json["base_artifact_id"], "git-tree:source");
+        assert_eq!(node_json["patch_id"], "patch:attempt-1");
+        assert_eq!(node_json["derived_artifact_id"], "git-commit:derived");
+
+        let request_json = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(request_json["base_artifact_id"], "git-tree:source");
+        assert_eq!(request_json["patch_id"], "patch:attempt-1");
+        assert_eq!(request_json["derived_artifact_id"], "git-commit:derived");
+        assert_eq!(
+            request_json["operation_target"],
+            node_json["operation_target"]
+        );
     }
 
     #[test]

@@ -49,7 +49,7 @@ use crate::intervention::{
     INTERVENTION_SYNTHESIS_PROCEDURE, InterventionApplyInput, InterventionApplyOutput,
     InterventionSynthesisInput, IssueCase, IssueDetectionInput, IssueDetectionOutput,
     detect_issue_cases, execute_intervention_apply, issue_detection_artifact_input,
-    select_primary_issue, synthesize_intervention_with_llm,
+    operation_target_artifact_id, select_primary_issue, synthesize_intervention_with_llm,
 };
 use crate::intervention_issue_aggregate::{
     IssueDetectionAggregate, IssueDetectionAggregateError, load_issue_detection_aggregate,
@@ -1161,6 +1161,11 @@ async fn persist_intervention_synthesis_for_record(
         issue,
         source_state_id,
         source_content,
+        // The generic CLI path does not yet know the durable Artifact target
+        // for this record. Downstream layers will preserve a fallback text-file
+        // surface id, but future backend-aware callers should pass an
+        // OperationTarget here instead of relying on that fallback.
+        operation_target: None,
     };
     let model_id = resolve_protocol_model_id(model_id)?;
     let provider_slug = resolve_protocol_provider_slug(&model_id, provider)?;
@@ -1213,12 +1218,21 @@ fn persist_intervention_apply_for_record(
                 candidate_id, subject_id
             ),
         })?;
+    let base_artifact_id = synthesis
+        .candidate_set
+        .operation_target
+        .as_ref()
+        .and_then(operation_target_artifact_id)
+        .cloned();
+    let patch_id = candidate.patch_id.clone();
     let input = InterventionApplyInput {
         source_state_id: synthesis.candidate_set.source_state_id.clone(),
         candidate,
         target_relpath: synthesis.candidate_set.target_relpath.clone(),
         expected_source_content: synthesis.candidate_set.source_content.clone(),
         repo_root: repo_root.to_path_buf(),
+        base_artifact_id,
+        patch_id,
     };
     let output =
         execute_intervention_apply(&input).map_err(|source| PrepareError::DatabaseSetup {

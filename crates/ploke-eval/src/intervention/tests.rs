@@ -495,6 +495,7 @@ fn synthesized_reviewed_tool_target_executes_against_tool_text_surface() {
         issue,
         source_state_id: "baseline-run-1".to_string(),
         source_content,
+        operation_target: None,
     })
     .expect("synthesize intervention");
     assert_eq!(synthesized.candidate_set.source_state_id, "baseline-run-1");
@@ -529,6 +530,7 @@ fn intervention_apply_realizes_candidate_against_expected_source_state() {
         issue,
         source_state_id: "baseline-run-1".to_string(),
         source_content: source_content.clone(),
+        operation_target: None,
     })
     .expect("synthesize intervention");
     let candidate = synthesized
@@ -542,6 +544,8 @@ fn intervention_apply_realizes_candidate_against_expected_source_state() {
         target_relpath: synthesized.candidate_set.target_relpath.clone(),
         expected_source_content: synthesized.candidate_set.source_content.clone(),
         repo_root: repo.path().to_path_buf(),
+        base_artifact_id: None,
+        patch_id: candidate.patch_id.clone(),
     })
     .expect("apply candidate");
 
@@ -554,6 +558,9 @@ fn intervention_apply_realizes_candidate_against_expected_source_state() {
     assert!(output.changed);
     assert!(output.validation.ok);
     assert_ne!(output.source_content_hash, output.applied_content_hash);
+    assert!(output.base_artifact_id.is_some());
+    assert_eq!(output.patch_id, candidate.patch_id);
+    assert!(output.derived_artifact_id.is_some());
 }
 
 #[test]
@@ -569,12 +576,14 @@ fn intervention_apply_rejects_source_content_mismatch() {
         issue,
         source_state_id: "baseline-run-1".to_string(),
         source_content,
+        operation_target: None,
     })
     .expect("synthesize intervention");
     let candidate = synthesized
         .primary_candidate()
         .expect("primary candidate")
         .clone();
+    let patch_id = candidate.patch_id.clone();
     fs::write(
         repo.path()
             .join("crates/ploke-core/tool_text/non_semantic_patch.md"),
@@ -588,6 +597,8 @@ fn intervention_apply_rejects_source_content_mismatch() {
         target_relpath: synthesized.candidate_set.target_relpath.clone(),
         expected_source_content: synthesized.candidate_set.source_content.clone(),
         repo_root: repo.path().to_path_buf(),
+        base_artifact_id: None,
+        patch_id,
     })
     .expect_err("source mismatch should fail");
 
@@ -623,6 +634,7 @@ async fn live_intervention_synthesis_fans_out_replacement_candidates() {
             issue,
             source_state_id: "live-baseline-1".to_string(),
             source_content: source_content.clone(),
+            operation_target: None,
         },
         cfg,
     )

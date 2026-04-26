@@ -69,417 +69,11 @@ use crate::{
 
 impl Prototype1LoopCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let _run_scope = TimingTrace::scope("loop.prototype1.run");
-        let (batch_manifest, prepared_batch) = prepare_or_load_prototype1_batch(&self)?;
-        let campaign = prepare_prototype1_loop_campaign(&self, &prepared_batch)?;
-        let trace_path = prototype1_trace_path(&campaign.manifest_path);
-        let branch_registry_path = prototype1_branch_registry_path(&campaign.manifest_path);
-        let scheduler_path = prototype1_scheduler_path(&campaign.manifest_path);
-        let search_policy = Prototype1SearchPolicy {
-            max_generations: self.max_generations,
-            max_total_nodes: self.max_total_nodes,
-            stop_on_first_keep: self.stop_on_first_keep,
-            require_keep_for_continuation: self.require_keep_for_continuation,
-        };
-        let mut scheduler = update_scheduler_policy(
-            &campaign.campaign_id,
-            &campaign.manifest_path,
-            search_policy.clone(),
-        )?;
+        let format = self.format;
+        let input = Prototype1LoopControllerInput::from_command(&self)?;
+        let report = run_prototype1_loop_controller(input).await?;
 
-        let mut baseline_instances = Vec::new();
-        let mut selected_targets = Vec::new();
-        let mut staged_nodes = Vec::new();
-        let mut branch_evaluations = Vec::new();
-        let mut selected_next_branch_id = None;
-        let mut continuation_decision = None;
-        let mut protocol_failures = Vec::new();
-        let mut protocol_task_instances = Vec::new();
-        let intervention_repo_root =
-            std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
-                path: PathBuf::from("."),
-                source,
-            })?;
-
-        if let (Some(source_campaign), Some(source_branch_id)) = (
-            self.source_campaign.as_deref(),
-            self.source_branch_id.as_deref(),
-        ) {
-            let _scope = TimingTrace::scope("loop.prototype1.materialize_source_branch");
-            let source_manifest_path = campaign_manifest_path(source_campaign)?;
-            let resolved =
-                resolve_treatment_branch(source_campaign, &source_manifest_path, source_branch_id)?;
-            ensure_treatment_branch_materialized(
-                source_campaign,
-                &source_manifest_path,
-                &resolved,
-                &intervention_repo_root,
-            )?;
-        }
-
-        let mut eval_policy = campaign.resolved.eval.clone();
-        if self.stop_on_error {
-            eval_policy.stop_on_error = true;
-        }
-        let eval_report = {
-            let _scope = TimingTrace::scope("loop.prototype1.advance_eval_closure");
-            advance_eval_closure(&campaign.resolved, &eval_policy, false).await?
-        };
-
-        if self.stop_after >= Prototype1LoopStopAfter::BaselineProtocol {
-            let mut protocol_policy = campaign.resolved.protocol.clone();
-            if self.stop_on_error {
-                protocol_policy.stop_on_error = true;
-            }
-            let protocol_report = {
-                let _scope = TimingTrace::scope("loop.prototype1.advance_protocol_closure");
-                advance_protocol_closure(&campaign.resolved, &protocol_policy, false).await?
-            };
-            protocol_failures = protocol_report.failures;
-            protocol_task_instances = protocol_report
-                .selected_runs
-                .into_iter()
-                .map(|plan| plan.instance_id)
-                .collect();
-        }
-
-        let closure = load_closure_state(&campaign.campaign_id)?;
-
-        for row in &closure.instances {
-            let protocol_failure = protocol_failures
-                .iter()
-                .find(|failure| failure.starts_with(&format!("{}:", row.instance_id)))
-                .cloned();
-            let record_path = row.artifacts.record_path.clone();
-            let protocol_completed = row.protocol_status == ClosureClass::Complete;
-            let protocol_evidence_available = record_path
-                .as_ref()
-                .is_some_and(|path| load_protocol_aggregate(path).is_ok());
-
-            if self.stop_after >= Prototype1LoopStopAfter::TargetSelection
-                && row.eval_status == ClosureClass::Complete
-                && protocol_evidence_available
-            {
-                if let Some(record_path) = record_path.as_ref() {
-                    let detection_output = {
-                        let _scope = TimingTrace::scope(format!(
-                            "loop.prototype1.issue_detection.{}",
-                            row.instance_id
-                        ));
-                        persist_issue_detection_for_record(record_path)?
-                    };
-                    if let Some(issue) = select_primary_issue(&detection_output) {
-                        let synthesis = {
-                            let _scope = TimingTrace::scope(format!(
-                                "loop.prototype1.intervention_synthesis.{}",
-                                row.instance_id
-                            ));
-                            persist_intervention_synthesis_for_record(
-                                record_path,
-                                issue.clone(),
-                                self.source_branch_id.clone().unwrap_or_else(|| {
-                                    row.artifacts
-                                        .run_root
-                                        .as_ref()
-                                        .map(|path| path.display().to_string())
-                                        .unwrap_or_else(|| row.instance_id.clone())
-                                }),
-                                self.protocol_model_id.clone(),
-                                self.protocol_provider.clone(),
-                            )
-                            .await?
-                        };
-                        if let Some(candidate) = synthesis.primary_candidate() {
-                            let selected_branch_id = treatment_branch_id(
-                                &synthesis.candidate_set.source_state_id,
-                                &synthesis.candidate_set.target_relpath,
-                                candidate.candidate_id.as_str(),
-                            );
-                            let _ = record_synthesized_branches(
-                                &campaign.campaign_id,
-                                &campaign.manifest_path,
-                                &row.instance_id,
-                                &synthesis,
-                                Some(candidate.candidate_id.as_str()),
-                                self.source_branch_id.as_deref(),
-                            )?;
-                            let apply_output = if self.stop_after
-                                >= Prototype1LoopStopAfter::InterventionApply
-                                && !self.dry_run
-                            {
-                                let output = {
-                                    let _scope = TimingTrace::scope(format!(
-                                        "loop.prototype1.intervention_apply.{}",
-                                        row.instance_id
-                                    ));
-                                    persist_intervention_apply_for_record(
-                                        record_path,
-                                        &synthesis,
-                                        candidate.candidate_id.as_str(),
-                                        &intervention_repo_root,
-                                    )?
-                                };
-                                let _ = mark_treatment_branch_applied(
-                                    &campaign.campaign_id,
-                                    &campaign.manifest_path,
-                                    &synthesis.candidate_set.target_relpath,
-                                    &output,
-                                )?;
-                                Some(output)
-                            } else {
-                                None
-                            };
-                            selected_targets.push(Prototype1SelectedTarget {
-                                instance_id: row.instance_id.clone(),
-                                source_state_id: synthesis.candidate_set.source_state_id.clone(),
-                                parent_branch_id: self.source_branch_id.clone(),
-                                selected_branch_id,
-                                synthesized_candidate_count: synthesis
-                                    .candidate_set
-                                    .candidates
-                                    .len(),
-                                selected_candidate_id: candidate.candidate_id.clone(),
-                                synthesized_spec_id: candidate.spec.spec_id().to_string(),
-                                synthesized_target_relpath: synthesis
-                                    .candidate_set
-                                    .target_relpath
-                                    .clone(),
-                                apply_output: apply_output.as_ref().map(|output| {
-                                    Prototype1AppliedCandidate {
-                                        candidate_id: output.candidate_id.clone(),
-                                        apply_id: output.treatment_state.apply_id.clone(),
-                                        changed: output.changed,
-                                        source_content_hash: output.source_content_hash.clone(),
-                                        applied_content_hash: output.applied_content_hash.clone(),
-                                        target_relpath: output.target_relpath.clone(),
-                                    }
-                                }),
-                                apply_skipped_reason: if self.stop_after
-                                    >= Prototype1LoopStopAfter::InterventionApply
-                                    && self.dry_run
-                                {
-                                    Some(
-                                        "dry-run: synthesized candidate selected but not applied"
-                                            .to_string(),
-                                    )
-                                } else {
-                                    None
-                                },
-                                issue,
-                            });
-                        }
-                    }
-                }
-            }
-
-            baseline_instances.push(Prototype1LoopInstance {
-                instance_id: row.instance_id.clone(),
-                eval_status: row.eval_status,
-                protocol_status: row.protocol_status,
-                record_path,
-                protocol_completed,
-                protocol_evidence_available,
-                protocol_failure,
-            });
-        }
-
-        if !selected_targets.is_empty() {
-            let registry =
-                load_or_default_branch_registry(&campaign.campaign_id, &campaign.manifest_path)?;
-            for target in &selected_targets {
-                let Some(source_node) = registry.source_nodes.iter().find(|node| {
-                    node.instance_id == target.instance_id
-                        && node.source_state_id == target.source_state_id
-                        && node.target_relpath == target.synthesized_target_relpath
-                }) else {
-                    continue;
-                };
-
-                let generation = prototype1_source_generation(&registry, source_node) + 1;
-                for branch in &source_node.branches {
-                    if scheduler.nodes.len() as u32 >= search_policy.max_total_nodes {
-                        break;
-                    }
-                    let resolved = resolve_treatment_branch(
-                        &campaign.campaign_id,
-                        &campaign.manifest_path,
-                        &branch.branch_id,
-                    )?;
-                    let (updated_scheduler, node, _) = register_treatment_evaluation_node(
-                        &campaign.campaign_id,
-                        &campaign.manifest_path,
-                        &resolved,
-                        generation,
-                        &intervention_repo_root,
-                        self.stop_on_error,
-                    )?;
-                    scheduler = updated_scheduler;
-                    staged_nodes.push(node);
-                }
-            }
-        }
-
-        if self.stop_after >= Prototype1LoopStopAfter::Compare && !self.dry_run {
-            let registry =
-                load_or_default_branch_registry(&campaign.campaign_id, &campaign.manifest_path)?;
-            for target in &selected_targets {
-                let Some(source_node) = registry.source_nodes.iter().find(|node| {
-                    node.instance_id == target.instance_id
-                        && node.source_state_id == target.source_state_id
-                        && node.target_relpath == target.synthesized_target_relpath
-                }) else {
-                    continue;
-                };
-
-                for branch in &source_node.branches {
-                    let report = {
-                        let _scope = TimingTrace::scope(format!(
-                            "loop.prototype1.branch_evaluate.{}.{}",
-                            source_node.instance_id, branch.branch_id
-                        ));
-                        run_prototype1_branch_evaluation_via_child(
-                            &campaign.campaign_id,
-                            &branch.branch_id,
-                            &intervention_repo_root,
-                            self.stop_on_error,
-                        )
-                        .await?
-                    };
-                    branch_evaluations.push(match report {
-                        Prototype1NodeExecutionOutcome::Evaluated(report) => {
-                            summarize_prototype1_branch_evaluation(
-                                &source_node.instance_id,
-                                &source_node.source_state_id,
-                                source_node.parent_branch_id.as_deref(),
-                                &branch.branch_id,
-                                &branch.candidate_id,
-                                &branch.branch_label,
-                                &report,
-                            )
-                        }
-                        Prototype1NodeExecutionOutcome::Failed(result) => {
-                            summarize_prototype1_failed_branch_evaluation(
-                                &source_node.instance_id,
-                                &source_node.source_state_id,
-                                source_node.parent_branch_id.as_deref(),
-                                &branch.branch_id,
-                                &branch.candidate_id,
-                                &branch.branch_label,
-                                &result,
-                            )
-                        }
-                    });
-                    {
-                        let _scope = TimingTrace::scope(format!(
-                            "loop.prototype1.branch_restore.{}.{}",
-                            source_node.instance_id, branch.branch_id
-                        ));
-                        let _ = restore_treatment_branch(
-                            &campaign.campaign_id,
-                            &campaign.manifest_path,
-                            &branch.branch_id,
-                            &intervention_repo_root,
-                        )?;
-                    }
-                }
-            }
-
-            selected_next_branch_id = select_most_promising_branch(&branch_evaluations);
-            if let Some(branch_id) = selected_next_branch_id.as_deref() {
-                let _ = select_treatment_branch(
-                    &campaign.campaign_id,
-                    &campaign.manifest_path,
-                    branch_id,
-                )?;
-                let resolved = resolve_treatment_branch(
-                    &campaign.campaign_id,
-                    &campaign.manifest_path,
-                    branch_id,
-                )?;
-                {
-                    let _scope =
-                        TimingTrace::scope("loop.prototype1.materialize_selected_next_branch");
-                    ensure_treatment_branch_materialized(
-                        &campaign.campaign_id,
-                        &campaign.manifest_path,
-                        &resolved,
-                        &intervention_repo_root,
-                    )?;
-                }
-            }
-
-            let current_generation = selected_targets
-                .iter()
-                .filter_map(|target| {
-                    registry.source_nodes.iter().find(|node| {
-                        node.instance_id == target.instance_id
-                            && node.source_state_id == target.source_state_id
-                            && node.target_relpath == target.synthesized_target_relpath
-                    })
-                })
-                .map(|source_node| prototype1_source_generation(&registry, source_node))
-                .max()
-                .unwrap_or(0);
-            let selected_branch_disposition = selected_next_branch_id.as_deref().and_then(|id| {
-                branch_evaluations
-                    .iter()
-                    .find(|row| row.branch_id == id)
-                    .map(|row| serde_name(&row.overall_disposition).to_string())
-            });
-            let decision = crate::intervention::decide_continuation(
-                &scheduler,
-                current_generation,
-                selected_next_branch_id.as_deref(),
-                selected_branch_disposition.as_deref(),
-            );
-            let _ = record_continuation_decision(
-                &campaign.campaign_id,
-                &campaign.manifest_path,
-                decision.clone(),
-            )?;
-            continuation_decision = Some(decision);
-        }
-
-        let report = Prototype1LoopReport {
-            stage_reached: self.stop_after,
-            dry_run: self.dry_run,
-            search_policy,
-            continuation_decision,
-            continued_from_campaign: self.source_campaign.clone(),
-            continued_from_branch_id: self.source_branch_id.clone(),
-            batch_id: prepared_batch.batch_id.clone(),
-            batch_manifest,
-            campaign_id: campaign.campaign_id,
-            campaign_manifest: campaign.manifest_path,
-            closure_state_path: campaign.closure_state_path,
-            slice_dataset_path: campaign.slice_dataset_path,
-            branch_registry_path,
-            scheduler_path,
-            trace_path: trace_path.clone(),
-            prepared_instances: prepared_batch.instances.clone(),
-            completed_instances: eval_report
-                .selected_instances
-                .iter()
-                .filter(|instance_id| {
-                    baseline_instances.iter().any(|row| {
-                        row.instance_id == **instance_id
-                            && row.eval_status == ClosureClass::Complete
-                    })
-                })
-                .cloned()
-                .collect(),
-            protocol_task_instances,
-            baseline_instances,
-            selected_targets,
-            staged_nodes,
-            branch_evaluations,
-            selected_next_branch_id,
-            protocol_failures,
-            pending_stages: pending_prototype1_stages(self.stop_after),
-        };
-        write_json_file_pretty(&trace_path, &report)?;
-
-        match self.format {
+        match format {
             InspectOutputFormat::Table => print_prototype1_loop_report(&report),
             InspectOutputFormat::Json => {
                 println!(
@@ -491,6 +85,530 @@ impl Prototype1LoopCommand {
 
         Ok(())
     }
+}
+
+struct Prototype1LoopControllerInput {
+    stop_after: Prototype1LoopStopAfter,
+    dry_run: bool,
+    stop_on_error: bool,
+    protocol_model_id: Option<String>,
+    protocol_provider: Option<String>,
+    search_policy: Prototype1SearchPolicy,
+    source_campaign: Option<String>,
+    source_branch_id: Option<String>,
+    repo_root: PathBuf,
+    trace_path: PathBuf,
+    batch_id: String,
+    batch_manifest: PathBuf,
+    prepared_instances: Vec<String>,
+    campaign: Prototype1LoopCampaign,
+}
+
+impl Prototype1LoopControllerInput {
+    fn from_command(command: &Prototype1LoopCommand) -> Result<Self, PrepareError> {
+        let (batch_manifest, prepared_batch) = prepare_or_load_prototype1_batch(command)?;
+        let campaign = prepare_prototype1_loop_campaign(command, &prepared_batch)?;
+        let trace_path = prototype1_trace_path(&campaign.manifest_path);
+        let repo_root = std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
+            path: PathBuf::from("."),
+            source,
+        })?;
+
+        Ok(Self {
+            stop_after: command.stop_after,
+            dry_run: command.dry_run,
+            stop_on_error: command.stop_on_error,
+            protocol_model_id: command.protocol_model_id.clone(),
+            protocol_provider: command.protocol_provider.clone(),
+            search_policy: Prototype1SearchPolicy {
+                max_generations: command.max_generations,
+                max_total_nodes: command.max_total_nodes,
+                stop_on_first_keep: command.stop_on_first_keep,
+                require_keep_for_continuation: command.require_keep_for_continuation,
+            },
+            source_campaign: command.source_campaign.clone(),
+            source_branch_id: command.source_branch_id.clone(),
+            repo_root,
+            trace_path,
+            batch_id: prepared_batch.batch_id.clone(),
+            batch_manifest,
+            prepared_instances: prepared_batch.instances.clone(),
+            campaign,
+        })
+    }
+
+    fn from_successor(
+        campaign_id: &str,
+        manifest_path: PathBuf,
+        node: &Prototype1NodeRecord,
+        scheduler: &Prototype1SchedulerState,
+        stop_on_error: bool,
+        runtime_id: crate::cli::prototype1_state::event::RuntimeId,
+    ) -> Result<Self, PrepareError> {
+        let manifest = load_campaign_manifest(campaign_id)?;
+        let resolved = resolve_campaign_config(campaign_id, &CampaignOverrides::default())?;
+        let closure_state_path = campaign_closure_state_path(campaign_id)?;
+        let slice_dataset_path = manifest
+            .dataset_sources
+            .first()
+            .map(|source| source.path.clone())
+            .unwrap_or_else(|| PathBuf::from("<unknown>"));
+        let prepared_instances = load_closure_state(campaign_id)
+            .map(|state| {
+                state
+                    .instances
+                    .into_iter()
+                    .map(|row| row.instance_id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let batch_id = manifest
+            .eval
+            .batch_prefix
+            .clone()
+            .unwrap_or_else(|| campaign_id.to_string());
+
+        Ok(Self {
+            stop_after: Prototype1LoopStopAfter::Compare,
+            dry_run: false,
+            stop_on_error,
+            protocol_model_id: None,
+            protocol_provider: None,
+            search_policy: scheduler.policy.clone(),
+            source_campaign: Some(campaign_id.to_string()),
+            source_branch_id: Some(node.branch_id.clone()),
+            repo_root: node.workspace_root.clone(),
+            trace_path: prototype1_successor_trace_path(&manifest_path, &node.node_id, runtime_id),
+            batch_id,
+            batch_manifest: manifest_path.clone(),
+            prepared_instances,
+            campaign: Prototype1LoopCampaign {
+                campaign_id: campaign_id.to_string(),
+                manifest_path,
+                closure_state_path,
+                slice_dataset_path,
+                resolved,
+            },
+        })
+    }
+}
+
+pub(crate) async fn run_prototype1_successor_controller(
+    campaign_id: &str,
+    node_id: &str,
+    runtime_id: crate::cli::prototype1_state::event::RuntimeId,
+) -> Result<Prototype1LoopReport, PrepareError> {
+    let manifest_path = campaign_manifest_path(campaign_id)?;
+    let node = load_node_record(&manifest_path, node_id)?;
+    let request = load_runner_request(&manifest_path, node_id)?;
+    let scheduler = load_or_default_scheduler_state(campaign_id, &manifest_path)?;
+    let input = Prototype1LoopControllerInput::from_successor(
+        campaign_id,
+        manifest_path,
+        &node,
+        &scheduler,
+        request.stop_on_error,
+        runtime_id,
+    )?;
+    run_prototype1_loop_controller(input).await
+}
+
+async fn run_prototype1_loop_controller(
+    input: Prototype1LoopControllerInput,
+) -> Result<Prototype1LoopReport, PrepareError> {
+    let _run_scope = TimingTrace::scope("loop.prototype1.run");
+    let batch_manifest = input.batch_manifest;
+    let campaign = input.campaign;
+    let trace_path = input.trace_path;
+    let branch_registry_path = prototype1_branch_registry_path(&campaign.manifest_path);
+    let scheduler_path = prototype1_scheduler_path(&campaign.manifest_path);
+    let search_policy = input.search_policy;
+    let mut scheduler = update_scheduler_policy(
+        &campaign.campaign_id,
+        &campaign.manifest_path,
+        search_policy.clone(),
+    )?;
+
+    let mut baseline_instances = Vec::new();
+    let mut selected_targets = Vec::new();
+    let mut staged_nodes = Vec::new();
+    let mut branch_evaluations = Vec::new();
+    let mut selected_next_branch_id = None;
+    let mut continuation_decision = None;
+    let mut protocol_failures = Vec::new();
+    let mut protocol_task_instances = Vec::new();
+    let intervention_repo_root = input.repo_root;
+
+    if let (Some(source_campaign), Some(source_branch_id)) = (
+        input.source_campaign.as_deref(),
+        input.source_branch_id.as_deref(),
+    ) {
+        let _scope = TimingTrace::scope("loop.prototype1.materialize_source_branch");
+        let source_manifest_path = campaign_manifest_path(source_campaign)?;
+        let resolved =
+            resolve_treatment_branch(source_campaign, &source_manifest_path, source_branch_id)?;
+        ensure_treatment_branch_materialized(
+            source_campaign,
+            &source_manifest_path,
+            &resolved,
+            &intervention_repo_root,
+        )?;
+    }
+
+    let mut eval_policy = campaign.resolved.eval.clone();
+    if input.stop_on_error {
+        eval_policy.stop_on_error = true;
+    }
+    let eval_report = {
+        let _scope = TimingTrace::scope("loop.prototype1.advance_eval_closure");
+        advance_eval_closure(&campaign.resolved, &eval_policy, false).await?
+    };
+
+    if input.stop_after >= Prototype1LoopStopAfter::BaselineProtocol {
+        let mut protocol_policy = campaign.resolved.protocol.clone();
+        if input.stop_on_error {
+            protocol_policy.stop_on_error = true;
+        }
+        let protocol_report = {
+            let _scope = TimingTrace::scope("loop.prototype1.advance_protocol_closure");
+            advance_protocol_closure(&campaign.resolved, &protocol_policy, false).await?
+        };
+        protocol_failures = protocol_report.failures;
+        protocol_task_instances = protocol_report
+            .selected_runs
+            .into_iter()
+            .map(|plan| plan.instance_id)
+            .collect();
+    }
+
+    let closure = load_closure_state(&campaign.campaign_id)?;
+
+    for row in &closure.instances {
+        let protocol_failure = protocol_failures
+            .iter()
+            .find(|failure| failure.starts_with(&format!("{}:", row.instance_id)))
+            .cloned();
+        let record_path = row.artifacts.record_path.clone();
+        let protocol_completed = row.protocol_status == ClosureClass::Complete;
+        let protocol_evidence_available = record_path
+            .as_ref()
+            .is_some_and(|path| load_protocol_aggregate(path).is_ok());
+
+        if input.stop_after >= Prototype1LoopStopAfter::TargetSelection
+            && row.eval_status == ClosureClass::Complete
+            && protocol_evidence_available
+        {
+            if let Some(record_path) = record_path.as_ref() {
+                let detection_output = {
+                    let _scope = TimingTrace::scope(format!(
+                        "loop.prototype1.issue_detection.{}",
+                        row.instance_id
+                    ));
+                    persist_issue_detection_for_record(record_path)?
+                };
+                if let Some(issue) = select_primary_issue(&detection_output) {
+                    let synthesis = {
+                        let _scope = TimingTrace::scope(format!(
+                            "loop.prototype1.intervention_synthesis.{}",
+                            row.instance_id
+                        ));
+                        persist_intervention_synthesis_for_record(
+                            record_path,
+                            issue.clone(),
+                            input.source_branch_id.clone().unwrap_or_else(|| {
+                                row.artifacts
+                                    .run_root
+                                    .as_ref()
+                                    .map(|path| path.display().to_string())
+                                    .unwrap_or_else(|| row.instance_id.clone())
+                            }),
+                            input.protocol_model_id.clone(),
+                            input.protocol_provider.clone(),
+                        )
+                        .await?
+                    };
+                    if let Some(candidate) = synthesis.primary_candidate() {
+                        let selected_branch_id = treatment_branch_id(
+                            &synthesis.candidate_set.source_state_id,
+                            &synthesis.candidate_set.target_relpath,
+                            candidate.candidate_id.as_str(),
+                        );
+                        let _ = record_synthesized_branches(
+                            &campaign.campaign_id,
+                            &campaign.manifest_path,
+                            &row.instance_id,
+                            &synthesis,
+                            Some(candidate.candidate_id.as_str()),
+                            input.source_branch_id.as_deref(),
+                        )?;
+                        let apply_output = if input.stop_after
+                            >= Prototype1LoopStopAfter::InterventionApply
+                            && !input.dry_run
+                        {
+                            let output = {
+                                let _scope = TimingTrace::scope(format!(
+                                    "loop.prototype1.intervention_apply.{}",
+                                    row.instance_id
+                                ));
+                                persist_intervention_apply_for_record(
+                                    record_path,
+                                    &synthesis,
+                                    candidate.candidate_id.as_str(),
+                                    &intervention_repo_root,
+                                )?
+                            };
+                            let _ = mark_treatment_branch_applied(
+                                &campaign.campaign_id,
+                                &campaign.manifest_path,
+                                &synthesis.candidate_set.target_relpath,
+                                &output,
+                            )?;
+                            Some(output)
+                        } else {
+                            None
+                        };
+                        selected_targets.push(Prototype1SelectedTarget {
+                            instance_id: row.instance_id.clone(),
+                            source_state_id: synthesis.candidate_set.source_state_id.clone(),
+                            parent_branch_id: input.source_branch_id.clone(),
+                            selected_branch_id,
+                            synthesized_candidate_count: synthesis.candidate_set.candidates.len(),
+                            selected_candidate_id: candidate.candidate_id.clone(),
+                            synthesized_spec_id: candidate.spec.spec_id().to_string(),
+                            synthesized_target_relpath: synthesis
+                                .candidate_set
+                                .target_relpath
+                                .clone(),
+                            apply_output: apply_output.as_ref().map(|output| {
+                                Prototype1AppliedCandidate {
+                                    candidate_id: output.candidate_id.clone(),
+                                    apply_id: output.treatment_state.apply_id.clone(),
+                                    changed: output.changed,
+                                    source_content_hash: output.source_content_hash.clone(),
+                                    applied_content_hash: output.applied_content_hash.clone(),
+                                    target_relpath: output.target_relpath.clone(),
+                                }
+                            }),
+                            apply_skipped_reason: if input.stop_after
+                                >= Prototype1LoopStopAfter::InterventionApply
+                                && input.dry_run
+                            {
+                                Some(
+                                    "dry-run: synthesized candidate selected but not applied"
+                                        .to_string(),
+                                )
+                            } else {
+                                None
+                            },
+                            issue,
+                        });
+                    }
+                }
+            }
+        }
+
+        baseline_instances.push(Prototype1LoopInstance {
+            instance_id: row.instance_id.clone(),
+            eval_status: row.eval_status,
+            protocol_status: row.protocol_status,
+            record_path,
+            protocol_completed,
+            protocol_evidence_available,
+            protocol_failure,
+        });
+    }
+
+    if !selected_targets.is_empty() {
+        let registry =
+            load_or_default_branch_registry(&campaign.campaign_id, &campaign.manifest_path)?;
+        for target in &selected_targets {
+            let Some(source_node) = registry.source_nodes.iter().find(|node| {
+                node.instance_id == target.instance_id
+                    && node.source_state_id == target.source_state_id
+                    && node.target_relpath == target.synthesized_target_relpath
+            }) else {
+                continue;
+            };
+
+            let generation = prototype1_source_generation(&registry, source_node) + 1;
+            for branch in &source_node.branches {
+                if scheduler.nodes.len() as u32 >= search_policy.max_total_nodes {
+                    break;
+                }
+                let resolved = resolve_treatment_branch(
+                    &campaign.campaign_id,
+                    &campaign.manifest_path,
+                    &branch.branch_id,
+                )?;
+                let (updated_scheduler, node, _) = register_treatment_evaluation_node(
+                    &campaign.campaign_id,
+                    &campaign.manifest_path,
+                    &resolved,
+                    generation,
+                    &intervention_repo_root,
+                    input.stop_on_error,
+                )?;
+                scheduler = updated_scheduler;
+                staged_nodes.push(node);
+            }
+        }
+    }
+
+    if input.stop_after >= Prototype1LoopStopAfter::Compare && !input.dry_run {
+        let registry =
+            load_or_default_branch_registry(&campaign.campaign_id, &campaign.manifest_path)?;
+        for target in &selected_targets {
+            let Some(source_node) = registry.source_nodes.iter().find(|node| {
+                node.instance_id == target.instance_id
+                    && node.source_state_id == target.source_state_id
+                    && node.target_relpath == target.synthesized_target_relpath
+            }) else {
+                continue;
+            };
+
+            for branch in &source_node.branches {
+                let report = {
+                    let _scope = TimingTrace::scope(format!(
+                        "loop.prototype1.branch_evaluate.{}.{}",
+                        source_node.instance_id, branch.branch_id
+                    ));
+                    run_prototype1_branch_evaluation_via_child(
+                        &campaign.campaign_id,
+                        &branch.branch_id,
+                        &intervention_repo_root,
+                        input.stop_on_error,
+                    )
+                    .await?
+                };
+                branch_evaluations.push(match report {
+                    Prototype1NodeExecutionOutcome::Evaluated(report) => {
+                        summarize_prototype1_branch_evaluation(
+                            &source_node.instance_id,
+                            &source_node.source_state_id,
+                            source_node.parent_branch_id.as_deref(),
+                            &branch.branch_id,
+                            &branch.candidate_id,
+                            &branch.branch_label,
+                            &report,
+                        )
+                    }
+                    Prototype1NodeExecutionOutcome::Failed(result) => {
+                        summarize_prototype1_failed_branch_evaluation(
+                            &source_node.instance_id,
+                            &source_node.source_state_id,
+                            source_node.parent_branch_id.as_deref(),
+                            &branch.branch_id,
+                            &branch.candidate_id,
+                            &branch.branch_label,
+                            &result,
+                        )
+                    }
+                });
+                {
+                    let _scope = TimingTrace::scope(format!(
+                        "loop.prototype1.branch_restore.{}.{}",
+                        source_node.instance_id, branch.branch_id
+                    ));
+                    let _ = restore_treatment_branch(
+                        &campaign.campaign_id,
+                        &campaign.manifest_path,
+                        &branch.branch_id,
+                        &intervention_repo_root,
+                    )?;
+                }
+            }
+        }
+
+        selected_next_branch_id = select_most_promising_branch(&branch_evaluations);
+        if let Some(branch_id) = selected_next_branch_id.as_deref() {
+            let _ =
+                select_treatment_branch(&campaign.campaign_id, &campaign.manifest_path, branch_id)?;
+            let resolved = resolve_treatment_branch(
+                &campaign.campaign_id,
+                &campaign.manifest_path,
+                branch_id,
+            )?;
+            {
+                let _scope = TimingTrace::scope("loop.prototype1.materialize_selected_next_branch");
+                ensure_treatment_branch_materialized(
+                    &campaign.campaign_id,
+                    &campaign.manifest_path,
+                    &resolved,
+                    &intervention_repo_root,
+                )?;
+            }
+        }
+
+        let current_generation = selected_targets
+            .iter()
+            .filter_map(|target| {
+                registry.source_nodes.iter().find(|node| {
+                    node.instance_id == target.instance_id
+                        && node.source_state_id == target.source_state_id
+                        && node.target_relpath == target.synthesized_target_relpath
+                })
+            })
+            .map(|source_node| prototype1_source_generation(&registry, source_node))
+            .max()
+            .unwrap_or(0);
+        let selected_branch_disposition = selected_next_branch_id.as_deref().and_then(|id| {
+            branch_evaluations
+                .iter()
+                .find(|row| row.branch_id == id)
+                .map(|row| serde_name(&row.overall_disposition).to_string())
+        });
+        let decision = crate::intervention::decide_continuation(
+            &scheduler,
+            current_generation,
+            selected_next_branch_id.as_deref(),
+            selected_branch_disposition.as_deref(),
+        );
+        let _ = record_continuation_decision(
+            &campaign.campaign_id,
+            &campaign.manifest_path,
+            decision.clone(),
+        )?;
+        continuation_decision = Some(decision);
+    }
+
+    let report = Prototype1LoopReport {
+        stage_reached: input.stop_after,
+        dry_run: input.dry_run,
+        search_policy,
+        continuation_decision,
+        continued_from_campaign: input.source_campaign.clone(),
+        continued_from_branch_id: input.source_branch_id.clone(),
+        batch_id: input.batch_id,
+        batch_manifest,
+        campaign_id: campaign.campaign_id,
+        campaign_manifest: campaign.manifest_path,
+        closure_state_path: campaign.closure_state_path,
+        slice_dataset_path: campaign.slice_dataset_path,
+        branch_registry_path,
+        scheduler_path,
+        trace_path: trace_path.clone(),
+        prepared_instances: input.prepared_instances,
+        completed_instances: eval_report
+            .selected_instances
+            .iter()
+            .filter(|instance_id| {
+                baseline_instances.iter().any(|row| {
+                    row.instance_id == **instance_id && row.eval_status == ClosureClass::Complete
+                })
+            })
+            .cloned()
+            .collect(),
+        protocol_task_instances,
+        baseline_instances,
+        selected_targets,
+        staged_nodes,
+        branch_evaluations,
+        selected_next_branch_id,
+        protocol_failures,
+        pending_stages: pending_prototype1_stages(input.stop_after),
+    };
+    write_json_file_pretty(&trace_path, &report)?;
+    Ok(report)
 }
 
 fn prepare_or_load_prototype1_batch(
@@ -613,6 +731,11 @@ impl Prototype1BranchApplyCommand {
             candidate_id: resolved.branch.candidate_id.clone(),
             branch_label: resolved.branch.branch_label.clone(),
             proposed_content: resolved.branch.proposed_content.clone(),
+            // This manual operator path reconstructs a candidate from the
+            // branch handle. The registry will recover patch provenance from
+            // its stored branch record or text-file fallback; future materialize
+            // paths should pass registry provenance directly.
+            patch_id: None,
             spec: InterventionSpec::ToolGuidanceMutation {
                 spec_id: resolved.branch.synthesized_spec_id.clone(),
                 evidence_basis: "prototype1_branch_apply".to_string(),
@@ -630,6 +753,11 @@ impl Prototype1BranchApplyCommand {
             target_relpath: resolved.target_relpath.clone(),
             expected_source_content: resolved.source_content.clone(),
             repo_root,
+            // No whole-worktree artifact identity is available in this manual
+            // apply command yet. `execute_intervention_apply` will derive only
+            // text-file surface identities.
+            base_artifact_id: None,
+            patch_id: None,
         };
         let output =
             execute_intervention_apply(&input).map_err(|source| PrepareError::DatabaseSetup {
@@ -1227,6 +1355,10 @@ pub(crate) fn ensure_treatment_branch_materialized(
         candidate_id: resolved.branch.candidate_id.clone(),
         branch_label: resolved.branch.branch_label.clone(),
         proposed_content: resolved.branch.proposed_content.clone(),
+        // Branch evaluation currently replays stored branch content through
+        // the text-file adapter. Keep this absent until the materialization
+        // path can pass the registry's graph provenance directly.
+        patch_id: None,
         spec: InterventionSpec::ToolGuidanceMutation {
             spec_id: resolved.branch.synthesized_spec_id.clone(),
             evidence_basis: "prototype1_branch_evaluate".to_string(),
@@ -1244,6 +1376,10 @@ pub(crate) fn ensure_treatment_branch_materialized(
         target_relpath: resolved.target_relpath.clone(),
         expected_source_content: resolved.source_content.clone(),
         repo_root: repo_root.to_path_buf(),
+        // This path is still file-surface based; do not invent a whole
+        // ArtifactId from the evaluation worktree.
+        base_artifact_id: None,
+        patch_id: None,
     };
     let output =
         execute_intervention_apply(&input).map_err(|source| PrepareError::DatabaseSetup {
@@ -1309,7 +1445,10 @@ pub(crate) fn prepare_prototype1_treatment_campaign(
     })
 }
 
-pub(crate) fn prototype1_branch_evaluation_path(campaign_manifest_path: &Path, branch_id: &str) -> PathBuf {
+pub(crate) fn prototype1_branch_evaluation_path(
+    campaign_manifest_path: &Path,
+    branch_id: &str,
+) -> PathBuf {
     campaign_manifest_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -2494,4 +2633,17 @@ fn prototype1_trace_path(campaign_manifest_path: &Path) -> PathBuf {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("prototype1-loop-trace.json")
+}
+
+pub(crate) fn prototype1_successor_trace_path(
+    campaign_manifest_path: &Path,
+    node_id: &str,
+    runtime_id: crate::cli::prototype1_state::event::RuntimeId,
+) -> PathBuf {
+    campaign_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1")
+        .join("loop-traces")
+        .join(format!("successor-{node_id}-{runtime_id}.json"))
 }

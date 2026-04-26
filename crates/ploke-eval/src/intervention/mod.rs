@@ -49,6 +49,7 @@ pub use scheduler::{
     update_node_status, update_node_workspace_root, update_scheduler_policy,
     write_runner_result_at,
 };
+pub(crate) use spec::operation_target_artifact_id;
 pub use spec::{
     AppliedEdit, ArtifactEdit, InterventionApplyInput, InterventionApplyOutput,
     InterventionCandidate, InterventionCandidateSet, InterventionExecutionInput,

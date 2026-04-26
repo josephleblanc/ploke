@@ -17,6 +17,7 @@ use crate::intervention::issue::{IssueCase, IssueSelectionBasis};
 use crate::intervention::spec::{
     ArtifactEdit, InterventionCandidate, InterventionCandidateSet, InterventionSpec,
     InterventionSynthesisInput, InterventionSynthesisOutput, ValidationPolicy,
+    text_replacement_patch_id,
 };
 
 pub const INTERVENTION_SYNTHESIS_PROCEDURE: &str = "intervention_synthesis";
@@ -38,6 +39,8 @@ pub struct InterventionSynthesisContext {
     pub source_state_id: String,
     pub source_content: String,
     pub target_relpath: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) operation_target: Option<crate::loop_graph::OperationTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +84,7 @@ impl MechanizedSpec for ContextualizeInterventionSynthesis {
             issue: input.issue,
             source_state_id: input.source_state_id,
             source_content: input.source_content,
+            operation_target: input.operation_target,
         })
     }
 }
@@ -216,6 +220,7 @@ impl MechanizedSpec for AssembleInterventionCandidates {
                 target_relpath: context.target_relpath,
                 source_content: context.source_content,
                 candidates,
+                operation_target: context.operation_target,
             },
         })
     }
@@ -254,6 +259,11 @@ fn build_candidate_from_draft(
     InterventionCandidate {
         candidate_id: candidate_id.to_string(),
         branch_label: branch_label.to_string(),
+        patch_id: Some(text_replacement_patch_id(
+            &context.target_relpath,
+            &context.source_content,
+            &draft.proposed_content,
+        )),
         proposed_content: draft.proposed_content,
         spec,
     }
@@ -431,9 +441,15 @@ fn synthesize_reviewed_tool_target(
             source_state_id: input.source_state_id.clone(),
             target_relpath: spec.target_relpath().to_path_buf(),
             source_content: input.source_content.clone(),
+            operation_target: input.operation_target.clone(),
             candidates: vec![InterventionCandidate {
                 candidate_id: "candidate-1".to_string(),
                 branch_label: "rewrite_v1".to_string(),
+                patch_id: Some(text_replacement_patch_id(
+                    spec.target_relpath(),
+                    &input.source_content,
+                    &proposed_content,
+                )),
                 proposed_content,
                 spec,
             }],

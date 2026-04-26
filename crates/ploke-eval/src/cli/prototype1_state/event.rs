@@ -8,7 +8,6 @@
 
 use std::fmt;
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -16,6 +15,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::intervention::Prototype1NodeStatus;
+pub(crate) use crate::loop_graph::RuntimeId;
 
 /// Durable identity for one committed transition attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -31,31 +31,6 @@ impl TransitionId {
 impl fmt::Display for TransitionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
-    }
-}
-
-/// Durable identity for one concrete child runtime instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub(crate) struct RuntimeId(pub Uuid);
-
-impl RuntimeId {
-    pub(crate) fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl fmt::Display for RuntimeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl FromStr for RuntimeId {
-    type Err = uuid::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self(Uuid::parse_str(s)?))
     }
 }
 

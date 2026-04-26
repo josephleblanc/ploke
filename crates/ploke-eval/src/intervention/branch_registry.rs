@@ -5,9 +5,12 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::spec::InterventionApplyOutput;
-use super::spec::InterventionSynthesisOutput;
+use super::spec::{
+    InterventionApplyOutput, InterventionSynthesisOutput, operation_target_artifact_id,
+    text_file_artifact_id, text_replacement_patch_id,
+};
 use crate::branch_evaluation::BranchDisposition;
+use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, PatchId};
 use crate::spec::PrepareError;
 
 pub const PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION: &str = "prototype1-branch-registry.v1";
@@ -36,15 +39,23 @@ pub struct TreatmentBranchEvaluationSummary {
 pub struct TreatmentBranchNode {
     pub branch_id: String,
     pub candidate_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) patch_id: Option<PatchId>,
     pub branch_label: String,
     pub synthesized_spec_id: String,
     pub proposed_content: String,
     pub proposed_content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) generation_target: Option<OperationTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) generation_coordinate: Option<Coordinate>,
     pub status: TreatmentBranchStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apply_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applied_content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) derived_artifact_id: Option<ArtifactId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_evaluation: Option<TreatmentBranchEvaluationSummary>,
 }
@@ -54,6 +65,10 @@ pub struct InterventionSourceNode {
     pub source_state_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_branch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_artifact_id: Option<ArtifactId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) operation_target: Option<OperationTarget>,
     pub instance_id: String,
     pub target_relpath: PathBuf,
     pub source_content: String,
@@ -68,9 +83,17 @@ pub struct ActiveInterventionTarget {
     pub target_relpath: PathBuf,
     pub source_state_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_artifact_id: Option<ArtifactId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_branch_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) active_patch_id: Option<PatchId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_apply_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) active_derived_artifact_id: Option<ArtifactId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) active_operation_target: Option<OperationTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -115,6 +138,12 @@ pub struct ResolvedTreatmentBranch {
 
 fn sha256_hex(payload: &str) -> String {
     format!("{:x}", Sha256::digest(payload.as_bytes()))
+}
+
+fn operation_target_for_artifact(artifact_id: &ArtifactId) -> OperationTarget {
+    OperationTarget::Artifact {
+        artifact_id: artifact_id.clone(),
+    }
 }
 
 fn branch_registry_dir(campaign_manifest_path: &Path) -> PathBuf {
@@ -193,6 +222,28 @@ pub fn record_synthesized_branches(
     parent_branch_id: Option<&str>,
 ) -> Result<Prototype1BranchRegistry, PrepareError> {
     let mut registry = load_or_default_branch_registry(campaign_id, campaign_manifest_path)?;
+    let source_content_hash = sha256_hex(&synthesis.candidate_set.source_content);
+    // Preserve any real target provenance already supplied by synthesis.
+    // Otherwise fall back to the current text-file surface identity. That
+    // fallback is intentionally narrower than a worktree ArtifactId; see
+    // `text_file_artifact_id` for the boundary.
+    let source_artifact_id = synthesis
+        .candidate_set
+        .operation_target
+        .as_ref()
+        .and_then(operation_target_artifact_id)
+        .cloned()
+        .unwrap_or_else(|| {
+            text_file_artifact_id(
+                &synthesis.candidate_set.target_relpath,
+                &synthesis.candidate_set.source_content,
+            )
+        });
+    let operation_target = synthesis
+        .candidate_set
+        .operation_target
+        .clone()
+        .unwrap_or_else(|| operation_target_for_artifact(&source_artifact_id));
     let selected_branch_id = selected_candidate_id.map(|candidate_id| {
         treatment_branch_id(
             &synthesis.candidate_set.source_state_id,
@@ -210,10 +261,12 @@ pub fn record_synthesized_branches(
         registry.source_nodes.push(InterventionSourceNode {
             source_state_id: synthesis.candidate_set.source_state_id.clone(),
             parent_branch_id: parent_branch_id.map(ToOwned::to_owned),
+            source_artifact_id: Some(source_artifact_id.clone()),
+            operation_target: Some(operation_target.clone()),
             instance_id: instance_id.to_string(),
             target_relpath: synthesis.candidate_set.target_relpath.clone(),
             source_content: synthesis.candidate_set.source_content.clone(),
-            source_content_hash: sha256_hex(&synthesis.candidate_set.source_content),
+            source_content_hash: source_content_hash.clone(),
             selected_branch_id: None,
             branches: Vec::new(),
         });
@@ -228,7 +281,9 @@ pub fn record_synthesized_branches(
         source_node.parent_branch_id = Some(parent_branch_id.to_string());
     }
     source_node.source_content = synthesis.candidate_set.source_content.clone();
-    source_node.source_content_hash = sha256_hex(&synthesis.candidate_set.source_content);
+    source_node.source_content_hash = source_content_hash.clone();
+    source_node.source_artifact_id = Some(source_artifact_id.clone());
+    source_node.operation_target = Some(operation_target.clone());
     source_node.selected_branch_id = selected_branch_id.clone();
 
     for candidate in &synthesis.candidate_set.candidates {
@@ -238,16 +293,28 @@ pub fn record_synthesized_branches(
             &candidate.candidate_id,
         );
         let proposed_content_hash = sha256_hex(&candidate.proposed_content);
+        // Candidate patch ids are the first durable handle for probabilistic
+        // patch generation. Legacy candidate ids and branch ids remain display
+        // and registry handles, not patch provenance.
+        let patch_id = candidate.patch_id.clone().unwrap_or_else(|| {
+            text_replacement_patch_id(
+                &synthesis.candidate_set.target_relpath,
+                &synthesis.candidate_set.source_content,
+                &candidate.proposed_content,
+            )
+        });
         match source_node
             .branches
             .iter_mut()
             .find(|branch| branch.branch_id == branch_id)
         {
             Some(branch) => {
+                branch.patch_id = Some(patch_id);
                 branch.branch_label = candidate.branch_label.clone();
                 branch.synthesized_spec_id = candidate.spec.spec_id().to_string();
                 branch.proposed_content = candidate.proposed_content.clone();
                 branch.proposed_content_hash = proposed_content_hash;
+                branch.generation_target = Some(operation_target.clone());
                 if selected_candidate_id == Some(candidate.candidate_id.as_str()) {
                     branch.status = TreatmentBranchStatus::Selected;
                 }
@@ -256,10 +323,13 @@ pub fn record_synthesized_branches(
                 source_node.branches.push(TreatmentBranchNode {
                     branch_id,
                     candidate_id: candidate.candidate_id.clone(),
+                    patch_id: Some(patch_id),
                     branch_label: candidate.branch_label.clone(),
                     synthesized_spec_id: candidate.spec.spec_id().to_string(),
                     proposed_content: candidate.proposed_content.clone(),
                     proposed_content_hash,
+                    generation_target: Some(operation_target.clone()),
+                    generation_coordinate: None,
                     status: if selected_candidate_id == Some(candidate.candidate_id.as_str()) {
                         TreatmentBranchStatus::Selected
                     } else {
@@ -267,6 +337,7 @@ pub fn record_synthesized_branches(
                     },
                     apply_id: None,
                     applied_content_hash: None,
+                    derived_artifact_id: None,
                     latest_evaluation: None,
                 });
             }
@@ -301,6 +372,18 @@ pub fn mark_treatment_branch_applied(
             ),
         })?;
 
+    let source_artifact_id = apply
+        .base_artifact_id
+        .clone()
+        .or_else(|| source_node.source_artifact_id.clone())
+        .unwrap_or_else(|| text_file_artifact_id(target_relpath, &source_node.source_content));
+    let operation_target = source_node
+        .operation_target
+        .clone()
+        .unwrap_or_else(|| operation_target_for_artifact(&source_artifact_id));
+    source_node.source_artifact_id = Some(source_artifact_id.clone());
+    source_node.operation_target = Some(operation_target.clone());
+
     let branch_id = treatment_branch_id(source_state_id, target_relpath, &apply.candidate_id);
     let branch = source_node
         .branches
@@ -312,9 +395,27 @@ pub fn mark_treatment_branch_applied(
                 branch_id, apply.candidate_id
             ),
         })?;
+    let patch_id = apply
+        .patch_id
+        .clone()
+        .or_else(|| branch.patch_id.clone())
+        .unwrap_or_else(|| {
+            text_replacement_patch_id(
+                target_relpath,
+                &source_node.source_content,
+                &branch.proposed_content,
+            )
+        });
+    let derived_artifact_id = apply
+        .derived_artifact_id
+        .clone()
+        .unwrap_or_else(|| text_file_artifact_id(target_relpath, &branch.proposed_content));
+    branch.patch_id = Some(patch_id.clone());
+    branch.generation_target = Some(operation_target.clone());
     branch.status = TreatmentBranchStatus::Applied;
     branch.apply_id = Some(apply.treatment_state.apply_id.clone());
     branch.applied_content_hash = Some(apply.applied_content_hash.clone());
+    branch.derived_artifact_id = Some(derived_artifact_id.clone());
     source_node.selected_branch_id = Some(branch_id.clone());
 
     match registry
@@ -324,16 +425,24 @@ pub fn mark_treatment_branch_applied(
     {
         Some(active) => {
             active.source_state_id = source_state_id.clone();
+            active.source_artifact_id = Some(source_artifact_id.clone());
             active.active_branch_id = Some(branch_id);
+            active.active_patch_id = Some(patch_id.clone());
             active.active_apply_id = Some(apply.treatment_state.apply_id.clone());
+            active.active_derived_artifact_id = Some(derived_artifact_id.clone());
+            active.active_operation_target = Some(operation_target.clone());
         }
         None => registry.active_targets.push(ActiveInterventionTarget {
             target_relpath: target_relpath.to_path_buf(),
             source_state_id: source_state_id.clone(),
+            source_artifact_id: Some(source_artifact_id),
             active_branch_id: Some(branch_id),
+            active_patch_id: Some(patch_id),
             active_apply_id: Some(apply.treatment_state.apply_id.clone()),
+            active_derived_artifact_id: Some(derived_artifact_id),
+            active_operation_target: Some(operation_target),
         }),
-    }
+    };
 
     registry.updated_at = Utc::now().to_rfc3339();
     save_branch_registry(campaign_manifest_path, &registry)?;
@@ -351,15 +460,41 @@ pub fn select_treatment_branch(
     for source_node in &mut registry.source_nodes {
         let source_state_id = source_node.source_state_id.clone();
         let target_relpath = source_node.target_relpath.clone();
+        let source_artifact_id = source_node
+            .source_artifact_id
+            .clone()
+            .unwrap_or_else(|| text_file_artifact_id(&target_relpath, &source_node.source_content));
+        let operation_target = source_node
+            .operation_target
+            .clone()
+            .unwrap_or_else(|| operation_target_for_artifact(&source_artifact_id));
+        source_node.source_artifact_id = Some(source_artifact_id.clone());
+        source_node.operation_target = Some(operation_target.clone());
         let mut branch_found = false;
         for branch in &mut source_node.branches {
             if branch.branch_id == branch_id {
+                let patch_id = branch.patch_id.clone().unwrap_or_else(|| {
+                    text_replacement_patch_id(
+                        &target_relpath,
+                        &source_node.source_content,
+                        &branch.proposed_content,
+                    )
+                });
+                branch.patch_id = Some(patch_id.clone());
+                branch.generation_target = Some(operation_target.clone());
                 branch_found = true;
                 if branch.status == TreatmentBranchStatus::Synthesized {
                     branch.status = TreatmentBranchStatus::Selected;
                 }
                 source_node.selected_branch_id = Some(branch_id.to_string());
-                selected = Some((source_state_id.clone(), target_relpath.clone()));
+                selected = Some((
+                    source_state_id.clone(),
+                    target_relpath.clone(),
+                    source_artifact_id.clone(),
+                    patch_id,
+                    branch.derived_artifact_id.clone(),
+                    operation_target.clone(),
+                ));
             }
         }
         if branch_found {
@@ -367,10 +502,16 @@ pub fn select_treatment_branch(
         }
     }
 
-    let (source_state_id, target_relpath) =
-        selected.ok_or_else(|| PrepareError::InvalidBatchSelection {
-            detail: format!("unknown treatment branch '{}'", branch_id),
-        })?;
+    let (
+        source_state_id,
+        target_relpath,
+        source_artifact_id,
+        active_patch_id,
+        active_derived_artifact_id,
+        active_operation_target,
+    ) = selected.ok_or_else(|| PrepareError::InvalidBatchSelection {
+        detail: format!("unknown treatment branch '{}'", branch_id),
+    })?;
 
     match registry
         .active_targets
@@ -379,16 +520,24 @@ pub fn select_treatment_branch(
     {
         Some(active) => {
             active.source_state_id = source_state_id;
+            active.source_artifact_id = Some(source_artifact_id.clone());
             active.active_branch_id = Some(branch_id.to_string());
+            active.active_patch_id = Some(active_patch_id.clone());
             active.active_apply_id = None;
+            active.active_derived_artifact_id = active_derived_artifact_id.clone();
+            active.active_operation_target = Some(active_operation_target.clone());
         }
         None => registry.active_targets.push(ActiveInterventionTarget {
             target_relpath,
             source_state_id,
+            source_artifact_id: Some(source_artifact_id),
             active_branch_id: Some(branch_id.to_string()),
+            active_patch_id: Some(active_patch_id),
             active_apply_id: None,
+            active_derived_artifact_id,
+            active_operation_target: Some(active_operation_target),
         }),
-    }
+    };
 
     registry.updated_at = Utc::now().to_rfc3339();
     save_branch_registry(campaign_manifest_path, &registry)?;
@@ -503,8 +652,12 @@ pub fn restore_treatment_branch(
             {
                 if active.active_branch_id.as_deref() == Some(branch_id) {
                     active.active_branch_id = None;
+                    active.active_patch_id = None;
                     active.active_apply_id = None;
+                    active.active_derived_artifact_id = None;
+                    active.active_operation_target = None;
                     active.source_state_id = source_node.source_state_id.clone();
+                    active.source_artifact_id = source_node.source_artifact_id.clone();
                 }
             }
             restored = Some(InterventionRestoreOutput {
@@ -584,11 +737,13 @@ mod tests {
                     "crates/ploke-core/tool_text/request_code_context.md",
                 ),
                 source_content: "old text\n".to_string(),
+                operation_target: None,
                 candidates: vec![
                     InterventionCandidate {
                         candidate_id: "candidate-1".to_string(),
                         branch_label: "minimal_rewrite".to_string(),
                         proposed_content: "new text a\n".to_string(),
+                        patch_id: None,
                         spec: InterventionSpec::ToolGuidanceMutation {
                             spec_id: "reviewed-tool:request_code_context:minimal_rewrite"
                                 .to_string(),
@@ -607,6 +762,7 @@ mod tests {
                         candidate_id: "candidate-2".to_string(),
                         branch_label: "decision_rule_rewrite".to_string(),
                         proposed_content: "new text b\n".to_string(),
+                        patch_id: None,
                         spec: InterventionSpec::ToolGuidanceMutation {
                             spec_id: "reviewed-tool:request_code_context:decision_rule_rewrite"
                                 .to_string(),
@@ -657,6 +813,111 @@ mod tests {
     }
 
     #[test]
+    fn branch_registry_deserializes_legacy_records_without_graph_provenance() {
+        let legacy = serde_json::json!({
+            "schema_version": PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION,
+            "campaign_id": "test-campaign",
+            "updated_at": "2026-04-26T00:00:00Z",
+            "source_nodes": [{
+                "source_state_id": "baseline-run-1",
+                "parent_branch_id": "branch-parent",
+                "instance_id": "clap-rs__clap-3670",
+                "target_relpath": "crates/ploke-core/tool_text/request_code_context.md",
+                "source_content": "old text\n",
+                "source_content_hash": "old-hash",
+                "selected_branch_id": "branch-selected",
+                "branches": [{
+                    "branch_id": "branch-selected",
+                    "candidate_id": "candidate-1",
+                    "branch_label": "minimal_rewrite",
+                    "synthesized_spec_id": "spec-1",
+                    "proposed_content": "new text\n",
+                    "proposed_content_hash": "new-hash",
+                    "status": "selected"
+                }]
+            }],
+            "active_targets": [{
+                "target_relpath": "crates/ploke-core/tool_text/request_code_context.md",
+                "source_state_id": "baseline-run-1",
+                "active_branch_id": "branch-selected"
+            }]
+        });
+
+        let registry: Prototype1BranchRegistry =
+            serde_json::from_value(legacy).expect("deserialize legacy registry");
+        let source = &registry.source_nodes[0];
+        assert_eq!(source.source_artifact_id, None);
+        assert_eq!(source.operation_target, None);
+        assert_eq!(source.branches[0].patch_id, None);
+        assert_eq!(source.branches[0].generation_target, None);
+        assert_eq!(source.branches[0].generation_coordinate, None);
+        assert_eq!(source.branches[0].derived_artifact_id, None);
+        assert_eq!(registry.active_targets[0].source_artifact_id, None);
+        assert_eq!(registry.active_targets[0].active_patch_id, None);
+        assert_eq!(registry.active_targets[0].active_derived_artifact_id, None);
+        assert_eq!(registry.active_targets[0].active_operation_target, None);
+
+        let roundtrip = serde_json::to_value(&registry).expect("serialize registry");
+        let branch = &roundtrip["source_nodes"][0]["branches"][0];
+        assert!(branch.get("patch_id").is_none());
+        assert!(branch.get("generation_target").is_none());
+        assert!(branch.get("generation_coordinate").is_none());
+        assert!(branch.get("derived_artifact_id").is_none());
+        assert!(
+            roundtrip["active_targets"][0]
+                .get("active_patch_id")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn record_synthesis_preserves_base_artifact_target_and_patch_identity() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let synthesis = synthesis_output();
+
+        let registry = record_synthesized_branches(
+            "test-campaign",
+            &manifest,
+            "clap-rs__clap-3670",
+            &synthesis,
+            Some("candidate-1"),
+            None,
+        )
+        .expect("record synthesis");
+
+        let source = &registry.source_nodes[0];
+        let expected_artifact_id = text_file_artifact_id(
+            &synthesis.candidate_set.target_relpath,
+            &synthesis.candidate_set.source_content,
+        );
+        assert_eq!(
+            source.source_artifact_id.as_ref(),
+            Some(&expected_artifact_id)
+        );
+        assert_eq!(
+            source.operation_target.as_ref(),
+            Some(&operation_target_for_artifact(&expected_artifact_id))
+        );
+
+        let branch = source
+            .branches
+            .iter()
+            .find(|branch| branch.candidate_id == "candidate-1")
+            .expect("candidate branch");
+        let patch_id = branch.patch_id.as_ref().expect("patch id");
+        assert!(patch_id.as_str().starts_with("text-replace-sha256:"));
+        assert_ne!(patch_id.as_str(), branch.branch_id);
+        assert_ne!(patch_id.as_str(), branch.candidate_id);
+        assert_eq!(
+            branch.generation_target.as_ref(),
+            Some(&operation_target_for_artifact(&expected_artifact_id))
+        );
+        assert_eq!(branch.generation_coordinate, None);
+        assert_eq!(branch.derived_artifact_id, None);
+    }
+
+    #[test]
     fn apply_marks_active_branch_and_restore_writes_source_content() {
         let tmp = tempdir().expect("tmp");
         let manifest = campaign_manifest_path(tmp.path());
@@ -692,6 +953,8 @@ mod tests {
             target_relpath: target_relpath.clone(),
             expected_source_content: synthesis.candidate_set.source_content.clone(),
             repo_root: repo_root.clone(),
+            base_artifact_id: None,
+            patch_id: None,
         })
         .expect("apply");
         let registry = mark_treatment_branch_applied(
@@ -705,6 +968,27 @@ mod tests {
         assert_eq!(
             registry.active_targets[0].active_branch_id.as_deref(),
             Some(branch_id.as_str())
+        );
+        let active = &registry.active_targets[0];
+        assert!(active.source_artifact_id.is_some());
+        assert!(active.active_patch_id.is_some());
+        assert_eq!(
+            active.active_apply_id.as_deref(),
+            Some(apply_output.treatment_state.apply_id.as_str())
+        );
+        assert_eq!(
+            active.active_derived_artifact_id.as_ref(),
+            apply_output.derived_artifact_id.as_ref()
+        );
+        assert!(active.active_operation_target.is_some());
+        let applied_branch = registry.source_nodes[0]
+            .branches
+            .iter()
+            .find(|branch| branch.branch_id == branch_id)
+            .expect("applied branch");
+        assert_eq!(
+            applied_branch.derived_artifact_id.as_ref(),
+            apply_output.derived_artifact_id.as_ref()
         );
 
         let restored = restore_treatment_branch("test-campaign", &manifest, &branch_id, &repo_root)
