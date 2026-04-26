@@ -105,10 +105,10 @@
 //!   -> write runner-result.json
 //!   -> exit
 //!
-//! successor: loop prototype1-runner --execute
+//! successor: loop prototype1-state --handoff-invocation ...
 //!   -> validate continuation
 //!   -> write successor-ready acknowledgement
-//!   -> rehydrate controller for one bounded next generation
+//!   -> enter the same typed parent path as the initial parent
 //! ```
 //!
 //! Keeping this path local makes it easier to audit for runaway-process risks.
@@ -124,14 +124,18 @@ use crate::cli::prototype1_state::cli_facing::{
     ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
     prototype1_branch_evaluation_path, prototype1_source_generation,
 };
+use crate::cli::prototype1_state::event::RecordedAt;
 use crate::cli::prototype1_state::identity::{
     ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
     parent_identity_relpath, write_parent_identity,
 };
-use crate::cli::prototype1_state::journal::prototype1_transition_journal_path;
+use crate::cli::prototype1_state::journal::{
+    ActiveCheckoutAdvancedEntry, ChildArtifactCommittedEntry, JournalEntry, PrototypeJournal,
+    SuccessorHandoffEntry, prototype1_transition_journal_path,
+};
 use crate::intervention::{
     Prototype1ContinuationDisposition, Prototype1NodeStatus, Prototype1RunnerDisposition,
-    Prototype1RunnerResult, TreatmentBranchEvaluationSummary, clear_runner_result,
+    Prototype1RunnerResult, RecordStore, TreatmentBranchEvaluationSummary, clear_runner_result,
     load_node_record, load_or_default_branch_registry, load_or_register_treatment_evaluation_node,
     load_runner_request, load_runner_result_at, load_scheduler_state,
     prototype1_branch_registry_path, record_runner_result, record_treatment_branch_evaluation,
@@ -141,6 +145,20 @@ use crate::intervention::{
 
 const SUCCESSOR_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const SUCCESSOR_READY_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+fn append_prototype1_journal_entry(
+    manifest_path: &Path,
+    entry: JournalEntry,
+    phase: &'static str,
+) -> Result<(), PrepareError> {
+    let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(manifest_path));
+    journal
+        .append(entry)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase,
+            detail: source.to_string(),
+        })
+}
 
 /// Outcome of one parent-side node execution attempt.
 ///
@@ -429,6 +447,7 @@ fn install_prototype1_successor_artifact(
             phase: "prototype1_successor_artifact_prepare",
             detail: source.to_string(),
         })?;
+    let previous_parent = load_parent_identity_optional(active_parent_root)?;
 
     if node.workspace_root.exists() {
         let message = format!(
@@ -441,7 +460,6 @@ fn install_prototype1_successor_artifact(
                 phase: "prototype1_successor_artifact_commit",
                 detail: source.to_string(),
             })?;
-        let previous_parent = load_parent_identity_optional(active_parent_root)?;
         let identity = ParentIdentity::from_node(
             campaign_id.to_string(),
             node,
@@ -476,7 +494,7 @@ fn install_prototype1_successor_artifact(
             phase: "prototype1_successor_artifact_verify",
             detail: source.to_string(),
         })?;
-    let _ = backend
+    let installed_commit = backend
         .install_artifact_in_active_checkout(active_parent_root, &workspace.branch)
         .map_err(|source| PrepareError::DatabaseSetup {
             phase: "prototype1_successor_checkout_switch",
@@ -491,6 +509,19 @@ fn install_prototype1_successor_artifact(
             phase: "prototype1_successor_parent_admission",
             detail: source.to_string(),
         })?;
+    append_prototype1_journal_entry(
+        &campaign_manifest_path(campaign_id)?,
+        JournalEntry::ActiveCheckoutAdvanced(ActiveCheckoutAdvancedEntry {
+            recorded_at: RecordedAt::now(),
+            campaign_id: campaign_id.to_string(),
+            previous_parent_identity: previous_parent,
+            selected_parent_identity: identity,
+            active_parent_root: active_parent_root.to_path_buf(),
+            selected_branch: workspace.branch.0.clone(),
+            installed_commit: installed_commit.0,
+        }),
+        "prototype1_successor_checkout_journal",
+    )?;
     Ok(())
 }
 
@@ -574,7 +605,7 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
         "prototype1: persist buildable artifact for node {}",
         node.node_id
     );
-    let _ = backend
+    let target_commit = backend
         .persist_workspace_target(&workspace, &node.target_relpath, &message)
         .map_err(|source| PrepareError::DatabaseSetup {
             phase: "prototype1_child_artifact_commit",
@@ -589,7 +620,7 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
     );
     let _ = write_parent_identity(&workspace.root, &identity)?;
     let identity_message = parent_identity_commit_message(&identity);
-    let _ = backend
+    let identity_commit = backend
         .persist_workspace_files(&workspace, &[parent_identity_relpath()], &identity_message)
         .map_err(|source| PrepareError::DatabaseSetup {
             phase: "prototype1_parent_identity_commit",
@@ -607,6 +638,22 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
             phase: "prototype1_child_artifact_verify",
             detail: source.to_string(),
         })?;
+    append_prototype1_journal_entry(
+        campaign_manifest_path,
+        JournalEntry::ChildArtifactCommitted(ChildArtifactCommittedEntry {
+            recorded_at: RecordedAt::now(),
+            campaign_id: campaign_id.to_string(),
+            parent_identity: previous_parent,
+            child_identity: identity,
+            node_id: node.node_id.clone(),
+            generation: node.generation,
+            target_relpath: node.target_relpath.clone(),
+            child_branch: workspace.branch.0.clone(),
+            target_commit: target_commit.0,
+            identity_commit: identity_commit.0,
+        }),
+        "prototype1_child_artifact_journal",
+    )?;
     Ok(())
 }
 
@@ -759,11 +806,28 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     )?;
     let pid = child.id();
     match wait_for_prototype1_successor_ready(&mut child, &ready_path)? {
-        Some(_) => Ok(Some(Prototype1SuccessorHandoff {
-            runtime_id,
-            pid,
-            ready_path,
-        })),
+        Some(_) => {
+            append_prototype1_journal_entry(
+                &manifest_path,
+                JournalEntry::SuccessorHandoff(SuccessorHandoffEntry {
+                    recorded_at: RecordedAt::now(),
+                    campaign_id: campaign_id.to_string(),
+                    node_id: node.node_id.clone(),
+                    runtime_id,
+                    active_parent_root: active_parent_root.to_path_buf(),
+                    binary_path: active_successor_binary_path,
+                    invocation_path,
+                    ready_path: ready_path.clone(),
+                    pid,
+                }),
+                "prototype1_successor_handoff_journal",
+            )?;
+            Ok(Some(Prototype1SuccessorHandoff {
+                runtime_id,
+                pid,
+                ready_path,
+            }))
+        }
         None => Ok(None),
     }
 }

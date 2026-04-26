@@ -29,6 +29,7 @@ use super::event::{
     ChildRuntimeLifecycle, ContentHash, Hashes, ObservedChildTerminal, Paths, RecordedAt, Refs,
     RuntimeId, TransitionId, World,
 };
+use super::identity::ParentIdentity;
 use crate::branch_evaluation::BranchDisposition;
 use crate::intervention::{
     CommitPhase, Prototype1RunnerDisposition, RecordStore, load_runner_result_at,
@@ -160,10 +161,72 @@ pub(crate) struct CompletionEntry {
     pub result: Option<ObservedChildResult>,
 }
 
+/// Parent runtime admission record for one typed-loop turn.
+///
+/// This is intentionally parent/artifact shaped rather than legacy
+/// branch-registry shaped. It records the active identity a runtime used when
+/// entering the typed parent path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ParentStartedEntry {
+    pub recorded_at: RecordedAt,
+    pub campaign_id: String,
+    pub parent_identity: ParentIdentity,
+    pub repo_root: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff_runtime_id: Option<RuntimeId>,
+    pub pid: u32,
+}
+
+/// Durable child artifact commit record produced before a child can be selected
+/// as successor.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ChildArtifactCommittedEntry {
+    pub recorded_at: RecordedAt,
+    pub campaign_id: String,
+    pub parent_identity: Option<ParentIdentity>,
+    pub child_identity: ParentIdentity,
+    pub node_id: String,
+    pub generation: u32,
+    pub target_relpath: PathBuf,
+    pub child_branch: String,
+    pub target_commit: String,
+    pub identity_commit: String,
+}
+
+/// Active checkout advancement record for the parent handoff path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ActiveCheckoutAdvancedEntry {
+    pub recorded_at: RecordedAt,
+    pub campaign_id: String,
+    pub previous_parent_identity: Option<ParentIdentity>,
+    pub selected_parent_identity: ParentIdentity,
+    pub active_parent_root: PathBuf,
+    pub selected_branch: String,
+    pub installed_commit: String,
+}
+
+/// Successor handoff acknowledgement observed by the previous parent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct SuccessorHandoffEntry {
+    pub recorded_at: RecordedAt,
+    pub campaign_id: String,
+    pub node_id: String,
+    pub runtime_id: RuntimeId,
+    pub active_parent_root: PathBuf,
+    pub binary_path: PathBuf,
+    pub invocation_path: PathBuf,
+    pub ready_path: PathBuf,
+    pub pid: u32,
+}
+
 /// Single append-only journal entry for typed prototype1 transitions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum JournalEntry {
+    ParentStarted(ParentStartedEntry),
+    ChildArtifactCommitted(ChildArtifactCommittedEntry),
+    ActiveCheckoutAdvanced(ActiveCheckoutAdvancedEntry),
+    SuccessorHandoff(SuccessorHandoffEntry),
     MaterializeBranch(Entry),
     BuildChild(BuildEntry),
     SpawnChild(SpawnEntry),
@@ -331,6 +394,10 @@ impl PrototypeJournal {
                 }
                 JournalEntry::MaterializeBranch(_)
                 | JournalEntry::BuildChild(_)
+                | JournalEntry::ParentStarted(_)
+                | JournalEntry::ChildArtifactCommitted(_)
+                | JournalEntry::ActiveCheckoutAdvanced(_)
+                | JournalEntry::SuccessorHandoff(_)
                 | JournalEntry::ObserveChild(_) => {}
             }
         }

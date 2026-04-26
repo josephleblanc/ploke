@@ -396,7 +396,7 @@ pub enum Prototype1StateStopAfter {
 #[command(about = "Run the new typed Prototype 1 state transitions for one staged node")]
 pub struct Prototype1StateCommand {
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: Option<String>,
 
     #[arg(long)]
     pub node_id: Option<String>,
@@ -427,7 +427,7 @@ pub struct Prototype1StateCommand {
 #[command(about = "List, peek, or watch Prototype 1 live-loop output locations")]
 pub struct Prototype1MonitorCommand {
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: Option<String>,
 
     #[arg(long, value_name = "PATH")]
     pub repo_root: Option<PathBuf>,
@@ -11787,7 +11787,7 @@ mod tests {
             Command::Loop(LoopCommand {
                 command: LoopSubcommand::Prototype1State(cmd),
             }) => {
-                assert_eq!(cmd.campaign, "prototype1-campaign");
+                assert_eq!(cmd.campaign.as_deref(), Some("prototype1-campaign"));
                 assert_eq!(cmd.node_id.as_deref(), Some("branch-abc-g1"));
                 assert_eq!(
                     cmd.handoff_invocation.as_deref(),
@@ -11821,7 +11821,7 @@ mod tests {
             Command::Loop(LoopCommand {
                 command: LoopSubcommand::Prototype1State(cmd),
             }) => {
-                assert_eq!(cmd.campaign, "prototype1-campaign");
+                assert_eq!(cmd.campaign.as_deref(), Some("prototype1-campaign"));
                 assert_eq!(cmd.node_id.as_deref(), Some("node-gen0"));
                 assert!(cmd.init_parent_identity);
                 assert_eq!(
@@ -11858,7 +11858,7 @@ mod tests {
             Command::Loop(LoopCommand {
                 command: LoopSubcommand::Prototype1Monitor(cmd),
             }) => {
-                assert_eq!(cmd.campaign, "prototype1-campaign");
+                assert_eq!(cmd.campaign.as_deref(), Some("prototype1-campaign"));
                 assert_eq!(
                     cmd.repo_root.as_deref(),
                     Some(std::path::Path::new("/tmp/repo"))
@@ -11901,6 +11901,40 @@ mod tests {
                 }
                 other => panic!("unexpected monitor subcommand: {:?}", other),
             },
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_state_parent_checkout_form_parses() {
+        let parsed = Cli::try_parse_from(["ploke-eval", "loop", "prototype1-state"])
+            .expect("loop prototype1-state should allow parent checkout inference");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1State(cmd),
+            }) => {
+                assert_eq!(cmd.campaign, None);
+                assert_eq!(cmd.node_id, None);
+                assert_eq!(cmd.repo_root, None);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_monitor_parent_checkout_form_parses() {
+        let parsed = Cli::try_parse_from(["ploke-eval", "loop", "prototype1-monitor", "watch"])
+            .expect("loop prototype1-monitor should allow parent checkout inference");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Monitor(cmd),
+            }) => {
+                assert_eq!(cmd.campaign, None);
+                assert_eq!(cmd.repo_root, None);
+                assert!(matches!(cmd.command, Prototype1MonitorSubcommand::Watch(_)));
+            }
             other => panic!("unexpected command shape: {:?}", other),
         }
     }

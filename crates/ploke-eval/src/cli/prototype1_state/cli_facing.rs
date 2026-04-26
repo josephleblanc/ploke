@@ -44,11 +44,15 @@ use crate::{
             c2::BuildChild,
             c3::SpawnChild,
             c4::{ObserveChild, ObservedChild},
+            event::RecordedAt,
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
                 parent_identity_relpath, write_parent_identity,
             },
-            journal::{PrototypeJournal, prototype1_transition_journal_path},
+            journal::{
+                JournalEntry, ParentStartedEntry, PrototypeJournal,
+                prototype1_transition_journal_path,
+            },
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
         serde_name, write_json_file_pretty, yes_no,
@@ -59,7 +63,7 @@ use crate::{
         InterventionSpec, IssueCase, Outcome, Prototype1BranchRegistry,
         Prototype1ContinuationDecision, Prototype1ContinuationDisposition, Prototype1NodeRecord,
         Prototype1NodeStatus, Prototype1RunnerResult, Prototype1SchedulerState,
-        Prototype1SearchPolicy, ValidationPolicy, decide_node_successor_continuation,
+        Prototype1SearchPolicy, RecordStore, ValidationPolicy, decide_node_successor_continuation,
         execute_intervention_apply, load_node_record, load_or_default_branch_registry,
         load_or_default_scheduler_state, load_runner_request, load_runner_result,
         mark_treatment_branch_applied, prototype1_branch_registry_path, prototype1_scheduler_path,
@@ -929,22 +933,23 @@ struct Prototype1MonitorSnapshotEntry {
 
 impl Prototype1MonitorCommand {
     pub fn run(self) -> Result<(), PrepareError> {
-        let manifest_path = campaign_manifest_path(&self.campaign)?;
-        let repo_root = match self.repo_root {
-            Some(path) => Some(path),
-            None => std::env::current_dir().ok(),
+        let repo_root = match self.repo_root.clone() {
+            Some(path) => path,
+            None => current_dir_as_repo_root()?,
         };
+        let campaign_id = resolve_prototype1_monitor_campaign(&self, &repo_root)?;
+        let manifest_path = campaign_manifest_path(&campaign_id)?;
 
         match self.command {
             Prototype1MonitorSubcommand::List => {
-                print_prototype1_monitor_locations(&manifest_path, repo_root.as_deref());
+                print_prototype1_monitor_locations(&manifest_path, Some(&repo_root));
                 Ok(())
             }
             Prototype1MonitorSubcommand::Peek(command) => {
-                peek_prototype1_monitor_locations(&manifest_path, repo_root.as_deref(), &command)
+                peek_prototype1_monitor_locations(&manifest_path, Some(&repo_root), &command)
             }
             Prototype1MonitorSubcommand::Watch(command) => {
-                watch_prototype1_monitor_locations(&manifest_path, repo_root.as_deref(), &command)
+                watch_prototype1_monitor_locations(&manifest_path, Some(&repo_root), &command)
             }
         }
     }
@@ -1363,8 +1368,62 @@ fn same_existing_path(left: &Path, right: &Path) -> bool {
     normalize(left) == normalize(right)
 }
 
+fn current_dir_as_repo_root() -> Result<PathBuf, PrepareError> {
+    std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
+        path: PathBuf::from("."),
+        source,
+    })
+}
+
+fn infer_campaign_from_parent_identity(repo_root: &Path) -> Result<Option<String>, PrepareError> {
+    load_parent_identity_optional(repo_root)
+        .map(|identity| identity.map(|identity| identity.campaign_id))
+}
+
+fn resolve_prototype1_state_campaign(
+    command: &Prototype1StateCommand,
+    repo_root: &Path,
+) -> Result<String, PrepareError> {
+    if let Some(campaign) = command.campaign.as_ref() {
+        return Ok(campaign.clone());
+    }
+    if command.init_parent_identity {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail:
+                "--init-parent-identity requires --campaign because no parent identity exists yet"
+                    .to_string(),
+        });
+    }
+    infer_campaign_from_parent_identity(repo_root)?.ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "--campaign was omitted and no parent identity exists at '{}'",
+                crate::cli::prototype1_state::identity::parent_identity_path(repo_root).display()
+            ),
+        }
+    })
+}
+
+fn resolve_prototype1_monitor_campaign(
+    command: &Prototype1MonitorCommand,
+    repo_root: &Path,
+) -> Result<String, PrepareError> {
+    if let Some(campaign) = command.campaign.as_ref() {
+        return Ok(campaign.clone());
+    }
+    infer_campaign_from_parent_identity(repo_root)?.ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "--campaign was omitted and no parent identity exists at '{}'",
+                crate::cli::prototype1_state::identity::parent_identity_path(repo_root).display()
+            ),
+        }
+    })
+}
+
 fn initialize_prototype1_parent_identity(
     command: &Prototype1StateCommand,
+    campaign_id: &str,
     manifest_path: &Path,
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
@@ -1400,7 +1459,7 @@ fn initialize_prototype1_parent_identity(
             detail: source.to_string(),
         })?;
     let identity = ParentIdentity::from_node(
-        command.campaign.clone(),
+        campaign_id.to_string(),
         &node,
         None,
         Some(branch.to_string()),
@@ -1424,11 +1483,12 @@ fn initialize_prototype1_parent_identity(
 
 fn resolve_prototype1_parent_identity(
     command: &Prototype1StateCommand,
+    campaign_id: &str,
     manifest_path: &Path,
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
     if let Some(identity) = load_parent_identity_optional(repo_root)? {
-        identity.validate_for_command(&command.campaign, command.node_id.as_deref())?;
+        identity.validate_for_command(campaign_id, command.node_id.as_deref())?;
         return Ok(identity);
     }
 
@@ -1445,7 +1505,7 @@ fn resolve_prototype1_parent_identity(
             })?;
     let node = load_node_record(manifest_path, node_id)?;
     Ok(ParentIdentity::from_node(
-        command.campaign.clone(),
+        campaign_id.to_string(),
         &node,
         None,
         None,
@@ -1454,6 +1514,7 @@ fn resolve_prototype1_parent_identity(
 
 fn acknowledge_prototype1_state_handoff(
     command: &Prototype1StateCommand,
+    campaign_id: &str,
     identity: &ParentIdentity,
     manifest_path: &Path,
     repo_root: &Path,
@@ -1476,12 +1537,12 @@ fn acknowledge_prototype1_state_handoff(
             }
         };
 
-    if invocation.campaign_id() != command.campaign {
+    if invocation.campaign_id() != campaign_id {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "handoff invocation campaign '{}' does not match command campaign '{}'",
                 invocation.campaign_id(),
-                command.campaign
+                campaign_id
             ),
         });
     }
@@ -1533,24 +1594,26 @@ impl Prototype1StateCommand {
         target = "ploke_exec",
         level = "debug",
         skip(self),
-        fields(campaign = %self.campaign, node_id = ?self.node_id, stop_after = ?self.stop_after)
+        fields(campaign = ?self.campaign, node_id = ?self.node_id, stop_after = ?self.stop_after)
     )]
     pub async fn run(self) -> Result<(), PrepareError> {
-        let manifest_path = campaign_manifest_path(&self.campaign)?;
         let repo_root = if let Some(path) = self.repo_root.clone() {
             path
         } else {
-            std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
-                path: PathBuf::from("."),
-                source,
-            })?
+            current_dir_as_repo_root()?
         };
+        let campaign_id = resolve_prototype1_state_campaign(&self, &repo_root)?;
+        let manifest_path = campaign_manifest_path(&campaign_id)?;
         let journal_path = prototype1_transition_journal_path(&manifest_path);
         let mut journal = PrototypeJournal::new(journal_path.clone());
 
         if self.init_parent_identity {
-            let identity =
-                initialize_prototype1_parent_identity(&self, &manifest_path, &repo_root)?;
+            let identity = initialize_prototype1_parent_identity(
+                &self,
+                &campaign_id,
+                &manifest_path,
+                &repo_root,
+            )?;
             match self.format {
                 InspectOutputFormat::Json => {
                     println!(
@@ -1576,7 +1639,7 @@ impl Prototype1StateCommand {
         }
 
         let parent_identity =
-            resolve_prototype1_parent_identity(&self, &manifest_path, &repo_root)?;
+            resolve_prototype1_parent_identity(&self, &campaign_id, &manifest_path, &repo_root)?;
         let backend = GitWorktreeBackend;
         backend
             .validate_parent_admission(&repo_root, &parent_identity)
@@ -1587,14 +1650,29 @@ impl Prototype1StateCommand {
         let node_id = parent_identity.node_id.clone();
         let handoff_invocation = acknowledge_prototype1_state_handoff(
             &self,
+            &campaign_id,
             &parent_identity,
             &manifest_path,
             &repo_root,
         )?;
+        journal
+            .append(JournalEntry::ParentStarted(ParentStartedEntry {
+                recorded_at: RecordedAt::now(),
+                campaign_id: campaign_id.clone(),
+                parent_identity: parent_identity.clone(),
+                repo_root: repo_root.clone(),
+                handoff_runtime_id: handoff_invocation
+                    .as_ref()
+                    .map(|invocation| invocation.runtime_id()),
+                pid: std::process::id(),
+            }))
+            .map_err(|err| {
+                prototype1_state_transition_error("prototype1_parent_start", err.to_string())
+            })?;
 
         debug!(
             target: EXECUTION_DEBUG_TARGET,
-            campaign = %self.campaign,
+            campaign = %campaign_id,
             node_id = %node_id,
             parent_id = %parent_identity.parent_id,
             generation = parent_identity.generation,
@@ -1603,7 +1681,7 @@ impl Prototype1StateCommand {
             "starting typed prototype1 state run"
         );
         let c1 = C1::load(
-            self.campaign.clone(),
+            campaign_id.clone(),
             manifest_path.clone(),
             &node_id,
             repo_root.clone(),
@@ -1623,7 +1701,7 @@ impl Prototype1StateCommand {
             Outcome::Advanced(next) => {
                 debug!(
                     target: EXECUTION_DEBUG_TARGET,
-                    campaign = %self.campaign,
+                    campaign = %campaign_id,
                     node_id = %node_id,
                     workspace_root = %next.artifact.repo_root.display(),
                     "materialize completed"
@@ -1648,7 +1726,7 @@ impl Prototype1StateCommand {
                     Outcome::Rejected(rejected) => {
                         debug!(
                             target: EXECUTION_DEBUG_TARGET,
-                            campaign = %self.campaign,
+                            campaign = %campaign_id,
                             node_id = %node_id,
                             rejected = ?rejected,
                             "build rejected"
@@ -1663,14 +1741,14 @@ impl Prototype1StateCommand {
                     }
                     Outcome::Advanced(c3) => {
                         persist_prototype1_buildable_child_artifact(
-                            &self.campaign,
+                            &campaign_id,
                             &manifest_path,
                             &repo_root,
                             c3.node(),
                         )?;
                         debug!(
                             target: EXECUTION_DEBUG_TARGET,
-                            campaign = %self.campaign,
+                            campaign = %campaign_id,
                             node_id = %node_id,
                             binary_path = %c3.binary.child_path.display(),
                             "build completed"
@@ -1689,7 +1767,7 @@ impl Prototype1StateCommand {
                                 Outcome::Rejected(rejected) => {
                                     debug!(
                                         target: EXECUTION_DEBUG_TARGET,
-                                        campaign = %self.campaign,
+                                        campaign = %campaign_id,
                                         node_id = %node_id,
                                         rejected = ?rejected,
                                         "spawn rejected"
@@ -1709,9 +1787,9 @@ impl Prototype1StateCommand {
                                         },
                                     );
                                     debug!(
-                                        target: EXECUTION_DEBUG_TARGET,
-                                        campaign = %self.campaign,
-                                        node_id = %node_id,
+                                            target: EXECUTION_DEBUG_TARGET,
+                                            campaign = %campaign_id,
+                                            node_id = %node_id,
                                         child_runtime = ?child_runtime,
                                         "spawn completed"
                                     );
@@ -1729,7 +1807,7 @@ impl Prototype1StateCommand {
                                             Outcome::Rejected(rejected) => {
                                                 debug!(
                                                     target: EXECUTION_DEBUG_TARGET,
-                                                    campaign = %self.campaign,
+                                                    campaign = %campaign_id,
                                                     node_id = %node_id,
                                                     rejected = ?rejected,
                                                     "child completion rejected"
@@ -1745,7 +1823,7 @@ impl Prototype1StateCommand {
                                             Outcome::Advanced(c5) => {
                                                 debug!(
                                                     target: EXECUTION_DEBUG_TARGET,
-                                                    campaign = %self.campaign,
+                                                    campaign = %campaign_id,
                                                     node_id = %node_id,
                                                     disposition = ?c5.report.overall_disposition,
                                                     "child completion observed"
@@ -1765,7 +1843,7 @@ impl Prototype1StateCommand {
                                                         load_node_record(&manifest_path, &node_id)?;
                                                     let scheduler =
                                                         load_or_default_scheduler_state(
-                                                            &self.campaign,
+                                                            &campaign_id,
                                                             &manifest_path,
                                                         )?;
                                                     let decision =
@@ -1773,7 +1851,7 @@ impl Prototype1StateCommand {
                                                             &scheduler, &node, None,
                                                         );
                                                     let _ = record_continuation_decision(
-                                                        &self.campaign,
+                                                        &campaign_id,
                                                         &manifest_path,
                                                         decision.clone(),
                                                     )?;
@@ -1781,7 +1859,7 @@ impl Prototype1StateCommand {
                                                         == Prototype1ContinuationDisposition::ContinueReady
                                                     {
                                                         match spawn_and_handoff_prototype1_successor(
-                                                            &self.campaign,
+                                                            &campaign_id,
                                                             &node_id,
                                                             &repo_root,
                                                         )? {
@@ -1843,7 +1921,7 @@ impl Prototype1StateCommand {
 
         let node = load_node_record(&manifest_path, &node_id)?;
         let report = Prototype1StateReport {
-            campaign_id: self.campaign,
+            campaign_id,
             node_id,
             repo_root,
             journal_path,
