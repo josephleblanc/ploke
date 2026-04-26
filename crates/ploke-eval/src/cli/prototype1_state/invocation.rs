@@ -10,13 +10,13 @@
 //! belongs to durable node/request state. Doing so would turn this type into a
 //! second runner request instead of a true bootstrap contract.
 //!
-//! The important seam is that Prototype 1 currently has two narrow executable
-//! runtime roles. These roles describe authority and bounded behavior, not a
+//! The important seam is that Prototype 1 currently has two narrow runtime
+//! authority roles. These roles describe authority and bounded behavior, not a
 //! permanent storage location for the process:
 //!
 //! - `Child`: leaf evaluator, executes one node, records, exits
-//! - `Successor`: acknowledges successor bootstrap, then runs one bounded
-//!   rehydrated controller generation
+//! - `Successor`: handoff token that lets the next parent acknowledge bootstrap
+//!   before entering the same typed parent command as the initial parent
 //!
 //! Keeping that split explicit here prevents the live runner seam from
 //! quietly drifting into a generic "fresh binary can do anything" surface. A
@@ -46,16 +46,32 @@ fn leaf_runner_argv(invocation_path: &Path) -> Vec<String> {
     ]
 }
 
-fn successor_runner_argv(invocation_path: &Path) -> Vec<String> {
-    vec![
+fn successor_parent_argv(
+    invocation: &Invocation,
+    invocation_path: &Path,
+) -> Result<Vec<String>, PrepareError> {
+    let active_parent_root = invocation.active_parent_root.as_ref().ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor invocation '{}' is missing active_parent_root",
+                invocation_path.display()
+            ),
+        }
+    })?;
+    Ok(vec![
         "loop".to_string(),
-        "prototype1-runner".to_string(),
-        "--invocation".to_string(),
+        "prototype1-state".to_string(),
+        "--campaign".to_string(),
+        invocation.campaign_id.clone(),
+        "--repo-root".to_string(),
+        active_parent_root.display().to_string(),
+        "--handoff-invocation".to_string(),
         invocation_path.display().to_string(),
-        "--execute".to_string(),
+        "--stop-after".to_string(),
+        "complete".to_string(),
         "--format".to_string(),
         "json".to_string(),
-    ]
+    ])
 }
 
 /// Durable schema version for runtime invocations.
@@ -245,9 +261,9 @@ impl SuccessorInvocation {
         self.inner.active_parent_root.as_deref()
     }
 
-    /// CLI argv for launching exactly one successor bootstrap.
-    pub(crate) fn launch_args(&self, invocation_path: &Path) -> Vec<String> {
-        successor_runner_argv(invocation_path)
+    /// CLI argv for launching the successor as the next typed parent.
+    pub(crate) fn launch_args(&self, invocation_path: &Path) -> Result<Vec<String>, PrepareError> {
+        successor_parent_argv(&self.inner, invocation_path)
     }
 }
 
@@ -434,4 +450,45 @@ pub(crate) fn write_successor_completion_record(
         path: path.to_path_buf(),
         source,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn successor_launch_args_reenter_typed_parent_command() {
+        let runtime_id = RuntimeId::new();
+        let invocation = SuccessorInvocation::new(
+            "campaign-1".to_string(),
+            "node-2".to_string(),
+            runtime_id,
+            PathBuf::from("/tmp/prototype1/journal.jsonl"),
+            PathBuf::from("/repo/stable-parent"),
+        );
+        let invocation_path =
+            PathBuf::from(format!("/tmp/prototype1/invocations/{runtime_id}.json"));
+
+        let argv = invocation
+            .launch_args(&invocation_path)
+            .expect("successor parent argv");
+
+        assert_eq!(
+            argv,
+            vec![
+                "loop",
+                "prototype1-state",
+                "--campaign",
+                "campaign-1",
+                "--repo-root",
+                "/repo/stable-parent",
+                "--handoff-invocation",
+                invocation_path.to_str().expect("utf8 path"),
+                "--stop-after",
+                "complete",
+                "--format",
+                "json",
+            ]
+        );
+    }
 }

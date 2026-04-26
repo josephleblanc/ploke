@@ -11,6 +11,8 @@ use std::process::Command;
 
 use thiserror::Error;
 
+use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
+
 /// Git branch name for one backend-managed child lineage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GitBranch(pub String);
@@ -147,6 +149,8 @@ pub(crate) enum BackendError {
         path: PathBuf,
         dirty_paths: Vec<PathBuf>,
     },
+    #[error("parent admission denied for checkout '{path}': {detail}")]
+    ParentAdmissionDenied { path: PathBuf, detail: String },
     #[error("node worktree path '{observed}' did not match expected managed path '{expected}'")]
     WorkspacePathMismatch {
         expected: PathBuf,
@@ -244,6 +248,14 @@ pub(crate) trait WorkspaceBackend {
         message: &str,
     ) -> Result<Self::Head, BackendError>;
 
+    /// Persist a bounded set of files in one realized workspace.
+    fn persist_workspace_files(
+        &self,
+        workspace: &Workspace<Self::Branch, Self::Head, Self::Root>,
+        relpaths: &[PathBuf],
+        message: &str,
+    ) -> Result<Self::Head, BackendError>;
+
     /// Verify that the durable Artifact handle carries the expected bounded
     /// target content before a caller installs or evaluates it.
     fn verify_artifact_target(
@@ -263,6 +275,38 @@ pub(crate) trait WorkspaceBackend {
         active_parent_root: &Path,
         artifact: &Self::Branch,
     ) -> Result<Self::Head, BackendError>;
+
+    /// Create a fresh parent bootstrap branch in the stable active checkout.
+    ///
+    /// This is stricter than `checkout_branch`: a gen0 bootstrap must not
+    /// reuse an existing branch, because the parent identity commit is the
+    /// branch admission witness.
+    fn checkout_fresh_parent_branch(
+        &self,
+        active_parent_root: &Path,
+        branch: &str,
+    ) -> Result<Self::Head, BackendError>;
+
+    /// Persist a bounded set of files in the stable active checkout.
+    fn persist_active_checkout_files(
+        &self,
+        active_parent_root: &Path,
+        relpaths: &[PathBuf],
+        message: &str,
+    ) -> Result<Self::Head, BackendError>;
+
+    /// Validate that this checkout is allowed to begin acting as the given
+    /// Parent.
+    ///
+    /// For git this is a branch/commit-message guard. Other backends should
+    /// validate the same semantic condition against their own durable artifact
+    /// metadata: the runtime is starting from the committed identity artifact
+    /// that names the Parent about to run.
+    fn validate_parent_admission(
+        &self,
+        active_parent_root: &Path,
+        identity: &ParentIdentity,
+    ) -> Result<(), BackendError>;
 }
 
 /// Git worktree realization backend.
@@ -346,6 +390,221 @@ impl GitWorktreeBackend {
         Ok(GitCommit(
             String::from_utf8_lossy(&output.stdout).trim().to_string(),
         ))
+    }
+
+    fn current_branch(&self, repo_root: &Path) -> Result<String, BackendError> {
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args(["branch", "--show-current"])
+            .output()
+            .map_err(|source| BackendError::GitCommand {
+                command: "git branch --show-current".to_string(),
+                source,
+            })?;
+
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git branch --show-current".to_string(),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if branch.is_empty() {
+            return Err(BackendError::ParentAdmissionDenied {
+                path: repo_root.to_path_buf(),
+                detail: "active checkout is detached; parent admission requires a branch"
+                    .to_string(),
+            });
+        }
+        Ok(branch)
+    }
+
+    fn head_commit_message(&self, repo_root: &Path) -> Result<String, BackendError> {
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args(["log", "-1", "--pretty=%B"])
+            .output()
+            .map_err(|source| BackendError::GitCommand {
+                command: "git log -1 --pretty=%B".to_string(),
+                source,
+            })?;
+
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git log -1 --pretty=%B".to_string(),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn head_changed_paths(&self, repo_root: &Path) -> Result<Vec<PathBuf>, BackendError> {
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"])
+            .output()
+            .map_err(|source| BackendError::GitCommand {
+                command: "git diff-tree --no-commit-id --name-only -r HEAD".to_string(),
+                source,
+            })?;
+
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git diff-tree --no-commit-id --name-only -r HEAD".to_string(),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(PathBuf::from)
+            .collect())
+    }
+
+    fn head_parent_reachable_from_other_branch(
+        &self,
+        repo_root: &Path,
+        branch: &str,
+    ) -> Result<bool, BackendError> {
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+            .output()
+            .map_err(|source| BackendError::GitCommand {
+                command: "git for-each-ref --format=%(refname:short) refs/heads".to_string(),
+                source,
+            })?;
+
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git for-each-ref --format=%(refname:short) refs/heads".to_string(),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        for candidate in String::from_utf8_lossy(&output.stdout).lines() {
+            if candidate == branch {
+                continue;
+            }
+            let status = Command::new("git")
+                .current_dir(repo_root)
+                .args(["merge-base", "--is-ancestor", "HEAD^", candidate])
+                .status()
+                .map_err(|source| BackendError::GitCommand {
+                    command: format!("git merge-base --is-ancestor HEAD^ {candidate}"),
+                    source,
+                })?;
+            if status.success() {
+                return Ok(true);
+            }
+            if status.code() != Some(1) {
+                return Err(BackendError::GitCommandStatus {
+                    command: format!("git merge-base --is-ancestor HEAD^ {candidate}"),
+                    status: status.code().unwrap_or(-1),
+                    stderr: String::new(),
+                });
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn persist_files(
+        &self,
+        repo_root: &Path,
+        relpaths: &[PathBuf],
+        message: &str,
+    ) -> Result<GitCommit, BackendError> {
+        if relpaths.is_empty() {
+            return self.head_commit(repo_root);
+        }
+        let dirty_paths = dirty_paths(repo_root)?;
+        let unexpected: Vec<_> = dirty_paths
+            .into_iter()
+            .filter(|path| !relpaths.iter().any(|allowed| allowed == path))
+            .collect();
+        if !unexpected.is_empty() {
+            return Err(BackendError::DirtyWorktree {
+                path: repo_root.to_path_buf(),
+                dirty_paths: unexpected,
+            });
+        }
+
+        let relpath_args: Vec<String> = relpaths
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect();
+
+        let mut add = Command::new("git");
+        add.current_dir(repo_root).arg("add").arg("--");
+        for relpath in &relpath_args {
+            add.arg(relpath);
+        }
+        let status = add.status().map_err(|source| BackendError::GitCommand {
+            command: "git add -- <paths>".to_string(),
+            source,
+        })?;
+        if !status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git add -- <paths>".to_string(),
+                status: status.code().unwrap_or(-1),
+                stderr: String::new(),
+            });
+        }
+
+        let mut diff = Command::new("git");
+        diff.current_dir(repo_root)
+            .arg("diff")
+            .arg("--cached")
+            .arg("--quiet")
+            .arg("--");
+        for relpath in &relpath_args {
+            diff.arg(relpath);
+        }
+        let status = diff.status().map_err(|source| BackendError::GitCommand {
+            command: "git diff --cached --quiet -- <paths>".to_string(),
+            source,
+        })?;
+        if status.success() {
+            return self.head_commit(repo_root);
+        }
+        if status.code() != Some(1) {
+            return Err(BackendError::GitCommandStatus {
+                command: "git diff --cached --quiet -- <paths>".to_string(),
+                status: status.code().unwrap_or(-1),
+                stderr: String::new(),
+            });
+        }
+
+        let mut commit = Command::new("git");
+        commit
+            .current_dir(repo_root)
+            .arg("commit")
+            .arg("--no-gpg-sign")
+            .arg("-m")
+            .arg(message)
+            .arg("--");
+        for relpath in &relpath_args {
+            commit.arg(relpath);
+        }
+        let status = commit.status().map_err(|source| BackendError::GitCommand {
+            command: "git commit --no-gpg-sign -m <message> -- <paths>".to_string(),
+            source,
+        })?;
+        if !status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git commit --no-gpg-sign -m <message> -- <paths>".to_string(),
+                status: status.code().unwrap_or(-1),
+                stderr: String::new(),
+            });
+        }
+        self.head_commit(repo_root)
     }
 
     /// Verify that an existing child worktree is safe to reuse.
@@ -595,60 +854,16 @@ impl WorkspaceBackend for GitWorktreeBackend {
         target_relpath: &Path,
         message: &str,
     ) -> Result<Self::Head, BackendError> {
-        let dirty_paths = dirty_paths(&workspace.root)?;
-        let unexpected: Vec<_> = dirty_paths
-            .into_iter()
-            .filter(|path| path != target_relpath)
-            .collect();
-        if !unexpected.is_empty() {
-            return Err(BackendError::DirtyWorktree {
-                path: workspace.root.clone(),
-                dirty_paths: unexpected,
-            });
-        }
+        self.persist_workspace_files(workspace, &[target_relpath.to_path_buf()], message)
+    }
 
-        let target_arg = target_relpath.to_string_lossy();
-        run_git(
-            &workspace.root,
-            &["add", "--", target_arg.as_ref()],
-            format!("git add -- {}", target_relpath.display()),
-        )?;
-
-        let diff = Command::new("git")
-            .current_dir(&workspace.root)
-            .args(["diff", "--cached", "--quiet", "--", target_arg.as_ref()])
-            .status()
-            .map_err(|source| BackendError::GitCommand {
-                command: format!("git diff --cached --quiet -- {}", target_relpath.display()),
-                source,
-            })?;
-        if diff.success() {
-            return self.head_commit(&workspace.root);
-        }
-        if diff.code() != Some(1) {
-            return Err(BackendError::GitCommandStatus {
-                command: format!("git diff --cached --quiet -- {}", target_relpath.display()),
-                status: diff.code().unwrap_or(-1),
-                stderr: String::new(),
-            });
-        }
-
-        run_git(
-            &workspace.root,
-            &[
-                "commit",
-                "--no-gpg-sign",
-                "-m",
-                message,
-                "--",
-                target_arg.as_ref(),
-            ],
-            format!(
-                "git commit --no-gpg-sign -m <message> -- {}",
-                target_relpath.display()
-            ),
-        )?;
-        self.head_commit(&workspace.root)
+    fn persist_workspace_files(
+        &self,
+        workspace: &Workspace<Self::Branch, Self::Head, Self::Root>,
+        relpaths: &[PathBuf],
+        message: &str,
+    ) -> Result<Self::Head, BackendError> {
+        self.persist_files(&workspace.root, relpaths, message)
     }
 
     /// Verify that a branch already carries the expected target content.
@@ -707,6 +922,115 @@ impl WorkspaceBackend for GitWorktreeBackend {
             format!("git switch {artifact}"),
         )?;
         self.head_commit(active_parent_root)
+    }
+
+    fn checkout_fresh_parent_branch(
+        &self,
+        active_parent_root: &Path,
+        branch: &str,
+    ) -> Result<Self::Head, BackendError> {
+        let dirty_paths = dirty_paths(active_parent_root)?;
+        if !dirty_paths.is_empty() {
+            return Err(BackendError::DirtyActiveCheckout {
+                path: active_parent_root.to_path_buf(),
+                dirty_paths,
+            });
+        }
+        let branch = GitBranch(branch.to_string());
+        if self.branch_exists(active_parent_root, &branch)? {
+            return Err(BackendError::ParentAdmissionDenied {
+                path: active_parent_root.to_path_buf(),
+                detail: format!(
+                    "gen0 parent branch '{branch}' already exists; initialize on a fresh branch"
+                ),
+            });
+        }
+        run_git(
+            active_parent_root,
+            &["switch", "-c", &branch.0],
+            format!("git switch -c {branch}"),
+        )?;
+        self.head_commit(active_parent_root)
+    }
+
+    fn persist_active_checkout_files(
+        &self,
+        active_parent_root: &Path,
+        relpaths: &[PathBuf],
+        message: &str,
+    ) -> Result<Self::Head, BackendError> {
+        self.persist_files(active_parent_root, relpaths, message)
+    }
+
+    fn validate_parent_admission(
+        &self,
+        active_parent_root: &Path,
+        identity: &ParentIdentity,
+    ) -> Result<(), BackendError> {
+        let dirty_paths = dirty_paths(active_parent_root)?;
+        if !dirty_paths.is_empty() {
+            return Err(BackendError::DirtyActiveCheckout {
+                path: active_parent_root.to_path_buf(),
+                dirty_paths,
+            });
+        }
+
+        let branch = self.current_branch(active_parent_root)?;
+        if let Some(expected_branch) = identity.artifact_branch.as_deref() {
+            if branch != expected_branch {
+                return Err(BackendError::ParentAdmissionDenied {
+                    path: active_parent_root.to_path_buf(),
+                    detail: format!(
+                        "active branch '{branch}' does not match parent identity artifact_branch '{expected_branch}'"
+                    ),
+                });
+            }
+        }
+
+        let expected_message = parent_identity_commit_message(identity);
+        let observed_message = self.head_commit_message(active_parent_root)?;
+        if observed_message != expected_message {
+            return Err(BackendError::ParentAdmissionDenied {
+                path: active_parent_root.to_path_buf(),
+                detail: format!(
+                    "HEAD commit message '{observed_message}' does not match expected parent admission message '{expected_message}'"
+                ),
+            });
+        }
+
+        let changed_paths = self.head_changed_paths(active_parent_root)?;
+        let identity_relpath = PathBuf::from(PARENT_IDENTITY_RELPATH);
+        if !changed_paths.contains(&identity_relpath) {
+            return Err(BackendError::ParentAdmissionDenied {
+                path: active_parent_root.to_path_buf(),
+                detail: format!(
+                    "HEAD commit does not carry parent identity path '{}'",
+                    identity_relpath.display()
+                ),
+            });
+        }
+
+        if identity.generation == 0 {
+            if changed_paths.len() != 1 || changed_paths[0] != identity_relpath {
+                return Err(BackendError::ParentAdmissionDenied {
+                    path: active_parent_root.to_path_buf(),
+                    detail: format!(
+                        "gen0 parent admission commit must only change '{}', observed {changed_paths:?}",
+                        identity_relpath.display()
+                    ),
+                });
+            }
+            if !self.head_parent_reachable_from_other_branch(active_parent_root, &branch)? {
+                return Err(BackendError::ParentAdmissionDenied {
+                    path: active_parent_root.to_path_buf(),
+                    detail: format!(
+                        "gen0 parent branch '{branch}' does not appear fresh; HEAD^ is not reachable from another local branch"
+                    ),
+                });
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -847,8 +1171,59 @@ fn parse_dirty_paths(stdout: &str) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{WorktreeEntry, parse_dirty_paths, parse_worktree_list};
+    use super::{
+        GitWorktreeBackend, WorkspaceBackend, WorktreeEntry, parse_dirty_paths, parse_worktree_list,
+    };
+    use crate::cli::prototype1_state::identity::{
+        PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity, parent_identity_commit_message,
+        parent_identity_relpath, write_parent_identity,
+    };
+    use std::fs;
     use std::path::PathBuf;
+    use std::process::Command;
+
+    fn run_git_test(repo_root: &std::path::Path, args: &[&str]) {
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn init_git_repo() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path();
+        run_git_test(repo_root, &["init"]);
+        run_git_test(
+            repo_root,
+            &["config", "user.email", "prototype1@example.com"],
+        );
+        run_git_test(repo_root, &["config", "user.name", "Prototype 1 Test"]);
+        fs::write(repo_root.join("README.md"), "base\n").expect("write base");
+        run_git_test(repo_root, &["add", "README.md"]);
+        run_git_test(repo_root, &["commit", "--no-gpg-sign", "-m", "base commit"]);
+        tmp
+    }
+
+    fn identity(generation: u32, parent_id: &str, artifact_branch: &str) -> ParentIdentity {
+        ParentIdentity {
+            schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
+            campaign_id: "campaign-1".to_string(),
+            parent_id: parent_id.to_string(),
+            node_id: parent_id.to_string(),
+            generation,
+            previous_parent_id: None,
+            parent_node_id: None,
+            branch_id: format!("branch-{parent_id}"),
+            artifact_branch: Some(artifact_branch.to_string()),
+            created_at: "2026-04-26T00:00:00Z".to_string(),
+        }
+    }
 
     #[test]
     fn parses_worktree_list_porcelain_output() {
@@ -906,5 +1281,97 @@ R  old.rs -> new.rs
                 PathBuf::from("new.rs"),
             ]
         );
+    }
+
+    #[test]
+    fn validates_fresh_gen0_parent_admission() {
+        let tmp = init_git_repo();
+        let repo_root = tmp.path();
+        let backend = GitWorktreeBackend;
+        let branch = "prototype1-parent-gen0";
+
+        backend
+            .checkout_fresh_parent_branch(repo_root, branch)
+            .expect("fresh branch");
+        let identity = identity(0, "node-0", branch);
+        write_parent_identity(repo_root, &identity).expect("write identity");
+        backend
+            .persist_active_checkout_files(
+                repo_root,
+                &[parent_identity_relpath()],
+                &parent_identity_commit_message(&identity),
+            )
+            .expect("commit identity");
+
+        backend
+            .validate_parent_admission(repo_root, &identity)
+            .expect("gen0 admission");
+    }
+
+    #[test]
+    fn rejects_contaminated_gen0_parent_branch() {
+        let tmp = init_git_repo();
+        let repo_root = tmp.path();
+        let backend = GitWorktreeBackend;
+        let branch = "prototype1-parent-gen0";
+
+        backend
+            .checkout_fresh_parent_branch(repo_root, branch)
+            .expect("fresh branch");
+        let identity = identity(0, "node-0", branch);
+        write_parent_identity(repo_root, &identity).expect("write identity");
+        backend
+            .persist_active_checkout_files(
+                repo_root,
+                &[parent_identity_relpath()],
+                &parent_identity_commit_message(&identity),
+            )
+            .expect("commit identity");
+        fs::write(repo_root.join("contamination.txt"), "not parent identity\n")
+            .expect("write contamination");
+        run_git_test(repo_root, &["add", "contamination.txt"]);
+        run_git_test(
+            repo_root,
+            &["commit", "--no-gpg-sign", "-m", "unexpected follow-up"],
+        );
+
+        let err = backend
+            .validate_parent_admission(repo_root, &identity)
+            .expect_err("contaminated gen0 branch should reject");
+        assert!(err.to_string().contains("does not match expected"));
+    }
+
+    #[test]
+    fn validates_gen1_parent_admission_after_artifact_commit() {
+        let tmp = init_git_repo();
+        let repo_root = tmp.path();
+        let backend = GitWorktreeBackend;
+        let branch = "prototype1-node-1";
+
+        run_git_test(repo_root, &["switch", "-c", branch]);
+        fs::write(repo_root.join("target.txt"), "artifact\n").expect("write artifact");
+        run_git_test(repo_root, &["add", "target.txt"]);
+        run_git_test(
+            repo_root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                "prototype1: persist buildable artifact for node node-1",
+            ],
+        );
+        let identity = identity(1, "node-1", branch);
+        write_parent_identity(repo_root, &identity).expect("write identity");
+        backend
+            .persist_active_checkout_files(
+                repo_root,
+                &[parent_identity_relpath()],
+                &parent_identity_commit_message(&identity),
+            )
+            .expect("commit identity");
+
+        backend
+            .validate_parent_admission(repo_root, &identity)
+            .expect("gen1 admission");
     }
 }

@@ -379,6 +379,8 @@ pub enum LoopSubcommand {
     /// Inspect one staged Prototype 1 runner node for trampoline execution.
     #[command(hide = true)]
     Prototype1Runner(Prototype1RunnerCommand),
+    /// Observe Prototype 1 live-loop files while trampolined parents run.
+    Prototype1Monitor(Prototype1MonitorCommand),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
@@ -397,16 +399,73 @@ pub struct Prototype1StateCommand {
     pub campaign: String,
 
     #[arg(long)]
-    pub node_id: String,
+    pub node_id: Option<String>,
 
     #[arg(long, value_name = "PATH")]
     pub repo_root: Option<PathBuf>,
+
+    /// Bootstrap the active checkout by writing and committing parent identity.
+    #[arg(long)]
+    pub init_parent_identity: bool,
+
+    /// Branch to create or switch to before writing initial parent identity.
+    #[arg(long, value_name = "BRANCH", requires = "init_parent_identity")]
+    pub identity_branch: Option<String>,
+
+    /// Successor handoff token written by the previous parent runtime.
+    #[arg(long, value_name = "PATH")]
+    pub handoff_invocation: Option<PathBuf>,
 
     #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Complete)]
     pub stop_after: Prototype1StateStopAfter,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "List, peek, or watch Prototype 1 live-loop output locations")]
+pub struct Prototype1MonitorCommand {
+    #[arg(long)]
+    pub campaign: String,
+
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: Prototype1MonitorSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Prototype1MonitorSubcommand {
+    /// Print expected output locations and volatility notes.
+    List,
+    /// Print short excerpts from existing expected output files.
+    Peek(Prototype1MonitorPeekCommand),
+    /// Poll expected output locations and print file changes.
+    Watch(Prototype1MonitorWatchCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1MonitorPeekCommand {
+    /// Maximum trailing lines to show per text file.
+    #[arg(long, default_value_t = 20)]
+    pub lines: usize,
+
+    /// Maximum bytes to read per file.
+    #[arg(long, default_value_t = 8192)]
+    pub bytes: usize,
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1MonitorWatchCommand {
+    /// Polling interval in milliseconds.
+    #[arg(long, default_value_t = 50)]
+    pub interval_ms: u64,
+
+    /// Include a one-time initial snapshot of existing files.
+    #[arg(long)]
+    pub print_initial: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -953,6 +1012,7 @@ impl LoopCommand {
             LoopSubcommand::Prototype1State(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Branch(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Runner(cmd) => cmd.run().await,
+            LoopSubcommand::Prototype1Monitor(cmd) => cmd.run(),
         }
     }
 }
@@ -11716,6 +11776,8 @@ mod tests {
             "prototype1-campaign",
             "--node-id",
             "branch-abc-g1",
+            "--handoff-invocation",
+            "/tmp/prototype1-successor.json",
             "--stop-after",
             "build",
         ])
@@ -11726,9 +11788,119 @@ mod tests {
                 command: LoopSubcommand::Prototype1State(cmd),
             }) => {
                 assert_eq!(cmd.campaign, "prototype1-campaign");
-                assert_eq!(cmd.node_id, "branch-abc-g1");
+                assert_eq!(cmd.node_id.as_deref(), Some("branch-abc-g1"));
+                assert_eq!(
+                    cmd.handoff_invocation.as_deref(),
+                    Some(std::path::Path::new("/tmp/prototype1-successor.json"))
+                );
                 assert_eq!(cmd.stop_after, Prototype1StateStopAfter::Build);
             }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_state_identity_init_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-state",
+            "--campaign",
+            "prototype1-campaign",
+            "--node-id",
+            "node-gen0",
+            "--repo-root",
+            "/tmp/repo",
+            "--init-parent-identity",
+            "--identity-branch",
+            "prototype1-parent-gen0",
+        ])
+        .expect("loop prototype1-state identity init should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1State(cmd),
+            }) => {
+                assert_eq!(cmd.campaign, "prototype1-campaign");
+                assert_eq!(cmd.node_id.as_deref(), Some("node-gen0"));
+                assert!(cmd.init_parent_identity);
+                assert_eq!(
+                    cmd.identity_branch.as_deref(),
+                    Some("prototype1-parent-gen0")
+                );
+                assert_eq!(
+                    cmd.repo_root.as_deref(),
+                    Some(std::path::Path::new("/tmp/repo"))
+                );
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_monitor_watch_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-monitor",
+            "--campaign",
+            "prototype1-campaign",
+            "--repo-root",
+            "/tmp/repo",
+            "watch",
+            "--interval-ms",
+            "75",
+            "--print-initial",
+        ])
+        .expect("loop prototype1-monitor watch should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Monitor(cmd),
+            }) => {
+                assert_eq!(cmd.campaign, "prototype1-campaign");
+                assert_eq!(
+                    cmd.repo_root.as_deref(),
+                    Some(std::path::Path::new("/tmp/repo"))
+                );
+                match cmd.command {
+                    Prototype1MonitorSubcommand::Watch(watch) => {
+                        assert_eq!(watch.interval_ms, 75);
+                        assert!(watch.print_initial);
+                    }
+                    other => panic!("unexpected monitor subcommand: {:?}", other),
+                }
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_monitor_peek_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-monitor",
+            "--campaign",
+            "prototype1-campaign",
+            "peek",
+            "--lines",
+            "5",
+            "--bytes",
+            "2048",
+        ])
+        .expect("loop prototype1-monitor peek should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Monitor(cmd),
+            }) => match cmd.command {
+                Prototype1MonitorSubcommand::Peek(peek) => {
+                    assert_eq!(peek.lines, 5);
+                    assert_eq!(peek.bytes, 2048);
+                }
+                other => panic!("unexpected monitor subcommand: {:?}", other),
+            },
             other => panic!("unexpected command shape: {:?}", other),
         }
     }

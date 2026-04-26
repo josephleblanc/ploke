@@ -3,6 +3,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    thread,
+    time::{Duration, SystemTime},
 };
 
 use chrono::Utc;
@@ -23,22 +25,29 @@ use crate::{
         InspectOutputFormat, Prototype1BranchApplyCommand, Prototype1BranchEvaluateCommand,
         Prototype1BranchRestoreCommand, Prototype1BranchSelectCommand, Prototype1BranchShowCommand,
         Prototype1BranchStatusCommand, Prototype1LoopCommand, Prototype1LoopStopAfter,
-        Prototype1RunnerCommand, Prototype1StateCommand, Prototype1StateStopAfter, TimingTrace,
-        advance_eval_closure, advance_protocol_closure, default_batch_id,
-        pending_prototype1_stages, persist_intervention_apply_for_record,
+        Prototype1MonitorCommand, Prototype1MonitorPeekCommand, Prototype1MonitorSubcommand,
+        Prototype1MonitorWatchCommand, Prototype1RunnerCommand, Prototype1StateCommand,
+        Prototype1StateStopAfter, TimingTrace, advance_eval_closure, advance_protocol_closure,
+        default_batch_id, pending_prototype1_stages, persist_intervention_apply_for_record,
         persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
         print_issue_case_block,
         prototype1_process::{
             Prototype1NodeExecutionOutcome, execute_prototype1_runner_invocation,
-            execute_prototype1_runner_node, execute_prototype1_successor_invocation,
-            persist_prototype1_buildable_child_artifact, run_prototype1_branch_evaluation,
-            run_prototype1_branch_evaluation_via_child, spawn_and_handoff_prototype1_successor,
+            execute_prototype1_runner_node, persist_prototype1_buildable_child_artifact,
+            record_prototype1_successor_completion, record_prototype1_successor_ready,
+            run_prototype1_branch_evaluation, run_prototype1_branch_evaluation_via_child,
+            spawn_and_handoff_prototype1_successor, validate_prototype1_successor_continuation,
         },
         prototype1_state::{
+            backend::{GitWorktreeBackend, WorkspaceBackend},
             c1::{C1, MaterializeBranch},
             c2::BuildChild,
             c3::SpawnChild,
             c4::ObserveChild,
+            identity::{
+                ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
+                parent_identity_relpath, write_parent_identity,
+            },
             journal::{PrototypeJournal, prototype1_transition_journal_path},
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
@@ -137,84 +146,6 @@ impl Prototype1LoopControllerInput {
             campaign,
         })
     }
-
-    fn from_successor(
-        campaign_id: &str,
-        manifest_path: PathBuf,
-        node: &Prototype1NodeRecord,
-        scheduler: &Prototype1SchedulerState,
-        stop_on_error: bool,
-        runtime_id: crate::cli::prototype1_state::event::RuntimeId,
-        active_parent_root: PathBuf,
-    ) -> Result<Self, PrepareError> {
-        let manifest = load_campaign_manifest(campaign_id)?;
-        let resolved = resolve_campaign_config(campaign_id, &CampaignOverrides::default())?;
-        let closure_state_path = campaign_closure_state_path(campaign_id)?;
-        let slice_dataset_path = manifest
-            .dataset_sources
-            .first()
-            .map(|source| source.path.clone())
-            .unwrap_or_else(|| PathBuf::from("<unknown>"));
-        let prepared_instances = load_closure_state(campaign_id)
-            .map(|state| {
-                state
-                    .instances
-                    .into_iter()
-                    .map(|row| row.instance_id)
-                    .collect()
-            })
-            .unwrap_or_default();
-        let batch_id = manifest
-            .eval
-            .batch_prefix
-            .clone()
-            .unwrap_or_else(|| campaign_id.to_string());
-
-        Ok(Self {
-            stop_after: Prototype1LoopStopAfter::Compare,
-            dry_run: false,
-            stop_on_error,
-            protocol_model_id: None,
-            protocol_provider: None,
-            search_policy: scheduler.policy.clone(),
-            source_campaign: Some(campaign_id.to_string()),
-            source_branch_id: Some(node.branch_id.clone()),
-            repo_root: active_parent_root,
-            trace_path: prototype1_successor_trace_path(&manifest_path, &node.node_id, runtime_id),
-            batch_id,
-            batch_manifest: manifest_path.clone(),
-            prepared_instances,
-            campaign: Prototype1LoopCampaign {
-                campaign_id: campaign_id.to_string(),
-                manifest_path,
-                closure_state_path,
-                slice_dataset_path,
-                resolved,
-            },
-        })
-    }
-}
-
-pub(crate) async fn run_prototype1_successor_controller(
-    campaign_id: &str,
-    node_id: &str,
-    runtime_id: crate::cli::prototype1_state::event::RuntimeId,
-    active_parent_root: PathBuf,
-) -> Result<Prototype1LoopReport, PrepareError> {
-    let manifest_path = campaign_manifest_path(campaign_id)?;
-    let node = load_node_record(&manifest_path, node_id)?;
-    let request = load_runner_request(&manifest_path, node_id)?;
-    let scheduler = load_or_default_scheduler_state(campaign_id, &manifest_path)?;
-    let input = Prototype1LoopControllerInput::from_successor(
-        campaign_id,
-        manifest_path,
-        &node,
-        &scheduler,
-        request.stop_on_error,
-        runtime_id,
-        active_parent_root,
-    )?;
-    run_prototype1_loop_controller(input).await
 }
 
 async fn run_prototype1_loop_controller(
@@ -892,26 +823,12 @@ impl Prototype1RunnerCommand {
                         }
                     }
                     crate::cli::prototype1_state::invocation::InvocationAuthority::Successor(_) => {
-                        let ready =
-                            execute_prototype1_successor_invocation(&invocation_path).await?;
-                        match self.format {
-                            InspectOutputFormat::Json => {
-                                println!(
-                                    "{}",
-                                    serde_json::to_string_pretty(&ready)
-                                        .map_err(PrepareError::Serialize)?
-                                );
-                            }
-                            InspectOutputFormat::Table => {
-                                println!("prototype1 successor invocation");
-                                println!("{}", "-".repeat(40));
-                                println!("invocation: {}", invocation_path.display());
-                                println!("campaign_id: {}", ready.campaign_id);
-                                println!("node_id: {}", ready.node_id);
-                                println!("runtime_id: {}", ready.runtime_id);
-                                println!("pid: {}", ready.pid);
-                            }
-                        }
+                        return Err(PrepareError::InvalidBatchSelection {
+                            detail: format!(
+                                "successor invocation '{}' must be executed by loop prototype1-state --handoff-invocation",
+                                invocation_path.display()
+                            ),
+                        });
                     }
                 }
                 return Ok(());
@@ -995,6 +912,442 @@ impl Prototype1RunnerCommand {
     }
 }
 
+#[derive(Debug, Clone)]
+struct Prototype1MonitorLocation {
+    label: &'static str,
+    path: PathBuf,
+    volatility: &'static str,
+    description: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Prototype1MonitorSnapshotEntry {
+    is_dir: bool,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+impl Prototype1MonitorCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let manifest_path = campaign_manifest_path(&self.campaign)?;
+        let repo_root = match self.repo_root {
+            Some(path) => Some(path),
+            None => std::env::current_dir().ok(),
+        };
+
+        match self.command {
+            Prototype1MonitorSubcommand::List => {
+                print_prototype1_monitor_locations(&manifest_path, repo_root.as_deref());
+                Ok(())
+            }
+            Prototype1MonitorSubcommand::Peek(command) => {
+                peek_prototype1_monitor_locations(&manifest_path, repo_root.as_deref(), &command)
+            }
+            Prototype1MonitorSubcommand::Watch(command) => {
+                watch_prototype1_monitor_locations(&manifest_path, repo_root.as_deref(), &command)
+            }
+        }
+    }
+}
+
+fn prototype1_campaign_root(campaign_manifest_path: &Path) -> PathBuf {
+    campaign_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1")
+}
+
+fn prototype1_monitor_locations(
+    manifest_path: &Path,
+    repo_root: Option<&Path>,
+) -> Vec<Prototype1MonitorLocation> {
+    let prototype_root = prototype1_campaign_root(manifest_path);
+    let mut locations = vec![
+        Prototype1MonitorLocation {
+            label: "campaign manifest",
+            path: manifest_path.to_path_buf(),
+            volatility: "stable file; may be edited by campaign setup, not by git checkout",
+            description: "Baseline campaign manifest reused by the live controller path.",
+        },
+        Prototype1MonitorLocation {
+            label: "prototype1 root",
+            path: prototype_root.clone(),
+            volatility: "directory; accumulates and mutates during the loop",
+            description: "Campaign-local Prototype 1 state root.",
+        },
+        Prototype1MonitorLocation {
+            label: "scheduler",
+            path: prototype1_scheduler_path(manifest_path),
+            volatility: "mutable JSON; overwritten when scheduler state changes",
+            description: "Search policy, node frontier, completed/failed nodes, and latest continuation decision.",
+        },
+        Prototype1MonitorLocation {
+            label: "branch registry",
+            path: prototype1_branch_registry_path(manifest_path),
+            volatility: "mutable JSON; overwritten as branches are synthesized, selected, applied, and evaluated",
+            description: "Synthesized branch records and latest evaluation summaries.",
+        },
+        Prototype1MonitorLocation {
+            label: "legacy loop trace",
+            path: prototype_root.join("prototype1-loop-trace.json"),
+            volatility: "mutable JSON; overwritten by the legacy loop controller path",
+            description: "Legacy controller trace retained while the old path remains available.",
+        },
+        Prototype1MonitorLocation {
+            label: "transition journal",
+            path: prototype1_transition_journal_path(manifest_path),
+            volatility: "append-only JSONL; should not be overwritten by normal loop progress",
+            description: "Typed transition journal for materialize/build/spawn/observe events.",
+        },
+        Prototype1MonitorLocation {
+            label: "evaluations",
+            path: prototype_root.join("evaluations"),
+            volatility: "directory; per-branch JSON files are created or replaced by evaluation runs",
+            description: "Treatment-vs-baseline branch evaluation artifacts.",
+        },
+        Prototype1MonitorLocation {
+            label: "nodes",
+            path: prototype_root.join("nodes"),
+            volatility: "directory; node subdirectories are created and later updated",
+            description: "Scheduler-owned node records plus per-runtime invocation and result artifacts.",
+        },
+        Prototype1MonitorLocation {
+            label: "node record",
+            path: prototype_root.join("nodes/<node-id>/node.json"),
+            volatility: "node-scoped JSON; created at node registration and may be updated with status/workspace fields",
+            description: "Durable scheduler mirror for one candidate node.",
+        },
+        Prototype1MonitorLocation {
+            label: "runner request",
+            path: prototype_root.join("nodes/<node-id>/runner-request.json"),
+            volatility: "node-scoped JSON; mutable request consumed by child runtime",
+            description: "Runner invocation configuration for one node.",
+        },
+        Prototype1MonitorLocation {
+            label: "latest runner result",
+            path: prototype_root.join("nodes/<node-id>/runner-result.json"),
+            volatility: "node-scoped JSON; overwritten or cleared before a fresh attempt",
+            description: "Latest runner outcome used by the parent/controller.",
+        },
+        Prototype1MonitorLocation {
+            label: "runtime invocation",
+            path: prototype_root.join("nodes/<node-id>/invocations/<runtime-id>.json"),
+            volatility: "attempt-scoped JSON; created per runtime and normally retained",
+            description: "Child or successor authority token for one spawned process.",
+        },
+        Prototype1MonitorLocation {
+            label: "attempt result",
+            path: prototype_root.join("nodes/<node-id>/results/<runtime-id>.json"),
+            volatility: "attempt-scoped JSON; created per child runtime and normally retained",
+            description: "Runner result for one concrete runtime attempt.",
+        },
+        Prototype1MonitorLocation {
+            label: "successor ready",
+            path: prototype_root.join("nodes/<node-id>/successor-ready/<runtime-id>.json"),
+            volatility: "attempt-scoped JSON; created when detached successor acknowledges handoff",
+            description: "Parent-observed successor acknowledgement.",
+        },
+        Prototype1MonitorLocation {
+            label: "successor completion",
+            path: prototype_root.join("nodes/<node-id>/successor-completion/<runtime-id>.json"),
+            volatility: "attempt-scoped JSON; created after successor finishes its parent turn",
+            description: "Terminal status for a successor parent process.",
+        },
+        Prototype1MonitorLocation {
+            label: "child worktree",
+            path: prototype_root.join("nodes/<node-id>/worktree"),
+            volatility: "temporary directory; should be removed after artifact persistence/handoff",
+            description: "Backend-managed child workspace, not the next parent home.",
+        },
+        Prototype1MonitorLocation {
+            label: "child build products",
+            path: prototype_root.join("nodes/<node-id>/{bin,target}"),
+            volatility: "temporary directories; may be removed by cleanup",
+            description: "Build output for child evaluation, not durable identity.",
+        },
+    ];
+
+    if let Some(repo_root) = repo_root {
+        locations.push(Prototype1MonitorLocation {
+            label: "active parent identity",
+            path: crate::cli::prototype1_state::identity::parent_identity_path(repo_root),
+            volatility: "git-tracked artifact file; replaced by git switch during parent handoff",
+            description: "Identity the active checkout uses to know which Parent it is.",
+        });
+    }
+
+    locations
+}
+
+fn print_prototype1_monitor_locations(manifest_path: &Path, repo_root: Option<&Path>) {
+    println!("prototype1 monitor locations");
+    println!("{}", "-".repeat(40));
+    for location in prototype1_monitor_locations(manifest_path, repo_root) {
+        let exists = if location.path.exists() { "yes" } else { "no" };
+        println!("{}", location.label);
+        println!("  path: {}", location.path.display());
+        println!("  exists: {exists}");
+        println!("  volatility: {}", location.volatility);
+        println!("  description: {}", location.description);
+    }
+}
+
+fn peek_prototype1_monitor_locations(
+    manifest_path: &Path,
+    repo_root: Option<&Path>,
+    command: &Prototype1MonitorPeekCommand,
+) -> Result<(), PrepareError> {
+    let prototype_root = prototype1_campaign_root(manifest_path);
+    let mut files = BTreeSet::new();
+    for location in prototype1_monitor_locations(manifest_path, repo_root) {
+        if location.path.is_file() {
+            files.insert(location.path);
+        }
+    }
+    collect_prototype1_monitor_files(&prototype_root, &mut files)?;
+    if let Some(repo_root) = repo_root {
+        let identity_path = crate::cli::prototype1_state::identity::parent_identity_path(repo_root);
+        if identity_path.is_file() {
+            files.insert(identity_path);
+        }
+    }
+
+    if files.is_empty() {
+        println!("no existing Prototype 1 monitor files found");
+        return Ok(());
+    }
+
+    for path in files {
+        print_prototype1_file_excerpt(&prototype_root, &path, command.lines, command.bytes)?;
+    }
+    Ok(())
+}
+
+fn watch_prototype1_monitor_locations(
+    manifest_path: &Path,
+    repo_root: Option<&Path>,
+    command: &Prototype1MonitorWatchCommand,
+) -> Result<(), PrepareError> {
+    let prototype_root = prototype1_campaign_root(manifest_path);
+    let identity_path = repo_root.map(crate::cli::prototype1_state::identity::parent_identity_path);
+    let interval = Duration::from_millis(command.interval_ms.max(1));
+    println!("watching Prototype 1 outputs");
+    println!("campaign_root: {}", prototype_root.display());
+    if let Some(path) = identity_path.as_ref() {
+        println!("active_parent_identity: {}", path.display());
+    }
+    println!("interval_ms: {}", interval.as_millis());
+    println!("press Ctrl-C to stop");
+
+    let mut previous =
+        collect_prototype1_monitor_snapshot(&prototype_root, identity_path.as_deref())?;
+    if command.print_initial {
+        for (path, entry) in &previous {
+            print_prototype1_monitor_event("initial", &prototype_root, path, Some(*entry));
+        }
+    }
+
+    loop {
+        thread::sleep(interval);
+        let current =
+            collect_prototype1_monitor_snapshot(&prototype_root, identity_path.as_deref())?;
+
+        for (path, entry) in &current {
+            match previous.get(path) {
+                None => {
+                    print_prototype1_monitor_event("created", &prototype_root, path, Some(*entry))
+                }
+                Some(old) if old != entry => {
+                    print_prototype1_monitor_event("modified", &prototype_root, path, Some(*entry))
+                }
+                Some(_) => {}
+            }
+        }
+        for path in previous.keys() {
+            if !current.contains_key(path) {
+                print_prototype1_monitor_event("removed", &prototype_root, path, None);
+            }
+        }
+        previous = current;
+    }
+}
+
+fn collect_prototype1_monitor_snapshot(
+    prototype_root: &Path,
+    identity_path: Option<&Path>,
+) -> Result<BTreeMap<PathBuf, Prototype1MonitorSnapshotEntry>, PrepareError> {
+    let mut snapshot = BTreeMap::new();
+    collect_prototype1_monitor_tree(prototype_root, &mut snapshot)?;
+    if let Some(path) = identity_path {
+        if let Ok(metadata) = fs::metadata(path) {
+            snapshot.insert(path.to_path_buf(), snapshot_entry(&metadata));
+        }
+    }
+    Ok(snapshot)
+}
+
+fn collect_prototype1_monitor_files(
+    root: &Path,
+    files: &mut BTreeSet<PathBuf>,
+) -> Result<(), PrepareError> {
+    if !root.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(root).map_err(|source| PrepareError::ReadManifest {
+        path: root.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| PrepareError::ReadManifest {
+            path: root.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        let metadata = entry
+            .metadata()
+            .map_err(|source| PrepareError::ReadManifest {
+                path: path.clone(),
+                source,
+            })?;
+        if metadata.is_file() {
+            files.insert(path);
+        } else if metadata.is_dir() && should_descend_prototype1_monitor_dir(&path) {
+            collect_prototype1_monitor_files(&path, files)?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_prototype1_monitor_tree(
+    root: &Path,
+    snapshot: &mut BTreeMap<PathBuf, Prototype1MonitorSnapshotEntry>,
+) -> Result<(), PrepareError> {
+    if !root.exists() {
+        return Ok(());
+    }
+    let metadata = fs::metadata(root).map_err(|source| PrepareError::ReadManifest {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    snapshot.insert(root.to_path_buf(), snapshot_entry(&metadata));
+    if !metadata.is_dir() || !should_descend_prototype1_monitor_dir(root) {
+        return Ok(());
+    }
+    for entry in fs::read_dir(root).map_err(|source| PrepareError::ReadManifest {
+        path: root.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| PrepareError::ReadManifest {
+            path: root.to_path_buf(),
+            source,
+        })?;
+        collect_prototype1_monitor_tree(&entry.path(), snapshot)?;
+    }
+    Ok(())
+}
+
+fn should_descend_prototype1_monitor_dir(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return true;
+    };
+    !matches!(name, "worktree" | "target" | "bin")
+}
+
+fn snapshot_entry(metadata: &fs::Metadata) -> Prototype1MonitorSnapshotEntry {
+    Prototype1MonitorSnapshotEntry {
+        is_dir: metadata.is_dir(),
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    }
+}
+
+fn print_prototype1_file_excerpt(
+    prototype_root: &Path,
+    path: &Path,
+    lines: usize,
+    bytes: usize,
+) -> Result<(), PrepareError> {
+    let content = fs::read(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let start = content.len().saturating_sub(bytes);
+    let text = String::from_utf8_lossy(&content[start..]);
+    let excerpt_lines: Vec<_> = text.lines().rev().take(lines).collect();
+    println!(
+        "\n== {} ==",
+        prototype1_monitor_display_path(prototype_root, path)
+    );
+    println!("{}", prototype1_monitor_description(prototype_root, path));
+    for line in excerpt_lines.into_iter().rev() {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn print_prototype1_monitor_event(
+    event: &str,
+    prototype_root: &Path,
+    path: &Path,
+    entry: Option<Prototype1MonitorSnapshotEntry>,
+) {
+    let timestamp = Utc::now().to_rfc3339();
+    let kind = entry
+        .map(|entry| if entry.is_dir { "dir" } else { "file" })
+        .unwrap_or("-");
+    let size = entry
+        .map(|entry| entry.len.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    println!(
+        "{timestamp} {event:<8} {kind:<4} bytes={size:<8} {} -- {}",
+        prototype1_monitor_display_path(prototype_root, path),
+        prototype1_monitor_description(prototype_root, path)
+    );
+}
+
+fn prototype1_monitor_display_path(prototype_root: &Path, path: &Path) -> String {
+    path.strip_prefix(prototype_root)
+        .map(|relative| relative.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string())
+}
+
+fn prototype1_monitor_description(prototype_root: &Path, path: &Path) -> &'static str {
+    let Ok(relative) = path.strip_prefix(prototype_root) else {
+        return "active checkout artifact identity or campaign-level file";
+    };
+    let parts: Vec<_> = relative
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => value.to_str(),
+            _ => None,
+        })
+        .collect();
+    match parts.as_slice() {
+        [] => "campaign-local Prototype 1 state root",
+        ["scheduler.json"] => "scheduler frontier, policy, node list, and continuation decision",
+        ["branches.json"] => "synthesized branch registry and evaluation summaries",
+        ["prototype1-loop-trace.json"] => "legacy loop controller trace, overwritten per run",
+        ["transition-journal.jsonl"] => "append-only typed transition journal",
+        ["evaluations"] => "branch evaluation artifact directory",
+        ["evaluations", _] => "branch evaluation artifact",
+        ["nodes"] => "node artifact directory",
+        ["nodes", _] => "node-specific artifact directory",
+        ["nodes", _, "node.json"] => "scheduler-owned node record",
+        ["nodes", _, "runner-request.json"] => "node runner request",
+        ["nodes", _, "runner-result.json"] => "latest node runner result",
+        ["nodes", _, "invocations"] => "runtime invocation directory",
+        ["nodes", _, "invocations", _] => "attempt-scoped runtime invocation",
+        ["nodes", _, "results"] => "runtime result directory",
+        ["nodes", _, "results", _] => "attempt-scoped runtime result",
+        ["nodes", _, "successor-ready"] => "successor acknowledgement directory",
+        ["nodes", _, "successor-ready", _] => "successor ready acknowledgement",
+        ["nodes", _, "successor-completion"] => "successor completion directory",
+        ["nodes", _, "successor-completion", _] => "successor terminal status",
+        ["nodes", _, "worktree"] => "temporary child worktree root",
+        ["nodes", _, "bin"] | ["nodes", _, "target"] => "temporary child build output root",
+        _ => "Prototype 1 campaign artifact",
+    }
+}
+
 fn prototype1_state_transition_error(
     phase: &'static str,
     detail: impl Into<String>,
@@ -1005,12 +1358,182 @@ fn prototype1_state_transition_error(
     }
 }
 
+fn same_existing_path(left: &Path, right: &Path) -> bool {
+    let normalize = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    normalize(left) == normalize(right)
+}
+
+fn initialize_prototype1_parent_identity(
+    command: &Prototype1StateCommand,
+    manifest_path: &Path,
+    repo_root: &Path,
+) -> Result<ParentIdentity, PrepareError> {
+    let node_id =
+        command
+            .node_id
+            .as_deref()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "--init-parent-identity requires --node-id for the bootstrap parent"
+                    .to_string(),
+            })?;
+    let Some(branch) = command.identity_branch.as_deref() else {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail:
+                "--init-parent-identity requires --identity-branch so gen0 starts on a fresh branch"
+                    .to_string(),
+        });
+    };
+    let backend = GitWorktreeBackend;
+    let node = load_node_record(manifest_path, node_id)?;
+    if node.generation != 0 {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "--init-parent-identity can only initialize generation 0, node '{node_id}' is generation {}",
+                node.generation
+            ),
+        });
+    }
+    let _ = backend
+        .checkout_fresh_parent_branch(repo_root, branch)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_parent_identity_branch",
+            detail: source.to_string(),
+        })?;
+    let identity = ParentIdentity::from_node(
+        command.campaign.clone(),
+        &node,
+        None,
+        Some(branch.to_string()),
+    );
+    let _ = write_parent_identity(repo_root, &identity)?;
+    let message = parent_identity_commit_message(&identity);
+    let _ = backend
+        .persist_active_checkout_files(repo_root, &[parent_identity_relpath()], &message)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_parent_identity_commit",
+            detail: source.to_string(),
+        })?;
+    backend
+        .validate_parent_admission(repo_root, &identity)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_parent_admission",
+            detail: source.to_string(),
+        })?;
+    Ok(identity)
+}
+
+fn resolve_prototype1_parent_identity(
+    command: &Prototype1StateCommand,
+    manifest_path: &Path,
+    repo_root: &Path,
+) -> Result<ParentIdentity, PrepareError> {
+    if let Some(identity) = load_parent_identity_optional(repo_root)? {
+        identity.validate_for_command(&command.campaign, command.node_id.as_deref())?;
+        return Ok(identity);
+    }
+
+    let node_id =
+        command
+            .node_id
+            .as_deref()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "parent identity is missing at '{}' and --node-id was not provided",
+                    crate::cli::prototype1_state::identity::parent_identity_path(repo_root)
+                        .display()
+                ),
+            })?;
+    let node = load_node_record(manifest_path, node_id)?;
+    Ok(ParentIdentity::from_node(
+        command.campaign.clone(),
+        &node,
+        None,
+        None,
+    ))
+}
+
+fn acknowledge_prototype1_state_handoff(
+    command: &Prototype1StateCommand,
+    identity: &ParentIdentity,
+    manifest_path: &Path,
+    repo_root: &Path,
+) -> Result<Option<crate::cli::prototype1_state::invocation::SuccessorInvocation>, PrepareError> {
+    let Some(invocation_path) = command.handoff_invocation.as_deref() else {
+        return Ok(None);
+    };
+    let invocation =
+        match crate::cli::prototype1_state::invocation::load_executable(invocation_path)? {
+            crate::cli::prototype1_state::invocation::InvocationAuthority::Successor(
+                invocation,
+            ) => invocation,
+            crate::cli::prototype1_state::invocation::InvocationAuthority::Child(_) => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "handoff invocation '{}' is a child invocation, expected successor",
+                        invocation_path.display()
+                    ),
+                });
+            }
+        };
+
+    if invocation.campaign_id() != command.campaign {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "handoff invocation campaign '{}' does not match command campaign '{}'",
+                invocation.campaign_id(),
+                command.campaign
+            ),
+        });
+    }
+    if invocation.node_id() != identity.node_id {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "handoff invocation node '{}' does not match parent identity node '{}'",
+                invocation.node_id(),
+                identity.node_id
+            ),
+        });
+    }
+    let active_parent_root =
+        invocation
+            .active_parent_root()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "handoff invocation '{}' is missing active_parent_root",
+                    invocation_path.display()
+                ),
+            })?;
+    if !same_existing_path(active_parent_root, repo_root) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "handoff invocation active_parent_root '{}' does not match command repo_root '{}'",
+                active_parent_root.display(),
+                repo_root.display()
+            ),
+        });
+    }
+
+    validate_prototype1_successor_continuation(&invocation, manifest_path)?;
+    let ready = record_prototype1_successor_ready(&invocation, manifest_path)?;
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %invocation.campaign_id(),
+        node_id = %invocation.node_id(),
+        runtime_id = %invocation.runtime_id(),
+        pid = ready.pid,
+        invocation_path = %invocation_path.display(),
+        active_parent_root = %active_parent_root.display(),
+        "prototype1 successor acknowledged handoff before entering typed parent run"
+    );
+    Ok(Some(invocation))
+}
+
 impl Prototype1StateCommand {
     #[instrument(
         target = "ploke_exec",
         level = "debug",
         skip(self),
-        fields(campaign = %self.campaign, node_id = %self.node_id, stop_after = ?self.stop_after)
+        fields(campaign = %self.campaign, node_id = ?self.node_id, stop_after = ?self.stop_after)
     )]
     pub async fn run(self) -> Result<(), PrepareError> {
         let manifest_path = campaign_manifest_path(&self.campaign)?;
@@ -1025,10 +1548,56 @@ impl Prototype1StateCommand {
         let journal_path = prototype1_transition_journal_path(&manifest_path);
         let mut journal = PrototypeJournal::new(journal_path.clone());
 
+        if self.init_parent_identity {
+            let identity =
+                initialize_prototype1_parent_identity(&self, &manifest_path, &repo_root)?;
+            match self.format {
+                InspectOutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&identity).map_err(PrepareError::Serialize)?
+                    );
+                }
+                InspectOutputFormat::Table => {
+                    println!("prototype1 parent identity");
+                    println!("{}", "-".repeat(40));
+                    println!("campaign_id: {}", identity.campaign_id);
+                    println!("parent_id: {}", identity.parent_id);
+                    println!("node_id: {}", identity.node_id);
+                    println!("generation: {}", identity.generation);
+                    println!("branch_id: {}", identity.branch_id);
+                    println!(
+                        "artifact_branch: {}",
+                        identity.artifact_branch.as_deref().unwrap_or("-")
+                    );
+                }
+            }
+            return Ok(());
+        }
+
+        let parent_identity =
+            resolve_prototype1_parent_identity(&self, &manifest_path, &repo_root)?;
+        let backend = GitWorktreeBackend;
+        backend
+            .validate_parent_admission(&repo_root, &parent_identity)
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "prototype1_parent_admission",
+                detail: source.to_string(),
+            })?;
+        let node_id = parent_identity.node_id.clone();
+        let handoff_invocation = acknowledge_prototype1_state_handoff(
+            &self,
+            &parent_identity,
+            &manifest_path,
+            &repo_root,
+        )?;
+
         debug!(
             target: EXECUTION_DEBUG_TARGET,
             campaign = %self.campaign,
-            node_id = %self.node_id,
+            node_id = %node_id,
+            parent_id = %parent_identity.parent_id,
+            generation = parent_identity.generation,
             repo_root = %repo_root.display(),
             journal_path = %journal_path.display(),
             "starting typed prototype1 state run"
@@ -1036,7 +1605,7 @@ impl Prototype1StateCommand {
         let c1 = C1::load(
             self.campaign.clone(),
             manifest_path.clone(),
-            &self.node_id,
+            &node_id,
             repo_root.clone(),
         )
         .map_err(|err| {
@@ -1055,7 +1624,7 @@ impl Prototype1StateCommand {
                 debug!(
                     target: EXECUTION_DEBUG_TARGET,
                     campaign = %self.campaign,
-                    node_id = %self.node_id,
+                    node_id = %node_id,
                     workspace_root = %next.artifact.repo_root.display(),
                     "materialize completed"
                 );
@@ -1080,7 +1649,7 @@ impl Prototype1StateCommand {
                         debug!(
                             target: EXECUTION_DEBUG_TARGET,
                             campaign = %self.campaign,
-                            node_id = %self.node_id,
+                            node_id = %node_id,
                             rejected = ?rejected,
                             "build rejected"
                         );
@@ -1102,7 +1671,7 @@ impl Prototype1StateCommand {
                         debug!(
                             target: EXECUTION_DEBUG_TARGET,
                             campaign = %self.campaign,
-                            node_id = %self.node_id,
+                            node_id = %node_id,
                             binary_path = %c3.binary.child_path.display(),
                             "build completed"
                         );
@@ -1121,7 +1690,7 @@ impl Prototype1StateCommand {
                                     debug!(
                                         target: EXECUTION_DEBUG_TARGET,
                                         campaign = %self.campaign,
-                                        node_id = %self.node_id,
+                                        node_id = %node_id,
                                         rejected = ?rejected,
                                         "spawn rejected"
                                     );
@@ -1142,7 +1711,7 @@ impl Prototype1StateCommand {
                                     debug!(
                                         target: EXECUTION_DEBUG_TARGET,
                                         campaign = %self.campaign,
-                                        node_id = %self.node_id,
+                                        node_id = %node_id,
                                         child_runtime = ?child_runtime,
                                         "spawn completed"
                                     );
@@ -1161,7 +1730,7 @@ impl Prototype1StateCommand {
                                                 debug!(
                                                     target: EXECUTION_DEBUG_TARGET,
                                                     campaign = %self.campaign,
-                                                    node_id = %self.node_id,
+                                                    node_id = %node_id,
                                                     rejected = ?rejected,
                                                     "child completion rejected"
                                                 );
@@ -1177,17 +1746,15 @@ impl Prototype1StateCommand {
                                                 debug!(
                                                     target: EXECUTION_DEBUG_TARGET,
                                                     campaign = %self.campaign,
-                                                    node_id = %self.node_id,
+                                                    node_id = %node_id,
                                                     disposition = ?c5.report.overall_disposition,
                                                     "child completion observed"
                                                 );
                                                 if c5.report.overall_disposition
                                                     == BranchDisposition::Keep
                                                 {
-                                                    let node = load_node_record(
-                                                        &manifest_path,
-                                                        &self.node_id,
-                                                    )?;
+                                                    let node =
+                                                        load_node_record(&manifest_path, &node_id)?;
                                                     let scheduler =
                                                         load_or_default_scheduler_state(
                                                             &self.campaign,
@@ -1212,7 +1779,7 @@ impl Prototype1StateCommand {
                                                     {
                                                         match spawn_and_handoff_prototype1_successor(
                                                             &self.campaign,
-                                                            &self.node_id,
+                                                            &node_id,
                                                             &repo_root,
                                                         )? {
                                                             Some(successor) => (
@@ -1271,10 +1838,10 @@ impl Prototype1StateCommand {
                 }
             };
 
-        let node = load_node_record(&manifest_path, &self.node_id)?;
+        let node = load_node_record(&manifest_path, &node_id)?;
         let report = Prototype1StateReport {
             campaign_id: self.campaign,
-            node_id: self.node_id,
+            node_id,
             repo_root,
             journal_path,
             stop_after: self.stop_after,
@@ -1331,6 +1898,15 @@ impl Prototype1StateCommand {
                         .unwrap_or_else(|| "-".to_string())
                 );
             }
+        }
+        if let Some(invocation) = handoff_invocation {
+            let _ = record_prototype1_successor_completion(
+                &invocation,
+                &manifest_path,
+                crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Succeeded,
+                None,
+                None,
+            )?;
         }
         Ok(())
     }
@@ -2008,12 +2584,6 @@ pub(crate) struct Prototype1LoopReport {
     pending_stages: Vec<&'static str>,
 }
 
-impl Prototype1LoopReport {
-    pub(crate) fn continuation_decision(&self) -> Option<&Prototype1ContinuationDecision> {
-        self.continuation_decision.as_ref()
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Prototype1LoopInstance {
     instance_id: String,
@@ -2663,17 +3233,4 @@ fn prototype1_trace_path(campaign_manifest_path: &Path) -> PathBuf {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("prototype1-loop-trace.json")
-}
-
-pub(crate) fn prototype1_successor_trace_path(
-    campaign_manifest_path: &Path,
-    node_id: &str,
-    runtime_id: crate::cli::prototype1_state::event::RuntimeId,
-) -> PathBuf {
-    campaign_manifest_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("prototype1")
-        .join("loop-traces")
-        .join(format!("successor-{node_id}-{runtime_id}.json"))
 }

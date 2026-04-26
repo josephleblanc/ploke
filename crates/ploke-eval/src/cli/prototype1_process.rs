@@ -40,15 +40,15 @@
 //!
 //! 1. The parent selects one kept child/node as the successor candidate.
 //! 2. The parent updates the stable active checkout to the selected Artifact.
-//! 3. The parent hydrates and launches the successor Runtime from that active
+//! 3. The parent hydrates and launches the next Parent from that active
 //!    checkout, not from the temporary child worktree.
-//! 4. The successor validates the continuation policy, writes a ready
-//!    acknowledgement, rehydrates the controller, and runs one bounded next
-//!    generation.
+//! 4. The successor handoff token lets that next Parent validate continuation
+//!    authority and write a ready acknowledgement before entering the same
+//!    typed parent command path as the initial Parent.
 //!
-//! The current successor path is a bounded trampoline. Each successor runs one
-//! rehydrated generation, then hands off to the next successor only when the
-//! scheduler records `ContinueReady`.
+//! The current successor path is a bounded trampoline. Each new Parent runs one
+//! typed generation, then hands off to the next Parent only when the scheduler
+//! records `ContinueReady`.
 //!
 //! # Safety invariants and target constraints
 //!
@@ -56,8 +56,8 @@
 //!   in this module.
 //! - The child runner executes one node and does not recurse or spawn further
 //!   descendants.
-//! - The successor runner is bounded by scheduler continuation policy and one
-//!   rehydrated generation.
+//! - The successor handoff is bounded by scheduler continuation policy and one
+//!   typed parent generation.
 //! - Temporary child worktrees and build products must become cleanup targets
 //!   once evaluation, selection, and handoff no longer need them.
 //! - Compile failures and treatment failures are persisted as runner results
@@ -123,7 +123,10 @@ use crate::cli::prototype1_state::cli_facing::{
     Prototype1BranchEvaluationReport, build_prototype1_branch_evaluation_report,
     ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
     prototype1_branch_evaluation_path, prototype1_source_generation,
-    prototype1_successor_trace_path, run_prototype1_successor_controller,
+};
+use crate::cli::prototype1_state::identity::{
+    ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
+    parent_identity_relpath, write_parent_identity,
 };
 use crate::cli::prototype1_state::journal::prototype1_transition_journal_path;
 use crate::intervention::{
@@ -263,7 +266,7 @@ fn record_prototype1_child_ready_if_configured(
     )
 }
 
-fn record_prototype1_successor_ready(
+pub(crate) fn record_prototype1_successor_ready(
     invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
     manifest_path: &Path,
 ) -> Result<crate::cli::prototype1_state::invocation::SuccessorReadyRecord, PrepareError> {
@@ -285,7 +288,7 @@ fn record_prototype1_successor_ready(
     Ok(record)
 }
 
-fn record_prototype1_successor_completion(
+pub(crate) fn record_prototype1_successor_completion(
     invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
     manifest_path: &Path,
     status: crate::cli::prototype1_state::invocation::SuccessorCompletionStatus,
@@ -316,7 +319,7 @@ fn record_prototype1_successor_completion(
     Ok(record)
 }
 
-fn validate_prototype1_successor_continuation(
+pub(crate) fn validate_prototype1_successor_continuation(
     invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
     manifest_path: &Path,
 ) -> Result<(), PrepareError> {
@@ -409,11 +412,12 @@ fn prepare_prototype1_active_successor_runtime(
     validate_prototype1_successor_node_continuation(manifest_path, &node.node_id)?;
     let _ = select_treatment_branch(campaign_id, manifest_path, &node.branch_id)?;
     let resolved = resolve_treatment_branch(campaign_id, manifest_path, &node.branch_id)?;
-    install_prototype1_successor_artifact(active_parent_root, node, &resolved)?;
+    install_prototype1_successor_artifact(campaign_id, active_parent_root, node, &resolved)?;
     build_prototype1_active_successor_binary(active_parent_root)
 }
 
 fn install_prototype1_successor_artifact(
+    campaign_id: &str,
     active_parent_root: &Path,
     node: &crate::intervention::Prototype1NodeRecord,
     resolved: &crate::intervention::ResolvedTreatmentBranch,
@@ -435,6 +439,21 @@ fn install_prototype1_successor_artifact(
             .persist_workspace_target(&workspace, &resolved.target_relpath, &message)
             .map_err(|source| PrepareError::DatabaseSetup {
                 phase: "prototype1_successor_artifact_commit",
+                detail: source.to_string(),
+            })?;
+        let previous_parent = load_parent_identity_optional(active_parent_root)?;
+        let identity = ParentIdentity::from_node(
+            campaign_id.to_string(),
+            node,
+            previous_parent.as_ref(),
+            Some(workspace.branch.0.clone()),
+        );
+        let _ = write_parent_identity(&workspace.root, &identity)?;
+        let identity_message = parent_identity_commit_message(&identity);
+        let _ = backend
+            .persist_workspace_files(&workspace, &[parent_identity_relpath()], &identity_message)
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "prototype1_successor_parent_identity_commit",
                 detail: source.to_string(),
             })?;
         backend
@@ -461,6 +480,15 @@ fn install_prototype1_successor_artifact(
         .install_artifact_in_active_checkout(active_parent_root, &workspace.branch)
         .map_err(|source| PrepareError::DatabaseSetup {
             phase: "prototype1_successor_checkout_switch",
+            detail: source.to_string(),
+        })?;
+    let identity =
+        crate::cli::prototype1_state::identity::load_parent_identity(active_parent_root)?;
+    identity.validate_for_command(campaign_id, Some(&node.node_id))?;
+    backend
+        .validate_parent_admission(active_parent_root, &identity)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_parent_admission",
             detail: source.to_string(),
         })?;
     Ok(())
@@ -552,6 +580,21 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
             phase: "prototype1_child_artifact_commit",
             detail: source.to_string(),
         })?;
+    let previous_parent = load_parent_identity_optional(active_parent_root)?;
+    let identity = ParentIdentity::from_node(
+        campaign_id.to_string(),
+        node,
+        previous_parent.as_ref(),
+        Some(workspace.branch.0.clone()),
+    );
+    let _ = write_parent_identity(&workspace.root, &identity)?;
+    let identity_message = parent_identity_commit_message(&identity);
+    let _ = backend
+        .persist_workspace_files(&workspace, &[parent_identity_relpath()], &identity_message)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_parent_identity_commit",
+            detail: source.to_string(),
+        })?;
     let resolved = resolve_treatment_branch(campaign_id, campaign_manifest_path, &node.branch_id)?;
     backend
         .verify_artifact_target(
@@ -565,32 +608,6 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
             detail: source.to_string(),
         })?;
     Ok(())
-}
-
-fn successor_node_id_for_decision(
-    manifest_path: &Path,
-    decision: &crate::intervention::Prototype1ContinuationDecision,
-) -> Result<Option<String>, PrepareError> {
-    if decision.disposition != Prototype1ContinuationDisposition::ContinueReady {
-        return Ok(None);
-    }
-    let Some(branch_id) = decision.selected_next_branch_id.as_deref() else {
-        return Ok(None);
-    };
-    let scheduler = load_scheduler_state(manifest_path)?;
-    Ok(scheduler
-        .nodes
-        .iter()
-        .filter(|node| node.branch_id == branch_id && node.generation == decision.next_generation)
-        .max_by_key(|node| node.updated_at.as_str())
-        .or_else(|| {
-            scheduler
-                .nodes
-                .iter()
-                .filter(|node| node.branch_id == branch_id)
-                .max_by_key(|node| node.generation)
-        })
-        .map(|node| node.node_id.clone()))
 }
 
 fn load_prototype1_branch_evaluation_report(
@@ -634,7 +651,7 @@ fn spawn_prototype1_successor(
         invocation_path,
         invocation,
     )?;
-    let child_argv = invocation.launch_args(invocation_path);
+    let child_argv = invocation.launch_args(invocation_path)?;
     let mut command = ProcessCommand::new(binary_path);
     command
         .args(&child_argv)
@@ -1241,131 +1258,6 @@ pub(super) async fn execute_prototype1_runner_invocation(
         "prototype1 child invocation completed"
     );
     Ok(result)
-}
-
-#[instrument(
-    target = "ploke_exec",
-    level = "debug",
-    skip(invocation_path),
-    fields(invocation_path = %invocation_path.display())
-)]
-pub(super) async fn execute_prototype1_successor_invocation(
-    invocation_path: &Path,
-) -> Result<crate::cli::prototype1_state::invocation::SuccessorReadyRecord, PrepareError> {
-    let invocation = match crate::cli::prototype1_state::invocation::load_executable(
-        invocation_path,
-    )? {
-        crate::cli::prototype1_state::invocation::InvocationAuthority::Successor(invocation) => {
-            invocation
-        }
-        crate::cli::prototype1_state::invocation::InvocationAuthority::Child(_) => {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "child invocation '{}' must be executed via execute_prototype1_runner_invocation",
-                    invocation_path.display()
-                ),
-            });
-        }
-    };
-    let manifest_path = campaign_manifest_path(invocation.campaign_id())?;
-    validate_prototype1_successor_continuation(&invocation, &manifest_path)?;
-    let active_parent_root = match invocation.active_parent_root() {
-        Some(path) => path.to_path_buf(),
-        None => std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
-            path: PathBuf::from("."),
-            source,
-        })?,
-    };
-    let ready = record_prototype1_successor_ready(&invocation, &manifest_path)?;
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %invocation.campaign_id(),
-        node_id = %invocation.node_id(),
-        runtime_id = %invocation.runtime_id(),
-        pid = ready.pid,
-        active_parent_root = %active_parent_root.display(),
-        "prototype1 successor acknowledged handoff"
-    );
-    let trace_path = prototype1_successor_trace_path(
-        &manifest_path,
-        invocation.node_id(),
-        invocation.runtime_id(),
-    );
-    match run_prototype1_successor_controller(
-        invocation.campaign_id(),
-        invocation.node_id(),
-        invocation.runtime_id(),
-        active_parent_root.clone(),
-    )
-    .await
-    {
-        Ok(report) => {
-            if let Some(decision) = report.continuation_decision() {
-                if let Some(next_node_id) =
-                    successor_node_id_for_decision(&manifest_path, decision)?
-                {
-                    match spawn_and_handoff_prototype1_successor(
-                        invocation.campaign_id(),
-                        &next_node_id,
-                        &active_parent_root,
-                    )? {
-                        Some(next) => {
-                            debug!(
-                                target: EXECUTION_DEBUG_TARGET,
-                                campaign = %invocation.campaign_id(),
-                                node_id = %next_node_id,
-                                runtime_id = %next.runtime_id,
-                                pid = next.pid,
-                                "prototype1 successor handed off to next runtime"
-                            );
-                        }
-                        None => {
-                            let err = PrepareError::DatabaseSetup {
-                                phase: "prototype1_successor_chain",
-                                detail: format!(
-                                    "successor handoff for node '{}' timed out",
-                                    next_node_id
-                                ),
-                            };
-                            let _ = record_prototype1_successor_completion(
-                                &invocation,
-                                &manifest_path,
-                                crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Failed,
-                                Some(trace_path),
-                                Some(err.to_string()),
-                            )?;
-                            return Err(err);
-                        }
-                    }
-                }
-            }
-            let _ = record_prototype1_successor_completion(
-                &invocation,
-                &manifest_path,
-                crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Succeeded,
-                Some(trace_path),
-                None,
-            )?;
-        }
-        Err(err) => {
-            let _ = record_prototype1_successor_completion(
-                &invocation,
-                &manifest_path,
-                crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Failed,
-                Some(trace_path),
-                Some(err.to_string()),
-            )?;
-            return Err(err);
-        }
-    }
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %invocation.campaign_id(),
-        node_id = %invocation.node_id(),
-        runtime_id = %invocation.runtime_id(),
-        "prototype1 successor completed one rehydrated generation"
-    );
-    Ok(ready)
 }
 
 /// Parent-side staged execution path for one treatment branch.
