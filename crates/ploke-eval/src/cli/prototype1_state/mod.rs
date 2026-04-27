@@ -100,6 +100,97 @@
 //! run would create one parent worktree per generation and eventually exhaust
 //! disk.
 //!
+//! ## Crown and succession
+//!
+//! A live Parent has exclusive authority over one active lineage. The working
+//! name for that authority is the Crown. The Crown is not a process id, a git
+//! branch, or a path. It is the capability to mutate the active checkout and
+//! decide which child Artifact becomes the next active Parent for that lineage.
+//!
+//! The handoff model is:
+//!
+//! ```text
+//! Parent<Ruling>
+//!   -> installs selected Artifact into the active checkout
+//!   -> locks succession authority for the selected next runtime
+//!   -> launches the next runtime from that active checkout
+//!   -> waits for the next runtime to unlock succession
+//!   -> exits as Parent
+//!
+//! next runtime
+//!   -> validates the active checkout and artifact-carried identity
+//!   -> unlocks succession authority
+//!   -> becomes Parent<Ruling>
+//! ```
+//!
+//! In shorthand: the Parent dies as Parent at the same boundary where the next
+//! Runtime becomes Parent. There may be overlapping processes during handoff,
+//! but there should not be overlapping mutable Parent authority for the same
+//! lineage. The single-lineage prototype can enforce that directly. A later
+//! multi-parent system must make the lineage parameter explicit so sibling
+//! Parents do not share one Crown by accident.
+//!
+//! The first code carriers for this shape are in [`inner`] and [`parent`].
+//! [`inner::Crown`] and [`inner::LockBox`] name the intended authority-transfer
+//! structure. They are still scaffolding: current live handoff uses concrete
+//! invocation and ready files, while the child-selection path has the first
+//! concrete message box. Do not extend the old process seam by adding another
+//! ad hoc acknowledgement file. Add the missing concrete box/transition pair
+//! instead.
+//!
+//! ## Boxes, messages, and buffers
+//!
+//! A message is not merely "some record we persisted". In this module,
+//! `Message` means a cross-runtime obligation:
+//!
+//! ```text
+//! one Runtime in Role<StateA> writes one payload into one concrete buffer
+//! another Runtime in Role<StateB> reads that payload from that same buffer
+//! the write and read are preconditions for typed state transitions
+//! ```
+//!
+//! For filesystem-backed communication, the buffer is not an arbitrary
+//! `PathBuf`. It is a concrete file schema implementing [`inner::File`], such
+//! as [`parent::ChildPlanFile`]. The concrete file schema plus the lock
+//! transition plus the unlock transition define the box:
+//!
+//! ```text
+//! Box = (Lock transition, Unlock transition, File schema)
+//! ```
+//!
+//! The current concrete example is the child-plan message:
+//!
+//! ```text
+//! File:
+//!   prototype1/messages/child-plan/<parent-node-id>.json
+//!
+//! Lock:
+//!   Parent<Ready> -> Parent<Planned>
+//!
+//! Unlock:
+//!   Parent<Planned> -> Parent<Selectable>
+//! ```
+//!
+//! The body of that message names the exact scheduler, branch registry, node,
+//! and runner-request files that form the parent-owned candidate set for this
+//! turn. The receiver checks that the message was read from the same concrete
+//! box named by the body, that it is addressed to the same Parent identity, and
+//! that the child generation is exactly `parent_identity.generation + 1`.
+//!
+//! This is intentionally stricter than "look in scheduler.json for something
+//! runnable". The run10 failure came from that weaker shape: the producer wrote
+//! candidate records for the wrong generation/parent coordinate, and the
+//! consumer later tried to infer the next child from mutable scheduler state.
+//! The child-plan box makes the producer publish the candidate set before the
+//! parent can select from it.
+//!
+//! More boxes should not mean more random files. A box is a typed access rule.
+//! Several boxes may later be implemented as slots in one authoritative
+//! lineage file if the file format supports independent append-only or
+//! authority-owned sections. The important property is that each mutable
+//! buffer has an explicit owner, allowed readers, and a typed transition that
+//! justifies each write and read.
+//!
 //! ## Planning note: generative graph, not only git ancestry
 //!
 //! The current prototype deliberately starts with an artificial editing
@@ -438,6 +529,12 @@
 //! - `transition-journal.jsonl`
 //!   Append-only typed transition log for child-ready and successor-handoff
 //!   events.
+//! - `messages/child-plan/<parent-node-id>.json`
+//!   Typed parent-owned child-plan box. The Parent writes this after producing
+//!   the candidate set for a turn and reads it back before selecting a child.
+//!   It binds the candidate set to the Parent identity, expected child
+//!   generation, scheduler file, branch registry file, node files, and runner
+//!   request files.
 //! - `nodes/<node-id>/node.json`
 //!   Durable node summary owned by the scheduler.
 //! - `nodes/<node-id>/runner-request.json`
@@ -475,13 +572,33 @@
 //! but it is not yet the full state model needed for safe fan-out. In
 //! particular, the live implementation still lacks:
 //!
-//! - a controller lease or epoch proving which parent owns the campaign
+//! - a concrete Crown box for successor handoff, so the authority transfer
+//!   still depends on invocation/ready files rather than one typed succession
+//!   transition
 //! - a first-class attempt record that unifies invocation, pid, workspace
-//!   lease, heartbeat, and terminal status
+//!   lease, process output streams, and terminal status
 //! - a durable scheduler decision for selected successors distinct from
 //!   per-node `keep` evaluations
 //! - explicit bounded fan-out policy state such as concurrent-child budget,
 //!   total-completed budget, and absolute deadline
+//! - a single authoritative inventory of mutable buffers, their owning role,
+//!   allowed readers, and the transition that permits each access
+//!
+//! The record sprawl is a design problem, not just a naming problem. Today the
+//! scheduler, branch registry, node records, runner requests/results,
+//! invocation files, transition journal, evaluation summaries, parent identity,
+//! stream logs, and compressed run records all carry pieces of one protocol.
+//! Cleanup should not add another parallel "status" document. It should move
+//! each field into either:
+//!
+//! - an authority-owned buffer for the active Parent lineage,
+//! - an append-only observation stream,
+//! - an attempt-scoped child/successor result,
+//! - or a durable Artifact/Runtime/operation provenance record.
+//!
+//! Fields duplicated across those buffers should be kept only where they are
+//! needed for recovery or validation, and the validating transition should name
+//! which copy is authoritative.
 //!
 pub(crate) mod authority;
 pub(crate) mod backend;
