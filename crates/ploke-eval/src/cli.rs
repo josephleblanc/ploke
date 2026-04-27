@@ -371,7 +371,7 @@ pub struct LoopCommand {
 pub enum LoopSubcommand {
     /// Run Prototype 1 through eval configuration, baseline arm, synthesis, treatment, and compare.
     Prototype1(Prototype1LoopCommand),
-    /// Prepare Prototype 1 baseline/synthesis state, then stop before applying or running children.
+    /// Create a Prototype 1 campaign and admit the current checkout as Parent(0).
     Prototype1Setup(Prototype1LoopCommand),
     /// Drive the typed Prototype 1 parent runtime path.
     Prototype1State(Prototype1StateCommand),

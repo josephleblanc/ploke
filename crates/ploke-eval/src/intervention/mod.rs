@@ -45,8 +45,9 @@ pub use scheduler::{
     load_runner_request, load_runner_result, load_runner_result_at, load_scheduler_state,
     prototype1_node_dir, prototype1_node_id, prototype1_node_record_path,
     prototype1_runner_request_path, prototype1_runner_result_path, prototype1_scheduler_path,
-    record_continuation_decision, record_runner_result, register_treatment_evaluation_node,
-    update_node_status, update_node_workspace_root, update_scheduler_policy,
+    record_continuation_decision, record_runner_result, register_root_parent_node,
+    register_treatment_evaluation_node, update_node_status, update_node_workspace_root,
+    update_scheduler_policy,
     write_runner_result_at,
 };
 pub(crate) use spec::operation_target_artifact_id;

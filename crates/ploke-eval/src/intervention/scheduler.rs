@@ -226,6 +226,107 @@ pub fn prototype1_node_id(branch_id: &str, generation: u32) -> String {
     format!("node-{}", &digest[..16])
 }
 
+pub fn register_root_parent_node(
+    campaign_id: &str,
+    campaign_manifest_path: &Path,
+    instance_id: &str,
+    artifact_branch: &str,
+    repo_root: &Path,
+    policy: Prototype1SearchPolicy,
+) -> Result<Prototype1NodeRecord, PrepareError> {
+    let mut scheduler = load_or_default_scheduler_state(campaign_id, campaign_manifest_path)?;
+    scheduler.policy = policy;
+
+    let generation = 0;
+    let node_id = prototype1_node_id(artifact_branch, generation);
+    let node_dir = prototype1_node_dir(campaign_manifest_path, &node_id);
+    let binary_path = node_dir.join("bin/ploke-eval");
+    let runner_request_path = prototype1_runner_request_path(campaign_manifest_path, &node_id);
+    let runner_result_path = prototype1_runner_result_path(campaign_manifest_path, &node_id);
+    let now = Utc::now().to_rfc3339();
+
+    let record = Prototype1NodeRecord {
+        schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+        node_id: node_id.clone(),
+        parent_node_id: None,
+        generation,
+        instance_id: instance_id.to_string(),
+        source_state_id: format!("prototype1-root:{campaign_id}"),
+        operation_target: None,
+        base_artifact_id: None,
+        patch_id: None,
+        derived_artifact_id: None,
+        parent_branch_id: None,
+        branch_id: artifact_branch.to_string(),
+        candidate_id: "root-parent".to_string(),
+        target_relpath: PathBuf::from(PARENT_IDENTITY_RELPATH_FOR_SCHEDULER),
+        node_dir: node_dir.clone(),
+        workspace_root: repo_root.to_path_buf(),
+        binary_path: binary_path.clone(),
+        runner_request_path: runner_request_path.clone(),
+        runner_result_path,
+        status: Prototype1NodeStatus::Planned,
+        created_at: scheduler
+            .nodes
+            .iter()
+            .find(|node| node.node_id == node_id)
+            .map(|node| node.created_at.clone())
+            .unwrap_or_else(|| now.clone()),
+        updated_at: now.clone(),
+    };
+
+    let request = Prototype1RunnerRequest {
+        schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+        campaign_id: campaign_id.to_string(),
+        node_id: node_id.clone(),
+        generation,
+        instance_id: instance_id.to_string(),
+        source_state_id: record.source_state_id.clone(),
+        operation_target: None,
+        base_artifact_id: None,
+        patch_id: None,
+        derived_artifact_id: None,
+        branch_id: artifact_branch.to_string(),
+        target_relpath: record.target_relpath.clone(),
+        workspace_root: repo_root.to_path_buf(),
+        binary_path,
+        stop_on_error: false,
+        runner_args: vec![
+            "loop".to_string(),
+            "prototype1-state".to_string(),
+            "--repo-root".to_string(),
+            repo_root.display().to_string(),
+        ],
+    };
+
+    fs::create_dir_all(node_dir.join("bin")).map_err(|source| PrepareError::WriteManifest {
+        path: node_dir.join("bin"),
+        source,
+    })?;
+    save_node_record(&record)?;
+    save_runner_request(&request, &runner_request_path)?;
+
+    match scheduler
+        .nodes
+        .iter_mut()
+        .find(|node| node.node_id == node_id)
+    {
+        Some(existing) => *existing = record.clone(),
+        None => scheduler.nodes.push(record.clone()),
+    }
+    scheduler.frontier_node_ids.clear();
+    scheduler.frontier_node_ids.push(node_id);
+    scheduler.completed_node_ids.clear();
+    scheduler.failed_node_ids.clear();
+    scheduler.last_continuation_decision = None;
+    scheduler.updated_at = now;
+    save_scheduler_state(campaign_manifest_path, &scheduler)?;
+
+    Ok(record)
+}
+
+const PARENT_IDENTITY_RELPATH_FOR_SCHEDULER: &str = ".ploke/prototype1/parent_identity.json";
+
 fn default_scheduler_state(campaign_id: &str) -> Prototype1SchedulerState {
     Prototype1SchedulerState {
         schema_version: PROTOTYPE1_SCHEDULER_SCHEMA_VERSION.to_string(),

@@ -67,7 +67,7 @@ use crate::{
         execute_intervention_apply, load_node_record, load_or_default_branch_registry,
         load_or_default_scheduler_state, load_runner_request, load_runner_result,
         mark_treatment_branch_applied, prototype1_branch_registry_path, prototype1_scheduler_path,
-        record_continuation_decision, record_synthesized_branches,
+        record_continuation_decision, record_synthesized_branches, register_root_parent_node,
         register_treatment_evaluation_node, resolve_treatment_branch, restore_treatment_branch,
         select_primary_issue, select_treatment_branch, treatment_branch_id,
         update_scheduler_policy,
@@ -103,23 +103,160 @@ impl Prototype1LoopCommand {
 
     pub async fn run_setup(self) -> Result<(), PrepareError> {
         let format = self.format;
-        let mut input = Prototype1LoopControllerInput::from_command(&self)?;
-        input.stop_after = Prototype1LoopStopAfter::TargetSelection;
-        input.dry_run = true;
-        let report = run_prototype1_loop_controller(input).await?;
+        let setup = prepare_prototype1_parent_setup(&self)?;
 
         match format {
-            InspectOutputFormat::Table => print_prototype1_loop_report(&report),
+            InspectOutputFormat::Table => print_prototype1_setup_report(&setup),
             InspectOutputFormat::Json => {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                    serde_json::to_string_pretty(&setup).map_err(PrepareError::Serialize)?
                 );
             }
         }
 
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1SetupReport {
+    campaign_id: String,
+    campaign_manifest: PathBuf,
+    slice_dataset_path: PathBuf,
+    scheduler_path: PathBuf,
+    batch_id: String,
+    batch_manifest: PathBuf,
+    instance_id: String,
+    repo_root: PathBuf,
+    artifact_branch: String,
+    parent_identity_path: PathBuf,
+    parent_id: String,
+    node_id: String,
+    generation: u32,
+    branch_id: String,
+    search_policy: Prototype1SearchPolicy,
+}
+
+fn prepare_prototype1_parent_setup(
+    command: &Prototype1LoopCommand,
+) -> Result<Prototype1SetupReport, PrepareError> {
+    let (batch_manifest, prepared_batch) = prepare_or_load_prototype1_batch(command)?;
+    if prepared_batch.instances.len() != 1 {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "prototype1 setup currently requires exactly one instance, got {}",
+                prepared_batch.instances.len()
+            ),
+        });
+    }
+
+    let campaign = prepare_prototype1_loop_campaign(command, &prepared_batch)?;
+    let repo_root = std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
+        path: PathBuf::from("."),
+        source,
+    })?;
+    let search_policy = Prototype1SearchPolicy {
+        max_generations: command.max_generations,
+        max_total_nodes: command.max_total_nodes,
+        stop_on_first_keep: command.stop_on_first_keep,
+        require_keep_for_continuation: command.require_keep_for_continuation,
+    };
+    let artifact_branch = format!(
+        "prototype1-parent-{}-gen0",
+        sanitize_batch_component(&campaign.campaign_id)
+    );
+    let node = register_root_parent_node(
+        &campaign.campaign_id,
+        &campaign.manifest_path,
+        &prepared_batch.instances[0],
+        &artifact_branch,
+        &repo_root,
+        search_policy.clone(),
+    )?;
+
+    let backend = GitWorktreeBackend;
+    let _ = backend
+        .checkout_fresh_parent_branch(&repo_root, &artifact_branch)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_setup_parent_branch",
+            detail: source.to_string(),
+        })?;
+    let identity = ParentIdentity::from_node(
+        campaign.campaign_id.clone(),
+        &node,
+        None,
+        Some(artifact_branch.clone()),
+    );
+    let parent_identity_path = write_parent_identity(&repo_root, &identity)?;
+    let message = parent_identity_commit_message(&identity);
+    let _ = backend
+        .persist_active_checkout_files(&repo_root, &[parent_identity_relpath()], &message)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_setup_parent_identity_commit",
+            detail: source.to_string(),
+        })?;
+    backend
+        .validate_parent_admission(&repo_root, &identity)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_setup_parent_admission",
+            detail: source.to_string(),
+        })?;
+
+    Ok(Prototype1SetupReport {
+        campaign_id: campaign.campaign_id,
+        campaign_manifest: campaign.manifest_path.clone(),
+        slice_dataset_path: campaign.slice_dataset_path,
+        scheduler_path: prototype1_scheduler_path(&campaign.manifest_path),
+        batch_id: prepared_batch.batch_id,
+        batch_manifest,
+        instance_id: prepared_batch.instances[0].clone(),
+        repo_root,
+        artifact_branch,
+        parent_identity_path,
+        parent_id: identity.parent_id,
+        node_id: identity.node_id,
+        generation: identity.generation,
+        branch_id: identity.branch_id,
+        search_policy,
+    })
+}
+
+fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
+    println!("prototype1 setup");
+    println!("{}", "-".repeat(40));
+    println!("campaign_id: {}", report.campaign_id);
+    println!("campaign_manifest: {}", report.campaign_manifest.display());
+    println!("slice_dataset: {}", report.slice_dataset_path.display());
+    println!("scheduler: {}", report.scheduler_path.display());
+    println!("batch_id: {}", report.batch_id);
+    println!("batch_manifest: {}", report.batch_manifest.display());
+    println!("instance_id: {}", report.instance_id);
+    println!("repo_root: {}", report.repo_root.display());
+    println!("artifact_branch: {}", report.artifact_branch);
+    println!("parent_identity: {}", report.parent_identity_path.display());
+    println!("parent_id: {}", report.parent_id);
+    println!("node_id: {}", report.node_id);
+    println!("generation: {}", report.generation);
+    println!("branch_id: {}", report.branch_id);
+    println!(
+        "search_policy: generations<={} nodes<={} stop_on_first_keep={} require_keep_for_continuation={}",
+        report.search_policy.max_generations,
+        report.search_policy.max_total_nodes,
+        yes_no(report.search_policy.stop_on_first_keep),
+        yes_no(report.search_policy.require_keep_for_continuation)
+    );
+    println!();
+    println!("next:");
+    println!(
+        "  ./target/debug/ploke-eval select campaign {}",
+        report.campaign_id
+    );
+    println!(
+        "  ./target/debug/ploke-eval select instance {}",
+        report.instance_id
+    );
+    println!("  ./target/debug/ploke-eval loop prototype1-state --repo-root .");
 }
 
 struct Prototype1LoopControllerInput {
