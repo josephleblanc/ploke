@@ -1377,11 +1377,17 @@ fn watch_prototype1_monitor_locations(
 
     let mut previous =
         collect_prototype1_monitor_snapshot(&prototype_root, identity_path.as_deref())?;
+    let mut seen_journal_entries = if command.print_initial {
+        0
+    } else {
+        journal_entry_count(&prototype_root)
+    };
     if command.print_initial {
         for (path, entry) in &previous {
             print_prototype1_monitor_event("initial", &prototype_root, path, Some(*entry));
         }
         print_watch_summary(manifest_path, &prototype_root);
+        seen_journal_entries = print_new_journal_entries(&prototype_root, seen_journal_entries);
     }
 
     let mut terminal_seen = terminal_state(manifest_path, &prototype_root, &previous);
@@ -1399,22 +1405,40 @@ fn watch_prototype1_monitor_locations(
         for (path, entry) in &current {
             match previous.get(path) {
                 None => {
-                    print_prototype1_monitor_event("created", &prototype_root, path, Some(*entry));
-                    semantic_changed |= is_semantic_watch_path(&prototype_root, path);
+                    if !is_transition_journal_path(&prototype_root, path) {
+                        print_prototype1_monitor_event(
+                            "created",
+                            &prototype_root,
+                            path,
+                            Some(*entry),
+                        );
+                        semantic_changed |= is_semantic_watch_path(&prototype_root, path);
+                    }
                 }
                 Some(old) if old != entry => {
-                    print_prototype1_monitor_event("modified", &prototype_root, path, Some(*entry));
-                    semantic_changed |= is_semantic_watch_path(&prototype_root, path);
+                    if !is_transition_journal_path(&prototype_root, path) {
+                        print_prototype1_monitor_event(
+                            "modified",
+                            &prototype_root,
+                            path,
+                            Some(*entry),
+                        );
+                        semantic_changed |= is_semantic_watch_path(&prototype_root, path);
+                    }
                 }
                 Some(_) => {}
             }
         }
         for path in previous.keys() {
             if !current.contains_key(path) {
-                print_prototype1_monitor_event("removed", &prototype_root, path, None);
-                semantic_changed |= is_semantic_watch_path(&prototype_root, path);
+                if !is_transition_journal_path(&prototype_root, path) {
+                    print_prototype1_monitor_event("removed", &prototype_root, path, None);
+                    semantic_changed |= is_semantic_watch_path(&prototype_root, path);
+                }
             }
         }
+
+        seen_journal_entries = print_new_journal_entries(&prototype_root, seen_journal_entries);
 
         if semantic_changed {
             print_watch_summary(manifest_path, &prototype_root);
@@ -1538,7 +1562,6 @@ fn is_semantic_watch_path(prototype_root: &Path, path: &Path) -> bool {
         parts.as_slice(),
         ["scheduler.json"]
             | ["branches.json"]
-            | ["transition-journal.jsonl"]
             | ["nodes", _, "node.json"]
             | ["nodes", _, "runner-result.json"]
             | ["nodes", _, "successor-ready", _]
@@ -1546,7 +1569,11 @@ fn is_semantic_watch_path(prototype_root: &Path, path: &Path) -> bool {
     )
 }
 
-fn print_watch_summary(manifest_path: &Path, prototype_root: &Path) {
+fn is_transition_journal_path(prototype_root: &Path, path: &Path) -> bool {
+    path == prototype_root.join("transition-journal.jsonl")
+}
+
+fn print_watch_summary(manifest_path: &Path, _prototype_root: &Path) {
     if let Ok(scheduler) = load_scheduler_state(manifest_path) {
         let continuation = scheduler
             .last_continuation_decision
@@ -1572,17 +1599,128 @@ fn print_watch_summary(manifest_path: &Path, prototype_root: &Path) {
             continuation
         );
     }
+}
 
+fn journal_entry_count(prototype_root: &Path) -> usize {
     let journal_path = prototype_root.join("transition-journal.jsonl");
     let journal = PrototypeJournal::new(&journal_path);
-    if let Ok(entries) = journal.load_entries() {
-        if let Some(entry) = entries.last() {
-            println!(
-                "  journal: entries={} latest={}",
-                entries.len(),
-                journal_entry_kind(entry)
-            );
-        }
+    journal
+        .load_entries()
+        .map(|entries| entries.len())
+        .unwrap_or(0)
+}
+
+fn print_new_journal_entries(prototype_root: &Path, seen: usize) -> usize {
+    let journal_path = prototype_root.join("transition-journal.jsonl");
+    let journal = PrototypeJournal::new(&journal_path);
+    let Ok(entries) = journal.load_entries() else {
+        return seen;
+    };
+    for entry in entries.iter().skip(seen) {
+        print_journal_transition(entry);
+    }
+    entries.len()
+}
+
+fn print_journal_transition(entry: &JournalEntry) {
+    println!("journal: {}", journal_entry_summary(entry));
+}
+
+fn journal_entry_summary(entry: &JournalEntry) -> String {
+    match entry {
+        JournalEntry::ParentStarted(entry) => format!(
+            "{} campaign={} parent={} generation={} pid={}",
+            "parent_started",
+            entry.campaign_id,
+            entry.parent_identity.parent_id,
+            entry.parent_identity.generation,
+            entry.pid
+        ),
+        JournalEntry::ChildArtifactCommitted(entry) => format!(
+            "{} node={} generation={} branch={} target_commit={} identity_commit={}",
+            "child_artifact_committed",
+            entry.node_id,
+            entry.generation,
+            entry.child_branch,
+            entry.target_commit,
+            entry.identity_commit
+        ),
+        JournalEntry::ActiveCheckoutAdvanced(entry) => format!(
+            "{} selected_parent={} generation={} branch={} commit={}",
+            "active_checkout_advanced",
+            entry.selected_parent_identity.parent_id,
+            entry.selected_parent_identity.generation,
+            entry.selected_branch,
+            entry.installed_commit
+        ),
+        JournalEntry::SuccessorHandoff(entry) => format!(
+            "{} node={} runtime={} pid={} ready={}",
+            "successor_handoff",
+            entry.node_id,
+            entry.runtime_id,
+            entry.pid,
+            entry.ready_path.display()
+        ),
+        JournalEntry::MaterializeBranch(entry) => format!(
+            "{} node={} generation={} transition={} branch={} current={} proposed={}",
+            journal_entry_kind(&JournalEntry::MaterializeBranch(entry.clone())),
+            entry.refs.node_id,
+            entry.generation,
+            entry.transition_id,
+            entry.refs.branch_id,
+            entry.hashes.current,
+            entry.hashes.proposed
+        ),
+        JournalEntry::BuildChild(entry) => format!(
+            "{} node={} generation={} transition={} result={}",
+            journal_entry_kind(&JournalEntry::BuildChild(entry.clone())),
+            entry.refs.node_id,
+            entry.generation,
+            entry.transition_id,
+            entry
+                .result
+                .as_ref()
+                .map(|result| format!("{result:?}"))
+                .unwrap_or_else(|| "(pending)".to_string())
+        ),
+        JournalEntry::SpawnChild(entry) => format!(
+            "{} node={} generation={} runtime={} child_pid={} result={}",
+            journal_entry_kind(&JournalEntry::SpawnChild(entry.clone())),
+            entry.refs.node_id,
+            entry.generation,
+            entry.runtime_id,
+            entry
+                .child_pid
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            entry
+                .result
+                .as_ref()
+                .map(|result| format!("{result:?}"))
+                .unwrap_or_else(|| "(pending)".to_string())
+        ),
+        JournalEntry::Child(entry) => entry.entry_kind().to_string(),
+        JournalEntry::ChildReady(entry) => format!(
+            "{} node={} generation={} runtime={} pid={}",
+            journal_entry_kind(&JournalEntry::ChildReady(entry.clone())),
+            entry.refs.node_id,
+            entry.generation,
+            entry.runtime_id,
+            entry.pid
+        ),
+        JournalEntry::ObserveChild(entry) => format!(
+            "{} node={} generation={} runtime={} transition={} result={}",
+            journal_entry_kind(&JournalEntry::ObserveChild(entry.clone())),
+            entry.refs.node_id,
+            entry.generation,
+            entry.runtime_id,
+            entry.transition_id,
+            entry
+                .result
+                .as_ref()
+                .map(|result| format!("{result:?}"))
+                .unwrap_or_else(|| "(pending)".to_string())
+        ),
     }
 }
 
