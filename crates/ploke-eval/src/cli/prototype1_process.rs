@@ -132,7 +132,7 @@ use crate::cli::prototype1_state::identity::{
 };
 use crate::cli::prototype1_state::journal::{
     ActiveCheckoutAdvancedEntry, ChildArtifactCommittedEntry, JournalEntry, PrototypeJournal,
-    SuccessorHandoffEntry, prototype1_transition_journal_path,
+    Streams, SuccessorHandoffEntry, prototype1_transition_journal_path,
 };
 use crate::intervention::{
     Prototype1ContinuationDisposition, Prototype1NodeStatus, Prototype1RunnerDisposition,
@@ -696,19 +696,21 @@ fn spawn_prototype1_successor(
     repo_root: &Path,
     invocation_path: &Path,
     invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
+    streams: &Streams,
 ) -> Result<std::process::Child, PrepareError> {
     crate::cli::prototype1_state::invocation::write_successor_invocation(
         invocation_path,
         invocation,
     )?;
     let child_argv = invocation.launch_args(invocation_path)?;
+    let (stdout, stderr) = open_runtime_streams(streams)?;
     let mut command = ProcessCommand::new(binary_path);
     command
         .args(&child_argv)
         .current_dir(repo_root)
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stdout(std::process::Stdio::from(stdout))
+        .stderr(std::process::Stdio::from(stderr));
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -720,6 +722,41 @@ fn spawn_prototype1_successor(
             phase: "prototype1_successor_spawn",
             detail: source.to_string(),
         })
+}
+
+fn runtime_streams(
+    node_dir: &Path,
+    runtime_id: crate::cli::prototype1_state::event::RuntimeId,
+) -> Streams {
+    let dir = node_dir.join("streams").join(runtime_id.to_string());
+    Streams {
+        stdout: dir.join("stdout.log"),
+        stderr: dir.join("stderr.log"),
+    }
+}
+
+fn open_runtime_streams(streams: &Streams) -> Result<(std::fs::File, std::fs::File), PrepareError> {
+    let dir = streams
+        .stdout
+        .parent()
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!("invalid stdout stream path '{}'", streams.stdout.display()),
+        })?;
+    std::fs::create_dir_all(dir).map_err(|source| PrepareError::WriteManifest {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    let stdout =
+        std::fs::File::create(&streams.stdout).map_err(|source| PrepareError::WriteManifest {
+            path: streams.stdout.clone(),
+            source,
+        })?;
+    let stderr =
+        std::fs::File::create(&streams.stderr).map_err(|source| PrepareError::WriteManifest {
+            path: streams.stderr.clone(),
+            source,
+        })?;
+    Ok((stdout, stderr))
 }
 
 fn wait_for_prototype1_successor_ready(
@@ -782,6 +819,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     );
     let ready_path =
         crate::cli::prototype1_state::invocation::successor_ready_path(&node.node_dir, runtime_id);
+    let streams = runtime_streams(&node.node_dir, runtime_id);
     if ready_path.exists() {
         fs::remove_file(&ready_path).map_err(|source| PrepareError::WriteManifest {
             path: ready_path.clone(),
@@ -798,6 +836,8 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         active_parent_root = %active_parent_root.display(),
         invocation_path = %invocation_path.display(),
         ready_path = %ready_path.display(),
+        stdout = %streams.stdout.display(),
+        stderr = %streams.stderr.display(),
         "spawning detached prototype1 successor from active checkout"
     );
 
@@ -806,6 +846,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         active_parent_root,
         &invocation_path,
         &invocation,
+        &streams,
     )?;
     let pid = child.id();
     match wait_for_prototype1_successor_ready(&mut child, &ready_path)? {
@@ -821,6 +862,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
                     binary_path: active_successor_binary_path,
                     invocation_path,
                     ready_path: ready_path.clone(),
+                    streams: Some(streams),
                     pid,
                 }),
                 "prototype1_successor_handoff_journal",

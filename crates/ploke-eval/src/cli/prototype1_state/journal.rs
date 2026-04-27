@@ -225,6 +225,8 @@ pub(crate) struct SuccessorHandoffEntry {
     pub binary_path: PathBuf,
     pub invocation_path: PathBuf,
     pub ready_path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streams: Option<Streams>,
     pub pid: u32,
 }
 

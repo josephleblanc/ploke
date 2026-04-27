@@ -49,6 +49,9 @@ use crate::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
                 parent_identity_relpath, write_parent_identity,
             },
+            invocation::{
+                self, InvocationAuthority, SuccessorCompletionStatus, SuccessorInvocation,
+            },
             journal::{
                 JournalEntry, ParentStartedEntry, PrototypeJournal,
                 prototype1_transition_journal_path,
@@ -1024,8 +1027,8 @@ impl Prototype1RunnerCommand {
             }
 
             if self.execute {
-                match crate::cli::prototype1_state::invocation::load_executable(&invocation_path)? {
-                    crate::cli::prototype1_state::invocation::InvocationAuthority::Child(_) => {
+                match invocation::load_executable(&invocation_path)? {
+                    InvocationAuthority::Child(_) => {
                         let result = execute_prototype1_runner_invocation(&invocation_path).await?;
                         match self.format {
                             InspectOutputFormat::Json => {
@@ -1047,7 +1050,7 @@ impl Prototype1RunnerCommand {
                             }
                         }
                     }
-                    crate::cli::prototype1_state::invocation::InvocationAuthority::Successor(_) => {
+                    InvocationAuthority::Successor(_) => {
                         return Err(PrepareError::InvalidBatchSelection {
                             detail: format!(
                                 "successor invocation '{}' must be executed by loop prototype1-state --handoff-invocation",
@@ -1059,7 +1062,7 @@ impl Prototype1RunnerCommand {
                 return Ok(());
             }
 
-            let invocation = crate::cli::prototype1_state::invocation::load(&invocation_path)?;
+            let invocation = invocation::load(&invocation_path)?;
             match self.format {
                 InspectOutputFormat::Json => {
                     println!(
@@ -2170,24 +2173,21 @@ fn acknowledge_prototype1_state_handoff(
     identity: &ParentIdentity,
     manifest_path: &Path,
     repo_root: &Path,
-) -> Result<Option<crate::cli::prototype1_state::invocation::SuccessorInvocation>, PrepareError> {
+) -> Result<Option<SuccessorInvocation>, PrepareError> {
     let Some(invocation_path) = command.handoff_invocation.as_deref() else {
         return Ok(None);
     };
-    let invocation =
-        match crate::cli::prototype1_state::invocation::load_executable(invocation_path)? {
-            crate::cli::prototype1_state::invocation::InvocationAuthority::Successor(
-                invocation,
-            ) => invocation,
-            crate::cli::prototype1_state::invocation::InvocationAuthority::Child(_) => {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "handoff invocation '{}' is a child invocation, expected successor",
-                        invocation_path.display()
-                    ),
-                });
-            }
-        };
+    let invocation = match invocation::load_executable(invocation_path)? {
+        InvocationAuthority::Successor(invocation) => invocation,
+        InvocationAuthority::Child(_) => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "handoff invocation '{}' is a child invocation, expected successor",
+                    invocation_path.display()
+                ),
+            });
+        }
+    };
 
     if invocation.campaign_id() != campaign_id {
         return Err(PrepareError::InvalidBatchSelection {
@@ -2241,6 +2241,29 @@ fn acknowledge_prototype1_state_handoff(
     Ok(Some(invocation))
 }
 
+fn record_failed_successor_turn(invocation_path: &Path, error: &PrepareError) {
+    let Ok(InvocationAuthority::Successor(invocation)) =
+        invocation::load_executable(invocation_path)
+    else {
+        return;
+    };
+    let Ok(manifest_path) = campaign_manifest_path(invocation.campaign_id()) else {
+        return;
+    };
+    if let Err(record_error) = record_prototype1_successor_completion(
+        &invocation,
+        &manifest_path,
+        SuccessorCompletionStatus::Failed,
+        None,
+        Some(format!("prototype1-state successor failed: {error}")),
+    ) {
+        eprintln!(
+            "failed to record successor failure for '{}': {record_error}",
+            invocation_path.display()
+        );
+    }
+}
+
 impl Prototype1StateCommand {
     #[instrument(
         target = "ploke_exec",
@@ -2249,6 +2272,17 @@ impl Prototype1StateCommand {
         fields(campaign = ?self.campaign, node_id = ?self.node_id, stop_after = ?self.stop_after)
     )]
     pub async fn run(self) -> Result<(), PrepareError> {
+        let handoff_invocation = self.handoff_invocation.clone();
+        let result = self.run_turn().await;
+        if let Err(error) = &result
+            && let Some(invocation_path) = handoff_invocation.as_deref()
+        {
+            record_failed_successor_turn(invocation_path, error);
+        }
+        result
+    }
+
+    async fn run_turn(self) -> Result<(), PrepareError> {
         let repo_root = if let Some(path) = self.repo_root.clone() {
             path
         } else {
@@ -2657,7 +2691,7 @@ impl Prototype1StateCommand {
             let _ = record_prototype1_successor_completion(
                 &invocation,
                 &manifest_path,
-                crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Succeeded,
+                SuccessorCompletionStatus::Succeeded,
                 None,
                 None,
             )?;
