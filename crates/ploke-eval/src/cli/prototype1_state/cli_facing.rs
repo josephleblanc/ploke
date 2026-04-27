@@ -57,6 +57,7 @@ use crate::{
                 prototype1_transition_journal_path,
             },
             parent::{Check, Parent, Unchecked},
+            successor::Record as SuccessorRecord,
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
         sanitize_batch_component, serde_name, write_json_file_pretty, yes_no,
@@ -1661,6 +1662,16 @@ fn journal_entry_summary(entry: &JournalEntry) -> String {
             entry.pid,
             entry.ready_path.display()
         ),
+        JournalEntry::Successor(entry) => format!(
+            "{} node={} runtime={} state={:?}",
+            entry.entry_kind(),
+            entry.node_id,
+            entry
+                .runtime_id
+                .map(|runtime_id| runtime_id.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            entry.state
+        ),
         JournalEntry::MaterializeBranch(entry) => format!(
             "{} node={} generation={} transition={} branch={} current={} proposed={}",
             journal_entry_kind(&JournalEntry::MaterializeBranch(entry.clone())),
@@ -1730,6 +1741,7 @@ fn journal_entry_kind(entry: &JournalEntry) -> &'static str {
         JournalEntry::ChildArtifactCommitted(_) => "child_artifact_committed",
         JournalEntry::ActiveCheckoutAdvanced(_) => "active_checkout_advanced",
         JournalEntry::SuccessorHandoff(_) => "successor_handoff",
+        JournalEntry::Successor(entry) => entry.entry_kind(),
         JournalEntry::MaterializeBranch(entry) => match entry.phase {
             crate::intervention::CommitPhase::Before => "materialize_branch:before",
             crate::intervention::CommitPhase::After => "materialize_branch:after",
@@ -1739,6 +1751,7 @@ fn journal_entry_kind(entry: &JournalEntry) -> &'static str {
             crate::intervention::CommitPhase::After => "build_child:after",
         },
         JournalEntry::SpawnChild(entry) => match entry.phase {
+            crate::cli::prototype1_state::journal::SpawnPhase::Starting => "spawn_child:starting",
             crate::cli::prototype1_state::journal::SpawnPhase::Spawned => "spawn_child:spawned",
             crate::cli::prototype1_state::journal::SpawnPhase::Observed => "spawn_child:observed",
         },
@@ -2695,6 +2708,20 @@ impl Prototype1StateCommand {
                                                         decide_node_successor_continuation(
                                                             &scheduler, &node, None,
                                                         );
+                                                    journal
+                                                        .append(JournalEntry::Successor(
+                                                            SuccessorRecord::selected(
+                                                                campaign_id.clone(),
+                                                                node.node_id.clone(),
+                                                                decision.clone(),
+                                                            ),
+                                                        ))
+                                                        .map_err(|err| {
+                                                            prototype1_state_transition_error(
+                                                                "prototype1_successor_selection",
+                                                                err.to_string(),
+                                                            )
+                                                        })?;
                                                     let _ = record_continuation_decision(
                                                         &campaign_id,
                                                         &manifest_path,

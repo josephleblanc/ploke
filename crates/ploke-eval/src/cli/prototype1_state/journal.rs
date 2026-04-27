@@ -86,6 +86,7 @@ pub(crate) struct BuildEntry {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SpawnPhase {
+    Starting,
     Spawned,
     Observed,
 }
@@ -96,6 +97,7 @@ pub(crate) enum SpawnPhase {
 pub(crate) enum SpawnObservation {
     Acknowledged,
     TerminatedBeforeAcknowledged { exit_code: Option<i32> },
+    ReadyTimedOut { waited_ms: u64 },
 }
 
 /// Append-only machine-readable journal entry for `C3 -> C4` child spawn and
@@ -238,6 +240,7 @@ pub(crate) enum JournalEntry {
     ChildArtifactCommitted(ChildArtifactCommittedEntry),
     ActiveCheckoutAdvanced(ActiveCheckoutAdvancedEntry),
     SuccessorHandoff(SuccessorHandoffEntry),
+    Successor(super::successor::Record),
     MaterializeBranch(Entry),
     BuildChild(BuildEntry),
     SpawnChild(SpawnEntry),
@@ -418,15 +421,22 @@ impl PrototypeJournal {
                 | JournalEntry::ChildArtifactCommitted(_)
                 | JournalEntry::ActiveCheckoutAdvanced(_)
                 | JournalEntry::SuccessorHandoff(_)
+                | JournalEntry::Successor(_)
                 | JournalEntry::ObserveChild(_) => {}
             }
         }
 
         let mut replay = Vec::new();
         for (runtime_id, phases) in grouped {
-            match (phases.spawned, phases.observed, phases.ready) {
-                (Some(spawned), Some(observed), ready) => {
+            match (
+                phases.starting,
+                phases.spawned,
+                phases.observed,
+                phases.ready,
+            ) {
+                (starting, Some(spawned), Some(observed), ready) => {
                     replay.push(SpawnReplay {
+                        starting,
                         spawned,
                         outcome: SpawnOutcome::Committed {
                             observed: Box::new(observed),
@@ -434,24 +444,37 @@ impl PrototypeJournal {
                         },
                     });
                 }
-                (Some(spawned), None, ready) => {
+                (starting, Some(spawned), None, ready) => {
                     let disposition = if ready.is_some() {
                         PendingSpawn::AcknowledgedUnobserved
                     } else {
                         PendingSpawn::SpawnedUnacknowledged
                     };
                     replay.push(SpawnReplay {
+                        starting,
                         spawned,
                         outcome: SpawnOutcome::Pending { ready, disposition },
                     });
                 }
-                (None, Some(_), _) => {
+                (Some(starting), None, None, None) => {
+                    replay.push(SpawnReplay {
+                        starting: None,
+                        spawned: starting,
+                        outcome: SpawnOutcome::Pending {
+                            ready: None,
+                            disposition: PendingSpawn::StartRecorded,
+                        },
+                    });
+                }
+                (_, None, Some(_), _) => {
                     return Err(PrototypeJournalError::ObservedWithoutSpawned { runtime_id });
                 }
-                (None, None, Some(_)) => {
+                (_, None, None, Some(_)) => {
                     return Err(PrototypeJournalError::ReadyWithoutSpawned { runtime_id });
                 }
-                (None, None, None) => {}
+                (None, None, None, None) => {
+                    unreachable!("spawn replay groups are only created from recorded entries")
+                }
             }
         }
 
@@ -599,6 +622,7 @@ impl BuildPhases {
 
 #[derive(Debug, Default)]
 struct SpawnPhases {
+    starting: Option<SpawnEntry>,
     spawned: Option<SpawnEntry>,
     observed: Option<SpawnEntry>,
     ready: Option<ReadyEntry>,
@@ -607,6 +631,12 @@ struct SpawnPhases {
 impl SpawnPhases {
     fn record_spawn(&mut self, entry: SpawnEntry) -> Result<(), PrototypeJournalError> {
         match entry.phase {
+            SpawnPhase::Starting => record_unique(
+                &mut self.starting,
+                entry.runtime_id,
+                DuplicateKey::SpawnPhase(SpawnPhase::Starting),
+                entry,
+            ),
             SpawnPhase::Spawned => record_unique(
                 &mut self.spawned,
                 entry.runtime_id,
@@ -852,6 +882,7 @@ pub(crate) enum PendingBuild {
 /// Replay classification for one spawn-child runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SpawnReplay {
+    pub starting: Option<SpawnEntry>,
     pub spawned: SpawnEntry,
     pub outcome: SpawnOutcome,
 }
@@ -873,6 +904,7 @@ pub(crate) enum SpawnOutcome {
 /// observed by the parent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PendingSpawn {
+    StartRecorded,
     SpawnedUnacknowledged,
     AcknowledgedUnobserved,
 }

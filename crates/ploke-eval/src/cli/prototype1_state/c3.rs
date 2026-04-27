@@ -76,6 +76,7 @@ where
         Some(SpawnObservation::TerminatedBeforeAcknowledged { .. }) => {
             ChildRuntimeLifecycle::Terminated
         }
+        Some(SpawnObservation::ReadyTimedOut { .. }) => ChildRuntimeLifecycle::Terminated,
         None => ChildRuntimeLifecycle::Spawned,
     };
     SpawnEntry {
@@ -210,6 +211,10 @@ struct HandoffTxn {
 }
 
 impl HandoffTxn {
+    fn record_starting(&mut self, entry: SpawnEntry) -> Result<(), PrototypeJournalError> {
+        self.journal.append(JournalEntry::SpawnChild(entry))
+    }
+
     fn record_spawned(&mut self, entry: SpawnEntry) -> Result<(), PrototypeJournalError> {
         self.journal.append(JournalEntry::SpawnChild(entry))
     }
@@ -355,14 +360,16 @@ pub(crate) enum Rejected {
 }
 
 impl Rejected {
-    fn exited_before_ready_result(&self) -> Option<SpawnObservation> {
+    fn spawn_result(&self) -> SpawnObservation {
         match self {
             Self::ExitedBeforeReady { exit_code, .. } => {
-                Some(SpawnObservation::TerminatedBeforeAcknowledged {
+                SpawnObservation::TerminatedBeforeAcknowledged {
                     exit_code: *exit_code,
-                })
+                }
             }
-            Self::ReadyTimedOut { .. } => None,
+            Self::ReadyTimedOut { waited_ms, .. } => SpawnObservation::ReadyTimedOut {
+                waited_ms: *waited_ms,
+            },
         }
     }
 }
@@ -538,6 +545,23 @@ impl Intervention<C3, C4> for SpawnChild {
         let handoff = Handoff::new(records.path().to_path_buf());
         let parent_pid = std::process::id();
         let streams = streams(&from, self.runtime_id);
+        handoff
+            .with_txn(|txn| {
+                txn.record_starting(spawn_entry(
+                    &from,
+                    self.runtime_id,
+                    SpawnPhase::Starting,
+                    child_argv.clone(),
+                    parent_pid,
+                    None,
+                    streams.clone(),
+                    None,
+                ))
+            })
+            .map_err(|source| CommitError::Record {
+                phase: crate::intervention::CommitPhase::Before,
+                source,
+            })?;
         let (stdout, stderr) = open_streams(&streams).map_err(CommitError::Transition)?;
         let mut child = ProcessCommand::new(&binary_path)
             .args(&child_argv)
@@ -652,46 +676,44 @@ impl Intervention<C3, C4> for SpawnChild {
                     rejected = ?rejected,
                     "spawn handshake rejected"
                 );
-                if let Some(result) = rejected.exited_before_ready_result() {
-                    let (_, failed_node) = update_node_status(
-                        &from.campaign_id,
-                        &from.campaign_manifest_path,
-                        &from.node.node_id,
-                        Prototype1NodeStatus::Failed,
-                    )
-                    .map_err(|source| {
-                        CommitError::Transition(SpawnChildError::UpdateNodeStatus {
-                            node_id: from.node.node_id.clone(),
-                            source,
-                        })
-                    })?;
-                    let failed = Prototype {
-                        campaign_id: from.campaign_id,
-                        campaign_manifest_path: from.campaign_manifest_path,
-                        node: failed_node,
-                        resolved: from.resolved,
-                        artifact: from.artifact,
-                        binary: from.binary,
-                    };
+                let (_, failed_node) = update_node_status(
+                    &from.campaign_id,
+                    &from.campaign_manifest_path,
+                    &from.node.node_id,
+                    Prototype1NodeStatus::Failed,
+                )
+                .map_err(|source| {
+                    CommitError::Transition(SpawnChildError::UpdateNodeStatus {
+                        node_id: from.node.node_id.clone(),
+                        source,
+                    })
+                })?;
+                let failed = Prototype {
+                    campaign_id: from.campaign_id,
+                    campaign_manifest_path: from.campaign_manifest_path,
+                    node: failed_node,
+                    resolved: from.resolved,
+                    artifact: from.artifact,
+                    binary: from.binary,
+                };
 
-                    handoff
-                        .with_txn(|txn| {
-                            txn.record_observed(spawn_entry(
-                                &failed,
-                                self.runtime_id,
-                                SpawnPhase::Observed,
-                                child_argv.clone(),
-                                parent_pid,
-                                Some(child_pid),
-                                streams.clone(),
-                                Some(result),
-                            ))
-                        })
-                        .map_err(|source| CommitError::Record {
-                            phase: crate::intervention::CommitPhase::After,
-                            source,
-                        })?;
-                }
+                handoff
+                    .with_txn(|txn| {
+                        txn.record_observed(spawn_entry(
+                            &failed,
+                            self.runtime_id,
+                            SpawnPhase::Observed,
+                            child_argv.clone(),
+                            parent_pid,
+                            Some(child_pid),
+                            streams.clone(),
+                            Some(rejected.spawn_result()),
+                        ))
+                    })
+                    .map_err(|source| CommitError::Record {
+                        phase: crate::intervention::CommitPhase::After,
+                        source,
+                    })?;
 
                 Ok(Outcome::Rejected(rejected))
             }

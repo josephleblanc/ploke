@@ -497,4 +497,5 @@ pub(crate) mod invocation;
 pub(crate) mod journal;
 pub(crate) mod parent;
 pub(crate) mod record;
+pub(crate) mod successor;
 pub(crate) mod workspace;

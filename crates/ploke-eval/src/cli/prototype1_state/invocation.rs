@@ -261,6 +261,11 @@ impl SuccessorInvocation {
         self.inner.active_parent_root.as_deref()
     }
 
+    /// Shared journal path used for successor acknowledgement and completion.
+    pub(crate) fn journal_path(&self) -> &Path {
+        &self.inner.journal_path
+    }
+
     /// CLI argv for launching the successor as the next typed parent.
     pub(crate) fn launch_args(&self, invocation_path: &Path) -> Result<Vec<String>, PrepareError> {
         successor_parent_argv(&self.inner, invocation_path)

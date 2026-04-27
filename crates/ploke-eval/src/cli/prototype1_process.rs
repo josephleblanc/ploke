@@ -134,10 +134,12 @@ use crate::cli::prototype1_state::journal::{
     ActiveCheckoutAdvancedEntry, ChildArtifactCommittedEntry, JournalEntry, PrototypeJournal,
     Streams, SuccessorHandoffEntry, prototype1_transition_journal_path,
 };
+use crate::cli::prototype1_state::successor::Record as SuccessorRecord;
 use crate::intervention::{
-    Prototype1ContinuationDisposition, Prototype1NodeStatus, Prototype1RunnerDisposition,
-    Prototype1RunnerResult, RecordStore, TreatmentBranchEvaluationSummary, clear_runner_result,
-    load_node_record, load_or_default_branch_registry, load_or_register_treatment_evaluation_node,
+    CommitPhase, Prototype1ContinuationDisposition, Prototype1NodeStatus,
+    Prototype1RunnerDisposition, Prototype1RunnerResult, RecordStore,
+    TreatmentBranchEvaluationSummary, clear_runner_result, load_node_record,
+    load_or_default_branch_registry, load_or_register_treatment_evaluation_node,
     load_runner_request, load_runner_result_at, load_scheduler_state,
     prototype1_branch_registry_path, record_runner_result, record_treatment_branch_evaluation,
     resolve_treatment_branch, select_treatment_branch, update_node_status,
@@ -155,6 +157,20 @@ fn append_prototype1_journal_entry(
     let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(manifest_path));
     journal
         .append(entry)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase,
+            detail: source.to_string(),
+        })
+}
+
+fn append_successor_record(
+    journal_path: &Path,
+    record: SuccessorRecord,
+    phase: &'static str,
+) -> Result<(), PrepareError> {
+    let mut journal = PrototypeJournal::new(journal_path);
+    journal
+        .append(JournalEntry::Successor(record))
         .map_err(|source| PrepareError::DatabaseSetup {
             phase,
             detail: source.to_string(),
@@ -306,6 +322,11 @@ pub(crate) fn record_prototype1_successor_ready(
         recorded_at: Utc::now().to_rfc3339(),
     };
     crate::cli::prototype1_state::invocation::write_successor_ready_record(&ready_path, &record)?;
+    append_successor_record(
+        invocation.journal_path(),
+        SuccessorRecord::ready(invocation, record.pid, ready_path),
+        "prototype1_successor_ready_journal",
+    )?;
     Ok(record)
 }
 
@@ -329,13 +350,18 @@ pub(crate) fn record_prototype1_successor_completion(
         node_id: invocation.node_id().to_string(),
         runtime_id: invocation.runtime_id(),
         status,
-        trace_path,
-        detail,
+        trace_path: trace_path.clone(),
+        detail: detail.clone(),
         recorded_at: Utc::now().to_rfc3339(),
     };
     crate::cli::prototype1_state::invocation::write_successor_completion_record(
         &completion_path,
         &record,
+    )?;
+    append_successor_record(
+        invocation.journal_path(),
+        SuccessorRecord::completed(invocation, status, completion_path, trace_path, detail),
+        "prototype1_successor_completion_journal",
     )?;
     Ok(record)
 }
@@ -497,6 +523,18 @@ fn install_prototype1_successor_artifact(
             phase: "prototype1_successor_artifact_verify",
             detail: source.to_string(),
         })?;
+    append_prototype1_journal_entry(
+        &campaign_manifest_path(campaign_id)?,
+        JournalEntry::Successor(SuccessorRecord::checkout(
+            campaign_id.to_string(),
+            node.node_id.clone(),
+            CommitPhase::Before,
+            active_parent_root.to_path_buf(),
+            workspace.branch.0.clone(),
+            None,
+        )),
+        "prototype1_successor_checkout_before_journal",
+    )?;
     let installed_commit = backend
         .install_artifact_in_active_checkout(active_parent_root, &workspace.branch)
         .map_err(|source| PrepareError::DatabaseSetup {
@@ -512,6 +550,18 @@ fn install_prototype1_successor_artifact(
             phase: "prototype1_successor_parent_checkout",
             detail: source.to_string(),
         })?;
+    append_prototype1_journal_entry(
+        &campaign_manifest_path(campaign_id)?,
+        JournalEntry::Successor(SuccessorRecord::checkout(
+            campaign_id.to_string(),
+            node.node_id.clone(),
+            CommitPhase::After,
+            active_parent_root.to_path_buf(),
+            workspace.branch.0.clone(),
+            Some(installed_commit.0.clone()),
+        )),
+        "prototype1_successor_checkout_after_journal",
+    )?;
     append_prototype1_journal_entry(
         &campaign_manifest_path(campaign_id)?,
         JournalEntry::ActiveCheckoutAdvanced(ActiveCheckoutAdvancedEntry {
@@ -759,16 +809,23 @@ fn open_runtime_streams(streams: &Streams) -> Result<(std::fs::File, std::fs::Fi
     Ok((stdout, stderr))
 }
 
+enum SuccessorWait {
+    Ready,
+    TimedOut { waited_ms: u64 },
+    ExitedBeforeReady { exit_code: Option<i32> },
+}
+
 fn wait_for_prototype1_successor_ready(
     child: &mut std::process::Child,
     ready_path: &Path,
-) -> Result<Option<crate::cli::prototype1_state::invocation::SuccessorReadyRecord>, PrepareError> {
+) -> Result<SuccessorWait, PrepareError> {
     let start = std::time::Instant::now();
     loop {
         if ready_path.exists() {
             let ready =
                 crate::cli::prototype1_state::invocation::load_successor_ready_record(ready_path)?;
-            return Ok(Some(ready));
+            let _ = ready;
+            return Ok(SuccessorWait::Ready);
         }
         if let Some(status) = child
             .try_wait()
@@ -777,18 +834,15 @@ fn wait_for_prototype1_successor_ready(
                 detail: source.to_string(),
             })?
         {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "prototype1_successor_ready",
-                detail: format!(
-                    "successor exited before acknowledging handoff (exit_code={:?})",
-                    status.code()
-                ),
+            return Ok(SuccessorWait::ExitedBeforeReady {
+                exit_code: status.code(),
             });
         }
         if start.elapsed() >= SUCCESSOR_READY_TIMEOUT {
+            let waited_ms = start.elapsed().as_millis() as u64;
             let _ = child.kill();
             let _ = child.wait();
-            return Ok(None);
+            return Ok(SuccessorWait::TimedOut { waited_ms });
         }
         std::thread::sleep(SUCCESSOR_READY_POLL);
     }
@@ -849,8 +903,21 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         &streams,
     )?;
     let pid = child.id();
+    append_successor_record(
+        invocation.journal_path(),
+        SuccessorRecord::spawned(
+            &invocation,
+            pid,
+            active_parent_root.to_path_buf(),
+            active_successor_binary_path.clone(),
+            invocation_path.clone(),
+            ready_path.clone(),
+            streams.clone(),
+        ),
+        "prototype1_successor_start_journal",
+    )?;
     match wait_for_prototype1_successor_ready(&mut child, &ready_path)? {
-        Some(_) => {
+        SuccessorWait::Ready => {
             append_prototype1_journal_entry(
                 &manifest_path,
                 JournalEntry::SuccessorHandoff(SuccessorHandoffEntry {
@@ -873,7 +940,27 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
                 ready_path,
             }))
         }
-        None => Ok(None),
+        SuccessorWait::TimedOut { waited_ms } => {
+            append_successor_record(
+                invocation.journal_path(),
+                SuccessorRecord::timed_out(&invocation, waited_ms, ready_path),
+                "prototype1_successor_timeout_journal",
+            )?;
+            Ok(None)
+        }
+        SuccessorWait::ExitedBeforeReady { exit_code } => {
+            append_successor_record(
+                invocation.journal_path(),
+                SuccessorRecord::exited_before_ready(&invocation, exit_code),
+                "prototype1_successor_exit_journal",
+            )?;
+            Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_successor_ready",
+                detail: format!(
+                    "successor exited before acknowledging handoff (exit_code={exit_code:?})"
+                ),
+            })
+        }
     }
 }
 
