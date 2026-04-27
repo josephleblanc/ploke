@@ -2141,6 +2141,7 @@ fn runnable_candidate_nodes(
     campaign_id: &str,
     manifest_path: &Path,
     required_generation: Option<u32>,
+    parent_node_id: Option<&str>,
 ) -> Result<Vec<CandidateNode>, PrepareError> {
     let selected_instance = active_selected_instance_for_campaign(campaign_id)?;
     let scheduler = load_or_default_scheduler_state(campaign_id, manifest_path)?;
@@ -2162,6 +2163,11 @@ fn runnable_candidate_nodes(
             selected_instance
                 .as_deref()
                 .map(|instance| node.instance_id == instance)
+                .unwrap_or(true)
+        })
+        .filter(|node| {
+            parent_node_id
+                .map(|parent_node_id| node.parent_node_id.as_deref() == Some(parent_node_id))
                 .unwrap_or(true)
         })
         .filter(|node| {
@@ -2210,6 +2216,7 @@ fn resolve_prototype1_candidate_node_id(
     campaign_id: &str,
     manifest_path: &Path,
     required_generation: Option<u32>,
+    parent_node_id: Option<&str>,
     purpose: &str,
 ) -> Result<String, PrepareError> {
     if let Some(node_id) = command.node_id.as_ref() {
@@ -2217,7 +2224,12 @@ fn resolve_prototype1_candidate_node_id(
     }
 
     let selected_instance = active_selected_instance_for_campaign(campaign_id)?;
-    let candidates = runnable_candidate_nodes(campaign_id, manifest_path, required_generation)?;
+    let candidates = runnable_candidate_nodes(
+        campaign_id,
+        manifest_path,
+        required_generation,
+        parent_node_id,
+    )?;
 
     match candidates.as_slice() {
         [node] => Ok(node.node_id.clone()),
@@ -2279,11 +2291,23 @@ async fn resolve_next_candidate_node_id(
                 ),
             });
         }
+        if candidate.parent_node_id.as_deref() != Some(parent_identity.node_id.as_str()) {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "--node-id '{}' is not a child of active parent '{}'",
+                    node_id, parent_identity.parent_id
+                ),
+            });
+        }
         return Ok(node_id.clone());
     }
 
-    let candidates =
-        runnable_candidate_nodes(campaign_id, manifest_path, Some(required_generation))?;
+    let candidates = runnable_candidate_nodes(
+        campaign_id,
+        manifest_path,
+        Some(required_generation),
+        Some(parent_identity.node_id.as_str()),
+    )?;
     if candidates.is_empty() {
         let _ = run_parent_target_selection(campaign_id, manifest_path, repo_root, parent_identity)
             .await?;
@@ -2294,6 +2318,7 @@ async fn resolve_next_candidate_node_id(
         campaign_id,
         manifest_path,
         Some(required_generation),
+        Some(parent_identity.node_id.as_str()),
         "next child candidate",
     )
 }
@@ -2309,6 +2334,7 @@ fn initialize_prototype1_parent_identity(
         campaign_id,
         manifest_path,
         Some(0),
+        None,
         "initial parent identity",
     )?;
     let Some(branch) = command.identity_branch.as_deref() else {
@@ -2358,9 +2384,9 @@ fn initialize_prototype1_parent_identity(
 }
 
 fn resolve_prototype1_parent_identity(
-    command: &Prototype1StateCommand,
+    _command: &Prototype1StateCommand,
     campaign_id: &str,
-    manifest_path: &Path,
+    _manifest_path: &Path,
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
     if let Some(identity) = load_parent_identity_optional(repo_root)? {
@@ -2368,22 +2394,12 @@ fn resolve_prototype1_parent_identity(
         return Ok(identity);
     }
 
-    let node_id = command.node_id.clone().map(Ok).unwrap_or_else(|| {
-        resolve_prototype1_candidate_node_id(
-            command,
-            campaign_id,
-            manifest_path,
-            Some(0),
-            "parent identity fallback",
-        )
-    })?;
-    let node = load_node_record(manifest_path, &node_id)?;
-    Ok(ParentIdentity::from_node(
-        campaign_id.to_string(),
-        &node,
-        None,
-        None,
-    ))
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "prototype1-state requires parent identity at '{}'; run prototype1-setup or --init-parent-identity first",
+            repo_root.join(parent_identity_relpath()).display()
+        ),
+    })
 }
 
 fn acknowledge_prototype1_state_handoff(
@@ -4361,6 +4377,7 @@ mod tests {
             &state_command_without_ids(),
             "campaign",
             &manifest_path,
+            None,
             None,
             "test",
         )

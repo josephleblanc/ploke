@@ -1103,6 +1103,7 @@ mod tests {
             Some(SpawnObservation::TerminatedBeforeAcknowledged { .. }) => {
                 ChildRuntimeLifecycle::Terminated
             }
+            Some(SpawnObservation::ReadyTimedOut { .. }) => ChildRuntimeLifecycle::Terminated,
             None => ChildRuntimeLifecycle::Spawned,
         };
         SpawnEntry {

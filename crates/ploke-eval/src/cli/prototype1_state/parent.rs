@@ -97,10 +97,6 @@ impl Parent<Checked> {
     pub(crate) fn identity(&self) -> &ParentIdentity {
         &self.identity
     }
-
-    pub(crate) fn node(&self) -> &Prototype1NodeRecord {
-        &self.node
-    }
 }
 
 fn identity_context(
