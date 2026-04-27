@@ -22,6 +22,7 @@ use ploke_protocol::tool_calls::{review, segment, trace};
 use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure};
 use regex::Regex;
 use serde::Serialize;
+use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 mod prototype1_process;
@@ -30,6 +31,8 @@ mod prototype1_process;
 /// See `prototype1_state::mod` for the implementation split and the on-disk
 /// campaign layout under `~/.ploke-eval/campaigns/<campaign-id>/prototype1/`.
 mod prototype1_state;
+
+const TOOL_REVIEW_CALL_LIMIT: usize = 8;
 
 use crate::campaign::{
     CampaignManifest, CampaignOverrides, CampaignValidationCheck, EvalCampaignPolicy,
@@ -1116,12 +1119,19 @@ async fn execute_protocol_run_tasks(
     let max_concurrency = max_concurrency.max(1);
     let mut pending = tasks.into_iter().collect::<VecDeque<_>>();
     let mut join_set = JoinSet::new();
+    let review_permits = Arc::new(Semaphore::new(TOOL_REVIEW_CALL_LIMIT));
 
     while join_set.len() < max_concurrency {
         let Some(task) = pending.pop_front() else {
             break;
         };
-        spawn_protocol_run_task(&mut join_set, task, model_id.clone(), provider_slug.clone());
+        spawn_protocol_run_task(
+            &mut join_set,
+            task,
+            model_id.clone(),
+            provider_slug.clone(),
+            review_permits.clone(),
+        );
     }
 
     while let Some(joined) = join_set.join_next().await {
@@ -1134,6 +1144,7 @@ async fn execute_protocol_run_tasks(
                         task,
                         model_id.clone(),
                         provider_slug.clone(),
+                        review_permits.clone(),
                     );
                 }
             }
@@ -1149,6 +1160,7 @@ async fn execute_protocol_run_tasks(
                         task,
                         model_id.clone(),
                         provider_slug.clone(),
+                        review_permits.clone(),
                     );
                 }
             }
@@ -1168,6 +1180,7 @@ async fn execute_protocol_run_tasks(
                         task,
                         model_id.clone(),
                         provider_slug.clone(),
+                        review_permits.clone(),
                     );
                 }
             }
@@ -5095,14 +5108,18 @@ fn spawn_protocol_run_task(
     task: ProtocolRunTask,
     model_id: String,
     provider_slug: Option<String>,
+    review_permits: Arc<Semaphore>,
 ) {
-    join_set.spawn(async move { execute_protocol_run_task(task, model_id, provider_slug).await });
+    join_set.spawn(async move {
+        execute_protocol_run_task(task, model_id, provider_slug, review_permits).await
+    });
 }
 
 async fn execute_protocol_run_task(
     task: ProtocolRunTask,
     model_id: String,
     provider_slug: Option<String>,
+    review_permits: Arc<Semaphore>,
 ) -> Result<ProtocolRunExecution, PrepareError> {
     let mut plan = protocol_run_plan(&task.instance_id, &task.record_path).map_err(|err| {
         PrepareError::DatabaseSetup {
@@ -5134,17 +5151,23 @@ async fn execute_protocol_run_task(
         })?;
     }
 
-    for call_index in plan.missing_call_indices.clone() {
-        execute_protocol_tool_call_review_quiet(
-            &task.record_path,
-            Some(model_id.clone()),
-            provider_slug.clone(),
-            call_index,
-        )
-        .await
-        .map_err(|err| PrepareError::DatabaseSetup {
-            phase: "closure_advance_protocol",
-            detail: format!("{}: {err}", task.instance_id),
+    let call_subjects = call_review_subjects(&task.record_path, &plan.missing_call_indices)?;
+    let call_reviews = review_calls(
+        call_subjects,
+        protocol_llm_config(Some(model_id.clone()), provider_slug.clone(), 30, 400)?,
+        review_permits.clone(),
+    )
+    .await
+    .map_err(|err| PrepareError::DatabaseSetup {
+        phase: "closure_advance_protocol",
+        detail: format!("{}: {err}", task.instance_id),
+    })?;
+    for review in call_reviews {
+        write_call_review(&task.record_path, review).map_err(|err| {
+            PrepareError::DatabaseSetup {
+                phase: "closure_advance_protocol",
+                detail: format!("{}: {err}", task.instance_id),
+            }
         })?;
         call_reviews_created += 1;
     }
@@ -5504,37 +5527,144 @@ async fn execute_protocol_tool_call_review_quiet(
     provider: Option<String>,
     index: usize,
 ) -> Result<(), PrepareError> {
+    let subject = call_review_subjects(record_path, &[index])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "protocol_tool_call_review",
+            detail: format!("tool call index {index} was not selected"),
+        })?;
+    let review = review_call(
+        subject,
+        protocol_llm_config(model_id, provider, 30, 400)?,
+        Arc::new(Semaphore::new(1)),
+    )
+    .await?;
+    write_call_review(record_path, review)?;
+    Ok(())
+}
+
+#[derive(Debug)]
+struct CallReview {
+    index: usize,
+    subject_id: String,
+    input: trace::ToolCallNeighborhood,
+    config: JsonLlmConfig,
+    reviewed: ploke_protocol::ProcedureRun<
+        review::LocalAnalysisAssessment,
+        review::ToolCallReviewArtifact,
+    >,
+}
+
+fn call_review_subjects(
+    record_path: &Path,
+    indices: &[usize],
+) -> Result<Vec<trace::ToolCallNeighborhood>, PrepareError> {
+    if indices.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let record =
         read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
             path: record_path.to_path_buf(),
             source,
         })?;
-    let subject = build_tool_call_review_subject(&record, index)?;
-    let subject_id = subject.subject_id.clone();
-    let persisted_input = subject.clone();
+    indices
+        .iter()
+        .map(|index| build_tool_call_review_subject(&record, *index))
+        .collect()
+}
+
+fn protocol_llm_config(
+    model_id: Option<String>,
+    provider: Option<String>,
+    timeout_secs: u64,
+    max_tokens: u32,
+) -> Result<JsonLlmConfig, PrepareError> {
     let model_id = resolve_protocol_model_id(model_id)?;
     let provider_slug = resolve_protocol_provider_slug(&model_id, provider)?;
-    let client = reqwest::Client::new();
-    let cfg = JsonLlmConfig {
+    Ok(JsonLlmConfig {
         model_id: model_id.to_string(),
         provider_slug,
-        timeout_secs: 30,
-        max_tokens: 400,
-    };
-    let protocol = review::ToolCallReview::new(JsonAdjudicator::new(client, cfg.clone()));
+        timeout_secs,
+        max_tokens,
+    })
+}
+
+async fn review_calls(
+    subjects: Vec<trace::ToolCallNeighborhood>,
+    config: JsonLlmConfig,
+    permits: Arc<Semaphore>,
+) -> Result<Vec<CallReview>, PrepareError> {
+    let mut join_set = JoinSet::new();
+    for subject in subjects {
+        let config = config.clone();
+        let permits = permits.clone();
+        join_set.spawn(async move { review_call(subject, config, permits).await });
+    }
+
+    let mut reviews = Vec::new();
+    while let Some(joined) = join_set.join_next().await {
+        match joined {
+            Ok(Ok(review)) => reviews.push(review),
+            Ok(Err(err)) => {
+                join_set.abort_all();
+                return Err(err);
+            }
+            Err(err) => {
+                join_set.abort_all();
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "protocol_tool_call_review",
+                    detail: format!("tool review task failed: {err}"),
+                });
+            }
+        }
+    }
+
+    reviews.sort_by_key(|review| review.index);
+    Ok(reviews)
+}
+
+async fn review_call(
+    subject: trace::ToolCallNeighborhood,
+    config: JsonLlmConfig,
+    permits: Arc<Semaphore>,
+) -> Result<CallReview, PrepareError> {
+    let _permit = permits
+        .acquire_owned()
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "protocol_tool_call_review",
+            detail: format!("tool review permit closed: {err}"),
+        })?;
+    let index = subject.focal.index;
+    let subject_id = subject.subject_id.clone();
+    let input = subject.clone();
+    let client = reqwest::Client::new();
+    let protocol = review::ToolCallReview::new(JsonAdjudicator::new(client, config.clone()));
     let reviewed = protocol
         .run(subject)
         .await
         .map_err(tool_call_review_error_to_prepare)?;
+    Ok(CallReview {
+        index,
+        subject_id,
+        input,
+        config,
+        reviewed,
+    })
+}
+
+fn write_call_review(record_path: &Path, review: CallReview) -> Result<(), PrepareError> {
     write_protocol_artifact(
         record_path,
-        &reviewed.procedure_name,
-        &subject_id,
-        Some(cfg.model_id.as_str()),
-        cfg.provider_slug.as_deref(),
-        &persisted_input,
-        &reviewed.output,
-        &reviewed.artifact,
+        &review.reviewed.procedure_name,
+        &review.subject_id,
+        Some(review.config.model_id.as_str()),
+        review.config.provider_slug.as_deref(),
+        &review.input,
+        &review.reviewed.output,
+        &review.reviewed.artifact,
     )?;
     Ok(())
 }
