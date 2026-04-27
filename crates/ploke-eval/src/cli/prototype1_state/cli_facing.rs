@@ -66,11 +66,11 @@ use crate::{
         Prototype1SearchPolicy, RecordStore, ValidationPolicy, decide_node_successor_continuation,
         execute_intervention_apply, load_node_record, load_or_default_branch_registry,
         load_or_default_scheduler_state, load_runner_request, load_runner_result,
-        mark_treatment_branch_applied, prototype1_branch_registry_path, prototype1_scheduler_path,
-        record_continuation_decision, record_synthesized_branches, register_root_parent_node,
-        register_treatment_evaluation_node, resolve_treatment_branch, restore_treatment_branch,
-        select_primary_issue, select_treatment_branch, treatment_branch_id,
-        update_scheduler_policy,
+        load_scheduler_state, mark_treatment_branch_applied, prototype1_branch_registry_path,
+        prototype1_scheduler_path, record_continuation_decision, record_synthesized_branches,
+        register_root_parent_node, register_treatment_evaluation_node, resolve_treatment_branch,
+        restore_treatment_branch, select_primary_issue, select_treatment_branch,
+        treatment_branch_id, update_scheduler_policy,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -1151,6 +1151,12 @@ struct Prototype1MonitorSnapshotEntry {
     modified: Option<SystemTime>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TerminalState {
+    reason: &'static str,
+    detail: String,
+}
+
 impl Prototype1MonitorCommand {
     pub fn run(self) -> Result<(), PrepareError> {
         let repo_root = match self.repo_root.clone() {
@@ -1362,7 +1368,8 @@ fn watch_prototype1_monitor_locations(
         println!("active_parent_identity: {}", path.display());
     }
     println!("interval_ms: {}", interval.as_millis());
-    println!("press Ctrl-C to stop");
+    println!("exits on terminal loop state");
+    println!("press Ctrl-C to stop early");
 
     let mut previous =
         collect_prototype1_monitor_snapshot(&prototype_root, identity_path.as_deref())?;
@@ -1370,6 +1377,13 @@ fn watch_prototype1_monitor_locations(
         for (path, entry) in &previous {
             print_prototype1_monitor_event("initial", &prototype_root, path, Some(*entry));
         }
+        print_watch_summary(manifest_path, &prototype_root);
+    }
+
+    let mut terminal_seen = terminal_state(manifest_path, &prototype_root, &previous);
+    if let Some(terminal) = terminal_seen.as_ref() {
+        print_terminal_state(terminal);
+        return Ok(());
     }
 
     loop {
@@ -1377,13 +1391,16 @@ fn watch_prototype1_monitor_locations(
         let current =
             collect_prototype1_monitor_snapshot(&prototype_root, identity_path.as_deref())?;
 
+        let mut semantic_changed = false;
         for (path, entry) in &current {
             match previous.get(path) {
                 None => {
-                    print_prototype1_monitor_event("created", &prototype_root, path, Some(*entry))
+                    print_prototype1_monitor_event("created", &prototype_root, path, Some(*entry));
+                    semantic_changed |= is_semantic_watch_path(&prototype_root, path);
                 }
                 Some(old) if old != entry => {
-                    print_prototype1_monitor_event("modified", &prototype_root, path, Some(*entry))
+                    print_prototype1_monitor_event("modified", &prototype_root, path, Some(*entry));
+                    semantic_changed |= is_semantic_watch_path(&prototype_root, path);
                 }
                 Some(_) => {}
             }
@@ -1391,7 +1408,21 @@ fn watch_prototype1_monitor_locations(
         for path in previous.keys() {
             if !current.contains_key(path) {
                 print_prototype1_monitor_event("removed", &prototype_root, path, None);
+                semantic_changed |= is_semantic_watch_path(&prototype_root, path);
             }
+        }
+
+        if semantic_changed {
+            print_watch_summary(manifest_path, &prototype_root);
+        }
+
+        let terminal = terminal_state(manifest_path, &prototype_root, &current);
+        if terminal_seen.as_ref() != terminal.as_ref() {
+            if let Some(terminal) = terminal.as_ref() {
+                print_terminal_state(terminal);
+                return Ok(());
+            }
+            terminal_seen = terminal;
         }
         previous = current;
     }
@@ -1485,6 +1516,276 @@ fn snapshot_entry(metadata: &fs::Metadata) -> Prototype1MonitorSnapshotEntry {
     }
 }
 
+fn is_semantic_watch_path(prototype_root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(prototype_root) else {
+        return path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "parent_identity.json");
+    };
+    let parts: Vec<_> = relative
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => value.to_str(),
+            _ => None,
+        })
+        .collect();
+    matches!(
+        parts.as_slice(),
+        ["scheduler.json"]
+            | ["branches.json"]
+            | ["transition-journal.jsonl"]
+            | ["nodes", _, "node.json"]
+            | ["nodes", _, "runner-result.json"]
+            | ["nodes", _, "successor-ready", _]
+            | ["nodes", _, "successor-completion", _]
+    )
+}
+
+fn print_watch_summary(manifest_path: &Path, prototype_root: &Path) {
+    if let Ok(scheduler) = load_scheduler_state(manifest_path) {
+        let continuation = scheduler
+            .last_continuation_decision
+            .as_ref()
+            .map(|decision| {
+                format!(
+                    "{} next_generation={} selected_next_branch_id={}",
+                    serde_name(&decision.disposition),
+                    decision.next_generation,
+                    decision
+                        .selected_next_branch_id
+                        .as_deref()
+                        .unwrap_or("(none)")
+                )
+            })
+            .unwrap_or_else(|| "(none)".to_string());
+        println!(
+            "  scheduler: nodes={} frontier={} completed={} failed={} continuation={}",
+            scheduler.nodes.len(),
+            scheduler.frontier_node_ids.len(),
+            scheduler.completed_node_ids.len(),
+            scheduler.failed_node_ids.len(),
+            continuation
+        );
+    }
+
+    let journal_path = prototype_root.join("transition-journal.jsonl");
+    let journal = PrototypeJournal::new(&journal_path);
+    if let Ok(entries) = journal.load_entries() {
+        if let Some(entry) = entries.last() {
+            println!(
+                "  journal: entries={} latest={}",
+                entries.len(),
+                journal_entry_kind(entry)
+            );
+        }
+    }
+}
+
+fn journal_entry_kind(entry: &JournalEntry) -> &'static str {
+    match entry {
+        JournalEntry::ParentStarted(_) => "parent_started",
+        JournalEntry::ChildArtifactCommitted(_) => "child_artifact_committed",
+        JournalEntry::ActiveCheckoutAdvanced(_) => "active_checkout_advanced",
+        JournalEntry::SuccessorHandoff(_) => "successor_handoff",
+        JournalEntry::MaterializeBranch(entry) => match entry.phase {
+            crate::intervention::CommitPhase::Before => "materialize_branch:before",
+            crate::intervention::CommitPhase::After => "materialize_branch:after",
+        },
+        JournalEntry::BuildChild(entry) => match entry.phase {
+            crate::intervention::CommitPhase::Before => "build_child:before",
+            crate::intervention::CommitPhase::After => "build_child:after",
+        },
+        JournalEntry::SpawnChild(entry) => match entry.phase {
+            crate::cli::prototype1_state::journal::SpawnPhase::Spawned => "spawn_child:spawned",
+            crate::cli::prototype1_state::journal::SpawnPhase::Observed => "spawn_child:observed",
+        },
+        JournalEntry::ChildReady(_) => "child_ready",
+        JournalEntry::ObserveChild(entry) => match entry.phase {
+            crate::intervention::CommitPhase::Before => "observe_child:before",
+            crate::intervention::CommitPhase::After => "observe_child:after",
+        },
+    }
+}
+
+fn terminal_state(
+    manifest_path: &Path,
+    prototype_root: &Path,
+    snapshot: &BTreeMap<PathBuf, Prototype1MonitorSnapshotEntry>,
+) -> Option<TerminalState> {
+    let scheduler = load_scheduler_state(manifest_path).ok();
+    if let Some(scheduler) = scheduler.as_ref() {
+        if let Some(decision) = scheduler.last_continuation_decision.as_ref() {
+            if decision.disposition != Prototype1ContinuationDisposition::ContinueReady {
+                return Some(TerminalState {
+                    reason: "scheduler_stopped",
+                    detail: format!(
+                        "{} next_generation={} total_nodes_after_continue={} selected_next_branch_id={}",
+                        serde_name(&decision.disposition),
+                        decision.next_generation,
+                        decision.total_nodes_after_continue,
+                        decision
+                            .selected_next_branch_id
+                            .as_deref()
+                            .unwrap_or("(none)")
+                    ),
+                });
+            }
+        }
+
+        let mut failed = BTreeSet::new();
+        failed.extend(scheduler.failed_node_ids.iter().cloned());
+        failed.extend(
+            scheduler
+                .nodes
+                .iter()
+                .filter(|node| node.status == Prototype1NodeStatus::Failed)
+                .map(|node| node.node_id.clone()),
+        );
+        if !failed.is_empty() {
+            return Some(TerminalState {
+                reason: "node_failed",
+                detail: failed.into_iter().collect::<Vec<_>>().join(", "),
+            });
+        }
+    }
+
+    if let Some(terminal) = successor_completion_state(prototype_root, snapshot) {
+        return Some(terminal);
+    }
+
+    if let Some(terminal) = stalled_materialization_state(prototype_root, snapshot) {
+        return Some(terminal);
+    }
+
+    exited_parent_state(prototype_root, snapshot)
+}
+
+fn successor_completion_state(
+    prototype_root: &Path,
+    snapshot: &BTreeMap<PathBuf, Prototype1MonitorSnapshotEntry>,
+) -> Option<TerminalState> {
+    for path in snapshot.keys() {
+        let Ok(relative) = path.strip_prefix(prototype_root) else {
+            continue;
+        };
+        let parts: Vec<_> = relative
+            .components()
+            .filter_map(|component| match component {
+                std::path::Component::Normal(value) => value.to_str(),
+                _ => None,
+            })
+            .collect();
+        if !matches!(parts.as_slice(), ["nodes", _, "successor-completion", _]) {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        let status = value
+            .get("status")
+            .and_then(|status| status.as_str())
+            .unwrap_or("(unknown)");
+        if status == "failed" {
+            return Some(TerminalState {
+                reason: "successor_failed",
+                detail: format!(
+                    "{} status=failed detail={}",
+                    prototype1_monitor_display_path(prototype_root, path),
+                    value
+                        .get("detail")
+                        .and_then(|detail| detail.as_str())
+                        .unwrap_or("(none)")
+                ),
+            });
+        }
+    }
+    None
+}
+
+fn stalled_materialization_state(
+    prototype_root: &Path,
+    snapshot: &BTreeMap<PathBuf, Prototype1MonitorSnapshotEntry>,
+) -> Option<TerminalState> {
+    if !snapshot_quiet_for(snapshot, Duration::from_secs(2)) {
+        return None;
+    }
+
+    let journal_path = prototype_root.join("transition-journal.jsonl");
+    let journal = PrototypeJournal::new(journal_path);
+    let Ok(materialize) = journal.replay_materialize_branch() else {
+        return None;
+    };
+    let pending = materialize.iter().find(|entry| {
+        matches!(
+            entry.outcome,
+            crate::cli::prototype1_state::journal::MaterializeBranchOutcome::Pending { .. }
+        )
+    })?;
+
+    Some(TerminalState {
+        reason: "materialize_incomplete",
+        detail: format!(
+            "node_id={} branch_id={} has materialize_branch:before without after and no monitor file changed for 2000ms",
+            pending.before.refs.node_id, pending.before.refs.branch_id
+        ),
+    })
+}
+
+fn exited_parent_state(
+    prototype_root: &Path,
+    snapshot: &BTreeMap<PathBuf, Prototype1MonitorSnapshotEntry>,
+) -> Option<TerminalState> {
+    if !snapshot_quiet_for(snapshot, Duration::from_secs(2)) {
+        return None;
+    }
+
+    let journal_path = prototype_root.join("transition-journal.jsonl");
+    let journal = PrototypeJournal::new(journal_path);
+    let Ok(entries) = journal.load_entries() else {
+        return None;
+    };
+    let Some((pid, node_id)) = entries.iter().rev().find_map(|entry| match entry {
+        JournalEntry::ParentStarted(entry) => {
+            Some((entry.pid, entry.parent_identity.node_id.clone()))
+        }
+        _ => None,
+    }) else {
+        return None;
+    };
+
+    if pid_alive(pid) {
+        return None;
+    }
+
+    Some(TerminalState {
+        reason: "parent_process_exited",
+        detail: format!(
+            "latest parent pid={} for node_id={} is no longer visible and no monitor file changed for 2000ms",
+            pid, node_id
+        ),
+    })
+}
+
+fn snapshot_quiet_for(
+    snapshot: &BTreeMap<PathBuf, Prototype1MonitorSnapshotEntry>,
+    duration: Duration,
+) -> bool {
+    let Some(latest) = snapshot.values().filter_map(|entry| entry.modified).max() else {
+        return false;
+    };
+    SystemTime::now()
+        .duration_since(latest)
+        .is_ok_and(|elapsed| elapsed >= duration)
+}
+
+fn pid_alive(pid: u32) -> bool {
+    Path::new("/proc").join(pid.to_string()).exists()
+}
+
 fn print_prototype1_file_excerpt(
     prototype_root: &Path,
     path: &Path,
@@ -1526,6 +1827,14 @@ fn print_prototype1_monitor_event(
         "{timestamp} {event:<8} {kind:<4} bytes={size:<8} {} -- {}",
         prototype1_monitor_display_path(prototype_root, path),
         prototype1_monitor_description(prototype_root, path)
+    );
+}
+
+fn print_terminal_state(terminal: &TerminalState) {
+    let timestamp = Utc::now().to_rfc3339();
+    println!(
+        "{timestamp} terminal reason={} {}",
+        terminal.reason, terminal.detail
     );
 }
 
