@@ -259,6 +259,68 @@ fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
     println!("  ./target/debug/ploke-eval loop prototype1-state --repo-root .");
 }
 
+fn load_existing_prototype1_campaign(
+    campaign_id: &str,
+) -> Result<Prototype1LoopCampaign, PrepareError> {
+    let manifest_path = campaign_manifest_path(campaign_id)?;
+    let manifest = load_campaign_manifest(campaign_id)?;
+    let resolved = resolve_campaign_config(campaign_id, &CampaignOverrides::default())?;
+    let closure_state_path = campaign_closure_state_path(campaign_id)?;
+    let slice_dataset_path = manifest
+        .dataset_sources
+        .first()
+        .map(|source| source.path.clone())
+        .unwrap_or_else(|| {
+            manifest_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("slice.jsonl")
+        });
+
+    Ok(Prototype1LoopCampaign {
+        campaign_id: campaign_id.to_string(),
+        manifest_path,
+        closure_state_path,
+        slice_dataset_path,
+        resolved,
+    })
+}
+
+async fn run_initial_parent_target_selection(
+    campaign_id: &str,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent_identity: &ParentIdentity,
+) -> Result<Prototype1LoopReport, PrepareError> {
+    let root_node = load_node_record(manifest_path, &parent_identity.node_id)?;
+    let scheduler = load_or_default_scheduler_state(campaign_id, manifest_path)?;
+    let campaign = load_existing_prototype1_campaign(campaign_id)?;
+    let batch_id = campaign
+        .resolved
+        .eval
+        .batch_prefix
+        .clone()
+        .unwrap_or_else(|| campaign_id.to_string());
+    let batch_manifest = batches_dir()?.join(&batch_id).join("batch.json");
+    let input = Prototype1LoopControllerInput {
+        stop_after: Prototype1LoopStopAfter::TargetSelection,
+        dry_run: true,
+        stop_on_error: false,
+        protocol_model_id: None,
+        protocol_provider: None,
+        search_policy: scheduler.policy,
+        source_campaign: None,
+        source_branch_id: None,
+        repo_root: repo_root.to_path_buf(),
+        trace_path: prototype1_trace_path(&campaign.manifest_path),
+        batch_id,
+        batch_manifest,
+        prepared_instances: vec![root_node.instance_id],
+        campaign,
+    };
+    run_prototype1_loop_controller(input).await
+}
+
 struct Prototype1LoopControllerInput {
     stop_after: Prototype1LoopStopAfter,
     dry_run: bool,
@@ -1926,7 +1988,23 @@ impl Prototype1StateCommand {
                 phase: "prototype1_parent_admission",
                 detail: source.to_string(),
             })?;
-        let node_id = parent_identity.node_id.clone();
+        let mut node_id = parent_identity.node_id.clone();
+        if parent_identity.generation == 0 {
+            let _ = run_initial_parent_target_selection(
+                &campaign_id,
+                &manifest_path,
+                &repo_root,
+                &parent_identity,
+            )
+            .await?;
+            node_id = resolve_prototype1_state_node_id(
+                &self,
+                &campaign_id,
+                &manifest_path,
+                Some(parent_identity.generation + 1),
+                "initial parent selected child",
+            )?;
+        }
         let handoff_invocation = acknowledge_prototype1_state_handoff(
             &self,
             &campaign_id,
