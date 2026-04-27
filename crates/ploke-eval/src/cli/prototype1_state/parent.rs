@@ -23,6 +23,10 @@ pub(crate) enum Unchecked {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Checked {}
 
+/// Parent role after predecessor handoff, if any, has been acknowledged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ready {}
+
 /// Runtime role carrier for a Parent in a known verification state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Parent<S> {
@@ -94,6 +98,20 @@ impl Parent<Unchecked> {
 }
 
 impl Parent<Checked> {
+    pub(crate) fn identity(&self) -> &ParentIdentity {
+        &self.identity
+    }
+
+    pub(crate) fn ready(self) -> Parent<Ready> {
+        Parent {
+            identity: self.identity,
+            node: self.node,
+            _state: PhantomData,
+        }
+    }
+}
+
+impl Parent<Ready> {
     pub(crate) fn identity(&self) -> &ParentIdentity {
         &self.identity
     }

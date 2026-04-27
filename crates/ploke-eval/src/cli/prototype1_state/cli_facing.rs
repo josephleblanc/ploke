@@ -56,7 +56,7 @@ use crate::{
                 JournalEntry, ParentStartedEntry, PrototypeJournal,
                 prototype1_transition_journal_path,
             },
-            parent::{Check, Parent, Unchecked},
+            parent::{Check, Checked, Parent, Ready, Unchecked},
             successor::Record as SuccessorRecord,
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
@@ -315,7 +315,7 @@ async fn run_parent_target_selection(
         protocol_provider: None,
         search_policy: scheduler.policy,
         source_campaign: None,
-        source_branch_id: None,
+        source_branch_id: Some(parent_identity.branch_id.clone()),
         repo_root: repo_root.to_path_buf(),
         trace_path: prototype1_trace_path(&campaign.manifest_path),
         batch_id,
@@ -2278,8 +2278,9 @@ async fn resolve_next_candidate_node_id(
     campaign_id: &str,
     manifest_path: &Path,
     repo_root: &Path,
-    parent_identity: &ParentIdentity,
+    parent: &Parent<Ready>,
 ) -> Result<String, PrepareError> {
+    let parent_identity = parent.identity();
     let required_generation = parent_identity.generation + 1;
     if let Some(node_id) = command.node_id.as_ref() {
         let candidate = load_node_record(manifest_path, node_id)?;
@@ -2405,12 +2406,13 @@ fn resolve_prototype1_parent_identity(
 fn acknowledge_prototype1_state_handoff(
     command: &Prototype1StateCommand,
     campaign_id: &str,
-    identity: &ParentIdentity,
+    parent: Parent<Checked>,
     manifest_path: &Path,
     repo_root: &Path,
-) -> Result<Option<SuccessorInvocation>, PrepareError> {
+) -> Result<(Parent<Ready>, Option<SuccessorInvocation>), PrepareError> {
+    let identity = parent.identity();
     let Some(invocation_path) = command.handoff_invocation.as_deref() else {
-        return Ok(None);
+        return Ok((parent.ready(), None));
     };
     let invocation = match invocation::load_executable(invocation_path)? {
         InvocationAuthority::Successor(invocation) => invocation,
@@ -2473,7 +2475,7 @@ fn acknowledge_prototype1_state_handoff(
         active_parent_root = %active_parent_root.display(),
         "prototype1 successor acknowledged handoff before entering typed parent run"
     );
-    Ok(Some(invocation))
+    Ok((parent.ready(), Some(invocation)))
 }
 
 fn record_failed_successor_turn(invocation_path: &Path, error: &PrepareError) {
@@ -2572,22 +2574,14 @@ impl Prototype1StateCommand {
                 selected_instance: selected_instance.as_deref(),
             },
         )?;
-        let parent_identity = parent.identity();
-        let candidate_node_id = resolve_next_candidate_node_id(
+        let (parent, handoff_invocation) = acknowledge_prototype1_state_handoff(
             &self,
             &campaign_id,
-            &manifest_path,
-            &repo_root,
-            &parent_identity,
-        )
-        .await?;
-        let handoff_invocation = acknowledge_prototype1_state_handoff(
-            &self,
-            &campaign_id,
-            &parent_identity,
+            parent,
             &manifest_path,
             &repo_root,
         )?;
+        let parent_identity = parent.identity();
         journal
             .append(JournalEntry::ParentStarted(ParentStartedEntry {
                 recorded_at: RecordedAt::now(),
@@ -2606,12 +2600,27 @@ impl Prototype1StateCommand {
         debug!(
             target: EXECUTION_DEBUG_TARGET,
             campaign = %campaign_id,
-            candidate_node_id = %candidate_node_id,
             parent_id = %parent_identity.parent_id,
             generation = parent_identity.generation,
             repo_root = %repo_root.display(),
             journal_path = %journal_path.display(),
-            "starting typed prototype1 state run"
+            "starting typed prototype1 parent turn"
+        );
+        let candidate_node_id = resolve_next_candidate_node_id(
+            &self,
+            &campaign_id,
+            &manifest_path,
+            &repo_root,
+            &parent,
+        )
+        .await?;
+        debug!(
+            target: EXECUTION_DEBUG_TARGET,
+            campaign = %campaign_id,
+            candidate_node_id = %candidate_node_id,
+            parent_id = %parent_identity.parent_id,
+            generation = parent_identity.generation,
+            "resolved prototype1 candidate for parent turn"
         );
         let c1 = C1::load(
             campaign_id.clone(),
