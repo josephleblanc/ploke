@@ -489,6 +489,7 @@ pub(crate) mod c1;
 pub(crate) mod c2;
 pub(crate) mod c3;
 pub(crate) mod c4;
+pub(crate) mod child;
 pub(crate) mod cli_facing;
 pub(crate) mod event;
 pub(crate) mod identity;

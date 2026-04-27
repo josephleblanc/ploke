@@ -19,7 +19,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Child as ProcessChild, Command as ProcessCommand};
+use std::process::{Child as ProcessChild, Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -38,7 +38,7 @@ use super::event::{ChildRuntimeLifecycle, ContentHash, Paths, RecordedAt, Refs, 
 use super::invocation::{ChildInvocation, invocation_path, write_child_invocation};
 use super::journal::{
     JournalEntry, PrototypeJournal, PrototypeJournalError, ReadyEntry, SpawnEntry,
-    SpawnObservation, SpawnPhase,
+    SpawnObservation, SpawnPhase, Streams,
 };
 
 /// Environment key used to tell the child which runtime instance it is.
@@ -65,6 +65,7 @@ fn spawn_entry<AckState>(
     argv: Vec<String>,
     parent_pid: u32,
     child_pid: Option<u32>,
+    streams: Streams,
     result: Option<SpawnObservation>,
 ) -> SpawnEntry
 where
@@ -113,8 +114,45 @@ where
         parent_pid,
         child_pid,
         argv,
+        streams: Some(streams),
         result,
     }
+}
+
+fn streams(config: &C3, runtime_id: RuntimeId) -> Streams {
+    let dir = config
+        .node
+        .node_dir
+        .join("streams")
+        .join(runtime_id.to_string());
+    Streams {
+        stdout: dir.join("stdout.log"),
+        stderr: dir.join("stderr.log"),
+    }
+}
+
+fn open_streams(streams: &Streams) -> Result<(fs::File, fs::File), SpawnChildError> {
+    let dir = streams
+        .stdout
+        .parent()
+        .ok_or_else(|| SpawnChildError::InvalidStreamPath {
+            path: streams.stdout.clone(),
+        })?;
+    fs::create_dir_all(dir).map_err(|source| SpawnChildError::CreateStreamsDir {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    let stdout =
+        fs::File::create(&streams.stdout).map_err(|source| SpawnChildError::OpenStdout {
+            path: streams.stdout.clone(),
+            source,
+        })?;
+    let stderr =
+        fs::File::create(&streams.stderr).map_err(|source| SpawnChildError::OpenStderr {
+            path: streams.stderr.clone(),
+            source,
+        })?;
+    Ok((stdout, stderr))
 }
 
 /// Shared journal-backed handoff view.
@@ -158,6 +196,9 @@ impl Handoff {
                 JournalEntry::ChildReady(ready) if ready.runtime_id == runtime_id => {
                     Some(ready.clone())
                 }
+                JournalEntry::Child(child) => child
+                    .ready_entry()
+                    .filter(|ready| ready.runtime_id == runtime_id),
                 _ => None,
             })
         })
@@ -254,6 +295,23 @@ pub(crate) enum SpawnChildError {
     BinaryPathMismatch { request: PathBuf, config: PathBuf },
     #[error("failed to spawn child binary '{path}': {source}")]
     SpawnInvoke {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("invalid child process stream path '{path}'")]
+    InvalidStreamPath { path: PathBuf },
+    #[error("failed to create child process stream directory '{path}': {source}")]
+    CreateStreamsDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to open child process stdout '{path}': {source}")]
+    OpenStdout {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to open child process stderr '{path}': {source}")]
+    OpenStderr {
         path: PathBuf,
         source: std::io::Error,
     },
@@ -479,9 +537,14 @@ impl Intervention<C3, C4> for SpawnChild {
 
         let handoff = Handoff::new(records.path().to_path_buf());
         let parent_pid = std::process::id();
+        let streams = streams(&from, self.runtime_id);
+        let (stdout, stderr) = open_streams(&streams).map_err(CommitError::Transition)?;
         let mut child = ProcessCommand::new(&binary_path)
             .args(&child_argv)
             .current_dir(&from.artifact.repo_root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr))
             .spawn()
             .map_err(|source| {
                 CommitError::Transition(SpawnChildError::SpawnInvoke {
@@ -509,6 +572,7 @@ impl Intervention<C3, C4> for SpawnChild {
                     child_argv.clone(),
                     parent_pid,
                     Some(child_pid),
+                    streams.clone(),
                     None,
                 ))
             })
@@ -560,6 +624,7 @@ impl Intervention<C3, C4> for SpawnChild {
                             child_argv.clone(),
                             parent_pid,
                             Some(child_pid),
+                            streams.clone(),
                             Some(SpawnObservation::Acknowledged),
                         ))
                     })
@@ -618,6 +683,7 @@ impl Intervention<C3, C4> for SpawnChild {
                                 child_argv.clone(),
                                 parent_pid,
                                 Some(child_pid),
+                                streams.clone(),
                                 Some(result),
                             ))
                         })

@@ -119,12 +119,13 @@ use tracing::{debug, instrument};
 use super::*;
 use crate::BranchDisposition;
 use crate::cli::prototype1_state::backend::{GitWorktreeBackend, RealizeRequest, WorkspaceBackend};
+use crate::cli::prototype1_state::child::{Child, Ready};
 use crate::cli::prototype1_state::cli_facing::{
     Prototype1BranchEvaluationReport, build_prototype1_branch_evaluation_report,
     ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
     prototype1_branch_evaluation_path, prototype1_source_generation,
 };
-use crate::cli::prototype1_state::event::RecordedAt;
+use crate::cli::prototype1_state::event::{Paths, RecordedAt, Refs};
 use crate::cli::prototype1_state::identity::{
     ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
     parent_identity_relpath, write_parent_identity,
@@ -213,30 +214,24 @@ fn record_prototype1_child_ready(
     workspace_root: &Path,
     runtime_id: crate::cli::prototype1_state::event::RuntimeId,
     journal_path: &Path,
-) -> Result<(), PrepareError> {
+) -> Result<Child<Ready>, PrepareError> {
     let resolved = resolve_treatment_branch(campaign_id, manifest_path, &node.branch_id)?;
-    let entry = crate::cli::prototype1_state::journal::ReadyEntry {
-        runtime_id,
-        recorded_at: crate::cli::prototype1_state::event::RecordedAt::now(),
-        generation: node.generation,
-        refs: crate::cli::prototype1_state::event::Refs {
-            campaign_id: campaign_id.to_string(),
-            node_id: node.node_id.clone(),
-            instance_id: node.instance_id.clone(),
-            source_state_id: node.source_state_id.clone(),
-            branch_id: node.branch_id.clone(),
-            candidate_id: node.candidate_id.clone(),
-            branch_label: resolved.branch.branch_label.clone(),
-            spec_id: resolved.branch.synthesized_spec_id.clone(),
-        },
-        paths: crate::cli::prototype1_state::event::Paths {
-            repo_root: workspace_root.to_path_buf(),
-            workspace_root: workspace_root.to_path_buf(),
-            binary_path: node.binary_path.clone(),
-            target_relpath: node.target_relpath.clone(),
-            absolute_path: workspace_root.join(&node.target_relpath),
-        },
-        pid: std::process::id(),
+    let refs = Refs {
+        campaign_id: campaign_id.to_string(),
+        node_id: node.node_id.clone(),
+        instance_id: node.instance_id.clone(),
+        source_state_id: node.source_state_id.clone(),
+        branch_id: node.branch_id.clone(),
+        candidate_id: node.candidate_id.clone(),
+        branch_label: resolved.branch.branch_label.clone(),
+        spec_id: resolved.branch.synthesized_spec_id.clone(),
+    };
+    let paths = Paths {
+        repo_root: workspace_root.to_path_buf(),
+        workspace_root: workspace_root.to_path_buf(),
+        binary_path: node.binary_path.clone(),
+        target_relpath: node.target_relpath.clone(),
+        absolute_path: workspace_root.join(&node.target_relpath),
     };
 
     debug!(
@@ -248,12 +243,19 @@ fn record_prototype1_child_ready(
         "recording child ready handshake"
     );
 
-    crate::cli::prototype1_state::c3::record_child_ready(journal_path.to_path_buf(), entry).map_err(
-        |err| PrepareError::DatabaseSetup {
-            phase: "prototype1_child_ready",
-            detail: err.to_string(),
-        },
+    Child::new(
+        journal_path.to_path_buf(),
+        runtime_id,
+        node.generation,
+        refs,
+        paths,
+        std::process::id(),
     )
+    .ready()
+    .map_err(|err| PrepareError::DatabaseSetup {
+        phase: "prototype1_child_ready",
+        detail: err.to_string(),
+    })
 }
 
 fn record_prototype1_child_ready_if_configured(
@@ -282,6 +284,7 @@ fn record_prototype1_child_ready_if_configured(
         runtime_id,
         &journal_path,
     )
+    .map(|_| ())
 }
 
 pub(crate) fn record_prototype1_successor_ready(
@@ -1278,14 +1281,19 @@ pub(super) async fn execute_prototype1_runner_invocation(
         invocation.node_id(),
         Prototype1NodeStatus::Running,
     )?;
-    record_prototype1_child_ready(
+    let child = record_prototype1_child_ready(
         invocation.campaign_id(),
         &manifest_path,
         &node,
         &request.workspace_root,
         invocation.runtime_id(),
         invocation.journal_path(),
-    )?;
+    )?
+    .evaluating()
+    .map_err(|err| PrepareError::DatabaseSetup {
+        phase: "prototype1_child_evaluating",
+        detail: err.to_string(),
+    })?;
 
     let outcome = run_prototype1_branch_evaluation(
         invocation.campaign_id(),
@@ -1306,6 +1314,10 @@ pub(super) async fn execute_prototype1_runner_invocation(
             None,
         ),
     };
+    let runner_result_path = crate::cli::prototype1_state::invocation::result_path(
+        &node.node_dir,
+        invocation.runtime_id(),
+    );
     let result = record_attempt_runner_result(
         invocation.campaign_id(),
         &manifest_path,
@@ -1313,6 +1325,13 @@ pub(super) async fn execute_prototype1_runner_invocation(
         invocation.runtime_id(),
         result,
     )?;
+    let _child =
+        child
+            .result_written(runner_result_path)
+            .map_err(|err| PrepareError::DatabaseSetup {
+                phase: "prototype1_child_result_written",
+                detail: err.to_string(),
+            })?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
         campaign = %invocation.campaign_id(),

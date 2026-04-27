@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use thiserror::Error;
 use tracing::{debug, instrument};
@@ -25,9 +25,10 @@ use super::event::{
     World,
 };
 use super::invocation::result_path;
-use super::journal::{CompletionEntry, JournalEntry, ObservedChildResult, PrototypeJournal};
+use super::journal::{
+    CompletionEntry, JournalEntry, ObservedChildResult, PrototypeJournal, PrototypeJournalError,
+};
 
-const RESULT_TIMEOUT: Duration = Duration::from_secs(300);
 const RESULT_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, PartialEq, Eq)]
@@ -168,6 +169,11 @@ pub(crate) enum ObserveChildError {
         path: PathBuf,
         source: serde_json::Error,
     },
+    #[error("failed to read child state journal")]
+    ReadJournal {
+        #[source]
+        source: PrototypeJournalError,
+    },
 }
 
 /// Surface over the runner result path used by child-completion observation.
@@ -217,13 +223,25 @@ fn terminal_from_result(result: &ObservedChildResult) -> ObservedChildTerminal {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Rejected {
-    ResultTimedOut {
-        runtime_id: RuntimeId,
-        waited_ms: u64,
-    },
+fn child_result_path(
+    records: &PrototypeJournal,
+    runtime_id: RuntimeId,
+) -> Result<Option<PathBuf>, ObserveChildError> {
+    records
+        .load_entries()
+        .map_err(|source| ObserveChildError::ReadJournal { source })
+        .map(|entries| {
+            entries.into_iter().rev().find_map(|entry| {
+                let JournalEntry::Child(child) = entry else {
+                    return None;
+                };
+                child.result_path(runtime_id)
+            })
+        })
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Rejected {}
 
 impl Intervention<C4, C5> for ObserveChild {
     type Surface = RunnerResultSurface;
@@ -273,9 +291,10 @@ impl Intervention<C4, C5> for ObserveChild {
             "recorded completion before entry"
         );
 
-        let start = Instant::now();
         loop {
-            if runner_result_path.exists() {
+            if let Some(runner_result_path) =
+                child_result_path(records, runtime_id).map_err(CommitError::Transition)?
+            {
                 let runner_result =
                     load_runner_result_at(&runner_result_path).map_err(|source| {
                         CommitError::Transition(ObserveChildError::LoadRunnerResult {
@@ -367,22 +386,6 @@ impl Intervention<C4, C5> for ObserveChild {
                     "observed successful child evaluation"
                 );
                 return Ok(Outcome::Advanced(next));
-            }
-
-            let waited = start.elapsed();
-            if waited >= RESULT_TIMEOUT {
-                let rejected = Rejected::ResultTimedOut {
-                    runtime_id,
-                    waited_ms: waited.as_millis() as u64,
-                };
-                debug!(
-                    target: ploke_core::EXECUTION_DEBUG_TARGET,
-                    node_id = %from.node.node_id,
-                    runtime_id = %runtime_id,
-                    rejected = ?rejected,
-                    "timed out waiting for child runner result"
-                );
-                return Ok(Outcome::Rejected(rejected));
             }
 
             thread::sleep(RESULT_POLL);

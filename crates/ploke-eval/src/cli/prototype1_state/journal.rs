@@ -114,7 +114,16 @@ pub(crate) struct SpawnEntry {
     pub child_pid: Option<u32>,
     pub argv: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streams: Option<Streams>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<SpawnObservation>,
+}
+
+/// Files receiving stdout and stderr for a spawned child process.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct Streams {
+    pub stdout: PathBuf,
+    pub stderr: PathBuf,
 }
 
 /// Child-side handshake witness for one spawned runtime.
@@ -230,6 +239,7 @@ pub(crate) enum JournalEntry {
     MaterializeBranch(Entry),
     BuildChild(BuildEntry),
     SpawnChild(SpawnEntry),
+    Child(super::child::Record),
     ChildReady(ReadyEntry),
     ObserveChild(CompletionEntry),
 }
@@ -391,6 +401,14 @@ impl PrototypeJournal {
                         .entry(entry.runtime_id)
                         .or_default()
                         .record_ready(entry)?;
+                }
+                JournalEntry::Child(entry) => {
+                    if let Some(ready) = entry.ready_entry() {
+                        grouped
+                            .entry(ready.runtime_id)
+                            .or_default()
+                            .record_ready(ready)?;
+                    }
                 }
                 JournalEntry::MaterializeBranch(_)
                 | JournalEntry::BuildChild(_)
@@ -1086,6 +1104,7 @@ mod tests {
             parent_pid: 111,
             child_pid: Some(222),
             argv: vec!["prototype1-runner".to_string()],
+            streams: None,
             result,
         }
     }

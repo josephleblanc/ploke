@@ -1601,6 +1601,7 @@ fn journal_entry_kind(entry: &JournalEntry) -> &'static str {
             crate::cli::prototype1_state::journal::SpawnPhase::Spawned => "spawn_child:spawned",
             crate::cli::prototype1_state::journal::SpawnPhase::Observed => "spawn_child:observed",
         },
+        JournalEntry::Child(entry) => entry.entry_kind(),
         JournalEntry::ChildReady(_) => "child_ready",
         JournalEntry::ObserveChild(entry) => match entry.phase {
             crate::intervention::CommitPhase::Before => "observe_child:before",
