@@ -149,8 +149,8 @@ pub(crate) enum BackendError {
         path: PathBuf,
         dirty_paths: Vec<PathBuf>,
     },
-    #[error("parent admission denied for checkout '{path}': {detail}")]
-    ParentAdmissionDenied { path: PathBuf, detail: String },
+    #[error("parent checkout '{path}' does not match parent identity: {detail}")]
+    ParentCheckoutMismatch { path: PathBuf, detail: String },
     #[error("node worktree path '{observed}' did not match expected managed path '{expected}'")]
     WorkspacePathMismatch {
         expected: PathBuf,
@@ -280,7 +280,7 @@ pub(crate) trait WorkspaceBackend {
     ///
     /// This is stricter than `checkout_branch`: a gen0 bootstrap must not
     /// reuse an existing branch, because the parent identity commit is the
-    /// branch admission witness.
+    /// branch's identity witness.
     fn checkout_fresh_parent_branch(
         &self,
         active_parent_root: &Path,
@@ -302,7 +302,7 @@ pub(crate) trait WorkspaceBackend {
     /// validate the same semantic condition against their own durable artifact
     /// metadata: the runtime is starting from the committed identity artifact
     /// that names the Parent about to run.
-    fn validate_parent_admission(
+    fn validate_parent_checkout(
         &self,
         active_parent_root: &Path,
         identity: &ParentIdentity,
@@ -412,9 +412,9 @@ impl GitWorktreeBackend {
 
         let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if branch.is_empty() {
-            return Err(BackendError::ParentAdmissionDenied {
+            return Err(BackendError::ParentCheckoutMismatch {
                 path: repo_root.to_path_buf(),
-                detail: "active checkout is detached; parent admission requires a branch"
+                detail: "active checkout is detached; parent checkout requires a branch"
                     .to_string(),
             });
         }
@@ -938,7 +938,7 @@ impl WorkspaceBackend for GitWorktreeBackend {
         }
         let branch = GitBranch(branch.to_string());
         if self.branch_exists(active_parent_root, &branch)? {
-            return Err(BackendError::ParentAdmissionDenied {
+            return Err(BackendError::ParentCheckoutMismatch {
                 path: active_parent_root.to_path_buf(),
                 detail: format!(
                     "gen0 parent branch '{branch}' already exists; initialize on a fresh branch"
@@ -962,7 +962,7 @@ impl WorkspaceBackend for GitWorktreeBackend {
         self.persist_files(active_parent_root, relpaths, message)
     }
 
-    fn validate_parent_admission(
+    fn validate_parent_checkout(
         &self,
         active_parent_root: &Path,
         identity: &ParentIdentity,
@@ -978,7 +978,7 @@ impl WorkspaceBackend for GitWorktreeBackend {
         let branch = self.current_branch(active_parent_root)?;
         if let Some(expected_branch) = identity.artifact_branch.as_deref() {
             if branch != expected_branch {
-                return Err(BackendError::ParentAdmissionDenied {
+                return Err(BackendError::ParentCheckoutMismatch {
                     path: active_parent_root.to_path_buf(),
                     detail: format!(
                         "active branch '{branch}' does not match parent identity artifact_branch '{expected_branch}'"
@@ -990,10 +990,10 @@ impl WorkspaceBackend for GitWorktreeBackend {
         let expected_message = parent_identity_commit_message(identity);
         let observed_message = self.head_commit_message(active_parent_root)?;
         if observed_message != expected_message {
-            return Err(BackendError::ParentAdmissionDenied {
+            return Err(BackendError::ParentCheckoutMismatch {
                 path: active_parent_root.to_path_buf(),
                 detail: format!(
-                    "HEAD commit message '{observed_message}' does not match expected parent admission message '{expected_message}'"
+                    "HEAD commit message '{observed_message}' does not match expected parent identity message '{expected_message}'"
                 ),
             });
         }
@@ -1001,7 +1001,7 @@ impl WorkspaceBackend for GitWorktreeBackend {
         let changed_paths = self.head_changed_paths(active_parent_root)?;
         let identity_relpath = PathBuf::from(PARENT_IDENTITY_RELPATH);
         if !changed_paths.contains(&identity_relpath) {
-            return Err(BackendError::ParentAdmissionDenied {
+            return Err(BackendError::ParentCheckoutMismatch {
                 path: active_parent_root.to_path_buf(),
                 detail: format!(
                     "HEAD commit does not carry parent identity path '{}'",
@@ -1012,16 +1012,16 @@ impl WorkspaceBackend for GitWorktreeBackend {
 
         if identity.generation == 0 {
             if changed_paths.len() != 1 || changed_paths[0] != identity_relpath {
-                return Err(BackendError::ParentAdmissionDenied {
+                return Err(BackendError::ParentCheckoutMismatch {
                     path: active_parent_root.to_path_buf(),
                     detail: format!(
-                        "gen0 parent admission commit must only change '{}', observed {changed_paths:?}",
+                        "gen0 parent identity commit must only change '{}', observed {changed_paths:?}",
                         identity_relpath.display()
                     ),
                 });
             }
             if !self.head_parent_reachable_from_other_branch(active_parent_root, &branch)? {
-                return Err(BackendError::ParentAdmissionDenied {
+                return Err(BackendError::ParentCheckoutMismatch {
                     path: active_parent_root.to_path_buf(),
                     detail: format!(
                         "gen0 parent branch '{branch}' does not appear fresh; HEAD^ is not reachable from another local branch"
@@ -1284,7 +1284,7 @@ R  old.rs -> new.rs
     }
 
     #[test]
-    fn validates_fresh_gen0_parent_admission() {
+    fn validates_fresh_gen0_parent_checkout() {
         let tmp = init_git_repo();
         let repo_root = tmp.path();
         let backend = GitWorktreeBackend;
@@ -1304,8 +1304,8 @@ R  old.rs -> new.rs
             .expect("commit identity");
 
         backend
-            .validate_parent_admission(repo_root, &identity)
-            .expect("gen0 admission");
+            .validate_parent_checkout(repo_root, &identity)
+            .expect("gen0 parent checkout");
     }
 
     #[test]
@@ -1336,13 +1336,13 @@ R  old.rs -> new.rs
         );
 
         let err = backend
-            .validate_parent_admission(repo_root, &identity)
+            .validate_parent_checkout(repo_root, &identity)
             .expect_err("contaminated gen0 branch should reject");
         assert!(err.to_string().contains("does not match expected"));
     }
 
     #[test]
-    fn validates_gen1_parent_admission_after_artifact_commit() {
+    fn validates_gen1_parent_checkout_after_artifact_commit() {
         let tmp = init_git_repo();
         let repo_root = tmp.path();
         let backend = GitWorktreeBackend;
@@ -1371,7 +1371,7 @@ R  old.rs -> new.rs
             .expect("commit identity");
 
         backend
-            .validate_parent_admission(repo_root, &identity)
-            .expect("gen1 admission");
+            .validate_parent_checkout(repo_root, &identity)
+            .expect("gen1 parent checkout");
     }
 }

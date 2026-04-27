@@ -53,6 +53,7 @@ use crate::{
                 JournalEntry, ParentStartedEntry, PrototypeJournal,
                 prototype1_transition_journal_path,
             },
+            parent::{Check, Parent, Unchecked},
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
         sanitize_batch_component, serde_name, write_json_file_pretty, yes_no,
@@ -197,9 +198,9 @@ fn prepare_prototype1_parent_setup(
             detail: source.to_string(),
         })?;
     backend
-        .validate_parent_admission(&repo_root, &identity)
+        .validate_parent_checkout(&repo_root, &identity)
         .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_setup_parent_admission",
+            phase: "prototype1_setup_parent_checkout",
             detail: source.to_string(),
         })?;
 
@@ -2125,9 +2126,9 @@ fn initialize_prototype1_parent_identity(
             detail: source.to_string(),
         })?;
     backend
-        .validate_parent_admission(repo_root, &identity)
+        .validate_parent_checkout(repo_root, &identity)
         .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_parent_admission",
+            phase: "prototype1_parent_checkout",
             detail: source.to_string(),
         })?;
     Ok(identity)
@@ -2291,13 +2292,18 @@ impl Prototype1StateCommand {
         let parent_identity =
             resolve_prototype1_parent_identity(&self, &campaign_id, &manifest_path, &repo_root)?;
         let backend = GitWorktreeBackend;
-        backend
-            .validate_parent_admission(&repo_root, &parent_identity)
-            .map_err(|source| PrepareError::DatabaseSetup {
-                phase: "prototype1_parent_admission",
-                detail: source.to_string(),
-            })?;
-        let mut node_id = parent_identity.node_id.clone();
+        let selected_instance = active_selected_instance_for_campaign(&campaign_id)?;
+        let parent = Parent::<Unchecked>::load(&manifest_path, parent_identity)?.check(
+            &backend,
+            &manifest_path,
+            Check {
+                campaign_id: &campaign_id,
+                active_root: &repo_root,
+                selected_instance: selected_instance.as_deref(),
+            },
+        )?;
+        let parent_identity = parent.identity();
+        let mut node_id = parent.node().node_id.clone();
         if parent_identity.generation == 0 {
             let _ = run_initial_parent_target_selection(
                 &campaign_id,

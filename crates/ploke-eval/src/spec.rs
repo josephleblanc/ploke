@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -349,6 +350,8 @@ pub enum PrepareError {
     MissingDatasetInstance { path: PathBuf, instance_id: String },
     #[error("batch selection is invalid: {detail}")]
     InvalidBatchSelection { detail: String },
+    #[error("prototype1 parent check failed: {0}")]
+    Prototype1Parent(#[from] Prototype1ParentError),
     #[error("issue input must include at least a title or a body")]
     EmptyIssue,
     #[error("failed to canonicalize '{path}': {source}")]
@@ -380,6 +383,72 @@ pub enum PrepareError {
     SnapshotFailed { detail: String },
     #[error("Error with database")]
     PlokeError(#[from] ploke_db::DbError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prototype1ParentIdentityContext {
+    pub path: PathBuf,
+    pub node_id: String,
+    pub generation: u32,
+    pub branch_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prototype1ParentNodeContext {
+    pub path: PathBuf,
+    pub node_id: String,
+    pub generation: u32,
+    pub branch_id: String,
+    pub instance_id: String,
+}
+
+#[derive(Debug, Error)]
+pub enum Prototype1ParentError {
+    #[error("generation mismatch between {identity} and {node}")]
+    GenerationMismatch {
+        identity: Prototype1ParentIdentityContext,
+        node: Prototype1ParentNodeContext,
+    },
+    #[error("branch mismatch between {identity} and {node}")]
+    BranchMismatch {
+        identity: Prototype1ParentIdentityContext,
+        node: Prototype1ParentNodeContext,
+    },
+    #[error(
+        "selected instance '{selected_instance}' does not match parent for campaign '{campaign_id}': {parent}"
+    )]
+    SelectionMismatch {
+        campaign_id: String,
+        selected_instance: String,
+        parent: Prototype1ParentNodeContext,
+    },
+}
+
+impl fmt::Display for Prototype1ParentIdentityContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "identity '{}' node '{}' generation {} branch '{}'",
+            self.path.display(),
+            self.node_id,
+            self.generation,
+            self.branch_id
+        )
+    }
+}
+
+impl fmt::Display for Prototype1ParentNodeContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "scheduler node '{}' node '{}' generation {} branch '{}' instance '{}'",
+            self.path.display(),
+            self.node_id,
+            self.generation,
+            self.branch_id,
+            self.instance_id
+        )
+    }
 }
 
 impl PrepareSingleRunRequest {

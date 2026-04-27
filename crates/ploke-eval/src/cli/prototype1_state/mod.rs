@@ -221,9 +221,9 @@
 //! - Dirty worktrees are provisional candidates. Promotion, selection,
 //!   successor handoff, and cross-lineage reuse should refer to durable
 //!   Artifacts, not uncommitted filesystem state.
-//! - A Runtime may begin acting as Parent only after the workspace backend
-//!   admits the active checkout for the artifact-carried parent identity. For
-//!   git, gen0 admission means a fresh branch whose HEAD is exactly the
+//! - A Runtime may begin acting as `Parent<Checked>` only after the active
+//!   checkout, artifact-carried parent identity, and scheduler node agree. For
+//!   git, gen0 checking means a fresh branch whose HEAD is exactly the
 //!   `parent_identity.json` initialization commit, and later generations must
 //!   also have an identity commit at HEAD for the Parent being started.
 //! - Temporary child worktrees are cleanup targets after selection and handoff.
@@ -494,5 +494,6 @@ pub(crate) mod event;
 pub(crate) mod identity;
 pub(crate) mod invocation;
 pub(crate) mod journal;
+pub(crate) mod parent;
 pub(crate) mod record;
 pub(crate) mod workspace;

@@ -161,7 +161,7 @@ pub(crate) struct CompletionEntry {
     pub result: Option<ObservedChildResult>,
 }
 
-/// Parent runtime admission record for one typed-loop turn.
+/// Parent runtime start record for one typed-loop turn.
 ///
 /// This is intentionally parent/artifact shaped rather than legacy
 /// branch-registry shaped. It records the active identity a runtime used when

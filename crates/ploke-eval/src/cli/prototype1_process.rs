@@ -504,9 +504,9 @@ fn install_prototype1_successor_artifact(
         crate::cli::prototype1_state::identity::load_parent_identity(active_parent_root)?;
     identity.validate_for_command(campaign_id, Some(&node.node_id))?;
     backend
-        .validate_parent_admission(active_parent_root, &identity)
+        .validate_parent_checkout(active_parent_root, &identity)
         .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_successor_parent_admission",
+            phase: "prototype1_successor_parent_checkout",
             detail: source.to_string(),
         })?;
     append_prototype1_journal_entry(
