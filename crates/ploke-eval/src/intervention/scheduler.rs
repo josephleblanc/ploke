@@ -690,6 +690,7 @@ pub fn register_treatment_evaluation_node(
     campaign_manifest_path: &Path,
     branch: &ResolvedTreatmentBranch,
     generation: u32,
+    parent_node_id: Option<&str>,
     repo_root: &Path,
     stop_on_error: bool,
 ) -> Result<
@@ -707,14 +708,16 @@ pub fn register_treatment_evaluation_node(
     let binary_path = node_dir.join("bin/ploke-eval");
     let runner_request_path = prototype1_runner_request_path(campaign_manifest_path, &node_id);
     let runner_result_path = prototype1_runner_result_path(campaign_manifest_path, &node_id);
-    let parent_node_id = branch
-        .parent_branch_id
-        .as_deref()
-        .and_then(|parent_branch_id| {
-            generation
-                .checked_sub(1)
-                .map(|g| prototype1_node_id(parent_branch_id, g))
-        });
+    let parent_node_id = parent_node_id.map(ToOwned::to_owned).or_else(|| {
+        branch
+            .parent_branch_id
+            .as_deref()
+            .and_then(|parent_branch_id| {
+                generation
+                    .checked_sub(1)
+                    .map(|g| prototype1_node_id(parent_branch_id, g))
+            })
+    });
     let now = Utc::now().to_rfc3339();
 
     // Only copy graph provenance already carried by the branch registry. The
@@ -835,6 +838,7 @@ pub fn load_or_register_treatment_evaluation_node(
     campaign_manifest_path: &Path,
     branch: &ResolvedTreatmentBranch,
     generation: u32,
+    parent_node_id: Option<&str>,
     repo_root: &Path,
     stop_on_error: bool,
 ) -> Result<
@@ -856,6 +860,7 @@ pub fn load_or_register_treatment_evaluation_node(
                 campaign_manifest_path,
                 branch,
                 generation,
+                parent_node_id,
                 repo_root,
                 stop_on_error,
             );
@@ -870,6 +875,7 @@ pub fn load_or_register_treatment_evaluation_node(
                 campaign_manifest_path,
                 branch,
                 generation,
+                parent_node_id,
                 repo_root,
                 stop_on_error,
             );
@@ -987,6 +993,7 @@ mod tests {
             &manifest,
             &resolved_branch(),
             2,
+            None,
             tmp.path(),
             false,
         )
@@ -1028,6 +1035,7 @@ mod tests {
             &manifest,
             &resolved_branch_with_graph(),
             2,
+            None,
             tmp.path(),
             false,
         )
@@ -1058,6 +1066,7 @@ mod tests {
             &manifest,
             &resolved_branch(),
             2,
+            None,
             tmp.path(),
             false,
         )
@@ -1098,6 +1107,7 @@ mod tests {
             &manifest,
             &resolved_branch(),
             2,
+            None,
             tmp.path(),
             false,
         )
@@ -1211,6 +1221,7 @@ mod tests {
             &manifest,
             &resolved,
             2,
+            None,
             tmp.path(),
             false,
         )
@@ -1222,6 +1233,7 @@ mod tests {
                 &manifest,
                 &resolved,
                 2,
+                None,
                 tmp.path(),
                 true,
             )

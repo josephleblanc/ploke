@@ -1,14 +1,20 @@
 //! Parent role state for Prototype 1.
 
 use std::marker::PhantomData;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 
 use crate::{
     cli::prototype1_state::{
         backend::WorkspaceBackend,
         identity::{ParentIdentity, parent_identity_path},
+        inner::{At, File, Message, MessageBox, Transition},
     },
-    intervention::{Prototype1NodeRecord, load_node_record, prototype1_node_record_path},
+    intervention::{
+        Prototype1NodeRecord, load_node_record, prototype1_branch_registry_path,
+        prototype1_node_record_path, prototype1_runner_request_path, prototype1_scheduler_path,
+    },
     spec::{
         PrepareError, Prototype1ParentError, Prototype1ParentIdentityContext,
         Prototype1ParentNodeContext,
@@ -27,12 +33,290 @@ pub(crate) enum Checked {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Ready {}
 
+/// Parent role after it has packed a child-plan message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Planned {}
+
+/// Parent role after it has received and validated its child-plan message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Selectable {}
+
 /// Runtime role carrier for a Parent in a known verification state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Parent<S> {
     identity: ParentIdentity,
     node: Prototype1NodeRecord,
     _state: PhantomData<S>,
+}
+
+/// Cross-runtime message: this parent has planned one or more child artifacts.
+#[derive(Debug)]
+pub(crate) struct ChildPlan;
+
+/// Body locked into the child-plan message box.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ChildPlanFiles {
+    message: At<ChildPlanFile>,
+    scheduler: At<SchedulerFile>,
+    branches: At<BranchesFile>,
+    parent_node_id: String,
+    child_generation: u32,
+    children: Vec<ChildFiles>,
+}
+
+impl ChildPlanFiles {
+    pub(crate) fn for_parent(
+        manifest_path: &Path,
+        parent: &ParentIdentity,
+        nodes: &[Prototype1NodeRecord],
+    ) -> Self {
+        Self {
+            message: At::resolve((manifest_path.to_path_buf(), parent.node_id.clone())),
+            scheduler: At::resolve(manifest_path.to_path_buf()),
+            branches: At::resolve(manifest_path.to_path_buf()),
+            parent_node_id: parent.node_id.clone(),
+            // Prototype 1 direct-child policy: candidates produced by Parent k
+            // are generation k + 1.
+            child_generation: parent.generation + 1,
+            children: nodes
+                .iter()
+                .map(|node| ChildFiles {
+                    node_id: node.node_id.clone(),
+                    node: At::resolve((manifest_path.to_path_buf(), node.node_id.clone())),
+                    runner_request: At::resolve((
+                        manifest_path.to_path_buf(),
+                        node.node_id.clone(),
+                    )),
+                })
+                .collect(),
+        }
+    }
+
+    pub(crate) fn message(&self) -> &Path {
+        self.message.path()
+    }
+
+    pub(crate) fn message_at(&self) -> At<ChildPlanFile> {
+        self.message.clone()
+    }
+
+    pub(crate) fn scheduler(&self) -> &Path {
+        self.scheduler.path()
+    }
+
+    pub(crate) fn branches(&self) -> &Path {
+        self.branches.path()
+    }
+
+    pub(crate) fn parent_node_id(&self) -> &str {
+        &self.parent_node_id
+    }
+
+    pub(crate) fn child_generation(&self) -> u32 {
+        self.child_generation
+    }
+
+    pub(crate) fn children(&self) -> &[ChildFiles] {
+        &self.children
+    }
+
+    pub(crate) fn contains_child(&self, node_id: &str) -> bool {
+        self.children.iter().any(|child| child.node_id == node_id)
+    }
+
+    fn validate_receiver(&self, identity: &ParentIdentity) -> Result<(), ChildPlanReceiverError> {
+        if identity.node_id != self.parent_node_id {
+            return Err(ChildPlanReceiverError::ParentNode {
+                expected_parent_node_id: self.parent_node_id.clone(),
+                actual_parent_node_id: identity.node_id.clone(),
+            });
+        }
+
+        // Match the same direct-child lineage rule encoded when the candidate
+        // set was written.
+        let actual_generation = identity.generation + 1;
+        if actual_generation != self.child_generation {
+            return Err(ChildPlanReceiverError::Generation {
+                expected_generation: self.child_generation,
+                actual_generation,
+            });
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ChildFiles {
+    node_id: String,
+    node: At<NodeFile>,
+    runner_request: At<RunnerRequestFile>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ChildPlanFile;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LockChildPlan;
+
+impl Transition for LockChildPlan {
+    type From = Parent<Ready>;
+    type To = Parent<Planned>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct UnlockChildPlan;
+
+impl Transition for UnlockChildPlan {
+    type From = Parent<Planned>;
+    type To = Parent<Selectable>;
+}
+
+impl File for ChildPlanFile {
+    type Params = (PathBuf, String);
+
+    const NAME: &'static str = "prototype1/messages/child-plan/<parent-node-id>.json";
+
+    fn resolve((manifest_path, parent_node_id): Self::Params) -> PathBuf {
+        manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("prototype1/messages/child-plan")
+            .join(format!("{parent_node_id}.json"))
+    }
+}
+
+impl MessageBox for ChildPlanFile {
+    type Lock = LockChildPlan;
+    type Unlock = UnlockChildPlan;
+}
+
+impl ChildFiles {
+    pub(crate) fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    pub(crate) fn node(&self) -> &Path {
+        self.node.path()
+    }
+
+    pub(crate) fn runner_request(&self) -> &Path {
+        self.runner_request.path()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SchedulerFile;
+
+impl File for SchedulerFile {
+    type Params = PathBuf;
+
+    const NAME: &'static str = "prototype1/scheduler.json";
+
+    fn resolve(manifest_path: Self::Params) -> PathBuf {
+        prototype1_scheduler_path(&manifest_path)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BranchesFile;
+
+impl File for BranchesFile {
+    type Params = PathBuf;
+
+    const NAME: &'static str = "prototype1/branches.json";
+
+    fn resolve(manifest_path: Self::Params) -> PathBuf {
+        prototype1_branch_registry_path(&manifest_path)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NodeFile;
+
+impl File for NodeFile {
+    type Params = (PathBuf, String);
+
+    const NAME: &'static str = "prototype1/nodes/<node-id>/node.json";
+
+    fn resolve((manifest_path, node_id): Self::Params) -> PathBuf {
+        prototype1_node_record_path(&manifest_path, &node_id)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RunnerRequestFile;
+
+impl File for RunnerRequestFile {
+    type Params = (PathBuf, String);
+
+    const NAME: &'static str = "prototype1/nodes/<node-id>/runner-request.json";
+
+    fn resolve((manifest_path, node_id): Self::Params) -> PathBuf {
+        prototype1_runner_request_path(&manifest_path, &node_id)
+    }
+}
+
+impl Message for ChildPlan {
+    type Box = ChildPlanFile;
+    type Body = ChildPlanFiles;
+    type SenderFailed = Parent<Ready>;
+    type ReceiveError = ChildPlanReceiverError;
+
+    const KIND: &'static str = "child_plan";
+
+    fn close_sender(
+        sender: <<Self::Box as MessageBox>::Lock as Transition>::From,
+        _at: &At<Self::Box>,
+        _body: &Self::Body,
+    ) -> <<Self::Box as MessageBox>::Lock as Transition>::To {
+        sender.cast()
+    }
+
+    fn fail_sender(
+        sender: <<Self::Box as MessageBox>::Lock as Transition>::From,
+    ) -> Self::SenderFailed {
+        sender
+    }
+
+    fn ready_receiver(
+        receiver: <<Self::Box as MessageBox>::Unlock as Transition>::From,
+        at: &At<Self::Box>,
+        body: &Self::Body,
+    ) -> Result<<<Self::Box as MessageBox>::Unlock as Transition>::To, Self::ReceiveError> {
+        if at.path() != body.message() {
+            return Err(ChildPlanReceiverError::MessageBox {
+                expected: body.message().to_path_buf(),
+                actual: at.path().to_path_buf(),
+            });
+        }
+        body.validate_receiver(receiver.identity())?;
+        Ok(receiver.cast())
+    }
+}
+
+/// Wrong receiver for a packed child-plan message.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum ChildPlanReceiverError {
+    /// The message was read from a different box than the body names.
+    #[error("child plan box '{actual}' did not match body box '{expected}'", actual = actual.display(), expected = expected.display())]
+    MessageBox { expected: PathBuf, actual: PathBuf },
+    /// The packed message names a different parent than the receiver.
+    #[error(
+        "child plan is addressed to parent node '{expected_parent_node_id}', but receiver is '{actual_parent_node_id}'"
+    )]
+    ParentNode {
+        expected_parent_node_id: String,
+        actual_parent_node_id: String,
+    },
+    /// The packed message names a different child generation than the receiver can accept.
+    #[error(
+        "child plan is addressed to generation {expected_generation}, but receiver can accept generation {actual_generation}"
+    )]
+    Generation {
+        expected_generation: u32,
+        actual_generation: u32,
+    },
 }
 
 /// Inputs needed to check whether an unchecked Parent role is valid here.
@@ -115,6 +399,32 @@ impl Parent<Ready> {
     pub(crate) fn identity(&self) -> &ParentIdentity {
         &self.identity
     }
+
+    pub(crate) fn planned_from_locked_child_plan(self) -> Parent<Planned> {
+        self.cast()
+    }
+}
+
+impl Parent<Planned> {
+    pub(crate) fn identity(&self) -> &ParentIdentity {
+        &self.identity
+    }
+}
+
+impl Parent<Selectable> {
+    pub(crate) fn identity(&self) -> &ParentIdentity {
+        &self.identity
+    }
+}
+
+impl<S> Parent<S> {
+    fn cast<T>(self) -> Parent<T> {
+        Parent {
+            identity: self.identity,
+            node: self.node,
+            _state: PhantomData,
+        }
+    }
 }
 
 fn identity_context(
@@ -136,5 +446,107 @@ fn node_context(manifest_path: &Path, node: &Prototype1NodeRecord) -> Prototype1
         generation: node.generation,
         branch_id: node.branch_id.clone(),
         instance_id: node.instance_id.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        cli::prototype1_state::inner::Open,
+        intervention::{PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeStatus},
+    };
+
+    fn identity(node_id: &str, generation: u32) -> ParentIdentity {
+        ParentIdentity {
+            schema_version: "prototype1-parent-identity.v1".to_string(),
+            campaign_id: "campaign".to_string(),
+            parent_id: node_id.to_string(),
+            node_id: node_id.to_string(),
+            generation,
+            previous_parent_id: None,
+            parent_node_id: None,
+            branch_id: format!("branch-{node_id}"),
+            artifact_branch: Some(format!("artifact-{node_id}")),
+            created_at: "2026-04-27T00:00:00Z".to_string(),
+        }
+    }
+
+    fn parent(node_id: &str, generation: u32) -> Parent<Ready> {
+        let identity = identity(node_id, generation);
+        Parent {
+            node: node_record(node_id, generation, None),
+            identity,
+            _state: PhantomData,
+        }
+    }
+
+    fn node_record(
+        node_id: &str,
+        generation: u32,
+        parent_node_id: Option<&str>,
+    ) -> Prototype1NodeRecord {
+        let node_dir = PathBuf::from(format!("/tmp/prototype1/nodes/{node_id}"));
+        Prototype1NodeRecord {
+            schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+            node_id: node_id.to_string(),
+            parent_node_id: parent_node_id.map(ToOwned::to_owned),
+            generation,
+            instance_id: "instance".to_string(),
+            source_state_id: "source".to_string(),
+            operation_target: None,
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            parent_branch_id: None,
+            branch_id: format!("branch-{node_id}"),
+            candidate_id: format!("candidate-{node_id}"),
+            target_relpath: PathBuf::from("crates/ploke-core/tool_text/read_file.md"),
+            node_dir: node_dir.clone(),
+            workspace_root: node_dir.join("worktree"),
+            binary_path: node_dir.join("bin/ploke-eval"),
+            runner_request_path: node_dir.join("runner-request.json"),
+            runner_result_path: node_dir.join("runner-result.json"),
+            status: Prototype1NodeStatus::Planned,
+            created_at: "2026-04-27T00:00:00Z".to_string(),
+            updated_at: "2026-04-27T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn child_plan_receive_returns_received_capability_for_ready_parent() {
+        let manifest_path = Path::new("/tmp/campaign.json");
+        let sender = parent("parent-a", 0);
+        let child = node_record("child-1", 1, Some("parent-a"));
+        let files = ChildPlanFiles::for_parent(manifest_path, sender.identity(), &[child]);
+
+        let at = files.message_at();
+        let (planned, locked) = Open::<ChildPlan>::from_sender(sender, files)
+            .lock(at, |_, _| Ok::<_, std::convert::Infallible>(()))
+            .unwrap();
+        let (selectable, received) = locked.unlock(planned).unwrap();
+
+        assert_eq!(selectable.identity().node_id, "parent-a");
+        assert!(received.body().contains_child("child-1"));
+    }
+
+    #[test]
+    fn child_plan_receive_rejects_wrong_ready_parent() {
+        let manifest_path = Path::new("/tmp/campaign.json");
+        let sender = parent("parent-a", 0);
+        let receiver = parent("parent-b", 0);
+        let child = node_record("child-1", 1, Some("parent-a"));
+        let files = ChildPlanFiles::for_parent(manifest_path, sender.identity(), &[child]);
+
+        let at = files.message_at();
+        let (_planned, locked) = Open::<ChildPlan>::from_sender(sender, files)
+            .lock(at, |_, _| Ok::<_, std::convert::Infallible>(()))
+            .unwrap();
+        let err = locked
+            .unlock(receiver.planned_from_locked_child_plan())
+            .unwrap_err();
+        let (_failed, source) = err.into_parts();
+
+        assert!(matches!(source, ChildPlanReceiverError::ParentNode { .. }));
     }
 }

@@ -493,6 +493,7 @@ pub(crate) mod child;
 pub(crate) mod cli_facing;
 pub(crate) mod event;
 pub(crate) mod identity;
+pub(crate) mod inner;
 pub(crate) mod invocation;
 pub(crate) mod journal;
 pub(crate) mod parent;

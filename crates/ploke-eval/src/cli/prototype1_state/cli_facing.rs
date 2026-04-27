@@ -49,6 +49,7 @@ use crate::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
                 parent_identity_relpath, write_parent_identity,
             },
+            inner::{Locked, Open, Received},
             invocation::{
                 self, InvocationAuthority, SuccessorCompletionStatus, SuccessorInvocation,
             },
@@ -56,7 +57,10 @@ use crate::{
                 JournalEntry, ParentStartedEntry, PrototypeJournal,
                 prototype1_transition_journal_path,
             },
-            parent::{Check, Checked, Parent, Ready, Unchecked},
+            parent::{
+                Check, Checked, ChildPlan, ChildPlanFile, ChildPlanFiles, Parent, Planned, Ready,
+                Selectable, Unchecked,
+            },
             successor::Record as SuccessorRecord,
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
@@ -291,12 +295,44 @@ fn load_existing_prototype1_campaign(
     })
 }
 
+struct ChildPlanReceipt {
+    parent: Parent<Selectable>,
+    plan: Received<ChildPlan>,
+}
+
+struct SelectedChild {
+    parent: Parent<Selectable>,
+    plan: Received<ChildPlan>,
+    node_id: String,
+}
+
+impl SelectedChild {
+    fn load_c1(
+        self,
+        campaign_id: String,
+        manifest_path: PathBuf,
+        repo_root: PathBuf,
+    ) -> Result<(C1, String), PrepareError> {
+        let Self {
+            parent,
+            plan,
+            node_id,
+        } = self;
+        validate_received_child_plan(parent.identity(), &plan, &node_id)?;
+        let c1 = C1::load(campaign_id, manifest_path, &node_id, repo_root).map_err(|err| {
+            prototype1_state_transition_error("prototype1_state_load_c1", err.to_string())
+        })?;
+        Ok((c1, node_id))
+    }
+}
+
 async fn run_parent_target_selection(
     campaign_id: &str,
     manifest_path: &Path,
     repo_root: &Path,
-    parent_identity: &ParentIdentity,
-) -> Result<Prototype1LoopReport, PrepareError> {
+    parent: Parent<Ready>,
+) -> Result<ChildPlanReceipt, PrepareError> {
+    let parent_identity = parent.identity().clone();
     let root_node = load_node_record(manifest_path, &parent_identity.node_id)?;
     let scheduler = load_or_default_scheduler_state(campaign_id, manifest_path)?;
     let campaign = load_existing_prototype1_campaign(campaign_id)?;
@@ -316,6 +352,7 @@ async fn run_parent_target_selection(
         search_policy: scheduler.policy,
         source_campaign: None,
         source_branch_id: Some(parent_identity.branch_id.clone()),
+        source_parent: Some(parent_identity.clone()),
         repo_root: repo_root.to_path_buf(),
         trace_path: prototype1_trace_path(&campaign.manifest_path),
         batch_id,
@@ -323,7 +360,245 @@ async fn run_parent_target_selection(
         prepared_instances: vec![root_node.instance_id],
         campaign,
     };
-    run_prototype1_loop_controller(input).await
+    let report = run_prototype1_loop_controller(input).await?;
+    let files = ChildPlanFiles::for_parent(manifest_path, &parent_identity, &report.staged_nodes);
+    let at = files.message_at();
+    let open = Open::<ChildPlan>::from_sender(parent, files);
+    let (planned, locked) = open
+        .lock(at, |at, body| {
+            validate_child_plan(&parent_identity, &report, body)?;
+            write_child_plan_file(at.path(), body)
+        })
+        .map_err(|err| {
+            let (_parent, source) = err.into_parts();
+            source
+        })?;
+    receive_child_plan(
+        campaign_id,
+        manifest_path,
+        repo_root,
+        &parent_identity,
+        planned,
+        locked,
+    )
+}
+
+fn receive_existing_child_plan(
+    campaign_id: &str,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: Parent<Ready>,
+    nodes: &[Prototype1NodeRecord],
+) -> Result<ChildPlanReceipt, PrepareError> {
+    let parent_identity = parent.identity().clone();
+    let files = ChildPlanFiles::for_parent(manifest_path, &parent_identity, nodes);
+    let at = files.message_at();
+    let locked = Locked::<ChildPlan>::from_box(at, read_child_plan_message).map_err(|err| {
+        let (_at, source) = err.into_parts();
+        source
+    })?;
+    let planned = parent.planned_from_locked_child_plan();
+    receive_child_plan(
+        campaign_id,
+        manifest_path,
+        repo_root,
+        &parent_identity,
+        planned,
+        locked,
+    )
+}
+
+fn receive_child_plan(
+    _campaign_id: &str,
+    _manifest_path: &Path,
+    _repo_root: &Path,
+    parent_identity: &ParentIdentity,
+    planned: Parent<Planned>,
+    locked: Locked<ChildPlan>,
+) -> Result<ChildPlanReceipt, PrepareError> {
+    if planned.identity().node_id != parent_identity.node_id {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "planned parent '{}' did not match active parent '{}'",
+                planned.identity().node_id,
+                parent_identity.node_id
+            ),
+        });
+    }
+    let (parent, plan) = locked.unlock(planned).map_err(|err| {
+        let (_failed, source) = err.into_parts();
+        PrepareError::InvalidBatchSelection {
+            detail: source.to_string(),
+        }
+    })?;
+    Ok(ChildPlanReceipt { parent, plan })
+}
+
+fn write_child_plan_file(path: &Path, body: &ChildPlanFiles) -> Result<(), PrepareError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    write_json_file_pretty(path, body)
+}
+
+fn read_child_plan_message(
+    path: &crate::cli::prototype1_state::inner::At<ChildPlanFile>,
+) -> Result<ChildPlanFiles, PrepareError> {
+    let bytes = fs::read(path.path()).map_err(|source| PrepareError::ReadManifest {
+        path: path.path().to_path_buf(),
+        source,
+    })?;
+    let body = serde_json::from_slice::<ChildPlanFiles>(&bytes).map_err(|source| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "could not decode child plan message '{}': {source}",
+                path.path().display()
+            ),
+        }
+    })?;
+    read_child_plan_files(&body)?;
+    Ok(body)
+}
+
+fn read_child_plan_files(files: &ChildPlanFiles) -> Result<(), PrepareError> {
+    read_child_plan_file(files.scheduler())?;
+    read_child_plan_file(files.branches())?;
+    for child in files.children() {
+        read_child_plan_file(child.node())?;
+        read_child_plan_file(child.runner_request())?;
+    }
+    Ok(())
+}
+
+fn read_child_plan_file(path: &Path) -> Result<(), PrepareError> {
+    let _ = fs::read(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(())
+}
+
+fn validate_received_child_plan(
+    parent: &ParentIdentity,
+    plan: &Received<ChildPlan>,
+    node_id: &str,
+) -> Result<(), PrepareError> {
+    let files = plan.body();
+    if files.parent_node_id() != parent.node_id {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "received child plan recipient '{}' did not match parent '{}'",
+                files.parent_node_id(),
+                parent.node_id
+            ),
+        });
+    }
+    if !files.contains_child(node_id) {
+        let listed = files
+            .children()
+            .iter()
+            .map(|child| child.node_id())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "node '{node_id}' was not included in received child plan for parent '{}'; planned children: {listed}",
+                parent.node_id
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_child_plan(
+    parent: &ParentIdentity,
+    report: &Prototype1LoopReport,
+    files: &ChildPlanFiles,
+) -> Result<(), PrepareError> {
+    if files.scheduler() != report.scheduler_path {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child plan scheduler address '{}' did not match report scheduler '{}'",
+                files.scheduler().display(),
+                report.scheduler_path.display()
+            ),
+        });
+    }
+    if files.branches() != report.branch_registry_path {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child plan branch registry address '{}' did not match report branch registry '{}'",
+                files.branches().display(),
+                report.branch_registry_path.display()
+            ),
+        });
+    }
+
+    // Same direct-child lineage policy as resolve_next_child.
+    let expected_generation = parent.generation + 1;
+    if files.parent_node_id() != parent.node_id {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child plan recipient '{}' did not match parent '{}'",
+                files.parent_node_id(),
+                parent.node_id
+            ),
+        });
+    }
+    if files.child_generation() != expected_generation {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child plan generation {} did not match expected generation {}",
+                files.child_generation(),
+                expected_generation
+            ),
+        });
+    }
+    let valid_children = report
+        .staged_nodes
+        .iter()
+        .filter(|node| {
+            node.generation == expected_generation
+                && node.parent_node_id.as_deref() == Some(parent.node_id.as_str())
+        })
+        .count();
+
+    if valid_children == 0 {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child plan did not stage any generation {} children for parent '{}'",
+                expected_generation, parent.node_id
+            ),
+        });
+    }
+
+    let planned = files
+        .children()
+        .iter()
+        .map(|child| child.node_id())
+        .collect::<BTreeSet<_>>();
+    let staged = report
+        .staged_nodes
+        .iter()
+        .filter(|node| {
+            node.generation == expected_generation
+                && node.parent_node_id.as_deref() == Some(parent.node_id.as_str())
+        })
+        .map(|node| node.node_id.as_str())
+        .collect::<BTreeSet<_>>();
+    if planned != staged {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child plan children did not match staged children for parent '{}': planned={:?} staged={:?}",
+                parent.node_id, planned, staged
+            ),
+        });
+    }
+
+    Ok(())
 }
 
 struct Prototype1LoopControllerInput {
@@ -335,6 +610,7 @@ struct Prototype1LoopControllerInput {
     search_policy: Prototype1SearchPolicy,
     source_campaign: Option<String>,
     source_branch_id: Option<String>,
+    source_parent: Option<ParentIdentity>,
     repo_root: PathBuf,
     trace_path: PathBuf,
     batch_id: String,
@@ -367,6 +643,7 @@ impl Prototype1LoopControllerInput {
             },
             source_campaign: command.source_campaign.clone(),
             source_branch_id: command.source_branch_id.clone(),
+            source_parent: None,
             repo_root,
             trace_path,
             batch_id: prepared_batch.batch_id.clone(),
@@ -594,7 +871,12 @@ async fn run_prototype1_loop_controller(
                 continue;
             };
 
-            let generation = prototype1_source_generation(&registry, source_node) + 1;
+            let generation =
+                prototype1_child_generation(input.source_parent.as_ref(), &registry, source_node);
+            let parent_node_id = input
+                .source_parent
+                .as_ref()
+                .map(|parent| parent.node_id.as_str());
             for branch in &source_node.branches {
                 if scheduler.nodes.len() as u32 >= search_policy.max_total_nodes {
                     break;
@@ -609,6 +891,7 @@ async fn run_prototype1_loop_controller(
                     &campaign.manifest_path,
                     &resolved,
                     generation,
+                    parent_node_id,
                     &intervention_repo_root,
                     input.stop_on_error,
                 )?;
@@ -2211,6 +2494,23 @@ fn runnable_candidate_nodes(
         .collect())
 }
 
+fn runnable_child_plan_nodes(
+    campaign_id: &str,
+    manifest_path: &Path,
+    required_generation: u32,
+    parent_node_id: &str,
+) -> Result<Vec<Prototype1NodeRecord>, PrepareError> {
+    runnable_candidate_nodes(
+        campaign_id,
+        manifest_path,
+        Some(required_generation),
+        Some(parent_node_id),
+    )?
+    .into_iter()
+    .map(|node| load_node_record(manifest_path, &node.node_id))
+    .collect()
+}
+
 fn resolve_prototype1_candidate_node_id(
     command: &Prototype1StateCommand,
     campaign_id: &str,
@@ -2273,16 +2573,39 @@ fn resolve_prototype1_candidate_node_id(
     }
 }
 
-async fn resolve_next_candidate_node_id(
+async fn resolve_next_child(
     command: &Prototype1StateCommand,
     campaign_id: &str,
     manifest_path: &Path,
     repo_root: &Path,
-    parent: &Parent<Ready>,
-) -> Result<String, PrepareError> {
-    let parent_identity = parent.identity();
+    parent: Parent<Ready>,
+) -> Result<SelectedChild, PrepareError> {
+    let parent_identity = parent.identity().clone();
+    // Prototype 1 currently enforces direct-child lineage: Parent k may only
+    // materialize candidates produced as generation k + 1.
     let required_generation = parent_identity.generation + 1;
-    if let Some(node_id) = command.node_id.as_ref() {
+    let parent_node_id = parent_identity.node_id.clone();
+    let mut nodes = runnable_child_plan_nodes(
+        campaign_id,
+        manifest_path,
+        required_generation,
+        parent_node_id.as_str(),
+    )?;
+    let receipt = if nodes.is_empty() {
+        let receipt =
+            run_parent_target_selection(campaign_id, manifest_path, repo_root, parent).await?;
+        nodes = runnable_child_plan_nodes(
+            campaign_id,
+            manifest_path,
+            required_generation,
+            parent_node_id.as_str(),
+        )?;
+        receipt
+    } else {
+        receive_existing_child_plan(campaign_id, manifest_path, repo_root, parent, &nodes)?
+    };
+
+    let node_id = if let Some(node_id) = command.node_id.as_ref() {
         let candidate = load_node_record(manifest_path, node_id)?;
         if candidate.generation != required_generation {
             return Err(PrepareError::InvalidBatchSelection {
@@ -2300,28 +2623,32 @@ async fn resolve_next_candidate_node_id(
                 ),
             });
         }
-        return Ok(node_id.clone());
-    }
+        if !nodes.iter().any(|node| node.node_id == *node_id) {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "--node-id '{}' is not present in the received child plan for active parent '{}'",
+                    node_id, parent_identity.parent_id
+                ),
+            });
+        }
+        node_id.clone()
+    } else {
+        resolve_prototype1_candidate_node_id(
+            command,
+            campaign_id,
+            manifest_path,
+            Some(required_generation),
+            Some(parent_node_id.as_str()),
+            "next child candidate",
+        )?
+    };
 
-    let candidates = runnable_candidate_nodes(
-        campaign_id,
-        manifest_path,
-        Some(required_generation),
-        Some(parent_identity.node_id.as_str()),
-    )?;
-    if candidates.is_empty() {
-        let _ = run_parent_target_selection(campaign_id, manifest_path, repo_root, parent_identity)
-            .await?;
-    }
-
-    resolve_prototype1_candidate_node_id(
-        command,
-        campaign_id,
-        manifest_path,
-        Some(required_generation),
-        Some(parent_identity.node_id.as_str()),
-        "next child candidate",
-    )
+    validate_received_child_plan(&parent_identity, &receipt.plan, &node_id)?;
+    Ok(SelectedChild {
+        parent: receipt.parent,
+        plan: receipt.plan,
+        node_id,
+    })
 }
 
 fn initialize_prototype1_parent_identity(
@@ -2581,7 +2908,7 @@ impl Prototype1StateCommand {
             &manifest_path,
             &repo_root,
         )?;
-        let parent_identity = parent.identity();
+        let parent_identity = parent.identity().clone();
         journal
             .append(JournalEntry::ParentStarted(ParentStartedEntry {
                 recorded_at: RecordedAt::now(),
@@ -2606,14 +2933,13 @@ impl Prototype1StateCommand {
             journal_path = %journal_path.display(),
             "starting typed prototype1 parent turn"
         );
-        let candidate_node_id = resolve_next_candidate_node_id(
-            &self,
-            &campaign_id,
-            &manifest_path,
-            &repo_root,
-            &parent,
-        )
-        .await?;
+        let selected_child =
+            resolve_next_child(&self, &campaign_id, &manifest_path, &repo_root, parent).await?;
+        let (c1, candidate_node_id) = selected_child.load_c1(
+            campaign_id.clone(),
+            manifest_path.clone(),
+            repo_root.clone(),
+        )?;
         debug!(
             target: EXECUTION_DEBUG_TARGET,
             campaign = %campaign_id,
@@ -2622,16 +2948,6 @@ impl Prototype1StateCommand {
             generation = parent_identity.generation,
             "resolved prototype1 candidate for parent turn"
         );
-        let c1 = C1::load(
-            campaign_id.clone(),
-            manifest_path.clone(),
-            &candidate_node_id,
-            repo_root.clone(),
-        )
-        .map_err(|err| {
-            prototype1_state_transition_error("prototype1_state_load_c1", err.to_string())
-        })?;
-
         let c2 = match MaterializeBranch::new()
             .transition(c1, &mut journal)
             .map_err(|err| {
@@ -3342,6 +3658,18 @@ pub(crate) fn prototype1_source_generation(
     }
 
     recurse(registry, source_node, 0)
+}
+
+fn prototype1_child_generation(
+    source_parent: Option<&ParentIdentity>,
+    registry: &Prototype1BranchRegistry,
+    source_node: &crate::intervention::InterventionSourceNode,
+) -> u32 {
+    source_parent
+        // Direct-child lineage for typed parent runs: Parent k produces
+        // generation k + 1 candidates.
+        .map(|parent| parent.generation + 1)
+        .unwrap_or_else(|| prototype1_source_generation(registry, source_node) + 1)
 }
 
 fn prototype1_branch_status_report(
@@ -4393,5 +4721,44 @@ mod tests {
         .expect("selected node should resolve");
 
         assert_eq!(resolved, selected.node_id);
+    }
+
+    #[test]
+    fn child_generation_uses_active_parent_identity_for_root_parent_branch() {
+        let parent = ParentIdentity {
+            schema_version: "prototype1-parent-identity.v1".to_string(),
+            campaign_id: "campaign".to_string(),
+            parent_id: "parent-0".to_string(),
+            node_id: "node-parent".to_string(),
+            generation: 0,
+            previous_parent_id: None,
+            parent_node_id: None,
+            branch_id: "prototype1-parent-campaign-gen0".to_string(),
+            artifact_branch: Some("prototype1-parent-campaign-gen0".to_string()),
+            created_at: "2026-04-26T00:00:00Z".to_string(),
+        };
+        let source = InterventionSourceNode {
+            source_state_id: "baseline-run".to_string(),
+            parent_branch_id: Some(parent.branch_id.clone()),
+            source_artifact_id: None,
+            operation_target: None,
+            instance_id: "clap-rs__clap-3670".to_string(),
+            target_relpath: PathBuf::from("crates/ploke-core/tool_text/read_file.md"),
+            source_content: "old".to_string(),
+            source_content_hash: "old-hash".to_string(),
+            selected_branch_id: Some("branch-selected".to_string()),
+            branches: Vec::new(),
+        };
+        let registry = Prototype1BranchRegistry {
+            schema_version: PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION.to_string(),
+            campaign_id: "campaign".to_string(),
+            updated_at: "2026-04-26T00:00:00Z".to_string(),
+            source_nodes: vec![source.clone()],
+            active_targets: Vec::new(),
+        };
+
+        let generation = prototype1_child_generation(Some(&parent), &registry, &source);
+
+        assert_eq!(generation, 1);
     }
 }

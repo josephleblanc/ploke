@@ -1525,6 +1525,7 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
         &baseline_manifest_path,
         &resolved,
         generation,
+        None,
         repo_root,
         stop_on_error,
     )?;
