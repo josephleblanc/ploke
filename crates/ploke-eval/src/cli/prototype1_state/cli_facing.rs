@@ -291,7 +291,7 @@ fn load_existing_prototype1_campaign(
     })
 }
 
-async fn run_initial_parent_target_selection(
+async fn run_parent_target_selection(
     campaign_id: &str,
     manifest_path: &Path,
     repo_root: &Path,
@@ -2120,17 +2120,28 @@ fn active_selected_instance_for_campaign(
     }
 }
 
-fn resolve_prototype1_state_node_id(
-    command: &Prototype1StateCommand,
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CandidateNode {
+    node_id: String,
+    branch_id: String,
+    status: Prototype1NodeStatus,
+}
+
+impl CandidateNode {
+    fn from_record(node: &Prototype1NodeRecord) -> Self {
+        Self {
+            node_id: node.node_id.clone(),
+            branch_id: node.branch_id.clone(),
+            status: node.status,
+        }
+    }
+}
+
+fn runnable_candidate_nodes(
     campaign_id: &str,
     manifest_path: &Path,
     required_generation: Option<u32>,
-    purpose: &str,
-) -> Result<String, PrepareError> {
-    if let Some(node_id) = command.node_id.as_ref() {
-        return Ok(node_id.clone());
-    }
-
+) -> Result<Vec<CandidateNode>, PrepareError> {
     let selected_instance = active_selected_instance_for_campaign(campaign_id)?;
     let scheduler = load_or_default_scheduler_state(campaign_id, manifest_path)?;
     let frontier: BTreeSet<&str> = scheduler
@@ -2188,6 +2199,26 @@ fn resolve_prototype1_state_node_id(
         }
     }
 
+    Ok(candidates
+        .into_iter()
+        .map(CandidateNode::from_record)
+        .collect())
+}
+
+fn resolve_prototype1_candidate_node_id(
+    command: &Prototype1StateCommand,
+    campaign_id: &str,
+    manifest_path: &Path,
+    required_generation: Option<u32>,
+    purpose: &str,
+) -> Result<String, PrepareError> {
+    if let Some(node_id) = command.node_id.as_ref() {
+        return Ok(node_id.clone());
+    }
+
+    let selected_instance = active_selected_instance_for_campaign(campaign_id)?;
+    let candidates = runnable_candidate_nodes(campaign_id, manifest_path, required_generation)?;
+
     match candidates.as_slice() {
         [node] => Ok(node.node_id.clone()),
         [] => {
@@ -2230,13 +2261,50 @@ fn resolve_prototype1_state_node_id(
     }
 }
 
+async fn resolve_next_candidate_node_id(
+    command: &Prototype1StateCommand,
+    campaign_id: &str,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent_identity: &ParentIdentity,
+) -> Result<String, PrepareError> {
+    let required_generation = parent_identity.generation + 1;
+    if let Some(node_id) = command.node_id.as_ref() {
+        let candidate = load_node_record(manifest_path, node_id)?;
+        if candidate.generation != required_generation {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "--node-id '{}' is generation {}, but parent '{}' can only materialize generation {} candidates",
+                    node_id, candidate.generation, parent_identity.parent_id, required_generation
+                ),
+            });
+        }
+        return Ok(node_id.clone());
+    }
+
+    let candidates =
+        runnable_candidate_nodes(campaign_id, manifest_path, Some(required_generation))?;
+    if candidates.is_empty() {
+        let _ = run_parent_target_selection(campaign_id, manifest_path, repo_root, parent_identity)
+            .await?;
+    }
+
+    resolve_prototype1_candidate_node_id(
+        command,
+        campaign_id,
+        manifest_path,
+        Some(required_generation),
+        "next child candidate",
+    )
+}
+
 fn initialize_prototype1_parent_identity(
     command: &Prototype1StateCommand,
     campaign_id: &str,
     manifest_path: &Path,
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
-    let node_id = resolve_prototype1_state_node_id(
+    let node_id = resolve_prototype1_candidate_node_id(
         command,
         campaign_id,
         manifest_path,
@@ -2296,16 +2364,16 @@ fn resolve_prototype1_parent_identity(
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
     if let Some(identity) = load_parent_identity_optional(repo_root)? {
-        identity.validate_for_command(campaign_id, command.node_id.as_deref())?;
+        identity.validate_for_command(campaign_id, None)?;
         return Ok(identity);
     }
 
     let node_id = command.node_id.clone().map(Ok).unwrap_or_else(|| {
-        resolve_prototype1_state_node_id(
+        resolve_prototype1_candidate_node_id(
             command,
             campaign_id,
             manifest_path,
-            None,
+            Some(0),
             "parent identity fallback",
         )
     })?;
@@ -2489,23 +2557,14 @@ impl Prototype1StateCommand {
             },
         )?;
         let parent_identity = parent.identity();
-        let mut node_id = parent.node().node_id.clone();
-        if parent_identity.generation == 0 {
-            let _ = run_initial_parent_target_selection(
-                &campaign_id,
-                &manifest_path,
-                &repo_root,
-                &parent_identity,
-            )
-            .await?;
-            node_id = resolve_prototype1_state_node_id(
-                &self,
-                &campaign_id,
-                &manifest_path,
-                Some(parent_identity.generation + 1),
-                "initial parent selected child",
-            )?;
-        }
+        let candidate_node_id = resolve_next_candidate_node_id(
+            &self,
+            &campaign_id,
+            &manifest_path,
+            &repo_root,
+            &parent_identity,
+        )
+        .await?;
         let handoff_invocation = acknowledge_prototype1_state_handoff(
             &self,
             &campaign_id,
@@ -2531,7 +2590,7 @@ impl Prototype1StateCommand {
         debug!(
             target: EXECUTION_DEBUG_TARGET,
             campaign = %campaign_id,
-            node_id = %node_id,
+            candidate_node_id = %candidate_node_id,
             parent_id = %parent_identity.parent_id,
             generation = parent_identity.generation,
             repo_root = %repo_root.display(),
@@ -2541,7 +2600,7 @@ impl Prototype1StateCommand {
         let c1 = C1::load(
             campaign_id.clone(),
             manifest_path.clone(),
-            &node_id,
+            &candidate_node_id,
             repo_root.clone(),
         )
         .map_err(|err| {
@@ -2560,7 +2619,7 @@ impl Prototype1StateCommand {
                 debug!(
                     target: EXECUTION_DEBUG_TARGET,
                     campaign = %campaign_id,
-                    node_id = %node_id,
+                    candidate_node_id = %candidate_node_id,
                     workspace_root = %next.artifact.repo_root.display(),
                     "materialize completed"
                 );
@@ -2585,7 +2644,7 @@ impl Prototype1StateCommand {
                         debug!(
                             target: EXECUTION_DEBUG_TARGET,
                             campaign = %campaign_id,
-                            node_id = %node_id,
+                            candidate_node_id = %candidate_node_id,
                             rejected = ?rejected,
                             "build rejected"
                         );
@@ -2607,7 +2666,7 @@ impl Prototype1StateCommand {
                         debug!(
                             target: EXECUTION_DEBUG_TARGET,
                             campaign = %campaign_id,
-                            node_id = %node_id,
+                            candidate_node_id = %candidate_node_id,
                             binary_path = %c3.binary.child_path.display(),
                             "build completed"
                         );
@@ -2626,7 +2685,7 @@ impl Prototype1StateCommand {
                                     debug!(
                                         target: EXECUTION_DEBUG_TARGET,
                                         campaign = %campaign_id,
-                                        node_id = %node_id,
+                                        candidate_node_id = %candidate_node_id,
                                         rejected = ?rejected,
                                         "spawn rejected"
                                     );
@@ -2647,7 +2706,7 @@ impl Prototype1StateCommand {
                                     debug!(
                                             target: EXECUTION_DEBUG_TARGET,
                                             campaign = %campaign_id,
-                                            node_id = %node_id,
+                                            candidate_node_id = %candidate_node_id,
                                         child_runtime = ?child_runtime,
                                         "spawn completed"
                                     );
@@ -2666,7 +2725,7 @@ impl Prototype1StateCommand {
                                                 debug!(
                                                     target: EXECUTION_DEBUG_TARGET,
                                                     campaign = %campaign_id,
-                                                    node_id = %node_id,
+                                                    candidate_node_id = %candidate_node_id,
                                                     rejected = ?rejected,
                                                     "child completion rejected"
                                                 );
@@ -2682,7 +2741,7 @@ impl Prototype1StateCommand {
                                                 debug!(
                                                     target: EXECUTION_DEBUG_TARGET,
                                                     campaign = %campaign_id,
-                                                    node_id = %node_id,
+                                                    candidate_node_id = %candidate_node_id,
                                                     disposition = ?c5.report.overall_disposition,
                                                     "child completion observed"
                                                 );
@@ -2697,8 +2756,10 @@ impl Prototype1StateCommand {
                                                     &c5.observed,
                                                     ObservedChild::Succeeded(_)
                                                 ) {
-                                                    let node =
-                                                        load_node_record(&manifest_path, &node_id)?;
+                                                    let node = load_node_record(
+                                                        &manifest_path,
+                                                        &candidate_node_id,
+                                                    )?;
                                                     let scheduler =
                                                         load_or_default_scheduler_state(
                                                             &campaign_id,
@@ -2732,7 +2793,7 @@ impl Prototype1StateCommand {
                                                     {
                                                         match spawn_and_handoff_prototype1_successor(
                                                             &campaign_id,
-                                                            &node_id,
+                                                            &candidate_node_id,
                                                             &repo_root,
                                                         )? {
                                                             Some(successor) => (
@@ -2791,10 +2852,10 @@ impl Prototype1StateCommand {
                 }
             };
 
-        let node = load_node_record(&manifest_path, &node_id)?;
+        let node = load_node_record(&manifest_path, &candidate_node_id)?;
         let report = Prototype1StateReport {
             campaign_id,
-            node_id,
+            node_id: candidate_node_id,
             repo_root,
             journal_path,
             stop_after: self.stop_after,
@@ -4296,7 +4357,7 @@ mod tests {
         )
         .expect("write registry");
 
-        let resolved = resolve_prototype1_state_node_id(
+        let resolved = resolve_prototype1_candidate_node_id(
             &state_command_without_ids(),
             "campaign",
             &manifest_path,

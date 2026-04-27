@@ -403,7 +403,7 @@ pub struct Prototype1StateCommand {
     #[arg(long)]
     pub campaign: Option<String>,
 
-    /// Staged node id. Defaults to the selected branch/node in the campaign scheduler.
+    /// Candidate node id to materialize/evaluate. During --init-parent-identity only, this is the generation-0 parent node.
     #[arg(long)]
     pub node_id: Option<String>,
 
