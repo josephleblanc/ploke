@@ -1,5 +1,13 @@
 # Prototype 1 History Admission Map
 
+Status note, 2026-04-29 11:31 PDT: this map is an evidence/projection bridge,
+not the canonical History definition. The canonical implementation contract is
+`crates/ploke-eval/src/cli/prototype1_state/history.rs`; the current v2
+conceptual anchor is
+`docs/workflow/evalnomicon/chat-history/history-blocks-v2.md`. This document
+should describe how current records can be read or normalized without implying
+that imported JSON records already carry Crown authority.
+
 This document bridges the existing Prototype 1 persisted-record audits into the
 new History model in
 `crates/ploke-eval/src/cli/prototype1_state/history.rs`.
@@ -49,7 +57,7 @@ checks, or projections.
 | --- | --- | --- | --- |
 | `campaign_id` | campaign manifest, scheduler, journal entries, invocations, successor records, run/eval reports | Block or entry environment | Store once per block/environment when stable; entries may reference it when imported from external run records. |
 | `node_id` | scheduler, node records, runner request/result, journal refs, invocation, branch evaluation reports | Entry subject or artifact/runtime ref | Use as a subject/ref key, not as the only artifact identity. |
-| `generation` | scheduler nodes, branch registry source states, journal entries, parent identity, runner records | Block height where it matches Crown epoch; otherwise entry metadata | Do not assume generation equals block height after branching/merge. |
+| `generation` | scheduler nodes, branch registry source states, journal entries, parent identity, runner records | Projection coordinate or entry metadata | Do not assume generation equals block height after branching/merge. In v2, lineage-local height is an index/projection attached to a policy-scoped History head, not identity. |
 | `runtime_id` | invocation, child/successor journal records, ready/completion files, results path | `ActorRef::Runtime` / executor | Make runtime the executor/observer where it performed the action; keep process ids separate. |
 | `pid` | child/successor records, ready files, spawn entries, parent started | Operational environment detail | Never use pid as durable actor identity. |
 | parent identity | `.ploke/prototype1/parent_identity.json`, journal snapshots, active checkout records | Artifact identity evidence | Hash/reference the artifact-carried file; treat copied snapshots as corroborating evidence. |
@@ -61,7 +69,7 @@ checks, or projections.
 | baseline/treatment campaign ids | evaluation report, branch evaluation summary, run records | Procedure/evaluation context | Keep as evaluation context; do not make treatment campaign a History authority. |
 | operational metrics | evaluation report, operational metrics CLI, run record-derived summaries | Derived projection with source refs | Persist metric values only with derivation version and source record digests. |
 | branch evaluation disposition/reasons | evaluation report, branch registry latest summary, runner result, observe-child journal | `Decision` entry | Use full evaluation report as source; registry summary is a projection. |
-| stop reason / continuation decision | scheduler latest decision, successor selected journal entry, successor stdout | `Decision` entry and block seal context | Prefer journal decision plus scheduler policy; scheduler latest field is projection/current state. |
+| stop reason / continuation decision | scheduler latest decision, successor selected journal entry, successor stdout | `Decision` entry and block seal context | Prefer journal decision plus scheduler policy; scheduler latest field is projection/current state. Name this as selection evidence/source strength unless and until the decision was admitted through sealed Crown/History authority. |
 | tool call ids and parent/request ids | `RunRecord`, agent turn artifact, protocol artifacts | Tool procedure subevent refs | Preserve pairing keys; avoid copying tool request fields into every derived metric row. |
 | LLM prompt/response text | run record, full response JSONL, agent turn artifact, protocol artifact inputs | Evidence refs and payload hashes | Store digest/ref and bounded summary; only admit full text by reference. |
 | stream paths/stdout/stderr excerpts | spawn records, failure info, runner reports, node stream dirs | Evidence refs | Reference logs; import excerpts only as diagnostic observation payloads. |
@@ -75,8 +83,17 @@ relying on History as the sole analysis surface.
 
 - `sealed_by` / committer actor for block sealing is not yet recorded in
   `history.rs`.
-- Live `Parent<Ruling>`, `Crown<Locked>`, and `Successor<Admitted>` carriers do
-  not yet gate History transitions.
+- Live startup validation does not yet gate `Parent<Ruling>` on the current
+  checkout Tree key matching the sealed History head.
+- Live `Crown<Locked>` sealing does not yet persist the block that the next
+  runtime must verify before entering `Parent<Ruling>`.
+- `PolicyRef` and `PolicyScope` are not yet explicit enough to define the
+  single-ruler local policy through `Surface`.
+- Artifact commitments do not yet include a stable artifact-local provenance
+  manifest ref/digest.
+- Stochastic evidence, uncertainty/risk refs, rejected/failure evidence refs,
+  and rollback/fork/finality head-state concerns are not yet represented as
+  first-class block/History material.
 - Branch evaluation reports need schema/version and source record digests.
 - Registry summaries should include a path/ref to the full evaluation artifact.
 - Latest runner result should become a pointer to an attempt result or be
@@ -96,7 +113,7 @@ should produce a preview with explicit degraded provenance:
 ```text
 campaign root
 -> source refs and payload hashes
--> one provisional block per observed generation/Crown epoch
+-> one provisional grouping per observed generation/Crown epoch
 -> admitted-preview entries from journal/evaluation/run artifacts
 -> projection rows for scheduler/branch/frontier summaries
 -> rejected/deferred evidence list with reasons
@@ -126,9 +143,9 @@ The command preserves the old full table/JSON behavior by default, and also
 supports bounded inspection for iterative development:
 
 ```text
-history-preview --entries 5 --diagnostics 5
-history-preview --entry 80
-history-preview --format json --entries 0 --diagnostics 0
+history preview --entries 5 --diagnostics 5
+history preview --entry 80
+history preview --format json --entries 0 --diagnostics 0
 ```
 
 The importer has a narrow `EvidenceStore` trait and a filesystem-backed
@@ -140,7 +157,7 @@ disposition fields, evaluation paths, runner result paths, baseline/treatment
 record paths, and basic graph refs such as source state, base artifact, and
 patch id.
 
-Current block placement remains provisional. The preview builds a node index
+Current grouping remains provisional. The preview builds a node index
 from `nodes/*/node.json` and uses it to infer generation for invocation,
 successor, evaluation, and other adjacent records when possible. This improves
 analysis without changing the authority claim: mutable node records are still

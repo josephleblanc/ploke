@@ -7,11 +7,12 @@ into the main evalnomicon book.
   Tight notation-first draft for composed procedures, evidential outputs, and
   fork/merge structure.
 - [`history-blocks-and-crown-authority.md`](history-blocks-and-crown-authority.md)
-  Prototype 1 History model tying sealed blocks, Crown authority, ingress,
-  provenance, and weekly implementation audits together.
+  Older Prototype 1 History/Crown background. Current v2 block and blockchain
+  framing lives in `../chat-history/history-blocks-v2.md`.
 - [`prototype1-history-metrics-agent-brief.md`](prototype1-history-metrics-agent-brief.md)
   Compact post-compaction brief for Prototype 1 History, metrics projections,
-  CLI surfaces, task stack, and review discipline.
+  CLI surfaces, task stack, and review discipline; updated to point at v2
+  History/Crown framing.
 - [`prototype1-history-handoff-2026-04-29.md`](prototype1-history-handoff-2026-04-29.md)
   End-of-session handoff for the current History/Crown direction: startup
   admission, lineage-local History height, configured-store genesis absence,

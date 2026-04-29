@@ -1,6 +1,6 @@
 # Prototype 1 History And Metrics Agent Brief
 
-Last updated: 2026-04-28 America/Los_Angeles.
+Last updated: 2026-04-29 11:31 PDT.
 
 Purpose: compact post-compaction context for work on Prototype 1 History,
 metrics projections, and CLI surfaces. Read this before editing
@@ -15,12 +15,17 @@ Minimum read set for most tasks:
 1. `AGENTS.md`
 2. this file
 3. `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
-4. the directly edited source file
-5. `docs/reports/prototype1-record-audit/history-admission-map.md`
+4. `crates/ploke-eval/src/cli/prototype1_state/history.rs` when touching
+   History, Crown, Block, policy, or authority claims
+5. the directly edited source file
+6. `docs/reports/prototype1-record-audit/history-admission-map.md`
 
 Read deeper only when the task touches the relevant concept:
 
-- Crown/authority: `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md`
+- current History/Crown/blockchain framing:
+  `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md`
+- older Crown/authority background:
+  `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md`
 - procedure graphs and mixed LLM/mechanized metrics:
   `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md`
 - runtime/artifact graph location:
@@ -47,8 +52,9 @@ Core terms:
 - Parent: a Runtime in a role/state with authority over one active lineage.
 - Child: a Runtime evaluating a candidate Artifact.
 - Crown: authority to mutate one active lineage and choose its successor.
-- History: the intended durable substrate: sealed authority blocks plus
-  provenance-bearing entries and ingress.
+- History: the intended durable substrate: sealed local authority blocks,
+  provenance-bearing entries, evidence references, policy-scoped admission
+  state, and future head-state/finality material.
 - Journal/current JSON records: transitional evidence, mutable buffers, or
   projections. They are not sealed History.
 - Projection: a disposable view or derived metric over evidence or History.
@@ -107,8 +113,10 @@ Implemented:
 Not implemented:
 
 - live `Crown<Locked>` does not yet gate block sealing.
-- live `Parent<Ruling>` and `Successor<Admitted>` do not yet form the authority
-  path for History mutation.
+- live startup validation does not yet gate `Parent<Ruling>` on the current
+  checkout Tree key matching the sealed History head.
+- live `Crown<Locked>` sealing does not yet persist the block that the next
+  runtime must verify before entering `Parent<Ruling>`.
 - current metrics are not sealed History entries.
 - current JSON records do not become authoritative by being imported.
 - lineage id is not available in current records; cohort metrics group by
@@ -175,30 +183,35 @@ Known metrics issues:
 The target authority sequence is:
 
 ```text
-Parent<Ruling> opens Block<Open>
+Runtime starts from a checkout
+Startup derives the backend Tree key for that checkout
+Startup verifies the current sealed History head expects that Tree key
+Startup validates artifact-carried parent identity as redundant evidence
+Startup enters Parent<Ruling>
 Parent<Ruling> records entries while it has the Crown
 Parent<Ruling> installs selected Artifact
 Parent<Ruling> locks Crown<Locked>
 Crown<Locked> seals Block<Sealed>
-Successor<Admitted> verifies Block<Sealed>
-Successor<Admitted> imports admissible Ingress
-Successor<Admitted> becomes Parent<Ruling>
+The next Runtime repeats Startup validation before entering Parent<Ruling>
 ```
 
 This is a cross-runtime protocol, not a single in-process state machine. The
 runtime that locks the box is not the runtime that opens it. Each generation is
 compiled with the same shared contract, but the transition is offset across
 Parent runtimes: the outgoing Parent writes/locks the handoff material at the
-end of its rule, and the successor later verifies/unlocks it before becoming
-the next Parent. The type system is used to keep the contract consistent on
-both sides of that runtime boundary and to preserve the invariant that only one
-runtime may hold mutable lineage authority at a time.
+end of its rule, and the next runtime later verifies the sealed head and its
+own checkout before entering the next Parent role. The type system is used to
+keep the contract consistent on both sides of that runtime boundary. The
+current local claim is not OS-process uniqueness; it is that only a runtime
+whose current Artifact matches the successor Artifact committed by the sealed
+History head may enter the ruling parent path under the single-ruler policy.
 
 The "Crown" names that one-at-a-time lineage authority. Parent is a role a
 runtime may hold; Crown is the capability that prevents two Parents from
-mutating the same History lineage as if both were ruling. Later multi-parent
-work must make the lineage coordinate explicit so "one Crown" means one Crown
-per lineage, not one global singleton for the whole tree.
+mutating the same local History lineage as if both were ruling under the same
+policy scope. Later multi-parent work must make policy, store scope, lineage
+coordinate, and finality explicit so "one Crown" means one local Crown under a
+policy-scoped surface, not one global singleton for the whole tree.
 
 `SealBlock` currently commits a `crown_lock_transition` evidence ref into the
 sealed header, but that ref is not an authority token. The desired next

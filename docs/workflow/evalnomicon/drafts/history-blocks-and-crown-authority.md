@@ -1,5 +1,13 @@
 # History Blocks And Crown Authority
 
+Status note, 2026-04-29 11:31 PDT: this draft is older background. The
+canonical implementation contract now lives in
+`crates/ploke-eval/src/cli/prototype1_state/history.rs`; the current v2
+conceptual anchor is
+`docs/workflow/evalnomicon/chat-history/history-blocks-v2.md`. The material
+below remains useful where it describes the Crown boundary and audit policy,
+but any conflict should be resolved in favor of those newer sources.
+
 This draft pins the next Prototype 1 History concept after the first working
 three-generation trampoline run. The goal is not to add another report format.
 The goal is to define the durable substrate that lets later analysis answer:
@@ -20,7 +28,7 @@ History is not `scheduler.json`, `branches.json`, a CLI inspection view, a
 mutable report, or a side table in Cozo. Those may be useful projections.
 They are not the trust source.
 
-The stronger object is:
+The stronger object was initially sketched as:
 
 ```text
 History = chain of sealed Blocks
@@ -29,6 +37,13 @@ Entry = provenance-bearing fact inside an epoch
 Ingress = append-only late/backchannel observations outside the sealed epoch
 Projection = disposable view or index derived from History
 ```
+
+Status note, 2026-04-29 11:31 PDT: that reduction is now too narrow. The v2
+model treats History as an authenticated substrate containing sealed local
+blocks, head-state proofs/projections, evidence references, policy-scoped
+admission state, and future finality/consensus material. A local single-ruler
+History may still look chain-like today, but "chain of blocks" is not the full
+definition.
 
 Cozo can later index History. It should not become the authority layer unless
 it stores or verifies the same immutable block and entry identities.
@@ -39,15 +54,16 @@ The Crown is the authority to mutate one active lineage and choose the next
 Parent for that lineage. A Block should align with that authority epoch:
 
 ```text
-Parent<Ruling> opens Block<Open>
+Runtime starts from a checkout
+Startup derives the backend Tree key for that checkout
+Startup verifies the current sealed History head expects that Tree key
+Startup validates artifact-carried parent identity as redundant evidence
+Startup enters Parent<Ruling>
 Parent<Ruling> records entries while it has the Crown
 Parent<Ruling> installs the selected Artifact
 Parent<Ruling> locks Crown<Locked>
 Crown<Locked> seals Block<Sealed>
-Successor<Admitted> verifies Block<Sealed>
-Successor<Admitted> imports admissible Ingress
-Successor<Admitted> becomes Parent<Ruling>
-Parent<Ruling> opens the next Block<Open>
+The next Runtime repeats Startup validation before entering Parent<Ruling>
 ```
 
 Pinning the block boundary to `Crown<Locked>` gives us a concrete authority
@@ -58,7 +74,7 @@ recorded policy.
 What this gives today:
 
 - a precise place to stop accepting Parent-authored decisions for one epoch
-- a validation target for the successor before it becomes `Parent<Ruling>`
+- a validation target for the next runtime before it becomes `Parent<Ruling>`
 - a way to separate sealed evidence from late observations
 - a place to check that selection, active checkout, runtime identity, and
   artifact identity agree
@@ -70,6 +86,8 @@ What this does not give today:
 - proof that an LLM judgment is correct
 - proof that every current JSON buffer already has block semantics
 - global authority across unrelated lineages
+- OS-process uniqueness; duplicate local processes are out of scope until a
+  lease, lock, or consensus layer exists
 
 Later cryptographic signatures, remote witnesses, replicated logs, or
 multi-Ruler consensus may strengthen the model. The current claim should stay
@@ -115,8 +133,9 @@ The intended shape is:
 
 ```text
 Parent<Ruling> -> Crown<Locked> -> Block<Sealed>
-Crown<Locked> + Block<Sealed> + SuccessorEvidence -> Successor<Admitted>
-Successor<Admitted> -> Parent<Ruling>
+Startup<Observed> + current Tree key + sealed head -> Startup<Validated>
+Startup<Validated> -> Parent<Ruling>
+Parent<Ruling> -> Crown<Locked> -> Block<Sealed>
 ```
 
 To make that real, advanced states must be hard to construct accidentally:
@@ -255,6 +274,16 @@ an LLM adjudication, a human review, a stale binary, a different tool surface,
 or an imported late observation.
 
 ## Block Header
+
+Status note, 2026-04-29 11:31 PDT: this header sketch is aspirational and
+incomplete. The current implementation does not yet carry the full v2 block
+content. In v2, `lineage_id` and lineage-local height are coordinates/indexes,
+not complete identity. Policy must be explicit, with `PolicyRef` and
+`PolicyScope` defined through `Surface`. Artifact commitments need enough
+backend/tree and artifact-local manifest information to recover and validate
+the selected successor artifact. Stochastic evidence, rejected/failure evidence,
+rollback/fork/finality state, and risk/uncertainty references are first-class
+History concerns even if not all are inline header fields.
 
 A block header should be small and mechanical:
 
