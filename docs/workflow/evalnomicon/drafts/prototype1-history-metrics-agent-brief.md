@@ -200,11 +200,12 @@ runtime that locks the box is not the runtime that opens it. Each generation is
 compiled with the same shared contract, but the transition is offset across
 Parent runtimes: the outgoing Parent writes/locks the handoff material at the
 end of its rule, and the next runtime later verifies the sealed head and its
-own checkout before entering the next Parent role. The type system is used to
-keep the contract consistent on both sides of that runtime boundary. The
-current local claim is not OS-process uniqueness; it is that only a runtime
-whose current Artifact matches the successor Artifact committed by the sealed
-History head may enter the ruling parent path under the single-ruler policy.
+own checkout before entering the next Parent role. Locally, `Parent<Ruling>`
+is admitted through the artifact named by the sealed History head: the startup
+gate must relate the runtime, its current checkout Tree key, and the expected
+successor Artifact before granting Crown-backed mutable History authority.
+This does not claim OS-process uniqueness; duplicate processes executing the
+same admitted Artifact remain outside the current type-state guarantee.
 
 The "Crown" names that one-at-a-time lineage authority. Parent is a role a
 runtime may hold; Crown is the capability that prevents two Parents from

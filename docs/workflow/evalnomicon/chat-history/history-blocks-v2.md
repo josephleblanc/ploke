@@ -91,6 +91,41 @@ For the hot path, startup should validate the immediate sealed head and current
 Artifact commitment. Full History replay can remain a separate validation
 procedure because block hashes and parent links support recursive verification.
 
+Refined invariant, 2026-04-29 11:58 PDT:
+
+```text
+ProducedBy(A_i, R_i)
+```
+
+means Artifact `A_i` hydrates Runtime `R_i`.
+
+For a configured History surface `H`, lineage coordinate `L`, and policy `P`,
+the intended local admission rule is:
+
+```text
+MayEnterRuling(H, L, P, R_i)
+  only if
+∃ A_i.
+  ProducedBy(A_i, R_i)
+  ∧ CurrentCheckout(R_i) commits to TreeKey(A_i)
+  ∧ Head(H, L, P) commits to ExpectedSuccessor(A_i)
+```
+
+Under the current single-ruler local policy, mutable History authority is
+therefore mediated by the artifact named by the sealed head, not by a generic
+process identity. This is the invariant the startup gate should encode. It
+does not yet prove OS-process uniqueness:
+
+```text
+MayEnterRuling(H, L, P, R_i) ∧ MayEnterRuling(H, L, P, R_j)
+  does not imply
+ProcessId(R_i) = ProcessId(R_j)
+```
+
+Two processes can still execute the same admitted Artifact until a lease, lock,
+or consensus layer is added. That process-uniqueness property is outside the
+current type-state claim.
+
 ### Procedure Environment
 
 `ProcedureRef` in the current code should be read as a reference to a procedure
