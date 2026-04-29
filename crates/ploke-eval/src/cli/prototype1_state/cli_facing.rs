@@ -313,7 +313,7 @@ impl SelectedChild {
         campaign_id: String,
         manifest_path: PathBuf,
         repo_root: PathBuf,
-    ) -> Result<(C1, String), PrepareError> {
+    ) -> Result<(Parent<Selectable>, C1, String), PrepareError> {
         let Self {
             parent,
             plan,
@@ -323,7 +323,7 @@ impl SelectedChild {
         let c1 = C1::load(campaign_id, manifest_path, &node_id, repo_root).map_err(|err| {
             prototype1_state_transition_error("prototype1_state_load_c1", err.to_string())
         })?;
-        Ok((c1, node_id))
+        Ok((parent, c1, node_id))
     }
 }
 
@@ -3252,7 +3252,7 @@ impl Prototype1StateCommand {
         );
         let selected_child =
             resolve_next_child(&self, &campaign_id, &manifest_path, &repo_root, parent).await?;
-        let (c1, candidate_node_id) = selected_child.load_c1(
+        let (parent, c1, candidate_node_id) = selected_child.load_c1(
             campaign_id.clone(),
             manifest_path.clone(),
             repo_root.clone(),
@@ -3453,18 +3453,21 @@ impl Prototype1StateCommand {
                                                             &campaign_id,
                                                             &candidate_node_id,
                                                             &repo_root,
+                                                            parent,
                                                         )? {
-                                                            Some(successor) => (
-                                                                format!(
-                                                                    "completed:{:?};successor_handoff=acknowledged",
-                                                                    c5.report.overall_disposition
-                                                                ),
-                                                                child_runtime,
-                                                                Some(successor.runtime_id.to_string()),
-                                                                Some(successor.pid),
-                                                                Some(successor.ready_path),
-                                                            ),
-                                                            None => (
+                                                            (_retired, Some(successor)) => {
+                                                                (
+                                                                    format!(
+                                                                        "completed:{:?};successor_handoff=acknowledged",
+                                                                        c5.report.overall_disposition
+                                                                    ),
+                                                                    child_runtime,
+                                                                    Some(successor.runtime_id.to_string()),
+                                                                    Some(successor.pid),
+                                                                    Some(successor.ready_path),
+                                                                )
+                                                            }
+                                                            (_retired, None) => (
                                                                 format!(
                                                                     "completed:{:?};successor_handoff=timed_out",
                                                                     c5.report.overall_disposition

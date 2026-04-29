@@ -9,7 +9,7 @@ use crate::{
     cli::prototype1_state::{
         backend::WorkspaceBackend,
         identity::{ParentIdentity, parent_identity_path},
-        inner::{At, File, Message, MessageBox, Transition},
+        inner::{At, Crown, File, Message, MessageBox, Transition, crown},
     },
     intervention::{
         Prototype1NodeRecord, load_node_record, prototype1_branch_registry_path,
@@ -40,6 +40,10 @@ pub(crate) enum Planned {}
 /// Parent role after it has received and validated its child-plan message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Selectable {}
+
+/// Parent role after it has locked lineage authority for successor handoff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Retired {}
 
 /// Runtime role carrier for a Parent in a known verification state.
 #[derive(Debug, PartialEq, Eq)]
@@ -415,6 +419,17 @@ impl Parent<Selectable> {
     pub(crate) fn identity(&self) -> &ParentIdentity {
         &self.identity
     }
+
+    /// Lock this lineage's Crown and retire the current Parent.
+    ///
+    /// This is deliberately unavailable on `Parent<Ready>`. The Crown should
+    /// not be minted early and carried beside ordinary parent work. In the live
+    /// handoff path, a parent can only produce `Crown<Locked>` by crossing the
+    /// successor boundary from `Parent<Selectable>` to `Parent<Retired>`.
+    pub(crate) fn lock_crown(self) -> (Parent<Retired>, Crown<crown::Locked>) {
+        let crown = Crown::for_lineage(self.identity.campaign_id.clone()).lock();
+        (self.cast(), crown)
+    }
 }
 
 impl<S> Parent<S> {
@@ -528,6 +543,24 @@ mod tests {
 
         assert_eq!(selectable.identity().node_id, "parent-a");
         assert!(received.body().contains_child("child-1"));
+    }
+
+    #[test]
+    fn selectable_parent_locks_crown_and_retires() {
+        let manifest_path = Path::new("/tmp/campaign.json");
+        let sender = parent("parent-a", 0);
+        let child = node_record("child-1", 1, Some("parent-a"));
+        let files = ChildPlanFiles::for_parent(manifest_path, sender.identity(), &[child]);
+
+        let at = files.message_at();
+        let (planned, locked_plan) = Open::<ChildPlan>::from_sender(sender, files)
+            .lock(at, |_, _| Ok::<_, std::convert::Infallible>(()))
+            .unwrap();
+        let (selectable, _received) = locked_plan.unlock(planned).unwrap();
+        let (retired, locked) = selectable.lock_crown();
+
+        assert_eq!(retired.identity.node_id, "parent-a");
+        assert_eq!(locked.lineage(), "campaign");
     }
 
     #[test]

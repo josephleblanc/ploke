@@ -39,15 +39,70 @@ pub(crate) trait MessageBox: File {
     type Unlock: Transition;
 }
 
+/// Crown authority state markers.
+pub(crate) mod crown {
+    use super::Private;
+
+    /// The current Parent may mutate the active lineage.
+    #[derive(Debug)]
+    pub(crate) struct Ruling {
+        _private: Private,
+    }
+
+    /// The prior Parent has locked the Crown for successor verification.
+    #[derive(Debug)]
+    pub(crate) struct Locked {
+        _private: Private,
+    }
+}
+
 /// Exclusive authority over one lineage surface.
-pub(crate) struct Crown<L> {
-    _lineage: PhantomData<L>,
+pub(crate) struct Crown<S> {
+    lineage: String,
+    _state: PhantomData<S>,
     _private: Private,
 }
 
-impl<L> fmt::Debug for Crown<L> {
+impl<S> fmt::Debug for Crown<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Crown").finish_non_exhaustive()
+        f.debug_struct("Crown")
+            .field("lineage", &self.lineage)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<S> Crown<S> {
+    pub(crate) fn lineage(&self) -> &str {
+        &self.lineage
+    }
+}
+
+impl Crown<crown::Ruling> {
+    pub(super) fn for_lineage(lineage: impl Into<String>) -> Self {
+        Self {
+            lineage: lineage.into(),
+            _state: PhantomData,
+            _private: Private,
+        }
+    }
+
+    pub(crate) fn lock(self) -> Crown<crown::Locked> {
+        Crown {
+            lineage: self.lineage,
+            _state: PhantomData,
+            _private: Private,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Crown<crown::Locked> {
+    pub(crate) fn test_locked(lineage: impl Into<String>) -> Self {
+        Self {
+            lineage: lineage.into(),
+            _state: PhantomData,
+            _private: Private,
+        }
     }
 }
 

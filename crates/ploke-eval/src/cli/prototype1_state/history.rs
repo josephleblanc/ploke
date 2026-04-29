@@ -3,17 +3,127 @@
 //! Status recorded 2026-04-27 14:32 PDT. Implementation started from this
 //! specification on 2026-04-27.
 //!
-//! This module defines the local invariant core for Prototype 1 History. It is
-//! intentionally not wired into the live successor handoff yet. Current live
-//! handoff still uses typed transition scaffolding, a transition journal,
-//! invocation files, successor-ready files, and mutable scheduler/branch
-//! projections. Those records can be imported as evidence later; they are not
-//! themselves sealed History blocks.
+//! This module defines the local invariant core for Prototype 1 History.
+//! Current live handoff locks a lineage-bound Crown carrier but does not yet
+//! seal or persist a block. The live loop still uses typed transition
+//! scaffolding, a transition journal, invocation files, successor-ready files,
+//! and mutable scheduler/branch projections. Those records can be imported as
+//! evidence later; they are not themselves sealed History blocks.
 //!
 //! The weekly review policy in `AGENTS.md` applies here: reviewers must compare
 //! these claims against the actual code at least once per week while this
 //! architecture is active, and must either narrow the claims or fix the
 //! implementation when the code does not enforce them.
+//!
+//! ## Authoritative History model
+//!
+//! Treat these module docs as the local authority for Prototype 1 History while
+//! this type stabilizes. Older design notes and audit reports may explain how
+//! we got here, but this module should state the claims we are willing to make
+//! about the current code.
+//!
+//! History is the durable authority surface for one lineage. It is not a
+//! scheduler snapshot, branch registry, CLI report, metrics dashboard, preview
+//! aggregate, or database side table. Those are projections, caches, or evidence
+//! sources. The semantic object is:
+//!
+//! ```text
+//! History    = chain of sealed Blocks
+//! Block      = one authority epoch for one active lineage
+//! Entry      = provenance-bearing fact admitted inside an epoch
+//! Ingress    = append-only late/backchannel observation outside a sealed epoch
+//! Projection = disposable view or index derived from History or evidence
+//! ```
+//!
+//! The intended live authority sequence is:
+//!
+//! ```text
+//! BootstrapPolicy admits clean Tree<Key> as Parent<Ruling>
+//! BootstrapPolicy opens genesis Block<Open>
+//! Parent<Ruling> records entries while it has the Crown
+//! Parent<Ruling> installs the selected Artifact
+//! Parent<Ruling> locks Crown<Locked>
+//! Crown<Locked> seals Block<Sealed>
+//! incoming Runtime derives clean Tree<Key>
+//! incoming Runtime verifies Tree<Key> against current Block<Sealed>
+//! incoming Runtime imports admissible Ingress
+//! incoming Runtime becomes Parent<Ruling>
+//! Parent<Ruling> opens the next Block<Open> from predecessor authority
+//! ```
+//!
+//! This is a cross-runtime contract, not merely an in-process state machine. The
+//! outgoing Parent runtime locks the handoff material at the end of its rule.
+//! A later successor runtime, built from the selected Artifact, verifies that
+//! sealed material before it may become the next Parent. The type system keeps
+//! both runtimes aligned to the same protocol even though the transition is
+//! observed across process and artifact boundaries.
+//!
+//! This is the subtle part: the Crown is not locked because a single in-memory
+//! object survives across both runtimes. The Crown is locked because, within the
+//! shared contract compiled into both artifacts, the only valid way to make the
+//! successor runtime executable is for the predecessor to cross the move-only
+//! handoff transition and produce the sealed handoff material. If that contract
+//! is preserved by the successor Artifact, a valid successor execution implies
+//! that the predecessor has already moved out of the state with ruling access.
+//!
+//! Therefore the core invariant is:
+//!
+//! ```text
+//! For one lineage, at most one valid typestate carrier may hold
+//! Crown<Ruling>.
+//!
+//! During handoff, there may be zero rulers:
+//! Parent<Ruling> has moved to a retired/non-ruling state, Crown<Locked> exists
+//! as handoff evidence, and the successor runtime has not yet verified that
+//! evidence into the next Parent<Ruling>.
+//! ```
+//!
+//! Multiple runtimes may execute, especially around handoff. Execution is not
+//! the same as Crown authority. The invariant is about which typed carriers can
+//! mutate the lineage as ruling Parent.
+//!
+//! Current claim updated 2026-04-29: Crown/History gates artifact eligibility,
+//! not OS-process uniqueness. For one lineage, a Runtime may enter the ruling
+//! parent path only if its current clean Artifact tree matches the Artifact
+//! committed by the current sealed History head. This does not prove that only
+//! one OS process is running from that Artifact; process uniqueness requires a
+//! later lease, lock, or consensus mechanism.
+//!
+//! The Crown is the one-at-a-time lineage authority. Parent is a role a Runtime
+//! may hold; the Crown is the capability that prevents two Parents from
+//! mutating the same lineage as if both were ruling. Future multi-parent or
+//! consensus work must make the lineage coordinate explicit, so "one Crown"
+//! means one Crown per lineage, not one global singleton for the whole tree.
+//!
+//! A sealed block must be a projection of the authority transition, not a caller
+//! assembled status blob. Mutable files such as `scheduler.json`,
+//! `branches.json`, node records, invocation files, ready/completion files, and
+//! monitor reports may be cited as evidence or projections, but they do not
+//! become History authority until admitted into a sealed block or imported as
+//! ingress under an explicit policy.
+//!
+//! The current implementation enforces only part of this model:
+//!
+//! - `Block<Open>::seal` is private to this module.
+//! - sealing requires a lineage-bound `Crown<Locked>` carrier.
+//! - sealed blocks carry deterministic hashes and can be locally verified.
+//! - a filesystem `BlockStore` can append sealed blocks and maintain
+//!   rebuildable indexes.
+//!
+//! The current implementation does not yet enforce:
+//!
+//! - live `Parent<Ruling>` as the only writer of open block entries;
+//! - live append of the handoff block through `BlockStore`;
+//! - successor verification of the predecessor `Block<Sealed>` before becoming
+//!   authoritative;
+//! - ingress capture/import while the Crown is locked;
+//! - cryptographic signatures or distributed consensus.
+//!
+//! Therefore the current claim is local and narrow: this module defines and
+//! partially enforces tamper-evident, lineage-scoped, transition-checked
+//! History. It does not make the whole execution environment trustworthy, and
+//! it does not upgrade existing Prototype 1 JSON records into authority by
+//! reading or previewing them.
 //!
 //! ## Formal vocabulary
 //!
@@ -70,31 +180,36 @@
 //!
 //! ## Blocked live wiring
 //!
-//! The next live integration still needs concrete authority carriers outside
+//! The next live integration still needs complete authority carriers outside
 //! this module. The intended shape is:
 //!
 //! ```ignore
-//! // Blocked until Prototype 1 has real live authority carriers:
+//! // Blocked until Prototype 1 has real live authority carriers and tree keys:
+//! //
+//! // BootstrapPolicy
+//! //   .admit(tree_key, parent_identity)
+//! //   -> Parent<Ruling>
 //! //
 //! // Parent<Ruling>
 //! //   .lock_crown(selected_successor, open_block)
 //! //   -> (Crown<Locked>, Block<Sealed>)
 //! //
-//! // Successor
-//! //   .verify(crown_locked, sealed_block, active_artifact)
-//! //   -> Successor<Admitted>
-//! //
-//! // Successor<Admitted>
-//! //   .rule()
+//! // Runtime<Checked>
+//! //   .verify(sealed_head, tree_key, parent_identity)
 //! //   -> Parent<Ruling>
 //! ```
 //!
 //! Blocking reasons:
 //!
-//! - `Parent<Ruling>`, `Crown<Locked>`, and `Successor<Admitted>` are not yet
-//!   live handoff gates.
+//! - `Parent<Ruling>` and `Successor<Admitted>` are not yet live handoff gates.
+//!   The live handoff now locks a lineage-bound `Crown<Locked>` carrier, but it
+//!   does not yet seal or persist a History block.
 //! - live successor validation still consults mutable scheduler/invocation
-//!   state instead of a sealed block hash.
+//!   state instead of deriving `Tree<Key>` from the current checkout and
+//!   checking that it matches the current sealed History head.
+//! - gen0 setup currently writes and commits parent identity, but it does not
+//!   yet open or append an explicit genesis History block from bootstrap
+//!   authority.
 //! - whole-artifact and runtime/build identities still need final canonical
 //!   refs in several paths.
 //! - existing journals and reports must be imported as pre-History evidence
@@ -121,8 +236,22 @@
 //! `BlockCommon::parent_block_hashes` is a list, not a singleton. The current
 //! single-lineage chain is the one-parent case. Branch merges and consensus
 //! extensions should not require rewriting the sealed block shape.
+//!
+//! Generation is not the same concept as block height. In the current linear
+//! prototype they may often move together, but branching, revisits, merges, and
+//! cross-runtime generation over distinct `(Artifact, Runtime)` coordinates can
+//! break that equivalence. Storage and projections must preserve the block's
+//! lineage/head metadata explicitly instead of reconstructing authority from a
+//! generation number, branch name, or scheduler frontier.
 
 #![allow(dead_code)] // Self-contained invariant core; live wiring is intentionally deferred.
+
+use std::{
+    collections::BTreeMap,
+    fs::{self, OpenOptions},
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -217,6 +346,212 @@ impl LineageId {
     }
 }
 
+/// Append-only storage port for sealed History blocks.
+///
+/// This is intentionally separate from the read-only preview `EvidenceStore`
+/// and the intervention `RecordStore`. It stores authority-bearing
+/// `Block<Sealed>` values and may maintain rebuildable indexes.
+///
+/// `append` is the only semantic operation that may advance the lineage head.
+/// Filesystem details such as `heads.json` are projections of the sealed block
+/// stream, not independent authority. A database-backed implementation may use
+/// rows or transactions instead, but it must preserve the same contract: the
+/// head is derived from accepted sealed blocks, not written as a free-standing
+/// status field.
+///
+/// Current limitation: `head` returns only the block hash. Before live handoff
+/// opens the next block from storage, this should be widened to return the
+/// stored head reference needed to construct the successor block without
+/// reconstructing authority from scheduler state, generation buckets, or branch
+/// handles.
+pub(crate) trait BlockStore {
+    type Error;
+
+    fn append(&self, block: &Block<block::Sealed>) -> Result<StoredBlock, Self::Error>;
+
+    fn head(&self, lineage: &LineageId) -> Result<Option<BlockHash>, Self::Error>;
+}
+
+/// Filesystem-backed sealed block store for Prototype 1.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FsBlockStore {
+    root: PathBuf,
+}
+
+impl FsBlockStore {
+    const SEGMENT_NAME: &'static str = "segment-000000.jsonl";
+
+    pub(crate) fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    pub(crate) fn for_campaign_manifest(manifest_path: &Path) -> Self {
+        let root = manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("prototype1")
+            .join("history");
+        Self::new(root)
+    }
+
+    fn blocks_dir(&self) -> PathBuf {
+        self.root.join("blocks")
+    }
+
+    fn index_dir(&self) -> PathBuf {
+        self.root.join("index")
+    }
+
+    fn segment_path(&self) -> PathBuf {
+        self.blocks_dir().join(Self::SEGMENT_NAME)
+    }
+
+    fn by_hash_path(&self) -> PathBuf {
+        self.index_dir().join("by-hash.jsonl")
+    }
+
+    fn by_lineage_height_path(&self) -> PathBuf {
+        self.index_dir().join("by-lineage-height.jsonl")
+    }
+
+    fn heads_path(&self) -> PathBuf {
+        self.index_dir().join("heads.json")
+    }
+
+    fn ensure_dirs(&self) -> Result<(), BlockStoreError> {
+        fs::create_dir_all(self.blocks_dir()).map_err(|source| BlockStoreError::CreateDir {
+            path: self.blocks_dir(),
+            source,
+        })?;
+        fs::create_dir_all(self.index_dir()).map_err(|source| BlockStoreError::CreateDir {
+            path: self.index_dir(),
+            source,
+        })?;
+        Ok(())
+    }
+
+    fn append_jsonl<T: Serialize>(&self, path: &Path, value: &T) -> Result<(), BlockStoreError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| BlockStoreError::CreateDir {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|source| BlockStoreError::Open {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        let mut line = serde_json::to_string(value).map_err(BlockStoreError::Serialize)?;
+        line.push('\n');
+        file.write_all(line.as_bytes())
+            .map_err(|source| BlockStoreError::Write {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        file.sync_data().map_err(|source| BlockStoreError::Sync {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Ok(())
+    }
+
+    fn read_heads(&self) -> Result<BTreeMap<LineageId, BlockHash>, BlockStoreError> {
+        let path = self.heads_path();
+        match fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(BlockStoreError::Deserialize),
+            Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+            Err(source) => Err(BlockStoreError::Read { path, source }),
+        }
+    }
+
+    fn write_heads(&self, heads: &BTreeMap<LineageId, BlockHash>) -> Result<(), BlockStoreError> {
+        let path = self.heads_path();
+        let bytes = serde_json::to_vec_pretty(heads).map_err(BlockStoreError::Serialize)?;
+        fs::write(&path, bytes).map_err(|source| BlockStoreError::Write { path, source })
+    }
+}
+
+impl BlockStore for FsBlockStore {
+    type Error = BlockStoreError;
+
+    fn append(&self, block: &Block<block::Sealed>) -> Result<StoredBlock, Self::Error> {
+        block.verify_hash()?;
+        self.ensure_dirs()?;
+
+        let segment_path = self.segment_path();
+        let location = BlockLocation {
+            segment: Self::SEGMENT_NAME.to_string(),
+            line_index: count_lines(&segment_path)?,
+        };
+        let stored = StoredBlock {
+            block_hash: block.block_hash().clone(),
+            lineage_id: block.header().common.lineage_id.clone(),
+            block_height: block.header().common.block_height,
+            location,
+        };
+
+        self.append_jsonl(&segment_path, block)?;
+        self.append_jsonl(&self.by_hash_path(), &stored)?;
+        self.append_jsonl(
+            &self.by_lineage_height_path(),
+            &LineageHeight {
+                lineage_id: stored.lineage_id.clone(),
+                block_height: stored.block_height,
+                block_hash: stored.block_hash.clone(),
+            },
+        )?;
+
+        let mut heads = self.read_heads()?;
+        heads.insert(stored.lineage_id.clone(), stored.block_hash.clone());
+        self.write_heads(&heads)?;
+
+        Ok(stored)
+    }
+
+    fn head(&self, lineage: &LineageId) -> Result<Option<BlockHash>, Self::Error> {
+        Ok(self.read_heads()?.get(lineage).cloned())
+    }
+}
+
+fn count_lines(path: &Path) -> Result<u64, BlockStoreError> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text.lines().count() as u64),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(0),
+        Err(source) => Err(BlockStoreError::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// Physical location of one sealed block in the append-only block store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct BlockLocation {
+    segment: String,
+    line_index: u64,
+}
+
+/// Result of appending a sealed block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct StoredBlock {
+    block_hash: BlockHash,
+    lineage_id: LineageId,
+    block_height: u64,
+    location: BlockLocation,
+}
+
+/// Rebuildable projection from `(lineage, height)` to block hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LineageHeight {
+    lineage_id: LineageId,
+    block_height: u64,
+    block_hash: BlockHash,
+}
+
 /// Actor identity in a custody role.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "value")]
@@ -290,6 +625,104 @@ impl ArtifactRef {
             value: value.into(),
         }
     }
+}
+
+/// Stable commitment to a backend-owned clean tree key.
+///
+/// The concrete tree key belongs to the workspace backend adapter
+/// (`WorkspaceBackend::TreeKey`). History commits a deterministic digest of
+/// that typed backend key so this module does not accept caller-authored text
+/// as an Artifact identity witness.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TreeKeyHash {
+    hash: HistoryHash,
+}
+
+impl TreeKeyHash {
+    fn from_serialized_key<K>(key: &K) -> Result<Self, HistoryError>
+    where
+        K: Serialize,
+    {
+        Ok(Self {
+            hash: HistoryHash::of_domain_json("prototype1.history.tree_key.v1", key)?,
+        })
+    }
+}
+
+/// Capability for a backend-owned tree key to produce its History commitment.
+///
+/// The constructor for `TreeKeyHash` stays private. Backends expose a concrete
+/// associated `WorkspaceBackend::TreeKey`; only key types that implement this
+/// trait can be admitted into History opening authority.
+pub(crate) trait TreeKeyCommitment {
+    fn tree_key_hash(&self) -> Result<TreeKeyHash, HistoryError>;
+}
+
+impl TreeKeyCommitment for super::backend::GitTreeKey {
+    fn tree_key_hash(&self) -> Result<TreeKeyHash, HistoryError> {
+        TreeKeyHash::from_serialized_key(self)
+    }
+}
+
+/// Parent identity evidence committed into a parent-capable Artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ParentIdentityRef {
+    evidence: EvidenceRef,
+}
+
+impl ParentIdentityRef {
+    pub(crate) fn new(evidence: EvidenceRef) -> Self {
+        Self { evidence }
+    }
+}
+
+/// Authority that opens the first block for a lineage.
+///
+/// Gen0 is not authorized by a predecessor block. It is authorized by
+/// setup/bootstrap policy, and that base case must be committed explicitly so
+/// later successor admission can recurse from a real History head instead of a
+/// conceptual hole.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GenesisAuthority {
+    bootstrap_policy: ProcedureRef,
+    tree_key: TreeKeyHash,
+    parent_identity: ParentIdentityRef,
+}
+
+impl GenesisAuthority {
+    pub(crate) fn new(
+        bootstrap_policy: ProcedureRef,
+        tree_key: TreeKeyHash,
+        parent_identity: ParentIdentityRef,
+    ) -> Self {
+        Self {
+            bootstrap_policy,
+            tree_key,
+            parent_identity,
+        }
+    }
+}
+
+/// Authority that opens a non-genesis block from a sealed predecessor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PredecessorAuthority {
+    predecessor_block_hash: BlockHash,
+}
+
+impl PredecessorAuthority {
+    pub(crate) fn new(predecessor_block_hash: BlockHash) -> Self {
+        Self {
+            predecessor_block_hash,
+        }
+    }
+}
+
+/// Authority basis for opening a block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+pub(crate) enum OpeningAuthority {
+    Genesis(GenesisAuthority),
+    Predecessor(PredecessorAuthority),
 }
 
 /// Selected successor named in a sealed block.
@@ -595,6 +1028,7 @@ pub(crate) struct OpenBlock {
     pub(crate) lineage_id: LineageId,
     pub(crate) block_height: u64,
     pub(crate) parent_block_hashes: Vec<BlockHash>,
+    pub(crate) opening_authority: OpeningAuthority,
     pub(crate) opened_by: ActorRef,
     pub(crate) opened_from_artifact: ArtifactRef,
     pub(crate) ruling_authority: ActorRef,
@@ -609,6 +1043,7 @@ struct BlockCommon {
     lineage_id: LineageId,
     block_height: u64,
     parent_block_hashes: Vec<BlockHash>,
+    opening_authority: OpeningAuthority,
     opened_by: ActorRef,
     opened_from_artifact: ArtifactRef,
     ruling_authority: ActorRef,
@@ -616,15 +1051,14 @@ struct BlockCommon {
     opened_at: RecordedAt,
 }
 
-/// Data required for `Block<block::Open> -> Block<block::Sealed>`.
+/// Header data committed by `Crown<Locked> -> Block<block::Sealed>`.
 ///
-/// Implementation gap recorded 2026-04-28 11:59 PDT: this transition commits
-/// a `crown_lock_transition` reference into the sealed header, but it does not
-/// yet require the live `Crown<Locked>` authority carrier described in
-/// `history-blocks-and-crown-authority.md`. The reference is header material,
-/// not an authority token. The live integration should make block sealing a
-/// projection of the Crown lock transition rather than a direct public
-/// `Block<Open>` operation.
+/// Implementation gap updated 2026-04-29: block sealing now requires the
+/// `Crown<Locked>` carrier at the API boundary, and the live successor handoff
+/// now locks that carrier. The `crown_lock_transition` reference is still
+/// header material, not an authority token. Live handoff still needs to pass
+/// the carrier into block sealing and persist the sealed block before successor
+/// admission can verify it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SealBlock {
     pub(crate) crown_lock_transition: EvidenceRef,
@@ -697,6 +1131,21 @@ impl Block<block::Open> {
         if fields.block_height > 0 && fields.parent_block_hashes.is_empty() {
             return Err(HistoryError::NonGenesisWithoutParents);
         }
+        match (&fields.opening_authority, fields.block_height) {
+            (OpeningAuthority::Genesis(_), 0) => {}
+            (OpeningAuthority::Genesis(_), _) => return Err(HistoryError::GenesisAuthorityOnChild),
+            (OpeningAuthority::Predecessor(_), 0) => {
+                return Err(HistoryError::GenesisWithoutBootstrap);
+            }
+            (OpeningAuthority::Predecessor(predecessor), _) => {
+                if !fields
+                    .parent_block_hashes
+                    .contains(&predecessor.predecessor_block_hash)
+                {
+                    return Err(HistoryError::OpeningPredecessorNotParent);
+                }
+            }
+        }
 
         Ok(Self {
             entries: Vec::new(),
@@ -707,6 +1156,7 @@ impl Block<block::Open> {
                     lineage_id: fields.lineage_id,
                     block_height: fields.block_height,
                     parent_block_hashes: fields.parent_block_hashes,
+                    opening_authority: fields.opening_authority,
                     opened_by: fields.opened_by,
                     opened_from_artifact: fields.opened_from_artifact,
                     ruling_authority: fields.ruling_authority,
@@ -760,7 +1210,7 @@ impl Block<block::Open> {
         Ok(entry_id)
     }
 
-    pub(crate) fn seal(self, fields: SealBlock) -> Result<Block<block::Sealed>, HistoryError> {
+    fn seal(self, fields: SealBlock) -> Result<Block<block::Sealed>, HistoryError> {
         let entry_hashes = self
             .entries
             .iter()
@@ -884,6 +1334,9 @@ impl Block<block::Sealed> {
         Block::<block::Open>::open(OpenBlock {
             lineage_id: self.header().common.lineage_id.clone(),
             block_height: self.header().common.block_height + 1,
+            opening_authority: OpeningAuthority::Predecessor(PredecessorAuthority::new(
+                self.block_hash().clone(),
+            )),
             parent_block_hashes,
             opened_by: fields.opened_by,
             opened_from_artifact: fields.opened_from_artifact,
@@ -891,6 +1344,25 @@ impl Block<block::Sealed> {
             policy_ref: fields.policy_ref,
             opened_at: fields.opened_at,
         })
+    }
+}
+
+impl super::inner::Crown<super::inner::crown::Locked> {
+    /// Seal a block using a locked Crown carrier for the same lineage.
+    ///
+    /// This is the public crate boundary for `Block<Open> -> Block<Sealed>`.
+    /// The block remains a History object, while the authority to seal it is
+    /// carried structurally by `Crown<Locked>`.
+    pub(crate) fn seal(
+        self,
+        block: Block<block::Open>,
+        fields: SealBlock,
+    ) -> Result<Block<block::Sealed>, HistoryError> {
+        if self.lineage() != block.lineage_id().as_str() {
+            return Err(HistoryError::WrongCrownLineage);
+        }
+
+        block.seal(fields)
     }
 }
 
@@ -1052,6 +1524,15 @@ pub(crate) enum HistoryError {
     #[error("non-genesis block must cite at least one parent block hash")]
     NonGenesisWithoutParents,
 
+    #[error("genesis block must be opened by bootstrap authority")]
+    GenesisWithoutBootstrap,
+
+    #[error("bootstrap authority can only open the genesis block")]
+    GenesisAuthorityOnChild,
+
+    #[error("predecessor opening authority must cite one of the parent block hashes")]
+    OpeningPredecessorNotParent,
+
     #[error("entry belongs to another lineage")]
     WrongLineage,
 
@@ -1060,6 +1541,9 @@ pub(crate) enum HistoryError {
 
     #[error("entry belongs to another block height")]
     WrongBlockHeight,
+
+    #[error("locked Crown belongs to another lineage")]
+    WrongCrownLineage,
 
     #[error("duplicate entry id in block: {0:?}")]
     DuplicateEntry(EntryId),
@@ -1075,6 +1559,34 @@ pub(crate) enum HistoryError {
 
     #[error("sealed block hash does not match expected anchored hash")]
     ExpectedBlockHashMismatch,
+}
+
+/// Sealed History block storage errors.
+#[derive(Debug, Error)]
+pub(crate) enum BlockStoreError {
+    #[error("failed to create History store directory '{}'", path.display())]
+    CreateDir { path: PathBuf, source: io::Error },
+
+    #[error("failed to open History store file '{}'", path.display())]
+    Open { path: PathBuf, source: io::Error },
+
+    #[error("failed to read History store file '{}'", path.display())]
+    Read { path: PathBuf, source: io::Error },
+
+    #[error("failed to write History store file '{}'", path.display())]
+    Write { path: PathBuf, source: io::Error },
+
+    #[error("failed to sync History store file '{}'", path.display())]
+    Sync { path: PathBuf, source: io::Error },
+
+    #[error("failed to serialize History store value")]
+    Serialize(#[source] serde_json::Error),
+
+    #[error("failed to deserialize History store value")]
+    Deserialize(#[source] serde_json::Error),
+
+    #[error("sealed block failed verification before storage")]
+    Verify(#[from] HistoryError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1102,6 +1614,23 @@ mod tests {
             .recorder(EvidenceRef::new("journal:test"))
     }
 
+    #[derive(Serialize)]
+    struct TestTreeKey<'a> {
+        value: &'a str,
+    }
+
+    impl TreeKeyCommitment for TestTreeKey<'_> {
+        fn tree_key_hash(&self) -> Result<TreeKeyHash, HistoryError> {
+            TreeKeyHash::from_serialized_key(self)
+        }
+    }
+
+    fn tree_key(value: &'static str) -> TreeKeyHash {
+        TestTreeKey { value }
+            .tree_key_hash()
+            .expect("tree key hash")
+    }
+
     fn open_block(height: u64, parents: Vec<BlockHash>) -> Block<block::Open> {
         open_block_with_id(BlockId::new(), height, parents)
     }
@@ -1111,12 +1640,24 @@ mod tests {
         height: u64,
         parents: Vec<BlockHash>,
     ) -> Block<block::Open> {
+        let opening_authority = if height == 0 {
+            OpeningAuthority::Genesis(GenesisAuthority::new(
+                ProcedureRef::new("policy:bootstrap"),
+                tree_key("tree:genesis"),
+                ParentIdentityRef::new(EvidenceRef::new("parent-identity:genesis")),
+            ))
+        } else {
+            OpeningAuthority::Predecessor(PredecessorAuthority::new(
+                parents.first().expect("non-genesis parent hash").clone(),
+            ))
+        };
         Block::open_with_block_id(
             block_id,
             OpenBlock {
                 lineage_id: LineageId::new("lineage:a"),
                 block_height: height,
                 parent_block_hashes: parents,
+                opening_authority,
                 opened_by: actor("parent"),
                 opened_from_artifact: ArtifactRef::new("artifact:base"),
                 ruling_authority: actor("ruler"),
@@ -1168,17 +1709,91 @@ mod tests {
         block: Block<block::Open>,
         transition: &'static str,
     ) -> Block<block::Sealed> {
-        block
-            .seal(SealBlock {
-                crown_lock_transition: EvidenceRef::new(transition),
-                selected_successor: SuccessorRef::new(
-                    actor("successor"),
-                    ArtifactRef::new("artifact:successor"),
-                ),
-                active_artifact: ArtifactRef::new("artifact:successor"),
-                sealed_at: at(30),
-            })
+        super::super::inner::Crown::test_locked(block.lineage_id().as_str())
+            .seal(
+                block,
+                SealBlock {
+                    crown_lock_transition: EvidenceRef::new(transition),
+                    selected_successor: SuccessorRef::new(
+                        actor("successor"),
+                        ArtifactRef::new("artifact:successor"),
+                    ),
+                    active_artifact: ArtifactRef::new("artifact:successor"),
+                    sealed_at: at(30),
+                },
+            )
             .expect("seal block")
+    }
+
+    #[test]
+    fn locked_crown_must_match_block_lineage() {
+        let block = open_block(0, Vec::new());
+        let err = super::super::inner::Crown::test_locked("lineage:other")
+            .seal(
+                block,
+                SealBlock {
+                    crown_lock_transition: EvidenceRef::new("transition:crown-lock"),
+                    selected_successor: SuccessorRef::new(
+                        actor("successor"),
+                        ArtifactRef::new("artifact:successor"),
+                    ),
+                    active_artifact: ArtifactRef::new("artifact:successor"),
+                    sealed_at: at(30),
+                },
+            )
+            .expect_err("wrong lineage must not seal");
+
+        assert!(matches!(err, HistoryError::WrongCrownLineage));
+    }
+
+    #[test]
+    fn fs_block_store_appends_block_and_projection_indexes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let mut block = open_block(0, Vec::new());
+        block
+            .admit(proposed_entry(), actor("admitter"))
+            .expect("admit");
+        let sealed = seal(block);
+        let expected_hash = sealed.block_hash().clone();
+
+        let stored = store.append(&sealed).expect("append sealed block");
+
+        assert_eq!(stored.block_hash, expected_hash);
+        assert_eq!(
+            store
+                .head(&LineageId::new("lineage:a"))
+                .expect("read head")
+                .as_ref(),
+            Some(&expected_hash)
+        );
+
+        let block_lines = std::fs::read_to_string(
+            tmp.path()
+                .join("history")
+                .join("blocks")
+                .join("segment-000000.jsonl"),
+        )
+        .expect("block segment");
+        assert_eq!(block_lines.lines().count(), 1);
+
+        let by_hash = std::fs::read_to_string(
+            tmp.path()
+                .join("history")
+                .join("index")
+                .join("by-hash.jsonl"),
+        )
+        .expect("by hash index");
+        assert!(by_hash.contains(expected_hash.as_str()));
+
+        let by_lineage = std::fs::read_to_string(
+            tmp.path()
+                .join("history")
+                .join("index")
+                .join("by-lineage-height.jsonl"),
+        )
+        .expect("by lineage index");
+        assert!(by_lineage.contains("\"block_height\":0"));
     }
 
     #[test]
@@ -1246,6 +1861,9 @@ mod tests {
             lineage_id: LineageId::new("lineage:a"),
             block_height: 1,
             parent_block_hashes: Vec::new(),
+            opening_authority: OpeningAuthority::Predecessor(PredecessorAuthority::new(
+                BlockHash::from(HistoryHash::of_bytes(b"parent")),
+            )),
             opened_by: actor("parent"),
             opened_from_artifact: ArtifactRef::new("artifact:base"),
             ruling_authority: actor("ruler"),
@@ -1255,6 +1873,125 @@ mod tests {
         .expect_err("non-genesis without parent must fail");
 
         assert!(matches!(err, HistoryError::NonGenesisWithoutParents));
+    }
+
+    #[test]
+    fn genesis_block_requires_bootstrap_authority() {
+        let err = Block::open(OpenBlock {
+            lineage_id: LineageId::new("lineage:a"),
+            block_height: 0,
+            parent_block_hashes: Vec::new(),
+            opening_authority: OpeningAuthority::Predecessor(PredecessorAuthority::new(
+                BlockHash::from(HistoryHash::of_bytes(b"parent")),
+            )),
+            opened_by: actor("parent"),
+            opened_from_artifact: ArtifactRef::new("artifact:base"),
+            ruling_authority: actor("ruler"),
+            policy_ref: ProcedureRef::new("policy:test"),
+            opened_at: at(10),
+        })
+        .expect_err("genesis without bootstrap authority must fail");
+
+        assert!(matches!(err, HistoryError::GenesisWithoutBootstrap));
+    }
+
+    #[test]
+    fn child_block_rejects_bootstrap_authority() {
+        let parent_hash = BlockHash::from(HistoryHash::of_bytes(b"parent"));
+        let err = Block::open(OpenBlock {
+            lineage_id: LineageId::new("lineage:a"),
+            block_height: 1,
+            parent_block_hashes: vec![parent_hash],
+            opening_authority: OpeningAuthority::Genesis(GenesisAuthority::new(
+                ProcedureRef::new("policy:bootstrap"),
+                tree_key("tree:genesis"),
+                ParentIdentityRef::new(EvidenceRef::new("parent-identity:genesis")),
+            )),
+            opened_by: actor("parent"),
+            opened_from_artifact: ArtifactRef::new("artifact:base"),
+            ruling_authority: actor("ruler"),
+            policy_ref: ProcedureRef::new("policy:test"),
+            opened_at: at(10),
+        })
+        .expect_err("non-genesis block must not use bootstrap authority");
+
+        assert!(matches!(err, HistoryError::GenesisAuthorityOnChild));
+    }
+
+    #[test]
+    fn predecessor_authority_must_cite_parent_hash() {
+        let parent_hash = BlockHash::from(HistoryHash::of_bytes(b"parent"));
+        let other_hash = BlockHash::from(HistoryHash::of_bytes(b"other"));
+        let err = Block::open(OpenBlock {
+            lineage_id: LineageId::new("lineage:a"),
+            block_height: 1,
+            parent_block_hashes: vec![parent_hash],
+            opening_authority: OpeningAuthority::Predecessor(PredecessorAuthority::new(other_hash)),
+            opened_by: actor("parent"),
+            opened_from_artifact: ArtifactRef::new("artifact:base"),
+            ruling_authority: actor("ruler"),
+            policy_ref: ProcedureRef::new("policy:test"),
+            opened_at: at(10),
+        })
+        .expect_err("predecessor authority must match a cited parent hash");
+
+        assert!(matches!(err, HistoryError::OpeningPredecessorNotParent));
+    }
+
+    #[test]
+    fn genesis_tree_key_is_committed_to_block_hash() {
+        let block_id = BlockId::new();
+        let entry_id = EntryId::new();
+        let mut first = Block::open_with_block_id(
+            block_id,
+            OpenBlock {
+                lineage_id: LineageId::new("lineage:a"),
+                block_height: 0,
+                parent_block_hashes: Vec::new(),
+                opening_authority: OpeningAuthority::Genesis(GenesisAuthority::new(
+                    ProcedureRef::new("policy:bootstrap"),
+                    tree_key("tree:a"),
+                    ParentIdentityRef::new(EvidenceRef::new("parent-identity:genesis")),
+                )),
+                opened_by: actor("parent"),
+                opened_from_artifact: ArtifactRef::new("artifact:base"),
+                ruling_authority: actor("ruler"),
+                policy_ref: ProcedureRef::new("policy:test"),
+                opened_at: at(10),
+            },
+        )
+        .expect("first genesis");
+        first
+            .admit(proposed_entry_with_id(entry_id), actor("admitter"))
+            .expect("admit first");
+
+        let mut second = Block::open_with_block_id(
+            block_id,
+            OpenBlock {
+                lineage_id: LineageId::new("lineage:a"),
+                block_height: 0,
+                parent_block_hashes: Vec::new(),
+                opening_authority: OpeningAuthority::Genesis(GenesisAuthority::new(
+                    ProcedureRef::new("policy:bootstrap"),
+                    tree_key("tree:b"),
+                    ParentIdentityRef::new(EvidenceRef::new("parent-identity:genesis")),
+                )),
+                opened_by: actor("parent"),
+                opened_from_artifact: ArtifactRef::new("artifact:base"),
+                ruling_authority: actor("ruler"),
+                policy_ref: ProcedureRef::new("policy:test"),
+                opened_at: at(10),
+            },
+        )
+        .expect("second genesis");
+        second
+            .admit(proposed_entry_with_id(entry_id), actor("admitter"))
+            .expect("admit second");
+
+        let first = seal(first);
+        let second = seal(second);
+
+        assert_ne!(first.block_hash(), second.block_hash());
     }
 
     #[test]

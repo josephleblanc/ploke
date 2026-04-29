@@ -40,9 +40,12 @@
 //!
 //! 1. The parent selects one kept child/node as the successor candidate.
 //! 2. The parent updates the stable active checkout to the selected Artifact.
-//! 3. The parent hydrates and launches the next Parent from that active
+//! 3. The parent crosses a move-only handoff transition from
+//!    `Parent<Selectable>` to `Parent<Retired>`, locking lineage authority
+//!    before the successor process is spawned.
+//! 4. The parent hydrates and launches the next Parent from that active
 //!    checkout, not from the temporary child worktree.
-//! 4. The successor handoff token lets that next Parent validate continuation
+//! 5. The successor handoff token lets that next Parent validate continuation
 //!    authority and write a ready acknowledgement before entering the same
 //!    typed parent command path as the initial Parent.
 //!
@@ -68,6 +71,10 @@
 //!   the previous Parent used, after that checkout has been advanced to the
 //!   selected Artifact. Any code path that instead makes the child worktree
 //!   the successor Parent's long-lived home is transitional implementation debt.
+//! - The predecessor must not remain in a ruling-capable parent state after the
+//!   successor runtime is executable. After the selected Artifact is installed,
+//!   successor spawn crosses the parent into `Parent<Retired>`, leaving only a
+//!   retired observer in the predecessor process.
 //!
 //! # Failure fallout
 //!
@@ -134,6 +141,7 @@ use crate::cli::prototype1_state::journal::{
     ActiveCheckoutAdvancedEntry, ChildArtifactCommittedEntry, JournalEntry, PrototypeJournal,
     Streams, SuccessorHandoffEntry, prototype1_transition_journal_path,
 };
+use crate::cli::prototype1_state::parent::{Parent, Retired, Selectable};
 use crate::cli::prototype1_state::successor::Record as SuccessorRecord;
 use crate::intervention::{
     CommitPhase, Prototype1ContinuationDisposition, Prototype1NodeStatus,
@@ -746,13 +754,15 @@ fn spawn_prototype1_successor(
     repo_root: &Path,
     invocation_path: &Path,
     invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
+    retired_parent: &Parent<Retired>,
     streams: &Streams,
 ) -> Result<std::process::Child, PrepareError> {
-    crate::cli::prototype1_state::invocation::write_successor_invocation(
+    crate::cli::prototype1_state::invocation::write_successor_invocation_for_retired_parent(
+        retired_parent,
         invocation_path,
         invocation,
     )?;
-    let child_argv = invocation.launch_args(invocation_path)?;
+    let child_argv = invocation.launch_args_for_retired_parent(retired_parent, invocation_path)?;
     let (stdout, stderr) = open_runtime_streams(streams)?;
     let mut command = ProcessCommand::new(binary_path);
     command
@@ -852,7 +862,8 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     campaign_id: &str,
     node_id: &str,
     active_parent_root: &Path,
-) -> Result<Option<Prototype1SuccessorHandoff>, PrepareError> {
+    parent: Parent<Selectable>,
+) -> Result<(Parent<Retired>, Option<Prototype1SuccessorHandoff>), PrepareError> {
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let node = load_node_record(&manifest_path, node_id)?;
     let active_successor_binary_path = prepare_prototype1_active_successor_runtime(
@@ -861,16 +872,26 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         &node,
         active_parent_root,
     )?;
+    let (retired_parent, locked_crown) = parent.lock_crown();
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %campaign_id,
+        node_id = %node_id,
+        crown_lineage = %locked_crown.lineage(),
+        "prototype1 Crown locked before successor runtime spawn"
+    );
     let runtime_id = crate::cli::prototype1_state::event::RuntimeId::new();
     let invocation_path =
         crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
-    let invocation = crate::cli::prototype1_state::invocation::SuccessorInvocation::new(
-        campaign_id.to_string(),
-        node.node_id.clone(),
-        runtime_id,
-        prototype1_transition_journal_path(&manifest_path),
-        active_parent_root.to_path_buf(),
-    );
+    let invocation =
+        crate::cli::prototype1_state::invocation::SuccessorInvocation::from_retired_parent(
+            &retired_parent,
+            campaign_id.to_string(),
+            node.node_id.clone(),
+            runtime_id,
+            prototype1_transition_journal_path(&manifest_path),
+            active_parent_root.to_path_buf(),
+        );
     let ready_path =
         crate::cli::prototype1_state::invocation::successor_ready_path(&node.node_dir, runtime_id);
     let streams = runtime_streams(&node.node_dir, runtime_id);
@@ -900,6 +921,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         active_parent_root,
         &invocation_path,
         &invocation,
+        &retired_parent,
         &streams,
     )?;
     let pid = child.id();
@@ -934,11 +956,14 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
                 }),
                 "prototype1_successor_handoff_journal",
             )?;
-            Ok(Some(Prototype1SuccessorHandoff {
-                runtime_id,
-                pid,
-                ready_path,
-            }))
+            Ok((
+                retired_parent,
+                Some(Prototype1SuccessorHandoff {
+                    runtime_id,
+                    pid,
+                    ready_path,
+                }),
+            ))
         }
         SuccessorWait::TimedOut { waited_ms } => {
             append_successor_record(
@@ -946,7 +971,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
                 SuccessorRecord::timed_out(&invocation, waited_ms, ready_path),
                 "prototype1_successor_timeout_journal",
             )?;
-            Ok(None)
+            Ok((retired_parent, None))
         }
         SuccessorWait::ExitedBeforeReady { exit_code } => {
             append_successor_record(

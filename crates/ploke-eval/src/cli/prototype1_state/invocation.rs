@@ -32,7 +32,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::spec::PrepareError;
 
-use super::event::RuntimeId;
+use super::{
+    event::RuntimeId,
+    parent::{Parent, Retired},
+};
 
 fn leaf_runner_argv(invocation_path: &Path) -> Vec<String> {
     vec![
@@ -218,7 +221,7 @@ impl ChildInvocation {
 impl SuccessorInvocation {
     /// Create the executable successor invocation used by the detached
     /// handoff path.
-    pub(crate) fn new(
+    fn new(
         campaign_id: String,
         node_id: String,
         runtime_id: RuntimeId,
@@ -234,6 +237,30 @@ impl SuccessorInvocation {
                 active_parent_root,
             ),
         }
+    }
+
+    /// Create the successor launch descriptor after the predecessor has crossed
+    /// into `Parent<Retired>`.
+    ///
+    /// This is still a launch descriptor, not sealed History authority. The
+    /// retired parent argument exists to keep ordinary crate code from creating
+    /// executable successor invocations without first crossing the
+    /// Crown-locking handoff boundary.
+    pub(crate) fn from_retired_parent(
+        _parent: &Parent<Retired>,
+        campaign_id: String,
+        node_id: String,
+        runtime_id: RuntimeId,
+        journal_path: PathBuf,
+        active_parent_root: PathBuf,
+    ) -> Self {
+        Self::new(
+            campaign_id,
+            node_id,
+            runtime_id,
+            journal_path,
+            active_parent_root,
+        )
     }
 
     /// Access the persisted wire record.
@@ -267,8 +294,22 @@ impl SuccessorInvocation {
     }
 
     /// CLI argv for launching the successor as the next typed parent.
-    pub(crate) fn launch_args(&self, invocation_path: &Path) -> Result<Vec<String>, PrepareError> {
+    fn launch_args(&self, invocation_path: &Path) -> Result<Vec<String>, PrepareError> {
         successor_parent_argv(&self.inner, invocation_path)
+    }
+
+    /// CLI argv for a successor launch after the predecessor retired.
+    ///
+    /// This keeps launch argv construction on the same side of the handoff
+    /// boundary as invocation construction. The invocation JSON remains a
+    /// persisted descriptor; it is not itself authority to spawn another
+    /// runtime.
+    pub(crate) fn launch_args_for_retired_parent(
+        &self,
+        _parent: &Parent<Retired>,
+        invocation_path: &Path,
+    ) -> Result<Vec<String>, PrepareError> {
+        self.launch_args(invocation_path)
     }
 }
 
@@ -338,11 +379,24 @@ pub(crate) fn write_child_invocation(
 }
 
 /// Persist one executable branch-successor invocation.
-pub(crate) fn write_successor_invocation(
+fn write_successor_invocation(
     path: &Path,
     invocation: &SuccessorInvocation,
 ) -> Result<(), PrepareError> {
     write_invocation(path, invocation.as_invocation())
+}
+
+/// Persist a successor launch descriptor after the predecessor retired.
+///
+/// This is intentionally separate from raw invocation writing: creating a file
+/// that can launch the next parent must remain downstream of the Crown-locking
+/// handoff transition.
+pub(crate) fn write_successor_invocation_for_retired_parent(
+    _parent: &Parent<Retired>,
+    path: &Path,
+    invocation: &SuccessorInvocation,
+) -> Result<(), PrepareError> {
+    write_successor_invocation(path, invocation)
 }
 
 /// Successor-ready acknowledgement written by a detached successor runtime.

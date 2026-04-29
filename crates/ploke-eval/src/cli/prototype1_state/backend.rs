@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde::Serialize;
 use thiserror::Error;
 
 use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
@@ -42,6 +43,62 @@ impl std::fmt::Display for GitCommit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
+}
+
+/// Git object id for a tree object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "algorithm", content = "bytes")]
+pub(crate) enum GitObjectId {
+    /// SHA-1 object id used by standard git repositories.
+    Sha1([u8; 20]),
+    /// SHA-256 object id used by repositories initialized with SHA-256 object
+    /// format.
+    Sha256([u8; 32]),
+}
+
+impl GitObjectId {
+    #[allow(dead_code)] // Staged for History genesis/successor admission wiring.
+    fn parse_hex(value: &str) -> Result<Self, BackendError> {
+        match value.len() {
+            40 => {
+                let mut bytes = [0_u8; 20];
+                decode_hex(value, &mut bytes)?;
+                Ok(Self::Sha1(bytes))
+            }
+            64 => {
+                let mut bytes = [0_u8; 32];
+                decode_hex(value, &mut bytes)?;
+                Ok(Self::Sha256(bytes))
+            }
+            _ => Err(BackendError::InvalidTreeKey {
+                value: value.to_string(),
+            }),
+        }
+    }
+}
+
+/// Backend-owned key derived from the current clean git tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct GitTreeKey {
+    tree: GitObjectId,
+}
+
+#[allow(dead_code)] // Staged for History genesis/successor admission wiring.
+fn decode_hex(value: &str, output: &mut [u8]) -> Result<(), BackendError> {
+    if value.len() != output.len() * 2 {
+        return Err(BackendError::InvalidTreeKey {
+            value: value.to_string(),
+        });
+    }
+    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        let hex = std::str::from_utf8(chunk).map_err(|_| BackendError::InvalidTreeKey {
+            value: value.to_string(),
+        })?;
+        output[index] = u8::from_str_radix(hex, 16).map_err(|_| BackendError::InvalidTreeKey {
+            value: value.to_string(),
+        })?;
+    }
+    Ok(())
 }
 
 /// Request to realize one descendant workspace from a parent artifact world.
@@ -151,6 +208,9 @@ pub(crate) enum BackendError {
     },
     #[error("parent checkout '{path}' does not match parent identity: {detail}")]
     ParentCheckoutMismatch { path: PathBuf, detail: String },
+    #[allow(dead_code)] // Staged for History genesis/successor admission wiring.
+    #[error("invalid git tree key '{value}'")]
+    InvalidTreeKey { value: String },
     #[error("node worktree path '{observed}' did not match expected managed path '{expected}'")]
     WorkspacePathMismatch {
         expected: PathBuf,
@@ -201,6 +261,9 @@ pub(crate) trait WorkspaceBackend {
     type Head: Clone + std::fmt::Debug + PartialEq + Eq;
     /// Backend-specific root locator for one realized workspace.
     type Root: Clone + std::fmt::Debug + PartialEq + Eq;
+    /// Backend-specific key for the exact clean Artifact tree hosted by a
+    /// checkout root.
+    type TreeKey: Clone + std::fmt::Debug + PartialEq + Eq + Serialize;
 
     /// Realize or safely reuse one child workspace for the requested node.
     ///
@@ -307,6 +370,14 @@ pub(crate) trait WorkspaceBackend {
         active_parent_root: &Path,
         identity: &ParentIdentity,
     ) -> Result<(), BackendError>;
+
+    /// Derive the backend-owned key for the exact clean Artifact tree hosted
+    /// by a checkout root.
+    ///
+    /// This is the operation History admission should rely on. Callers should
+    /// not construct tree keys from strings or command-line arguments.
+    #[allow(dead_code)] // Staged for History genesis/successor admission wiring.
+    fn clean_tree_key(&self, active_parent_root: &Path) -> Result<Self::TreeKey, BackendError>;
 }
 
 /// Git worktree realization backend.
@@ -683,6 +754,7 @@ impl WorkspaceBackend for GitWorktreeBackend {
     type Branch = GitBranch;
     type Head = GitCommit;
     type Root = PathBuf;
+    type TreeKey = GitTreeKey;
 
     /// Realize one child workspace by either creating a new git worktree or
     /// safely reusing an existing verified one.
@@ -1031,6 +1103,38 @@ impl WorkspaceBackend for GitWorktreeBackend {
         }
 
         Ok(())
+    }
+
+    fn clean_tree_key(&self, active_parent_root: &Path) -> Result<Self::TreeKey, BackendError> {
+        let dirty_paths = dirty_paths(active_parent_root)?;
+        if !dirty_paths.is_empty() {
+            return Err(BackendError::DirtyActiveCheckout {
+                path: active_parent_root.to_path_buf(),
+                dirty_paths,
+            });
+        }
+
+        let output = Command::new("git")
+            .current_dir(active_parent_root)
+            .args(["rev-parse", "HEAD^{tree}"])
+            .output()
+            .map_err(|source| BackendError::GitCommand {
+                command: "git rev-parse HEAD^{tree}".to_string(),
+                source,
+            })?;
+
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git rev-parse HEAD^{tree}".to_string(),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(GitTreeKey {
+            tree: GitObjectId::parse_hex(&value)?,
+        })
     }
 }
 
