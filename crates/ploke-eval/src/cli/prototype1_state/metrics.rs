@@ -448,7 +448,7 @@ struct Generation {
     top_ranked_branch_id: Option<String>,
     top_dashboard_score: Option<i64>,
     selected_dashboard_score: Option<i64>,
-    dashboard_score_delta_from_top: Option<i64>,
+    deltas: Vec<Delta>,
     total_tool_calls: usize,
     failed_tool_calls: usize,
     failed_tool_call_rate: Option<f64>,
@@ -473,8 +473,8 @@ struct Cohort {
     selected_count: usize,
     selected: Vec<Choice>,
     top: Option<Choice>,
-    top_rejected: Option<Choice>,
-    dashboard_score_delta_from_top: Option<i64>,
+    alternative: Option<Choice>,
+    deltas: Vec<Delta>,
     total_tool_calls: usize,
     failed_tool_calls: usize,
     failed_tool_call_rate: Option<f64>,
@@ -664,7 +664,7 @@ struct Decision {
     selected_count: usize,
     selected: Vec<Choice>,
     top: Option<Choice>,
-    top_rejected: Option<Choice>,
+    alternative: Option<Choice>,
     deltas: Vec<Delta>,
 }
 
@@ -680,13 +680,13 @@ impl Decision {
             selected_count: cohort.selected_count,
             selected: cohort.selected.clone(),
             top: cohort.top.clone(),
-            top_rejected: cohort.top_rejected.clone(),
-            deltas: Vec::new(),
+            alternative: cohort.alternative.clone(),
+            deltas: cohort.deltas.clone(),
         };
         if matches!(decision.state, DecisionState::Many) {
-            decision.deltas.push(Delta::against_rejected(
+            decision.deltas.push(Delta::against_alternative(
                 DeltaState::Ambiguous,
-                decision.top_rejected.as_ref(),
+                decision.alternative.as_ref(),
                 decision.selected_count,
                 None,
             ));
@@ -733,6 +733,30 @@ struct Delta {
 }
 
 impl Delta {
+    fn against_top(selected: Option<&Row>, top: Option<&Row>, selected_count: usize) -> Self {
+        let state = match (selected_count, selected, top) {
+            (count, _, _) if count > 1 => DeltaState::Ambiguous,
+            (1, Some(_), Some(_)) => DeltaState::Known,
+            _ => DeltaState::Empty,
+        };
+        Self {
+            basis: Basis::Top,
+            state,
+            against: top.map(Point::from_row),
+            value: selected
+                .zip(top)
+                .filter(|_| matches!(state, DeltaState::Known))
+                .map(|(selected, top)| selected.dashboard_score - top.dashboard_score),
+            count: if matches!(state, DeltaState::Known) {
+                1
+            } else if matches!(state, DeltaState::Ambiguous) {
+                selected_count
+            } else {
+                0
+            },
+        }
+    }
+
     fn against_parent(
         selected: &Choice,
         parent_node_id: Option<&str>,
@@ -754,32 +778,58 @@ impl Delta {
         }
     }
 
-    fn against_rejected(
+    fn against_alternative(
         state: DeltaState,
-        rejected: Option<&Choice>,
+        alternative: Option<&Choice>,
         count: usize,
         selected: Option<&Choice>,
     ) -> Self {
         let state = if matches!(state, DeltaState::Ambiguous) {
             DeltaState::Ambiguous
-        } else if rejected.is_some() {
+        } else if alternative.is_some() {
             state
         } else {
             DeltaState::Empty
         };
         Self {
-            basis: Basis::TopRejected,
+            basis: Basis::Alternative,
             state,
-            against: rejected.map(Point::from_choice),
+            against: alternative.map(Point::from_choice),
             value: selected
-                .zip(rejected)
+                .zip(alternative)
                 .filter(|_| matches!(state, DeltaState::Known))
-                .map(|(selected, rejected)| selected.dashboard_score - rejected.dashboard_score),
-            count: if rejected.is_some() || matches!(state, DeltaState::Ambiguous) {
+                .map(|(selected, alternative)| {
+                    selected.dashboard_score - alternative.dashboard_score
+                }),
+            count: if alternative.is_some() || matches!(state, DeltaState::Ambiguous) {
                 count
             } else {
                 0
             },
+        }
+    }
+
+    fn against_previous(current: &Step, previous: &Step) -> Self {
+        let against = previous.selected_node_id.as_ref().map(|node_id| Point {
+            node_id: node_id.clone(),
+            branch_id: previous.selected_branch_id.clone(),
+            dashboard_rank: previous.selected_dashboard_rank,
+            dashboard_score: previous.selected_dashboard_score,
+        });
+        let value = current
+            .selected_dashboard_score
+            .zip(previous.selected_dashboard_score)
+            .map(|(current, previous)| current - previous);
+        Self {
+            basis: Basis::Previous,
+            state: if value.is_some() {
+                DeltaState::Known
+            } else {
+                DeltaState::Empty
+            },
+            against,
+            value,
+            count: usize::from(value.is_some()),
         }
     }
 }
@@ -787,8 +837,10 @@ impl Delta {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Basis {
+    Top,
     Parent,
-    TopRejected,
+    Alternative,
+    Previous,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -847,7 +899,6 @@ struct Step {
     selected_dashboard_rank: Option<usize>,
     selected_disposition: Option<String>,
     selected_dashboard_score: Option<i64>,
-    dashboard_score_delta_from_previous_selected: Option<i64>,
     parent_continuity: Option<&'static str>,
     deltas: Vec<Delta>,
     completed_nodes: usize,
@@ -871,13 +922,12 @@ impl Step {
             selected_dashboard_rank: selected.dashboard_rank,
             selected_disposition: selected.disposition.clone(),
             selected_dashboard_score: Some(selected.dashboard_score),
-            dashboard_score_delta_from_previous_selected: None,
             parent_continuity: None,
             deltas: vec![
                 Delta::against_parent(selected, decision.key.parent_node_id.as_deref(), parent),
-                Delta::against_rejected(
+                Delta::against_alternative(
                     DeltaState::Known,
-                    decision.top_rejected.as_ref(),
+                    decision.alternative.as_ref(),
                     1,
                     Some(selected),
                 ),
@@ -1257,22 +1307,23 @@ fn cohorts(rows: &[Row], diagnostics: &mut Vec<String>) -> Vec<Cohort> {
 }
 
 fn cohort(key: Key, rows: &[&Row]) -> Cohort {
-    let selected = rows
+    let selected_rows = rows
         .iter()
         .copied()
         .filter(|row| row.selected)
-        .map(choice)
         .collect::<Vec<_>>();
-    let top = rows
+    let selected = selected_rows
         .iter()
         .copied()
-        .max_by(|left, right| {
-            left.rank_key()
-                .cmp(&right.rank_key())
-                .then_with(|| right.node_id.cmp(&left.node_id))
-        })
-        .map(choice);
-    let top_rejected = rows
+        .map(choice)
+        .collect::<Vec<_>>();
+    let top_row = rows.iter().copied().max_by(|left, right| {
+        left.rank_key()
+            .cmp(&right.rank_key())
+            .then_with(|| right.node_id.cmp(&left.node_id))
+    });
+    let top = top_row.map(choice);
+    let alternative_row = rows
         .iter()
         .copied()
         .filter(|row| !row.selected)
@@ -1280,16 +1331,20 @@ fn cohort(key: Key, rows: &[&Row]) -> Cohort {
             left.rank_key()
                 .cmp(&right.rank_key())
                 .then_with(|| right.node_id.cmp(&left.node_id))
-        })
-        .map(choice);
+        });
+    let alternative = alternative_row.map(choice);
     let total_tool_calls = rows.iter().map(|row| row.total_tool_calls).sum();
     let failed_tool_calls = rows.iter().map(|row| row.failed_tool_calls).sum();
-    let selected_score = if selected.len() == 1 {
-        selected.first().map(|row| row.dashboard_score)
+    let selected_row = if selected_rows.len() == 1 {
+        selected_rows.first().copied()
     } else {
         None
     };
-    let top_score = top.as_ref().map(|row| row.dashboard_score);
+    let deltas = vec![Delta::against_top(
+        selected_row,
+        top_row,
+        selected_rows.len(),
+    )];
     Cohort {
         key,
         nodes: rows.len(),
@@ -1302,10 +1357,8 @@ fn cohort(key: Key, rows: &[&Row]) -> Cohort {
         selected_count: selected.len(),
         selected,
         top,
-        top_rejected,
-        dashboard_score_delta_from_top: selected_score
-            .zip(top_score)
-            .map(|(selected, top)| top - selected),
+        alternative,
+        deltas,
         total_tool_calls,
         failed_tool_calls,
         failed_tool_call_rate: rate(failed_tool_calls, total_tool_calls),
@@ -1337,7 +1390,12 @@ fn generation_summary(generation: u32, rows: &[&Row]) -> Generation {
             .cmp(&right.rank_key())
             .then_with(|| right.node_id.cmp(&left.node_id))
     });
-    let selected = rows.iter().copied().find(|row| row.selected);
+    let selected_rows = rows
+        .iter()
+        .copied()
+        .filter(|row| row.selected)
+        .collect::<Vec<_>>();
+    let selected = selected_rows.first().copied();
     let total_tool_calls = rows.iter().map(|row| row.total_tool_calls).sum();
     let failed_tool_calls = rows.iter().map(|row| row.failed_tool_calls).sum();
     Generation {
@@ -1357,9 +1415,11 @@ fn generation_summary(generation: u32, rows: &[&Row]) -> Generation {
         top_ranked_branch_id: top_ranked.and_then(|row| row.branch_id.clone()),
         top_dashboard_score: top_ranked.map(|row| row.dashboard_score),
         selected_dashboard_score: selected.map(|row| row.dashboard_score),
-        dashboard_score_delta_from_top: selected
-            .zip(top_ranked)
-            .map(|(selected, top_ranked)| top_ranked.dashboard_score - selected.dashboard_score),
+        deltas: vec![Delta::against_top(
+            selected,
+            top_ranked,
+            selected_rows.len(),
+        )],
         total_tool_calls,
         failed_tool_calls,
         failed_tool_call_rate: rate(failed_tool_calls, total_tool_calls),
@@ -1390,7 +1450,7 @@ fn mark_continuity(steps: &mut [Step], diagnostics: &mut Vec<String>) -> Continu
     }
 
     let mut previous = None::<Vec<String>>;
-    let mut previous_score = None;
+    let mut previous_index = None;
     let mut continuity = Continuity::default();
     for indices in by_generation.values() {
         if indices.len() != 1 {
@@ -1435,11 +1495,11 @@ fn mark_continuity(steps: &mut [Step], diagnostics: &mut Vec<String>) -> Continu
                     steps[index].parent_continuity = Some("ambiguous_previous");
                 }
             }
-            steps[index].dashboard_score_delta_from_previous_selected = steps[index]
-                .selected_dashboard_score
-                .zip(previous_score)
-                .map(|(current, previous)| current - previous);
-            previous_score = steps[index].selected_dashboard_score;
+            if let Some(previous_index) = previous_index {
+                let delta = Delta::against_previous(&steps[index], &steps[previous_index]);
+                steps[index].deltas.push(delta);
+            }
+            previous_index = Some(index);
             previous = current_node.map(|node| vec![node]);
             continue;
         }
@@ -1450,7 +1510,7 @@ fn mark_continuity(steps: &mut [Step], diagnostics: &mut Vec<String>) -> Continu
                 .filter_map(|index| steps[*index].selected_node_id.clone())
                 .collect(),
         );
-        previous_score = None;
+        previous_index = None;
     }
     continuity
 }
@@ -1473,8 +1533,10 @@ fn delta_summary(deltas: &[Delta]) -> String {
         .iter()
         .map(|delta| {
             let basis = match delta.basis {
+                Basis::Top => "top",
                 Basis::Parent => "parent",
-                Basis::TopRejected => "top_rejected",
+                Basis::Alternative => "alternative",
+                Basis::Previous => "previous",
             };
             let against = delta
                 .against
@@ -1508,7 +1570,7 @@ fn print_generations(generations: &[Generation]) {
     println!("generation summaries");
     println!("{}", "-".repeat(40));
     println!(
-        "gen | nodes | done | failed | evals | dashboard_rank | selected | authority | top_ranked | dashboard_score_delta_from_top | tool_fail_rate"
+        "gen | nodes | done | failed | evals | dashboard_rank | selected | authority | top_ranked | deltas | tool_fail_rate"
     );
     for row in generations {
         println!(
@@ -1522,7 +1584,7 @@ fn print_generations(generations: &[Generation]) {
             row.selected_node_id.as_deref().unwrap_or("-"),
             row.selected_authority.unwrap_or("-"),
             row.top_ranked_node_id.as_deref().unwrap_or("-"),
-            display_opt(row.dashboard_score_delta_from_top),
+            delta_summary(&row.deltas),
             display_rate(row.failed_tool_call_rate),
         );
     }
@@ -1532,7 +1594,7 @@ fn print_cohorts(cohorts: &[Cohort]) {
     println!("cohorts");
     println!("{}", "-".repeat(40));
     println!(
-        "gen | lineage | parent | nodes | done | evals | selected | top | dashboard_score_delta_from_top | patch_attempted | applied | partial | aborted | repair_loops | tool_fail_rate"
+        "gen | lineage | parent | nodes | done | evals | selected | top | deltas | patch_attempted | applied | partial | aborted | repair_loops | tool_fail_rate"
     );
     for row in cohorts {
         let selected = row
@@ -1558,7 +1620,7 @@ fn print_cohorts(cohorts: &[Cohort]) {
                 .as_ref()
                 .map(|choice| choice.node_id.as_str())
                 .unwrap_or("-"),
-            display_opt(row.dashboard_score_delta_from_top),
+            delta_summary(&row.deltas),
             row.patch_attempted_instances,
             row.applied_patch_instances,
             row.partial_patch_instances,
@@ -1601,11 +1663,11 @@ fn print_trajectory(trajectory: &Trajectory, include_diagnostics: bool) {
     println!();
     println!("unambiguous projection steps");
     println!(
-        "gen | parent | selected | branch | authority | rank | disposition | dashboard_score | dashboard_score_delta_from_previous_selected | continuity | deltas"
+        "gen | parent | selected | branch | authority | rank | disposition | dashboard_score | continuity | deltas"
     );
     for row in &trajectory.steps {
         println!(
-            "{} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {}",
+            "{} | {} | {} | {} | {} | {} | {} | {} | {} | {}",
             row.generation,
             display_parent(row.cohort.parent_node_id.as_deref()),
             row.selected_node_id.as_deref().unwrap_or("-"),
@@ -1614,7 +1676,6 @@ fn print_trajectory(trajectory: &Trajectory, include_diagnostics: bool) {
             display_opt(row.selected_dashboard_rank),
             row.selected_disposition.as_deref().unwrap_or("-"),
             display_opt(row.selected_dashboard_score),
-            display_opt(row.dashboard_score_delta_from_previous_selected),
             row.parent_continuity.unwrap_or("-"),
             delta_summary(&row.deltas),
         );
@@ -1983,7 +2044,9 @@ mod tests {
         assert_eq!(summary.selected_node_id.as_deref(), Some("node-b"));
         assert_eq!(summary.selected_authority, Some("mutable_projection"));
         assert_eq!(summary.selected_dashboard_rank, Some(1));
-        assert_eq!(summary.dashboard_score_delta_from_top, Some(0));
+        let top_delta = delta(&summary.deltas, Basis::Top);
+        assert_eq!(top_delta.state, DeltaState::Known);
+        assert_eq!(top_delta.value, Some(0));
         let selected = dashboard
             .rows
             .iter()
@@ -2227,7 +2290,7 @@ mod tests {
     }
 
     #[test]
-    fn trajectory_step_records_known_parent_and_rejected_deltas() {
+    fn trajectory_step_records_known_parent_and_alternative_deltas() {
         let dashboard = dashboard_from_cases(
             &[
                 case("parent-1", None, 0, "branch-parent", "reject", 1, 0, 4, 0),
@@ -2267,11 +2330,11 @@ mod tests {
             .iter()
             .find(|row| row.node_id == "parent-1")
             .expect("parent row");
-        let rejected = dashboard
+        let alternative = dashboard
             .rows
             .iter()
             .find(|row| row.node_id == "node-a")
-            .expect("rejected row");
+            .expect("alternative row");
 
         let parent_delta = delta(&step.deltas, Basis::Parent);
         assert_eq!(parent_delta.state, DeltaState::Known);
@@ -2287,18 +2350,18 @@ mod tests {
             Some(selected.dashboard_score - parent.dashboard_score)
         );
 
-        let rejected_delta = delta(&step.deltas, Basis::TopRejected);
-        assert_eq!(rejected_delta.state, DeltaState::Known);
+        let alternative_delta = delta(&step.deltas, Basis::Alternative);
+        assert_eq!(alternative_delta.state, DeltaState::Known);
         assert_eq!(
-            rejected_delta
+            alternative_delta
                 .against
                 .as_ref()
                 .map(|point| point.node_id.as_str()),
             Some("node-a")
         );
         assert_eq!(
-            rejected_delta.value,
-            Some(selected.dashboard_score - rejected.dashboard_score)
+            alternative_delta.value,
+            Some(selected.dashboard_score - alternative.dashboard_score)
         );
     }
 
@@ -2347,19 +2410,19 @@ mod tests {
         assert_eq!(dashboard.trajectory.decisions.len(), 1);
         assert_eq!(dashboard.trajectory.decisions[0].state, DecisionState::Many);
         assert_eq!(dashboard.trajectory.decisions[0].selected_count, 2);
-        let rejected_delta = delta(
+        let alternative_delta = delta(
             &dashboard.trajectory.decisions[0].deltas,
-            Basis::TopRejected,
+            Basis::Alternative,
         );
-        assert_eq!(rejected_delta.state, DeltaState::Ambiguous);
+        assert_eq!(alternative_delta.state, DeltaState::Ambiguous);
         assert_eq!(
-            rejected_delta
+            alternative_delta
                 .against
                 .as_ref()
                 .map(|point| point.node_id.as_str()),
             None
         );
-        assert_eq!(rejected_delta.count, 2);
+        assert_eq!(alternative_delta.count, 2);
         assert!(dashboard.trajectory.steps.is_empty());
         assert!(dashboard.trajectory.diagnostics.iter().any(|diagnostic| {
             diagnostic.contains("cohort is ambiguous")
@@ -2369,7 +2432,7 @@ mod tests {
     }
 
     #[test]
-    fn trajectory_decision_marks_rejected_delta_ambiguous_for_multiple_selected_rows() {
+    fn trajectory_decision_marks_alternative_delta_ambiguous_for_multiple_selected_rows() {
         let dashboard = dashboard_from_cases(
             &[
                 case(
@@ -2413,20 +2476,20 @@ mod tests {
             .decisions
             .first()
             .expect("trajectory decision");
-        let rejected_delta = delta(&decision.deltas, Basis::TopRejected);
+        let alternative_delta = delta(&decision.deltas, Basis::Alternative);
 
         assert_eq!(decision.state, DecisionState::Many);
         assert!(dashboard.trajectory.steps.is_empty());
-        assert_eq!(rejected_delta.state, DeltaState::Ambiguous);
-        assert_eq!(rejected_delta.count, 2);
+        assert_eq!(alternative_delta.state, DeltaState::Ambiguous);
+        assert_eq!(alternative_delta.count, 2);
         assert_eq!(
-            rejected_delta
+            alternative_delta
                 .against
                 .as_ref()
                 .map(|point| point.node_id.as_str()),
             Some("node-c")
         );
-        assert_eq!(rejected_delta.value, None);
+        assert_eq!(alternative_delta.value, None);
     }
 
     #[test]
@@ -2515,7 +2578,7 @@ mod tests {
     }
 
     #[test]
-    fn cohort_dashboard_score_delta_from_top_is_empty_for_ambiguous_selected_rows() {
+    fn cohort_top_delta_is_ambiguous_for_multiple_selected_rows() {
         let dashboard = dashboard_from_nodes(
             &[
                 ("node-a", Some("parent-1"), 1, "branch-a"),
@@ -2524,9 +2587,11 @@ mod tests {
             &["branch-a", "branch-b"],
         );
         let cohort = dashboard.cohorts.first().expect("cohort");
+        let top_delta = delta(&cohort.deltas, Basis::Top);
 
         assert_eq!(cohort.selected_count, 2);
-        assert_eq!(cohort.dashboard_score_delta_from_top, None);
+        assert_eq!(top_delta.state, DeltaState::Ambiguous);
+        assert_eq!(top_delta.value, None);
     }
 
     #[test]

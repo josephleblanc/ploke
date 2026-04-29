@@ -143,17 +143,18 @@ Metrics currently provide:
 
 - node rows with status, disposition, branch/runtime refs, source refs, tool
   call totals/failures, patch attempts, patch apply states, submission states,
-  abort/repair-loop counts, and heuristic rank/score
+  abort/repair-loop counts, heuristic rank/score, and row-local score
+  derivation
 - generation summaries
 - cohorts grouped by parent and generation
-- selected-by-generation trajectory projection
+- cohort-aware trajectory projection with structural `Delta` records over
+  selected steps and cohort decisions
 
 Known metrics issues:
 
-- generation/trajectory currently assumes one selected successor per
-  generation; this is only correct for the current single-lineage run shape.
-  A trajectory patch should derive from rows or cohorts directly, not from a
-  generation summary that has already chosen one selected row.
+- trajectory now derives from rows/cohorts rather than generation summaries.
+  Keep it that way; generation summaries still exist for compatibility and must
+  not become the semantic source for trajectory.
 - current records do not prove lineage. Wording such as "single lineage" must
   be reserved for the future state where a real lineage coordinate exists, or
   qualified as an unambiguous projection under degraded coordinates.
@@ -164,6 +165,10 @@ Known metrics issues:
   implying the score fully explains rank unless the implementation is aligned.
 - dashboard scores are local analysis heuristics, not oracle truth and not the
   historical Parent policy.
+- trajectory deltas are dashboard-score projection comparisons only. They are
+  represented structurally as `Delta { basis, state, against, value, count }`
+  with bases such as `Parent`, `Alternative`, and `Previous`; do not reintroduce
+  flattened prose names such as `dashboard_score_delta_from_top`.
 
 ## History/Crown Direction
 
@@ -231,20 +236,23 @@ Done recently:
 - added latest Prototype 1 campaign fallback
 - added cohort metrics and richer operational row fields
 - documented degraded lineage in the admission map
+- added cohort-aware trajectory projection from rows/cohorts, preserving
+  ambiguity instead of collapsing selected rows by generation
+- added row-local `dashboard_score_derivation` with explicit
+  `rank_relation: "separate_from_dashboard_rank"`
+- added structural trajectory deltas for parent, alternative, and previous
+  selected comparisons
 
 Likely next patches:
 
-1. Make trajectory explicitly cohort-aware under the currently degraded
-   coordinate `(parent_node_id, generation)`: preserve ambiguity, diagnose
-   plural selected rows, avoid inventing missing-selection failures, and do not
-   silently collapse branch structure into one row per generation.
-2. Align `dashboard_score` with `dashboard_rank`, or rename/display them so
-   users do not infer the wrong relationship.
-3. Improve table/JSON view slicing so `--view cohorts` and `--view trajectory`
+1. Use the new trajectory deltas to build a compact operator readout for
+   selected parent-successor progress across generations. Keep this as a
+   projection over degraded evidence, not lineage proof or authority.
+2. Improve table/JSON view slicing so `--view cohorts` and `--view trajectory`
    return focused payloads.
-4. Add a compact command that surfaces selected parent-successor chains with
-   source refs and key deltas.
-5. Later: start live Crown-gated History mutation beside existing records on a
+3. Add or refine selected-vs-alternative cohort comparisons if the current
+   trajectory output is still too hard to scan.
+4. Later: start live Crown-gated History mutation beside existing records on a
    recovery branch.
 
 No-goals for small CLI/metrics patches:
@@ -277,6 +285,8 @@ During implementation:
   degraded evidence
 - avoid deriving trajectory from an already-collapsed generation summary; start
   from rows/cohorts so branch structure is still visible
+- keep comparison structure in types and fields such as `Delta`, `Basis`, and
+  `DeltaState`; do not encode endpoints into long field names
 - keep selection evidence separate from Crown authority; `transition_journal`
   is stronger evidence than mutable scheduler projections, but neither is a
   live Crown token
