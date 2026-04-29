@@ -301,11 +301,12 @@ use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
     io::{self, Write},
+    marker::PhantomData,
     path::{Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::{Digest as ShaDigest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -679,6 +680,311 @@ pub(crate) struct ArtifactRef {
 }
 
 impl ArtifactRef {
+    pub(crate) fn new(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+        }
+    }
+}
+
+/// Typed content digest for a recoverable History object.
+///
+/// `Digest<T>` is stored evidence, not a recovery capability. The capability
+/// lives in [`Locator<T>`], which defines the key and digest type used by a
+/// particular artifact/tree context. Common local implementations can use this
+/// generic digest as the associated `Locator<T>::Digest`, while a future backend
+/// may use a different associated digest type without changing the conceptual
+/// relation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub(crate) struct Digest<T> {
+    hash: HistoryHash,
+    #[serde(skip)]
+    _target: PhantomData<fn() -> T>,
+}
+
+impl<T> Digest<T> {
+    fn new(hash: HistoryHash) -> Self {
+        Self {
+            hash,
+            _target: PhantomData,
+        }
+    }
+
+    pub(crate) fn hash(&self) -> &HistoryHash {
+        &self.hash
+    }
+}
+
+/// Fallible recovery contract for an object `T` under a concrete context.
+///
+/// In Prototype 1 the intended context is a committed Artifact backed by the
+/// workspace tree. A `Locator<T>` can locate `T` from its associated `Key` and
+/// can compute the associated digest for the object found at that key. This is
+/// the code-level form of the block invariant:
+///
+/// ```text
+/// key --locate through Artifact/Tree--> T
+/// key --digest through Artifact/Tree--> Digest(T)
+/// ```
+///
+/// The trait is intentionally a capability, not stored block data.
+pub(crate) trait Locator<T> {
+    type Key;
+    type Digest;
+    type Error;
+
+    fn locate(&self, key: &Self::Key) -> Result<T, Self::Error>;
+
+    fn digest(&self, key: &Self::Key) -> Result<Self::Digest, Self::Error>;
+}
+
+/// Stored key plus digest for an object that can be checked through `L`.
+///
+/// This is the innermost envelope for block claims. It says only that `T` is
+/// verifiable through locator context `L`; it does not say who observed it, who
+/// admitted it, or whether a sealed block has made it durable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Verifiable<T, L>
+where
+    L: Locator<T>,
+{
+    key: L::Key,
+    digest: L::Digest,
+    _target: PhantomData<fn() -> T>,
+    _locator: PhantomData<fn() -> L>,
+}
+
+impl<T, L> Verifiable<T, L>
+where
+    L: Locator<T>,
+{
+    fn new(key: L::Key, digest: L::Digest) -> Self {
+        Self {
+            key,
+            digest,
+            _target: PhantomData,
+            _locator: PhantomData,
+        }
+    }
+
+    fn from_locator(locator: &L, key: L::Key) -> Result<(T, Self), VerifyError<L::Error>> {
+        let item = locator.locate(&key).map_err(VerifyError::Locate)?;
+        let digest = locator.digest(&key).map_err(VerifyError::Digest)?;
+        Ok((item, Self::new(key, digest)))
+    }
+
+    pub(crate) fn key(&self) -> &L::Key {
+        &self.key
+    }
+
+    pub(crate) fn digest(&self) -> &L::Digest {
+        &self.digest
+    }
+
+    pub(crate) fn verify_with(&self, locator: &L) -> Result<T, VerifyError<L::Error>>
+    where
+        L::Digest: PartialEq,
+    {
+        let item = locator.locate(&self.key).map_err(VerifyError::Locate)?;
+        let actual = locator.digest(&self.key).map_err(VerifyError::Digest)?;
+        if actual != self.digest {
+            return Err(VerifyError::DigestMismatch);
+        }
+        Ok(item)
+    }
+
+    fn into_parts(self) -> (L::Key, L::Digest) {
+        (self.key, self.digest)
+    }
+}
+
+/// Error while checking a [`Verifiable`] object through its locator contract.
+#[derive(Debug, Error)]
+pub(crate) enum VerifyError<E> {
+    #[error("failed to locate verifiable object")]
+    Locate(#[source] E),
+
+    #[error("failed to compute verifiable object digest")]
+    Digest(#[source] E),
+
+    #[error("located object digest does not match the sealed expectation")]
+    DigestMismatch,
+}
+
+/// A claim observed or produced by a witness.
+///
+/// This wrapper is justified only because it adds witness information that is
+/// not present in the inner value. In the block model, the witness is the actor
+/// and environment that produced the key/digest pair before admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Witnessed<W, X> {
+    witness: W,
+    claim: X,
+}
+
+impl<W, X> Witnessed<W, X> {
+    fn new(witness: W, claim: X) -> Self {
+        Self { witness, claim }
+    }
+
+    pub(crate) fn witness(&self) -> &W {
+        &self.witness
+    }
+
+    pub(crate) fn claim(&self) -> &X {
+        &self.claim
+    }
+
+    fn into_parts(self) -> (W, X) {
+        (self.witness, self.claim)
+    }
+}
+
+/// Claim-envelope types for block header facts.
+///
+/// This module avoids colliding with the existing entry-state `Admitted` while
+/// preserving the intended nested shape:
+///
+/// ```text
+/// claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<T, L>>>
+/// ```
+pub(crate) mod claim {
+    /// A witnessed claim admitted into a block under authority/policy.
+    ///
+    /// This wrapper is distinct from sealing. Admission says the claim belongs
+    /// in the block; sealing later commits the flattened fields into the block
+    /// hash.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct Admitted<A, X> {
+        pub(super) admission: A,
+        pub(super) claim: X,
+    }
+
+    impl<A, X> Admitted<A, X> {
+        pub(super) fn new(admission: A, claim: X) -> Self {
+            Self { admission, claim }
+        }
+
+        pub(crate) fn admission(&self) -> &A {
+            &self.admission
+        }
+
+        pub(crate) fn claim(&self) -> &X {
+            &self.claim
+        }
+
+        pub(super) fn into_parts(self) -> (A, X) {
+            (self.admission, self.claim)
+        }
+    }
+}
+
+/// Witness for a block claim produced under the current ruling authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RulerWitness {
+    ruler: ActorRef,
+    environment: OperationalEnvironment,
+    witnessed_at: RecordedAt,
+}
+
+impl RulerWitness {
+    fn new(ruler: ActorRef, environment: OperationalEnvironment, witnessed_at: RecordedAt) -> Self {
+        Self {
+            ruler,
+            environment,
+            witnessed_at,
+        }
+    }
+}
+
+/// Admission decision for a witnessed block claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Admission {
+    admitting_authority: ActorRef,
+    policy: ProcedureRef,
+    admitted_at: RecordedAt,
+}
+
+impl Admission {
+    fn new(admitting_authority: ActorRef, policy: ProcedureRef, admitted_at: RecordedAt) -> Self {
+        Self {
+            admitting_authority,
+            policy,
+            admitted_at,
+        }
+    }
+}
+
+/// Flat stored form for one admitted, witnessed, verifiable claim.
+///
+/// Blocks store this shape so their serialized representation stays simple:
+/// key, digest, witness, admission. Construction and extraction go through the
+/// nested type boundary so callers cannot accidentally treat a bare digest as
+/// admitted block evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct FlatClaim<Key, Digest> {
+    key: Key,
+    digest: Digest,
+    witness: RulerWitness,
+    admission: Admission,
+}
+
+impl<Key, Digest> FlatClaim<Key, Digest> {
+    fn from_admitted<T, L>(
+        admitted: claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<T, L>>>,
+    ) -> Self
+    where
+        L: Locator<T, Key = Key, Digest = Digest>,
+    {
+        let (admission, witnessed) = admitted.into_parts();
+        let (witness, verifiable) = witnessed.into_parts();
+        let (key, digest) = verifiable.into_parts();
+        Self {
+            key,
+            digest,
+            witness,
+            admission,
+        }
+    }
+
+    fn to_admitted<T, L>(
+        &self,
+    ) -> claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<T, L>>>
+    where
+        Key: Clone,
+        Digest: Clone,
+        L: Locator<T, Key = Key, Digest = Digest>,
+    {
+        claim::Admitted::new(
+            self.admission.clone(),
+            Witnessed::new(
+                self.witness.clone(),
+                Verifiable::new(self.key.clone(), self.digest.clone()),
+            ),
+        )
+    }
+}
+
+/// Marker for the policy artifact used to admit a block or block claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Policy;
+
+/// Marker for the bounded surface over which a policy applies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Surface;
+
+/// Marker for an artifact-local provenance manifest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Manifest;
+
+/// Artifact-relative path used by the initial History claim shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ArtifactPath {
+    value: String,
+}
+
+impl ArtifactPath {
     pub(crate) fn new(value: impl Into<String>) -> Self {
         Self {
             value: value.into(),
@@ -1135,6 +1441,7 @@ pub(crate) struct SealBlock {
     pub(crate) crown_lock_transition: EvidenceRef,
     pub(crate) selected_successor: SuccessorRef,
     pub(crate) active_artifact: ArtifactRef,
+    pub(crate) claims: block::Claims,
     pub(crate) sealed_at: RecordedAt,
 }
 
@@ -1142,7 +1449,106 @@ pub(crate) struct SealBlock {
 pub(crate) mod block {
     use serde::Serialize;
 
-    use super::{BlockCommon, Private, SealedBlockHeader};
+    use super::BlockCommon;
+    use super::{
+        Admission, ArtifactPath, Digest, FlatClaim, Locator, Manifest, Policy, Private,
+        RulerWitness, SealedBlockHeader, Surface, Verifiable, Witnessed, claim,
+    };
+
+    /// Flattened v2 block claims.
+    ///
+    /// Status recorded 2026-04-29 13:37 PDT; tightened 2026-04-29 21:18 PDT:
+    /// this is a storage boundary, not a report object and not an authority
+    /// factory. The block stores flat fields for serialization and hashing;
+    /// setter/accessor methods consume and reconstruct the nested semantic
+    /// shape:
+    ///
+    /// ```text
+    /// claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<T, L>>>
+    /// ```
+    ///
+    /// `Claims` is deliberately in the `block` module and has no public
+    /// constructor or `Default` implementation. Outside this module, a caller
+    /// should not be able to mint block claim storage from a bare path, digest,
+    /// or status string. A field being `None` means the current live code has
+    /// not yet supplied that claim. It is not an implicit admission, and it
+    /// must not be interpreted as successful verification.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+    pub(crate) struct Claims {
+        policy: Option<FlatClaim<ArtifactPath, Digest<Policy>>>,
+        surface: Option<FlatClaim<ArtifactPath, Digest<Surface>>>,
+        manifest: Option<FlatClaim<ArtifactPath, Digest<Manifest>>>,
+    }
+
+    impl Claims {
+        pub(super) fn empty_unchecked() -> Self {
+            Self {
+                policy: None,
+                surface: None,
+                manifest: None,
+            }
+        }
+
+        pub(super) fn with_policy<L>(
+            mut self,
+            claim: claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Policy, L>>>,
+        ) -> Self
+        where
+            L: Locator<Policy, Key = ArtifactPath, Digest = Digest<Policy>>,
+        {
+            self.policy = Some(FlatClaim::from_admitted(claim));
+            self
+        }
+
+        pub(crate) fn policy<L>(
+            &self,
+        ) -> Option<claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Policy, L>>>>
+        where
+            L: Locator<Policy, Key = ArtifactPath, Digest = Digest<Policy>>,
+        {
+            self.policy.as_ref().map(FlatClaim::to_admitted)
+        }
+
+        pub(super) fn with_surface<L>(
+            mut self,
+            claim: claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Surface, L>>>,
+        ) -> Self
+        where
+            L: Locator<Surface, Key = ArtifactPath, Digest = Digest<Surface>>,
+        {
+            self.surface = Some(FlatClaim::from_admitted(claim));
+            self
+        }
+
+        pub(crate) fn surface<L>(
+            &self,
+        ) -> Option<claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Surface, L>>>>
+        where
+            L: Locator<Surface, Key = ArtifactPath, Digest = Digest<Surface>>,
+        {
+            self.surface.as_ref().map(FlatClaim::to_admitted)
+        }
+
+        pub(super) fn with_manifest<L>(
+            mut self,
+            claim: claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Manifest, L>>>,
+        ) -> Self
+        where
+            L: Locator<Manifest, Key = ArtifactPath, Digest = Digest<Manifest>>,
+        {
+            self.manifest = Some(FlatClaim::from_admitted(claim));
+            self
+        }
+
+        pub(crate) fn manifest<L>(
+            &self,
+        ) -> Option<claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Manifest, L>>>>
+        where
+            L: Locator<Manifest, Key = ArtifactPath, Digest = Digest<Manifest>>,
+        {
+            self.manifest.as_ref().map(FlatClaim::to_admitted)
+        }
+    }
 
     /// Open block state.
     #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -1166,6 +1572,7 @@ pub(crate) struct SealedBlockHeader {
     crown_lock_transition: EvidenceRef,
     selected_successor: SuccessorRef,
     active_artifact: ArtifactRef,
+    claims: block::Claims,
     sealed_at: RecordedAt,
     entry_count: usize,
     entries_root: HistoryHash,
@@ -1178,6 +1585,7 @@ struct SealedBlockPreimage {
     crown_lock_transition: EvidenceRef,
     selected_successor: SuccessorRef,
     active_artifact: ArtifactRef,
+    claims: block::Claims,
     sealed_at: RecordedAt,
     entry_count: usize,
     entries_root: HistoryHash,
@@ -1203,6 +1611,10 @@ struct SealedBlockPreimage {
 /// - artifact commitments: active Artifact and selected successor Artifact
 ///   should be recoverable from the tree and validated through backend tree key
 ///   commitment plus artifact-local manifest digest/reference;
+/// - block claims: flat serialized fields should enter and leave the block
+///   through the nested claim boundary
+///   `claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<T, L>>>`;
+///   a bare digest or path is never itself admitted block evidence;
 /// - successor eligibility: selected successor runtime/artifact evidence
 ///   should be sufficient for startup to validate the immediate sealed head
 ///   without replaying the entire History hot path;
@@ -1332,6 +1744,7 @@ impl Block<block::Open> {
             crown_lock_transition: fields.crown_lock_transition,
             selected_successor: fields.selected_successor,
             active_artifact: fields.active_artifact,
+            claims: fields.claims,
             sealed_at: fields.sealed_at,
             entry_count: self.entries.len(),
             entries_root,
@@ -1345,6 +1758,7 @@ impl Block<block::Open> {
             crown_lock_transition: preimage.crown_lock_transition,
             selected_successor: preimage.selected_successor,
             active_artifact: preimage.active_artifact,
+            claims: preimage.claims,
             sealed_at: preimage.sealed_at,
             entry_count: preimage.entry_count,
             entries_root: preimage.entries_root,
@@ -1411,6 +1825,7 @@ impl Block<block::Sealed> {
             crown_lock_transition: header.crown_lock_transition.clone(),
             selected_successor: header.selected_successor.clone(),
             active_artifact: header.active_artifact.clone(),
+            claims: header.claims.clone(),
             sealed_at: header.sealed_at,
             entry_count: header.entry_count,
             entries_root,
@@ -1453,6 +1868,48 @@ impl Block<block::Sealed> {
             policy_ref: fields.policy_ref,
             opened_at: fields.opened_at,
         })
+    }
+}
+
+impl super::inner::Crown<super::inner::crown::Ruling> {
+    /// Admit a fallibly located claim under the current ruling Crown.
+    ///
+    /// This is the construction boundary for the nested claim shape. The
+    /// locator call is the quarantined fallible border with the artifact/tree
+    /// backend: missing files, digest failures, and backend inconsistencies are
+    /// returned here instead of being represented as valid block-internal
+    /// facts.
+    ///
+    /// Current implementation gap recorded 2026-04-29 21:18 PDT: the method
+    /// proves possession of `Crown<Ruling>`, but it still accepts the ruler
+    /// actor identity as data. A future `Parent<Ruling>` carrier should supply
+    /// that identity structurally rather than trusting the caller to pass the
+    /// matching `ActorRef`.
+    pub(crate) fn admit_claim<T, L>(
+        &self,
+        locator: &L,
+        key: L::Key,
+        ruler: ActorRef,
+        environment: OperationalEnvironment,
+        policy: ProcedureRef,
+        at: RecordedAt,
+    ) -> Result<
+        (
+            T,
+            claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<T, L>>>,
+        ),
+        VerifyError<L::Error>,
+    >
+    where
+        L: Locator<T>,
+    {
+        let (item, verifiable) = Verifiable::from_locator(locator, key)?;
+        let witness = RulerWitness::new(ruler.clone(), environment, at.clone());
+        let admission = Admission::new(ruler, policy, at);
+        Ok((
+            item,
+            claim::Admitted::new(admission, Witnessed::new(witness, verifiable)),
+        ))
     }
 }
 
@@ -1734,6 +2191,36 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Error)]
+    #[error("test locator error")]
+    struct TestLocatorError;
+
+    #[derive(Debug)]
+    struct TestLocator;
+
+    impl Locator<Policy> for TestLocator {
+        type Key = ArtifactPath;
+        type Digest = Digest<Policy>;
+        type Error = TestLocatorError;
+
+        fn locate(&self, _key: &Self::Key) -> Result<Policy, Self::Error> {
+            Ok(Policy)
+        }
+
+        fn digest(&self, key: &Self::Key) -> Result<Self::Digest, Self::Error> {
+            Ok(Digest::new(HistoryHash::of_domain_json(
+                "test.policy.digest.v1",
+                key,
+            )?))
+        }
+    }
+
+    impl From<HistoryError> for TestLocatorError {
+        fn from(_value: HistoryError) -> Self {
+            Self
+        }
+    }
+
     fn tree_key(value: &'static str) -> TreeKeyHash {
         TestTreeKey { value }
             .tree_key_hash()
@@ -1818,6 +2305,14 @@ mod tests {
         block: Block<block::Open>,
         transition: &'static str,
     ) -> Block<block::Sealed> {
+        seal_with_transition_and_claims(block, transition, block::Claims::empty_unchecked())
+    }
+
+    fn seal_with_transition_and_claims(
+        block: Block<block::Open>,
+        transition: &'static str,
+        claims: block::Claims,
+    ) -> Block<block::Sealed> {
         super::super::inner::Crown::test_locked(block.lineage_id().as_str())
             .seal(
                 block,
@@ -1828,10 +2323,37 @@ mod tests {
                         ArtifactRef::new("artifact:successor"),
                     ),
                     active_artifact: ArtifactRef::new("artifact:successor"),
+                    claims,
                     sealed_at: at(30),
                 },
             )
             .expect("seal block")
+    }
+
+    fn ruler_witness() -> RulerWitness {
+        RulerWitness::new(actor("ruler"), env(), at(25))
+    }
+
+    fn admission() -> Admission {
+        Admission::new(actor("ruler"), ProcedureRef::new("policy:test"), at(25))
+    }
+
+    fn policy_claim(
+        path: &'static str,
+    ) -> claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Policy, TestLocator>>> {
+        let crown: super::super::inner::Crown<super::super::inner::crown::Ruling> =
+            super::super::inner::Crown::for_lineage("lineage:a");
+        let (_, claim) = crown
+            .admit_claim(
+                &TestLocator,
+                ArtifactPath::new(path),
+                actor("ruler"),
+                env(),
+                ProcedureRef::new("policy:test"),
+                at(25),
+            )
+            .expect("policy claim");
+        claim
     }
 
     #[test]
@@ -1847,6 +2369,7 @@ mod tests {
                         ArtifactRef::new("artifact:successor"),
                     ),
                     active_artifact: ArtifactRef::new("artifact:successor"),
+                    claims: block::Claims::empty_unchecked(),
                     sealed_at: at(30),
                 },
             )
@@ -1958,6 +2481,53 @@ mod tests {
 
         let first = seal_with_transition(first, "transition:crown-lock:a");
         let second = seal_with_transition(second, "transition:crown-lock:b");
+
+        assert_ne!(first.block_hash(), second.block_hash());
+        first.verify_hash().expect("first verifies");
+        second.verify_hash().expect("second verifies");
+    }
+
+    #[test]
+    fn block_claims_store_flat_fields_but_extract_nested_policy_claim() {
+        let claims = block::Claims::empty_unchecked().with_policy(policy_claim("policy.toml"));
+        let extracted = claims
+            .policy::<TestLocator>()
+            .expect("policy claim extracts");
+
+        assert_eq!(extracted.admission(), &admission());
+        assert_eq!(extracted.claim().witness(), &ruler_witness());
+        assert_eq!(
+            extracted.claim().claim().key(),
+            &ArtifactPath::new("policy.toml")
+        );
+        extracted
+            .claim()
+            .claim()
+            .verify_with(&TestLocator)
+            .expect("policy claim verifies through locator");
+    }
+
+    #[test]
+    fn block_claims_are_committed_to_sealed_block_hash() {
+        let block_id = BlockId::new();
+        let entry_id = EntryId::new();
+        let mut first = open_block_with_id(block_id, 0, Vec::new());
+        first
+            .admit(proposed_entry_with_id(entry_id), actor("admitter"))
+            .expect("admit first");
+
+        let mut second = open_block_with_id(block_id, 0, Vec::new());
+        second
+            .admit(proposed_entry_with_id(entry_id), actor("admitter"))
+            .expect("admit second");
+
+        let first_claims =
+            block::Claims::empty_unchecked().with_policy(policy_claim("policy-a.toml"));
+        let second_claims =
+            block::Claims::empty_unchecked().with_policy(policy_claim("policy-b.toml"));
+        let first = seal_with_transition_and_claims(first, "transition:crown-lock", first_claims);
+        let second =
+            seal_with_transition_and_claims(second, "transition:crown-lock", second_claims);
 
         assert_ne!(first.block_hash(), second.block_hash());
         first.verify_hash().expect("first verifies");
