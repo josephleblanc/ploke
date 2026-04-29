@@ -22,24 +22,50 @@
 //! we got here, but this module should state the claims we are willing to make
 //! about the current code.
 //!
-//! History is the durable authority surface for one lineage. It is not a
-//! scheduler snapshot, branch registry, CLI report, metrics dashboard, preview
-//! aggregate, or database side table. Those are projections, caches, or evidence
-//! sources. The semantic object is:
+//! Update recorded 2026-04-29 10:35 UTC: the next design slice treats History
+//! as a global authenticated store over lineage-local authority chains. A block
+//! height is lineage-local; it is not the same as a global storage offset or
+//! append position.
+//!
+//! History is the durable authority surface for admitted lineage facts. It is
+//! not a scheduler snapshot, branch registry, CLI report, metrics dashboard,
+//! preview aggregate, or database side table. Those are projections, caches, or
+//! evidence sources. The semantic object is:
 //!
 //! ```text
-//! History    = chain of sealed Blocks
-//! Block      = one authority epoch for one active lineage
-//! Entry      = provenance-bearing fact admitted inside an epoch
-//! Ingress    = append-only late/backchannel observation outside a sealed epoch
-//! Projection = disposable view or index derived from History or evidence
+//! History     = authenticated store over sealed lineage-local blocks
+//! Lineage     = policy-governed projection over admitted Artifact continuity
+//! Block       = one authority epoch for one lineage
+//! Entry       = provenance-bearing fact admitted inside an epoch
+//! Ingress     = append-only late/backchannel observation outside a sealed epoch
+//! Projection  = disposable view or index derived from History or evidence
 //! ```
+//!
+//! Terminology status recorded 2026-04-29 10:35 UTC: the terms
+//! "transaction", "relation", "intervention", "policy", and "lineage
+//! projection" are intentionally not fully formalized in this module yet.
+//! Current code uses `Entry` as the implemented admission unit. Future block
+//! contents should likely be expressed as admitted transactions or relations
+//! over typed references, but that vocabulary needs its own definition before
+//! it becomes an implementation claim.
+//!
+//! Intended, not fully implemented as of 2026-04-29 10:35 UTC: startup should
+//! become an explicit admission procedure. A Runtime must first establish
+//! `ProducedBy(SelfRuntime, CurrentArtifact)`, then establish
+//! `AdmittedBy(CurrentArtifact, Lineage, Policy, History)` before it may enter
+//! the ruling Parent path.
 //!
 //! The intended live authority sequence is:
 //!
 //! ```text
-//! BootstrapPolicy admits clean Tree<Key> as Parent<Ruling>
-//! BootstrapPolicy opens genesis Block<Open>
+//! Startup<Observed>
+//!   -> Startup<Genesis> | Startup<Predecessor>
+//!   -> Startup<Validated>
+//!   -> Parent<Ruling>
+//!
+//! BootstrapPolicy admits clean Tree<Key> for a lineage with no valid
+//! associated History head in the configured store
+//! BootstrapPolicy opens genesis Block<Open> for lineage-local height 0
 //! Parent<Ruling> records entries while it has the Crown
 //! Parent<Ruling> installs the selected Artifact
 //! Parent<Ruling> locks Crown<Locked>
@@ -50,6 +76,12 @@
 //! incoming Runtime becomes Parent<Ruling>
 //! Parent<Ruling> opens the next Block<Open> from predecessor authority
 //! ```
+//!
+//! The genesis absence claim is local and store-scoped. It means "no valid
+//! associated authority for this lineage/artifact is present in the configured
+//! History store/root", not "no such authority exists anywhere". If the
+//! configured store is unreadable, ambiguous, or inconsistent with the local
+//! checkout, startup must reject rather than silently bootstrap.
 //!
 //! This is a cross-runtime contract, not merely an in-process state machine. The
 //! outgoing Parent runtime locks the handoff material at the end of its rule.
@@ -101,6 +133,20 @@
 //! monitor reports may be cited as evidence or projections, but they do not
 //! become History authority until admitted into a sealed block or imported as
 //! ingress under an explicit policy.
+//!
+//! Intended, not implemented as of 2026-04-29 10:35 UTC: the store should
+//! eventually maintain an authenticated lineage-head map, likely using a
+//! Merkle-Patricia trie or equivalent authenticated map rather than a
+//! hand-rolled directory scan. That map should support present and absent
+//! lineage-head proofs. The current filesystem `heads.json` projection is not
+//! such a proof.
+//!
+//! Intended, not implemented as of 2026-04-29 10:35 UTC: admitted Artifacts
+//! should carry an artifact-local provenance manifest committed by the Artifact
+//! tree. History should admit the Artifact by committing to its backend tree key
+//! plus manifest digest, leaving large evidence such as self-evaluations,
+//! intervention details, and build/runtime records in the Artifact or external
+//! content-addressed locations when policy permits.
 //!
 //! The current implementation enforces only part of this model:
 //!
@@ -201,9 +247,10 @@
 //!
 //! Blocking reasons:
 //!
-//! - `Parent<Ruling>` and `Successor<Admitted>` are not yet live handoff gates.
-//!   The live handoff now locks a lineage-bound `Crown<Locked>` carrier, but it
-//!   does not yet seal or persist a History block.
+//! - `Parent<Ruling>` is not yet gated by `Startup<Validated>`. The live
+//!   handoff now locks a lineage-bound `Crown<Locked>` carrier, but it does
+//!   not yet seal or persist a History block, and the incoming Runtime does
+//!   not yet validate through History before entering the parent path.
 //! - live successor validation still consults mutable scheduler/invocation
 //!   state instead of deriving `Tree<Key>` from the current checkout and
 //!   checking that it matches the current sealed History head.
@@ -358,6 +405,14 @@ impl LineageId {
 /// rows or transactions instead, but it must preserve the same contract: the
 /// head is derived from accepted sealed blocks, not written as a free-standing
 /// status field.
+///
+/// Update recorded 2026-04-29 10:35 UTC: this trait is still a local prototype
+/// port, not the final authenticated store contract. The current `head` method
+/// and `heads.json` projection do not provide Merkle/authenticated inclusion or
+/// absence proofs, and `append` does not yet validate a compare-and-swap style
+/// lineage-head transition. Future startup admission should depend on an
+/// authenticated lineage-head map API rather than treating `Option<BlockHash>`
+/// as a sufficient authority proof.
 ///
 /// Current limitation: `head` returns only the block hash. Before live handoff
 /// opens the next block from storage, this should be widened to return the
@@ -682,6 +737,12 @@ impl ParentIdentityRef {
 /// setup/bootstrap policy, and that base case must be committed explicitly so
 /// later successor admission can recurse from a real History head instead of a
 /// conceptual hole.
+///
+/// Update recorded 2026-04-29 10:35 UTC: genesis authority is lineage-local and
+/// store-scoped. In the intended startup procedure, genesis is valid only after
+/// the configured History store proves or locally validates absence of a valid
+/// associated head for this lineage/artifact. This type records bootstrap
+/// material; it is not by itself a global absence proof.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct GenesisAuthority {
     bootstrap_policy: ProcedureRef,
@@ -1023,6 +1084,12 @@ impl Entry<Admitted> {
 }
 
 /// Data required to open a block.
+///
+/// Implemented now: `block_height` is validated as lineage-local height:
+/// genesis opens height 0 with no parents, and predecessor authority opens
+/// nonzero heights with parent hashes. Not implemented yet: global append
+/// position, authenticated lineage-head map proofs, artifact manifest digest
+/// commitments, or a first-class `PolicyRef` distinct from `ProcedureRef`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OpenBlock {
     pub(crate) lineage_id: LineageId,
@@ -1112,7 +1179,14 @@ struct SealedBlockPreimage {
     entries_root: HistoryHash,
 }
 
-/// One authority epoch in the History chain.
+/// One authority epoch in a lineage-local History chain.
+///
+/// Update recorded 2026-04-29 10:35 UTC: a block should eventually commit to
+/// admitted transactions/relations over content-addressed references, including
+/// artifact-local manifest digests and provenance composition. Current code
+/// implements `Entry<Admitted>` only. The words "transaction" and "relation"
+/// are aspirational vocabulary here until their invariants are defined and
+/// encoded.
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct Block<S> {
     entries: Vec<Entry<Admitted>>,

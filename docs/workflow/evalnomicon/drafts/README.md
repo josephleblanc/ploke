@@ -12,6 +12,10 @@ into the main evalnomicon book.
 - [`prototype1-history-metrics-agent-brief.md`](prototype1-history-metrics-agent-brief.md)
   Compact post-compaction brief for Prototype 1 History, metrics projections,
   CLI surfaces, task stack, and review discipline.
+- [`prototype1-history-handoff-2026-04-29.md`](prototype1-history-handoff-2026-04-29.md)
+  End-of-session handoff for the current History/Crown direction: startup
+  admission, lineage-local History height, configured-store genesis absence,
+  artifact-local manifests, and the next block-content implementation slice.
 - [`eval-triage-rubric.md`](eval-triage-rubric.md)
   Compact classification rubric for separating harness invalidity, known
   frontier limits, and action-surface failures before baseline.

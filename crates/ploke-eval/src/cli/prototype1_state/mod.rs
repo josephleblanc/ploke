@@ -26,9 +26,13 @@
 //!
 //! ## Key terms and types
 //!
-//! The types in this module are reflections of concepts for a complex structure of
-//! self-propagating, self-evaluating configurations of artifact/runtime pairs that exist in a
-//! branching tree structure with a shared append-only history.
+//! The types in this module are reflections of concepts for a complex
+//! structure of self-propagating, self-evaluating configurations of
+//! artifact/runtime pairs that exist in a branching tree structure with a
+//! shared History store. Update recorded 2026-04-29 10:35 UTC: that store
+//! should be understood as a global authenticated substrate over lineage-local
+//! authority chains, not as one global linear chain whose height defines every
+//! lineage.
 //!
 //! Configuration: The operating world of one runtime. This includes type-state information that
 //! determines what is and is not an admissible intervention in that runtime.
@@ -57,10 +61,10 @@
 //!
 //! History: The intended durable substrate behind the Journal. History is not
 //! the scheduler snapshot, branch registry, CLI report, or any other mutable
-//! projection. It is the provenance-preserving chain of sealed authority
-//! blocks for one or more lineages. A block is the record of one Crown epoch:
-//! entries are written while a runtime is `Parent<Ruling>`, the block is
-//! sealed when the Crown is locked for the selected successor, and the
+//! projection. It is the provenance-preserving store of sealed authority blocks
+//! for one or more lineages. A block is the record of one Crown epoch within a
+//! lineage: entries are written while a runtime is `Parent<Ruling>`, the block
+//! is sealed when the Crown is locked for the selected successor, and the
 //! successor must verify that sealed block before it may become the next
 //! `Parent<Ruling>`.
 //!
@@ -77,6 +81,27 @@
 //! Current code should describe this as a tamper-evident, transition-checked
 //! local History model, not as distributed consensus or proof of LLM judgment
 //! correctness.
+//!
+//! Update recorded 2026-04-29 10:35 UTC: the intended startup admission check
+//! is:
+//!
+//! ```text
+//! ProducedBy(SelfRuntime, CurrentArtifact)
+//! AdmittedBy(CurrentArtifact, Lineage, Policy, History)
+//! ```
+//!
+//! Genesis admission is a local, configured-store absence claim: the runtime
+//! may use bootstrap authority only if the configured History store has no
+//! valid associated head for the lineage/artifact. Predecessor admission uses a
+//! sealed History head that names the current clean artifact tree. Current code
+//! has pieces of this shape but does not yet implement the full startup gate.
+//!
+//! Terminology status recorded 2026-04-29 10:35 UTC: terms such as
+//! "transaction", "relation", "intervention", "policy", and "lineage
+//! projection" are still underspecified relative to the larger state model.
+//! Do not treat them as implemented APIs until their invariants are written
+//! down and encoded. In particular, an `Intervention` is not automatically a
+//! History transaction; the relationship still needs a formal definition.
 //!
 //! Tree: The branching structure that contains the lineage of all Artifacts. This structure is
 //! based on the conceptual framework of a git tree, but is abstracted from it and backend agnostic.
@@ -292,6 +317,13 @@
 //! source Artifact is later lost then that Runtime has degraded provenance. It
 //! can still generate patches, but the system must not silently pretend the
 //! missing Artifact is recoverable.
+//!
+//! Intended, not implemented as of 2026-04-29 10:35 UTC: durable Artifacts
+//! should carry an artifact-local provenance manifest committed by the tree.
+//! History should admit the Artifact by committing to the backend tree key plus
+//! manifest digest. Larger evidence, such as self-evaluation records,
+//! intervention details, build/runtime records, and later validator
+//! attestations, may live in that manifest or be referenced from it by digest.
 //!
 //! Successor selection should eventually promote a graph coordinate or graph
 //! node under a policy, not a global "current branch". The single-successor
@@ -600,6 +632,17 @@
 //! - `nodes/<node-id>/bin/` and `nodes/<node-id>/target/`
 //!   Build artifacts from the live child-build path rather than authoritative
 //!   scheduler state.
+//! - `.ploke/prototype1/parent_identity.json` in the active checkout
+//!   Artifact-carried parent identity witness. This is currently committed
+//!   into the Artifact tree and used by startup validation, but it is not yet a
+//!   full artifact-local provenance manifest.
+//!
+//! Intended, not implemented as of 2026-04-29 10:35 UTC: each admitted Artifact
+//! should carry or reference a provenance manifest whose digest is committed by
+//! both the Artifact tree and the admitting History block. That manifest is the
+//! natural home for reconstructive evidence such as production provenance,
+//! self-evaluation refs, intervention refs, build/runtime refs, and later
+//! consensus or validator attestations.
 //!
 //! Related state also exists outside the campaign-local `prototype1/` subtree:
 //!
@@ -619,6 +662,15 @@
 //! - a concrete Crown box for successor handoff, so the authority transfer
 //!   still depends on invocation/ready files rather than one typed succession
 //!   transition
+//! - a startup admission gate that rejects inconsistent required surfaces
+//!   before entering `Parent<Ruling>`
+//! - an authenticated lineage-head map, such as a Merkle-Patricia trie or
+//!   equivalent authenticated map, capable of present/absent lineage-head
+//!   proofs for genesis and predecessor admission
+//! - artifact-local provenance manifests committed by the Artifact tree and
+//!   admitted by History through digest/reference
+//! - a minimal explicit policy reference for History admission; current code
+//!   still uses procedure references and runtime contract assumptions in places
 //! - a first-class attempt record that unifies invocation, pid, workspace
 //!   lease, process output streams, and terminal status
 //! - a durable scheduler decision for selected successors distinct from
