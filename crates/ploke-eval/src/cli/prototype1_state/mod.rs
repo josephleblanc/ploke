@@ -430,7 +430,9 @@
 //! Prototype 1 History and Crown authority must be audited at least weekly by
 //! combined human and LLM review while this architecture is active. The audit
 //! should compare the actual implementation against the claims above and in
-//! `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md`.
+//! `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md`, using
+//! `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md`
+//! as older background where it has not yet been refreshed.
 //! In particular, review private fields, constructor visibility, sealed or
 //! module-private state markers, move-only transitions, and the durable records
 //! emitted by those transitions. If the code permits forging `Parent<Ruling>`,
@@ -659,9 +661,9 @@
 //! but it is not yet the full state model needed for safe fan-out. In
 //! particular, the live implementation still lacks:
 //!
-//! - a concrete Crown box for successor handoff, so the authority transfer
-//!   still depends on invocation/ready files rather than one typed succession
-//!   transition
+//! - live sealing and persistence of a `Crown<Locked>` History block for
+//!   successor handoff, so the authority transfer still depends on
+//!   invocation/ready files rather than one typed succession transition
 //! - a startup admission gate that rejects inconsistent required surfaces
 //!   before entering `Parent<Ruling>`
 //! - an authenticated lineage-head map, such as a Merkle-Patricia trie or
@@ -669,8 +671,15 @@
 //!   proofs for genesis and predecessor admission
 //! - artifact-local provenance manifests committed by the Artifact tree and
 //!   admitted by History through digest/reference
-//! - a minimal explicit policy reference for History admission; current code
-//!   still uses procedure references and runtime contract assumptions in places
+//! - minimal explicit policy references and policy scopes defined through
+//!   bounded `Surface` identities for History admission; current code still
+//!   uses procedure references and runtime contract assumptions in places
+//! - stochastic evidence commitments such as evaluation sample refs,
+//!   uncertainty/risk refs, validator/reporter refs, and rejected/failure
+//!   evidence refs where policy uses those data for admission
+//! - first-class head-state concerns for rollback, fork/conflict, admission, and
+//!   finality; current code only has local parent links and rebuildable head
+//!   projections
 //! - a first-class attempt record that unifies invocation, pid, workspace
 //!   lease, process output streams, and terminal status
 //! - a durable scheduler decision for selected successors distinct from

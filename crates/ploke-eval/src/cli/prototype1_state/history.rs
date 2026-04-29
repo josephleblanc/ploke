@@ -1181,12 +1181,43 @@ struct SealedBlockPreimage {
 
 /// One authority epoch in a lineage-local History chain.
 ///
-/// Update recorded 2026-04-29 10:35 UTC: a block should eventually commit to
-/// admitted transactions/relations over content-addressed references, including
-/// artifact-local manifest digests and provenance composition. Current code
-/// implements `Entry<Admitted>` only. The words "transaction" and "relation"
-/// are aspirational vocabulary here until their invariants are defined and
-/// encoded.
+/// Draft block-content framing recorded 2026-04-29 08:03 PDT. Current code
+/// implements `Entry<Admitted>` plus sealed header material only; the grouping
+/// below is the design target for the next type slice, not a completed
+/// implementation claim.
+///
+/// A block should witness the meeting point of several independently useful
+/// invariants:
+///
+/// - chain position: block id/hash, parent block hashes, lineage coordinate,
+///   and lineage-local height as an index/projection rather than identity;
+/// - local authority: opening authority, ruling authority, Crown lock
+///   transition, and the store scope under which this block is authoritative;
+/// - procedural environment: `ProcedureRef` currently names the procedure set
+///   and runtime contract available to a Runtime built from an Artifact, not
+///   merely one narrow function call;
+/// - artifact commitments: active Artifact and selected successor Artifact
+///   should be recoverable from the tree and validated through backend tree key
+///   commitment plus artifact-local manifest digest/reference;
+/// - successor eligibility: selected successor runtime/artifact evidence
+///   should be sufficient for startup to validate the immediate sealed head
+///   without replaying the entire History hot path;
+/// - stochastic evidence: evaluation samples, oracle/eval refs, uncertainty
+///   summaries, risk-budget effects, validator/reporter refs, and rejected or
+///   failed candidate evidence should be committed by digest/root/reference when
+///   policy uses them for admission;
+/// - head state: rollback, fork/conflict, admission, and finality status are
+///   first-class block/History concerns even when the initial filesystem store
+///   can only model them as local projections;
+/// - admitted facts: entries remain the implemented admission unit, sealed by
+///   entry count and entries root.
+///
+/// Future consensus or multi-ruler work should add explicit policy/store
+/// semantics instead of treating a local Crown block as globally final. The
+/// current intended claim is local: under the configured single-ruler policy,
+/// this block is a valid authority epoch for one History store and lineage.
+/// Human or root authority is intentionally left as future policy work rather
+/// than a current block invariant.
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct Block<S> {
     entries: Vec<Entry<Admitted>>,
