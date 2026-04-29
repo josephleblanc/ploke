@@ -80,16 +80,20 @@ recoverable identity.
 
 ### Startup
 
-A Runtime may enter `Parent<Ruling>` only after establishing:
+Intended startup invariant, not yet the live startup gate as of 2026-04-29
+11:58 PDT: a Runtime may enter `Parent<Ruling>` only after establishing:
 
 ```text
 ProducedBy(SelfRuntime, CurrentArtifact)
 AdmittedBy(CurrentArtifact, Lineage, Policy, History)
 ```
 
-For the hot path, startup should validate the immediate sealed head and current
-Artifact commitment. Full History replay can remain a separate validation
-procedure because block hashes and parent links support recursive verification.
+For the intended hot path, startup should validate the immediate sealed head
+and current Artifact commitment. Full History replay can remain a separate
+validation procedure because block hashes and parent links support recursive
+verification. Current Prototype 1 startup still uses checkout, parent identity,
+scheduler, and invocation evidence; it does not yet validate sealed History
+head admission.
 
 Refined invariant, 2026-04-29 11:58 PDT:
 

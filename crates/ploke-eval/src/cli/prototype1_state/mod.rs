@@ -1,8 +1,8 @@
 //! Typed prototype1 configuration states.
 //!
 //! These states are only partially wired into the live controller. They exist
-//! so the Parent -> Child -> Completed child -> Selected successor -> Successor
-//! bootstrap seam can be modeled explicitly as move-only configuration
+//! so the Parent -> Child -> Completed child -> Selected successor -> incoming
+//! Parent handoff seam can be modeled explicitly as move-only configuration
 //! transitions while the older non-trampoline controller is being replaced.
 //! Live configuration values should be constructed through trusted
 //! loaders/transitions in their defining modules rather than by ad hoc struct

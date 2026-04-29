@@ -1,8 +1,9 @@
-//! Typed successor runtime role-state records.
+//! Typed records for the successor handoff path.
 //!
-//! The successor is not a separate controller role. It is the next Parent before
-//! handoff acknowledgement. These records project that handoff path into the
-//! append-only transition journal.
+//! The successor is not a separate controller role or a live `Successor<State>`
+//! authority carrier. It is the incoming Parent before handoff acknowledgement.
+//! These records project that handoff path into the append-only transition
+//! journal.
 
 use std::path::PathBuf;
 

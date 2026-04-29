@@ -114,12 +114,16 @@
 //! the same as Crown authority. The invariant is about which typed carriers can
 //! mutate the lineage as ruling Parent.
 //!
-//! Current claim updated 2026-04-29: Crown/History gates artifact eligibility,
-//! not OS-process uniqueness. For one lineage, a Runtime may enter the ruling
+//! Intended local authority claim updated 2026-04-29 11:58 PDT: Crown/History
+//! should gate artifact eligibility, not OS-process uniqueness. For one
+//! lineage, the target startup gate is that a Runtime may enter the ruling
 //! parent path only if its current clean Artifact tree matches the Artifact
-//! committed by the current sealed History head. This does not prove that only
-//! one OS process is running from that Artifact; process uniqueness requires a
-//! later lease, lock, or consensus mechanism.
+//! committed by the current sealed History head. The live startup path does not
+//! yet enforce that sealed-head admission; it still relies on checkout, parent
+//! identity, scheduler, and invocation evidence. Even after the sealed-head gate
+//! is wired, this does not prove that only one OS process is running from that
+//! Artifact; process uniqueness requires a later lease, lock, or consensus
+//! mechanism.
 //!
 //! The Crown is the one-at-a-time lineage authority. Parent is a role a Runtime
 //! may hold; the Crown is the capability that prevents two Parents from
