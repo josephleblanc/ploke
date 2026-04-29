@@ -171,6 +171,9 @@ pub enum Command {
     #[command(display_order = 32)]
     /// Inspect run artifacts, failures, tool calls, and stored snapshots.
     Inspect(InspectCommand),
+    #[command(display_order = 33)]
+    /// Inspect History-shaped projections and metrics from persisted evidence.
+    History(HistoryCommand),
     #[command(display_order = 40)]
     /// Operate on named eval campaigns and export campaign-level submissions.
     Campaign(CampaignCommand),
@@ -447,10 +450,98 @@ pub struct Prototype1MonitorCommand {
 pub enum Prototype1MonitorSubcommand {
     /// Print expected output locations and volatility notes.
     List,
+    /// Print read-only Prototype 1 metric projections from current evidence.
+    HistoryMetrics(Prototype1MetricsCommand),
+    /// Print a read-only History-shaped preview from current campaign records.
+    HistoryPreview(Prototype1HistoryPreviewCommand),
     /// Print short excerpts from existing expected output files.
     Peek(Prototype1MonitorPeekCommand),
+    /// Summarize the current campaign records as a provisional History input.
+    Report(Prototype1MonitorReportCommand),
     /// Poll expected output locations and print file changes.
     Watch(Prototype1MonitorWatchCommand),
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Inspect History-shaped projections and metrics from persisted evidence")]
+pub struct HistoryCommand {
+    #[arg(long, global = true)]
+    pub campaign: Option<String>,
+
+    #[arg(long, global = true, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: HistorySubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HistorySubcommand {
+    /// Print read-only metric projections from current evidence.
+    Metrics(Prototype1MetricsCommand),
+    /// Print a read-only History-shaped preview from current campaign records.
+    Preview(Prototype1HistoryPreviewCommand),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum MetricSlice {
+    Summary,
+    Cohorts,
+    Trajectory,
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1MetricsCommand {
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Maximum rows to print.
+    #[arg(long, default_value_t = 20, value_parser = parse_metric_rows)]
+    pub rows: usize,
+
+    /// Restrict rows to one generation.
+    #[arg(long)]
+    pub generation: Option<u32>,
+
+    /// Metrics view to print.
+    #[arg(long, value_enum, default_value_t = MetricSlice::Summary)]
+    pub view: MetricSlice,
+}
+
+fn parse_metric_rows(raw: &str) -> Result<usize, String> {
+    let rows = raw
+        .parse::<usize>()
+        .map_err(|source| format!("invalid row count '{raw}': {source}"))?;
+    if (1..=500).contains(&rows) {
+        Ok(rows)
+    } else {
+        Err(format!("rows must be between 1 and 500, got {rows}"))
+    }
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1HistoryPreviewCommand {
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Print one zero-based entry from the preview.
+    #[arg(long, value_name = "INDEX")]
+    pub entry: Option<usize>,
+
+    /// Maximum entries to include in the lightweight view.
+    #[arg(long, value_name = "N")]
+    pub entries: Option<usize>,
+
+    /// Maximum diagnostics to include in the lightweight view.
+    #[arg(long, value_name = "N")]
+    pub diagnostics: Option<usize>,
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1MonitorReportCommand {
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
 }
 
 #[derive(Debug, Parser)]
@@ -854,6 +945,13 @@ impl Cli {
                 }
             },
             Command::Inspect(cmd) => match cmd.run().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Command::History(cmd) => match cmd.run() {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
@@ -12070,6 +12168,202 @@ mod tests {
                 Prototype1MonitorSubcommand::Peek(peek) => {
                     assert_eq!(peek.lines, 5);
                     assert_eq!(peek.bytes, 2048);
+                }
+                other => panic!("unexpected monitor subcommand: {:?}", other),
+            },
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_monitor_report_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-monitor",
+            "--campaign",
+            "prototype1-campaign",
+            "report",
+            "--format",
+            "json",
+        ])
+        .expect("loop prototype1-monitor report should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Monitor(cmd),
+            }) => match cmd.command {
+                Prototype1MonitorSubcommand::Report(report) => {
+                    assert_eq!(report.format, InspectOutputFormat::Json);
+                }
+                other => panic!("unexpected monitor subcommand: {:?}", other),
+            },
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_monitor_history_metrics_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-monitor",
+            "--campaign",
+            "prototype1-campaign",
+            "history-metrics",
+            "--format",
+            "json",
+            "--rows",
+            "12",
+            "--generation",
+            "2",
+            "--view",
+            "trajectory",
+        ])
+        .expect("loop prototype1-monitor history-metrics should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Monitor(cmd),
+            }) => match cmd.command {
+                Prototype1MonitorSubcommand::HistoryMetrics(metrics) => {
+                    assert_eq!(metrics.format, InspectOutputFormat::Json);
+                    assert_eq!(metrics.rows, 12);
+                    assert_eq!(metrics.generation, Some(2));
+                    assert_eq!(metrics.view, MetricSlice::Trajectory);
+                }
+                other => panic!("unexpected monitor subcommand: {:?}", other),
+            },
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_monitor_history_metrics_cohorts_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-monitor",
+            "--campaign",
+            "prototype1-campaign",
+            "history-metrics",
+            "--view",
+            "cohorts",
+        ])
+        .expect("loop prototype1-monitor history-metrics cohorts should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Monitor(cmd),
+            }) => match cmd.command {
+                Prototype1MonitorSubcommand::HistoryMetrics(metrics) => {
+                    assert_eq!(metrics.view, MetricSlice::Cohorts);
+                }
+                other => panic!("unexpected monitor subcommand: {:?}", other),
+            },
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn history_metrics_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "history",
+            "metrics",
+            "--campaign",
+            "prototype1-campaign",
+            "--format",
+            "json",
+            "--rows",
+            "12",
+            "--generation",
+            "2",
+            "--view",
+            "cohorts",
+        ])
+        .expect("history metrics should parse");
+
+        match parsed.command {
+            Command::History(HistoryCommand {
+                campaign,
+                command: HistorySubcommand::Metrics(metrics),
+                ..
+            }) => {
+                assert_eq!(campaign.as_deref(), Some("prototype1-campaign"));
+                assert_eq!(metrics.format, InspectOutputFormat::Json);
+                assert_eq!(metrics.rows, 12);
+                assert_eq!(metrics.generation, Some(2));
+                assert_eq!(metrics.view, MetricSlice::Cohorts);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn history_preview_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "history",
+            "preview",
+            "--campaign",
+            "prototype1-campaign",
+            "--format",
+            "json",
+            "--entries",
+            "3",
+            "--diagnostics",
+            "2",
+            "--entry",
+            "1",
+        ])
+        .expect("history preview should parse");
+
+        match parsed.command {
+            Command::History(HistoryCommand {
+                campaign,
+                command: HistorySubcommand::Preview(preview),
+                ..
+            }) => {
+                assert_eq!(campaign.as_deref(), Some("prototype1-campaign"));
+                assert_eq!(preview.format, InspectOutputFormat::Json);
+                assert_eq!(preview.entries, Some(3));
+                assert_eq!(preview.diagnostics, Some(2));
+                assert_eq!(preview.entry, Some(1));
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_monitor_history_preview_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-monitor",
+            "--campaign",
+            "prototype1-campaign",
+            "history-preview",
+            "--format",
+            "json",
+            "--entries",
+            "3",
+            "--diagnostics",
+            "2",
+            "--entry",
+            "1",
+        ])
+        .expect("loop prototype1-monitor history-preview should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Monitor(cmd),
+            }) => match cmd.command {
+                Prototype1MonitorSubcommand::HistoryPreview(preview) => {
+                    assert_eq!(preview.format, InspectOutputFormat::Json);
+                    assert_eq!(preview.entries, Some(3));
+                    assert_eq!(preview.diagnostics, Some(2));
+                    assert_eq!(preview.entry, Some(1));
                 }
                 other => panic!("unexpected monitor subcommand: {:?}", other),
             },

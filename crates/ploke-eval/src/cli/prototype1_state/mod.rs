@@ -55,6 +55,29 @@
 //! contains evaluations, handoff documents, Records of Interventions, and Journals of a given
 //! Runtime's trajectory.
 //!
+//! History: The intended durable substrate behind the Journal. History is not
+//! the scheduler snapshot, branch registry, CLI report, or any other mutable
+//! projection. It is the provenance-preserving chain of sealed authority
+//! blocks for one or more lineages. A block is the record of one Crown epoch:
+//! entries are written while a runtime is `Parent<Ruling>`, the block is
+//! sealed when the Crown is locked for the selected successor, and the
+//! successor must verify that sealed block before it may become the next
+//! `Parent<Ruling>`.
+//!
+//! A History entry should preserve the subject, transition/procedure/policy,
+//! executor, operational environment, observer, recorder, proposer, ruling
+//! authority, input/output references, timestamps, and payload hash. These
+//! roles are not interchangeable: a late event submitted under one authority
+//! and admitted by another must retain that chain of custody.
+//!
+//! `Crown<Locked>` does not make local execution globally trustworthy. It
+//! gives a concrete boundary for one lineage: prior decisions must be in the
+//! sealed block, while late/backchannel observations go to append-only ingress
+//! and can affect later control flow only after an explicit import policy.
+//! Current code should describe this as a tamper-evident, transition-checked
+//! local History model, not as distributed consensus or proof of LLM judgment
+//! correctness.
+//!
 //! Tree: The branching structure that contains the lineage of all Artifacts. This structure is
 //! based on the conceptual framework of a git tree, but is abstracted from it and backend agnostic.
 //! The important characteristics of a Tree are that it contains the edges formed by applying a
@@ -129,6 +152,14 @@
 //! lineage. The single-lineage prototype can enforce that directly. A later
 //! multi-parent system must make the lineage parameter explicit so sibling
 //! Parents do not share one Crown by accident.
+//!
+//! Sealing the History block at `Crown<Locked>` gives the successor a specific
+//! validation target. Before unlocking, the successor should be able to verify
+//! the previous block hash, the selected Artifact installed in the active
+//! checkout, the selected successor identity, the policy decision, and the
+//! required evidence references. If required evidence arrives after the lock,
+//! it belongs to ingress and must be imported by a later admitted Parent under
+//! a named policy rather than silently rewriting the sealed block.
 //!
 //! The first code carriers for this shape are in [`inner`] and [`parent`].
 //! [`inner::Crown`] and [`inner::LockBox`] name the intended authority-transfer
@@ -361,6 +392,19 @@
 //! whole-repository artifact ids. Future work should replace those fallbacks
 //! with durable git/tree/manifest identities as the backend stops being a
 //! single `include_str!` text target.
+//!
+//! ## History block audit
+//!
+//! Prototype 1 History and Crown authority must be audited at least weekly by
+//! combined human and LLM review while this architecture is active. The audit
+//! should compare the actual implementation against the claims above and in
+//! `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md`.
+//! In particular, review private fields, constructor visibility, sealed or
+//! module-private state markers, move-only transitions, and the durable records
+//! emitted by those transitions. If the code permits forging `Parent<Ruling>`,
+//! `Crown<Locked>`, `Block<Sealed>`, or successor admission outside the
+//! intended transition path, the claim must be narrowed or the implementation
+//! corrected before relying on the History model for longer runs.
 //!
 //! Intervention: Any change to the Configuration. This means changing the Artifact or Runtime.
 //! Every Intervention must include a Record before and after the Intervention, which is added to
@@ -609,11 +653,15 @@ pub(crate) mod c4;
 pub(crate) mod child;
 pub(crate) mod cli_facing;
 pub(crate) mod event;
+pub(crate) mod history;
+pub(crate) mod history_preview;
 pub(crate) mod identity;
 pub(crate) mod inner;
 pub(crate) mod invocation;
 pub(crate) mod journal;
+pub(crate) mod metrics;
 pub(crate) mod parent;
 pub(crate) mod record;
+pub(crate) mod report;
 pub(crate) mod successor;
 pub(crate) mod workspace;

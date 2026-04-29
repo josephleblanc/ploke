@@ -22,15 +22,16 @@ use crate::{
     campaign::campaign_closure_state_path,
     campaign_manifest_path,
     cli::{
-        InspectOutputFormat, Prototype1BranchApplyCommand, Prototype1BranchEvaluateCommand,
-        Prototype1BranchRestoreCommand, Prototype1BranchSelectCommand, Prototype1BranchShowCommand,
-        Prototype1BranchStatusCommand, Prototype1LoopCommand, Prototype1LoopStopAfter,
-        Prototype1MonitorCommand, Prototype1MonitorPeekCommand, Prototype1MonitorSubcommand,
-        Prototype1MonitorWatchCommand, Prototype1RunnerCommand, Prototype1StateCommand,
-        Prototype1StateStopAfter, TimingTrace, advance_eval_closure, advance_protocol_closure,
-        default_batch_id, pending_prototype1_stages, persist_intervention_apply_for_record,
-        persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
-        print_issue_case_block,
+        HistoryCommand, HistorySubcommand, InspectOutputFormat, Prototype1BranchApplyCommand,
+        Prototype1BranchEvaluateCommand, Prototype1BranchRestoreCommand,
+        Prototype1BranchSelectCommand, Prototype1BranchShowCommand, Prototype1BranchStatusCommand,
+        Prototype1HistoryPreviewCommand, Prototype1LoopCommand, Prototype1LoopStopAfter,
+        Prototype1MetricsCommand, Prototype1MonitorCommand, Prototype1MonitorPeekCommand,
+        Prototype1MonitorSubcommand, Prototype1MonitorWatchCommand, Prototype1RunnerCommand,
+        Prototype1StateCommand, Prototype1StateStopAfter, TimingTrace, advance_eval_closure,
+        advance_protocol_closure, default_batch_id, pending_prototype1_stages,
+        persist_intervention_apply_for_record, persist_intervention_synthesis_for_record,
+        persist_issue_detection_for_record, print_issue_case_block,
         prototype1_process::{
             Prototype1NodeExecutionOutcome, execute_prototype1_runner_invocation,
             execute_prototype1_runner_node, persist_prototype1_buildable_child_artifact,
@@ -1459,13 +1460,264 @@ impl Prototype1MonitorCommand {
                 print_prototype1_monitor_locations(&manifest_path, Some(&repo_root));
                 Ok(())
             }
+            Prototype1MonitorSubcommand::HistoryMetrics(command) => {
+                run_metric_slice(&campaign_id, &manifest_path, &command)
+            }
             Prototype1MonitorSubcommand::Peek(command) => {
                 peek_prototype1_monitor_locations(&manifest_path, Some(&repo_root), &command)
+            }
+            Prototype1MonitorSubcommand::Report(command) => {
+                crate::cli::prototype1_state::report::run(&campaign_id, &manifest_path, &command)
+            }
+            Prototype1MonitorSubcommand::HistoryPreview(command) => {
+                run_history_preview(&campaign_id, &manifest_path, &command)
             }
             Prototype1MonitorSubcommand::Watch(command) => {
                 watch_prototype1_monitor_locations(&manifest_path, Some(&repo_root), &command)
             }
         }
+    }
+}
+
+impl HistoryCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let repo_root = match self.repo_root.clone() {
+            Some(path) => path,
+            None => current_dir_as_repo_root()?,
+        };
+        let campaign_id = resolve_history_campaign(&self, &repo_root)?;
+        let manifest_path = campaign_manifest_path(&campaign_id)?;
+
+        match self.command {
+            HistorySubcommand::Metrics(command) => {
+                run_metric_slice(&campaign_id, &manifest_path, &command)
+            }
+            HistorySubcommand::Preview(command) => {
+                run_history_preview(&campaign_id, &manifest_path, &command)
+            }
+        }
+    }
+}
+
+fn run_metric_slice(
+    campaign_id: &str,
+    manifest_path: &Path,
+    command: &Prototype1MetricsCommand,
+) -> Result<(), PrepareError> {
+    crate::cli::prototype1_state::metrics::run(
+        campaign_id,
+        manifest_path,
+        crate::cli::prototype1_state::metrics::MetricRequest {
+            rows: command.rows,
+            generation: command.generation,
+            view: command.view,
+            format: command.format,
+        },
+    )
+}
+
+fn run_history_preview(
+    campaign_id: &str,
+    manifest_path: &Path,
+    command: &Prototype1HistoryPreviewCommand,
+) -> Result<(), PrepareError> {
+    if command.entry.is_none() && command.entries.is_none() && command.diagnostics.is_none() {
+        return crate::cli::prototype1_state::history_preview::run(
+            campaign_id,
+            manifest_path,
+            command.format,
+        );
+    }
+
+    let preview = crate::cli::prototype1_state::history_preview::build(campaign_id, manifest_path)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "build prototype1 history preview",
+            detail: source.to_string(),
+        })?;
+    let value = serde_json::to_value(&preview).map_err(PrepareError::Serialize)?;
+    let slice = PreviewSlice::from_value(value, command)?;
+
+    match command.format {
+        InspectOutputFormat::Table => print_preview_slice(&slice),
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&slice.value).map_err(PrepareError::Serialize)?
+            );
+        }
+    }
+
+    Ok(())
+}
+
+struct PreviewSlice {
+    value: serde_json::Value,
+}
+
+impl PreviewSlice {
+    fn from_value(
+        value: serde_json::Value,
+        command: &Prototype1HistoryPreviewCommand,
+    ) -> Result<Self, PrepareError> {
+        let entries = json_array(&value, "entries")?;
+        let diagnostics = json_array(&value, "diagnostics")?;
+
+        let mut out = serde_json::Map::new();
+        copy_json_field(&value, &mut out, "schema_version");
+        copy_json_field(&value, &mut out, "generated_at");
+        copy_json_field(&value, &mut out, "campaign_id");
+        copy_json_field(&value, &mut out, "manifest_path");
+        copy_json_field(&value, &mut out, "prototype_root");
+        copy_json_field(&value, &mut out, "sources");
+        copy_json_field(&value, &mut out, "blocks");
+        copy_json_field(&value, &mut out, "deferred");
+        out.insert("entry_count".to_string(), serde_json::json!(entries.len()));
+        out.insert(
+            "diagnostic_count".to_string(),
+            serde_json::json!(diagnostics.len()),
+        );
+
+        if let Some(index) = command.entry {
+            let entry = entries
+                .get(index)
+                .cloned()
+                .ok_or_else(|| PrepareError::DatabaseSetup {
+                    phase: "select prototype1 history preview entry",
+                    detail: format!(
+                        "entry index {} out of range for {} entries",
+                        index,
+                        entries.len()
+                    ),
+                })?;
+            out.insert("entry_index".to_string(), serde_json::json!(index));
+            out.insert("entry".to_string(), entry);
+        } else if let Some(limit) = command.entries {
+            out.insert("entries".to_string(), limited_array(entries, limit));
+            out.insert("entries_limit".to_string(), serde_json::json!(limit));
+        }
+
+        if let Some(limit) = command.diagnostics {
+            out.insert("diagnostics".to_string(), limited_array(diagnostics, limit));
+            out.insert("diagnostics_limit".to_string(), serde_json::json!(limit));
+        }
+
+        Ok(Self {
+            value: serde_json::Value::Object(out),
+        })
+    }
+}
+
+fn json_array<'a>(
+    value: &'a serde_json::Value,
+    field: &'static str,
+) -> Result<&'a Vec<serde_json::Value>, PrepareError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "read prototype1 history preview",
+            detail: format!("serialized preview missing array field '{field}'"),
+        })
+}
+
+fn copy_json_field(
+    value: &serde_json::Value,
+    out: &mut serde_json::Map<String, serde_json::Value>,
+    field: &'static str,
+) {
+    if let Some(item) = value.get(field) {
+        out.insert(field.to_string(), item.clone());
+    }
+}
+
+fn limited_array(items: &[serde_json::Value], limit: usize) -> serde_json::Value {
+    serde_json::Value::Array(items.iter().take(limit).cloned().collect())
+}
+
+fn print_preview_slice(slice: &PreviewSlice) {
+    let value = &slice.value;
+    println!("prototype1 history preview");
+    println!("{}", "-".repeat(40));
+    print_json_scalar(value, "schema_version");
+    print_json_scalar(value, "generated_at");
+    print_json_scalar(value, "campaign_id");
+    print_json_scalar(value, "manifest_path");
+    print_json_scalar(value, "prototype_root");
+    print_json_scalar(value, "entry_count");
+    print_json_scalar(value, "diagnostic_count");
+
+    if let Some(entry) = value.get("entry") {
+        println!();
+        println!("entry");
+        println!("{}", "-".repeat(40));
+        print_json_scalar(value, "entry_index");
+        print_json_scalar(entry, "entry_kind");
+        print_json_scalar(entry, "subject");
+        print_json_scalar(entry, "executor");
+        print_json_scalar(entry, "observer");
+        print_json_scalar(entry, "recorder");
+        print_json_scalar(entry, "proposer");
+        print_json_scalar(entry, "procedure_or_policy");
+        print_json_scalar(entry, "block_height");
+        print_json_scalar(entry, "generation");
+        print_json_scalar(entry, "payload_ref");
+        print_json_scalar(entry, "payload_hash");
+        if let Some(source) = entry.get("source") {
+            print_json_scalar(source, "ref_id");
+        }
+        return;
+    }
+
+    if let Some(entries) = value.get("entries").and_then(serde_json::Value::as_array) {
+        println!();
+        println!("entries");
+        println!("{}", "-".repeat(40));
+        for (index, entry) in entries.iter().enumerate() {
+            let kind = json_display(entry.get("entry_kind"));
+            let subject = json_display(entry.get("subject"));
+            let height = json_display(entry.get("block_height"));
+            let source = entry
+                .get("source")
+                .and_then(|source| source.get("ref_id"))
+                .map(|value| json_display(Some(value)))
+                .unwrap_or_else(|| "-".to_string());
+            println!("#{index} kind={kind} height={height} subject={subject} source={source}");
+        }
+    }
+
+    if let Some(diagnostics) = value
+        .get("diagnostics")
+        .and_then(serde_json::Value::as_array)
+    {
+        println!();
+        println!("diagnostics");
+        println!("{}", "-".repeat(40));
+        if diagnostics.is_empty() {
+            println!("(none)");
+        } else {
+            for diagnostic in diagnostics {
+                let severity = json_display(diagnostic.get("severity"));
+                let source = json_display(diagnostic.get("source_ref"));
+                let message = json_display(diagnostic.get("message"));
+                println!("{severity} [{source}]: {message}");
+            }
+        }
+    }
+}
+
+fn print_json_scalar(value: &serde_json::Value, field: &'static str) {
+    if let Some(item) = value.get(field) {
+        println!("{field}: {}", json_display(Some(item)));
+    }
+}
+
+fn json_display(value: Option<&serde_json::Value>) -> String {
+    match value {
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(serde_json::Value::Number(number)) => number.to_string(),
+        Some(serde_json::Value::Bool(flag)) => flag.to_string(),
+        Some(serde_json::Value::Null) | None => "-".to_string(),
+        Some(other) => other.to_string(),
     }
 }
 
@@ -2390,6 +2642,71 @@ fn resolve_prototype1_monitor_campaign(
             crate::cli::prototype1_state::identity::parent_identity_path(repo_root).display()
         ),
     })
+}
+
+fn resolve_history_campaign(
+    command: &HistoryCommand,
+    repo_root: &Path,
+) -> Result<String, PrepareError> {
+    if let Some(campaign) = command.campaign.as_ref() {
+        return Ok(campaign.clone());
+    }
+    if let Some(campaign) = infer_campaign_from_parent_identity(repo_root)? {
+        return Ok(campaign);
+    }
+    if let Some(campaign) = load_active_selection()?.campaign {
+        return Ok(campaign);
+    }
+    if let Some(campaign) = latest_prototype1_campaign()? {
+        return Ok(campaign);
+    }
+
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "--campaign was omitted, no parent identity exists at '{}', no active campaign is selected, and no Prototype 1 campaign was found under '{}'. Run `ploke-eval select campaign <campaign>` or pass --campaign.",
+            crate::cli::prototype1_state::identity::parent_identity_path(repo_root).display(),
+            crate::layout::campaigns_dir()?.display()
+        ),
+    })
+}
+
+fn latest_prototype1_campaign() -> Result<Option<String>, PrepareError> {
+    let root = crate::layout::campaigns_dir()?;
+    if !root.exists() {
+        return Ok(None);
+    }
+
+    let mut latest = None::<(SystemTime, String)>;
+    for entry in fs::read_dir(&root).map_err(|source| PrepareError::ReadCampaignManifest {
+        path: root.clone(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| PrepareError::ReadCampaignManifest {
+            path: root.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if !path.is_dir()
+            || !path.join("campaign.json").exists()
+            || !path.join("prototype1").exists()
+        {
+            continue;
+        }
+        let modified = path
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let campaign_id = entry.file_name().to_string_lossy().to_string();
+        if latest
+            .as_ref()
+            .map(|(current, _)| modified > *current)
+            .unwrap_or(true)
+        {
+            latest = Some((modified, campaign_id));
+        }
+    }
+
+    Ok(latest.map(|(_, campaign_id)| campaign_id))
 }
 
 fn active_selected_instance_for_campaign(

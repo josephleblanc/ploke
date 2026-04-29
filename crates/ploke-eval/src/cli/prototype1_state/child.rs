@@ -40,6 +40,10 @@ pub(crate) struct Record {
 }
 
 impl Record {
+    pub(crate) fn runtime_id(&self) -> RuntimeId {
+        self.runtime_id
+    }
+
     /// Stable display label for monitor summaries.
     pub(crate) fn entry_kind(&self) -> &'static str {
         match self.state {

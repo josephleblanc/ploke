@@ -16,6 +16,29 @@
 //! Every transition family recorded in [`JournalEntry`] should also have a
 //! replay classifier here so restart/recovery semantics stay symmetric with the
 //! forward transition contract.
+//!
+//! Naming and migration discipline:
+//! Several older records in this file have flattened names such as
+//! `ChildArtifactCommittedEntry`, `ActiveCheckoutAdvancedEntry`, and
+//! `SuccessorHandoffEntry`. Those names are legacy storage labels, not the
+//! intended semantic shape for new protocol code. They compress role, state,
+//! object, and persistence mechanism into one identifier.
+//!
+//! New History-facing code should normalize these records into structural
+//! carriers before admission, for example:
+//!
+//! ```text
+//! Artifact<Committed> or artifact::Record { state: artifact::State::Committed }
+//! Checkout<Advanced> or checkout::Record { state: checkout::State::Advanced }
+//! Successor<Ready> or successor::Record { state: successor::State::Ready }
+//! Parent<Started> or parent::Record { state: parent::State::Started }
+//! ```
+//!
+//! Do not mirror the flattened `*Entry` names into History entry kinds. Import
+//! them as legacy evidence, then project them into typed domain facts whose
+//! structure lives in the module path, carrier type, and state parameter. Once
+//! the structural import path is tested, these flattened records can be marked
+//! deprecated to make the migration explicit without breaking replay at once.
 
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -188,8 +211,13 @@ pub(crate) struct ParentStartedEntry {
     pub pid: u32,
 }
 
-/// Durable child artifact commit record produced before a child can be selected
-/// as successor.
+/// Legacy storage label for a durable child artifact commit record produced
+/// before a child can be selected as successor.
+///
+/// History import should treat this as evidence for an artifact transition,
+/// not as the semantic model itself. The intended normalized shape is an
+/// `Artifact<Committed>`-style carrier or equivalent `artifact::Record` with a
+/// committed state.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ChildArtifactCommittedEntry {
     pub recorded_at: RecordedAt,
@@ -204,7 +232,12 @@ pub(crate) struct ChildArtifactCommittedEntry {
     pub identity_commit: String,
 }
 
-/// Active checkout advancement record for the parent handoff path.
+/// Legacy storage label for active checkout advancement in the parent handoff
+/// path.
+///
+/// History import should normalize this into a checkout transition fact. The
+/// semantic structure is `Checkout<Advanced>` or equivalent, not a
+/// `ActiveCheckoutAdvancedEntry` concept carried forward as a History kind.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ActiveCheckoutAdvancedEntry {
     pub recorded_at: RecordedAt,
@@ -216,7 +249,12 @@ pub(crate) struct ActiveCheckoutAdvancedEntry {
     pub installed_commit: String,
 }
 
-/// Successor handoff acknowledgement observed by the previous parent.
+/// Legacy storage label for successor handoff acknowledgement observed by the
+/// previous parent.
+///
+/// History import should normalize this into successor and parent authority
+/// facts. It is evidence about a handoff boundary, not the future
+/// `Crown<Locked> -> Successor<Admitted> -> Parent<Ruling>` carrier.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SuccessorHandoffEntry {
     pub recorded_at: RecordedAt,
@@ -233,6 +271,11 @@ pub(crate) struct SuccessorHandoffEntry {
 }
 
 /// Single append-only journal entry for typed prototype1 transitions.
+///
+/// This enum is a replay envelope. It intentionally preserves older storage
+/// labels so existing JSONL can still be read, but new History code should not
+/// treat each variant name as an ontology. Convert the variant into a
+/// structural transition fact first, then propose that fact for History.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum JournalEntry {

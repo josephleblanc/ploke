@@ -1,5 +1,6 @@
 pub mod inner;
 
+pub mod algebra;
 pub mod branch_evaluation;
 pub mod campaign;
 pub mod cli;
