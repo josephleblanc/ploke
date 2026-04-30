@@ -4,16 +4,18 @@
 //! specification on 2026-04-27.
 //!
 //! This module defines the local invariant core for Prototype 1 History.
-//! Current live handoff locks a lineage-bound Crown carrier but does not yet
-//! seal or persist a block. The live loop still uses typed transition
+//! Current live handoff seals and appends a minimal History block before
+//! launching the successor runtime. The live loop still uses typed transition
 //! scaffolding, a transition journal, invocation files, successor-ready files,
 //! and mutable scheduler/branch projections. Those records can be imported as
-//! evidence later; they are not themselves sealed History blocks.
+//! evidence later; they are not themselves sealed History authority.
+//!
 //! Update recorded 2026-04-29 22:05 PDT: in-code `Block<Open>` construction,
 //! successor opening, and entry admission are now routed through
-//! `Crown<Ruling>` methods. That narrows the local type boundary, but the live
-//! runtime still needs to pass a real ruling carrier through handoff sealing
-//! and append the sealed block before successor admission can rely on History.
+//! `Crown<Ruling>` methods. The live successor handoff also now routes block
+//! sealing through the Crown transition and appends the sealed block before
+//! successor launch. The successor still does not verify that sealed head on
+//! startup, so History is not yet the live admission gate.
 //!
 //! The weekly review policy in `AGENTS.md` applies here: reviewers must compare
 //! these claims against the actual code at least once per week while this
@@ -246,8 +248,8 @@
 //! //   -> Parent<Ruling>
 //! //
 //! // Parent<Ruling>
-//! //   .lock_crown(selected_successor, open_block)
-//! //   -> (Crown<Locked>, Block<Sealed>)
+//! //   .seal_block(open_block, selected_successor)
+//! //   -> (Parent<Retired>, Block<Sealed>)
 //! //
 //! // Runtime<Checked>
 //! //   .verify(sealed_head, tree_key, parent_identity)
@@ -257,20 +259,18 @@
 //! Blocking reasons:
 //!
 //! - `Parent<Ruling>` is not yet gated by `Startup<Validated>`. The live
-//!   handoff now locks a lineage-bound `Crown<Locked>` carrier, but it does
-//!   not yet seal or persist a History block, and the incoming Runtime does
-//!   not yet validate through History before entering the parent path.
+//!   handoff now seals and appends a lineage-bound History block before
+//!   successor launch, but the incoming Runtime does not yet validate through
+//!   History before entering the parent path.
 //! - `Block<Open>` construction and entry admission are locally gated by
-//!   `Crown<Ruling>`, but the live controller does not yet carry that ruling
-//!   authority through its full block lifecycle. The current methods still
-//!   accept actor identity fields as data until `Parent<Ruling>` supplies them
-//!   structurally.
+//!   `Crown<Ruling>`, but the current methods still accept actor identity
+//!   fields as data until `Parent<Ruling>` supplies them structurally.
 //! - live successor validation still consults mutable scheduler/invocation
 //!   state instead of deriving `Tree<Key>` from the current checkout and
 //!   checking that it matches the current sealed History head.
-//! - gen0 setup currently writes and commits parent identity, but it does not
-//!   yet open or append an explicit genesis History block from bootstrap
-//!   authority.
+//! - gen0 setup currently writes and commits parent identity, but setup itself
+//!   does not open or append a genesis History block. The first live handoff
+//!   creates the genesis block if no configured History head exists.
 //! - whole-artifact and runtime/build identities still need final canonical
 //!   refs in several paths.
 //! - existing journals and reports must be imported as pre-History evidence
@@ -426,20 +426,15 @@ impl LineageId {
 /// and `heads.json` projection do not provide Merkle/authenticated inclusion or
 /// absence proofs, and `append` does not yet validate a compare-and-swap style
 /// lineage-head transition. Future startup admission should depend on an
-/// authenticated lineage-head map API rather than treating `Option<BlockHash>`
+/// authenticated lineage-head map API rather than treating `Option<BlockHead>`
 /// as a sufficient authority proof.
 ///
-/// Current limitation: `head` returns only the block hash. Before live handoff
-/// opens the next block from storage, this should be widened to return the
-/// stored head reference needed to construct the successor block without
-/// reconstructing authority from scheduler state, generation buckets, or branch
-/// handles.
 pub(crate) trait BlockStore {
     type Error;
 
     fn append(&self, block: &Block<block::Sealed>) -> Result<StoredBlock, Self::Error>;
 
-    fn head(&self, lineage: &LineageId) -> Result<Option<BlockHash>, Self::Error>;
+    fn head(&self, lineage: &LineageId) -> Result<Option<BlockHead>, Self::Error>;
 }
 
 /// Filesystem-backed sealed block store for Prototype 1.
@@ -543,6 +538,33 @@ impl FsBlockStore {
         let bytes = serde_json::to_vec_pretty(heads).map_err(BlockStoreError::Serialize)?;
         fs::write(&path, bytes).map_err(|source| BlockStoreError::Write { path, source })
     }
+
+    fn stored_by_hash(
+        &self,
+        lineage: &LineageId,
+        block_hash: &BlockHash,
+    ) -> Result<BlockHead, BlockStoreError> {
+        let path = self.by_hash_path();
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(source) => return Err(BlockStoreError::Read { path, source }),
+        };
+        for line in text.lines() {
+            let stored: StoredBlock =
+                serde_json::from_str(line).map_err(BlockStoreError::Deserialize)?;
+            if &stored.lineage_id == lineage && &stored.block_hash == block_hash {
+                return Ok(BlockHead {
+                    block_hash: stored.block_hash,
+                    lineage_id: stored.lineage_id,
+                    block_height: stored.block_height,
+                });
+            }
+        }
+        Err(BlockStoreError::MissingHeadIndex {
+            lineage_id: lineage.clone(),
+            block_hash: block_hash.clone(),
+        })
+    }
 }
 
 impl BlockStore for FsBlockStore {
@@ -582,8 +604,11 @@ impl BlockStore for FsBlockStore {
         Ok(stored)
     }
 
-    fn head(&self, lineage: &LineageId) -> Result<Option<BlockHash>, Self::Error> {
-        Ok(self.read_heads()?.get(lineage).cloned())
+    fn head(&self, lineage: &LineageId) -> Result<Option<BlockHead>, Self::Error> {
+        let Some(block_hash) = self.read_heads()?.get(lineage).cloned() else {
+            return Ok(None);
+        };
+        self.stored_by_hash(lineage, &block_hash).map(Some)
     }
 }
 
@@ -612,6 +637,34 @@ pub(crate) struct StoredBlock {
     lineage_id: LineageId,
     block_height: u64,
     location: BlockLocation,
+}
+
+impl StoredBlock {
+    pub(crate) fn block_hash(&self) -> &BlockHash {
+        &self.block_hash
+    }
+
+    pub(crate) fn block_height(&self) -> u64 {
+        self.block_height
+    }
+}
+
+/// Store-derived current head for one lineage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct BlockHead {
+    block_hash: BlockHash,
+    lineage_id: LineageId,
+    block_height: u64,
+}
+
+impl BlockHead {
+    pub(crate) fn block_hash(&self) -> &BlockHash {
+        &self.block_hash
+    }
+
+    pub(crate) fn block_height(&self) -> u64 {
+        self.block_height
+    }
 }
 
 /// Rebuildable projection from `(lineage, height)` to block hash.
@@ -2261,6 +2314,14 @@ pub(crate) enum BlockStoreError {
     #[error("failed to deserialize History store value")]
     Deserialize(#[source] serde_json::Error),
 
+    #[error(
+        "History head projection for lineage '{lineage_id:?}' points at missing block {block_hash:?}"
+    )]
+    MissingHeadIndex {
+        lineage_id: LineageId,
+        block_hash: BlockHash,
+    },
+
     #[error("sealed block failed verification before storage")]
     Verify(#[from] HistoryError),
 }
@@ -2543,7 +2604,8 @@ mod tests {
             store
                 .head(&LineageId::new("lineage:a"))
                 .expect("read head")
-                .as_ref(),
+                .as_ref()
+                .map(BlockHead::block_hash),
             Some(&expected_hash)
         );
 

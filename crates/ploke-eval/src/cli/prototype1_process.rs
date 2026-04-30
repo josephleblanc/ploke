@@ -134,7 +134,9 @@ use crate::cli::prototype1_state::cli_facing::{
 };
 use crate::cli::prototype1_state::event::{Paths, RecordedAt, Refs};
 use crate::cli::prototype1_state::history::{
-    ActorRef, ArtifactRef, EvidenceRef, SealBlock, SuccessorRef,
+    ActorRef, ArtifactRef, BlockStore, EvidenceRef, FsBlockStore, GenesisAuthority, LineageId,
+    OpenBlock, OpeningAuthority, ParentIdentityRef, PredecessorAuthority, ProcedureRef, SealBlock,
+    SuccessorRef, TreeKeyCommitment,
 };
 use crate::cli::prototype1_state::identity::{
     ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -878,19 +880,33 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     )?;
     let runtime_id = crate::cli::prototype1_state::event::RuntimeId::new();
     let successor_artifact = successor_artifact_ref(&node);
+    let open = handoff_block_fields(
+        campaign_id,
+        active_parent_root,
+        parent.identity(),
+        &manifest_path,
+        successor_artifact.clone(),
+    )?;
     let seal = SealBlock::from_handoff(
         EvidenceRef::new(format!("prototype1:successor-handoff:{runtime_id}")),
         SuccessorRef::new(ActorRef::Runtime(runtime_id), successor_artifact.clone()),
         successor_artifact,
         RecordedAt::now(),
     );
-    let (retired_parent, locked_crown) = parent.lock_crown(seal);
+    let (retired_parent, sealed_block) = parent
+        .seal_block(open, seal)
+        .map_err(history_prepare_error)?;
+    let history_store = FsBlockStore::for_campaign_manifest(&manifest_path);
+    let stored_block = history_store
+        .append(&sealed_block)
+        .map_err(block_store_prepare_error)?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
         campaign = %campaign_id,
         node_id = %node_id,
-        crown_lineage = %locked_crown.lineage(),
-        "prototype1 Crown locked before successor runtime spawn"
+        block_height = stored_block.block_height(),
+        block_hash = %stored_block.block_hash().as_str(),
+        "prototype1 History block sealed before successor runtime spawn"
     );
     let invocation_path =
         crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
@@ -1008,6 +1024,91 @@ fn successor_artifact_ref(node: &crate::intervention::Prototype1NodeRecord) -> A
         return ArtifactRef::new(format!("artifact:{}", artifact_id.as_str()));
     }
     ArtifactRef::new(format!("branch:{}", node.branch_id))
+}
+
+fn handoff_block_fields(
+    campaign_id: &str,
+    active_parent_root: &Path,
+    parent_identity: &ParentIdentity,
+    manifest_path: &Path,
+    active_artifact: ArtifactRef,
+) -> Result<OpenBlock, PrepareError> {
+    let store = FsBlockStore::for_campaign_manifest(manifest_path);
+    let lineage_id = LineageId::new(campaign_id.to_string());
+    let head = store.head(&lineage_id).map_err(block_store_prepare_error)?;
+    let parent_actor = parent_actor_ref(parent_identity);
+    let (block_height, parent_block_hashes, opening_authority) = match head {
+        Some(head) => {
+            let predecessor = head.block_hash().clone();
+            (
+                head.block_height() + 1,
+                vec![predecessor.clone()],
+                OpeningAuthority::Predecessor(PredecessorAuthority::new(predecessor)),
+            )
+        }
+        None => {
+            let backend = GitWorktreeBackend;
+            let tree_key = backend
+                .clean_tree_key(active_parent_root)
+                .map_err(backend_prepare_error)?;
+            let tree_key = tree_key.tree_key_hash().map_err(history_prepare_error)?;
+            (
+                0,
+                Vec::new(),
+                OpeningAuthority::Genesis(GenesisAuthority::new(
+                    ProcedureRef::new("prototype1:bootstrap:single-ruler:v1"),
+                    tree_key,
+                    ParentIdentityRef::new(EvidenceRef::new(format!(
+                        "artifact-path:{}",
+                        parent_identity_relpath().display()
+                    ))),
+                )),
+            )
+        }
+    };
+
+    Ok(OpenBlock {
+        lineage_id,
+        block_height,
+        parent_block_hashes,
+        opening_authority,
+        opened_by: parent_actor.clone(),
+        opened_from_artifact: active_artifact,
+        ruling_authority: parent_actor,
+        policy_ref: ProcedureRef::new("prototype1:single-ruler-local:v1"),
+        opened_at: RecordedAt::now(),
+    })
+}
+
+fn parent_actor_ref(parent_identity: &ParentIdentity) -> ActorRef {
+    ActorRef::Process(format!("parent:{}", parent_identity.parent_id))
+}
+
+fn history_prepare_error(
+    error: crate::cli::prototype1_state::history::HistoryError,
+) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase: "prototype1_history",
+        detail: error.to_string(),
+    }
+}
+
+fn block_store_prepare_error(
+    error: crate::cli::prototype1_state::history::BlockStoreError,
+) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase: "prototype1_history_store",
+        detail: error.to_string(),
+    }
+}
+
+fn backend_prepare_error(
+    error: crate::cli::prototype1_state::backend::BackendError,
+) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase: "prototype1_history_tree_key",
+        detail: error.to_string(),
+    }
 }
 
 /// Construct a persisted runner result for child-binary build failure.

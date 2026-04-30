@@ -565,7 +565,7 @@ mod tests {
         ));
 
         assert_eq!(retired.identity.node_id, "parent-a");
-        assert_eq!(locked.lineage(), "campaign");
+        assert!(locked.lineage_key().matches_debug_str("campaign"));
     }
 
     #[test]

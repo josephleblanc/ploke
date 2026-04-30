@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::history::SealBlock;
+use super::history::{Block, HistoryError, OpenBlock, SealBlock, block};
 
 /// Static filesystem address schema used by a cross-runtime message.
 pub(crate) trait File {
@@ -109,10 +109,6 @@ impl LineageKey {
         }
     }
 
-    pub(crate) fn as_debug_str(&self) -> &str {
-        &self.value
-    }
-
     pub(crate) fn matches_debug_str(&self, value: &str) -> bool {
         self.value == value
     }
@@ -127,10 +123,6 @@ impl<S> fmt::Debug for Crown<S> {
 }
 
 impl<S> Crown<S> {
-    pub(crate) fn lineage(&self) -> &str {
-        self.lineage.as_debug_str()
-    }
-
     pub(crate) fn lineage_key(&self) -> &LineageKey {
         &self.lineage
     }
@@ -169,15 +161,36 @@ impl Crown<crown::Locked> {
 pub(crate) trait LockCrown {
     type Retired;
 
+    #[cfg(test)]
     fn lock_crown(self, seal: SealBlock) -> (Self::Retired, Crown<crown::Locked>);
+
+    fn seal_block(
+        self,
+        open: OpenBlock,
+        seal: SealBlock,
+    ) -> Result<(Self::Retired, Block<block::Sealed>), HistoryError>;
 }
 
 impl LockCrown for super::parent::Parent<super::parent::Selectable> {
     type Retired = super::parent::Parent<super::parent::Retired>;
 
+    #[cfg(test)]
     fn lock_crown(self, seal: SealBlock) -> (Self::Retired, Crown<crown::Locked>) {
         let (retired, lineage) = self.into_retired_and_lineage();
         (retired, Crown::for_lineage(lineage).lock(seal))
+    }
+
+    fn seal_block(
+        self,
+        open: OpenBlock,
+        seal: SealBlock,
+    ) -> Result<(Self::Retired, Block<block::Sealed>), HistoryError> {
+        let (retired, lineage) = self.into_retired_and_lineage();
+        let ruling = Crown::for_lineage(lineage);
+        let block = ruling.open_block(open)?;
+        let locked = ruling.lock(seal);
+        let sealed = locked.seal(block)?;
+        Ok((retired, sealed))
     }
 }
 

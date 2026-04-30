@@ -191,11 +191,12 @@
 //!
 //! The first code carriers for this shape are in [`inner`] and [`parent`].
 //! [`inner::Crown`] and [`inner::LockBox`] name the intended authority-transfer
-//! structure. They are still scaffolding: current live handoff uses concrete
-//! invocation and ready files, while the child-selection path has the first
-//! concrete message box. Do not extend the old process seam by adding another
-//! ad hoc acknowledgement file. Add the missing concrete box/transition pair
-//! instead.
+//! structure. The current live handoff now seals and appends a minimal History
+//! block before successor launch, but successor startup still uses concrete
+//! invocation and ready files rather than sealed-head verification. The
+//! child-selection path has the first concrete message box. Do not extend the
+//! old process seam by adding another ad hoc acknowledgement file. Add the
+//! missing concrete box/transition pair instead.
 //!
 //! ## Boxes, messages, and buffers
 //!
