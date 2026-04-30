@@ -351,7 +351,7 @@ pub enum PrepareError {
     #[error("batch selection is invalid: {detail}")]
     InvalidBatchSelection { detail: String },
     #[error("prototype1 parent check failed: {0}")]
-    Prototype1Parent(#[from] Prototype1ParentError),
+    Prototype1Parent(Box<Prototype1ParentError>),
     #[error("issue input must include at least a title or a body")]
     EmptyIssue,
     #[error("failed to canonicalize '{path}': {source}")]
@@ -383,6 +383,12 @@ pub enum PrepareError {
     SnapshotFailed { detail: String },
     #[error("Error with database")]
     PlokeError(#[from] ploke_db::DbError),
+}
+
+impl From<Prototype1ParentError> for PrepareError {
+    fn from(source: Prototype1ParentError) -> Self {
+        Self::Prototype1Parent(Box::new(source))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

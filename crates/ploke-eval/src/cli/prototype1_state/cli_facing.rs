@@ -2890,6 +2890,21 @@ fn resolve_prototype1_candidate_node_id(
     }
 }
 
+fn resolve_initial_parent_node_id(
+    command: &Prototype1StateCommand,
+    campaign_id: &str,
+    manifest_path: &Path,
+) -> Result<String, PrepareError> {
+    resolve_prototype1_candidate_node_id(
+        command,
+        campaign_id,
+        manifest_path,
+        Some(0),
+        None,
+        "initial parent identity",
+    )
+}
+
 async fn resolve_next_child(
     command: &Prototype1StateCommand,
     campaign_id: &str,
@@ -2974,14 +2989,7 @@ fn initialize_prototype1_parent_identity(
     manifest_path: &Path,
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
-    let node_id = resolve_prototype1_candidate_node_id(
-        command,
-        campaign_id,
-        manifest_path,
-        Some(0),
-        None,
-        "initial parent identity",
-    )?;
+    let node_id = resolve_initial_parent_node_id(command, campaign_id, manifest_path)?;
     let Some(branch) = command.identity_branch.as_deref() else {
         return Err(PrepareError::InvalidBatchSelection {
             detail:
@@ -2999,7 +3007,7 @@ fn initialize_prototype1_parent_identity(
             ),
         });
     }
-    let _ = backend
+    backend
         .checkout_fresh_parent_branch(repo_root, branch)
         .map_err(|source| PrepareError::DatabaseSetup {
             phase: "prototype1_parent_identity_branch",
@@ -3011,9 +3019,9 @@ fn initialize_prototype1_parent_identity(
         None,
         Some(branch.to_string()),
     );
-    let _ = write_parent_identity(repo_root, &identity)?;
+    write_parent_identity(repo_root, &identity)?;
     let message = parent_identity_commit_message(&identity);
-    let _ = backend
+    backend
         .persist_active_checkout_files(repo_root, &[parent_identity_relpath()], &message)
         .map_err(|source| PrepareError::DatabaseSetup {
             phase: "prototype1_parent_identity_commit",
@@ -3029,9 +3037,7 @@ fn initialize_prototype1_parent_identity(
 }
 
 fn resolve_prototype1_parent_identity(
-    _command: &Prototype1StateCommand,
     campaign_id: &str,
-    _manifest_path: &Path,
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
     if let Some(identity) = load_parent_identity_optional(repo_root)? {
@@ -3205,8 +3211,7 @@ impl Prototype1StateCommand {
             return Ok(());
         }
 
-        let parent_identity =
-            resolve_prototype1_parent_identity(&self, &campaign_id, &manifest_path, &repo_root)?;
+        let parent_identity = resolve_prototype1_parent_identity(&campaign_id, &repo_root)?;
         let backend = GitWorktreeBackend;
         let selected_instance = active_selected_instance_for_campaign(&campaign_id)?;
         let parent = Parent::<Unchecked>::load(&manifest_path, parent_identity)?.check(
