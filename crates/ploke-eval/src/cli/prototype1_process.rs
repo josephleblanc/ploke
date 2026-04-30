@@ -388,6 +388,44 @@ pub(crate) fn validate_prototype1_successor_continuation(
     validate_prototype1_successor_node_continuation(manifest_path, invocation.node_id())
 }
 
+/// Verify that the incoming runtime is running from the Artifact admitted by
+/// the predecessor's sealed History head.
+///
+/// This is the local single-ruler gate between successor transport evidence and
+/// `Parent<Ready>`. Invocation JSON may get the runtime to this point, but it is
+/// not authority to enter the ruling parent path.
+pub(crate) fn validate_prototype1_successor_history_admission(
+    campaign_id: &str,
+    manifest_path: &Path,
+    active_parent_root: &Path,
+) -> Result<(), PrepareError> {
+    let store = FsBlockStore::for_campaign_manifest(manifest_path);
+    let lineage_id = LineageId::new(campaign_id.to_string());
+    let head = match store.head(&lineage_id).map_err(block_store_prepare_error)? {
+        StoreHead::Present(head) => head,
+        StoreHead::Absent { .. } => {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_history_successor_admission",
+                detail: format!(
+                    "successor startup for campaign '{}' has no sealed History head to verify",
+                    campaign_id
+                ),
+            });
+        }
+    };
+    let sealed = store
+        .sealed_head_block(&head)
+        .map_err(block_store_prepare_error)?;
+    let current_artifact = GitWorktreeBackend
+        .clean_tree_key(active_parent_root)
+        .map_err(backend_prepare_error)?
+        .tree_key_hash()
+        .map_err(history_prepare_error)?;
+    sealed
+        .verify_current_artifact_tree(&current_artifact, &ArtifactLocator)
+        .map_err(history_prepare_error)
+}
+
 fn validate_prototype1_successor_node_continuation(
     manifest_path: &Path,
     node_id: &str,
@@ -901,7 +939,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         artifact_key,
     } = handoff_block;
     let (retired_parent, sealed_block) = parent
-        .seal_block_with(open, seal, |crown, claims| {
+        .seal_block_with_artifact(open, seal, |crown| {
             let environment = OperationalEnvironment::new()
                 .artifact(successor_artifact.clone())
                 .binary(EvidenceRef::new(format!(
@@ -920,7 +958,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
                     RecordedAt::now(),
                 )
                 .map_err(|source| source.into_history_error())?;
-            Ok(claims.with_artifact(artifact_claim))
+            Ok(artifact_claim)
         })
         .map_err(history_prepare_error)?;
     let history_store = FsBlockStore::for_campaign_manifest(&manifest_path);
@@ -932,7 +970,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         campaign = %campaign_id,
         node_id = %node_id,
         block_height = stored_block.block_height(),
-        block_hash = %stored_block.block_hash().as_str(),
+        block_hash = %stored_block.block_hash(),
         "prototype1 History block sealed before successor runtime spawn"
     );
     let invocation_path =
@@ -1078,10 +1116,10 @@ fn handoff_block_fields(
         .map_err(history_prepare_error)?;
     let (block_height, parent_block_hashes, opening_authority) = match &head {
         StoreHead::Present(head) => {
-            let predecessor = head.block_hash().clone();
+            let predecessor = *head.block_hash();
             (
                 head.block_height() + 1,
-                vec![predecessor.clone()],
+                vec![predecessor],
                 OpeningAuthority::Predecessor(PredecessorAuthority::new(predecessor)),
             )
         }

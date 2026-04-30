@@ -260,7 +260,7 @@
 //! //   -> Parent<Ruling>
 //! //
 //! // Parent<Ruling>
-//! //   .seal_block(open_block, selected_successor)
+//! //   .seal_block_with_artifact(open_block, selected_successor, admitted_artifact)
 //! //   -> (Parent<Retired>, Block<Sealed>)
 //! //
 //! // Runtime<Checked>
@@ -319,13 +319,14 @@
 
 use std::{
     collections::BTreeMap,
+    fmt,
     fs::{self, OpenOptions},
     io::{self, Write},
     marker::PhantomData,
     path::{Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use sha2::{Digest as ShaDigest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
@@ -365,19 +366,86 @@ struct HashPreimage<'a, T: Serialize> {
 }
 
 /// Durable block hash. Kept distinct from payload hashes in type signatures.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub(crate) struct BlockHash(String);
+///
+/// Storage serializes this as lowercase hex, but the in-memory value is a fixed
+/// 32-byte digest so a `BlockHash` cannot carry an arbitrary string payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct BlockHash([u8; 32]);
 
 impl BlockHash {
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
+    fn from_hex(value: &str) -> Result<Self, String> {
+        decode_hex_32(value).map(Self)
+    }
+
+    pub(crate) fn to_hex(self) -> String {
+        encode_hex_32(&self.0)
     }
 }
 
 impl From<HistoryHash> for BlockHash {
     fn from(value: HistoryHash) -> Self {
-        Self(value.0)
+        Self::from_hex(value.as_str()).expect("HistoryHash must be a SHA-256 hex digest")
+    }
+}
+
+impl Serialize for BlockHash {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for BlockHash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::from_hex(&value).map_err(de::Error::custom)
+    }
+}
+
+impl fmt::Display for BlockHash {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.to_hex())
+    }
+}
+
+fn encode_hex_32(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(64);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn decode_hex_32(value: &str) -> Result<[u8; 32], String> {
+    if value.len() != 64 {
+        return Err(format!(
+            "expected 64 hex characters for BlockHash, got {}",
+            value.len()
+        ));
+    }
+
+    let mut bytes = [0_u8; 32];
+    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        let high = decode_hex_nibble(chunk[0])?;
+        let low = decode_hex_nibble(chunk[1])?;
+        bytes[index] = (high << 4) | low;
+    }
+    Ok(bytes)
+}
+
+fn decode_hex_nibble(byte: u8) -> Result<u8, String> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(format!("invalid hex character {:?}", byte as char)),
     }
 }
 
@@ -591,11 +659,11 @@ impl FsBlockStore {
         fs::write(&path, bytes).map_err(|source| BlockStoreError::Write { path, source })
     }
 
-    fn stored_by_hash(
+    fn stored_record_by_hash(
         &self,
         lineage: &LineageId,
         block_hash: &BlockHash,
-    ) -> Result<BlockHead, BlockStoreError> {
+    ) -> Result<StoredBlock, BlockStoreError> {
         let path = self.by_hash_path();
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
@@ -605,17 +673,56 @@ impl FsBlockStore {
             let stored: StoredBlock =
                 serde_json::from_str(line).map_err(BlockStoreError::Deserialize)?;
             if &stored.lineage_id == lineage && &stored.block_hash == block_hash {
-                return Ok(BlockHead {
-                    block_hash: stored.block_hash,
-                    lineage_id: stored.lineage_id,
-                    block_height: stored.block_height,
-                });
+                return Ok(stored);
             }
         }
         Err(BlockStoreError::MissingHeadIndex {
             lineage_id: lineage.clone(),
-            block_hash: block_hash.clone(),
+            block_hash: *block_hash,
         })
+    }
+
+    fn stored_by_hash(
+        &self,
+        lineage: &LineageId,
+        block_hash: &BlockHash,
+    ) -> Result<BlockHead, BlockStoreError> {
+        self.stored_record_by_hash(lineage, block_hash)
+            .map(|stored| BlockHead {
+                block_hash: stored.block_hash,
+                lineage_id: stored.lineage_id,
+                block_height: stored.block_height,
+            })
+    }
+
+    /// Load and verify the sealed block currently named by a checked head.
+    ///
+    /// This is deliberately a loader transition instead of `Deserialize` for
+    /// `Block<block::Sealed>`. The current Prototype 1 handoff blocks have no
+    /// admitted entries; until entry loading has its own transition, this method
+    /// rejects non-empty stored blocks instead of silently reconstructing them.
+    pub(crate) fn sealed_head_block(
+        &self,
+        head: &BlockHead,
+    ) -> Result<Block<block::Sealed>, BlockStoreError> {
+        let stored = self.stored_record_by_hash(&head.lineage_id, &head.block_hash)?;
+        let path = self.blocks_dir().join(&stored.location.segment);
+        let text = fs::read_to_string(&path).map_err(|source| BlockStoreError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        let line = text
+            .lines()
+            .nth(stored.location.line_index as usize)
+            .ok_or_else(|| BlockStoreError::MissingStoredBlockLine {
+                path: path.clone(),
+                line_index: stored.location.line_index,
+            })?;
+        let stored_block: StoredSealedBlock =
+            serde_json::from_str(line).map_err(BlockStoreError::Deserialize)?;
+        let block = stored_block.into_verified_block(path, stored.location.line_index)?;
+        block.verify_expected_hash(&head.block_hash)?;
+        Ok(block)
     }
 }
 
@@ -646,7 +753,7 @@ impl BlockStore for FsBlockStore {
             line_index: count_lines(&segment_path)?,
         };
         let stored = StoredBlock {
-            block_hash: block.block_hash().clone(),
+            block_hash: *block.block_hash(),
             lineage_id: block.header().common.lineage_id.clone(),
             block_height: block.header().common.block_height,
             location,
@@ -659,11 +766,11 @@ impl BlockStore for FsBlockStore {
             &LineageHeight {
                 lineage_id: stored.lineage_id.clone(),
                 block_height: stored.block_height,
-                block_hash: stored.block_hash.clone(),
+                block_hash: stored.block_hash,
             },
         )?;
 
-        heads.insert(stored.lineage_id.clone(), stored.block_hash.clone());
+        heads.insert(stored.lineage_id.clone(), stored.block_hash);
         self.write_heads(&heads)?;
 
         Ok(stored)
@@ -719,6 +826,45 @@ impl StoredBlock {
 
     pub(crate) fn block_height(&self) -> u64 {
         self.block_height
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredSealedBlock {
+    state: StoredSealedState,
+    entries: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredSealedState {
+    header: SealedBlockHeader,
+    #[serde(rename = "_private")]
+    _private: serde_json::Value,
+}
+
+impl StoredSealedBlock {
+    fn into_verified_block(
+        self,
+        path: PathBuf,
+        line_index: u64,
+    ) -> Result<Block<block::Sealed>, BlockStoreError> {
+        if !self.entries.is_empty() || self.state.header.entry_count != 0 {
+            return Err(BlockStoreError::UnsupportedStoredEntries {
+                path,
+                line_index,
+                entry_count: self.state.header.entry_count,
+            });
+        }
+
+        let block = Block {
+            state: block::Sealed {
+                header: self.state.header,
+                _private: Private,
+            },
+            entries: Vec::new(),
+        };
+        block.verify_hash()?;
+        Ok(block)
     }
 }
 
@@ -820,7 +966,7 @@ impl StoreHead {
                 {
                     return Err(BlockStoreError::WrongStoreHeadParent {
                         lineage_id: head.lineage_id.clone(),
-                        expected: head.block_hash.clone(),
+                        expected: head.block_hash,
                     });
                 }
             }
@@ -1811,7 +1957,7 @@ pub(crate) struct OpenBlock {
     pub(crate) opened_at: RecordedAt,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct BlockCommon {
     schema_version: u32,
     block_id: BlockId,
@@ -1882,7 +2028,7 @@ impl SealBlock {
 
 /// Block typestate payloads.
 pub(crate) mod block {
-    use serde::Serialize;
+    use serde::{Deserialize, Serialize};
 
     use super::BlockCommon;
     use super::{
@@ -1908,7 +2054,7 @@ pub(crate) mod block {
     /// or status string. A field being `None` means the current live code has
     /// not yet supplied that claim. It is not an implicit admission, and it
     /// must not be interpreted as successful verification.
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub(crate) struct Claims {
         policy: Option<FlatClaim<ArtifactPath, Digest<Policy>>>,
         surface: Option<FlatClaim<ArtifactPath, Digest<Surface>>>,
@@ -2023,7 +2169,7 @@ pub(crate) mod block {
 }
 
 /// Header material committed by a sealed block.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SealedBlockHeader {
     common: BlockCommon,
     crown_lock_transition: EvidenceRef,
@@ -2315,18 +2461,51 @@ impl Block<block::Sealed> {
         Ok(())
     }
 
+    /// Verify that the sealed head admits the current checkout's Artifact tree.
+    ///
+    /// This is the successor-side half of the cross-runtime handoff contract: the
+    /// predecessor sealed a tree-key-backed Artifact claim, and the incoming
+    /// runtime must derive its own backend-owned clean tree key and match it
+    /// before entering the ruling Parent path.
+    pub(crate) fn verify_current_artifact_tree<L>(
+        &self,
+        current: &TreeKeyHash,
+        locator: &L,
+    ) -> Result<(), HistoryError>
+    where
+        L: Locator<Artifact, Key = TreeKeyHash, Digest = Digest<Artifact>, Error = HistoryError>,
+        L::Digest: PartialEq,
+    {
+        let artifact = self
+            .header()
+            .claims
+            .artifact::<L>()
+            .ok_or(HistoryError::MissingArtifactClaim)?;
+        let verifiable = artifact.claim().claim();
+        if verifiable.key() != current {
+            return Err(HistoryError::ArtifactTreeKeyMismatch {
+                expected: verifiable.key().clone(),
+                actual: current.clone(),
+            });
+        }
+        verifiable
+            .verify_with(locator)
+            .map_err(VerifyError::into_history_error)?;
+        Ok(())
+    }
+
     fn open_successor(
         &self,
         fields: OpenSuccessorBlock,
     ) -> Result<Block<block::Open>, HistoryError> {
-        let mut parent_block_hashes = vec![self.block_hash().clone()];
+        let mut parent_block_hashes = vec![*self.block_hash()];
         parent_block_hashes.extend(fields.additional_parent_block_hashes);
         let block_height = self.header().common.block_height + 1;
         Block::<block::Open>::open(OpenBlock {
             lineage_id: self.header().common.lineage_id.clone(),
             block_height,
             opening_authority: OpeningAuthority::Predecessor(PredecessorAuthority::new(
-                self.block_hash().clone(),
+                *self.block_hash(),
             )),
             parent_block_hashes,
             regime: Regime::prototype1_baseline(block_height),
@@ -2545,7 +2724,7 @@ impl Ingress<ingress::Open> {
         let entry_id = EntryId::new();
         let payload = IngressImportPayload {
             ingress_id: self.ingress_id,
-            prior_block_hash: self.prior_block_hash.clone(),
+            prior_block_hash: self.prior_block_hash,
             original_payload_ref: self.observation.payload_ref.clone(),
             original_payload_hash: self.observation.payload_hash.clone(),
             observed_by: self.observation.observer.clone(),
@@ -2660,6 +2839,15 @@ pub(crate) enum HistoryError {
 
     #[error("sealed block claim digest does not match the expected artifact/tree value")]
     ClaimDigestMismatch,
+
+    #[error("sealed block is missing the required admitted Artifact claim")]
+    MissingArtifactClaim,
+
+    #[error("current checkout tree key does not match sealed Artifact claim")]
+    ArtifactTreeKeyMismatch {
+        expected: TreeKeyHash,
+        actual: TreeKeyHash,
+    },
 }
 
 /// Sealed History block storage errors.
@@ -2743,6 +2931,20 @@ pub(crate) enum BlockStoreError {
     WrongStoreHeadParent {
         lineage_id: LineageId,
         expected: BlockHash,
+    },
+
+    #[error("History block segment '{}' has no line {line_index}", path.display())]
+    MissingStoredBlockLine { path: PathBuf, line_index: u64 },
+
+    #[error(
+        "stored History block at '{}':{} has {entry_count} entries; verified entry loading is not implemented yet",
+        path.display(),
+        line_index
+    )]
+    UnsupportedStoredEntries {
+        path: PathBuf,
+        line_index: u64,
+        entry_count: usize,
     },
 
     #[error("sealed block failed verification before storage")]
@@ -3037,7 +3239,7 @@ mod tests {
             .admit(proposed_entry(), actor("admitter"))
             .expect("admit");
         let sealed = seal(block);
-        let expected_hash = sealed.block_hash().clone();
+        let expected_hash = *sealed.block_hash();
         let expected_head = store
             .head(&LineageId::new("lineage:a"))
             .expect("read empty head");
@@ -3071,7 +3273,7 @@ mod tests {
                 .join("by-hash.jsonl"),
         )
         .expect("by hash index");
-        assert!(by_hash.contains(expected_hash.as_str()));
+        assert!(by_hash.contains(&expected_hash.to_hex()));
 
         let by_lineage = std::fs::read_to_string(
             tmp.path()
@@ -3148,7 +3350,7 @@ mod tests {
         let genesis = seal(open_block(0, Vec::new()));
         store.append(&stale, &genesis).expect("append genesis");
 
-        let child = seal(open_block(1, vec![genesis.block_hash().clone()]));
+        let child = seal(open_block(1, vec![*genesis.block_hash()]));
         let err = store
             .append(&stale, &child)
             .expect_err("stale expected head must fail");
@@ -3194,6 +3396,54 @@ mod tests {
             err,
             BlockStoreError::MissingLineageHeadProjection { .. }
         ));
+    }
+
+    #[test]
+    fn fs_block_store_loads_zero_entry_sealed_head_for_startup_admission() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+        let claims =
+            block::Claims::empty_unchecked().with_artifact(artifact_claim("tree:successor"));
+        let sealed = seal_with_transition_and_claims(
+            open_block(0, Vec::new()),
+            "transition:crown-lock",
+            claims,
+        );
+        let expected_hash = *sealed.block_hash();
+        let expected_head = store.head(&lineage).expect("read empty head");
+        store
+            .append(&expected_head, &sealed)
+            .expect("append sealed block");
+        let StoreHead::Present(head) = store.head(&lineage).expect("read head") else {
+            panic!("appended block should produce present head");
+        };
+
+        let loaded = store.sealed_head_block(&head).expect("load sealed head");
+
+        loaded
+            .verify_expected_hash(&expected_hash)
+            .expect("loaded block hash verifies");
+        loaded
+            .verify_current_artifact_tree(&tree_key("tree:successor"), &ArtifactLocator)
+            .expect("current successor tree is admitted by sealed head");
+    }
+
+    #[test]
+    fn sealed_head_artifact_verification_rejects_tree_mismatch() {
+        let claims =
+            block::Claims::empty_unchecked().with_artifact(artifact_claim("tree:successor"));
+        let sealed = seal_with_transition_and_claims(
+            open_block(0, Vec::new()),
+            "transition:crown-lock",
+            claims,
+        );
+
+        let err = sealed
+            .verify_current_artifact_tree(&tree_key("tree:other"), &ArtifactLocator)
+            .expect_err("mismatched current tree key must not enter parent path");
+
+        assert!(matches!(err, HistoryError::ArtifactTreeKeyMismatch { .. }));
     }
 
     #[test]
@@ -3539,7 +3789,7 @@ mod tests {
         let merge_parent = BlockHash::from(HistoryHash::of_bytes(b"merge-parent"));
         let successor = sealed
             .open_successor(OpenSuccessorBlock {
-                additional_parent_block_hashes: vec![merge_parent.clone()],
+                additional_parent_block_hashes: vec![merge_parent],
                 opened_by: actor("successor"),
                 opened_from_artifact: ArtifactRef::new("artifact:successor"),
                 ruling_authority: actor("successor"),
@@ -3576,9 +3826,9 @@ mod tests {
                 observed_at: at(50),
                 recorded_at: at(51),
             },
-            predecessor_hash.clone(),
+            predecessor_hash,
         );
-        let block = open_block(1, vec![predecessor_hash.clone()]);
+        let block = open_block(1, vec![predecessor_hash]);
 
         let (proposed, imported) = ingress.import(
             &block,
@@ -3627,9 +3877,9 @@ mod tests {
                 observed_at: at(50),
                 recorded_at: at(51),
             },
-            predecessor_hash.clone(),
+            predecessor_hash,
         );
-        let target = open_block(1, vec![predecessor_hash.clone()]);
+        let target = open_block(1, vec![predecessor_hash]);
         let mut wrong_block = open_block(1, vec![predecessor_hash]);
 
         let (proposed, _imported) = ingress.import(

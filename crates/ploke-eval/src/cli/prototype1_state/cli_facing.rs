@@ -38,6 +38,7 @@ use crate::{
             record_prototype1_successor_completion, record_prototype1_successor_ready,
             run_prototype1_branch_evaluation, run_prototype1_branch_evaluation_via_child,
             spawn_and_handoff_prototype1_successor, validate_prototype1_successor_continuation,
+            validate_prototype1_successor_history_admission,
         },
         prototype1_state::{
             backend::{GitWorktreeBackend, WorkspaceBackend},
@@ -3114,6 +3115,7 @@ fn acknowledge_prototype1_state_handoff(
     }
 
     validate_prototype1_successor_continuation(&invocation, manifest_path)?;
+    validate_prototype1_successor_history_admission(campaign_id, manifest_path, repo_root)?;
     let ready = record_prototype1_successor_ready(&invocation, manifest_path)?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,

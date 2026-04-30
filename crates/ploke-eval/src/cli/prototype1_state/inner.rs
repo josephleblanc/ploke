@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::history::{Block, HistoryError, OpenBlock, SealBlock, block};
+use super::history::{
+    Admission, Artifact, ArtifactLocator, Block, HistoryError, OpenBlock, RulerWitness, SealBlock,
+    Verifiable, Witnessed, block, claim,
+};
 
 /// Static filesystem address schema used by a cross-runtime message.
 pub(crate) trait File {
@@ -164,13 +167,7 @@ pub(crate) trait LockCrown {
     #[cfg(test)]
     fn lock_crown(self, seal: SealBlock) -> (Self::Retired, Crown<crown::Locked>);
 
-    fn seal_block(
-        self,
-        open: OpenBlock,
-        seal: SealBlock,
-    ) -> Result<(Self::Retired, Block<block::Sealed>), HistoryError>;
-
-    fn seal_block_with<F>(
+    fn seal_block_with_artifact<F>(
         self,
         open: OpenBlock,
         seal: SealBlock,
@@ -179,8 +176,13 @@ pub(crate) trait LockCrown {
     where
         F: FnOnce(
             &Crown<crown::Ruling>,
-            super::history::block::Claims,
-        ) -> Result<super::history::block::Claims, HistoryError>;
+        ) -> Result<
+            claim::Admitted<
+                Admission,
+                Witnessed<RulerWitness, Verifiable<Artifact, ArtifactLocator>>,
+            >,
+            HistoryError,
+        >;
 }
 
 impl LockCrown for super::parent::Parent<super::parent::Selectable> {
@@ -192,15 +194,7 @@ impl LockCrown for super::parent::Parent<super::parent::Selectable> {
         (retired, Crown::for_lineage(lineage).lock(seal))
     }
 
-    fn seal_block(
-        self,
-        open: OpenBlock,
-        seal: SealBlock,
-    ) -> Result<(Self::Retired, Block<block::Sealed>), HistoryError> {
-        self.seal_block_with(open, seal, |_ruling, claims| Ok(claims))
-    }
-
-    fn seal_block_with<F>(
+    fn seal_block_with_artifact<F>(
         self,
         open: OpenBlock,
         mut seal: SealBlock,
@@ -209,13 +203,18 @@ impl LockCrown for super::parent::Parent<super::parent::Selectable> {
     where
         F: FnOnce(
             &Crown<crown::Ruling>,
-            super::history::block::Claims,
-        ) -> Result<super::history::block::Claims, HistoryError>,
+        ) -> Result<
+            claim::Admitted<
+                Admission,
+                Witnessed<RulerWitness, Verifiable<Artifact, ArtifactLocator>>,
+            >,
+            HistoryError,
+        >,
     {
         let (retired, lineage) = self.into_retired_and_lineage();
         let ruling = Crown::for_lineage(lineage);
         let block = ruling.open_block(open)?;
-        seal.claims = admit(&ruling, seal.claims)?;
+        seal.claims = seal.claims.with_artifact(admit(&ruling)?);
         let locked = ruling.lock(seal);
         let sealed = locked.seal(block)?;
         Ok((retired, sealed))
