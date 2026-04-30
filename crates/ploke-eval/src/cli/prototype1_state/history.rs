@@ -45,6 +45,7 @@
 //! Block       = one authority epoch for one lineage
 //! Entry       = provenance-bearing fact admitted inside an epoch
 //! Ingress     = append-only late/backchannel observation outside a sealed epoch
+//! Regime      = phase/risk strategy context witnessed by a block
 //! Projection  = disposable view or index derived from History or evidence
 //! ```
 //!
@@ -145,6 +146,17 @@
 //! become History authority until admitted into a sealed block or imported as
 //! ingress under an explicit policy.
 //!
+//! Update recorded 2026-04-30 03:51 PDT: the block header now reserves a
+//! `Regime` slot for the phase/risk strategy context in effect when an
+//! authority epoch opens. This is not an external `Policy` object and should
+//! not be read as a claim that a policy file has authority. It records the
+//! current runtime-frame strategy hypothesis: long-horizon coherence and
+//! improvement are expected to require a variable strategy that changes across
+//! an absolute step axis and dependent environment axes, such as expansion,
+//! evaluation, consolidation, and hardening. Current code only commits the
+//! placeholder context into block hashes; it does not yet compute risk budgets,
+//! phase transitions, or consensus/finality effects from it.
+//!
 //! Intended, not implemented as of 2026-04-29 10:35 UTC: the store should
 //! eventually maintain an authenticated lineage-head map, likely using a
 //! Merkle-Patricia trie or equivalent authenticated map rather than a
@@ -164,13 +176,13 @@
 //! - `Block<Open>::seal` is private to this module.
 //! - sealing requires a lineage-bound `Crown<Locked>` carrier.
 //! - sealed blocks carry deterministic hashes and can be locally verified.
+//! - live handoff appends a minimal sealed block before successor launch.
 //! - a filesystem `BlockStore` can append sealed blocks and maintain
 //!   rebuildable indexes.
 //!
 //! The current implementation does not yet enforce:
 //!
 //! - live `Parent<Ruling>` as the only writer of open block entries;
-//! - live append of the handoff block through `BlockStore`;
 //! - successor verification of the predecessor `Block<Sealed>` before becoming
 //!   authoritative;
 //! - ingress capture/import while the Crown is locked;
@@ -305,8 +317,6 @@
 //! lineage/head metadata explicitly instead of reconstructing authority from a
 //! generation number, branch name, or scheduler frontier.
 
-#![allow(dead_code)] // Self-contained invariant core; live wiring is intentionally deferred.
-
 use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
@@ -421,20 +431,23 @@ impl LineageId {
 /// head is derived from accepted sealed blocks, not written as a free-standing
 /// status field.
 ///
-/// Update recorded 2026-04-29 10:35 UTC: this trait is still a local prototype
-/// port, not the final authenticated store contract. The current `head` method
-/// and `heads.json` projection do not provide Merkle/authenticated inclusion or
-/// absence proofs, and `append` does not yet validate a compare-and-swap style
-/// lineage-head transition. Future startup admission should depend on an
-/// authenticated lineage-head map API rather than treating `Option<BlockHead>`
-/// as a sufficient authority proof.
+/// Update recorded 2026-04-30 04:08 PDT: this trait is still a local
+/// prototype port, not the final authenticated store contract. `StoreHead`
+/// validates only the filesystem store projections available today; it is not a
+/// Merkle/authenticated inclusion or absence proof. `append` must still consume
+/// the expected store head so a sealed block can advance a lineage only from a
+/// verified absent or present predecessor state.
 ///
 pub(crate) trait BlockStore {
     type Error;
 
-    fn append(&self, block: &Block<block::Sealed>) -> Result<StoredBlock, Self::Error>;
+    fn append(
+        &self,
+        expected: &StoreHead,
+        block: &Block<block::Sealed>,
+    ) -> Result<StoredBlock, Self::Error>;
 
-    fn head(&self, lineage: &LineageId) -> Result<Option<BlockHead>, Self::Error>;
+    fn head(&self, lineage: &LineageId) -> Result<StoreHead, Self::Error>;
 }
 
 /// Filesystem-backed sealed block store for Prototype 1.
@@ -528,9 +541,48 @@ impl FsBlockStore {
         let path = self.heads_path();
         match fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(BlockStoreError::Deserialize),
-            Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                if self.has_stored_blocks()? {
+                    Err(BlockStoreError::MissingHeadsProjection { path })
+                } else {
+                    Ok(BTreeMap::new())
+                }
+            }
             Err(source) => Err(BlockStoreError::Read { path, source }),
         }
+    }
+
+    fn has_stored_blocks(&self) -> Result<bool, BlockStoreError> {
+        for path in [
+            self.segment_path(),
+            self.by_hash_path(),
+            self.by_lineage_height_path(),
+        ] {
+            match fs::metadata(&path) {
+                Ok(metadata) if metadata.len() > 0 => return Ok(true),
+                Ok(_) => {}
+                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => return Err(BlockStoreError::Read { path, source }),
+            }
+        }
+        Ok(false)
+    }
+
+    fn has_lineage_index(&self, lineage: &LineageId) -> Result<bool, BlockStoreError> {
+        let path = self.by_lineage_height_path();
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(source) => return Err(BlockStoreError::Read { path, source }),
+        };
+        for line in text.lines() {
+            let stored: LineageHeight =
+                serde_json::from_str(line).map_err(BlockStoreError::Deserialize)?;
+            if &stored.lineage_id == lineage {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn write_heads(&self, heads: &BTreeMap<LineageId, BlockHash>) -> Result<(), BlockStoreError> {
@@ -570,9 +622,23 @@ impl FsBlockStore {
 impl BlockStore for FsBlockStore {
     type Error = BlockStoreError;
 
-    fn append(&self, block: &Block<block::Sealed>) -> Result<StoredBlock, Self::Error> {
+    fn append(
+        &self,
+        expected: &StoreHead,
+        block: &Block<block::Sealed>,
+    ) -> Result<StoredBlock, Self::Error> {
         block.verify_hash()?;
         self.ensure_dirs()?;
+        let lineage_id = block.header().common.lineage_id.clone();
+        let current = self.head(&lineage_id)?;
+        if &current != expected {
+            return Err(BlockStoreError::StaleStoreHead {
+                expected: expected.clone(),
+                actual: current,
+            });
+        }
+        expected.verify_append(block)?;
+        let mut heads = self.read_heads()?;
 
         let segment_path = self.segment_path();
         let location = BlockLocation {
@@ -597,18 +663,25 @@ impl BlockStore for FsBlockStore {
             },
         )?;
 
-        let mut heads = self.read_heads()?;
         heads.insert(stored.lineage_id.clone(), stored.block_hash.clone());
         self.write_heads(&heads)?;
 
         Ok(stored)
     }
 
-    fn head(&self, lineage: &LineageId) -> Result<Option<BlockHead>, Self::Error> {
+    fn head(&self, lineage: &LineageId) -> Result<StoreHead, Self::Error> {
         let Some(block_hash) = self.read_heads()?.get(lineage).cloned() else {
-            return Ok(None);
+            if self.has_lineage_index(lineage)? {
+                return Err(BlockStoreError::MissingLineageHeadProjection {
+                    lineage_id: lineage.clone(),
+                });
+            }
+            return Ok(StoreHead::Absent {
+                lineage_id: lineage.clone(),
+            });
         };
-        self.stored_by_hash(lineage, &block_hash).map(Some)
+        self.stored_by_hash(lineage, &block_hash)
+            .map(StoreHead::Present)
     }
 }
 
@@ -664,6 +737,95 @@ impl BlockHead {
 
     pub(crate) fn block_height(&self) -> u64 {
         self.block_height
+    }
+}
+
+/// Store-derived predecessor state for one lineage.
+///
+/// This is the local filesystem predecessor proof used by the current
+/// single-ruler implementation. It is deliberately weaker than the future
+/// authenticated lineage-head map: `Absent` means "no head for this lineage in
+/// this checked store after projection consistency checks", not "no such head
+/// exists globally".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum StoreHead {
+    Absent { lineage_id: LineageId },
+    Present(BlockHead),
+}
+
+impl StoreHead {
+    pub(crate) fn lineage_id(&self) -> &LineageId {
+        match self {
+            Self::Absent { lineage_id } => lineage_id,
+            Self::Present(head) => &head.lineage_id,
+        }
+    }
+
+    pub(crate) fn block_hash(&self) -> Option<&BlockHash> {
+        match self {
+            Self::Absent { .. } => None,
+            Self::Present(head) => Some(&head.block_hash),
+        }
+    }
+
+    pub(crate) fn block_height(&self) -> Option<u64> {
+        match self {
+            Self::Absent { .. } => None,
+            Self::Present(head) => Some(head.block_height),
+        }
+    }
+
+    fn verify_append(&self, block: &Block<block::Sealed>) -> Result<(), BlockStoreError> {
+        let block_lineage = &block.header().common.lineage_id;
+        if self.lineage_id() != block_lineage {
+            return Err(BlockStoreError::WrongStoreHeadLineage {
+                expected: self.lineage_id().clone(),
+                actual: block_lineage.clone(),
+            });
+        }
+
+        match self {
+            Self::Absent { lineage_id } => {
+                if block.header().common.block_height != 0 {
+                    return Err(BlockStoreError::NonGenesisWithoutHead {
+                        lineage_id: lineage_id.clone(),
+                        block_height: block.header().common.block_height,
+                    });
+                }
+                if !block.header().common.parent_block_hashes.is_empty() {
+                    return Err(BlockStoreError::GenesisWithStoreParents {
+                        lineage_id: lineage_id.clone(),
+                    });
+                }
+            }
+            Self::Present(head) => {
+                if block.header().common.block_height == 0 {
+                    return Err(BlockStoreError::DuplicateGenesis {
+                        lineage_id: head.lineage_id.clone(),
+                    });
+                }
+                let expected_height = head.block_height + 1;
+                if block.header().common.block_height != expected_height {
+                    return Err(BlockStoreError::NonConsecutiveHeight {
+                        lineage_id: head.lineage_id.clone(),
+                        expected: expected_height,
+                        actual: block.header().common.block_height,
+                    });
+                }
+                if !block
+                    .header()
+                    .common
+                    .parent_block_hashes
+                    .contains(&head.block_hash)
+                {
+                    return Err(BlockStoreError::WrongStoreHeadParent {
+                        lineage_id: head.lineage_id.clone(),
+                        expected: head.block_hash.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1032,6 +1194,132 @@ impl<Key, Digest> FlatClaim<Key, Digest> {
 /// Marker for the policy artifact used to admit a block or block claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Policy;
+
+/// Strategy context committed by a block authority epoch.
+///
+/// Status recorded 2026-04-30 03:51 PDT: this is a deliberately small
+/// placeholder for the periodic strategy schedule we expect History to witness.
+/// It is not external authority and it is not an interpreted policy file. A
+/// `Regime` records the runtime-frame strategy context in which a block was
+/// opened: an absolute cycle step, a current phase, and a coarse risk profile.
+///
+/// The design hypothesis is that a long-running self-propagating process should
+/// not optimize under one fixed risk posture. It should alternate among phases
+/// such as expansion, evaluation, consolidation, and hardening, while allowing
+/// dependent risk axes to shift with observed environment and History state.
+/// Current code commits this context into block hashes only; it does not yet
+/// derive phase transitions, selection pressure, finality, or consensus rules
+/// from these fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Regime {
+    step: Step,
+    phase: Phase,
+    risk: Risk,
+}
+
+impl Regime {
+    pub(crate) fn new(step: Step, phase: Phase, risk: Risk) -> Self {
+        Self { step, phase, risk }
+    }
+
+    pub(crate) fn prototype1_baseline(step: u64) -> Self {
+        Self {
+            step: Step::new(step),
+            phase: Phase::Consolidation,
+            risk: Risk::balanced(),
+        }
+    }
+
+    pub(crate) fn step(&self) -> Step {
+        self.step
+    }
+
+    pub(crate) fn phase(&self) -> Phase {
+        self.phase
+    }
+
+    pub(crate) fn risk(&self) -> Risk {
+        self.risk
+    }
+}
+
+/// Absolute cycle coordinate for strategy scheduling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Step(u64);
+
+impl Step {
+    pub(crate) fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub(crate) fn value(self) -> u64 {
+        self.0
+    }
+}
+
+/// Coarse phase of a periodic strategy cycle.
+///
+/// These phases are placeholders for future admission and reward-shaping
+/// policy. They should be interpreted as strategy context, not as a guarantee
+/// that the current block performed all work implied by the phase name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Phase {
+    Expansion,
+    Evaluation,
+    Consolidation,
+    Hardening,
+}
+
+/// Coarse risk profile for the current strategy phase.
+///
+/// The axes are intentionally minimal. They encode the fact that risk is not
+/// one scalar: exploration pressure, mutation tolerance, and finality pressure
+/// may move differently as the system alternates between expanding the search
+/// space and restoring coherence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Risk {
+    exploration: Level,
+    mutation: Level,
+    finality: Level,
+}
+
+impl Risk {
+    pub(crate) fn new(exploration: Level, mutation: Level, finality: Level) -> Self {
+        Self {
+            exploration,
+            mutation,
+            finality,
+        }
+    }
+
+    pub(crate) fn balanced() -> Self {
+        Self {
+            exploration: Level::Medium,
+            mutation: Level::Medium,
+            finality: Level::Medium,
+        }
+    }
+
+    pub(crate) fn exploration(self) -> Level {
+        self.exploration
+    }
+
+    pub(crate) fn mutation(self) -> Level {
+        self.mutation
+    }
+
+    pub(crate) fn finality(self) -> Level {
+        self.finality
+    }
+}
+
+/// Coarse ordinal level for one risk axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Level {
+    Low,
+    Medium,
+    High,
+}
 
 /// Marker for the bounded surface over which a policy applies.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1468,6 +1756,7 @@ pub(crate) struct OpenBlock {
     pub(crate) lineage_id: LineageId,
     pub(crate) block_height: u64,
     pub(crate) parent_block_hashes: Vec<BlockHash>,
+    pub(crate) regime: Regime,
     pub(crate) opening_authority: OpeningAuthority,
     pub(crate) opened_by: ActorRef,
     pub(crate) opened_from_artifact: ArtifactRef,
@@ -1483,6 +1772,7 @@ struct BlockCommon {
     lineage_id: LineageId,
     block_height: u64,
     parent_block_hashes: Vec<BlockHash>,
+    regime: Regime,
     opening_authority: OpeningAuthority,
     opened_by: ActorRef,
     opened_from_artifact: ArtifactRef,
@@ -1776,6 +2066,7 @@ impl Block<block::Open> {
                     lineage_id: fields.lineage_id,
                     block_height: fields.block_height,
                     parent_block_hashes: fields.parent_block_hashes,
+                    regime: fields.regime,
                     opening_authority: fields.opening_authority,
                     opened_by: fields.opened_by,
                     opened_from_artifact: fields.opened_from_artifact,
@@ -1884,6 +2175,10 @@ impl Block<block::Open> {
     pub(crate) fn block_height(&self) -> u64 {
         self.state.common.block_height
     }
+
+    pub(crate) fn regime(&self) -> &Regime {
+        &self.state.common.regime
+    }
 }
 
 impl Block<block::Sealed> {
@@ -1893,6 +2188,10 @@ impl Block<block::Sealed> {
 
     pub(crate) fn block_hash(&self) -> &BlockHash {
         &self.header().block_hash
+    }
+
+    pub(crate) fn regime(&self) -> &Regime {
+        &self.header().common.regime
     }
 
     pub(crate) fn entries(&self) -> &[Entry<Admitted>] {
@@ -1954,13 +2253,15 @@ impl Block<block::Sealed> {
     ) -> Result<Block<block::Open>, HistoryError> {
         let mut parent_block_hashes = vec![self.block_hash().clone()];
         parent_block_hashes.extend(fields.additional_parent_block_hashes);
+        let block_height = self.header().common.block_height + 1;
         Block::<block::Open>::open(OpenBlock {
             lineage_id: self.header().common.lineage_id.clone(),
-            block_height: self.header().common.block_height + 1,
+            block_height,
             opening_authority: OpeningAuthority::Predecessor(PredecessorAuthority::new(
                 self.block_hash().clone(),
             )),
             parent_block_hashes,
+            regime: Regime::prototype1_baseline(block_height),
             opened_by: fields.opened_by,
             opened_from_artifact: fields.opened_from_artifact,
             ruling_authority: fields.ruling_authority,
@@ -2322,6 +2623,57 @@ pub(crate) enum BlockStoreError {
         block_hash: BlockHash,
     },
 
+    #[error("History heads projection is missing while stored blocks exist: '{}'", path.display())]
+    MissingHeadsProjection { path: PathBuf },
+
+    #[error("History lineage index exists without a head projection for lineage '{lineage_id:?}'")]
+    MissingLineageHeadProjection { lineage_id: LineageId },
+
+    #[error("History append used stale store head: expected {expected:?}, actual {actual:?}")]
+    StaleStoreHead {
+        expected: StoreHead,
+        actual: StoreHead,
+    },
+
+    #[error(
+        "History append store-head lineage mismatch: expected '{expected:?}', actual '{actual:?}'"
+    )]
+    WrongStoreHeadLineage {
+        expected: LineageId,
+        actual: LineageId,
+    },
+
+    #[error(
+        "History append for lineage '{lineage_id:?}' tried to write non-genesis block height {block_height} without a verified head"
+    )]
+    NonGenesisWithoutHead {
+        lineage_id: LineageId,
+        block_height: u64,
+    },
+
+    #[error("History append for lineage '{lineage_id:?}' tried to write another genesis block")]
+    DuplicateGenesis { lineage_id: LineageId },
+
+    #[error(
+        "History append for lineage '{lineage_id:?}' tried to write genesis with store parents"
+    )]
+    GenesisWithStoreParents { lineage_id: LineageId },
+
+    #[error(
+        "History append for lineage '{lineage_id:?}' expected block height {expected}, got {actual}"
+    )]
+    NonConsecutiveHeight {
+        lineage_id: LineageId,
+        expected: u64,
+        actual: u64,
+    },
+
+    #[error("History append for lineage '{lineage_id:?}' does not cite current head {expected:?}")]
+    WrongStoreHeadParent {
+        lineage_id: LineageId,
+        expected: BlockHash,
+    },
+
     #[error("sealed block failed verification before storage")]
     Verify(#[from] HistoryError),
 }
@@ -2422,6 +2774,7 @@ mod tests {
             lineage_id: LineageId::new(lineage),
             block_height: height,
             parent_block_hashes: parents,
+            regime: Regime::prototype1_baseline(height),
             opening_authority,
             opened_by: actor("parent"),
             opened_from_artifact: ArtifactRef::new("artifact:base"),
@@ -2596,16 +2949,20 @@ mod tests {
             .expect("admit");
         let sealed = seal(block);
         let expected_hash = sealed.block_hash().clone();
+        let expected_head = store
+            .head(&LineageId::new("lineage:a"))
+            .expect("read empty head");
 
-        let stored = store.append(&sealed).expect("append sealed block");
+        let stored = store
+            .append(&expected_head, &sealed)
+            .expect("append sealed block");
 
         assert_eq!(stored.block_hash, expected_hash);
         assert_eq!(
             store
                 .head(&LineageId::new("lineage:a"))
                 .expect("read head")
-                .as_ref()
-                .map(BlockHead::block_hash),
+                .block_hash(),
             Some(&expected_hash)
         );
 
@@ -2635,6 +2992,119 @@ mod tests {
         )
         .expect("by lineage index");
         assert!(by_lineage.contains("\"block_height\":0"));
+    }
+
+    #[test]
+    fn fs_block_store_rejects_duplicate_genesis() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+        let first = seal(open_block(0, Vec::new()));
+        let first_head = store.head(&lineage).expect("read empty head");
+        store
+            .append(&first_head, &first)
+            .expect("append first genesis");
+
+        let second = seal(open_block(0, Vec::new()));
+        let current = store.head(&lineage).expect("read current head");
+        let err = store
+            .append(&current, &second)
+            .expect_err("duplicate genesis must fail");
+
+        assert!(matches!(err, BlockStoreError::DuplicateGenesis { .. }));
+    }
+
+    #[test]
+    fn fs_block_store_rejects_non_genesis_without_head() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+        let missing_parent = BlockHash::from(HistoryHash::of_bytes(b"missing-parent"));
+        let block = seal(open_block(1, vec![missing_parent]));
+        let head = store.head(&lineage).expect("read empty head");
+        let err = store
+            .append(&head, &block)
+            .expect_err("non-genesis without head must fail");
+
+        assert!(matches!(err, BlockStoreError::NonGenesisWithoutHead { .. }));
+    }
+
+    #[test]
+    fn fs_block_store_rejects_child_that_does_not_extend_current_head() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+        let genesis = seal(open_block(0, Vec::new()));
+        let genesis_head = store.head(&lineage).expect("read empty head");
+        store
+            .append(&genesis_head, &genesis)
+            .expect("append genesis");
+
+        let wrong_parent = BlockHash::from(HistoryHash::of_bytes(b"wrong-parent"));
+        let child = seal(open_block(1, vec![wrong_parent]));
+        let current = store.head(&lineage).expect("read current head");
+        let err = store
+            .append(&current, &child)
+            .expect_err("child must extend current head");
+
+        assert!(matches!(err, BlockStoreError::WrongStoreHeadParent { .. }));
+    }
+
+    #[test]
+    fn fs_block_store_rejects_stale_expected_head() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+        let stale = store.head(&lineage).expect("read empty head");
+        let genesis = seal(open_block(0, Vec::new()));
+        store.append(&stale, &genesis).expect("append genesis");
+
+        let child = seal(open_block(1, vec![genesis.block_hash().clone()]));
+        let err = store
+            .append(&stale, &child)
+            .expect_err("stale expected head must fail");
+
+        assert!(matches!(err, BlockStoreError::StaleStoreHead { .. }));
+    }
+
+    #[test]
+    fn fs_block_store_rejects_missing_heads_projection_when_blocks_exist() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+        let genesis = seal(open_block(0, Vec::new()));
+        let head = store.head(&lineage).expect("read empty head");
+        store.append(&head, &genesis).expect("append genesis");
+        std::fs::remove_file(store.heads_path()).expect("remove heads projection");
+
+        let err = store
+            .head(&lineage)
+            .expect_err("missing heads projection must not become genesis absence");
+
+        assert!(matches!(
+            err,
+            BlockStoreError::MissingHeadsProjection { .. }
+        ));
+    }
+
+    #[test]
+    fn fs_block_store_rejects_missing_lineage_head_projection() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+        let genesis = seal(open_block(0, Vec::new()));
+        let head = store.head(&lineage).expect("read empty head");
+        store.append(&head, &genesis).expect("append genesis");
+        std::fs::write(store.heads_path(), "{}").expect("clear heads projection");
+
+        let err = store
+            .head(&lineage)
+            .expect_err("lineage index without head must not become genesis absence");
+
+        assert!(matches!(
+            err,
+            BlockStoreError::MissingLineageHeadProjection { .. }
+        ));
     }
 
     #[test]
@@ -2672,6 +3142,55 @@ mod tests {
 
         assert_eq!(first.block_hash(), second.block_hash());
         assert_eq!(first.header().entries_root, second.header().entries_root);
+    }
+
+    #[test]
+    fn regime_is_committed_to_block_hash() {
+        let block_id = BlockId::new();
+        let entry_id = EntryId::new();
+        let expansion = Regime::new(
+            Step::new(7),
+            Phase::Expansion,
+            Risk::new(Level::High, Level::High, Level::Low),
+        );
+        let hardening = Regime::new(
+            Step::new(7),
+            Phase::Hardening,
+            Risk::new(Level::Low, Level::Low, Level::High),
+        );
+
+        let mut first_fields = open_block_fields("lineage:a", 0, Vec::new());
+        first_fields.regime = expansion.clone();
+        let mut first =
+            Block::open_with_block_id(block_id, first_fields).expect("first block opens");
+        first
+            .admit(proposed_entry_with_id(entry_id), actor("admitter"))
+            .expect("admit first");
+
+        let mut second_fields = open_block_fields("lineage:a", 0, Vec::new());
+        second_fields.regime = hardening;
+        let mut second =
+            Block::open_with_block_id(block_id, second_fields).expect("second block opens");
+        second
+            .admit(proposed_entry_with_id(entry_id), actor("admitter"))
+            .expect("admit second");
+
+        let first = seal(first);
+        let second = seal(second);
+
+        assert_eq!(first.regime(), &expansion);
+        assert_eq!(first.regime().step().value(), 7);
+        assert_eq!(first.regime().phase(), Phase::Expansion);
+        assert_eq!(first.regime().risk().exploration(), Level::High);
+        assert_eq!(first.regime().risk().mutation(), Level::High);
+        assert_eq!(first.regime().risk().finality(), Level::Low);
+        let evaluation = Regime::new(
+            Step::new(8),
+            Phase::Evaluation,
+            Risk::new(Level::Medium, Level::Low, Level::Medium),
+        );
+        assert_eq!(evaluation.phase(), Phase::Evaluation);
+        assert_ne!(first.block_hash(), second.block_hash());
     }
 
     #[test]
@@ -2749,6 +3268,7 @@ mod tests {
             lineage_id: LineageId::new("lineage:a"),
             block_height: 1,
             parent_block_hashes: Vec::new(),
+            regime: Regime::prototype1_baseline(1),
             opening_authority: OpeningAuthority::Predecessor(PredecessorAuthority::new(
                 BlockHash::from(HistoryHash::of_bytes(b"parent")),
             )),
@@ -2769,6 +3289,7 @@ mod tests {
             lineage_id: LineageId::new("lineage:a"),
             block_height: 0,
             parent_block_hashes: Vec::new(),
+            regime: Regime::prototype1_baseline(0),
             opening_authority: OpeningAuthority::Predecessor(PredecessorAuthority::new(
                 BlockHash::from(HistoryHash::of_bytes(b"parent")),
             )),
@@ -2790,6 +3311,7 @@ mod tests {
             lineage_id: LineageId::new("lineage:a"),
             block_height: 1,
             parent_block_hashes: vec![parent_hash],
+            regime: Regime::prototype1_baseline(1),
             opening_authority: OpeningAuthority::Genesis(GenesisAuthority::new(
                 ProcedureRef::new("policy:bootstrap"),
                 tree_key("tree:genesis"),
@@ -2814,6 +3336,7 @@ mod tests {
             lineage_id: LineageId::new("lineage:a"),
             block_height: 1,
             parent_block_hashes: vec![parent_hash],
+            regime: Regime::prototype1_baseline(1),
             opening_authority: OpeningAuthority::Predecessor(PredecessorAuthority::new(other_hash)),
             opened_by: actor("parent"),
             opened_from_artifact: ArtifactRef::new("artifact:base"),
@@ -2836,6 +3359,7 @@ mod tests {
                 lineage_id: LineageId::new("lineage:a"),
                 block_height: 0,
                 parent_block_hashes: Vec::new(),
+                regime: Regime::prototype1_baseline(0),
                 opening_authority: OpeningAuthority::Genesis(GenesisAuthority::new(
                     ProcedureRef::new("policy:bootstrap"),
                     tree_key("tree:a"),
@@ -2859,6 +3383,7 @@ mod tests {
                 lineage_id: LineageId::new("lineage:a"),
                 block_height: 0,
                 parent_block_hashes: Vec::new(),
+                regime: Regime::prototype1_baseline(0),
                 opening_authority: OpeningAuthority::Genesis(GenesisAuthority::new(
                     ProcedureRef::new("policy:bootstrap"),
                     tree_key("tree:b"),

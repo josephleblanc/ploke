@@ -135,8 +135,8 @@ use crate::cli::prototype1_state::cli_facing::{
 use crate::cli::prototype1_state::event::{Paths, RecordedAt, Refs};
 use crate::cli::prototype1_state::history::{
     ActorRef, ArtifactRef, BlockStore, EvidenceRef, FsBlockStore, GenesisAuthority, LineageId,
-    OpenBlock, OpeningAuthority, ParentIdentityRef, PredecessorAuthority, ProcedureRef, SealBlock,
-    SuccessorRef, TreeKeyCommitment,
+    OpenBlock, OpeningAuthority, ParentIdentityRef, PredecessorAuthority, ProcedureRef, Regime,
+    SealBlock, StoreHead, SuccessorRef, TreeKeyCommitment,
 };
 use crate::cli::prototype1_state::identity::{
     ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -880,7 +880,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     )?;
     let runtime_id = crate::cli::prototype1_state::event::RuntimeId::new();
     let successor_artifact = successor_artifact_ref(&node);
-    let open = handoff_block_fields(
+    let handoff_block = handoff_block_fields(
         campaign_id,
         active_parent_root,
         parent.identity(),
@@ -894,11 +894,11 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         RecordedAt::now(),
     );
     let (retired_parent, sealed_block) = parent
-        .seal_block(open, seal)
+        .seal_block(handoff_block.open, seal)
         .map_err(history_prepare_error)?;
     let history_store = FsBlockStore::for_campaign_manifest(&manifest_path);
     let stored_block = history_store
-        .append(&sealed_block)
+        .append(&handoff_block.expected_head, &sealed_block)
         .map_err(block_store_prepare_error)?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
@@ -1026,19 +1026,24 @@ fn successor_artifact_ref(node: &crate::intervention::Prototype1NodeRecord) -> A
     ArtifactRef::new(format!("branch:{}", node.branch_id))
 }
 
+struct HandoffBlock {
+    open: OpenBlock,
+    expected_head: StoreHead,
+}
+
 fn handoff_block_fields(
     campaign_id: &str,
     active_parent_root: &Path,
     parent_identity: &ParentIdentity,
     manifest_path: &Path,
     active_artifact: ArtifactRef,
-) -> Result<OpenBlock, PrepareError> {
+) -> Result<HandoffBlock, PrepareError> {
     let store = FsBlockStore::for_campaign_manifest(manifest_path);
     let lineage_id = LineageId::new(campaign_id.to_string());
     let head = store.head(&lineage_id).map_err(block_store_prepare_error)?;
     let parent_actor = parent_actor_ref(parent_identity);
-    let (block_height, parent_block_hashes, opening_authority) = match head {
-        Some(head) => {
+    let (block_height, parent_block_hashes, opening_authority) = match &head {
+        StoreHead::Present(head) => {
             let predecessor = head.block_hash().clone();
             (
                 head.block_height() + 1,
@@ -1046,7 +1051,7 @@ fn handoff_block_fields(
                 OpeningAuthority::Predecessor(PredecessorAuthority::new(predecessor)),
             )
         }
-        None => {
+        StoreHead::Absent { .. } => {
             let backend = GitWorktreeBackend;
             let tree_key = backend
                 .clean_tree_key(active_parent_root)
@@ -1067,16 +1072,20 @@ fn handoff_block_fields(
         }
     };
 
-    Ok(OpenBlock {
-        lineage_id,
-        block_height,
-        parent_block_hashes,
-        opening_authority,
-        opened_by: parent_actor.clone(),
-        opened_from_artifact: active_artifact,
-        ruling_authority: parent_actor,
-        policy_ref: ProcedureRef::new("prototype1:single-ruler-local:v1"),
-        opened_at: RecordedAt::now(),
+    Ok(HandoffBlock {
+        open: OpenBlock {
+            lineage_id,
+            block_height,
+            parent_block_hashes,
+            regime: Regime::prototype1_baseline(block_height),
+            opening_authority,
+            opened_by: parent_actor.clone(),
+            opened_from_artifact: active_artifact,
+            ruling_authority: parent_actor,
+            policy_ref: ProcedureRef::new("prototype1:single-ruler-local:v1"),
+            opened_at: RecordedAt::now(),
+        },
+        expected_head: head,
     })
 }
 
