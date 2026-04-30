@@ -134,9 +134,10 @@ use crate::cli::prototype1_state::cli_facing::{
 };
 use crate::cli::prototype1_state::event::{Paths, RecordedAt, Refs};
 use crate::cli::prototype1_state::history::{
-    ActorRef, ArtifactRef, BlockStore, EvidenceRef, FsBlockStore, GenesisAuthority, LineageId,
-    OpenBlock, OpeningAuthority, ParentIdentityRef, PredecessorAuthority, ProcedureRef, Regime,
-    SealBlock, StoreHead, SuccessorRef, TreeKeyCommitment,
+    ActorRef, ArtifactLocator, ArtifactRef, BlockStore, EvidenceRef, FsBlockStore,
+    GenesisAuthority, LineageId, OpenBlock, OpeningAuthority, OperationalEnvironment,
+    ParentIdentityRef, PredecessorAuthority, ProcedureRef, Regime, SealBlock, StoreHead,
+    SuccessorRef, TreeKeyCommitment, TreeKeyHash,
 };
 use crate::cli::prototype1_state::identity::{
     ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -880,6 +881,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     )?;
     let runtime_id = crate::cli::prototype1_state::event::RuntimeId::new();
     let successor_artifact = successor_artifact_ref(&node);
+    let parent_actor = parent_actor_ref(parent.identity());
     let handoff_block = handoff_block_fields(
         campaign_id,
         active_parent_root,
@@ -890,15 +892,40 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     let seal = SealBlock::from_handoff(
         EvidenceRef::new(format!("prototype1:successor-handoff:{runtime_id}")),
         SuccessorRef::new(ActorRef::Runtime(runtime_id), successor_artifact.clone()),
-        successor_artifact,
+        successor_artifact.clone(),
         RecordedAt::now(),
     );
+    let HandoffBlock {
+        open,
+        expected_head,
+        artifact_key,
+    } = handoff_block;
     let (retired_parent, sealed_block) = parent
-        .seal_block(handoff_block.open, seal)
+        .seal_block_with(open, seal, |crown, claims| {
+            let environment = OperationalEnvironment::new()
+                .artifact(successor_artifact.clone())
+                .binary(EvidenceRef::new(format!(
+                    "path:{}",
+                    active_successor_binary_path.display()
+                )))
+                .procedure_version(ProcedureRef::new("prototype1:successor-handoff:v1"))
+                .recorder(EvidenceRef::new("prototype1:history-block"));
+            let (_, artifact_claim) = crown
+                .admit_claim(
+                    &ArtifactLocator,
+                    artifact_key,
+                    parent_actor.clone(),
+                    environment,
+                    ProcedureRef::new("prototype1:single-ruler-local:v1"),
+                    RecordedAt::now(),
+                )
+                .map_err(|source| source.into_history_error())?;
+            Ok(claims.with_artifact(artifact_claim))
+        })
         .map_err(history_prepare_error)?;
     let history_store = FsBlockStore::for_campaign_manifest(&manifest_path);
     let stored_block = history_store
-        .append(&handoff_block.expected_head, &sealed_block)
+        .append(&expected_head, &sealed_block)
         .map_err(block_store_prepare_error)?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
@@ -1029,6 +1056,7 @@ fn successor_artifact_ref(node: &crate::intervention::Prototype1NodeRecord) -> A
 struct HandoffBlock {
     open: OpenBlock,
     expected_head: StoreHead,
+    artifact_key: TreeKeyHash,
 }
 
 fn handoff_block_fields(
@@ -1042,6 +1070,12 @@ fn handoff_block_fields(
     let lineage_id = LineageId::new(campaign_id.to_string());
     let head = store.head(&lineage_id).map_err(block_store_prepare_error)?;
     let parent_actor = parent_actor_ref(parent_identity);
+    let backend = GitWorktreeBackend;
+    let artifact_key = backend
+        .clean_tree_key(active_parent_root)
+        .map_err(backend_prepare_error)?
+        .tree_key_hash()
+        .map_err(history_prepare_error)?;
     let (block_height, parent_block_hashes, opening_authority) = match &head {
         StoreHead::Present(head) => {
             let predecessor = head.block_hash().clone();
@@ -1051,25 +1085,18 @@ fn handoff_block_fields(
                 OpeningAuthority::Predecessor(PredecessorAuthority::new(predecessor)),
             )
         }
-        StoreHead::Absent { .. } => {
-            let backend = GitWorktreeBackend;
-            let tree_key = backend
-                .clean_tree_key(active_parent_root)
-                .map_err(backend_prepare_error)?;
-            let tree_key = tree_key.tree_key_hash().map_err(history_prepare_error)?;
-            (
-                0,
-                Vec::new(),
-                OpeningAuthority::Genesis(GenesisAuthority::new(
-                    ProcedureRef::new("prototype1:bootstrap:single-ruler:v1"),
-                    tree_key,
-                    ParentIdentityRef::new(EvidenceRef::new(format!(
-                        "artifact-path:{}",
-                        parent_identity_relpath().display()
-                    ))),
-                )),
-            )
-        }
+        StoreHead::Absent { .. } => (
+            0,
+            Vec::new(),
+            OpeningAuthority::Genesis(GenesisAuthority::new(
+                ProcedureRef::new("prototype1:bootstrap:single-ruler:v1"),
+                artifact_key.clone(),
+                ParentIdentityRef::new(EvidenceRef::new(format!(
+                    "artifact-path:{}",
+                    parent_identity_relpath().display()
+                ))),
+            )),
+        ),
     };
 
     Ok(HandoffBlock {
@@ -1086,6 +1113,7 @@ fn handoff_block_fields(
             opened_at: RecordedAt::now(),
         },
         expected_head: head,
+        artifact_key,
     })
 }
 

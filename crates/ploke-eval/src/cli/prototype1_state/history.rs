@@ -964,6 +964,43 @@ pub(crate) trait Locator<T> {
     fn digest(&self, key: &Self::Key) -> Result<Self::Digest, Self::Error>;
 }
 
+/// Artifact state recoverable through the configured tree/backend boundary.
+///
+/// This is intentionally not a `*Ref` placeholder. In block claims, `Artifact`
+/// is the target of a verifiable claim: the stored block keeps a flat key and
+/// digest, while extraction reconstructs
+/// `claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Artifact, L>>>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Artifact {
+    _private: Private,
+}
+
+/// Locator for the current tree-key-backed Artifact commitment.
+///
+/// This is a small Prototype 1 bridge between the backend-owned clean tree key
+/// and the generic `Locator<T>` claim boundary. It does not define the final
+/// Artifact identity model; it only says that a `TreeKeyHash` admitted by the
+/// current ruling authority can be rechecked as the same tree-key commitment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArtifactLocator;
+
+impl Locator<Artifact> for ArtifactLocator {
+    type Key = TreeKeyHash;
+    type Digest = Digest<Artifact>;
+    type Error = HistoryError;
+
+    fn locate(&self, _key: &Self::Key) -> Result<Artifact, Self::Error> {
+        Ok(Artifact { _private: Private })
+    }
+
+    fn digest(&self, key: &Self::Key) -> Result<Self::Digest, Self::Error> {
+        Ok(Digest::new(HistoryHash::of_domain_json(
+            "prototype1.history.artifact.digest.v1",
+            key,
+        )?))
+    }
+}
+
 /// Stored key plus digest for an object that can be checked through `L`.
 ///
 /// This is the innermost envelope for block claims. It says only that `T` is
@@ -1035,6 +1072,15 @@ pub(crate) enum VerifyError<E> {
 
     #[error("located object digest does not match the sealed expectation")]
     DigestMismatch,
+}
+
+impl VerifyError<HistoryError> {
+    pub(crate) fn into_history_error(self) -> HistoryError {
+        match self {
+            Self::Locate(source) | Self::Digest(source) => source,
+            Self::DigestMismatch => HistoryError::ClaimDigestMismatch,
+        }
+    }
 }
 
 /// A claim observed or produced by a witness.
@@ -1840,7 +1886,7 @@ pub(crate) mod block {
 
     use super::BlockCommon;
     use super::{
-        Admission, ArtifactPath, Digest, FlatClaim, Locator, Manifest, Policy, Private,
+        Admission, Artifact, ArtifactPath, Digest, FlatClaim, Locator, Manifest, Policy, Private,
         RulerWitness, SealedBlockHeader, Surface, Verifiable, Witnessed, claim,
     };
 
@@ -1867,6 +1913,7 @@ pub(crate) mod block {
         policy: Option<FlatClaim<ArtifactPath, Digest<Policy>>>,
         surface: Option<FlatClaim<ArtifactPath, Digest<Surface>>>,
         manifest: Option<FlatClaim<ArtifactPath, Digest<Manifest>>>,
+        artifact: Option<FlatClaim<super::TreeKeyHash, Digest<Artifact>>>,
     }
 
     impl Claims {
@@ -1875,6 +1922,7 @@ pub(crate) mod block {
                 policy: None,
                 surface: None,
                 manifest: None,
+                artifact: None,
             }
         }
 
@@ -1936,6 +1984,26 @@ pub(crate) mod block {
             L: Locator<Manifest, Key = ArtifactPath, Digest = Digest<Manifest>>,
         {
             self.manifest.as_ref().map(FlatClaim::to_admitted)
+        }
+
+        pub(crate) fn with_artifact<L>(
+            mut self,
+            claim: claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Artifact, L>>>,
+        ) -> Self
+        where
+            L: Locator<Artifact, Key = super::TreeKeyHash, Digest = Digest<Artifact>>,
+        {
+            self.artifact = Some(FlatClaim::from_admitted(claim));
+            self
+        }
+
+        pub(crate) fn artifact<L>(
+            &self,
+        ) -> Option<claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Artifact, L>>>>
+        where
+            L: Locator<Artifact, Key = super::TreeKeyHash, Digest = Digest<Artifact>>,
+        {
+            self.artifact.as_ref().map(FlatClaim::to_admitted)
         }
     }
 
@@ -2589,6 +2657,9 @@ pub(crate) enum HistoryError {
 
     #[error("sealed block hash does not match expected anchored hash")]
     ExpectedBlockHashMismatch,
+
+    #[error("sealed block claim digest does not match the expected artifact/tree value")]
+    ClaimDigestMismatch,
 }
 
 /// Sealed History block storage errors.
@@ -2683,6 +2754,7 @@ struct Private;
 
 #[cfg(test)]
 mod tests {
+    use super::super::inner::{Crown, crown};
     use super::*;
 
     fn at(ms: i64) -> RecordedAt {
@@ -2750,8 +2822,8 @@ mod tests {
             .expect("tree key hash")
     }
 
-    fn ruling_crown() -> super::super::inner::Crown<super::super::inner::crown::Ruling> {
-        super::super::inner::Crown::test_ruling("lineage:a")
+    fn ruling_crown() -> Crown<crown::Ruling> {
+        Crown::test_ruling("lineage:a")
     }
 
     fn open_block(height: u64, parents: Vec<BlockHash>) -> Block<block::Open> {
@@ -2852,7 +2924,7 @@ mod tests {
             claims,
             sealed_at: at(30),
         };
-        super::super::inner::Crown::test_locked_with_seal(block.lineage_id().as_str(), seal)
+        Crown::test_locked_with_seal(block.lineage_id().as_str(), seal)
             .seal(block)
             .expect("seal block")
     }
@@ -2868,8 +2940,7 @@ mod tests {
     fn policy_claim(
         path: &'static str,
     ) -> claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Policy, TestLocator>>> {
-        let crown: super::super::inner::Crown<super::super::inner::crown::Ruling> =
-            super::super::inner::Crown::test_ruling("lineage:a");
+        let crown: Crown<crown::Ruling> = Crown::test_ruling("lineage:a");
         let (_, claim) = crown
             .admit_claim(
                 &TestLocator,
@@ -2883,10 +2954,28 @@ mod tests {
         claim
     }
 
+    fn artifact_claim(
+        key: &'static str,
+    ) -> claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Artifact, ArtifactLocator>>>
+    {
+        let crown: Crown<crown::Ruling> = Crown::test_ruling("lineage:a");
+        let (_, claim) = crown
+            .admit_claim(
+                &ArtifactLocator,
+                tree_key(key),
+                actor("ruler"),
+                env(),
+                ProcedureRef::new("policy:test"),
+                at(25),
+            )
+            .expect("artifact claim");
+        claim
+    }
+
     #[test]
     fn locked_crown_must_match_block_lineage() {
         let block = open_block(0, Vec::new());
-        let err = super::super::inner::Crown::test_locked("lineage:other")
+        let err = Crown::test_locked("lineage:other")
             .seal(block)
             .expect_err("wrong lineage must not seal");
 
@@ -2895,7 +2984,7 @@ mod tests {
 
     #[test]
     fn ruling_crown_must_match_open_block_lineage() {
-        let err = super::super::inner::Crown::test_ruling("lineage:other")
+        let err = Crown::test_ruling("lineage:other")
             .open_block(open_block_fields("lineage:a", 0, Vec::new()))
             .expect_err("wrong lineage must not open block");
 
@@ -2904,7 +2993,7 @@ mod tests {
 
     #[test]
     fn ruling_crown_must_match_admitted_block_lineage() {
-        let mut block = super::super::inner::Crown::test_ruling("lineage:other")
+        let mut block = Crown::test_ruling("lineage:other")
             .open_block(open_block_fields("lineage:other", 0, Vec::new()))
             .expect("open other lineage block");
         let err = ruling_crown()
@@ -2917,7 +3006,7 @@ mod tests {
     #[test]
     fn ruling_crown_must_match_successor_predecessor_lineage() {
         let predecessor = seal(
-            super::super::inner::Crown::test_ruling("lineage:other")
+            Crown::test_ruling("lineage:other")
                 .open_block(open_block_fields("lineage:other", 0, Vec::new()))
                 .expect("open other lineage block"),
         );
@@ -3233,6 +3322,24 @@ mod tests {
             .claim()
             .verify_with(&TestLocator)
             .expect("policy claim verifies through locator");
+    }
+
+    #[test]
+    fn block_claims_store_flat_fields_but_extract_nested_artifact_claim() {
+        let claims =
+            block::Claims::empty_unchecked().with_artifact(artifact_claim("tree:successor"));
+        let extracted = claims
+            .artifact::<ArtifactLocator>()
+            .expect("artifact claim extracts");
+
+        assert_eq!(extracted.admission(), &admission());
+        assert_eq!(extracted.claim().witness(), &ruler_witness());
+        assert_eq!(extracted.claim().claim().key(), &tree_key("tree:successor"));
+        extracted
+            .claim()
+            .claim()
+            .verify_with(&ArtifactLocator)
+            .expect("artifact claim verifies through locator");
     }
 
     #[test]

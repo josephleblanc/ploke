@@ -169,6 +169,18 @@ pub(crate) trait LockCrown {
         open: OpenBlock,
         seal: SealBlock,
     ) -> Result<(Self::Retired, Block<block::Sealed>), HistoryError>;
+
+    fn seal_block_with<F>(
+        self,
+        open: OpenBlock,
+        seal: SealBlock,
+        admit: F,
+    ) -> Result<(Self::Retired, Block<block::Sealed>), HistoryError>
+    where
+        F: FnOnce(
+            &Crown<crown::Ruling>,
+            super::history::block::Claims,
+        ) -> Result<super::history::block::Claims, HistoryError>;
 }
 
 impl LockCrown for super::parent::Parent<super::parent::Selectable> {
@@ -185,9 +197,25 @@ impl LockCrown for super::parent::Parent<super::parent::Selectable> {
         open: OpenBlock,
         seal: SealBlock,
     ) -> Result<(Self::Retired, Block<block::Sealed>), HistoryError> {
+        self.seal_block_with(open, seal, |_ruling, claims| Ok(claims))
+    }
+
+    fn seal_block_with<F>(
+        self,
+        open: OpenBlock,
+        mut seal: SealBlock,
+        admit: F,
+    ) -> Result<(Self::Retired, Block<block::Sealed>), HistoryError>
+    where
+        F: FnOnce(
+            &Crown<crown::Ruling>,
+            super::history::block::Claims,
+        ) -> Result<super::history::block::Claims, HistoryError>,
+    {
         let (retired, lineage) = self.into_retired_and_lineage();
         let ruling = Crown::for_lineage(lineage);
         let block = ruling.open_block(open)?;
+        seal.claims = admit(&ruling, seal.claims)?;
         let locked = ruling.lock(seal);
         let sealed = locked.seal(block)?;
         Ok((retired, sealed))
