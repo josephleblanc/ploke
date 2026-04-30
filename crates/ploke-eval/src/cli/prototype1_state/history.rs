@@ -9,6 +9,11 @@
 //! scaffolding, a transition journal, invocation files, successor-ready files,
 //! and mutable scheduler/branch projections. Those records can be imported as
 //! evidence later; they are not themselves sealed History blocks.
+//! Update recorded 2026-04-29 22:05 PDT: in-code `Block<Open>` construction,
+//! successor opening, and entry admission are now routed through
+//! `Crown<Ruling>` methods. That narrows the local type boundary, but the live
+//! runtime still needs to pass a real ruling carrier through handoff sealing
+//! and append the sealed block before successor admission can rely on History.
 //!
 //! The weekly review policy in `AGENTS.md` applies here: reviewers must compare
 //! these claims against the actual code at least once per week while this
@@ -255,6 +260,11 @@
 //!   handoff now locks a lineage-bound `Crown<Locked>` carrier, but it does
 //!   not yet seal or persist a History block, and the incoming Runtime does
 //!   not yet validate through History before entering the parent path.
+//! - `Block<Open>` construction and entry admission are locally gated by
+//!   `Crown<Ruling>`, but the live controller does not yet carry that ruling
+//!   authority through its full block lifecycle. The current methods still
+//!   accept actor identity fields as data until `Parent<Ruling>` supplies them
+//!   structurally.
 //! - live successor validation still consults mutable scheduler/invocation
 //!   state instead of deriving `Tree<Key>` from the current checkout and
 //!   checking that it matches the current sealed History head.
@@ -1677,7 +1687,7 @@ pub(crate) struct Block<S> {
 }
 
 impl Block<block::Open> {
-    pub(crate) fn open(fields: OpenBlock) -> Result<Self, HistoryError> {
+    fn open(fields: OpenBlock) -> Result<Self, HistoryError> {
         Self::open_with_block_id(BlockId::new(), fields)
     }
 
@@ -1725,7 +1735,7 @@ impl Block<block::Open> {
         })
     }
 
-    pub(crate) fn admit(
+    fn admit(
         &mut self,
         entry: Entry<Proposed>,
         admitting_authority: ActorRef,
@@ -1885,7 +1895,7 @@ impl Block<block::Sealed> {
         Ok(())
     }
 
-    pub(crate) fn open_successor(
+    fn open_successor(
         &self,
         fields: OpenSuccessorBlock,
     ) -> Result<Block<block::Open>, HistoryError> {
@@ -1908,6 +1918,68 @@ impl Block<block::Sealed> {
 }
 
 impl super::inner::Crown<super::inner::crown::Ruling> {
+    /// Open a History block under the current ruling Crown.
+    ///
+    /// This is the crate-visible construction boundary for `Block<Open>`.
+    /// `Block::open` remains private so sibling modules cannot create an open
+    /// authority epoch from a struct literal alone. Current limitation
+    /// recorded 2026-04-29: the Crown proves lineage authority but does not
+    /// yet carry the ruling actor identity; `OpenBlock` still supplies
+    /// `opened_by` and `ruling_authority` as data until `Parent<Ruling>` is
+    /// wired into this boundary.
+    pub(crate) fn open_block(&self, fields: OpenBlock) -> Result<Block<block::Open>, HistoryError> {
+        if !self
+            .lineage_key()
+            .matches_debug_str(fields.lineage_id.as_str())
+        {
+            return Err(HistoryError::WrongCrownLineage);
+        }
+
+        Block::<block::Open>::open(fields)
+    }
+
+    /// Open the next block from a verified sealed predecessor under this Crown.
+    ///
+    /// The sealed predecessor supplies predecessor authority and lineage-local
+    /// height. The ruling Crown supplies the permission to create the next open
+    /// epoch for that same lineage.
+    pub(crate) fn open_successor(
+        &self,
+        predecessor: &Block<block::Sealed>,
+        fields: OpenSuccessorBlock,
+    ) -> Result<Block<block::Open>, HistoryError> {
+        if !self
+            .lineage_key()
+            .matches_debug_str(predecessor.header().common.lineage_id.as_str())
+        {
+            return Err(HistoryError::WrongCrownLineage);
+        }
+
+        predecessor.open_successor(fields)
+    }
+
+    /// Admit a proposed entry into an open block under the current Crown.
+    ///
+    /// Entry admission is a mutation of the block's authority epoch, so it is
+    /// routed through the ruling Crown instead of exposed as a free-standing
+    /// `Block<Open>` method. The fallible checks inside `Block::admit` still
+    /// protect ingress imports from being moved across lineage/block/height.
+    pub(crate) fn admit_entry(
+        &self,
+        block: &mut Block<block::Open>,
+        entry: Entry<Proposed>,
+        admitting_authority: ActorRef,
+    ) -> Result<EntryId, HistoryError> {
+        if !self
+            .lineage_key()
+            .matches_debug_str(block.lineage_id().as_str())
+        {
+            return Err(HistoryError::WrongCrownLineage);
+        }
+
+        block.admit(entry, admitting_authority)
+    }
+
     /// Admit a fallibly located claim under the current ruling Crown.
     ///
     /// This is the construction boundary for the nested claim shape. The
@@ -2265,15 +2337,15 @@ mod tests {
             .expect("tree key hash")
     }
 
+    fn ruling_crown() -> super::super::inner::Crown<super::super::inner::crown::Ruling> {
+        super::super::inner::Crown::test_ruling("lineage:a")
+    }
+
     fn open_block(height: u64, parents: Vec<BlockHash>) -> Block<block::Open> {
         open_block_with_id(BlockId::new(), height, parents)
     }
 
-    fn open_block_with_id(
-        block_id: BlockId,
-        height: u64,
-        parents: Vec<BlockHash>,
-    ) -> Block<block::Open> {
+    fn open_block_fields(lineage: &'static str, height: u64, parents: Vec<BlockHash>) -> OpenBlock {
         let opening_authority = if height == 0 {
             OpeningAuthority::Genesis(GenesisAuthority::new(
                 ProcedureRef::new("policy:bootstrap"),
@@ -2285,21 +2357,26 @@ mod tests {
                 parents.first().expect("non-genesis parent hash").clone(),
             ))
         };
-        Block::open_with_block_id(
-            block_id,
-            OpenBlock {
-                lineage_id: LineageId::new("lineage:a"),
-                block_height: height,
-                parent_block_hashes: parents,
-                opening_authority,
-                opened_by: actor("parent"),
-                opened_from_artifact: ArtifactRef::new("artifact:base"),
-                ruling_authority: actor("ruler"),
-                policy_ref: ProcedureRef::new("policy:test"),
-                opened_at: at(10),
-            },
-        )
-        .expect("open block")
+        OpenBlock {
+            lineage_id: LineageId::new(lineage),
+            block_height: height,
+            parent_block_hashes: parents,
+            opening_authority,
+            opened_by: actor("parent"),
+            opened_from_artifact: ArtifactRef::new("artifact:base"),
+            ruling_authority: actor("ruler"),
+            policy_ref: ProcedureRef::new("policy:test"),
+            opened_at: at(10),
+        }
+    }
+
+    fn open_block_with_id(
+        block_id: BlockId,
+        height: u64,
+        parents: Vec<BlockHash>,
+    ) -> Block<block::Open> {
+        Block::open_with_block_id(block_id, open_block_fields("lineage:a", height, parents))
+            .expect("open block")
     }
 
     fn proposed_entry() -> Entry<Proposed> {
@@ -2398,6 +2475,52 @@ mod tests {
         let err = super::super::inner::Crown::test_locked("lineage:other")
             .seal(block)
             .expect_err("wrong lineage must not seal");
+
+        assert!(matches!(err, HistoryError::WrongCrownLineage));
+    }
+
+    #[test]
+    fn ruling_crown_must_match_open_block_lineage() {
+        let err = super::super::inner::Crown::test_ruling("lineage:other")
+            .open_block(open_block_fields("lineage:a", 0, Vec::new()))
+            .expect_err("wrong lineage must not open block");
+
+        assert!(matches!(err, HistoryError::WrongCrownLineage));
+    }
+
+    #[test]
+    fn ruling_crown_must_match_admitted_block_lineage() {
+        let mut block = super::super::inner::Crown::test_ruling("lineage:other")
+            .open_block(open_block_fields("lineage:other", 0, Vec::new()))
+            .expect("open other lineage block");
+        let err = ruling_crown()
+            .admit_entry(&mut block, proposed_entry(), actor("admitter"))
+            .expect_err("wrong lineage must not admit into block");
+
+        assert!(matches!(err, HistoryError::WrongCrownLineage));
+    }
+
+    #[test]
+    fn ruling_crown_must_match_successor_predecessor_lineage() {
+        let predecessor = seal(
+            super::super::inner::Crown::test_ruling("lineage:other")
+                .open_block(open_block_fields("lineage:other", 0, Vec::new()))
+                .expect("open other lineage block"),
+        );
+
+        let err = ruling_crown()
+            .open_successor(
+                &predecessor,
+                OpenSuccessorBlock {
+                    additional_parent_block_hashes: Vec::new(),
+                    opened_by: actor("successor"),
+                    opened_from_artifact: ArtifactRef::new("artifact:successor"),
+                    ruling_authority: actor("successor"),
+                    policy_ref: ProcedureRef::new("policy:next"),
+                    opened_at: at(40),
+                },
+            )
+            .expect_err("wrong lineage must not open successor block");
 
         assert!(matches!(err, HistoryError::WrongCrownLineage));
     }
