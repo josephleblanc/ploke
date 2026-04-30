@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use super::history::SealBlock;
+
 /// Static filesystem address schema used by a cross-runtime message.
 pub(crate) trait File {
     /// Runtime values needed to resolve this file address.
@@ -41,7 +43,7 @@ pub(crate) trait MessageBox: File {
 
 /// Crown authority state markers.
 pub(crate) mod crown {
-    use super::Private;
+    use super::{Private, SealBlock};
 
     /// The current Parent may mutate the active lineage.
     #[derive(Debug)]
@@ -49,17 +51,37 @@ pub(crate) mod crown {
         _private: Private,
     }
 
+    impl Ruling {
+        pub(super) fn new() -> Self {
+            Self { _private: Private }
+        }
+    }
+
     /// The prior Parent has locked the Crown for successor verification.
     #[derive(Debug)]
     pub(crate) struct Locked {
+        seal: SealBlock,
         _private: Private,
+    }
+
+    impl Locked {
+        pub(super) fn new(seal: SealBlock) -> Self {
+            Self {
+                seal,
+                _private: Private,
+            }
+        }
+
+        pub(super) fn into_seal(self) -> SealBlock {
+            self.seal
+        }
     }
 }
 
 /// Exclusive authority over one lineage surface.
 pub(crate) struct Crown<S> {
     lineage: LineageKey,
-    _state: PhantomData<S>,
+    state: S,
     _private: Private,
 }
 
@@ -118,17 +140,23 @@ impl Crown<crown::Ruling> {
     fn for_lineage(lineage: LineageKey) -> Self {
         Self {
             lineage,
-            _state: PhantomData,
+            state: crown::Ruling::new(),
             _private: Private,
         }
     }
 
-    pub(crate) fn lock(self) -> Crown<crown::Locked> {
+    fn lock(self, seal: SealBlock) -> Crown<crown::Locked> {
         Crown {
             lineage: self.lineage,
-            _state: PhantomData,
+            state: crown::Locked::new(seal),
             _private: Private,
         }
+    }
+}
+
+impl Crown<crown::Locked> {
+    pub(crate) fn into_seal_fields(self) -> SealBlock {
+        self.state.into_seal()
     }
 }
 
@@ -141,24 +169,28 @@ impl Crown<crown::Ruling> {
 pub(crate) trait LockCrown {
     type Retired;
 
-    fn lock_crown(self) -> (Self::Retired, Crown<crown::Locked>);
+    fn lock_crown(self, seal: SealBlock) -> (Self::Retired, Crown<crown::Locked>);
 }
 
 impl LockCrown for super::parent::Parent<super::parent::Selectable> {
     type Retired = super::parent::Parent<super::parent::Retired>;
 
-    fn lock_crown(self) -> (Self::Retired, Crown<crown::Locked>) {
+    fn lock_crown(self, seal: SealBlock) -> (Self::Retired, Crown<crown::Locked>) {
         let (retired, lineage) = self.into_retired_and_lineage();
-        (retired, Crown::for_lineage(lineage).lock())
+        (retired, Crown::for_lineage(lineage).lock(seal))
     }
 }
 
 #[cfg(test)]
 impl Crown<crown::Locked> {
     pub(crate) fn test_locked(lineage: impl Into<String>) -> Self {
+        Self::test_locked_with_seal(lineage, SealBlock::test())
+    }
+
+    pub(crate) fn test_locked_with_seal(lineage: impl Into<String>, seal: SealBlock) -> Self {
         Self {
             lineage: LineageKey::from_debug_value(lineage),
-            _state: PhantomData,
+            state: crown::Locked::new(seal),
             _private: Private,
         }
     }

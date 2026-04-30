@@ -171,20 +171,23 @@
 //!   -> becomes Parent<Ruling>
 //! ```
 //!
-//! In shorthand: the Parent dies as Parent at the same boundary where the next
-//! Runtime becomes Parent. There may be overlapping processes during handoff,
-//! but there should not be overlapping mutable Parent authority for the same
+//! In shorthand: the Parent dies as Parent at the same authority boundary where
+//! the next Runtime becomes Parent. This is a cross-runtime invariant preserved
+//! through a typed contract, not a claim that one in-memory Crown object crosses
+//! the process boundary. There may be overlapping processes during handoff, but
+//! there should not be overlapping mutable Parent authority for the same
 //! lineage. The single-lineage prototype can enforce that directly. A later
 //! multi-parent system must make the lineage parameter explicit so sibling
 //! Parents do not share one Crown by accident.
 //!
 //! Sealing the History block at `Crown<Locked>` gives the successor a specific
-//! validation target. Before unlocking, the successor should be able to verify
-//! the previous block hash, the selected Artifact installed in the active
-//! checkout, the selected successor identity, the policy decision, and the
-//! required evidence references. If required evidence arrives after the lock,
-//! it belongs to ingress and must be imported by a later admitted Parent under
-//! a named policy rather than silently rewriting the sealed block.
+//! validation target. Before satisfying the unlock transition, the successor
+//! should be able to verify the previous block hash, the selected Artifact
+//! installed in the active checkout, the selected successor identity, the policy
+//! decision, and the required evidence references. If required evidence arrives
+//! after the lock, it belongs to ingress and must be imported by a later
+//! admitted Parent under a named policy rather than silently rewriting the
+//! sealed block.
 //!
 //! The first code carriers for this shape are in [`inner`] and [`parent`].
 //! [`inner::Crown`] and [`inner::LockBox`] name the intended authority-transfer

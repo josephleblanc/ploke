@@ -1430,12 +1430,12 @@ struct BlockCommon {
 
 /// Header data committed by `Crown<Locked> -> Block<block::Sealed>`.
 ///
-/// Implementation gap updated 2026-04-29: block sealing now requires the
-/// `Crown<Locked>` carrier at the API boundary, and the live successor handoff
-/// now locks that carrier. The `crown_lock_transition` reference is still
-/// header material, not an authority token. Live handoff still needs to pass
-/// the carrier into block sealing and persist the sealed block before successor
-/// admission can verify it.
+/// Implementation status updated 2026-04-29: `Crown<Locked>` now carries this
+/// material, so the lock transition cannot produce a naked locked Crown without
+/// the facts a later seal must commit. The `crown_lock_transition` reference is
+/// still header material, not an authority token. Live handoff still needs to
+/// pass the carrier into block sealing and persist the sealed block before
+/// successor admission can verify it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SealBlock {
     pub(crate) crown_lock_transition: EvidenceRef,
@@ -1443,6 +1443,42 @@ pub(crate) struct SealBlock {
     pub(crate) active_artifact: ArtifactRef,
     pub(crate) claims: block::Claims,
     pub(crate) sealed_at: RecordedAt,
+}
+
+impl SealBlock {
+    /// Compatibility constructor for the live successor handoff seam.
+    ///
+    /// This is intentionally narrow and should disappear once the parent-side
+    /// handoff transition has a real open block and admitted claims in hand.
+    /// Until then, callers must still provide the successor and active artifact
+    /// identities before they can lock the Crown.
+    pub(crate) fn from_handoff(
+        crown_lock_transition: EvidenceRef,
+        selected_successor: SuccessorRef,
+        active_artifact: ArtifactRef,
+        sealed_at: RecordedAt,
+    ) -> Self {
+        Self {
+            crown_lock_transition,
+            selected_successor,
+            active_artifact,
+            claims: block::Claims::empty_unchecked(),
+            sealed_at,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test() -> Self {
+        Self::from_handoff(
+            EvidenceRef::new("transition:crown-lock"),
+            SuccessorRef::new(
+                ActorRef::Process("successor".to_string()),
+                ArtifactRef::new("artifact:successor"),
+            ),
+            ArtifactRef::new("artifact:successor"),
+            RecordedAt(30),
+        )
+    }
 }
 
 /// Block typestate payloads.
@@ -1922,7 +1958,6 @@ impl super::inner::Crown<super::inner::crown::Locked> {
     pub(crate) fn seal(
         self,
         block: Block<block::Open>,
-        fields: SealBlock,
     ) -> Result<Block<block::Sealed>, HistoryError> {
         if !self
             .lineage_key()
@@ -1931,7 +1966,7 @@ impl super::inner::Crown<super::inner::crown::Locked> {
             return Err(HistoryError::WrongCrownLineage);
         }
 
-        block.seal(fields)
+        block.seal(self.into_seal_fields())
     }
 }
 
@@ -2316,20 +2351,18 @@ mod tests {
         transition: &'static str,
         claims: block::Claims,
     ) -> Block<block::Sealed> {
-        super::super::inner::Crown::test_locked(block.lineage_id().as_str())
-            .seal(
-                block,
-                SealBlock {
-                    crown_lock_transition: EvidenceRef::new(transition),
-                    selected_successor: SuccessorRef::new(
-                        actor("successor"),
-                        ArtifactRef::new("artifact:successor"),
-                    ),
-                    active_artifact: ArtifactRef::new("artifact:successor"),
-                    claims,
-                    sealed_at: at(30),
-                },
-            )
+        let seal = SealBlock {
+            crown_lock_transition: EvidenceRef::new(transition),
+            selected_successor: SuccessorRef::new(
+                actor("successor"),
+                ArtifactRef::new("artifact:successor"),
+            ),
+            active_artifact: ArtifactRef::new("artifact:successor"),
+            claims,
+            sealed_at: at(30),
+        };
+        super::super::inner::Crown::test_locked_with_seal(block.lineage_id().as_str(), seal)
+            .seal(block)
             .expect("seal block")
     }
 
@@ -2363,19 +2396,7 @@ mod tests {
     fn locked_crown_must_match_block_lineage() {
         let block = open_block(0, Vec::new());
         let err = super::super::inner::Crown::test_locked("lineage:other")
-            .seal(
-                block,
-                SealBlock {
-                    crown_lock_transition: EvidenceRef::new("transition:crown-lock"),
-                    selected_successor: SuccessorRef::new(
-                        actor("successor"),
-                        ArtifactRef::new("artifact:successor"),
-                    ),
-                    active_artifact: ArtifactRef::new("artifact:successor"),
-                    claims: block::Claims::empty_unchecked(),
-                    sealed_at: at(30),
-                },
-            )
+            .seal(block)
             .expect_err("wrong lineage must not seal");
 
         assert!(matches!(err, HistoryError::WrongCrownLineage));

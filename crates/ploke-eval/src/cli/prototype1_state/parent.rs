@@ -462,7 +462,10 @@ fn node_context(manifest_path: &Path, node: &Prototype1NodeRecord) -> Prototype1
 mod tests {
     use super::*;
     use crate::{
-        cli::prototype1_state::inner::{LockCrown, Open},
+        cli::prototype1_state::{
+            history::{ActorRef, ArtifactRef, EvidenceRef, SealBlock, SuccessorRef},
+            inner::{LockCrown, Open},
+        },
         intervention::{PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeStatus},
     };
 
@@ -551,7 +554,15 @@ mod tests {
             .lock(at, |_, _| Ok::<_, std::convert::Infallible>(()))
             .unwrap();
         let (selectable, _received) = locked_plan.unlock(planned).unwrap();
-        let (retired, locked) = selectable.lock_crown();
+        let (retired, locked) = selectable.lock_crown(SealBlock::from_handoff(
+            EvidenceRef::new("transition:crown-lock"),
+            SuccessorRef::new(
+                ActorRef::Process("successor".to_string()),
+                ArtifactRef::new("artifact:successor"),
+            ),
+            ArtifactRef::new("artifact:successor"),
+            crate::cli::prototype1_state::event::RecordedAt(30),
+        ));
 
         assert_eq!(retired.identity.node_id, "parent-a");
         assert_eq!(locked.lineage(), "campaign");

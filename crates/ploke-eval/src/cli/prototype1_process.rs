@@ -133,6 +133,9 @@ use crate::cli::prototype1_state::cli_facing::{
     prototype1_branch_evaluation_path, prototype1_source_generation,
 };
 use crate::cli::prototype1_state::event::{Paths, RecordedAt, Refs};
+use crate::cli::prototype1_state::history::{
+    ActorRef, ArtifactRef, EvidenceRef, SealBlock, SuccessorRef,
+};
 use crate::cli::prototype1_state::identity::{
     ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
     parent_identity_relpath, write_parent_identity,
@@ -873,7 +876,15 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         &node,
         active_parent_root,
     )?;
-    let (retired_parent, locked_crown) = parent.lock_crown();
+    let runtime_id = crate::cli::prototype1_state::event::RuntimeId::new();
+    let successor_artifact = successor_artifact_ref(&node);
+    let seal = SealBlock::from_handoff(
+        EvidenceRef::new(format!("prototype1:successor-handoff:{runtime_id}")),
+        SuccessorRef::new(ActorRef::Runtime(runtime_id), successor_artifact.clone()),
+        successor_artifact,
+        RecordedAt::now(),
+    );
+    let (retired_parent, locked_crown) = parent.lock_crown(seal);
     debug!(
         target: EXECUTION_DEBUG_TARGET,
         campaign = %campaign_id,
@@ -881,7 +892,6 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         crown_lineage = %locked_crown.lineage(),
         "prototype1 Crown locked before successor runtime spawn"
     );
-    let runtime_id = crate::cli::prototype1_state::event::RuntimeId::new();
     let invocation_path =
         crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
     let invocation =
@@ -988,6 +998,16 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
             })
         }
     }
+}
+
+fn successor_artifact_ref(node: &crate::intervention::Prototype1NodeRecord) -> ArtifactRef {
+    if let Some(artifact_id) = node.derived_artifact_id.as_ref() {
+        return ArtifactRef::new(format!("artifact:{}", artifact_id.as_str()));
+    }
+    if let Some(artifact_id) = node.base_artifact_id.as_ref() {
+        return ArtifactRef::new(format!("artifact:{}", artifact_id.as_str()));
+    }
+    ArtifactRef::new(format!("branch:{}", node.branch_id))
 }
 
 /// Construct a persisted runner result for child-binary build failure.
