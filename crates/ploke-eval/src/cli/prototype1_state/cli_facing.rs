@@ -37,7 +37,8 @@ use crate::{
             execute_prototype1_runner_node, persist_prototype1_buildable_child_artifact,
             record_prototype1_successor_completion, record_prototype1_successor_ready,
             run_prototype1_branch_evaluation, run_prototype1_branch_evaluation_via_child,
-            spawn_and_handoff_prototype1_successor, validate_prototype1_successor_continuation,
+            spawn_and_handoff_prototype1_successor, validate_child_surface,
+            validate_prototype1_successor_continuation,
             validate_prototype1_successor_history_admission,
         },
         prototype1_state::{
@@ -3297,6 +3298,11 @@ impl Prototype1StateCommand {
             if self.stop_after == Prototype1StateStopAfter::Materialize {
                 ("materialized".to_string(), None, None, None, None)
             } else {
+                let _surface = validate_child_surface(
+                    &repo_root,
+                    &c2.artifact.repo_root,
+                    "prototype1_state_child_surface_commitment_before_build",
+                )?;
                 match BuildChild::new()
                     .transition(c2, &mut journal)
                     .map_err(|err| {
@@ -3322,7 +3328,7 @@ impl Prototype1StateCommand {
                         )
                     }
                     Outcome::Advanced(c3) => {
-                        persist_prototype1_buildable_child_artifact(
+                        let _surface = persist_prototype1_buildable_child_artifact(
                             &campaign_id,
                             &manifest_path,
                             &repo_root,

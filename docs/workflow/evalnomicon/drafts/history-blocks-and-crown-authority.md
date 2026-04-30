@@ -71,6 +71,35 @@ cut: no later Parent can honestly claim that a decision belonged to the prior
 epoch unless it appears in the sealed block or is imported from ingress with a
 recorded policy.
 
+Update recorded 2026-04-30 10:13 PDT: the policy-bearing surface for ordinary
+Prototype 1 succession is not an external policy file. It is the `ploke-eval`
+runtime surface that defines parent creation, child/successor execution, Crown
+transitions, History admission, and handoff. The intended invariant is
+inductive over the admitted transition system: if the first Parent is admitted
+with policy-surface digest `D`, and every Parent may execute a child/successor
+only after proving that candidate Artifact also has digest `D`, then every
+executed descendant produced by that transition system also has digest `D`.
+This does not claim protection against arbitrary external processes. It claims
+that incompatible code is not an admitted descendant and cannot enter the
+History/Crown mutation path under the digest-preserving contract.
+
+Ordinary bounded self-improvement must keep this policy-bearing `ploke-eval`
+surface out of the edit scope until an explicit protocol-upgrade/fork
+transition exists. We do plan to allow that surface into scope later, but that
+requires a new admission rule; it is not an ordinary successor transition.
+
+Update recorded 2026-04-30 12:20 PDT: the current implementation hardcodes the
+ordinary-succession partition as `Immutable = crates/ploke-eval`, `Mutated =
+all tool-description text files`, and `Ambient = empty declared surface`.
+Surface roots are SHA-256 commitments over sorted relpaths and per-file
+SHA-256 hashes. The successor handoff computes this commitment before executing
+the selected successor and stores it in the sealed History block. Child
+evaluation validates the same partition before child build/hydration and again
+after the child Artifact is persisted. Successor startup recomputes the current
+checkout surface and checks it against the sealed head before entering the
+parent path. Bootstrap admission and future protocol-upgrade rules remain
+separate work.
+
 What this gives today:
 
 - a precise place to stop accepting Parent-authored decisions for one epoch
@@ -275,15 +304,17 @@ or an imported late observation.
 
 ## Block Header
 
-Status note, 2026-04-29 11:31 PDT: this header sketch is aspirational and
-incomplete. The current implementation does not yet carry the full v2 block
+Status note updated 2026-04-30 10:13 PDT: this header sketch is aspirational
+and incomplete. The current implementation does not yet carry the full v2 block
 content. In v2, `lineage_id` and lineage-local height are coordinates/indexes,
-not complete identity. Policy must be explicit, with `PolicyRef` and
-`PolicyScope` defined through `Surface`. Artifact commitments need enough
-backend/tree and artifact-local manifest information to recover and validate
-the selected successor artifact. Stochastic evidence, rejected/failure evidence,
-rollback/fork/finality state, and risk/uncertainty references are first-class
-History concerns even if not all are inline header fields.
+not complete identity. Do not treat `PolicyRef` as an independent authority
+source; the authority-bearing policy is the admitted runtime surface, with
+external material interpreted only because that runtime contract says how to
+interpret it. Artifact commitments need enough backend/tree and artifact-local
+manifest information to recover and validate the selected successor artifact.
+Stochastic evidence, rejected/failure evidence, rollback/fork/finality state,
+and risk/uncertainty references are first-class History concerns even if not
+all are inline header fields.
 
 A block header should be small and mechanical:
 
@@ -298,7 +329,7 @@ A block header should be small and mechanical:
 - `crown_lock_transition`
 - `selected_successor_runtime`
 - `selected_successor_artifact`
-- `policy_ref`
+- `policy_surface_digest`
 - `opened_at`
 - `sealed_at`
 - `entry_count`

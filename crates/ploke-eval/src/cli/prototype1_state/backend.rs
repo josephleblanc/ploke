@@ -9,9 +9,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use ploke_core::tool_types::ToolName;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use super::history::{HistoryHash, Surface, SurfaceCommitment, SurfaceDelta, SurfaceRoot};
 use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
 
 /// Git branch name for one backend-managed child lineage.
@@ -246,6 +249,14 @@ pub(crate) enum BackendError {
         status: i32,
         stderr: String,
     },
+    #[error("surface path '{path}' is not valid UTF-8")]
+    NonUtf8SurfacePath { path: PathBuf },
+    #[error("declared surface pathspec '{pathspec}' matched no tracked files in '{root}'")]
+    EmptySurfacePathspec { root: PathBuf, pathspec: String },
+    #[error("declared surface file '{path}' is missing")]
+    MissingSurfaceFile { path: PathBuf },
+    #[error("immutable surface changed across candidate artifact: before={before}, after={after}")]
+    ImmutableSurfaceChanged { before: String, after: String },
 }
 
 /// Backend for realizing descendant workspaces.
@@ -378,6 +389,19 @@ pub(crate) trait WorkspaceBackend {
     /// not construct tree keys from strings or command-line arguments.
     #[allow(dead_code)] // Staged for History genesis/successor admission wiring.
     fn clean_tree_key(&self, active_parent_root: &Path) -> Result<Self::TreeKey, BackendError>;
+
+    /// Compute the current Prototype 1 surface commitment from two checked-out
+    /// Artifacts without executing either candidate.
+    ///
+    /// For the current single-ruler protocol, this is the code-level policy
+    /// boundary: `crates/ploke-eval` is the immutable authority surface, and
+    /// all tool-description files form the ordinary mutated surface. The
+    /// method rejects if the immutable root differs across the transition.
+    fn surface_commitment(
+        &self,
+        before_root: &Path,
+        after_root: &Path,
+    ) -> Result<SurfaceCommitment, BackendError>;
 }
 
 /// Git worktree realization backend.
@@ -1136,6 +1160,47 @@ impl WorkspaceBackend for GitWorktreeBackend {
             tree: GitObjectId::parse_hex(&value)?,
         })
     }
+
+    fn surface_commitment(
+        &self,
+        before_root: &Path,
+        after_root: &Path,
+    ) -> Result<SurfaceCommitment, BackendError> {
+        let immutable_before_paths = tracked_paths(before_root, "crates/ploke-eval")?;
+        if immutable_before_paths.is_empty() {
+            return Err(BackendError::EmptySurfacePathspec {
+                root: before_root.to_path_buf(),
+                pathspec: "crates/ploke-eval".to_string(),
+            });
+        }
+        let immutable_before = surface_root(before_root, &immutable_before_paths)?;
+        let immutable_after_paths = tracked_paths(after_root, "crates/ploke-eval")?;
+        if immutable_after_paths.is_empty() {
+            return Err(BackendError::EmptySurfacePathspec {
+                root: after_root.to_path_buf(),
+                pathspec: "crates/ploke-eval".to_string(),
+            });
+        }
+        let immutable_after = surface_root(after_root, &immutable_after_paths)?;
+        if immutable_before != immutable_after {
+            return Err(BackendError::ImmutableSurfaceChanged {
+                before: immutable_before.hash().as_str().to_string(),
+                after: immutable_after.hash().as_str().to_string(),
+            });
+        }
+
+        let mutated_paths = tool_description_paths();
+        let mutated_before = surface_root(before_root, &mutated_paths)?;
+        let mutated_after = surface_root(after_root, &mutated_paths)?;
+        let ambient_before = surface_root(before_root, &[])?;
+        let ambient_after = surface_root(after_root, &[])?;
+
+        Ok(SurfaceCommitment::new(
+            Surface::new(immutable_before),
+            SurfaceDelta::new(Surface::new(mutated_before), Surface::new(mutated_after)),
+            SurfaceDelta::new(Surface::new(ambient_before), Surface::new(ambient_after)),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1190,6 +1255,67 @@ fn dirty_paths(worktree_root: &Path) -> Result<Vec<PathBuf>, BackendError> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(parse_dirty_paths(&stdout))
+}
+
+fn tracked_paths(worktree_root: &Path, pathspec: &str) -> Result<Vec<PathBuf>, BackendError> {
+    let output = Command::new("git")
+        .current_dir(worktree_root)
+        .args(["ls-files", "--", pathspec])
+        .output()
+        .map_err(|source| BackendError::GitCommand {
+            command: format!("git ls-files -- {pathspec}"),
+            source,
+        })?;
+
+    if !output.status.success() {
+        return Err(BackendError::GitCommandStatus {
+            command: format!("git ls-files -- {pathspec}"),
+            status: output.status.code().unwrap_or(-1),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        });
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(PathBuf::from)
+        .collect())
+}
+
+fn tool_description_paths() -> Vec<PathBuf> {
+    ToolName::ALL
+        .iter()
+        .map(|tool| PathBuf::from(tool.description_artifact_relpath()))
+        .collect()
+}
+
+fn surface_root(worktree_root: &Path, relpaths: &[PathBuf]) -> Result<SurfaceRoot, BackendError> {
+    let mut relpaths = relpaths.to_vec();
+    relpaths.sort();
+
+    let mut preimage = Vec::new();
+    preimage.extend_from_slice(b"prototype1.surface.root.v1\0");
+    for relpath in relpaths {
+        let relpath_str = relpath
+            .to_str()
+            .ok_or_else(|| BackendError::NonUtf8SurfacePath {
+                path: relpath.clone(),
+            })?;
+        let absolute = worktree_root.join(&relpath);
+        if !absolute.exists() {
+            return Err(BackendError::MissingSurfaceFile { path: absolute });
+        }
+        let bytes = fs::read(&absolute).map_err(|source| BackendError::ReadTarget {
+            path: absolute,
+            source,
+        })?;
+        let file_hash: [u8; 32] = Sha256::digest(&bytes).into();
+        preimage.extend_from_slice(relpath_str.as_bytes());
+        preimage.push(0);
+        preimage.extend_from_slice(&file_hash);
+        preimage.push(0);
+    }
+
+    Ok(SurfaceRoot::new(HistoryHash::of_bytes(&preimage)))
 }
 
 /// Execute one short-lived git command and return a typed backend error on
@@ -1276,7 +1402,8 @@ fn parse_dirty_paths(stdout: &str) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        GitWorktreeBackend, WorkspaceBackend, WorktreeEntry, parse_dirty_paths, parse_worktree_list,
+        BackendError, GitWorktreeBackend, WorkspaceBackend, WorktreeEntry, parse_dirty_paths,
+        parse_worktree_list,
     };
     use crate::cli::prototype1_state::identity::{
         PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity, parent_identity_commit_message,
@@ -1311,6 +1438,26 @@ mod tests {
         fs::write(repo_root.join("README.md"), "base\n").expect("write base");
         run_git_test(repo_root, &["add", "README.md"]);
         run_git_test(repo_root, &["commit", "--no-gpg-sign", "-m", "base commit"]);
+        tmp
+    }
+
+    fn init_surface_repo(eval_text: &str, tool_text: &str) -> tempfile::TempDir {
+        let tmp = init_git_repo();
+        let repo_root = tmp.path();
+        let eval_path = repo_root.join("crates/ploke-eval/src");
+        fs::create_dir_all(&eval_path).expect("create eval dir");
+        fs::write(eval_path.join("lib.rs"), eval_text).expect("write eval file");
+        for relpath in super::tool_description_paths() {
+            let path = repo_root.join(relpath);
+            fs::create_dir_all(path.parent().expect("tool file has parent"))
+                .expect("create tool dir");
+            fs::write(path, tool_text).expect("write tool file");
+        }
+        run_git_test(repo_root, &["add", "crates"]);
+        run_git_test(
+            repo_root,
+            &["commit", "--no-gpg-sign", "-m", "surface files"],
+        );
         tmp
     }
 
@@ -1477,5 +1624,40 @@ R  old.rs -> new.rs
         backend
             .validate_parent_checkout(repo_root, &identity)
             .expect("gen1 parent checkout");
+    }
+
+    #[test]
+    fn surface_commitment_allows_tool_text_mutation() {
+        let before = init_surface_repo("pub fn policy() {}\n", "before\n");
+        let after = init_surface_repo("pub fn policy() {}\n", "after\n");
+        let backend = GitWorktreeBackend;
+
+        backend
+            .surface_commitment(before.path(), after.path())
+            .expect("tool text mutation preserves immutable surface");
+    }
+
+    #[test]
+    fn surface_commitment_rejects_eval_mutation() {
+        let before = init_surface_repo("pub fn policy() {}\n", "same\n");
+        let after = init_surface_repo("pub fn policy_changed() {}\n", "same\n");
+        let backend = GitWorktreeBackend;
+
+        let err = backend
+            .surface_commitment(before.path(), after.path())
+            .expect_err("ploke-eval mutation must reject ordinary succession");
+        assert!(matches!(err, BackendError::ImmutableSurfaceChanged { .. }));
+    }
+
+    #[test]
+    fn surface_commitment_rejects_missing_eval_surface() {
+        let before = init_git_repo();
+        let after = init_surface_repo("pub fn policy() {}\n", "same\n");
+        let backend = GitWorktreeBackend;
+
+        let err = backend
+            .surface_commitment(before.path(), after.path())
+            .expect_err("missing ploke-eval surface must reject ordinary succession");
+        assert!(matches!(err, BackendError::EmptySurfacePathspec { .. }));
     }
 }

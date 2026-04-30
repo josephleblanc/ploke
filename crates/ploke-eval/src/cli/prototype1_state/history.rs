@@ -14,8 +14,13 @@
 //! successor opening, and entry admission are now routed through
 //! `Crown<Ruling>` methods. The live successor handoff also now routes block
 //! sealing through the Crown transition and appends the sealed block before
-//! successor launch. The successor still does not verify that sealed head on
-//! startup, so History is not yet the live admission gate.
+//! successor launch.
+//!
+//! Update recorded 2026-04-30 10:13 PDT: the live successor handoff path now
+//! checks the current clean Artifact tree against the current sealed History
+//! head before entering the next parent path. This is still partial: bootstrap
+//! admission, full authenticated state roots, policy-surface digest checks, and
+//! process uniqueness are not yet implemented.
 //!
 //! The weekly review policy in `AGENTS.md` applies here: reviewers must compare
 //! these claims against the actual code at least once per week while this
@@ -126,12 +131,48 @@
 //! should gate artifact eligibility, not OS-process uniqueness. For one
 //! lineage, the target startup gate is that a Runtime may enter the ruling
 //! parent path only if its current clean Artifact tree matches the Artifact
-//! committed by the current sealed History head. The live startup path does not
-//! yet enforce that sealed-head admission; it still relies on checkout, parent
-//! identity, scheduler, and invocation evidence. Even after the sealed-head gate
-//! is wired, this does not prove that only one OS process is running from that
-//! Artifact; process uniqueness requires a later lease, lock, or consensus
-//! mechanism.
+//! committed by the current sealed History head. The live successor handoff
+//! path now enforces this sealed-head Artifact check before the next runtime
+//! enters the parent path; non-handoff/bootstrap startup still needs an
+//! explicit admission carrier. Even with the sealed-head gate, this does not
+//! prove that only one OS process is running from that Artifact; process
+//! uniqueness requires a later lease, lock, or consensus mechanism.
+//!
+//! Update recorded 2026-04-30 10:13 PDT: the policy-bearing surface should be
+//! modeled as part of the Artifact/Runtime contract, not as an independently
+//! authoritative external `PolicyRef`. The current intended surface is the
+//! `ploke-eval` code surface that contains the parent-creation, spawn,
+//! History-admission, Crown, and handoff rules. Let `D` be the digest of that
+//! surface. The invariant is closed over the admitted transition system:
+//!
+//! ```text
+//! Base:
+//!   the configured first Parent is admitted with policy-surface digest D.
+//!
+//! Step:
+//!   a Parent whose Artifact has digest D may execute a child/successor
+//!   runtime only after proving the child/successor Artifact also has digest D.
+//!
+//! Therefore:
+//!   every executed child or descendant produced by this transition system has
+//!   policy-surface digest D.
+//! ```
+//!
+//! This is not a claim that no external process can compile or run incompatible
+//! code. External processes are outside the quantified domain. The claim is
+//! that incompatible code is not an admitted descendant and is not admissible to
+//! the History/Crown mutation path under this digest-preserving transition
+//! system. Changing the policy-bearing surface is therefore a protocol
+//! upgrade/fork candidate, not an ordinary successor transition, unless a later
+//! explicit upgrade rule admits it.
+//!
+//! Current bounded-surface policy implication: ordinary Prototype 1
+//! self-improvement must not include this policy-bearing `ploke-eval` surface.
+//! We do intend to allow that surface into the bounded edit scope later, but
+//! only after defining a protocol-upgrade transition that replaces the
+//! digest-preservation invariant with an explicit upgrade invariant. Until
+//! then, any ordinary child/successor that changes the policy-bearing surface
+//! must fail admission or execution before it can become an admitted descendant.
 //!
 //! The Crown is the one-at-a-time lineage authority. Parent is a role a Runtime
 //! may hold; the Crown is the capability that prevents two Parents from
@@ -156,6 +197,24 @@
 //! evaluation, consolidation, and hardening. Current code only commits the
 //! placeholder context into block hashes; it does not yet compute risk budgets,
 //! phase transitions, or consensus/finality effects from it.
+//!
+//! Update recorded 2026-04-30 10:58 PDT: the block header now carries
+//! `SurfaceCommitment` as the first structural carrier for the partitioned
+//! Artifact surface:
+//!
+//! ```text
+//! ArtifactSurface = Immutable + Mutated + Ambient
+//! ```
+//!
+//! `Immutable` is stored as one root. The rule that ordinary succession must
+//! preserve that root is runtime policy, and the rule itself must be inside the
+//! immutable authority surface. Current Prototype 1 policy treats
+//! `crates/ploke-eval` as immutable and all tool-description text files as the
+//! mutated surface. `Mutated` and `Ambient` are before/after commitments so a
+//! verifier can reconstruct the candidate Artifact transition without
+//! executing the candidate runtime. Current live code computes this commitment
+//! before successor execution; child execution still relies on the older
+//! bounded-target validation path.
 //!
 //! Intended, not implemented as of 2026-04-29 10:35 UTC: the store should
 //! eventually maintain an authenticated lineage-head map, likely using a
@@ -183,8 +242,8 @@
 //! The current implementation does not yet enforce:
 //!
 //! - live `Parent<Ruling>` as the only writer of open block entries;
-//! - successor verification of the predecessor `Block<Sealed>` before becoming
-//!   authoritative;
+//! - a uniform bootstrap/predecessor admission carrier for every startup path;
+//! - structural type-state representation of the child/successor surface gate;
 //! - ingress capture/import while the Crown is locked;
 //! - cryptographic signatures or distributed consensus.
 //!
@@ -270,16 +329,18 @@
 //!
 //! Blocking reasons:
 //!
-//! - `Parent<Ruling>` is not yet gated by `Startup<Validated>`. The live
-//!   handoff now seals and appends a lineage-bound History block before
-//!   successor launch, but the incoming Runtime does not yet validate through
-//!   History before entering the parent path.
+//! - `Parent<Ruling>` is not yet represented as `Startup<Validated>` in the
+//!   type system. Update recorded 2026-04-30 12:20 PDT: the live successor
+//!   startup path now validates the current clean Artifact tree and surface
+//!   commitment against the sealed History head before entering the parent
+//!   path; bootstrap startup still needs a uniform admission carrier.
 //! - `Block<Open>` construction and entry admission are locally gated by
 //!   `Crown<Ruling>`, but the current methods still accept actor identity
 //!   fields as data until `Parent<Ruling>` supplies them structurally.
 //! - live successor validation still consults mutable scheduler/invocation
-//!   state instead of deriving `Tree<Key>` from the current checkout and
-//!   checking that it matches the current sealed History head.
+//!   state for transport identity, but History admission now derives the tree
+//!   key and surface commitment from the current checkout and checks both
+//!   against the sealed head.
 //! - gen0 setup currently writes and commits parent identity, but setup itself
 //!   does not open or append a genesis History block. The first live handoff
 //!   creates the genesis block if no configured History head exists.
@@ -1058,6 +1119,152 @@ impl ArtifactRef {
     }
 }
 
+/// Marker states for the partitioned Artifact surface committed by a block.
+///
+/// The markers keep the partition role in the type rather than in names such
+/// as `immutable_surface_root_before`. Ordinary succession policy interprets
+/// the roots: for now, the policy-bearing immutable surface must stay fixed;
+/// the mutated surface is the bounded edit target; and the ambient surface is
+/// the rest of the declared Artifact surface that was not held immutable and
+/// was not the edit target.
+pub(crate) mod surface {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct Immutable;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct Mutated;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct Ambient;
+
+    /// Marker for a bounded surface named by a claim or policy-interpreted
+    /// material locator.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct Bounded;
+}
+
+/// Root digest for a declared Artifact surface partition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SurfaceRoot {
+    hash: HistoryHash,
+}
+
+impl SurfaceRoot {
+    pub(crate) fn new(hash: HistoryHash) -> Self {
+        Self { hash }
+    }
+
+    pub(crate) fn hash(&self) -> &HistoryHash {
+        &self.hash
+    }
+}
+
+/// Digest commitment to one partition of an Artifact surface.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub(crate) struct Surface<P> {
+    root: SurfaceRoot,
+    #[serde(skip)]
+    _partition: PhantomData<fn() -> P>,
+}
+
+impl<P> Surface<P> {
+    pub(crate) fn new(root: SurfaceRoot) -> Self {
+        Self {
+            root,
+            _partition: PhantomData,
+        }
+    }
+
+    fn root(&self) -> &SurfaceRoot {
+        &self.root
+    }
+}
+
+/// Before/after commitment for a surface partition that policy compares.
+///
+/// This is a static reconstruction witness. It is meant to be computed by
+/// checking out Artifacts and hashing declared surfaces, not by executing the
+/// candidate Runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub(crate) struct SurfaceDelta<P> {
+    before: Surface<P>,
+    after: Surface<P>,
+}
+
+impl<P> SurfaceDelta<P> {
+    pub(crate) fn new(before: Surface<P>, after: Surface<P>) -> Self {
+        Self { before, after }
+    }
+
+    fn after(&self) -> &Surface<P> {
+        &self.after
+    }
+}
+
+/// Partitioned commitment to the Artifact transition admitted by a block.
+///
+/// `immutable` is one root, not a before/after pair. The rule that it must
+/// match the expected immutable root is runtime policy, and that rule itself
+/// belongs to the immutable authority surface. `mutated` and `ambient` are
+/// before/after commitments so a verifier can reconstruct the candidate
+/// transition without running the candidate code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SurfaceCommitment {
+    immutable: Surface<surface::Immutable>,
+    mutated: SurfaceDelta<surface::Mutated>,
+    ambient: SurfaceDelta<surface::Ambient>,
+}
+
+impl SurfaceCommitment {
+    pub(crate) fn new(
+        immutable: Surface<surface::Immutable>,
+        mutated: SurfaceDelta<surface::Mutated>,
+        ambient: SurfaceDelta<surface::Ambient>,
+    ) -> Self {
+        Self {
+            immutable,
+            mutated,
+            ambient,
+        }
+    }
+
+    pub(crate) fn verify_current(&self, current: &Self) -> Result<(), HistoryError> {
+        verify_surface_root(
+            "immutable",
+            self.immutable.root().hash(),
+            current.immutable.root().hash(),
+        )?;
+        verify_surface_root(
+            "mutated",
+            self.mutated.after().root().hash(),
+            current.mutated.after().root().hash(),
+        )?;
+        verify_surface_root(
+            "ambient",
+            self.ambient.after().root().hash(),
+            current.ambient.after().root().hash(),
+        )
+    }
+}
+
+fn verify_surface_root(
+    partition: &'static str,
+    expected: &HistoryHash,
+    actual: &HistoryHash,
+) -> Result<(), HistoryError> {
+    if expected == actual {
+        return Ok(());
+    }
+
+    Err(HistoryError::SurfaceMismatch {
+        partition,
+        expected: expected.clone(),
+        actual: actual.clone(),
+    })
+}
+
 /// Typed content digest for a recoverable History object.
 ///
 /// `Digest<T>` is stored evidence, not a recovery capability. The capability
@@ -1513,10 +1720,6 @@ pub(crate) enum Level {
     High,
 }
 
-/// Marker for the bounded surface over which a policy applies.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Surface;
-
 /// Marker for an artifact-local provenance manifest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Manifest;
@@ -1942,7 +2145,9 @@ impl Entry<Admitted> {
 /// genesis opens height 0 with no parents, and predecessor authority opens
 /// nonzero heights with parent hashes. Not implemented yet: global append
 /// position, authenticated lineage-head map proofs, artifact manifest digest
-/// commitments, or a first-class `PolicyRef` distinct from `ProcedureRef`.
+/// commitments, or live surface-commitment admission. The legacy
+/// `policy_ref` field below remains a procedure/policy-material label; it is
+/// not an independently authoritative `PolicyRef`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OpenBlock {
     pub(crate) lineage_id: LineageId,
@@ -1954,6 +2159,7 @@ pub(crate) struct OpenBlock {
     pub(crate) opened_from_artifact: ArtifactRef,
     pub(crate) ruling_authority: ActorRef,
     pub(crate) policy_ref: ProcedureRef,
+    pub(crate) surface: SurfaceCommitment,
     pub(crate) opened_at: RecordedAt,
 }
 
@@ -1970,6 +2176,7 @@ struct BlockCommon {
     opened_from_artifact: ArtifactRef,
     ruling_authority: ActorRef,
     policy_ref: ProcedureRef,
+    surface: SurfaceCommitment,
     opened_at: RecordedAt,
 }
 
@@ -2033,7 +2240,7 @@ pub(crate) mod block {
     use super::BlockCommon;
     use super::{
         Admission, Artifact, ArtifactPath, Digest, FlatClaim, Locator, Manifest, Policy, Private,
-        RulerWitness, SealedBlockHeader, Surface, Verifiable, Witnessed, claim,
+        RulerWitness, SealedBlockHeader, Verifiable, Witnessed, claim, surface,
     };
 
     /// Flattened v2 block claims.
@@ -2057,7 +2264,7 @@ pub(crate) mod block {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub(crate) struct Claims {
         policy: Option<FlatClaim<ArtifactPath, Digest<Policy>>>,
-        surface: Option<FlatClaim<ArtifactPath, Digest<Surface>>>,
+        surface: Option<FlatClaim<ArtifactPath, Digest<surface::Bounded>>>,
         manifest: Option<FlatClaim<ArtifactPath, Digest<Manifest>>>,
         artifact: Option<FlatClaim<super::TreeKeyHash, Digest<Artifact>>>,
     }
@@ -2094,10 +2301,13 @@ pub(crate) mod block {
 
         pub(super) fn with_surface<L>(
             mut self,
-            claim: claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Surface, L>>>,
+            claim: claim::Admitted<
+                Admission,
+                Witnessed<RulerWitness, Verifiable<surface::Bounded, L>>,
+            >,
         ) -> Self
         where
-            L: Locator<Surface, Key = ArtifactPath, Digest = Digest<Surface>>,
+            L: Locator<surface::Bounded, Key = ArtifactPath, Digest = Digest<surface::Bounded>>,
         {
             self.surface = Some(FlatClaim::from_admitted(claim));
             self
@@ -2105,9 +2315,11 @@ pub(crate) mod block {
 
         pub(crate) fn surface<L>(
             &self,
-        ) -> Option<claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Surface, L>>>>
+        ) -> Option<
+            claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<surface::Bounded, L>>>,
+        >
         where
-            L: Locator<Surface, Key = ArtifactPath, Digest = Digest<Surface>>,
+            L: Locator<surface::Bounded, Key = ArtifactPath, Digest = Digest<surface::Bounded>>,
         {
             self.surface.as_ref().map(FlatClaim::to_admitted)
         }
@@ -2211,6 +2423,9 @@ struct SealedBlockPreimage {
 /// - procedural environment: `ProcedureRef` currently names the procedure set
 ///   and runtime contract available to a Runtime built from an Artifact, not
 ///   merely one narrow function call;
+/// - surface commitment: one immutable authority surface root plus mutated and
+///   ambient surface deltas, computed statically from Artifacts without running
+///   the candidate Runtime;
 /// - artifact commitments: active Artifact and selected successor Artifact
 ///   should be recoverable from the tree and validated through backend tree key
 ///   commitment plus artifact-local manifest digest/reference;
@@ -2286,6 +2501,7 @@ impl Block<block::Open> {
                     opened_from_artifact: fields.opened_from_artifact,
                     ruling_authority: fields.ruling_authority,
                     policy_ref: fields.policy_ref,
+                    surface: fields.surface,
                     opened_at: fields.opened_at,
                 },
                 _private: Private,
@@ -2494,6 +2710,20 @@ impl Block<block::Sealed> {
         Ok(())
     }
 
+    /// Verify that the current checkout matches the surface admitted by this
+    /// sealed head.
+    ///
+    /// Startup validation intentionally recomputes the current surface from the
+    /// checked-out Artifact instead of trusting invocation JSON. The sealed
+    /// block supplies the expected roots; the backend supplies the observed
+    /// roots at this runtime boundary.
+    pub(crate) fn verify_current_surface(
+        &self,
+        current: &SurfaceCommitment,
+    ) -> Result<(), HistoryError> {
+        self.header().common.surface.verify_current(current)
+    }
+
     fn open_successor(
         &self,
         fields: OpenSuccessorBlock,
@@ -2513,6 +2743,7 @@ impl Block<block::Sealed> {
             opened_from_artifact: fields.opened_from_artifact,
             ruling_authority: fields.ruling_authority,
             policy_ref: fields.policy_ref,
+            surface: fields.surface,
             opened_at: fields.opened_at,
         })
     }
@@ -2651,6 +2882,7 @@ pub(crate) struct OpenSuccessorBlock {
     pub(crate) opened_from_artifact: ArtifactRef,
     pub(crate) ruling_authority: ActorRef,
     pub(crate) policy_ref: ProcedureRef,
+    pub(crate) surface: SurfaceCommitment,
     pub(crate) opened_at: RecordedAt,
 }
 
@@ -2847,6 +3079,12 @@ pub(crate) enum HistoryError {
     ArtifactTreeKeyMismatch {
         expected: TreeKeyHash,
         actual: TreeKeyHash,
+    },
+    #[error("current {partition} surface root does not match sealed expectation")]
+    SurfaceMismatch {
+        partition: &'static str,
+        expected: HistoryHash,
+        actual: HistoryHash,
     },
 }
 
@@ -3054,7 +3292,35 @@ mod tests {
             opened_from_artifact: ArtifactRef::new("artifact:base"),
             ruling_authority: actor("ruler"),
             policy_ref: ProcedureRef::new("policy:test"),
+            surface: surface_commitment("open-block"),
             opened_at: at(10),
+        }
+    }
+
+    fn surface_root(label: &'static str) -> SurfaceRoot {
+        SurfaceRoot {
+            hash: HistoryHash::of_bytes(label.as_bytes()),
+        }
+    }
+
+    fn surface<P>(label: &'static str) -> Surface<P> {
+        Surface {
+            root: surface_root(label),
+            _partition: PhantomData,
+        }
+    }
+
+    fn surface_commitment(label: &'static str) -> SurfaceCommitment {
+        SurfaceCommitment {
+            immutable: surface::<surface::Immutable>("immutable:prototype1"),
+            mutated: SurfaceDelta {
+                before: surface::<surface::Mutated>(label),
+                after: surface::<surface::Mutated>("mutated:after"),
+            },
+            ambient: SurfaceDelta {
+                before: surface::<surface::Ambient>("ambient:before"),
+                after: surface::<surface::Ambient>("ambient:after"),
+            },
         }
     }
 
@@ -3222,6 +3488,7 @@ mod tests {
                     opened_from_artifact: ArtifactRef::new("artifact:successor"),
                     ruling_authority: actor("successor"),
                     policy_ref: ProcedureRef::new("policy:next"),
+                    surface: surface_commitment("wrong-lineage-successor"),
                     opened_at: at(40),
                 },
             )
@@ -3533,6 +3800,54 @@ mod tests {
     }
 
     #[test]
+    fn surface_commitment_is_committed_to_block_hash() {
+        let block_id = BlockId::new();
+        let entry_id = EntryId::new();
+        let mut first_fields = open_block_fields("lineage:a", 0, Vec::new());
+        first_fields.surface = surface_commitment("mutated:before:a");
+        let mut first =
+            Block::open_with_block_id(block_id, first_fields).expect("first block opens");
+        first
+            .admit(proposed_entry_with_id(entry_id), actor("admitter"))
+            .expect("admit first");
+
+        let mut second_fields = open_block_fields("lineage:a", 0, Vec::new());
+        second_fields.surface = surface_commitment("mutated:before:b");
+        let mut second =
+            Block::open_with_block_id(block_id, second_fields).expect("second block opens");
+        second
+            .admit(proposed_entry_with_id(entry_id), actor("admitter"))
+            .expect("admit second");
+
+        let first = seal(first);
+        let second = seal(second);
+
+        assert_eq!(
+            first.header().common.surface.immutable.root.hash,
+            second.header().common.surface.immutable.root.hash
+        );
+        assert_ne!(first.block_hash(), second.block_hash());
+    }
+
+    #[test]
+    fn sealed_head_surface_verification_rejects_current_mismatch() {
+        let sealed = seal(open_block(0, Vec::new()));
+        let mut current = sealed.header().common.surface.clone();
+        current.mutated.after = surface::<surface::Mutated>("mutated:after:changed");
+
+        let err = sealed
+            .verify_current_surface(&current)
+            .expect_err("current surface mismatch must reject startup admission");
+        assert!(matches!(
+            err,
+            HistoryError::SurfaceMismatch {
+                partition: "mutated",
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn crown_lock_transition_reference_is_committed_to_block_hash() {
         let block_id = BlockId::new();
         let entry_id = EntryId::new();
@@ -3633,6 +3948,7 @@ mod tests {
             opened_from_artifact: ArtifactRef::new("artifact:base"),
             ruling_authority: actor("ruler"),
             policy_ref: ProcedureRef::new("policy:test"),
+            surface: surface_commitment("non-genesis-without-parents"),
             opened_at: at(10),
         })
         .expect_err("non-genesis without parent must fail");
@@ -3654,6 +3970,7 @@ mod tests {
             opened_from_artifact: ArtifactRef::new("artifact:base"),
             ruling_authority: actor("ruler"),
             policy_ref: ProcedureRef::new("policy:test"),
+            surface: surface_commitment("genesis-without-bootstrap"),
             opened_at: at(10),
         })
         .expect_err("genesis without bootstrap authority must fail");
@@ -3678,6 +3995,7 @@ mod tests {
             opened_from_artifact: ArtifactRef::new("artifact:base"),
             ruling_authority: actor("ruler"),
             policy_ref: ProcedureRef::new("policy:test"),
+            surface: surface_commitment("bootstrap-on-child"),
             opened_at: at(10),
         })
         .expect_err("non-genesis block must not use bootstrap authority");
@@ -3699,6 +4017,7 @@ mod tests {
             opened_from_artifact: ArtifactRef::new("artifact:base"),
             ruling_authority: actor("ruler"),
             policy_ref: ProcedureRef::new("policy:test"),
+            surface: surface_commitment("wrong-predecessor"),
             opened_at: at(10),
         })
         .expect_err("predecessor authority must match a cited parent hash");
@@ -3726,6 +4045,7 @@ mod tests {
                 opened_from_artifact: ArtifactRef::new("artifact:base"),
                 ruling_authority: actor("ruler"),
                 policy_ref: ProcedureRef::new("policy:test"),
+                surface: surface_commitment("genesis-tree-a"),
                 opened_at: at(10),
             },
         )
@@ -3750,6 +4070,7 @@ mod tests {
                 opened_from_artifact: ArtifactRef::new("artifact:base"),
                 ruling_authority: actor("ruler"),
                 policy_ref: ProcedureRef::new("policy:test"),
+                surface: surface_commitment("genesis-tree-b"),
                 opened_at: at(10),
             },
         )
@@ -3794,6 +4115,7 @@ mod tests {
                 opened_from_artifact: ArtifactRef::new("artifact:successor"),
                 ruling_authority: actor("successor"),
                 policy_ref: ProcedureRef::new("policy:next"),
+                surface: surface_commitment("successor-merge"),
                 opened_at: at(40),
             })
             .expect("open successor");

@@ -137,7 +137,7 @@ use crate::cli::prototype1_state::history::{
     ActorRef, ArtifactLocator, ArtifactRef, BlockStore, EvidenceRef, FsBlockStore,
     GenesisAuthority, LineageId, OpenBlock, OpeningAuthority, OperationalEnvironment,
     ParentIdentityRef, PredecessorAuthority, ProcedureRef, Regime, SealBlock, StoreHead,
-    SuccessorRef, TreeKeyCommitment, TreeKeyHash,
+    SuccessorRef, SurfaceCommitment, TreeKeyCommitment, TreeKeyHash,
 };
 use crate::cli::prototype1_state::identity::{
     ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -423,7 +423,26 @@ pub(crate) fn validate_prototype1_successor_history_admission(
         .map_err(history_prepare_error)?;
     sealed
         .verify_current_artifact_tree(&current_artifact, &ArtifactLocator)
+        .map_err(history_prepare_error)?;
+    let current_surface = GitWorktreeBackend
+        .surface_commitment(active_parent_root, active_parent_root)
+        .map_err(backend_prepare_error)?;
+    sealed
+        .verify_current_surface(&current_surface)
         .map_err(history_prepare_error)
+}
+
+pub(crate) fn validate_child_surface(
+    active_parent_root: &Path,
+    child_root: &Path,
+    phase: &'static str,
+) -> Result<SurfaceCommitment, PrepareError> {
+    GitWorktreeBackend
+        .surface_commitment(active_parent_root, child_root)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase,
+            detail: source.to_string(),
+        })
 }
 
 fn validate_prototype1_successor_node_continuation(
@@ -508,12 +527,14 @@ fn prepare_prototype1_active_successor_runtime(
     manifest_path: &Path,
     node: &crate::intervention::Prototype1NodeRecord,
     active_parent_root: &Path,
-) -> Result<PathBuf, PrepareError> {
+) -> Result<(PathBuf, SurfaceCommitment), PrepareError> {
     validate_prototype1_successor_node_continuation(manifest_path, &node.node_id)?;
     let _ = select_treatment_branch(campaign_id, manifest_path, &node.branch_id)?;
     let resolved = resolve_treatment_branch(campaign_id, manifest_path, &node.branch_id)?;
-    install_prototype1_successor_artifact(campaign_id, active_parent_root, node, &resolved)?;
-    build_prototype1_active_successor_binary(active_parent_root)
+    let surface =
+        install_prototype1_successor_artifact(campaign_id, active_parent_root, node, &resolved)?;
+    let binary = build_prototype1_active_successor_binary(active_parent_root)?;
+    Ok((binary, surface))
 }
 
 fn install_prototype1_successor_artifact(
@@ -521,7 +542,7 @@ fn install_prototype1_successor_artifact(
     active_parent_root: &Path,
     node: &crate::intervention::Prototype1NodeRecord,
     resolved: &crate::intervention::ResolvedTreatmentBranch,
-) -> Result<(), PrepareError> {
+) -> Result<SurfaceCommitment, PrepareError> {
     let backend = GitWorktreeBackend;
     let workspace = backend
         .workspace_for_node(&node.node_id, &node.node_dir, &node.workspace_root)
@@ -556,6 +577,12 @@ fn install_prototype1_successor_artifact(
                 phase: "prototype1_successor_parent_identity_commit",
                 detail: source.to_string(),
             })?;
+        let surface = backend
+            .surface_commitment(active_parent_root, &workspace.root)
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "prototype1_successor_surface_commitment",
+                detail: source.to_string(),
+            })?;
         backend
             .remove(active_parent_root, &workspace)
             .map_err(|source| PrepareError::DatabaseSetup {
@@ -563,8 +590,44 @@ fn install_prototype1_successor_artifact(
                 detail: source.to_string(),
             })?;
         cleanup_prototype1_child_build_products(node)?;
+        install_committed_successor_artifact(
+            campaign_id,
+            active_parent_root,
+            node,
+            resolved,
+            workspace,
+            surface,
+            previous_parent,
+        )
+    } else {
+        let surface = backend
+            .surface_commitment(active_parent_root, &active_parent_root)
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "prototype1_successor_surface_commitment_reuse",
+                detail: source.to_string(),
+            })?;
+        install_committed_successor_artifact(
+            campaign_id,
+            active_parent_root,
+            node,
+            resolved,
+            workspace,
+            surface,
+            previous_parent,
+        )
     }
+}
 
+fn install_committed_successor_artifact(
+    campaign_id: &str,
+    active_parent_root: &Path,
+    node: &crate::intervention::Prototype1NodeRecord,
+    resolved: &crate::intervention::ResolvedTreatmentBranch,
+    workspace: crate::cli::prototype1_state::backend::Workspace,
+    surface: SurfaceCommitment,
+    previous_parent: Option<ParentIdentity>,
+) -> Result<SurfaceCommitment, PrepareError> {
+    let backend = GitWorktreeBackend;
     backend
         .verify_artifact_target(
             active_parent_root,
@@ -628,7 +691,7 @@ fn install_prototype1_successor_artifact(
         }),
         "prototype1_successor_checkout_journal",
     )?;
-    Ok(())
+    Ok(surface)
 }
 
 fn ensure_node_child_path(node_dir: &Path, path: &Path) -> Result<(), PrepareError> {
@@ -699,7 +762,7 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
     campaign_manifest_path: &Path,
     active_parent_root: &Path,
     node: &crate::intervention::Prototype1NodeRecord,
-) -> Result<(), PrepareError> {
+) -> Result<SurfaceCommitment, PrepareError> {
     let backend = GitWorktreeBackend;
     let workspace = backend
         .workspace_for_node(&node.node_id, &node.node_dir, &node.workspace_root)
@@ -732,6 +795,11 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
             phase: "prototype1_parent_identity_commit",
             detail: source.to_string(),
         })?;
+    let surface = validate_child_surface(
+        active_parent_root,
+        &workspace.root,
+        "prototype1_child_surface_commitment_after_persist",
+    )?;
     let resolved = resolve_treatment_branch(campaign_id, campaign_manifest_path, &node.branch_id)?;
     backend
         .verify_artifact_target(
@@ -760,7 +828,7 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
         }),
         "prototype1_child_artifact_journal",
     )?;
-    Ok(())
+    Ok(surface)
 }
 
 fn load_prototype1_branch_evaluation_report(
@@ -911,7 +979,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
 ) -> Result<(Parent<Retired>, Option<Prototype1SuccessorHandoff>), PrepareError> {
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let node = load_node_record(&manifest_path, node_id)?;
-    let active_successor_binary_path = prepare_prototype1_active_successor_runtime(
+    let (active_successor_binary_path, surface) = prepare_prototype1_active_successor_runtime(
         campaign_id,
         &manifest_path,
         &node,
@@ -926,6 +994,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         parent.identity(),
         &manifest_path,
         successor_artifact.clone(),
+        surface,
     )?;
     let seal = SealBlock::from_handoff(
         EvidenceRef::new(format!("prototype1:successor-handoff:{runtime_id}")),
@@ -1103,6 +1172,7 @@ fn handoff_block_fields(
     parent_identity: &ParentIdentity,
     manifest_path: &Path,
     active_artifact: ArtifactRef,
+    surface: SurfaceCommitment,
 ) -> Result<HandoffBlock, PrepareError> {
     let store = FsBlockStore::for_campaign_manifest(manifest_path);
     let lineage_id = LineageId::new(campaign_id.to_string());
@@ -1148,6 +1218,7 @@ fn handoff_block_fields(
             opened_from_artifact: active_artifact,
             ruling_authority: parent_actor,
             policy_ref: ProcedureRef::new("prototype1:single-ruler-local:v1"),
+            surface,
             opened_at: RecordedAt::now(),
         },
         expected_head: head,
@@ -1765,6 +1836,11 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
         &node.node_id,
         repo_root,
     )?;
+    let _surface = validate_child_surface(
+        repo_root,
+        &node.workspace_root,
+        "prototype1_branch_child_surface_commitment_before_build",
+    )?;
     match build_prototype1_runner_binary(
         baseline_campaign_id,
         &baseline_manifest_path,
@@ -1776,7 +1852,7 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
         }
         Prototype1NodeBuildOutcome::Built => {}
     }
-    persist_prototype1_buildable_child_artifact(
+    let _surface = persist_prototype1_buildable_child_artifact(
         baseline_campaign_id,
         &baseline_manifest_path,
         repo_root,

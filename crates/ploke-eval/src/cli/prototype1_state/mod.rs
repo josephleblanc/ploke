@@ -93,8 +93,38 @@
 //! Genesis admission is a local, configured-store absence claim: the runtime
 //! may use bootstrap authority only if the configured History store has no
 //! valid associated head for the lineage/artifact. Predecessor admission uses a
-//! sealed History head that names the current clean artifact tree. Current code
-//! has pieces of this shape but does not yet implement the full startup gate.
+//! sealed History head that names the current clean artifact tree. Update
+//! recorded 2026-04-30 10:13 PDT: the live successor handoff path now checks
+//! the current clean Artifact tree against the sealed History head before the
+//! next runtime enters the parent path; bootstrap startup is still handled by
+//! local configured-store absence rather than a uniform admission carrier.
+//! Update recorded 2026-04-30 11:54 PDT: successor handoff now computes a
+//! partitioned surface commitment before successor execution and commits it
+//! into the sealed History block. The current concrete partition is:
+//! `Immutable = crates/ploke-eval`, `Mutated = all tool-description text
+//! files`, and `Ambient = empty declared surface`.
+//! Update recorded 2026-04-30 12:20 PDT: child evaluation now validates this
+//! surface before hydrating a child Runtime and again after the child Artifact
+//! is persisted; successor startup recomputes the current checkout surface and
+//! compares it with the sealed History head before entering the parent path.
+//!
+//! Update recorded 2026-04-30 10:13 PDT: the policy that matters for
+//! cross-runtime continuity is embodied by the runtime's policy-bearing code
+//! surface. For the current Prototype 1 contract, this means the `ploke-eval`
+//! surface that defines parent creation, child/successor execution, Crown
+//! transitions, History admission, and handoff. If the first admitted Parent
+//! has digest `D` for that surface, and every admitted parent may execute a
+//! child/successor only after proving the candidate Artifact also has digest
+//! `D`, then every runtime descendant produced by this transition system also
+//! carries digest `D`. This is an inductive invariant over admitted
+//! parent-created descendants. It does not claim that no external process can
+//! run incompatible code; it says such a process is outside the admitted
+//! transition system and may not enter the History/Crown mutation path.
+//! Ordinary Prototype 1 self-improvement therefore keeps this policy-bearing
+//! `ploke-eval` surface out of the bounded edit scope. We do plan to admit that
+//! surface into scope later, but only through an explicit protocol-upgrade
+//! transition. Until that transition exists, preserving the digest is a
+//! precondition for ordinary descendant execution and History admission.
 //!
 //! Terminology status recorded 2026-04-29 10:35 UTC: terms such as
 //! "transaction", "relation", "intervention", "policy", and "lineage
@@ -183,20 +213,22 @@
 //! Sealing the History block at `Crown<Locked>` gives the successor a specific
 //! validation target. Before satisfying the unlock transition, the successor
 //! should be able to verify the previous block hash, the selected Artifact
-//! installed in the active checkout, the selected successor identity, the policy
-//! decision, and the required evidence references. If required evidence arrives
-//! after the lock, it belongs to ingress and must be imported by a later
-//! admitted Parent under a named policy rather than silently rewriting the
-//! sealed block.
+//! installed in the active checkout, the selected successor identity, the
+//! policy-bearing surface digest, and the required evidence references. If
+//! required evidence arrives after the lock, it belongs to ingress and must be
+//! imported by a later admitted Parent under an explicit rule rather than
+//! silently rewriting the sealed block.
 //!
 //! The first code carriers for this shape are in [`inner`] and [`parent`].
 //! [`inner::Crown`] and [`inner::LockBox`] name the intended authority-transfer
-//! structure. The current live handoff now seals and appends a minimal History
-//! block before successor launch, but successor startup still uses concrete
-//! invocation and ready files rather than sealed-head verification. The
-//! child-selection path has the first concrete message box. Do not extend the
-//! old process seam by adding another ad hoc acknowledgement file. Add the
-//! missing concrete box/transition pair instead.
+//! structure. The current live handoff now seals and appends a History block
+//! carrying a surface commitment before successor launch, and the successor
+//! handoff path verifies the current clean Artifact tree against the sealed
+//! head before entering the next parent path. Concrete invocation and ready
+//! files remain transport/debug evidence, not authority. The child-selection
+//! path has the first concrete message box. Do not extend the old process seam
+//! by adding another ad hoc acknowledgement file. Add the missing concrete
+//! box/transition pair instead.
 //!
 //! ## Boxes, messages, and buffers
 //!
@@ -665,11 +697,8 @@
 //! but it is not yet the full state model needed for safe fan-out. In
 //! particular, the live implementation still lacks:
 //!
-//! - live sealing and persistence of a `Crown<Locked>` History block for
-//!   successor handoff, so the authority transfer still depends on
-//!   invocation/ready files rather than one typed succession transition
-//! - a startup admission gate that rejects inconsistent required surfaces
-//!   before entering `Parent<Ruling>`
+//! - a uniform bootstrap admission carrier; first-parent startup still depends
+//!   on configured-store absence
 //! - an authenticated lineage-head map, such as a Merkle-Patricia trie or
 //!   equivalent authenticated map, capable of present/absent lineage-head
 //!   proofs for genesis and predecessor admission

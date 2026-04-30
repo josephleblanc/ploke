@@ -36,10 +36,12 @@ Block =
   commitments, and parent links.
 ```
 
-Current implementation note: Prototype 1 does not yet implement distributed
-consensus, authenticated head-map proofs, full policy/finality semantics, or
-live startup admission through sealed History. Current code is a local,
-partial, tamper-evident History core.
+Current implementation note updated 2026-04-30 10:13 PDT: Prototype 1 does not
+yet implement distributed consensus, authenticated head-map proofs, full
+policy/finality semantics, or a uniform bootstrap/predecessor startup admission
+carrier. The live successor handoff path does now check the current clean
+Artifact tree against the sealed History head before entering the next parent
+path. Current code remains a local, partial, tamper-evident History core.
 
 ## What A Block Proves
 
@@ -80,8 +82,10 @@ recoverable identity.
 
 ### Startup
 
-Intended startup invariant, not yet the live startup gate as of 2026-04-29
-11:58 PDT: a Runtime may enter `Parent<Ruling>` only after establishing:
+Startup invariant status updated 2026-04-30 10:13 PDT: the successor handoff
+path has a partial live gate against sealed History, but the uniform
+bootstrap/predecessor admission carrier is still intended rather than complete.
+A Runtime may enter `Parent<Ruling>` only after establishing:
 
 ```text
 ProducedBy(SelfRuntime, CurrentArtifact)
@@ -91,9 +95,10 @@ AdmittedBy(CurrentArtifact, Lineage, Policy, History)
 For the intended hot path, startup should validate the immediate sealed head
 and current Artifact commitment. Full History replay can remain a separate
 validation procedure because block hashes and parent links support recursive
-verification. Current Prototype 1 startup still uses checkout, parent identity,
-scheduler, and invocation evidence; it does not yet validate sealed History
-head admission.
+verification. Current Prototype 1 successor handoff validates the current clean
+Artifact tree against the sealed History head. It still also uses checkout,
+parent identity, scheduler, and invocation evidence, and bootstrap/non-handoff
+startup does not yet have the same admission shape.
 
 Refined invariant, 2026-04-29 11:58 PDT:
 
@@ -146,22 +151,86 @@ another sample, not the same sample.
 
 ## Policy And Surface
 
-`PolicyRef` and `PolicyScope` should be defined through `Surface`. The policy
-question is not only "which rule was used?" but "over which bounded surface does
-this rule apply, and which operations are admissible on that surface?"
+Update recorded 2026-04-30 10:13 PDT: avoid treating an external `PolicyRef` as
+the authority source. The policy that matters for cross-runtime continuity is
+embodied by the admitted Runtime, especially the policy-bearing code surface
+that defines parent creation, child/successor execution, Crown transitions,
+History admission, and handoff. In the current Prototype 1 contract, that
+surface is `ploke-eval`.
 
-Policy is distinct from the procedure environment:
+The useful current split is:
 
 ```text
-ProcedureEnvironment:
-  what operations/procedures/tools/oracles exist and how they execute
+Policy-bearing runtime surface:
+  the code surface whose digest defines the parent/spawn/Crown/History
+  transition contract
 
-Policy:
-  what evidence is admissible and what decisions are allowed from it
+Policy-interpreted material:
+  oracle inputs, benchmark digests, phase schedules, thresholds, messages, and
+  evidence that only become decision material because the runtime contract says
+  how they are interpreted
 ```
 
-For now, `PolicyRef` should be minimal and explicit. It should not become a
-policy engine in the first type slice. Policy must eventually decide:
+For ordinary Prototype 1 self-improvement, the policy-bearing `ploke-eval`
+surface is outside the bounded edit scope. The intended inductive invariant is:
+
+```text
+Base:
+  the configured first Parent is admitted with policy-surface digest D.
+
+Step:
+  a Parent whose Artifact has digest D may execute a child/successor runtime
+  only after proving the child/successor Artifact also has digest D.
+
+Therefore:
+  every executed child or descendant produced by this transition system has
+  policy-surface digest D.
+```
+
+This invariant is closed over admitted descendants produced by the transition
+system. It does not claim that arbitrary external processes cannot exist. It
+claims that incompatible code is not an admitted descendant and may not enter
+the History/Crown mutation path.
+
+We do plan to allow `ploke-eval` into the bounded edit scope later. That should
+be modeled as an explicit protocol-upgrade/fork transition with its own
+admission rule, not as an ordinary successor transition.
+
+Update recorded 2026-04-30 10:58 PDT: the concrete block carrier should use a
+partitioned surface commitment, not a loose policy reference:
+
+```text
+ArtifactSurface = Immutable + Mutated + Ambient
+
+Block carries:
+  immutable_root
+  mutated_before_root
+  mutated_after_root
+  ambient_before_root
+  ambient_after_root
+```
+
+The equality rule for `immutable_root` is runtime policy, not another block
+boolean. The immutable surface must include the code that defines and checks
+that rule. Candidate validation should be static: a verifier checks out the
+before and after Artifacts, computes the partition roots, and validates the
+commitment without running the candidate Runtime. This is the pre-execution
+safety boundary that later validators/rulers need before sampling candidate
+evaluation behavior.
+
+Update recorded 2026-04-30 12:20 PDT: the current Prototype 1 concrete
+partition is intentionally hardcoded. `Immutable` is `crates/ploke-eval`.
+`Mutated` is the set of all tool-description text files referenced by
+`ToolName::ALL`. `Ambient` is the empty declared surface for now. SHA-256 over
+sorted relpaths and per-file SHA-256 hashes is the current canonicalization.
+The live successor handoff computes this commitment before successor execution
+and commits it into the sealed History block. Child evaluation validates the
+same surface before child build/hydration and again after the child Artifact is
+persisted. Successor startup recomputes the current checkout surface and checks
+it against the sealed head before entering the parent path. This is still not a
+general protocol-upgrade mechanism for mutating `crates/ploke-eval`.
+
+The runtime contract must eventually decide:
 
 - who may mint or admit;
 - which surfaces may be patched;
@@ -184,8 +253,8 @@ into giant report structs.
 - opening authority;
 - ruling authority;
 - Crown transition;
-- `PolicyRef` / `PolicyScope` through `Surface`;
-- procedure environment / runtime contract ref;
+- policy-bearing runtime surface digest;
+- procedure environment / runtime contract commitment;
 - active Artifact commitment;
 - selected successor Artifact commitment;
 - selected successor Runtime identity/ref;
@@ -308,11 +377,18 @@ current local Crown block should not be described as global finality.
 
 The next implementation tasks should add only minimal structural carriers:
 
-- `PolicyRef` and `PolicyScope`, rooted in `Surface`;
+- surface commitment carriers: one immutable authority surface root, a
+  mutated-surface transition commitment, and an ambient-surface transition
+  commitment;
 - artifact commitment / manifest reference shape;
 - head-state / rollback / finality placeholders;
 - refs or roots for stochastic evidence, uncertainty/risk, rejected/failure
   evidence, and validation samples.
+
+External oracle inputs, benchmark digests, schedules, and messages may still be
+addressed by digest or locator, but those addresses are not authority by
+themselves. They are policy-interpreted material only because the admitted
+runtime surface says how to interpret them.
 
 Do not introduce large names that flatten structure into identifiers. Preserve
 structure through typed carriers, modules, explicit refs, and state transitions.
