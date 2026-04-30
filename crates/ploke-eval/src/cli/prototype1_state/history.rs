@@ -1924,7 +1924,10 @@ impl super::inner::Crown<super::inner::crown::Locked> {
         block: Block<block::Open>,
         fields: SealBlock,
     ) -> Result<Block<block::Sealed>, HistoryError> {
-        if self.lineage() != block.lineage_id().as_str() {
+        if !self
+            .lineage_key()
+            .matches_debug_str(block.lineage_id().as_str())
+        {
             return Err(HistoryError::WrongCrownLineage);
         }
 
@@ -2342,7 +2345,7 @@ mod tests {
         path: &'static str,
     ) -> claim::Admitted<Admission, Witnessed<RulerWitness, Verifiable<Policy, TestLocator>>> {
         let crown: super::super::inner::Crown<super::super::inner::crown::Ruling> =
-            super::super::inner::Crown::for_lineage("lineage:a");
+            super::super::inner::Crown::test_ruling("lineage:a");
         let (_, claim) = crown
             .admit_claim(
                 &TestLocator,

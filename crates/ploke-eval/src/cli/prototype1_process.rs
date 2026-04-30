@@ -137,6 +137,7 @@ use crate::cli::prototype1_state::identity::{
     ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
     parent_identity_relpath, write_parent_identity,
 };
+use crate::cli::prototype1_state::inner::LockCrown;
 use crate::cli::prototype1_state::journal::{
     ActiveCheckoutAdvancedEntry, ChildArtifactCommittedEntry, JournalEntry, PrototypeJournal,
     Streams, SuccessorHandoffEntry, prototype1_transition_journal_path,

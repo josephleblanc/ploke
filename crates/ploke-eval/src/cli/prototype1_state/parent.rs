@@ -9,7 +9,7 @@ use crate::{
     cli::prototype1_state::{
         backend::WorkspaceBackend,
         identity::{ParentIdentity, parent_identity_path},
-        inner::{At, Crown, File, Message, MessageBox, Transition, crown},
+        inner::{At, File, LineageKey, Message, MessageBox, Transition},
     },
     intervention::{
         Prototype1NodeRecord, load_node_record, prototype1_branch_registry_path,
@@ -420,15 +420,9 @@ impl Parent<Selectable> {
         &self.identity
     }
 
-    /// Lock this lineage's Crown and retire the current Parent.
-    ///
-    /// This is deliberately unavailable on `Parent<Ready>`. The Crown should
-    /// not be minted early and carried beside ordinary parent work. In the live
-    /// handoff path, a parent can only produce `Crown<Locked>` by crossing the
-    /// successor boundary from `Parent<Selectable>` to `Parent<Retired>`.
-    pub(crate) fn lock_crown(self) -> (Parent<Retired>, Crown<crown::Locked>) {
-        let crown = Crown::for_lineage(self.identity.campaign_id.clone()).lock();
-        (self.cast(), crown)
+    pub(super) fn into_retired_and_lineage(self) -> (Parent<Retired>, LineageKey) {
+        let lineage = LineageKey::from_debug_value(self.identity.campaign_id.clone());
+        (self.cast(), lineage)
     }
 }
 
@@ -468,7 +462,7 @@ fn node_context(manifest_path: &Path, node: &Prototype1NodeRecord) -> Prototype1
 mod tests {
     use super::*;
     use crate::{
-        cli::prototype1_state::inner::Open,
+        cli::prototype1_state::inner::{LockCrown, Open},
         intervention::{PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeStatus},
     };
 

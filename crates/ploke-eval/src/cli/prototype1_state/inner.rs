@@ -58,9 +58,42 @@ pub(crate) mod crown {
 
 /// Exclusive authority over one lineage surface.
 pub(crate) struct Crown<S> {
-    lineage: String,
+    lineage: LineageKey,
     _state: PhantomData<S>,
     _private: Private,
+}
+
+/// Crown-local lineage identity.
+///
+/// This deliberately wraps the current debug/source string so Crown code does
+/// not depend on `String` as the long-term definition of lineage identity. The
+/// backing value can be replaced once lineage is defined by a stronger object
+/// such as an artifact/tree-backed coordinate or authenticated head key.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct LineageKey {
+    value: String,
+}
+
+impl fmt::Debug for LineageKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("LineageKey").field(&self.value).finish()
+    }
+}
+
+impl LineageKey {
+    pub(super) fn from_debug_value(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+        }
+    }
+
+    pub(crate) fn as_debug_str(&self) -> &str {
+        &self.value
+    }
+
+    pub(crate) fn matches_debug_str(&self, value: &str) -> bool {
+        self.value == value
+    }
 }
 
 impl<S> fmt::Debug for Crown<S> {
@@ -73,14 +106,18 @@ impl<S> fmt::Debug for Crown<S> {
 
 impl<S> Crown<S> {
     pub(crate) fn lineage(&self) -> &str {
+        self.lineage.as_debug_str()
+    }
+
+    pub(crate) fn lineage_key(&self) -> &LineageKey {
         &self.lineage
     }
 }
 
 impl Crown<crown::Ruling> {
-    pub(super) fn for_lineage(lineage: impl Into<String>) -> Self {
+    fn for_lineage(lineage: LineageKey) -> Self {
         Self {
-            lineage: lineage.into(),
+            lineage,
             _state: PhantomData,
             _private: Private,
         }
@@ -95,14 +132,42 @@ impl Crown<crown::Ruling> {
     }
 }
 
+/// Transition that retires a selectable Parent and locks lineage authority.
+///
+/// This trait is implemented in this module so the raw `Crown<Ruling>`
+/// constructor can stay private. Sibling modules may use the transition if they
+/// hold the required role/state carrier, but they cannot mint a ruling Crown
+/// from a lineage string.
+pub(crate) trait LockCrown {
+    type Retired;
+
+    fn lock_crown(self) -> (Self::Retired, Crown<crown::Locked>);
+}
+
+impl LockCrown for super::parent::Parent<super::parent::Selectable> {
+    type Retired = super::parent::Parent<super::parent::Retired>;
+
+    fn lock_crown(self) -> (Self::Retired, Crown<crown::Locked>) {
+        let (retired, lineage) = self.into_retired_and_lineage();
+        (retired, Crown::for_lineage(lineage).lock())
+    }
+}
+
 #[cfg(test)]
 impl Crown<crown::Locked> {
     pub(crate) fn test_locked(lineage: impl Into<String>) -> Self {
         Self {
-            lineage: lineage.into(),
+            lineage: LineageKey::from_debug_value(lineage),
             _state: PhantomData,
             _private: Private,
         }
+    }
+}
+
+#[cfg(test)]
+impl Crown<crown::Ruling> {
+    pub(crate) fn test_ruling(lineage: impl Into<String>) -> Self {
+        Self::for_lineage(LineageKey::from_debug_value(lineage))
     }
 }
 
