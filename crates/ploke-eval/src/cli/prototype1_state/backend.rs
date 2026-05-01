@@ -14,7 +14,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use super::history::{HistoryHash, Surface, SurfaceCommitment, SurfaceDelta, SurfaceRoot};
+use super::history::{HistoryHash, SurfaceCommitment};
 use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
 
 /// Git branch name for one backend-managed child lineage.
@@ -24,6 +24,59 @@ pub(crate) struct GitBranch(pub String);
 impl std::fmt::Display for GitBranch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+/// Backend-derived surface roots for the current Prototype 1 admission policy.
+///
+/// The fields and constructor stay private to this module so sibling modules
+/// cannot fabricate the material used to construct a History
+/// [`SurfaceCommitment`]. A caller can obtain one only by asking a
+/// [`WorkspaceBackend`] implementation to hash concrete Artifact checkouts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SurfaceRoots {
+    immutable: HistoryHash,
+    mutated_before: HistoryHash,
+    mutated_after: HistoryHash,
+    ambient_before: HistoryHash,
+    ambient_after: HistoryHash,
+}
+
+impl SurfaceRoots {
+    fn new(
+        immutable: HistoryHash,
+        mutated_before: HistoryHash,
+        mutated_after: HistoryHash,
+        ambient_before: HistoryHash,
+        ambient_after: HistoryHash,
+    ) -> Self {
+        Self {
+            immutable,
+            mutated_before,
+            mutated_after,
+            ambient_before,
+            ambient_after,
+        }
+    }
+
+    pub(crate) fn immutable(&self) -> &HistoryHash {
+        &self.immutable
+    }
+
+    pub(crate) fn mutated_before(&self) -> &HistoryHash {
+        &self.mutated_before
+    }
+
+    pub(crate) fn mutated_after(&self) -> &HistoryHash {
+        &self.mutated_after
+    }
+
+    pub(crate) fn ambient_before(&self) -> &HistoryHash {
+        &self.ambient_before
+    }
+
+    pub(crate) fn ambient_after(&self) -> &HistoryHash {
+        &self.ambient_after
     }
 }
 
@@ -1173,7 +1226,7 @@ impl WorkspaceBackend for GitWorktreeBackend {
                 pathspec: "crates/ploke-eval".to_string(),
             });
         }
-        let immutable_before = surface_root(before_root, &immutable_before_paths)?;
+        let immutable_before = surface_hash(before_root, &immutable_before_paths)?;
         let immutable_after_paths = tracked_paths(after_root, "crates/ploke-eval")?;
         if immutable_after_paths.is_empty() {
             return Err(BackendError::EmptySurfacePathspec {
@@ -1181,25 +1234,27 @@ impl WorkspaceBackend for GitWorktreeBackend {
                 pathspec: "crates/ploke-eval".to_string(),
             });
         }
-        let immutable_after = surface_root(after_root, &immutable_after_paths)?;
+        let immutable_after = surface_hash(after_root, &immutable_after_paths)?;
         if immutable_before != immutable_after {
             return Err(BackendError::ImmutableSurfaceChanged {
-                before: immutable_before.hash().as_str().to_string(),
-                after: immutable_after.hash().as_str().to_string(),
+                before: immutable_before.as_str().to_string(),
+                after: immutable_after.as_str().to_string(),
             });
         }
 
         let mutated_paths = tool_description_paths();
-        let mutated_before = surface_root(before_root, &mutated_paths)?;
-        let mutated_after = surface_root(after_root, &mutated_paths)?;
-        let ambient_before = surface_root(before_root, &[])?;
-        let ambient_after = surface_root(after_root, &[])?;
+        let mutated_before = surface_hash(before_root, &mutated_paths)?;
+        let mutated_after = surface_hash(after_root, &mutated_paths)?;
+        let ambient_before = surface_hash(before_root, &[])?;
+        let ambient_after = surface_hash(after_root, &[])?;
 
-        Ok(SurfaceCommitment::new(
-            Surface::new(immutable_before),
-            SurfaceDelta::new(Surface::new(mutated_before), Surface::new(mutated_after)),
-            SurfaceDelta::new(Surface::new(ambient_before), Surface::new(ambient_after)),
-        ))
+        Ok(SurfaceCommitment::from_backend_roots(SurfaceRoots::new(
+            immutable_before,
+            mutated_before,
+            mutated_after,
+            ambient_before,
+            ambient_after,
+        )))
     }
 }
 
@@ -1288,7 +1343,7 @@ fn tool_description_paths() -> Vec<PathBuf> {
         .collect()
 }
 
-fn surface_root(worktree_root: &Path, relpaths: &[PathBuf]) -> Result<SurfaceRoot, BackendError> {
+fn surface_hash(worktree_root: &Path, relpaths: &[PathBuf]) -> Result<HistoryHash, BackendError> {
     let mut relpaths = relpaths.to_vec();
     relpaths.sort();
 
@@ -1315,7 +1370,7 @@ fn surface_root(worktree_root: &Path, relpaths: &[PathBuf]) -> Result<SurfaceRoo
         preimage.push(0);
     }
 
-    Ok(SurfaceRoot::new(HistoryHash::of_bytes(&preimage)))
+    Ok(HistoryHash::of_bytes(&preimage))
 }
 
 /// Execute one short-lived git command and return a typed backend error on

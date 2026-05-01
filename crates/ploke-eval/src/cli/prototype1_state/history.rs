@@ -1150,7 +1150,7 @@ pub(crate) struct SurfaceRoot {
 }
 
 impl SurfaceRoot {
-    pub(crate) fn new(hash: HistoryHash) -> Self {
+    fn new(hash: HistoryHash) -> Self {
         Self { hash }
     }
 
@@ -1169,7 +1169,7 @@ pub(crate) struct Surface<P> {
 }
 
 impl<P> Surface<P> {
-    pub(crate) fn new(root: SurfaceRoot) -> Self {
+    fn new(root: SurfaceRoot) -> Self {
         Self {
             root,
             _partition: PhantomData,
@@ -1194,7 +1194,7 @@ pub(crate) struct SurfaceDelta<P> {
 }
 
 impl<P> SurfaceDelta<P> {
-    pub(crate) fn new(before: Surface<P>, after: Surface<P>) -> Self {
+    fn new(before: Surface<P>, after: Surface<P>) -> Self {
         Self { before, after }
     }
 
@@ -1218,7 +1218,7 @@ pub(crate) struct SurfaceCommitment {
 }
 
 impl SurfaceCommitment {
-    pub(crate) fn new(
+    fn new(
         immutable: Surface<surface::Immutable>,
         mutated: SurfaceDelta<surface::Mutated>,
         ambient: SurfaceDelta<surface::Ambient>,
@@ -1228,6 +1228,20 @@ impl SurfaceCommitment {
             mutated,
             ambient,
         }
+    }
+
+    pub(crate) fn from_backend_roots(roots: super::backend::SurfaceRoots) -> Self {
+        Self::new(
+            Surface::new(SurfaceRoot::new(roots.immutable().clone())),
+            SurfaceDelta::new(
+                Surface::new(SurfaceRoot::new(roots.mutated_before().clone())),
+                Surface::new(SurfaceRoot::new(roots.mutated_after().clone())),
+            ),
+            SurfaceDelta::new(
+                Surface::new(SurfaceRoot::new(roots.ambient_before().clone())),
+                Surface::new(SurfaceRoot::new(roots.ambient_after().clone())),
+            ),
+        )
     }
 
     pub(crate) fn verify_current(&self, current: &Self) -> Result<(), HistoryError> {
@@ -2145,7 +2159,9 @@ impl Entry<Admitted> {
 /// genesis opens height 0 with no parents, and predecessor authority opens
 /// nonzero heights with parent hashes. Not implemented yet: global append
 /// position, authenticated lineage-head map proofs, artifact manifest digest
-/// commitments, or live surface-commitment admission. The legacy
+/// commitments, or a uniform typed startup/admission carrier. Live successor
+/// handoff now commits a backend-derived surface, but block opening still
+/// receives that validated material from the current process boundary. The legacy
 /// `policy_ref` field below remains a procedure/policy-material label; it is
 /// not an independently authoritative `PolicyRef`.
 #[derive(Debug, Clone, PartialEq, Eq)]
