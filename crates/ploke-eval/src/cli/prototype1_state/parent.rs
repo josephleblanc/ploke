@@ -7,7 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     cli::prototype1_state::{
-        backend::WorkspaceBackend,
+        backend::{GitWorktreeBackend, WorkspaceBackend},
+        history::{
+            ArtifactLocator, BlockHead, BlockStore, BlockStoreError, FsBlockStore, HistoryError,
+            LineageId, LineageState, StoreHead, TreeKeyCommitment,
+        },
         identity::{ParentIdentity, parent_identity_path},
         inner::{At, File, LineageKey, Message, MessageBox, Transition},
     },
@@ -33,6 +37,18 @@ pub(crate) enum Checked {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Ready {}
 
+/// Startup evidence before a lineage predecessor exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Genesis {}
+
+/// Startup evidence derived from a sealed predecessor block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Predecessor {}
+
+/// Startup evidence checked against the current parent identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Validated {}
+
 /// Parent role after it has packed a child-plan message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Planned {}
@@ -51,6 +67,29 @@ pub(crate) struct Parent<S> {
     identity: ParentIdentity,
     node: Prototype1NodeRecord,
     _state: PhantomData<S>,
+}
+
+/// Evidence that this runtime may enter the ready Parent path.
+///
+/// `Startup<Validated>` is the local single-ruler startup gate. Gen0 reaches it
+/// only from a checked absent History head. Later runtimes reach it only after
+/// the predecessor sealed head and current checkout have already been verified.
+/// The fields stay private so callers cannot convert transport evidence, such
+/// as successor invocation JSON, into Parent readiness by convention.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Startup<S> {
+    lineage_id: LineageId,
+    parent_node_id: String,
+    generation: u32,
+    state: LineageState,
+    kind: StartupKind,
+    _state: PhantomData<S>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StartupKind {
+    Genesis,
+    Predecessor { head: BlockHead },
 }
 
 /// Cross-runtime message: this parent has planned one or more child artifacts.
@@ -390,12 +429,237 @@ impl Parent<Checked> {
         &self.identity
     }
 
-    pub(crate) fn ready(self) -> Parent<Ready> {
-        Parent {
+    pub(crate) fn ready(self, startup: Startup<Validated>) -> Result<Parent<Ready>, PrepareError> {
+        startup.validate_parent(&self.identity)?;
+        Ok(Parent {
             identity: self.identity,
             node: self.node,
             _state: PhantomData,
+        })
+    }
+}
+
+impl Startup<Genesis> {
+    pub(crate) fn from_history(
+        identity: &ParentIdentity,
+        manifest_path: &Path,
+    ) -> Result<Startup<Validated>, PrepareError> {
+        let store = FsBlockStore::for_campaign_manifest(manifest_path);
+        let lineage_id = LineageId::new(identity.campaign_id.clone());
+        let state = store
+            .lineage_state(&lineage_id)
+            .map_err(block_store_prepare_error)?;
+        Self::validated_from_state(identity, state)
+    }
+
+    fn validated_from_state(
+        identity: &ParentIdentity,
+        state: LineageState,
+    ) -> Result<Startup<Validated>, PrepareError> {
+        validate_startup_lineage(identity, &state)?;
+        if identity.generation != 0 {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "genesis startup for parent '{}' requires generation 0, found generation {}",
+                    identity.node_id, identity.generation
+                ),
+            });
         }
+        match state.head() {
+            StoreHead::Absent { .. } => Ok(Self::validated(identity, state, StartupKind::Genesis)),
+            StoreHead::Present(head) => Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "genesis startup for parent '{}' found existing History head at height {}",
+                    identity.node_id,
+                    head.block_height()
+                ),
+            }),
+        }
+    }
+}
+
+impl Startup<Predecessor> {
+    pub(crate) fn from_history(
+        identity: &ParentIdentity,
+        manifest_path: &Path,
+        active_parent_root: &Path,
+    ) -> Result<Startup<Validated>, PrepareError> {
+        let store = FsBlockStore::for_campaign_manifest(manifest_path);
+        let lineage_id = LineageId::new(identity.campaign_id.clone());
+        let state = store
+            .lineage_state(&lineage_id)
+            .map_err(block_store_prepare_error)?;
+        let head = match state.head() {
+            StoreHead::Present(head) => head.clone(),
+            StoreHead::Absent { .. } => {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "prototype1_history_successor_startup",
+                    detail: format!(
+                        "successor startup for campaign '{}' has no sealed History head to verify",
+                        identity.campaign_id
+                    ),
+                });
+            }
+        };
+        let sealed = store
+            .sealed_head_block(&head)
+            .map_err(block_store_prepare_error)?;
+        let current_artifact = GitWorktreeBackend
+            .clean_tree_key(active_parent_root)
+            .map_err(backend_prepare_error)?
+            .tree_key_hash()
+            .map_err(history_prepare_error)?;
+        sealed
+            .verify_current_artifact_tree(&current_artifact, &ArtifactLocator)
+            .map_err(history_prepare_error)?;
+        let current_surface = GitWorktreeBackend
+            .surface_commitment(active_parent_root, active_parent_root)
+            .map_err(backend_prepare_error)?;
+        sealed
+            .verify_current_surface(&current_surface)
+            .map_err(history_prepare_error)?;
+        Self::validated_from_state(identity, state)
+    }
+
+    fn validated_from_state(
+        identity: &ParentIdentity,
+        state: LineageState,
+    ) -> Result<Startup<Validated>, PrepareError> {
+        validate_startup_lineage(identity, &state)?;
+        if identity.generation == 0 {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "predecessor startup for parent '{}' cannot enter generation 0",
+                    identity.node_id
+                ),
+            });
+        }
+        match state.head() {
+            StoreHead::Present(head) => Ok(Self::validated(
+                identity,
+                state.clone(),
+                StartupKind::Predecessor { head: head.clone() },
+            )),
+            StoreHead::Absent { .. } => Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "predecessor startup for parent '{}' has no sealed History head",
+                    identity.node_id
+                ),
+            }),
+        }
+    }
+}
+
+impl Startup<Validated> {
+    fn validate_parent(&self, identity: &ParentIdentity) -> Result<(), PrepareError> {
+        match (&self.kind, self.state.head()) {
+            (StartupKind::Genesis, StoreHead::Absent { .. }) => {}
+            (StartupKind::Predecessor { head }, StoreHead::Present(actual)) if head == actual => {}
+            (StartupKind::Genesis, StoreHead::Present(head)) => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "validated genesis startup unexpectedly carries History head at height {}",
+                        head.block_height()
+                    ),
+                });
+            }
+            (StartupKind::Predecessor { .. }, StoreHead::Absent { .. }) => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail:
+                        "validated predecessor startup unexpectedly carries absent History head"
+                            .to_string(),
+                });
+            }
+            (StartupKind::Predecessor { .. }, StoreHead::Present(_)) => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: "validated predecessor startup head changed after validation"
+                        .to_string(),
+                });
+            }
+        }
+        if self.lineage_id.as_str() != identity.campaign_id {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "validated startup lineage '{}' does not match parent campaign '{}'",
+                    self.lineage_id.as_str(),
+                    identity.campaign_id
+                ),
+            });
+        }
+        if self.parent_node_id != identity.node_id {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "validated startup parent '{}' does not match parent identity '{}'",
+                    self.parent_node_id, identity.node_id
+                ),
+            });
+        }
+        if self.generation != identity.generation {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "validated startup generation {} does not match parent generation {}",
+                    self.generation, identity.generation
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl<S> Startup<S> {
+    fn validated(
+        identity: &ParentIdentity,
+        state: LineageState,
+        kind: StartupKind,
+    ) -> Startup<Validated> {
+        Startup {
+            lineage_id: LineageId::new(identity.campaign_id.clone()),
+            parent_node_id: identity.node_id.clone(),
+            generation: identity.generation,
+            state,
+            kind,
+            _state: PhantomData,
+        }
+    }
+}
+
+fn validate_startup_lineage(
+    identity: &ParentIdentity,
+    state: &LineageState,
+) -> Result<(), PrepareError> {
+    let expected = LineageId::new(identity.campaign_id.clone());
+    if state.head().lineage_id() != &expected {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "startup lineage '{}' does not match parent campaign '{}'",
+                state.head().lineage_id().as_str(),
+                identity.campaign_id
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn history_prepare_error(error: HistoryError) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase: "prototype1_history",
+        detail: error.to_string(),
+    }
+}
+
+fn block_store_prepare_error(error: BlockStoreError) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase: "prototype1_history_store",
+        detail: error.to_string(),
+    }
+}
+
+fn backend_prepare_error(
+    error: crate::cli::prototype1_state::backend::BackendError,
+) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase: "prototype1_history_tree_key",
+        detail: error.to_string(),
     }
 }
 
@@ -493,6 +757,15 @@ mod tests {
         }
     }
 
+    fn checked_parent(node_id: &str, generation: u32) -> Parent<Checked> {
+        let identity = identity(node_id, generation);
+        Parent {
+            node: node_record(node_id, generation, None),
+            identity,
+            _state: PhantomData,
+        }
+    }
+
     fn node_record(
         node_id: &str,
         generation: u32,
@@ -566,6 +839,31 @@ mod tests {
 
         assert_eq!(retired.identity.node_id, "parent-a");
         assert!(locked.lineage_key().matches_debug_str("campaign"));
+    }
+
+    #[test]
+    fn genesis_startup_allows_generation_zero_ready_parent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let parent = checked_parent("parent-a", 0);
+
+        let startup =
+            Startup::<Genesis>::from_history(parent.identity(), &manifest_path).expect("startup");
+        let ready = parent.ready(startup).expect("ready parent");
+
+        assert_eq!(ready.identity().node_id, "parent-a");
+    }
+
+    #[test]
+    fn genesis_startup_rejects_later_generation_parent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let parent = checked_parent("parent-b", 1);
+
+        let error = Startup::<Genesis>::from_history(parent.identity(), &manifest_path)
+            .expect_err("generation one cannot use genesis startup");
+
+        assert!(matches!(error, PrepareError::InvalidBatchSelection { .. }));
     }
 
     #[test]

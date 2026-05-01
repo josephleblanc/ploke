@@ -39,7 +39,6 @@ use crate::{
             run_prototype1_branch_evaluation, run_prototype1_branch_evaluation_via_child,
             spawn_and_handoff_prototype1_successor, validate_child_surface,
             validate_prototype1_successor_continuation,
-            validate_prototype1_successor_history_admission,
         },
         prototype1_state::{
             backend::{GitWorktreeBackend, WorkspaceBackend},
@@ -61,8 +60,8 @@ use crate::{
                 prototype1_transition_journal_path,
             },
             parent::{
-                Check, Checked, ChildPlan, ChildPlanFile, ChildPlanFiles, Parent, Planned, Ready,
-                Selectable, Unchecked,
+                Check, Checked, ChildPlan, ChildPlanFile, ChildPlanFiles, Genesis, Parent, Planned,
+                Predecessor, Ready, Selectable, Startup, Unchecked,
             },
             successor::Record as SuccessorRecord,
         },
@@ -3064,7 +3063,8 @@ fn acknowledge_prototype1_state_handoff(
 ) -> Result<(Parent<Ready>, Option<SuccessorInvocation>), PrepareError> {
     let identity = parent.identity();
     let Some(invocation_path) = command.handoff_invocation.as_deref() else {
-        return Ok((parent.ready(), None));
+        let startup = Startup::<Genesis>::from_history(identity, manifest_path)?;
+        return Ok((parent.ready(startup)?, None));
     };
     let invocation = match invocation::load_executable(invocation_path)? {
         InvocationAuthority::Successor(invocation) => invocation,
@@ -3116,7 +3116,7 @@ fn acknowledge_prototype1_state_handoff(
     }
 
     validate_prototype1_successor_continuation(&invocation, manifest_path)?;
-    validate_prototype1_successor_history_admission(campaign_id, manifest_path, repo_root)?;
+    let startup = Startup::<Predecessor>::from_history(identity, manifest_path, repo_root)?;
     let ready = record_prototype1_successor_ready(&invocation, manifest_path)?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
@@ -3128,7 +3128,7 @@ fn acknowledge_prototype1_state_handoff(
         active_parent_root = %active_parent_root.display(),
         "prototype1 successor acknowledged handoff before entering typed parent run"
     );
-    Ok((parent.ready(), Some(invocation)))
+    Ok((parent.ready(startup)?, Some(invocation)))
 }
 
 fn record_failed_successor_turn(invocation_path: &Path, error: &PrepareError) {

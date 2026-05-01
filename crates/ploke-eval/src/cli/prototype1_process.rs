@@ -388,53 +388,6 @@ pub(crate) fn validate_prototype1_successor_continuation(
     validate_prototype1_successor_node_continuation(manifest_path, invocation.node_id())
 }
 
-/// Verify that the incoming runtime is running from the Artifact admitted by
-/// the predecessor's sealed History head.
-///
-/// This is the local single-ruler gate between successor transport evidence and
-/// `Parent<Ready>`. Invocation JSON may get the runtime to this point, but it is
-/// not authority to enter the ruling parent path.
-pub(crate) fn validate_prototype1_successor_history_admission(
-    campaign_id: &str,
-    manifest_path: &Path,
-    active_parent_root: &Path,
-) -> Result<(), PrepareError> {
-    let store = FsBlockStore::for_campaign_manifest(manifest_path);
-    let lineage_id = LineageId::new(campaign_id.to_string());
-    let state = store
-        .lineage_state(&lineage_id)
-        .map_err(block_store_prepare_error)?;
-    let head = match state.head() {
-        StoreHead::Present(head) => head,
-        StoreHead::Absent { .. } => {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "prototype1_history_successor_admission",
-                detail: format!(
-                    "successor startup for campaign '{}' has no sealed History head to verify",
-                    campaign_id
-                ),
-            });
-        }
-    };
-    let sealed = store
-        .sealed_head_block(head)
-        .map_err(block_store_prepare_error)?;
-    let current_artifact = GitWorktreeBackend
-        .clean_tree_key(active_parent_root)
-        .map_err(backend_prepare_error)?
-        .tree_key_hash()
-        .map_err(history_prepare_error)?;
-    sealed
-        .verify_current_artifact_tree(&current_artifact, &ArtifactLocator)
-        .map_err(history_prepare_error)?;
-    let current_surface = GitWorktreeBackend
-        .surface_commitment(active_parent_root, active_parent_root)
-        .map_err(backend_prepare_error)?;
-    sealed
-        .verify_current_surface(&current_surface)
-        .map_err(history_prepare_error)
-}
-
 pub(crate) fn validate_child_surface(
     active_parent_root: &Path,
     child_root: &Path,

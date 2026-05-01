@@ -22,10 +22,15 @@
 //!
 //! Update recorded 2026-04-30 17:17 PDT: open blocks now commit to the
 //! `HistoryStateRoot` observed when the lineage state was read, and append
-//! rejects blocks opened from a different state root. This is still a local
-//! filesystem projection over `heads.json`, not a Merkle/Patricia proof or
-//! distributed consensus. Bootstrap admission, a uniform `Startup<Validated>`
-//! carrier, and process uniqueness remain incomplete.
+//! rejects blocks opened from a different state root.
+//!
+//! Update recorded 2026-05-01 10:57 PDT: `HistoryStateRoot` is now derived from
+//! a sparse Merkle map over the local lineage-head projection, and
+//! `LineageState` carries the sparse proof for the observed lineage key.
+//! `StoreHead::Absent` is therefore a local sparse-proof absence observation
+//! under the current root. This is still not distributed consensus, a global
+//! fork-choice rule, or OS-process uniqueness. Bootstrap admission remains
+//! weaker than the full genesis authority model.
 //!
 //! The weekly review policy in `AGENTS.md` applies here: reviewers must compare
 //! these claims against the actual code at least once per week while this
@@ -396,6 +401,9 @@ use std::{
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use sha2::{Digest as ShaDigest, Sha256};
+use sparse_merkle_tree::{
+    CompiledMerkleProof, H256, SparseMerkleTree, default_store::DefaultStore, traits::Hasher,
+};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -411,6 +419,14 @@ pub(crate) struct HistoryHash(String);
 impl HistoryHash {
     pub(crate) fn of_bytes(bytes: &[u8]) -> Self {
         Self(format!("{:x}", Sha256::digest(bytes)))
+    }
+
+    fn from_digest_bytes(bytes: [u8; 32]) -> Self {
+        Self(encode_hex_32(&bytes))
+    }
+
+    fn to_digest_bytes(&self) -> Result<[u8; 32], String> {
+        decode_hex_32(&self.0)
     }
 
     pub(crate) fn of_domain_json<T: Serialize>(
@@ -447,6 +463,10 @@ impl BlockHash {
 
     pub(crate) fn to_hex(self) -> String {
         encode_hex_32(&self.0)
+    }
+
+    fn to_bytes(self) -> [u8; 32] {
+        self.0
     }
 }
 
@@ -567,14 +587,13 @@ impl LineageId {
 /// head is derived from accepted sealed blocks, not written as a free-standing
 /// status field.
 ///
-/// Update recorded 2026-04-30 04:08 PDT: this trait is still a local
-/// prototype port, not the final authenticated store contract. `LineageState`
-/// adds a root digest for the local state map, while `StoreHead` validates only
-/// the filesystem store projections available today; neither is a
-/// Merkle/authenticated inclusion or absence proof. `append` must still consume
-/// the expected lineage state so a sealed block can advance a lineage only from
-/// a verified absent or present predecessor state and the state root it was
-/// opened from.
+/// Update recorded 2026-05-01 10:57 PDT: this trait is still a local prototype
+/// port, not the final distributed store contract. `LineageState` now includes
+/// a sparse-Merkle proof for the local projected lineage-head map, while
+/// `StoreHead` remains the domain projection of that proof into absent/present
+/// predecessor state. `append` must consume the expected lineage state so a
+/// sealed block can advance a lineage only from the observed absent or present
+/// predecessor state and the state root it was opened from.
 ///
 pub(crate) trait BlockStore {
     type Error;
@@ -848,23 +867,23 @@ impl BlockStore for FsBlockStore {
 
     fn lineage_state(&self, lineage: &LineageId) -> Result<LineageState, Self::Error> {
         let heads = self.read_heads()?;
-        let root = HistoryStateRoot::from_heads(&heads)?;
+        let map = state_map::Map::from_heads(&heads)?;
+        let root = map.root();
         let Some(block_hash) = heads.get(lineage).cloned() else {
             if self.has_lineage_index(lineage)? {
                 return Err(BlockStoreError::MissingLineageHeadProjection {
                     lineage_id: lineage.clone(),
                 });
             }
-            return Ok(LineageState::new(
-                root,
-                StoreHead::Absent {
-                    lineage_id: lineage.clone(),
-                },
-            ));
+            let head = StoreHead::Absent {
+                lineage_id: lineage.clone(),
+            };
+            let proof = map.proof(lineage, &head)?;
+            return Ok(LineageState::new(root, proof, head));
         };
-        self.stored_by_hash(lineage, &block_hash)
-            .map(StoreHead::Present)
-            .map(|head| LineageState::new(root, head))
+        let head = StoreHead::Present(self.stored_by_hash(lineage, &block_hash)?);
+        let proof = map.proof(lineage, &head)?;
+        Ok(LineageState::new(root, proof, head))
     }
 }
 
@@ -962,34 +981,27 @@ impl BlockHead {
     }
 }
 
-/// Authenticated-root placeholder for the History state map.
+/// Root commitment for the local History state map.
 ///
-/// This is not yet a Merkle/Patricia proof. It is the root digest for the
-/// current local filesystem projection of lineage heads, carried explicitly so
-/// block opening and append already use the same shape a future authenticated
-/// map will need: "this block was opened from this observed History state".
-/// For a distributed store, the same role should be filled by a trie root plus
-/// inclusion/absence proof rather than by `heads.json`.
+/// This is the sparse-Merkle root for the current local filesystem projection
+/// of lineage heads. It is carried explicitly so block opening and append say:
+/// "this block was opened from this observed History state". For a distributed
+/// store, the same role must be backed by the consensus-selected state root;
+/// local proof validity alone does not establish global canonical state.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub(crate) struct HistoryStateRoot(HistoryHash);
 
 impl HistoryStateRoot {
-    fn from_heads(heads: &BTreeMap<LineageId, BlockHash>) -> Result<Self, BlockStoreError> {
-        let leaves = heads
-            .iter()
-            .map(|(lineage_id, block_hash)| HistoryStateLeaf {
-                lineage_id: lineage_id.clone(),
-                block_hash: *block_hash,
-            })
-            .collect::<Vec<_>>();
-        let preimage = HistoryStatePreimage {
-            domain: "prototype1.history.state.root.v1",
-            leaves,
-        };
-        serde_json::to_vec(&preimage)
-            .map(|bytes| Self(HistoryHash::of_bytes(&bytes)))
-            .map_err(BlockStoreError::Serialize)
+    fn from_h256(root: H256) -> Self {
+        Self(HistoryHash::from_digest_bytes(root.into()))
+    }
+
+    fn to_h256(&self) -> Result<H256, BlockStoreError> {
+        self.0
+            .to_digest_bytes()
+            .map(H256::from)
+            .map_err(BlockStoreError::StateRootDigest)
     }
 
     #[cfg(test)]
@@ -998,33 +1010,155 @@ impl HistoryStateRoot {
     }
 }
 
-#[derive(Serialize)]
-struct HistoryStatePreimage {
-    domain: &'static str,
-    leaves: Vec<HistoryStateLeaf>,
-}
+mod state_map {
+    use super::*;
 
-#[derive(Serialize)]
-struct HistoryStateLeaf {
-    lineage_id: LineageId,
-    block_hash: BlockHash,
+    type Tree = SparseMerkleTree<Sha256StateHasher, H256, DefaultStore<H256>>;
+
+    pub(super) struct Map {
+        tree: Tree,
+    }
+
+    impl Map {
+        pub(super) fn from_heads(
+            heads: &BTreeMap<LineageId, BlockHash>,
+        ) -> Result<Self, BlockStoreError> {
+            let mut tree = Tree::default();
+            let leaves = heads
+                .iter()
+                .map(|(lineage_id, block_hash)| {
+                    Ok((key(lineage_id)?, value_for_hash(*block_hash)?))
+                })
+                .collect::<Result<Vec<_>, BlockStoreError>>()?;
+            tree.update_all(leaves).map_err(BlockStoreError::StateMap)?;
+            Ok(Self { tree })
+        }
+
+        pub(super) fn root(&self) -> HistoryStateRoot {
+            HistoryStateRoot::from_h256(*self.tree.root())
+        }
+
+        pub(super) fn proof(
+            &self,
+            lineage_id: &LineageId,
+            head: &StoreHead,
+        ) -> Result<Proof, BlockStoreError> {
+            let key = key(lineage_id)?;
+            let value = value_for_head(head)?;
+            let proof = self
+                .tree
+                .merkle_proof(vec![key])
+                .map_err(BlockStoreError::StateMap)?
+                .compile(vec![key])
+                .map_err(BlockStoreError::StateMap)?;
+            let proof = Proof {
+                key: key.into(),
+                value: value.into(),
+                program: proof.into(),
+            };
+            proof.verify(&self.root(), head)?;
+            Ok(proof)
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub(super) struct Proof {
+        key: [u8; 32],
+        value: [u8; 32],
+        program: Vec<u8>,
+    }
+
+    impl Proof {
+        pub(super) fn verify(
+            &self,
+            root: &HistoryStateRoot,
+            head: &StoreHead,
+        ) -> Result<(), BlockStoreError> {
+            let expected_key = key(head.lineage_id())?;
+            let expected_value = value_for_head(head)?;
+            let key = H256::from(self.key);
+            let value = H256::from(self.value);
+            if key != expected_key || value != expected_value {
+                return Err(BlockStoreError::StateProofMismatch);
+            }
+            let root = root.to_h256()?;
+            let proof = CompiledMerkleProof(self.program.clone());
+            let verified = proof
+                .verify::<Sha256StateHasher>(&root, vec![(key, value)])
+                .map_err(BlockStoreError::StateMap)?;
+            if !verified {
+                return Err(BlockStoreError::StateProofMismatch);
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct Sha256StateHasher {
+        bytes: Vec<u8>,
+    }
+
+    impl Hasher for Sha256StateHasher {
+        fn write_h256(&mut self, h: &H256) {
+            self.bytes.extend_from_slice(h.as_slice());
+        }
+
+        fn write_byte(&mut self, b: u8) {
+            self.bytes.push(b);
+        }
+
+        fn finish(self) -> H256 {
+            let digest = Sha256::digest(&self.bytes);
+            let mut bytes = [0_u8; 32];
+            bytes.copy_from_slice(&digest);
+            H256::from(bytes)
+        }
+    }
+
+    fn key(lineage_id: &LineageId) -> Result<H256, BlockStoreError> {
+        HistoryHash::of_domain_json("prototype1.history.state.key.v1", lineage_id)
+            .map(|hash| H256::from(BlockHash::from(hash).to_bytes()))
+            .map_err(BlockStoreError::Verify)
+    }
+
+    fn value_for_hash(block_hash: BlockHash) -> Result<H256, BlockStoreError> {
+        let value = HistoryHash::of_domain_json("prototype1.history.state.value.v1", &block_hash)
+            .map(|hash| H256::from(BlockHash::from(hash).to_bytes()))
+            .map_err(BlockStoreError::Verify)?;
+        if value.is_zero() {
+            return Err(BlockStoreError::StateValueZero);
+        }
+        Ok(value)
+    }
+
+    fn value_for_head(head: &StoreHead) -> Result<H256, BlockStoreError> {
+        match head.block_hash().copied() {
+            Some(block_hash) => value_for_hash(block_hash),
+            None => Ok(H256::zero()),
+        }
+    }
 }
 
 /// Local state-map observation for one lineage.
 ///
 /// `StoreHead` remains the single-lineage predecessor/absence projection, while
 /// `HistoryStateRoot` commits the surrounding map state from which that
-/// projection was read. This prevents the single-ruler correctness work from
-/// hardening a bare `heads.json` lookup into the long-term authority boundary.
+/// projection was read. `state_map::Proof` is the sparse-Merkle proof for the
+/// observed lineage key. It proves the local projected state under this root:
+/// `Absent` verifies as the zero value for the lineage key, and `Present`
+/// verifies as a domain-separated digest of the current block hash. This is
+/// still a local single-ruler store, not distributed consensus or process
+/// uniqueness.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LineageState {
     root: HistoryStateRoot,
+    proof: state_map::Proof,
     head: StoreHead,
 }
 
 impl LineageState {
-    fn new(root: HistoryStateRoot, head: StoreHead) -> Self {
-        Self { root, head }
+    fn new(root: HistoryStateRoot, proof: state_map::Proof, head: StoreHead) -> Self {
+        Self { root, proof, head }
     }
 
     pub(crate) fn root(&self) -> &HistoryStateRoot {
@@ -1041,6 +1175,7 @@ impl LineageState {
     }
 
     fn verify_append(&self, block: &Block<block::Sealed>) -> Result<(), BlockStoreError> {
+        self.proof.verify(self.root(), self.head())?;
         if &block.header().common.opened_from_state != self.root() {
             return Err(BlockStoreError::WrongOpeningStateRoot {
                 expected: self.root.clone(),
@@ -3322,6 +3457,18 @@ pub(crate) enum BlockStoreError {
 
     #[error("sealed block failed verification before storage")]
     Verify(#[from] HistoryError),
+
+    #[error("History state map operation failed")]
+    StateMap(#[source] sparse_merkle_tree::error::Error),
+
+    #[error("History state root is not a 32-byte digest: {0}")]
+    StateRootDigest(String),
+
+    #[error("History state proof does not match the observed lineage head")]
+    StateProofMismatch,
+
+    #[error("History state map encoded an occupied lineage as the sparse-tree empty value")]
+    StateValueZero,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

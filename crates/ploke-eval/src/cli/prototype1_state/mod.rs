@@ -416,6 +416,10 @@
 //!   git, gen0 checking means a fresh branch whose HEAD is exactly the
 //!   `parent_identity.json` initialization commit, and later generations must
 //!   also have an identity commit at HEAD for the Parent being started.
+//! - A Runtime may begin acting as `Parent<Ready>` only after
+//!   `Startup<Validated>` has checked either local genesis absence or the
+//!   predecessor sealed History head, current checkout Artifact, and current
+//!   surface commitment.
 //! - Temporary child worktrees are cleanup targets after selection and handoff.
 //!   The selected Artifact should be moved into the stable active checkout
 //!   before the successor becomes Parent; the child worktree should not become
@@ -699,13 +703,12 @@
 //!
 //! - a uniform bootstrap admission carrier; first-parent startup still depends
 //!   on configured-store absence
-//! - a Merkle/authenticated lineage-head map, such as a Merkle-Patricia trie or
-//!   equivalent authenticated map, capable of present/absent lineage-head
-//!   proofs for genesis and predecessor admission. Update recorded 2026-04-30
-//!   17:17 PDT: the live filesystem store now computes a local
-//!   `HistoryStateRoot` over `heads.json` and sealed blocks commit to the root
-//!   they were opened from, but that is still a local projection rather than an
-//!   authenticated trie proof.
+//! - a distributed lineage-head map and fork-choice policy. Update recorded
+//!   2026-05-01 10:57 PDT: the live filesystem store now computes
+//!   `HistoryStateRoot` from a sparse Merkle map over its local lineage-head
+//!   projection, and `LineageState` carries the sparse proof for the observed
+//!   lineage key. That supports local present/absent head checks; it is not yet
+//!   distributed consensus, process uniqueness, or global canonical state.
 //! - artifact-local provenance manifests committed by the Artifact tree and
 //!   admitted by History through digest/reference
 //! - minimal explicit policy references and policy scopes defined through
