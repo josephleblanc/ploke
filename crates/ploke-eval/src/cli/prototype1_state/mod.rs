@@ -699,9 +699,13 @@
 //!
 //! - a uniform bootstrap admission carrier; first-parent startup still depends
 //!   on configured-store absence
-//! - an authenticated lineage-head map, such as a Merkle-Patricia trie or
+//! - a Merkle/authenticated lineage-head map, such as a Merkle-Patricia trie or
 //!   equivalent authenticated map, capable of present/absent lineage-head
-//!   proofs for genesis and predecessor admission
+//!   proofs for genesis and predecessor admission. Update recorded 2026-04-30
+//!   17:17 PDT: the live filesystem store now computes a local
+//!   `HistoryStateRoot` over `heads.json` and sealed blocks commit to the root
+//!   they were opened from, but that is still a local projection rather than an
+//!   authenticated trie proof.
 //! - artifact-local provenance manifests committed by the Artifact tree and
 //!   admitted by History through digest/reference
 //! - minimal explicit policy references and policy scopes defined through

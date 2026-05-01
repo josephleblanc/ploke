@@ -29,6 +29,12 @@ History =
   authenticated substrate containing sealed blocks, head-state proofs,
   ingress/evidence references, and policy-scoped admission state.
 
+Current Prototype 1 status recorded 2026-04-30 17:17 PDT: sealed blocks now
+commit to the local `HistoryStateRoot` observed when their lineage state was
+read, and append rejects a block opened from a different root. This is a
+single-ruler-compatible shape for the future authenticated map, not yet a
+Merkle-Patricia trie, distributed consensus proof, or global fork-choice rule.
+
 Block =
   one sealed authority/evidence epoch for a lineage under policy,
   content-addressed by header material, admitted entries/evidence roots,

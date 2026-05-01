@@ -135,7 +135,7 @@ use crate::cli::prototype1_state::cli_facing::{
 use crate::cli::prototype1_state::event::{Paths, RecordedAt, Refs};
 use crate::cli::prototype1_state::history::{
     ActorRef, ArtifactLocator, ArtifactRef, BlockStore, EvidenceRef, FsBlockStore,
-    GenesisAuthority, LineageId, OpenBlock, OpeningAuthority, OperationalEnvironment,
+    GenesisAuthority, LineageId, LineageState, OpenBlock, OpeningAuthority, OperationalEnvironment,
     ParentIdentityRef, PredecessorAuthority, ProcedureRef, Regime, SealBlock, StoreHead,
     SuccessorRef, SurfaceCommitment, TreeKeyCommitment, TreeKeyHash,
 };
@@ -401,7 +401,10 @@ pub(crate) fn validate_prototype1_successor_history_admission(
 ) -> Result<(), PrepareError> {
     let store = FsBlockStore::for_campaign_manifest(manifest_path);
     let lineage_id = LineageId::new(campaign_id.to_string());
-    let head = match store.head(&lineage_id).map_err(block_store_prepare_error)? {
+    let state = store
+        .lineage_state(&lineage_id)
+        .map_err(block_store_prepare_error)?;
+    let head = match state.head() {
         StoreHead::Present(head) => head,
         StoreHead::Absent { .. } => {
             return Err(PrepareError::DatabaseSetup {
@@ -414,7 +417,7 @@ pub(crate) fn validate_prototype1_successor_history_admission(
         }
     };
     let sealed = store
-        .sealed_head_block(&head)
+        .sealed_head_block(head)
         .map_err(block_store_prepare_error)?;
     let current_artifact = GitWorktreeBackend
         .clean_tree_key(active_parent_root)
@@ -1004,7 +1007,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     );
     let HandoffBlock {
         open,
-        expected_head,
+        expected_state,
         artifact_key,
     } = handoff_block;
     let (retired_parent, sealed_block) = parent
@@ -1032,7 +1035,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         .map_err(history_prepare_error)?;
     let history_store = FsBlockStore::for_campaign_manifest(&manifest_path);
     let stored_block = history_store
-        .append(&expected_head, &sealed_block)
+        .append(&expected_state, &sealed_block)
         .map_err(block_store_prepare_error)?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
@@ -1162,7 +1165,7 @@ fn successor_artifact_ref(node: &crate::intervention::Prototype1NodeRecord) -> A
 
 struct HandoffBlock {
     open: OpenBlock,
-    expected_head: StoreHead,
+    expected_state: LineageState,
     artifact_key: TreeKeyHash,
 }
 
@@ -1176,7 +1179,9 @@ fn handoff_block_fields(
 ) -> Result<HandoffBlock, PrepareError> {
     let store = FsBlockStore::for_campaign_manifest(manifest_path);
     let lineage_id = LineageId::new(campaign_id.to_string());
-    let head = store.head(&lineage_id).map_err(block_store_prepare_error)?;
+    let state = store
+        .lineage_state(&lineage_id)
+        .map_err(block_store_prepare_error)?;
     let parent_actor = parent_actor_ref(parent_identity);
     let backend = GitWorktreeBackend;
     let artifact_key = backend
@@ -1184,7 +1189,7 @@ fn handoff_block_fields(
         .map_err(backend_prepare_error)?
         .tree_key_hash()
         .map_err(history_prepare_error)?;
-    let (block_height, parent_block_hashes, opening_authority) = match &head {
+    let (block_height, parent_block_hashes, opening_authority) = match state.head() {
         StoreHead::Present(head) => {
             let predecessor = *head.block_hash();
             (
@@ -1212,6 +1217,7 @@ fn handoff_block_fields(
             lineage_id,
             block_height,
             parent_block_hashes,
+            opened_from_state: state.root().clone(),
             regime: Regime::prototype1_baseline(block_height),
             opening_authority,
             opened_by: parent_actor.clone(),
@@ -1221,7 +1227,7 @@ fn handoff_block_fields(
             surface,
             opened_at: RecordedAt::now(),
         },
-        expected_head: head,
+        expected_state: state,
         artifact_key,
     })
 }
