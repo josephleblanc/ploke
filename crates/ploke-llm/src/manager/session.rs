@@ -629,7 +629,7 @@ fn should_retry_send_error(error: &reqwest::Error) -> bool {
 
 fn should_retry_body_failure(status: u16, failure: &HttpBodyFailure) -> bool {
     match failure {
-        HttpBodyFailure::Timeout => !(200..300).contains(&status) && should_retry_status(status),
+        HttpBodyFailure::Timeout => true,
         HttpBodyFailure::ReadFailed => true,
         HttpBodyFailure::DecodeFailed => false,
     }
@@ -1247,9 +1247,9 @@ mod tests {
     }
 
     #[test]
-    fn body_timeout_after_success_status_is_not_retried() {
-        assert!(!should_retry_body_failure(200, &HttpBodyFailure::Timeout));
-        assert!(!should_retry_body_failure(204, &HttpBodyFailure::Timeout));
+    fn body_timeout_after_success_status_is_retried() {
+        assert!(should_retry_body_failure(200, &HttpBodyFailure::Timeout));
+        assert!(should_retry_body_failure(204, &HttpBodyFailure::Timeout));
         assert!(should_retry_body_failure(503, &HttpBodyFailure::Timeout));
     }
 
