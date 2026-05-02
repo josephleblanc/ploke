@@ -33,7 +33,7 @@ use ploke_tui::app::commands::harness::TestRuntime;
 use ploke_tui::app::view::components::model_browser::tool_capable_provider_key;
 use ploke_tui::app_state::AppState;
 use ploke_tui::app_state::core::ParseFailure;
-use ploke_tui::app_state::core::{DiffPreview, EditProposalStatus};
+use ploke_tui::app_state::core::{DiffPreview, EditProposalStatus, RuntimeConfig};
 use ploke_tui::app_state::events::SystemEvent;
 use ploke_tui::llm::{ChatEvt, LlmEvent};
 use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
@@ -77,6 +77,27 @@ fn benchmark_chat_policy() -> ChatPolicy {
     policy.timeout_base_secs = 5;
     policy.error_retry_limit = 3;
     policy.validated()
+}
+
+fn configure_eval_model_runtime(
+    cfg: &mut RuntimeConfig,
+    selected_model_id: &ModelId,
+    selected_provider: &ProviderKey,
+) {
+    cfg.llm_timeout_secs = ploke_llm::LLM_TIMEOUT_SECS;
+    cfg.active_model = selected_model_id.clone();
+    cfg.model_registry
+        .select_model_provider(selected_model_id, Some(selected_provider));
+}
+
+fn configure_headless_benchmark_chat(
+    cfg: &mut RuntimeConfig,
+    selected_model_id: &ModelId,
+    selected_provider: &ProviderKey,
+) {
+    cfg.editing.auto_confirm_edits = true;
+    cfg.chat_policy = benchmark_chat_policy();
+    configure_eval_model_runtime(cfg, selected_model_id, selected_provider);
 }
 
 fn artifact_runs_dir(instance_dir: &Path) -> PathBuf {
@@ -1757,9 +1778,7 @@ impl RunMsbSingleRequest {
             let state = runtime.state_arc();
             {
                 let mut cfg = state.config.write().await;
-                cfg.active_model = selected_model_id.clone();
-                cfg.model_registry
-                    .select_model_provider(&selected_model_id, Some(&selected_provider));
+                configure_eval_model_runtime(&mut cfg, &selected_model_id, &selected_provider);
             }
             info!("runner phase: inspect active embedding set before activation");
             let currently_active_set: EmbeddingSet = runtime_db
@@ -2208,11 +2227,7 @@ impl RunMsbAgentSingleRequest {
             let state = runtime.state_arc();
             {
                 let mut cfg = state.config.write().await;
-                cfg.editing.auto_confirm_edits = true;
-                cfg.chat_policy = benchmark_chat_policy();
-                cfg.active_model = selected_model_id.clone();
-                cfg.model_registry
-                    .select_model_provider(&selected_model_id, Some(&selected_provider));
+                configure_headless_benchmark_chat(&mut cfg, &selected_model_id, &selected_provider);
             }
             info!("runner phase: inspect active embedding set before activation");
             let currently_active_set: EmbeddingSet = runtime_db
@@ -4079,6 +4094,28 @@ mod tests {
 
     fn test_provider_key() -> ProviderKey {
         ProviderKey::new("deepinfra").expect("provider key")
+    }
+
+    #[test]
+    fn benchmark_runtime_config_overrides_llm_timeout() {
+        let model = ploke_llm::ModelId::from(ploke_llm::ModelKey::default());
+        let provider = test_provider_key();
+        let mut cfg = RuntimeConfig {
+            llm_timeout_secs: 30,
+            ..RuntimeConfig::default()
+        };
+
+        configure_headless_benchmark_chat(&mut cfg, &model, &provider);
+
+        assert_eq!(cfg.llm_timeout_secs, ploke_llm::LLM_TIMEOUT_SECS);
+        assert_eq!(cfg.chat_policy.tool_call_timeout_secs, 60);
+        assert_eq!(cfg.chat_policy.timeout_base_secs, 5);
+        assert_eq!(cfg.chat_policy.error_retry_limit, 3);
+        assert!(matches!(
+            cfg.chat_policy.timeout_strategy,
+            ChatTimeoutStrategy::Backoff { attempts: Some(3) }
+        ));
+        assert!(cfg.editing.auto_confirm_edits);
     }
 
     #[test]

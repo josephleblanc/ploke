@@ -57,10 +57,7 @@ impl Default for ChatHttpConfig {
         Self {
             referer: HTTP_REFERER,
             title: HTTP_TITLE,
-            // NOTE:ploke-llm 2025-12-14
-            // Setting to 15 secs for now, try using it and getting a feel for the right default
-            // timing
-            timeout: Duration::from_secs(30),
+            timeout: Duration::from_secs(crate::LLM_TIMEOUT_SECS),
             max_attempts: 3,
             initial_backoff: Duration::from_millis(250),
             max_backoff: Duration::from_secs(2),
@@ -1266,5 +1263,13 @@ mod tests {
             503,
             &HttpBodyFailure::DecodeFailed
         ));
+    }
+
+    #[test]
+    fn chat_http_default_timeout_uses_llm_timeout_constant() {
+        assert_eq!(
+            ChatHttpConfig::default().timeout,
+            Duration::from_secs(crate::LLM_TIMEOUT_SECS)
+        );
     }
 }

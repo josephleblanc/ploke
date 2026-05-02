@@ -82,7 +82,7 @@ use crate::{
         prototype1_scheduler_path, record_continuation_decision, record_synthesized_branches,
         register_root_parent_node, register_treatment_evaluation_node, resolve_treatment_branch,
         restore_treatment_branch, select_primary_issue, select_treatment_branch,
-        treatment_branch_id, update_scheduler_policy,
+        treatment_branch_id, update_node_status, update_scheduler_policy,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -363,7 +363,47 @@ async fn run_parent_target_selection(
         prepared_instances: vec![root_node.instance_id],
         campaign,
     };
-    let report = run_prototype1_loop_controller(input).await?;
+    let _ = update_node_status(
+        campaign_id,
+        manifest_path,
+        &parent_identity.node_id,
+        Prototype1NodeStatus::Running,
+    )?;
+    let report = match run_prototype1_loop_controller(input).await {
+        Ok(report) => report,
+        Err(error) => {
+            let _ = update_node_status(
+                campaign_id,
+                manifest_path,
+                &parent_identity.node_id,
+                Prototype1NodeStatus::Failed,
+            );
+            return Err(error);
+        }
+    };
+    let expected_generation = parent_identity.generation + 1;
+    let valid_children = report
+        .staged_nodes
+        .iter()
+        .filter(|node| {
+            node.generation == expected_generation
+                && node.parent_node_id.as_deref() == Some(parent_identity.node_id.as_str())
+        })
+        .count();
+    if valid_children == 0 {
+        let _ = update_node_status(
+            campaign_id,
+            manifest_path,
+            &parent_identity.node_id,
+            Prototype1NodeStatus::Failed,
+        )?;
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child plan did not stage any generation {} children for parent '{}'",
+                expected_generation, parent_identity.node_id
+            ),
+        });
+    }
     let files = ChildPlanFiles::for_parent(manifest_path, &parent_identity, &report.staged_nodes);
     let at = files.message_at();
     let open = Open::<ChildPlan>::from_sender(parent, files);
