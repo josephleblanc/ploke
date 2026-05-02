@@ -3,6 +3,8 @@ pub mod mod_tree_construction;
 pub mod canon_resolver;
 
 pub mod backlink_imports;
+pub mod backlink_imports_spp;
+pub mod backlink_imports_spp_cfg;
 
 pub mod path_attribute;
 

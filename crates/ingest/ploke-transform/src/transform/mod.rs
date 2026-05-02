@@ -156,6 +156,11 @@ pub fn transform_parsed_graph(
     tracing::trace!("{}: Starting", "macros".log_step());
     transform_macros(db, code_graph.macros)?;
     tracing::trace!("{}: Starting", "imports".log_step());
+    // TODO(import-backlinks): Keep import nodes and import-bearing relations in lockstep here.
+    // We now rely on `ImportNode`s plus `ModuleImports` / `ReExports` / `ImportedBy` as real
+    // graph facts, so downstream transform/schema/query layers must not treat imports as
+    // second-class or optional metadata. When relation handling changes, verify import nodes are
+    // still transformed and that import relations are still inserted and consumed end-to-end.
     transform_imports(db, code_graph.use_statements)?;
     tracing::trace!("{}: Starting", "relations".log_step());
     transform_relations(db, code_graph.relations)?;

@@ -5,8 +5,8 @@ use ploke_core::TypeId;
 use ploke_core::TypeKind;
 use quote::ToTokens;
 use syn::{
-    AngleBracketedGenericArguments, GenericArgument, PathArguments, ReturnType, Type, TypePath,
-    TypeReference,
+    AngleBracketedGenericArguments, GenericArgument, Path, PathArguments, ReturnType, TraitBound,
+    Type, TypeParamBound, TypePath, TypeReference,
 };
 
 /// Gets or creates a TypeId for a given syn::Type.
@@ -34,28 +34,80 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
     // e.g. if we ever implement lifetime processing or want to distinguish differences in Generic
     // types possibly.
     // 2. Handle TypeId creation
+    get_or_create_type_node(state, type_kind, related_types)
+}
+
+fn get_or_create_type_node(
+    state: &mut VisitorState,
+    type_kind: TypeKind,
+    related_types: Vec<TypeId>,
+) -> TypeId {
     let new_id = state.generate_type_id(&type_kind, &related_types);
 
-    // 4. Check if a TypeNode with this ID already exists (handles recursion/cycles)
-    //    We avoid adding duplicate TypeNodes.
-    // NOTE: Might be slightly more efficient to reverse the iter here. Try benchmarking someday.
     if state.code_graph.type_graph.iter().any(|tn| tn.id == new_id) {
-        return new_id; // Already processed and added due to recursion
+        return new_id;
     }
 
-    // 5. Create the TypeNode containing the structural information if it's new
     let type_node = TypeNode {
-        id: new_id, // The newly generated ID
+        id: new_id,
         kind: type_kind,
         related_types,
-        // span: Option? If we want to store the span of the first encounter? Maybe later.
     };
 
-    // 6. Add the new TypeNode to the graph
     state.code_graph.type_graph.push(type_node);
-
-    // 7. Return the newly generated ID
     new_id
+}
+
+fn collect_path_segments_and_related_types(
+    state: &mut VisitorState,
+    path: &Path,
+    related_types: &mut Vec<TypeId>,
+) -> Vec<String> {
+    path.segments
+        .iter()
+        .map(|seg| {
+            match &seg.arguments {
+                PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) => {
+                    for arg in args {
+                        match arg {
+                            GenericArgument::Type(arg_type) => {
+                                related_types.push(get_or_create_type(state, arg_type));
+                            }
+                            GenericArgument::AssocType(assoc_type) => {
+                                related_types.push(get_or_create_type(state, &assoc_type.ty));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                PathArguments::Parenthesized(parenthesized) => {
+                    for input in &parenthesized.inputs {
+                        related_types.push(get_or_create_type(state, input));
+                    }
+                    if let ReturnType::Type(_, return_ty) = &parenthesized.output {
+                        related_types.push(get_or_create_type(state, return_ty));
+                    }
+                }
+                PathArguments::None => {}
+            }
+
+            seg.ident.to_string()
+        })
+        .collect()
+}
+
+pub(crate) fn get_or_create_trait_bound_type(
+    state: &mut VisitorState,
+    bound: &TraitBound,
+) -> TypeId {
+    let mut related_types = Vec::new();
+    let path = collect_path_segments_and_related_types(state, &bound.path, &mut related_types);
+    let kind = TypeKind::TraitBound {
+        path,
+        is_fully_qualified: bound.path.leading_colon.is_some(),
+    };
+
+    get_or_create_type_node(state, kind, related_types)
 }
 
 // Process a type and get its kind and related types
@@ -73,51 +125,7 @@ pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Ve
 
     match ty {
         Type::Path(TypePath { path, qself }) => {
-            // Check if it's a simple path like "Self" or "T" (potential generic/self)
-            // For now, treat these like any other named path for TypeKind generation.
-            // Contextual disambiguation is deferred.
-            let segments: Vec<String> = path
-                .segments
-                .iter()
-                .map(|seg| {
-                    // Process generic arguments if any
-                    if let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
-                        args,
-                        ..
-                    }) = &seg.arguments
-                    {
-                        for arg in args {
-                            match arg {
-                                GenericArgument::Type(arg_type) => {
-                                    // Recurse: Get TypeId for the generic argument type
-                                    related_types.push(get_or_create_type(state, arg_type));
-                                }
-                                GenericArgument::AssocType(assoc_type) => {
-                                    // Recurse: Get TypeId for the associated type
-                                    let assoc_type_ty = &assoc_type.ty;
-                                    related_types.push(get_or_create_type(state, assoc_type_ty));
-                                }
-                                // TODO: Handle Lifetime and Const generic arguments if needed
-                                _ => {}
-                            }
-                        }
-                    } else if let PathArguments::Parenthesized(parenthesized) = &seg.arguments {
-                        // Handle function pointer types like Fn(Args) -> Return
-                        for input in &parenthesized.inputs {
-                            // Recurse: Get TypeId for input types
-                            related_types.push(get_or_create_type(state, input));
-                        }
-                        if let ReturnType::Type(_, return_ty) = &parenthesized.output {
-                            // Recurse: Get TypeId for return type
-                            related_types.push(get_or_create_type(state, return_ty));
-                        }
-                    }
-                    // TODO: Handle `PathArguments::None` if necessary
-
-                    seg.ident.to_string()
-                })
-                .collect();
-            // Removed the problematic `ends_with` check and the associated comments.
+            let segments = collect_path_segments_and_related_types(state, path, &mut related_types);
 
             (
                 TypeKind::Named {
@@ -145,17 +153,111 @@ pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Ve
                 related_types, // Contains only elem_id
             )
         }
-        // --- Add other Type::* cases here ---
-        // e.g., Type::Tuple, Type::Slice, Type::Array, Type::Ptr, etc.
-        // Each case should:
-        // 1. Identify nested types (like tuple elements, array/slice element type).
-        // 2. For each nested type:
-        //    a. Call `get_or_create_type()` with the nested type and its string.
-        //    b. Push the returned TypeId into `related_types`.
-        // 3. Construct the appropriate `TypeKind` variant.
-        // 4. Return `(type_kind, related_types)`.
+        Type::Slice(type_slice) => {
+            related_types.push(get_or_create_type(state, &type_slice.elem));
+            (TypeKind::Slice {}, related_types)
+        }
+        Type::Array(type_array) => {
+            related_types.push(get_or_create_type(state, &type_array.elem));
+            (
+                TypeKind::Array {
+                    size: Some(type_array.len.to_token_stream().to_string()),
+                },
+                related_types,
+            )
+        }
+        Type::Tuple(type_tuple) => {
+            related_types.extend(
+                type_tuple
+                    .elems
+                    .iter()
+                    .map(|elem| get_or_create_type(state, elem)),
+            );
+            (TypeKind::Tuple {}, related_types)
+        }
+        Type::BareFn(type_bare_fn) => {
+            related_types.extend(
+                type_bare_fn
+                    .inputs
+                    .iter()
+                    .map(|input| get_or_create_type(state, &input.ty)),
+            );
+            if let ReturnType::Type(_, return_ty) = &type_bare_fn.output {
+                related_types.push(get_or_create_type(state, return_ty));
+            }
 
-        // --- Fallback Case ---
+            (
+                TypeKind::Function {
+                    is_unsafe: type_bare_fn.unsafety.is_some(),
+                    is_extern: type_bare_fn.abi.is_some(),
+                    abi: type_bare_fn
+                        .abi
+                        .as_ref()
+                        .and_then(|abi| abi.name.as_ref().map(|name| name.value())),
+                },
+                related_types,
+            )
+        }
+        Type::Never(_) => (TypeKind::Never, related_types),
+        Type::Infer(_) => (TypeKind::Inferred, related_types),
+        Type::Ptr(type_ptr) => {
+            related_types.push(get_or_create_type(state, &type_ptr.elem));
+            (
+                TypeKind::RawPointer {
+                    is_mutable: type_ptr.mutability.is_some(),
+                },
+                related_types,
+            )
+        }
+        Type::TraitObject(type_trait_object) => {
+            related_types.extend(
+                type_trait_object
+                    .bounds
+                    .iter()
+                    .filter_map(|bound| match bound {
+                        TypeParamBound::Trait(trait_bound) => {
+                            Some(get_or_create_trait_bound_type(state, trait_bound))
+                        }
+                        TypeParamBound::Lifetime(_) => None,
+                        _ => None,
+                    }),
+            );
+
+            (
+                TypeKind::TraitObject {
+                    dyn_token: type_trait_object.dyn_token.is_some(),
+                },
+                related_types,
+            )
+        }
+        Type::ImplTrait(type_impl_trait) => {
+            related_types.extend(
+                type_impl_trait
+                    .bounds
+                    .iter()
+                    .filter_map(|bound| match bound {
+                        TypeParamBound::Trait(trait_bound) => {
+                            Some(get_or_create_trait_bound_type(state, trait_bound))
+                        }
+                        TypeParamBound::Lifetime(_) => None,
+                        _ => None,
+                    }),
+            );
+
+            (TypeKind::ImplTrait {}, related_types)
+        }
+        Type::Paren(type_paren) => {
+            related_types.push(get_or_create_type(state, &type_paren.elem));
+            (TypeKind::Paren {}, related_types)
+        }
+        Type::Macro(type_macro) => (
+            TypeKind::Macro {
+                name: type_macro.mac.path.to_token_stream().to_string(),
+                tokens: type_macro.mac.tokens.to_string(),
+            },
+            related_types,
+        ),
+        Type::Group(type_group) => process_type(state, &type_group.elem),
         _ => {
             // Handle other types or unknown types
             // Use the string representation we already have from the caller

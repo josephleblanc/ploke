@@ -253,7 +253,7 @@ fn check_generic_params(
             // For Phase 2, it's often the simple name or a partially resolved path.
             // A more robust check might involve checking ends_with or specific segments.
             assert!(
-                matches!(&bound_type_node.kind, TypeKind::Named { path, .. } if path.iter().any(|seg| seg == "Display")),
+                matches!(&bound_type_node.kind, TypeKind::TraitBound { path, .. } if path.iter().any(|seg| seg == "Display")),
                 "Expected bound type 'Display', found {:?}",
                 bound_type_node.kind
             );
@@ -424,7 +424,7 @@ fn test_type_alias_node_displayable_container_paranoid() {
             let bound_type_node = find_type_node(graph, bound_type_id);
             // Expecting path like ["std", "fmt", "Display"] - may need adjustment based on how paths are stored
             assert!(
-                matches!(&bound_type_node.kind, TypeKind::Named { path, .. } if path.ends_with(&["Display".to_string()])), // Check suffix for now
+                matches!(&bound_type_node.kind, TypeKind::TraitBound { path, .. } if path.ends_with(&["Display".to_string()])), // Check suffix for now
                 "Expected bound type 'Display', found {:?}",
                 bound_type_node.kind
             );
@@ -569,11 +569,8 @@ fn test_other_type_alias_nodes() {
         Some("Documented public alias for a tuple type")
     );
     let aliased_type = find_type_node(graph, node.type_id);
-    assert!(
-        matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "(i32 , i32)")
-    ); // Tuple not implemented
-    // #[ignore = "TypeKind::Tuple not yet handled"]
-    {}
+    assert!(matches!(&aliased_type.kind, TypeKind::Tuple {}));
+    assert_eq!(aliased_type.related_types.len(), 2);
     assert_relation_exists(
         graph,
         GraphId::Node(module_id_crate),
@@ -637,11 +634,15 @@ fn test_other_type_alias_nodes() {
     );
     assert_eq!(node.visibility(), VisibilityKind::Inherited);
     let aliased_type = find_type_node(graph, node.type_id);
-    assert!(
-        matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "fn (i32 , i32) -> i32")
-    ); // Fn Ptr not implemented
-    // #[ignore = "TypeKind::Function not yet handled"]
-    {}
+    assert!(matches!(
+        &aliased_type.kind,
+        TypeKind::Function {
+            is_unsafe: false,
+            is_extern: false,
+            abi: None,
+        }
+    ));
+    assert_eq!(aliased_type.related_types.len(), 3);
     assert_relation_exists(
         graph,
         GraphId::Node(module_id_crate),
@@ -898,11 +899,11 @@ fn test_other_type_alias_nodes() {
     );
     assert_eq!(node.visibility(), VisibilityKind::Inherited);
     let aliased_type = find_type_node(graph, node.type_id);
-    assert!(
-        matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "* const u8")
-    ); // Ptr not implemented
-    // #[ignore = "TypeKind::Ptr not yet handled"]
-    {}
+    assert!(matches!(
+        &aliased_type.kind,
+        TypeKind::RawPointer { is_mutable: false }
+    ));
+    assert_eq!(aliased_type.related_types.len(), 1);
     assert_relation_exists(
         graph,
         GraphId::Node(module_id_crate),
@@ -920,17 +921,17 @@ fn test_other_type_alias_nodes() {
         &module_path,
         alias_name,
     );
-    let expected_type_str = "* mut u8";
     assert_eq!(node.visibility(), VisibilityKind::Inherited);
     let aliased_type = find_type_node(graph, node.type_id);
     assert!(
-        matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == expected_type_str),
-        "Expected: \"{}\", found: {:?}",
-        expected_type_str,
+        matches!(
+            &aliased_type.kind,
+            TypeKind::RawPointer { is_mutable: true }
+        ),
+        "Expected mutable raw pointer, found: {:?}",
         &aliased_type.kind
-    ); // Ptr not implemented
-    // #[ignore = "TypeKind::Ptr not yet handled"]
-    {}
+    );
+    assert_eq!(aliased_type.related_types.len(), 1);
     assert_relation_exists(
         graph,
         GraphId::Node(module_id_crate),
@@ -951,11 +952,11 @@ fn test_other_type_alias_nodes() {
         alias_name,
     );
     let aliased_type = find_type_node(graph, node.type_id);
-    assert!(
-        matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "[u8 ; 256]")
-    ); // Array not implemented
-    // #[ignore = "TypeKind::Array not yet handled"]
-    {}
+    assert!(matches!(
+        &aliased_type.kind,
+        TypeKind::Array { size } if size.as_deref() == Some("256")
+    ));
+    assert_eq!(aliased_type.related_types.len(), 1);
     assert_relation_exists(
         graph,
         GraphId::Node(module_id_crate),
@@ -973,16 +974,16 @@ fn test_other_type_alias_nodes() {
         &module_path,
         alias_name,
     );
-    let expected_type_str = "dyn std :: fmt :: Debug"; // shadowing above
     let aliased_type = find_type_node(graph, node.type_id);
     assert!(
-        matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == expected_type_str),
-        "Expected: \"{}\", found: {:?}",
-        expected_type_str,
+        matches!(
+            &aliased_type.kind,
+            TypeKind::TraitObject { dyn_token: true }
+        ),
+        "Expected dyn trait object, found: {:?}",
         &aliased_type.kind
-    ); // TraitObject not implemented
-    // #[ignore = "TypeKind::TraitObject not yet handled"]
-    {}
+    );
+    assert_eq!(aliased_type.related_types.len(), 1);
     assert_relation_exists(
         graph,
         GraphId::Node(module_id_crate),

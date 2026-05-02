@@ -508,6 +508,13 @@ impl ParsedCodeGraph {
         }
         // 7. Link definitions to the import sites that bring them into scope (internal only).
         tree.link_definition_imports(self)?;
+        // 8. Future post-merge type resolution should run after this point.
+        //    By now the pass can rely on:
+        //      - canonical module-tree structure
+        //      - `#[path]` reconciliation
+        //      - pruned file-module view
+        //      - `ImportedBy` / `ReExports`-aware name visibility
+        //    That is the earliest point where `TypeKind::Named` can be resolved without guessing.
         // ANCHOR_END: build_module_tree_relations_and_links
         // By the time we are finished, we should have all the necessary relations to form the path
         // of all defined items by ModuleTree's shortest_public_path method.

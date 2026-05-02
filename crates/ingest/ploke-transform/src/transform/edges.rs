@@ -91,6 +91,10 @@ pub(super) fn transform_relations(
     relations: Vec<SyntacticRelation>,
 ) -> Result<(), TransformError> {
     let schema = &SyntacticRelationSchema::SCHEMA;
+    // TODO(import-backlinks): This is the persistence boundary for syntactic import relations as
+    // well as structural containment. When downstream consumers start relying on import backlinks,
+    // make sure `ModuleImports`, `ReExports`, and `ImportedBy` are covered by transform tests and
+    // any relation filtering here stays lossless for those variants.
     for relation in relations {
         schema.insert_relation(db, &relation)?;
     }

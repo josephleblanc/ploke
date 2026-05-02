@@ -15,10 +15,19 @@ use super::*;
 
 // --- type-bearing ids ---
 pub use internal::{
+    ArrayTypeId, FunctionTypeId, ImplTraitTypeId, InferredTypeId, MacroTypeId, NamedTypeId,
+    NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId, StructuralTypeId,
+    TraitBoundTypeId, TraitObjectTypeId, TupleTypeId, TypeIdRefinementError, UnknownTypeId,
+};
+pub use internal::{
     ConstNodeId, EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamNodeId, ImplNodeId,
     ImportNodeId, MacroNodeId, MethodNodeId, ModuleNodeId, ParamNodeId, ReexportNodeId,
     StaticNodeId, StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, UnresolvedNodeId,
     VariantNodeId,
+};
+pub use internal::{
+    OrdinaryTypeTargetId, TraitTypeTargetId, TryFromOrdinaryTypeTargetError,
+    TryFromTraitTypeTargetError, TryFromTypeSourceError, TypeSourceId,
 };
 // --- traits ---
 // Re-export marker traits (adjust list as needed)

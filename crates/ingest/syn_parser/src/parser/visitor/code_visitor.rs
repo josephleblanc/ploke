@@ -10,7 +10,7 @@
 
 use super::attribute_processing::{extract_attributes, extract_cfg_strings, extract_docstring};
 use super::state::VisitorState;
-use super::type_processing::get_or_create_type;
+use super::type_processing::{get_or_create_trait_bound_type, get_or_create_type};
 use crate::parser::graph::GraphAccess;
 use crate::parser::nodes::{FunctionNodeId, GeneratesAnyNodeId};
 // NodeId wrapper types for individual node types
@@ -1945,13 +1945,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 // Use filter_map to handle non-trait bounds if necessary
                 match bound {
                     syn::TypeParamBound::Trait(trait_bound) => {
-                        // Construct a Type::Path from the TraitBound's path
-                        // This correctly represents the supertrait type itself.
-                        let ty = syn::Type::Path(syn::TypePath {
-                            qself: None, // Supertraits typically don't have qself
-                            path: trait_bound.path.clone(),
-                        });
-                        Some(get_or_create_type(self.state, &ty))
+                        Some(get_or_create_trait_bound_type(self.state, trait_bound))
                     }
                     syn::TypeParamBound::Lifetime(_) => {
                         // We don't store lifetime bounds as supertrait TypeIds currently

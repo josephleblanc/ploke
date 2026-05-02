@@ -102,10 +102,16 @@ pub(super) fn transform_types(
             }
             TypeKind::Tuple {} => {
                 let schema = TupleTypeSchema::SCHEMA;
-                let cozo_element_type = process_element_type(&type_node);
+                let cozo_element_types = DataValue::List(
+                    type_node
+                        .related_types
+                        .iter()
+                        .map(|t| t.to_cozo_uuid())
+                        .collect(),
+                );
                 let params = BTreeMap::from([
                     (schema.type_id().to_string(), cozo_type_id),
-                    (schema.type_id().to_string(), cozo_element_type),
+                    (schema.element_types().to_string(), cozo_element_types),
                 ]);
                 let script = schema.script_put(&params);
 
@@ -178,6 +184,33 @@ pub(super) fn transform_types(
                 let params = BTreeMap::from([
                     (schema.type_id().to_string(), cozo_type_id),
                     (schema.trait_bounds().to_string(), cozo_trait_bounds),
+                ]);
+                let script = schema.script_put(&params);
+
+                (script, params)
+            }
+            TypeKind::TraitBound {
+                path,
+                is_fully_qualified,
+            } => {
+                let schema = TraitBoundTypeSchema::SCHEMA;
+                let cozo_path =
+                    DataValue::List(path.iter().map(|s| DataValue::Str(s.into())).collect());
+                let cozo_related_types = DataValue::List(
+                    type_node
+                        .related_types
+                        .iter()
+                        .map(|t| t.to_cozo_uuid())
+                        .collect(),
+                );
+                let params = BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                    (schema.path().to_string(), cozo_path),
+                    (
+                        schema.is_fully_qualified().to_string(),
+                        DataValue::Bool(*is_fully_qualified),
+                    ),
+                    (schema.related_types().to_string(), cozo_related_types),
                 ]);
                 let script = schema.script_put(&params);
 

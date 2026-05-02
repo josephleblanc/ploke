@@ -36,6 +36,10 @@ impl SyntacticRelationSchema {
         let schema = &SyntacticRelationSchema::SCHEMA;
 
         // ANCHOR: impl_trait_associated_edges
+        // TODO(import-backlinks): Keep import-bearing relation kinds explicit here. `ModuleImports`,
+        // `ReExports`, and `ImportedBy` now participate in the real graph contract, so if relation
+        // kind folding or endpoint typing changes, verify the `syntax_edge` surface still preserves
+        // import semantics cleanly for downstream queries/importers.
         // Extract the node type names from the relation variant
         let (source_kind, target_kind) = match relation {
             SyntacticRelation::Contains { .. } => ("Module", "Primary"),

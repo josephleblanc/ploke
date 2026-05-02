@@ -6,6 +6,9 @@
 //! internally, provides restricted constructors, and defines helper types like
 //! `AnyNodeId`. Access to the base `NodeId` is confined to this module.
 
+mod type_families;
+mod type_ids;
+
 use crate::parser::visitor::VisitorState;
 
 // We will move ID definitions, trait implementations, etc., here later.
@@ -19,6 +22,16 @@ use uuid::Uuid;
 use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Display;
+
+pub use type_families::{
+    OrdinaryTypeTargetId, TraitTypeTargetId, TryFromOrdinaryTypeTargetError,
+    TryFromTraitTypeTargetError, TryFromTypeSourceError, TypeSourceId,
+};
+pub use type_ids::{
+    ArrayTypeId, FunctionTypeId, ImplTraitTypeId, InferredTypeId, MacroTypeId, NamedTypeId,
+    NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId, StructuralTypeId,
+    TraitBoundTypeId, TraitObjectTypeId, TupleTypeId, TypeIdRefinementError, UnknownTypeId,
+};
 
 // NOTE: WIP, turn this into macro for, e.g. FunctionNodeId, StructNodeId, etc
 // pub trait HasAnyNodeId {

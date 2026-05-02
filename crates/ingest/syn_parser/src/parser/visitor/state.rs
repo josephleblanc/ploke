@@ -14,7 +14,7 @@ use quote::ToTokens;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
 use super::calculate_cfg_hash_bytes;
-use super::type_processing::get_or_create_type;
+use super::type_processing::{get_or_create_trait_bound_type, get_or_create_type};
 
 use {
     crate::parser::nodes::ParamData,
@@ -318,14 +318,7 @@ impl VisitorState {
     fn process_type_bound(&mut self, bound: &syn::TypeParamBound) -> Option<TypeId> {
         match bound {
             syn::TypeParamBound::Trait(trait_bound) => {
-                let type_id = get_or_create_type(
-                    self,
-                    &syn::Type::Path(syn::TypePath {
-                        qself: None,
-                        path: trait_bound.path.clone(),
-                    }),
-                );
-                Some(type_id)
+                Some(get_or_create_trait_bound_type(self, trait_bound))
             }
             // TODO: How should lifetime bounds be represented in the type graph?
             // For now, create a placeholder type ID. Revisit during Phase 3 resolution.

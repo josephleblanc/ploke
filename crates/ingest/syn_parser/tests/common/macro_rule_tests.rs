@@ -170,6 +170,11 @@ macro_rules! paranoid_test_fields_and_values {
             let successful_graphs = match args.fixture {
                 "fixture_nodes" => &*$crate::common::PARSED_FIXTURE_CRATE_NODES,
                 "file_dir_detection" => &*$crate::common::PARSED_FIXTURE_CRATE_DIR_DETECTION,
+                "fixture_path_resolution" => &*$crate::common::PARSED_FIXTURE_CRATE_PATH_RESOLUTION,
+                "fixture_spp_edge_cases_no_cfg" => {
+                    &*$crate::common::PARSED_FIXTURE_CRATE_SPP_EDGE_CASES_NO_CFG
+                }
+                "fixture_spp_edge_cases" => &*$crate::common::PARSED_FIXTURE_CRATE_SPP_EDGE_CASES,
                 "fixture_types" => &*$crate::common::PARSED_FIXTURE_CRATE_TYPES,
                 _ => panic!("Unknown fixture name for lazy_static lookup: {}. Ensure it's defined in tests/common/parsed_fixtures.rs and matched here.", args.fixture),
             };
@@ -360,6 +365,11 @@ macro_rules! assoc_paranoid_test_fields_and_values {
             let successful_graphs = match args.fixture {
                 "fixture_nodes" => &*$crate::common::PARSED_FIXTURE_CRATE_NODES,
                 "file_dir_detection" => &*$crate::common::PARSED_FIXTURE_CRATE_DIR_DETECTION,
+                "fixture_path_resolution" => &*$crate::common::PARSED_FIXTURE_CRATE_PATH_RESOLUTION,
+                "fixture_spp_edge_cases_no_cfg" => {
+                    &*$crate::common::PARSED_FIXTURE_CRATE_SPP_EDGE_CASES_NO_CFG
+                }
+                "fixture_spp_edge_cases" => &*$crate::common::PARSED_FIXTURE_CRATE_SPP_EDGE_CASES,
                 "fixture_types" => &*$crate::common::PARSED_FIXTURE_CRATE_TYPES,
                 _ => panic!("Unknown fixture name for lazy_static lookup: {}. Ensure it's defined in tests/common/parsed_fixtures.rs and matched here.", args.fixture),
             };
@@ -542,6 +552,11 @@ macro_rules! paranoid_test_setup {
             let successful_graphs = match args.fixture {
                 "fixture_nodes" => &*$crate::common::PARSED_FIXTURE_CRATE_NODES,
                 "file_dir_detection" => &*$crate::common::PARSED_FIXTURE_CRATE_DIR_DETECTION,
+                "fixture_path_resolution" => &*$crate::common::PARSED_FIXTURE_CRATE_PATH_RESOLUTION,
+                "fixture_spp_edge_cases_no_cfg" => {
+                    &*$crate::common::PARSED_FIXTURE_CRATE_SPP_EDGE_CASES_NO_CFG
+                }
+                "fixture_spp_edge_cases" => &*$crate::common::PARSED_FIXTURE_CRATE_SPP_EDGE_CASES,
                 "fixture_types" => &*$crate::common::PARSED_FIXTURE_CRATE_TYPES,
                 _ => panic!("Unknown fixture name for lazy_static lookup: {}. Ensure it's defined in tests/common/parsed_fixtures.rs and matched here.", args.fixture),
             };
@@ -716,6 +731,34 @@ macro_rules! paranoid_tree_relation_case {
 
             $crate::common::relation_paranoid::assert_tree_relation_once(
                 $graph, $tree, &$expected,
+            )?;
+
+            Ok(())
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! paranoid_imported_by_case {
+    (
+        $test_name:ident,
+        parsed_graphs: $parsed_graphs:expr,
+        tree: $tree:expr,
+        target: $target:expr,
+        expected_sources: [$($expected_source:expr),* $(,)?]
+    ) => {
+        #[test]
+        fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
+            let _ = env_logger::builder()
+                .is_test(true)
+                .format_timestamp(None)
+                .try_init();
+
+            $crate::common::relation_paranoid::assert_imported_by_sources_exact(
+                $parsed_graphs,
+                $tree,
+                $target,
+                &[$($expected_source),*],
             )?;
 
             Ok(())
