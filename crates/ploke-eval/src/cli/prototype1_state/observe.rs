@@ -4,11 +4,12 @@
 //! authoritative projections of allowed protocol transitions.
 
 use std::fmt;
+use std::future::Future;
 use std::io;
 use std::process::Output;
 use std::time::{Duration, Instant};
 
-use tracing::{Level, Span, event};
+use tracing::{Instrument, Level, Span, event};
 
 pub(crate) const TARGET: &str = ploke_core::EXECUTION_DEBUG_TARGET;
 
@@ -168,6 +169,60 @@ where
                 phase,
                 error = %error,
                 "prototype1 io step failed"
+            );
+            Err(error)
+        }
+    }
+}
+
+pub(crate) fn result<T, E, F>(span: Span, run: F) -> Result<T, E>
+where
+    E: fmt::Display,
+    F: FnOnce() -> Result<T, E>,
+{
+    let started = Instant::now();
+    let result = {
+        let _entered = span.enter();
+        run()
+    };
+    finish_result(span, started, result)
+}
+
+pub(crate) async fn future<T, E, Fut>(span: Span, future: Fut) -> Result<T, E>
+where
+    E: fmt::Display,
+    Fut: Future<Output = Result<T, E>>,
+{
+    let started = Instant::now();
+    let result = future.instrument(span.clone()).await;
+    finish_result(span, started, result)
+}
+
+fn finish_result<T, E>(span: Span, started: Instant, result: Result<T, E>) -> Result<T, E>
+where
+    E: fmt::Display,
+{
+    match result {
+        Ok(value) => {
+            event!(
+                target: TARGET,
+                parent: &span,
+                Level::INFO,
+                outcome = "succeeded",
+                duration_ms = duration_ms(started.elapsed()),
+                "prototype1 result step finished"
+            );
+            Ok(value)
+        }
+        Err(error) => {
+            event!(
+                target: TARGET,
+                parent: &span,
+                Level::WARN,
+                outcome = "failed",
+                duration_ms = duration_ms(started.elapsed()),
+                error = %error,
+                "prototype1 result step failed"
             );
             Err(error)
         }

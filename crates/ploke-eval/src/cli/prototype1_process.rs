@@ -1620,109 +1620,202 @@ pub(super) async fn run_prototype1_branch_evaluation(
     repo_root: &Path,
     stop_on_error: bool,
 ) -> Result<Prototype1BranchEvaluationReport, PrepareError> {
-    let _run_scope = TimingTrace::scope(format!("loop.prototype1_branch.evaluate.{branch_id}"));
-    let baseline_manifest_path = campaign_manifest_path(baseline_campaign_id)?;
-    let branch_registry_path = prototype1_branch_registry_path(&baseline_manifest_path);
-    let resolved_branch =
-        resolve_treatment_branch(baseline_campaign_id, &baseline_manifest_path, branch_id)?;
-    {
-        let _scope = TimingTrace::scope(format!(
-            "loop.prototype1_branch.evaluate.materialize.{branch_id}"
-        ));
-        ensure_treatment_branch_materialized(
-            baseline_campaign_id,
-            &baseline_manifest_path,
-            &resolved_branch,
-            repo_root,
+    macro_rules! eval_span {
+        ($name:literal, $phase:literal) => {
+            observe::span!(
+                $name,
+                operation = "SelfEvaluation",
+                phase = $phase,
+                campaign_id = %baseline_campaign_id,
+                branch_id = %branch_id
+            )
+        };
+        ($name:literal, $phase:literal, $($fields:tt)+) => {
+            observe::span!(
+                $name,
+                operation = "SelfEvaluation",
+                phase = $phase,
+                campaign_id = %baseline_campaign_id,
+                branch_id = %branch_id,
+                $($fields)+
+            )
+        };
+    }
+    macro_rules! step {
+        ($name:literal, $phase:literal, $run:expr $(,)?) => {
+            observe::result(eval_span!($name, $phase), $run)
+        };
+        ($name:literal, $phase:literal, $run:expr, $($fields:tt)+) => {
+            observe::result(eval_span!($name, $phase, $($fields)+), $run)
+        };
+    }
+    macro_rules! async_step {
+        ($name:literal, $phase:literal, $future:expr $(,)?) => {
+            observe::future(eval_span!($name, $phase), $future)
+        };
+        ($name:literal, $phase:literal, $future:expr, $($fields:tt)+) => {
+            observe::future(eval_span!($name, $phase, $($fields)+), $future)
+        };
+    }
+
+    let step = observe::Step::start(observe::span!(
+        "prototype1.child.evaluate.run",
+        operation = "SelfEvaluation",
+        phase = "Run",
+        campaign_id = %baseline_campaign_id,
+        branch_id = %branch_id,
+        repo_root = %repo_root.display(),
+        stop_on_error,
+    ));
+    let outcome = async {
+        let _run_scope = TimingTrace::scope(format!("loop.prototype1_branch.evaluate.{branch_id}"));
+        let baseline_manifest_path = step!(
+            "prototype1.child.evaluate.resolve_manifest",
+            "ResolveManifest",
+            || campaign_manifest_path(baseline_campaign_id),
         )?;
-    }
-
-    let baseline_resolved =
-        resolve_campaign_config(baseline_campaign_id, &CampaignOverrides::default())?;
-    let treatment_campaign = {
-        let _scope = TimingTrace::scope(format!(
-            "loop.prototype1_branch.evaluate.prepare_campaign.{branch_id}"
-        ));
-        prepare_prototype1_treatment_campaign(&baseline_resolved, branch_id)?
-    };
-    let mut eval_policy = treatment_campaign.resolved.eval.clone();
-    if stop_on_error {
-        eval_policy.stop_on_error = true;
-    }
-    {
-        let _scope =
-            TimingTrace::scope(format!("loop.prototype1_branch.evaluate.eval.{branch_id}"));
-        let _ = advance_eval_closure(&treatment_campaign.resolved, &eval_policy, false).await?;
-    }
-
-    let mut protocol_policy = treatment_campaign.resolved.protocol.clone();
-    if stop_on_error {
-        protocol_policy.stop_on_error = true;
-    }
-    {
-        let _scope = TimingTrace::scope(format!(
-            "loop.prototype1_branch.evaluate.protocol.{branch_id}"
-        ));
-        let _ =
-            advance_protocol_closure(&treatment_campaign.resolved, &protocol_policy, false).await?;
-    }
-
-    let baseline_state = load_closure_state(baseline_campaign_id)?;
-    let treatment_state = load_closure_state(&treatment_campaign.campaign_id)?;
-    let evaluation_artifact_path =
-        prototype1_branch_evaluation_path(&baseline_manifest_path, branch_id);
-    let report = {
-        let _scope = TimingTrace::scope(format!(
-            "loop.prototype1_branch.evaluate.compare.{branch_id}"
-        ));
-        build_prototype1_branch_evaluation_report(
-            baseline_campaign_id,
-            branch_id,
-            &branch_registry_path,
-            &evaluation_artifact_path,
-            &treatment_campaign,
-            &baseline_state,
-            &treatment_state,
-        )?
-    };
-    {
-        let _scope = TimingTrace::scope(format!(
-            "loop.prototype1_branch.evaluate.persist_report.{branch_id}"
-        ));
-        write_json_file_pretty(&evaluation_artifact_path, &report)?;
-    }
-
-    let rejected_instances = report
-        .compared_instances
-        .iter()
-        .filter(|row| {
-            row.evaluation
-                .as_ref()
-                .is_some_and(|evaluation| evaluation.disposition == BranchDisposition::Reject)
-                || row.status != "compared"
-        })
-        .count();
-    let summary = TreatmentBranchEvaluationSummary {
-        baseline_campaign_id: baseline_campaign_id.to_string(),
-        treatment_campaign_id: report.treatment_campaign_id.clone(),
-        compared_instances: report.compared_instances.len(),
-        rejected_instances,
-        overall_disposition: report.overall_disposition.clone(),
-        evaluated_at: Utc::now().to_rfc3339(),
-    };
-    {
-        let _scope = TimingTrace::scope(format!(
-            "loop.prototype1_branch.evaluate.persist_summary.{branch_id}"
-        ));
-        let _ = record_treatment_branch_evaluation(
-            baseline_campaign_id,
-            &baseline_manifest_path,
-            branch_id,
-            summary,
+        let branch_registry_path = prototype1_branch_registry_path(&baseline_manifest_path);
+        let resolved_branch = step!(
+            "prototype1.child.evaluate.resolve_branch",
+            "ResolveBranch",
+            || resolve_treatment_branch(baseline_campaign_id, &baseline_manifest_path, branch_id),
+            baseline_manifest_path = %baseline_manifest_path.display(),
         )?;
-    }
+        step!(
+            "prototype1.child.evaluate.materialize",
+            "Materialize",
+            || {
+                ensure_treatment_branch_materialized(
+                    baseline_campaign_id,
+                    &baseline_manifest_path,
+                    &resolved_branch,
+                    repo_root,
+                )
+            },
+            repo_root = %repo_root.display(),
+        )?;
 
-    Ok(report)
+        let baseline_resolved = step!(
+            "prototype1.child.evaluate.resolve_baseline_campaign",
+            "ResolveBaselineCampaign",
+            || resolve_campaign_config(baseline_campaign_id, &CampaignOverrides::default()),
+        )?;
+        let treatment_campaign = step!(
+            "prototype1.child.evaluate.prepare_treatment_campaign",
+            "PrepareTreatmentCampaign",
+            || prepare_prototype1_treatment_campaign(&baseline_resolved, branch_id),
+        )?;
+        let mut eval_policy = treatment_campaign.resolved.eval.clone();
+        if stop_on_error {
+            eval_policy.stop_on_error = true;
+        }
+        async_step!(
+            "prototype1.child.evaluate.eval_closure",
+            "EvalClosure",
+            advance_eval_closure(&treatment_campaign.resolved, &eval_policy, false),
+            treatment_campaign_id = %treatment_campaign.campaign_id,
+            stop_on_error = eval_policy.stop_on_error,
+        )
+        .await?;
+
+        let mut protocol_policy = treatment_campaign.resolved.protocol.clone();
+        if stop_on_error {
+            protocol_policy.stop_on_error = true;
+        }
+        async_step!(
+            "prototype1.child.evaluate.protocol_closure",
+            "ProtocolClosure",
+            advance_protocol_closure(&treatment_campaign.resolved, &protocol_policy, false),
+            treatment_campaign_id = %treatment_campaign.campaign_id,
+            stop_on_error = protocol_policy.stop_on_error,
+        )
+        .await?;
+
+        let baseline_state = step!(
+            "prototype1.child.evaluate.load_baseline_state",
+            "LoadBaselineState",
+            || load_closure_state(baseline_campaign_id),
+            treatment_campaign_id = %treatment_campaign.campaign_id,
+        )?;
+        let treatment_state = step!(
+            "prototype1.child.evaluate.load_treatment_state",
+            "LoadTreatmentState",
+            || load_closure_state(&treatment_campaign.campaign_id),
+            treatment_campaign_id = %treatment_campaign.campaign_id,
+        )?;
+        let evaluation_artifact_path =
+            prototype1_branch_evaluation_path(&baseline_manifest_path, branch_id);
+        let report = step!(
+            "prototype1.child.evaluate.compare",
+            "Compare",
+            || {
+                build_prototype1_branch_evaluation_report(
+                    baseline_campaign_id,
+                    branch_id,
+                    &branch_registry_path,
+                    &evaluation_artifact_path,
+                    &treatment_campaign,
+                    &baseline_state,
+                    &treatment_state,
+                )
+            },
+            treatment_campaign_id = %treatment_campaign.campaign_id,
+            evaluation_artifact_path = %evaluation_artifact_path.display(),
+        )?;
+        step!(
+            "prototype1.child.evaluate.persist_report",
+            "PersistEvaluationReport",
+            || write_json_file_pretty(&evaluation_artifact_path, &report),
+            treatment_campaign_id = %treatment_campaign.campaign_id,
+            evaluation_artifact_path = %evaluation_artifact_path.display(),
+        )?;
+
+        let rejected_instances = report
+            .compared_instances
+            .iter()
+            .filter(|row| {
+                row.evaluation
+                    .as_ref()
+                    .is_some_and(|evaluation| evaluation.disposition == BranchDisposition::Reject)
+                    || row.status != "compared"
+            })
+            .count();
+        let summary = TreatmentBranchEvaluationSummary {
+            baseline_campaign_id: baseline_campaign_id.to_string(),
+            treatment_campaign_id: report.treatment_campaign_id.clone(),
+            compared_instances: report.compared_instances.len(),
+            rejected_instances,
+            overall_disposition: report.overall_disposition.clone(),
+            evaluated_at: Utc::now().to_rfc3339(),
+        };
+        step!(
+            "prototype1.child.evaluate.persist_summary",
+            "PersistEvaluationSummary",
+            || {
+                record_treatment_branch_evaluation(
+                    baseline_campaign_id,
+                    &baseline_manifest_path,
+                    branch_id,
+                    summary,
+                )
+            },
+            treatment_campaign_id = %treatment_campaign.campaign_id,
+        )?;
+
+        Ok(report)
+    }
+    .await;
+
+    match outcome {
+        Ok(report) => {
+            step.success();
+            Ok(report)
+        }
+        Err(error) => {
+            step.fail("self_evaluation", &error);
+            Err(error)
+        }
+    }
 }
 
 /// Child-runner entrypoint for `loop prototype1-runner --execute`.
