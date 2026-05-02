@@ -5515,50 +5515,55 @@ impl Prototype1StateCommand {
             successor_ready_path,
         };
 
-        match self.format {
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
-                );
-            }
-            InspectOutputFormat::Table => {
-                println!("prototype1 state");
-                println!("{}", "-".repeat(40));
-                println!("campaign_id: {}", report.campaign_id);
-                println!("node_id: {}", report.node_id);
-                println!("repo_root: {}", report.repo_root.display());
-                println!("journal_path: {}", report.journal_path.display());
-                println!("stop_after: {:?}", report.stop_after);
-                println!("outcome: {}", report.outcome);
-                println!("node_status: {:?}", report.node_status);
-                println!("workspace_root: {}", report.workspace_root.display());
-                println!("binary_path: {}", report.binary_path.display());
-                println!(
-                    "child_runtime: {}",
-                    report.child_runtime.as_deref().unwrap_or("-")
-                );
-                println!(
-                    "successor_runtime: {}",
-                    report.successor_runtime.as_deref().unwrap_or("-")
-                );
-                println!(
-                    "successor_pid: {}",
-                    report
-                        .successor_pid
-                        .map(|pid| pid.to_string())
-                        .unwrap_or_else(|| "-".to_string())
-                );
-                println!(
-                    "successor_ready_path: {}",
-                    report
-                        .successor_ready_path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "-".to_string())
-                );
+        #[cfg(not(feature = "demo"))]
+        {
+            match self.format {
+                InspectOutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                    );
+                }
+                InspectOutputFormat::Table => {
+                    println!("prototype1 state");
+                    println!("{}", "-".repeat(40));
+                    println!("campaign_id: {}", report.campaign_id);
+                    println!("node_id: {}", report.node_id);
+                    println!("repo_root: {}", report.repo_root.display());
+                    println!("journal_path: {}", report.journal_path.display());
+                    println!("stop_after: {:?}", report.stop_after);
+                    println!("outcome: {}", report.outcome);
+                    println!("node_status: {:?}", report.node_status);
+                    println!("workspace_root: {}", report.workspace_root.display());
+                    println!("binary_path: {}", report.binary_path.display());
+                    println!(
+                        "child_runtime: {}",
+                        report.child_runtime.as_deref().unwrap_or("-")
+                    );
+                    println!(
+                        "successor_runtime: {}",
+                        report.successor_runtime.as_deref().unwrap_or("-")
+                    );
+                    println!(
+                        "successor_pid: {}",
+                        report
+                            .successor_pid
+                            .map(|pid| pid.to_string())
+                            .unwrap_or_else(|| "-".to_string())
+                    );
+                    println!(
+                        "successor_ready_path: {}",
+                        report
+                            .successor_ready_path
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "-".to_string())
+                    );
+                }
             }
         }
+        #[cfg(feature = "demo")]
+        let _ = report;
         if let Some(invocation) = handoff_invocation {
             let _ = record_prototype1_successor_completion(
                 &invocation,

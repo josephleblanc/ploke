@@ -905,8 +905,7 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
         }
     }
 
-    /// Build the [`App`] handle. This does **not** require any actors to be spawned.
-    pub fn into_app(self, pwd: PathBuf) -> App {
+    fn app(&self, pwd: PathBuf) -> App {
         App::new(
             self.inner.command_style,
             Arc::clone(&self.inner.state),
@@ -919,10 +918,30 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
         )
     }
 
+    /// Build the [`App`] handle. This does **not** require any actors to be spawned.
+    pub fn into_app(self, pwd: PathBuf) -> App {
+        self.app(pwd)
+    }
+
     /// Build the [`App`] handle after seeding `SystemState.pwd` for fast-path tests.
     pub async fn into_app_with_state_pwd(self, pwd: PathBuf) -> App {
         self.inner.state.system.set_pwd_for_test(pwd.clone()).await;
         self.into_app(pwd)
+    }
+
+    /// Spawn a real terminal frontend attached to this runtime.
+    #[cfg(feature = "demo")]
+    pub async fn spawn_terminal_app(&self, pwd: PathBuf) -> tokio::task::JoinHandle<()> {
+        self.inner.state.system.set_pwd_for_test(pwd.clone()).await;
+        let app = self.app(pwd);
+        tokio::spawn(async move {
+            let terminal = ratatui::init();
+            let result = app.run(terminal).await;
+            ratatui::restore();
+            if let Err(error) = result {
+                tracing::error!(%error, "demo terminal app exited with error");
+            }
+        })
     }
 
     pub fn state_arc(&self) -> Arc<AppState> {

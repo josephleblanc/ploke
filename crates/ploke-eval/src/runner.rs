@@ -2240,6 +2240,11 @@ impl RunMsbAgentSingleRequest {
 
             activate_eval_embedding_runtime(&state, &embedding_selection)?;
 
+            #[cfg(feature = "demo")]
+            let _terminal_app = runtime
+                .spawn_terminal_app(prepared.repo_root.clone())
+                .await;
+
             let currently_active_set: EmbeddingSet = runtime_db
                 .with_active_set(|set| set.clone())
                 .expect("active embedding set");

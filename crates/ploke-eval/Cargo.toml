@@ -41,7 +41,7 @@ ploke-error = { workspace = true }
 default = ["convert_keyword_2015"]
 convert_keyword_2015 = ["ploke-tui/convert_keyword_2015"]
 qwen_reasoning_fix = ["ploke-llm/qwen_reasoning_fix"]
-demo = []
+demo = ["ploke-tui/demo"]
 
 [[bin]]
 name = "ploke-eval"

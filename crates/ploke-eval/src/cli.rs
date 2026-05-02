@@ -1182,7 +1182,10 @@ struct TimingScope {
 
 impl TimingTrace {
     fn mark(label: &str) {
+        #[cfg(not(feature = "demo"))]
         eprintln!("{} {}", Utc::now().format("%H:%M:%S"), label);
+        #[cfg(feature = "demo")]
+        let _ = label;
     }
 
     fn scope(label: impl Into<String>) -> TimingScope {
@@ -1197,12 +1200,15 @@ impl TimingTrace {
 
 impl Drop for TimingScope {
     fn drop(&mut self) {
+        #[cfg(not(feature = "demo"))]
         eprintln!(
             "{} {}.end +{:.3}s",
             Utc::now().format("%H:%M:%S"),
             self.label,
             self.started_at.elapsed().as_secs_f64()
         );
+        #[cfg(feature = "demo")]
+        let _ = (&self.label, self.started_at);
     }
 }
 
@@ -3532,14 +3538,19 @@ impl RunMsbAgentSingleCommand {
         }
         .run()
         .await?;
-        println!("{}", artifacts.base.execution_log.display());
-        println!("{}", artifacts.turn_summary.display());
-        if let Some(path) = artifacts.base.full_response_trace {
-            println!("{}", path.display());
+        #[cfg(not(feature = "demo"))]
+        {
+            println!("{}", artifacts.base.execution_log.display());
+            println!("{}", artifacts.turn_summary.display());
+            if let Some(path) = artifacts.base.full_response_trace {
+                println!("{}", path.display());
+            }
+            if let Some(path) = artifacts.base.msb_submission {
+                println!("{}", path.display());
+            }
         }
-        if let Some(path) = artifacts.base.msb_submission {
-            println!("{}", path.display());
-        }
+        #[cfg(feature = "demo")]
+        let _ = artifacts;
         Ok(())
     }
 }

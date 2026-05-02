@@ -102,7 +102,9 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
         .with_line_number(true)
         .with_ansi(true)
         .with_writer(std::io::stderr);
-    let console_filter = if debug_tools {
+    let console_filter = if cfg!(feature = "demo") {
+        filter::Targets::new().with_default(filter::LevelFilter::OFF)
+    } else if debug_tools {
         filter::Targets::new()
             .with_default(filter::LevelFilter::WARN)
             .with_target(EXECUTION_DEBUG_TARGET, Level::DEBUG)
