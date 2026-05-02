@@ -443,7 +443,7 @@ pub struct Prototype1MonitorCommand {
     pub repo_root: Option<PathBuf>,
 
     #[command(subcommand)]
-    pub command: Prototype1MonitorSubcommand,
+    pub command: Option<Prototype1MonitorSubcommand>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -554,6 +554,27 @@ pub struct Prototype1MonitorTimingCommand {
     /// Restrict output to one node id.
     #[arg(long)]
     pub node: Option<String>,
+
+    /// How far to open the timing tree in table output.
+    #[arg(long, value_enum, default_value_t = Depth::Node)]
+    pub depth: Depth,
+
+    /// Include evidence paths in table output.
+    #[arg(long)]
+    pub show_paths: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Depth {
+    /// One compact row per node.
+    Node,
+    /// Expand each node into major phase and run summaries.
+    Phase,
+    /// Expand agent runs into turns.
+    Turn,
+    /// Expand turns into bounded response/tool call rows.
+    Call,
 }
 
 #[derive(Debug, Parser)]
@@ -12146,7 +12167,7 @@ mod tests {
                     Some(std::path::Path::new("/tmp/repo"))
                 );
                 match cmd.command {
-                    Prototype1MonitorSubcommand::Watch(watch) => {
+                    Some(Prototype1MonitorSubcommand::Watch(watch)) => {
                         assert_eq!(watch.interval_ms, 75);
                         assert!(watch.print_initial);
                     }
@@ -12177,7 +12198,7 @@ mod tests {
             Command::Loop(LoopCommand {
                 command: LoopSubcommand::Prototype1Monitor(cmd),
             }) => match cmd.command {
-                Prototype1MonitorSubcommand::Peek(peek) => {
+                Some(Prototype1MonitorSubcommand::Peek(peek)) => {
                     assert_eq!(peek.lines, 5);
                     assert_eq!(peek.bytes, 2048);
                 }
@@ -12205,7 +12226,7 @@ mod tests {
             Command::Loop(LoopCommand {
                 command: LoopSubcommand::Prototype1Monitor(cmd),
             }) => match cmd.command {
-                Prototype1MonitorSubcommand::Report(report) => {
+                Some(Prototype1MonitorSubcommand::Report(report)) => {
                     assert_eq!(report.format, InspectOutputFormat::Json);
                 }
                 other => panic!("unexpected monitor subcommand: {:?}", other),
@@ -12234,7 +12255,7 @@ mod tests {
             Command::Loop(LoopCommand {
                 command: LoopSubcommand::Prototype1Monitor(cmd),
             }) => match cmd.command {
-                Prototype1MonitorSubcommand::Timing(timing) => {
+                Some(Prototype1MonitorSubcommand::Timing(timing)) => {
                     assert_eq!(timing.node.as_deref(), Some("node-abc123"));
                     assert_eq!(timing.format, InspectOutputFormat::Json);
                 }
@@ -12268,7 +12289,7 @@ mod tests {
             Command::Loop(LoopCommand {
                 command: LoopSubcommand::Prototype1Monitor(cmd),
             }) => match cmd.command {
-                Prototype1MonitorSubcommand::HistoryMetrics(metrics) => {
+                Some(Prototype1MonitorSubcommand::HistoryMetrics(metrics)) => {
                     assert_eq!(metrics.format, InspectOutputFormat::Json);
                     assert_eq!(metrics.rows, 12);
                     assert_eq!(metrics.generation, Some(2));
@@ -12298,7 +12319,7 @@ mod tests {
             Command::Loop(LoopCommand {
                 command: LoopSubcommand::Prototype1Monitor(cmd),
             }) => match cmd.command {
-                Prototype1MonitorSubcommand::HistoryMetrics(metrics) => {
+                Some(Prototype1MonitorSubcommand::HistoryMetrics(metrics)) => {
                     assert_eq!(metrics.view, MetricSlice::Cohorts);
                 }
                 other => panic!("unexpected monitor subcommand: {:?}", other),
@@ -12401,7 +12422,7 @@ mod tests {
             Command::Loop(LoopCommand {
                 command: LoopSubcommand::Prototype1Monitor(cmd),
             }) => match cmd.command {
-                Prototype1MonitorSubcommand::HistoryPreview(preview) => {
+                Some(Prototype1MonitorSubcommand::HistoryPreview(preview)) => {
                     assert_eq!(preview.format, InspectOutputFormat::Json);
                     assert_eq!(preview.entries, Some(3));
                     assert_eq!(preview.diagnostics, Some(2));
@@ -12441,7 +12462,27 @@ mod tests {
             }) => {
                 assert_eq!(cmd.campaign, None);
                 assert_eq!(cmd.repo_root, None);
-                assert!(matches!(cmd.command, Prototype1MonitorSubcommand::Watch(_)));
+                assert!(matches!(
+                    cmd.command,
+                    Some(Prototype1MonitorSubcommand::Watch(_))
+                ));
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_monitor_default_view_parses() {
+        let parsed = Cli::try_parse_from(["ploke-eval", "loop", "prototype1-monitor"])
+            .expect("loop prototype1-monitor should allow the default monitor view");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Monitor(cmd),
+            }) => {
+                assert_eq!(cmd.campaign, None);
+                assert_eq!(cmd.repo_root, None);
+                assert!(cmd.command.is_none());
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

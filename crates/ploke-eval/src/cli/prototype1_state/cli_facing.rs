@@ -22,17 +22,17 @@ use crate::{
     campaign::campaign_closure_state_path,
     campaign_manifest_path,
     cli::{
-        HistoryCommand, HistorySubcommand, InspectOutputFormat, Prototype1BranchApplyCommand,
-        Prototype1BranchEvaluateCommand, Prototype1BranchRestoreCommand,
-        Prototype1BranchSelectCommand, Prototype1BranchShowCommand, Prototype1BranchStatusCommand,
-        Prototype1HistoryPreviewCommand, Prototype1LoopCommand, Prototype1LoopStopAfter,
-        Prototype1MetricsCommand, Prototype1MonitorCommand, Prototype1MonitorPeekCommand,
-        Prototype1MonitorSubcommand, Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand,
-        Prototype1RunnerCommand, Prototype1StateCommand, Prototype1StateStopAfter, TimingTrace,
-        advance_eval_closure, advance_protocol_closure, default_batch_id,
-        pending_prototype1_stages, persist_intervention_apply_for_record,
-        persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
-        print_issue_case_block,
+        Depth, HistoryCommand, HistorySubcommand, InspectOutputFormat,
+        Prototype1BranchApplyCommand, Prototype1BranchEvaluateCommand,
+        Prototype1BranchRestoreCommand, Prototype1BranchSelectCommand, Prototype1BranchShowCommand,
+        Prototype1BranchStatusCommand, Prototype1HistoryPreviewCommand, Prototype1LoopCommand,
+        Prototype1LoopStopAfter, Prototype1MetricsCommand, Prototype1MonitorCommand,
+        Prototype1MonitorPeekCommand, Prototype1MonitorReportCommand, Prototype1MonitorSubcommand,
+        Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand, Prototype1RunnerCommand,
+        Prototype1StateCommand, Prototype1StateStopAfter, TimingTrace, advance_eval_closure,
+        advance_protocol_closure, default_batch_id, pending_prototype1_stages,
+        persist_intervention_apply_for_record, persist_intervention_synthesis_for_record,
+        persist_issue_detection_for_record, print_issue_case_block,
         prototype1_process::{
             Prototype1NodeExecutionOutcome, execute_prototype1_runner_invocation,
             execute_prototype1_runner_node, persist_prototype1_buildable_child_artifact,
@@ -89,7 +89,7 @@ use crate::{
     model_registry::resolve_model_for_run,
     protocol::load_protocol_aggregate,
     provider_prefs::load_provider_for_model,
-    record::read_compressed_record,
+    record::{RawFullResponseRecord, RunRecord, read_compressed_record},
     repos_dir, resolve_campaign_config, save_campaign_manifest,
     selection::load_active_selection,
     spec::PrepareError,
@@ -1497,8 +1497,13 @@ impl Prototype1MonitorCommand {
         };
         let campaign_id = resolve_prototype1_monitor_campaign(&self, &repo_root)?;
         let manifest_path = campaign_manifest_path(&campaign_id)?;
+        let command = self.command.unwrap_or(Prototype1MonitorSubcommand::Report(
+            Prototype1MonitorReportCommand {
+                format: InspectOutputFormat::Table,
+            },
+        ));
 
-        match self.command {
+        match command {
             Prototype1MonitorSubcommand::List => {
                 print_prototype1_monitor_locations(&manifest_path, Some(&repo_root));
                 Ok(())
@@ -1910,17 +1915,17 @@ fn print_prototype1_monitor_locations(manifest_path: &Path, repo_root: Option<&P
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct MonitorTimingReport {
+struct Report {
     schema_version: &'static str,
     generated_at: String,
     campaign_id: String,
     prototype_root: PathBuf,
     scheduler_updated_at: String,
-    nodes: Vec<NodeTiming>,
+    nodes: Vec<NodeEvidence>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct NodeTiming {
+struct NodeEvidence {
     node_id: String,
     generation: u32,
     parent_node_id: Option<String>,
@@ -1931,13 +1936,29 @@ struct NodeTiming {
     runner_result_exists: bool,
     runner_result_recorded_at: Option<String>,
     runner_result_disposition: Option<String>,
-    streams: Vec<StreamTiming>,
-    traces: Vec<TurnTraceTiming>,
-    observation_steps: Vec<ObservationTiming>,
+    runs: Vec<RunArtifacts>,
+    streams: Vec<StreamEvidence>,
+    traces: Vec<TurnTrace>,
+    observation_steps: Vec<ObservationStep>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct StreamTiming {
+struct RunArtifacts {
+    record_path: PathBuf,
+    #[serde(skip_serializing)]
+    record: RunRecord,
+    responses: Option<ResponseSidecar>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ResponseSidecar {
+    path: PathBuf,
+    #[serde(skip_serializing)]
+    records: Vec<RawFullResponseRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StreamEvidence {
     runtime_id: String,
     stderr_path: PathBuf,
     stderr_modified_at: Option<String>,
@@ -1951,7 +1972,7 @@ struct StreamTiming {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct TurnTraceTiming {
+struct TurnTrace {
     path: PathBuf,
     modified_at: Option<String>,
     event_counts: BTreeMap<String, usize>,
@@ -1962,7 +1983,7 @@ struct TurnTraceTiming {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ObservationTiming {
+struct ObservationStep {
     timestamp: Option<String>,
     node_id: Option<String>,
     generation: Option<u64>,
@@ -1976,7 +1997,7 @@ fn print_prototype1_monitor_timing(
     manifest_path: &Path,
     command: &Prototype1MonitorTimingCommand,
 ) -> Result<(), PrepareError> {
-    let report = MonitorTimingReport::load(campaign_id, manifest_path, command.node.as_deref())?;
+    let report = Report::load(campaign_id, manifest_path, command.node.as_deref())?;
     match command.format {
         InspectOutputFormat::Json => {
             println!(
@@ -1984,12 +2005,12 @@ fn print_prototype1_monitor_timing(
                 serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
             );
         }
-        InspectOutputFormat::Table => report.print(),
+        InspectOutputFormat::Table => report.print(command.depth, command.show_paths),
     }
     Ok(())
 }
 
-impl MonitorTimingReport {
+impl Report {
     fn load(
         campaign_id: &str,
         manifest_path: &Path,
@@ -2023,7 +2044,7 @@ impl MonitorTimingReport {
                 .cloned()
                 .collect();
 
-            nodes.push(NodeTiming {
+            nodes.push(NodeEvidence {
                 node_id: node.node_id.clone(),
                 generation: node.generation,
                 parent_node_id: node.parent_node_id.clone(),
@@ -2036,6 +2057,7 @@ impl MonitorTimingReport {
                 runner_result_disposition: result
                     .as_ref()
                     .map(|result| serde_name(&result.disposition).to_string()),
+                runs: load_run_artifacts(campaign_id, &node.branch_id)?,
                 streams: load_stream_timings(&node.node_dir)?,
                 traces,
                 observation_steps,
@@ -2043,7 +2065,7 @@ impl MonitorTimingReport {
         }
 
         Ok(Self {
-            schema_version: "prototype1-monitor-timing.v1",
+            schema_version: "prototype1-monitor-timing.v2",
             generated_at: Utc::now().to_rfc3339(),
             campaign_id: campaign_id.to_string(),
             prototype_root,
@@ -2052,7 +2074,7 @@ impl MonitorTimingReport {
         })
     }
 
-    fn print(&self) {
+    fn print(&self, depth: Depth, show_paths: bool) {
         println!("prototype1 timing");
         println!("{}", "-".repeat(40));
         println!("schema_version: {}", self.schema_version);
@@ -2060,6 +2082,7 @@ impl MonitorTimingReport {
         println!("campaign_id: {}", self.campaign_id);
         println!("prototype_root: {}", self.prototype_root.display());
         println!("scheduler_updated_at: {}", self.scheduler_updated_at);
+        println!("depth: {:?}", depth);
         println!();
 
         if self.nodes.is_empty() {
@@ -2067,97 +2090,855 @@ impl MonitorTimingReport {
             return;
         }
 
-        for node in &self.nodes {
-            node.print();
-            println!();
+        let mut out = String::new();
+        match depth {
+            Depth::Node => Table::from_rows(self.nodes.iter().map(Row::new)).render(&mut out, 0),
+            Depth::Phase | Depth::Turn | Depth::Call => {
+                let mut omitted = 0usize;
+                for node in &self.nodes {
+                    if node.should_expand() || self.nodes.len() == 1 {
+                        render_node(node, depth, show_paths).render(&mut out, 0);
+                        out.push('\n');
+                    } else {
+                        omitted += 1;
+                    }
+                }
+                if omitted > 0 {
+                    out.push_str(&format!("omitted nodes_without_timing={omitted}\n"));
+                }
+            }
+        }
+        print!("{}", out.trim_end());
+        println!();
+    }
+}
+
+#[derive(Clone)]
+struct Measurement {
+    label: &'static str,
+    value: String,
+}
+
+trait Timing {
+    fn heading(&self) -> String;
+    fn measurements(&self) -> Vec<Measurement>;
+}
+
+trait Render {
+    fn render(&self, out: &mut String, indent: usize);
+}
+
+struct Row<T> {
+    value: T,
+}
+
+impl<T> Row<T> {
+    fn new(value: T) -> Self {
+        Self { value }
+    }
+}
+
+struct Table<R> {
+    rows: Vec<R>,
+}
+
+impl<R> Table<R> {
+    fn from_rows<I>(rows: I) -> Self
+    where
+        I: IntoIterator<Item = R>,
+    {
+        Self {
+            rows: rows.into_iter().collect(),
         }
     }
 }
 
-impl NodeTiming {
-    fn print(&self) {
-        println!(
-            "node {} gen={} branch={} status={}",
-            self.node_id, self.generation, self.branch_id, self.status
-        );
-        println!(
-            "  parent={} created_at={} updated_at={}",
-            self.parent_node_id.as_deref().unwrap_or("(none)"),
-            self.created_at,
-            self.updated_at
-        );
-        println!(
-            "  runner_result: exists={} recorded_at={} disposition={}",
-            yes_no(self.runner_result_exists),
-            self.runner_result_recorded_at.as_deref().unwrap_or("-"),
-            self.runner_result_disposition.as_deref().unwrap_or("-")
-        );
+struct Node<T, C = ()> {
+    value: T,
+    children: C,
+}
 
-        if self.streams.is_empty() {
-            println!("  streams: (none)");
-        } else {
-            println!("  streams:");
-            for stream in &self.streams {
-                println!(
-                    "    runtime={} stderr_mtime={} branch_eval={} http_body_timeouts={}/{} chat_retries={}/{} llm_errors={}",
-                    stream.runtime_id,
-                    stream.stderr_modified_at.as_deref().unwrap_or("-"),
-                    stream
-                        .branch_eval_seconds
-                        .map(format_seconds)
-                        .unwrap_or_else(|| {
-                            stream
-                                .branch_eval_started_at
-                                .as_ref()
-                                .map(|started| format!("running since {started}"))
-                                .unwrap_or_else(|| "-".to_string())
-                        }),
-                    stream.http_body_timeouts,
-                    format_seconds(stream.http_body_timeout_seconds),
-                    stream.chat_retries,
-                    format_seconds(stream.chat_backoff_seconds),
-                    stream.llm_errors
-                );
-                println!("      stderr: {}", stream.stderr_path.display());
-            }
+struct Tree<N> {
+    root: N,
+}
+
+struct Lines {
+    text: String,
+}
+
+#[derive(Clone)]
+struct Phase {
+    name: &'static str,
+    duration_ms: Option<u64>,
+    measurements: Vec<Measurement>,
+}
+
+impl Lines {
+    fn new() -> Self {
+        Self {
+            text: String::new(),
         }
+    }
+}
 
+impl Phase {
+    fn new(
+        name: &'static str,
+        duration_ms: Option<u64>,
+        measurements: Vec<Measurement>,
+    ) -> Option<Self> {
+        if duration_ms.is_none() && measurements.is_empty() {
+            None
+        } else {
+            Some(Self {
+                name,
+                duration_ms,
+                measurements,
+            })
+        }
+    }
+}
+
+impl<T> Render for Row<T>
+where
+    T: Timing,
+{
+    fn render(&self, out: &mut String, indent: usize) {
+        push_indent(out, indent);
+        out.push_str(&self.value.heading());
+        for measurement in self.value.measurements() {
+            out.push(' ');
+            out.push_str(measurement.label);
+            out.push('=');
+            out.push_str(&measurement.value);
+        }
+        out.push('\n');
+    }
+}
+
+impl<R> Render for Table<R>
+where
+    R: Render,
+{
+    fn render(&self, out: &mut String, indent: usize) {
+        for row in &self.rows {
+            row.render(out, indent);
+        }
+    }
+}
+
+impl<T, C> Render for Node<T, C>
+where
+    T: Timing,
+    C: Render,
+{
+    fn render(&self, out: &mut String, indent: usize) {
+        Row::new(&self.value).render(out, indent);
+        self.children.render(out, indent + 2);
+    }
+}
+
+impl<N> Render for Tree<N>
+where
+    N: Render,
+{
+    fn render(&self, out: &mut String, indent: usize) {
+        self.root.render(out, indent);
+    }
+}
+
+impl<R> Render for Vec<R>
+where
+    R: Render,
+{
+    fn render(&self, out: &mut String, indent: usize) {
+        for item in self {
+            item.render(out, indent);
+        }
+    }
+}
+
+impl<R> Render for Option<R>
+where
+    R: Render,
+{
+    fn render(&self, out: &mut String, indent: usize) {
+        if let Some(item) = self {
+            item.render(out, indent);
+        }
+    }
+}
+
+impl Render for () {
+    fn render(&self, _out: &mut String, _indent: usize) {}
+}
+
+impl<A, B> Render for (A, B)
+where
+    A: Render,
+    B: Render,
+{
+    fn render(&self, out: &mut String, indent: usize) {
+        self.0.render(out, indent);
+        self.1.render(out, indent);
+    }
+}
+
+impl<T> Timing for &T
+where
+    T: Timing,
+{
+    fn heading(&self) -> String {
+        (*self).heading()
+    }
+
+    fn measurements(&self) -> Vec<Measurement> {
+        (*self).measurements()
+    }
+}
+
+impl Timing for NodeEvidence {
+    fn heading(&self) -> String {
+        format!("node {}", self.node_id)
+    }
+
+    fn measurements(&self) -> Vec<Measurement> {
+        let build_ms = self.observation_duration_by_prefix("prototype1.child.build.");
+        let wait_ms = self.observation_duration_by_name("prototype1.child.observe.wait_for_result");
+        let agent_seconds = self.agent_seconds();
+        let tools = self.tool_count();
+        let failed_tools = self.failed_tool_count();
+        let tool_latency_ms = self.tool_latency_ms();
+        let tokens = self.response_token_count();
+
+        vec![
+            Measurement::new("gen", self.generation),
+            Measurement::new("branch", self.branch_id.clone()),
+            Measurement::new("status", self.status.clone()),
+            Measurement::new("build", format_optional_millis(build_ms)),
+            Measurement::new("wait", format_optional_millis(wait_ms)),
+            Measurement::new(
+                "agent",
+                agent_seconds
+                    .map(format_seconds)
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            Measurement::new(
+                "tools",
+                tools
+                    .zip(failed_tools)
+                    .map(|(tools, failed)| format!("{tools}/{failed}"))
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            Measurement::new(
+                "tool_latency",
+                tool_latency_ms
+                    .map(format_millis)
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            Measurement::new(
+                "tokens",
+                tokens
+                    .map(format_token_count)
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+        ]
+    }
+}
+
+impl Timing for Phase {
+    fn heading(&self) -> String {
+        self.name.to_string()
+    }
+
+    fn measurements(&self) -> Vec<Measurement> {
+        let mut measurements = vec![Measurement::new(
+            "duration",
+            format_optional_millis(self.duration_ms),
+        )];
+        measurements.extend(self.measurements.clone());
+        measurements
+    }
+}
+
+impl Timing for RunArtifacts {
+    fn heading(&self) -> String {
+        "run".to_string()
+    }
+
+    fn measurements(&self) -> Vec<Measurement> {
+        let response_count = self
+            .responses
+            .as_ref()
+            .map(|responses| responses.records.len())
+            .unwrap_or(0);
+        vec![
+            Measurement::new(
+                "wall",
+                self.record
+                    .timing
+                    .as_ref()
+                    .map(|timing| format_seconds(timing.total_wall_clock_secs))
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            Measurement::new(
+                "agent",
+                self.record
+                    .timing
+                    .as_ref()
+                    .and_then(|timing| timing.agent_wall_clock_secs)
+                    .map(format_seconds)
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            Measurement::new("turns", self.record.phases.agent_turns.len()),
+            Measurement::new("responses", response_count),
+            Measurement::new("tools", run_tool_count(&self.record)),
+            Measurement::new("failed_tools", run_failed_tool_count(&self.record)),
+            Measurement::new(
+                "tokens",
+                format_token_count(
+                    self.responses
+                        .as_ref()
+                        .map(ResponseSidecar::token_count)
+                        .unwrap_or(0),
+                ),
+            ),
+        ]
+    }
+}
+
+impl Timing for crate::record::TurnRecord {
+    fn heading(&self) -> String {
+        format!("turn {}", self.turn_number)
+    }
+
+    fn measurements(&self) -> Vec<Measurement> {
+        vec![
+            Measurement::new("duration", format_optional_millis(turn_duration_ms(self))),
+            Measurement::new("outcome", turn_outcome_label(&self.outcome)),
+            Measurement::new("tools", self.tool_calls.len()),
+            Measurement::new(
+                "failed_tools",
+                self.tool_calls
+                    .iter()
+                    .filter(|call| matches!(call.result, crate::record::ToolResult::Failed(_)))
+                    .count(),
+            ),
+            Measurement::new(
+                "tool_latency",
+                format_millis(self.tool_calls.iter().map(|call| call.latency_ms).sum()),
+            ),
+        ]
+    }
+}
+
+impl Timing for crate::record::ToolExecutionRecord {
+    fn heading(&self) -> String {
+        format!("tool {}", self.request.tool)
+    }
+
+    fn measurements(&self) -> Vec<Measurement> {
+        vec![
+            Measurement::new(
+                "status",
+                match &self.result {
+                    crate::record::ToolResult::Completed(_) => "completed",
+                    crate::record::ToolResult::Failed(_) => "failed",
+                },
+            ),
+            Measurement::new("latency", format_millis(self.latency_ms)),
+            Measurement::new("call_id", short_id(&self.request.call_id).to_string()),
+        ]
+    }
+}
+
+impl Timing for RawFullResponseRecord {
+    fn heading(&self) -> String {
+        format!("response {}", self.response_index)
+    }
+
+    fn measurements(&self) -> Vec<Measurement> {
+        let usage = self.response.usage.as_ref();
+        vec![
+            Measurement::new(
+                "finish",
+                self.response
+                    .choices
+                    .first()
+                    .and_then(|choice| choice.finish_reason.as_ref())
+                    .map(serde_name)
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            Measurement::new(
+                "tokens",
+                usage
+                    .map(|usage| format_token_count(usage.total_tokens))
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            Measurement::new(
+                "model",
+                if self.response.model.is_empty() {
+                    "-".to_string()
+                } else {
+                    self.response.model.clone()
+                },
+            ),
+        ]
+    }
+}
+
+impl Timing for ObservationStep {
+    fn heading(&self) -> String {
+        self.step.clone()
+    }
+
+    fn measurements(&self) -> Vec<Measurement> {
+        vec![
+            Measurement::new("duration", format_millis(self.duration_ms)),
+            Measurement::new(
+                "outcome",
+                self.outcome.clone().unwrap_or_else(|| "-".to_string()),
+            ),
+        ]
+    }
+}
+
+impl Measurement {
+    fn new(label: &'static str, value: impl ToString) -> Self {
+        Self {
+            label,
+            value: value.to_string(),
+        }
+    }
+}
+
+impl NodeEvidence {
+    fn observation_duration_by_prefix(&self, prefix: &str) -> Option<u64> {
+        let mut found = false;
+        let total = self
+            .observation_steps
+            .iter()
+            .filter(|step| step.step.starts_with(prefix))
+            .inspect(|_| found = true)
+            .map(|step| step.duration_ms)
+            .sum();
+        found.then_some(total)
+    }
+
+    fn observation_duration_by_name(&self, name: &str) -> Option<u64> {
+        let mut found = false;
+        let total = self
+            .observation_steps
+            .iter()
+            .filter(|step| step.step == name)
+            .inspect(|_| found = true)
+            .map(|step| step.duration_ms)
+            .sum();
+        found.then_some(total)
+    }
+
+    fn agent_seconds(&self) -> Option<f64> {
+        let mut found = false;
+        let total = self
+            .runs
+            .iter()
+            .filter_map(|run| {
+                run.record
+                    .timing
+                    .as_ref()
+                    .and_then(|timing| timing.agent_wall_clock_secs)
+                    .or_else(|| {
+                        run.record
+                            .timing
+                            .as_ref()
+                            .map(|timing| timing.total_wall_clock_secs)
+                    })
+            })
+            .inspect(|_| found = true)
+            .sum();
+        found.then_some(total)
+    }
+
+    fn tool_count(&self) -> Option<usize> {
+        if !self.runs.is_empty() {
+            return Some(
+                self.runs
+                    .iter()
+                    .map(|run| run_tool_count(&run.record))
+                    .sum(),
+            );
+        }
         if self.traces.is_empty() {
-            println!("  traces: (none)");
+            None
         } else {
-            println!("  traces:");
-            for trace in &self.traces {
-                println!(
-                    "    mtime={} tools_completed={} tools_failed={} tool_latency_total={} tool_latency_max={} events={}",
-                    trace.modified_at.as_deref().unwrap_or("-"),
-                    trace.tool_completed,
-                    trace.tool_failed,
-                    format_millis(trace.tool_latency_ms_total),
-                    format_millis(trace.tool_latency_ms_max),
-                    format_event_counts(&trace.event_counts)
-                );
-                println!("      trace: {}", trace.path.display());
-            }
+            Some(
+                self.traces
+                    .iter()
+                    .map(|trace| trace.tool_completed + trace.tool_failed)
+                    .sum(),
+            )
         }
+    }
 
-        if self.observation_steps.is_empty() {
-            println!("  observation_steps: (none)");
+    fn failed_tool_count(&self) -> Option<usize> {
+        if !self.runs.is_empty() {
+            return Some(
+                self.runs
+                    .iter()
+                    .map(|run| run_failed_tool_count(&run.record))
+                    .sum(),
+            );
+        }
+        if self.traces.is_empty() {
+            None
         } else {
-            println!("  observation_steps:");
-            for step in &self.observation_steps {
-                println!(
-                    "    {} {} outcome={} duration={}",
-                    step.timestamp.as_deref().unwrap_or("-"),
-                    step.step,
-                    step.outcome.as_deref().unwrap_or("-"),
-                    format_millis(step.duration_ms)
-                );
+            Some(self.traces.iter().map(|trace| trace.tool_failed).sum())
+        }
+    }
+
+    fn tool_latency_ms(&self) -> Option<u64> {
+        if !self.runs.is_empty() {
+            return Some(
+                self.runs
+                    .iter()
+                    .map(|run| run_tool_latency_ms(&run.record))
+                    .sum(),
+            );
+        }
+        if self.traces.is_empty() {
+            None
+        } else {
+            Some(
+                self.traces
+                    .iter()
+                    .map(|trace| trace.tool_latency_ms_total)
+                    .sum(),
+            )
+        }
+    }
+
+    fn response_token_count(&self) -> Option<u32> {
+        let mut found = false;
+        let total = self
+            .runs
+            .iter()
+            .filter_map(|run| run.responses.as_ref())
+            .inspect(|_| found = true)
+            .map(ResponseSidecar::token_count)
+            .sum();
+        found.then_some(total)
+    }
+
+    fn phases(&self) -> Vec<Phase> {
+        [
+            self.phase(
+                "build",
+                "prototype1.child.build.",
+                &[
+                    ("check", "prototype1.child.build.cargo_check"),
+                    ("cargo", "prototype1.child.build.cargo_build"),
+                    ("promote", "prototype1.child.build.promote_binary"),
+                ],
+            ),
+            self.phase(
+                "observe",
+                "prototype1.child.observe.",
+                &[
+                    ("wait", "prototype1.child.observe.wait_for_result"),
+                    ("result", "prototype1.child.observe.load_runner_result"),
+                    ("eval", "prototype1.child.observe.load_evaluation_report"),
+                ],
+            ),
+            self.phase(
+                "parent",
+                "prototype1.parent.",
+                &[
+                    ("genesis", "prototype1.parent.startup.genesis"),
+                    ("predecessor", "prototype1.parent.startup.predecessor"),
+                    ("select", "prototype1.parent.select_successor"),
+                    ("checkout", "prototype1.parent.checkout.active"),
+                ],
+            ),
+            self.phase(
+                "history",
+                "prototype1.history.",
+                &[
+                    ("seal", "prototype1.history.seal"),
+                    ("append", "prototype1.history.append"),
+                ],
+            ),
+            self.phase(
+                "successor",
+                "prototype1.successor.",
+                &[
+                    ("spawn", "prototype1.successor.spawn"),
+                    ("ready", "prototype1.successor.ready_wait"),
+                ],
+            ),
+            self.phase(
+                "cleanup",
+                "prototype1.cleanup.",
+                &[
+                    ("binary", "prototype1.cleanup.binary"),
+                    ("target", "prototype1.cleanup.target"),
+                ],
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
+    fn has_timing_evidence(&self) -> bool {
+        !self.runs.is_empty() || !self.phases().is_empty()
+    }
+
+    fn should_expand(&self) -> bool {
+        self.status != "planned" && self.has_timing_evidence()
+    }
+
+    fn phase(
+        &self,
+        name: &'static str,
+        prefix: &str,
+        fields: &[(&'static str, &str)],
+    ) -> Option<Phase> {
+        let measurements = fields
+            .iter()
+            .filter_map(|(label, step)| {
+                self.observation_duration_by_name(step)
+                    .map(|duration| Measurement::new(*label, format_millis(duration)))
+            })
+            .collect();
+        Phase::new(
+            name,
+            self.observation_duration_by_prefix(prefix),
+            measurements,
+        )
+    }
+}
+
+impl ResponseSidecar {
+    fn token_count(&self) -> u32 {
+        self.records
+            .iter()
+            .filter_map(|record| record.response.usage.as_ref())
+            .map(|usage| usage.total_tokens)
+            .sum()
+    }
+}
+
+fn render_node(
+    node: &NodeEvidence,
+    depth: Depth,
+    show_paths: bool,
+) -> Tree<Node<&NodeEvidence, Lines>> {
+    let mut children = Lines::new();
+    if show_paths {
+        push_indent(&mut children.text, 2);
+        children.text.push_str(&format!(
+            "runner_result_path exists={}\n",
+            yes_no(node.runner_result_exists)
+        ));
+    }
+
+    if matches!(depth, Depth::Phase | Depth::Turn | Depth::Call) {
+        render_phase_rows(node, &mut children.text, 2);
+        Table::from_rows(node.runs.iter().map(Row::new)).render(&mut children.text, 2);
+    }
+
+    if matches!(depth, Depth::Turn | Depth::Call) {
+        for run in &node.runs {
+            render_run_children(run, depth, show_paths, &mut children.text, 4);
+        }
+    }
+
+    Tree {
+        root: Node {
+            value: node,
+            children,
+        },
+    }
+}
+
+impl Render for Lines {
+    fn render(&self, out: &mut String, _indent: usize) {
+        out.push_str(&self.text);
+    }
+}
+
+fn render_phase_rows(node: &NodeEvidence, out: &mut String, indent: usize) {
+    for phase in node.phases() {
+        Row::new(phase).render(out, indent);
+    }
+}
+
+fn render_run_children(
+    run: &RunArtifacts,
+    depth: Depth,
+    show_paths: bool,
+    out: &mut String,
+    indent: usize,
+) {
+    Table::from_rows(run.record.phases.agent_turns.iter().map(Row::new)).render(out, indent);
+    if matches!(depth, Depth::Call) {
+        for turn in &run.record.phases.agent_turns {
+            Table::from_rows(turn.tool_calls.iter().map(Row::new)).render(out, indent + 2);
+        }
+        if let Some(responses) = &run.responses {
+            if show_paths {
+                push_indent(out, indent);
+                out.push_str(&format!("record_path path={}\n", run.record_path.display()));
             }
+            push_indent(out, indent);
+            out.push_str("response_sidecar");
+            out.push_str(&format!(" responses={}", responses.records.len()));
+            if show_paths {
+                out.push_str(&format!(" path={}", responses.path.display()));
+            }
+            out.push('\n');
+            Table::from_rows(responses.records.iter().map(Row::new)).render(out, indent + 2);
         }
     }
 }
 
-fn load_stream_timings(node_dir: &Path) -> Result<Vec<StreamTiming>, PrepareError> {
+fn load_run_artifacts(
+    campaign_id: &str,
+    branch_id: &str,
+) -> Result<Vec<RunArtifacts>, PrepareError> {
+    let Some(root) = home_dir().map(|home| {
+        home.join(".ploke-eval")
+            .join("instances")
+            .join("prototype1")
+            .join(campaign_id)
+            .join("treatments")
+            .join(branch_id)
+    }) else {
+        return Ok(Vec::new());
+    };
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut paths = Vec::new();
+    collect_named_files(&root, "record.json.gz", &mut paths);
+    paths.sort();
+    paths
+        .into_iter()
+        .map(load_run_artifact)
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn load_run_artifact(record_path: PathBuf) -> Result<RunArtifacts, PrepareError> {
+    let record =
+        read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
+            path: record_path.clone(),
+            source,
+        })?;
+    let run_dir = record_path
+        .parent()
+        .ok_or_else(|| PrepareError::MissingRunManifest(record_path.clone()))?;
+    let response_path = run_dir.join("llm-full-responses.jsonl");
+    let responses = if response_path.exists() {
+        Some(ResponseSidecar {
+            records: load_run_responses(&response_path)?,
+            path: response_path,
+        })
+    } else {
+        None
+    };
+
+    Ok(RunArtifacts {
+        record_path,
+        record,
+        responses,
+    })
+}
+
+fn load_run_responses(path: &Path) -> Result<Vec<RawFullResponseRecord>, PrepareError> {
+    let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut responses = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        responses.push(serde_json::from_str(trimmed).map_err(|source| {
+            PrepareError::ParseManifest {
+                path: path.to_path_buf(),
+                source,
+            }
+        })?);
+    }
+    responses.sort_by_key(|record: &RawFullResponseRecord| record.response_index);
+    Ok(responses)
+}
+
+fn turn_outcome_label(outcome: &crate::record::TurnOutcome) -> String {
+    match outcome {
+        crate::record::TurnOutcome::ToolCalls { count } => format!("tool_calls:{count}"),
+        crate::record::TurnOutcome::Content => "content".to_string(),
+        crate::record::TurnOutcome::Error { .. } => "error".to_string(),
+        crate::record::TurnOutcome::Timeout { elapsed_secs } => {
+            format!("timeout:{elapsed_secs}s")
+        }
+    }
+}
+
+fn duration_between_ms(started_at: &str, ended_at: &str) -> Option<u64> {
+    let started = DateTime::parse_from_rfc3339(started_at).ok()?;
+    let ended = DateTime::parse_from_rfc3339(ended_at).ok()?;
+    let ms = ended.signed_duration_since(started).num_milliseconds();
+    u64::try_from(ms.max(0)).ok()
+}
+
+fn turn_duration_ms(turn: &crate::record::TurnRecord) -> Option<u64> {
+    duration_between_ms(&turn.started_at, &turn.ended_at)
+}
+
+fn run_tool_count(record: &RunRecord) -> usize {
+    record
+        .phases
+        .agent_turns
+        .iter()
+        .map(|turn| turn.tool_calls.len())
+        .sum()
+}
+
+fn run_failed_tool_count(record: &RunRecord) -> usize {
+    record
+        .phases
+        .agent_turns
+        .iter()
+        .flat_map(|turn| &turn.tool_calls)
+        .filter(|call| matches!(call.result, crate::record::ToolResult::Failed(_)))
+        .count()
+}
+
+fn run_tool_latency_ms(record: &RunRecord) -> u64 {
+    record
+        .phases
+        .agent_turns
+        .iter()
+        .flat_map(|turn| &turn.tool_calls)
+        .map(|call| call.latency_ms)
+        .sum()
+}
+
+fn format_optional_millis(ms: Option<u64>) -> String {
+    ms.map(format_millis).unwrap_or_else(|| "-".to_string())
+}
+
+fn push_indent(out: &mut String, indent: usize) {
+    for _ in 0..indent {
+        out.push(' ');
+    }
+}
+
+fn load_stream_timings(node_dir: &Path) -> Result<Vec<StreamEvidence>, PrepareError> {
     let streams_dir = node_dir.join("streams");
     let mut timings = Vec::new();
     if !streams_dir.exists() {
@@ -2192,7 +2973,7 @@ fn load_stream_timings(node_dir: &Path) -> Result<Vec<StreamTiming>, PrepareErro
 fn parse_stderr_timing(
     runtime_id: String,
     stderr_path: PathBuf,
-) -> Result<StreamTiming, PrepareError> {
+) -> Result<StreamEvidence, PrepareError> {
     let text = fs::read_to_string(&stderr_path).map_err(|source| PrepareError::ReadManifest {
         path: stderr_path.clone(),
         source,
@@ -2259,7 +3040,7 @@ fn parse_stderr_timing(
         }
     }
 
-    Ok(StreamTiming {
+    Ok(StreamEvidence {
         runtime_id,
         stderr_modified_at: file_modified_at(&stderr_path),
         stderr_path,
@@ -2273,7 +3054,7 @@ fn parse_stderr_timing(
     })
 }
 
-fn find_agent_turn_traces(campaign_id: &str) -> Vec<TurnTraceTiming> {
+fn find_agent_turn_traces(campaign_id: &str) -> Vec<TurnTrace> {
     let Some(root) = home_dir().map(|home| {
         home.join(".ploke-eval")
             .join("instances")
@@ -2292,7 +3073,7 @@ fn find_agent_turn_traces(campaign_id: &str) -> Vec<TurnTraceTiming> {
     traces
 }
 
-fn parse_turn_trace(path: PathBuf) -> Result<TurnTraceTiming, PrepareError> {
+fn parse_turn_trace(path: PathBuf) -> Result<TurnTrace, PrepareError> {
     let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
         path: path.clone(),
         source,
@@ -2329,7 +3110,7 @@ fn parse_turn_trace(path: PathBuf) -> Result<TurnTraceTiming, PrepareError> {
         }
     }
 
-    Ok(TurnTraceTiming {
+    Ok(TurnTrace {
         modified_at: file_modified_at(&path),
         path,
         event_counts,
@@ -2340,7 +3121,7 @@ fn parse_turn_trace(path: PathBuf) -> Result<TurnTraceTiming, PrepareError> {
     })
 }
 
-fn load_observation_timings(campaign_id: &str) -> Vec<ObservationTiming> {
+fn load_observation_timings(campaign_id: &str) -> Vec<ObservationStep> {
     let Some(log_root) = home_dir().map(|home| home.join(".ploke-eval").join("logs")) else {
         return Vec::new();
     };
@@ -2354,7 +3135,7 @@ fn load_observation_timings(campaign_id: &str) -> Vec<ObservationTiming> {
     timings
 }
 
-fn parse_observation_log(campaign_id: &str, path: &Path, timings: &mut Vec<ObservationTiming>) {
+fn parse_observation_log(campaign_id: &str, path: &Path, timings: &mut Vec<ObservationStep>) {
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
@@ -2375,7 +3156,7 @@ fn parse_observation_log(campaign_id: &str, path: &Path, timings: &mut Vec<Obser
             .or_else(|| string_field(Some(&value), "phase"))
             .or_else(|| string_field(Some(&value), "message"))
             .unwrap_or_else(|| "(unnamed)".to_string());
-        timings.push(ObservationTiming {
+        timings.push(ObservationStep {
             timestamp: string_field(Some(&value), "timestamp"),
             node_id: string_field(span, "node_id")
                 .or_else(|| string_field(Some(&value), "node_id")),
@@ -2460,15 +3241,18 @@ fn format_millis(ms: u64) -> String {
     }
 }
 
-fn format_event_counts(counts: &BTreeMap<String, usize>) -> String {
-    if counts.is_empty() {
-        return "-".to_string();
+fn format_token_count(tokens: u32) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}m", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}k", tokens as f64 / 1_000.0)
+    } else {
+        tokens.to_string()
     }
-    counts
-        .iter()
-        .map(|(kind, count)| format!("{kind}:{count}"))
-        .collect::<Vec<_>>()
-        .join(",")
+}
+
+fn short_id(value: &str) -> &str {
+    value.get(..12).unwrap_or(value)
 }
 
 fn peek_prototype1_monitor_locations(

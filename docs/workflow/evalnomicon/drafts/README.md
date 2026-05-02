@@ -17,6 +17,9 @@ into the main evalnomicon book.
   End-of-session handoff for the current History/Crown direction: startup
   admission, lineage-local History height, configured-store genesis absence,
   artifact-local manifests, and the next block-content implementation slice.
+- [`prototype1-timing-projection-handoff-2026-05-02.md`](prototype1-timing-projection-handoff-2026-05-02.md)
+  Restart handoff for joining Prototype 1 node phase timings with run,
+  turn/tool, full-response, eval, and History/Crown timing evidence.
 - [`eval-triage-rubric.md`](eval-triage-rubric.md)
   Compact classification rubric for separating harness invalidity, known
   frontier limits, and action-surface failures before baseline.
