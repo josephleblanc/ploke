@@ -1352,7 +1352,7 @@ async fn persist_intervention_synthesis_for_record(
     let cfg = JsonLlmConfig {
         model_id: model_id.to_string(),
         provider_slug,
-        timeout_secs: 45,
+        timeout_secs: 120,
         max_tokens: 3200,
     };
     let run = synthesize_intervention_with_llm(input.clone(), cfg.clone())
@@ -5577,7 +5577,7 @@ async fn execute_protocol_intent_segments_quiet(
     let cfg = JsonLlmConfig {
         model_id: model_id.to_string(),
         provider_slug,
-        timeout_secs: 45,
+        timeout_secs: 120,
         max_tokens: 1200,
     };
     let segmented = 'retry: loop {
@@ -5809,7 +5809,7 @@ async fn execute_protocol_tool_call_segment_review_quiet(
     let cfg = JsonLlmConfig {
         model_id: model_id.to_string(),
         provider_slug,
-        timeout_secs: 45,
+        timeout_secs: 120,
         max_tokens: 1200,
     };
     let protocol = review::ToolCallSegmentReview::new(JsonAdjudicator::new(client, cfg.clone()));
@@ -6105,7 +6105,7 @@ impl ProtocolToolCallSegmentReviewCommand {
         let cfg = JsonLlmConfig {
             model_id: model_id.to_string(),
             provider_slug,
-            timeout_secs: 45,
+            timeout_secs: 120,
             max_tokens: 1200,
         };
         let adjudicator = JsonAdjudicator::new(client, cfg.clone());
@@ -6247,7 +6247,7 @@ impl ProtocolToolCallIntentSegmentsCommand {
         let cfg = JsonLlmConfig {
             model_id: model_id.to_string(),
             provider_slug,
-            timeout_secs: 45,
+            timeout_secs: 120,
             max_tokens: 1200,
         };
         let protocol =

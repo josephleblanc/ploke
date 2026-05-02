@@ -39,6 +39,6 @@ pub use utils::const_settings::{HTTP_REFERER, HTTP_TITLE};
 
 use serde::{Deserialize, Serialize};
 
-/// The default number of seconds for timeout on LLM request loop.
+/// The default number of seconds for a non-streaming LLM HTTP response.
 // TODO: Add this to user config
-pub const LLM_TIMEOUT_SECS: u64 = 45;
+pub const LLM_TIMEOUT_SECS: u64 = 120;

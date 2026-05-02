@@ -139,26 +139,30 @@ pub async fn chat_step<R: Router>(
         {
             Ok(resp) => resp,
             Err(error) => {
-                trace_chat_http_error(
-                    request_id,
-                    attempt,
-                    max_attempts,
-                    "send",
-                    url,
-                    start.elapsed(),
-                    error.is_timeout(),
-                    &error.to_string(),
-                );
-                let phase = if error.is_timeout() {
+                let send_failure = if error.is_timeout() {
                     HttpSendFailure::Timeout
                 } else {
                     HttpSendFailure::Failed
                 };
+                trace_chat_http_error(ChatHttpErrorTrace {
+                    request_id,
+                    attempt,
+                    max_attempts,
+                    phase: "send",
+                    url,
+                    status: None,
+                    failure: send_failure.as_str(),
+                    receive_phase: None,
+                    body_failure: None,
+                    elapsed: start.elapsed(),
+                    is_timeout: error.is_timeout(),
+                    raw_error: &error.to_string(),
+                });
                 let failure = LlmError::Http(HttpFailure::send(
                     Some(url.to_string()),
                     Some(start.elapsed().as_millis()),
                     format!("sending request to {url}: {error}"),
-                    phase,
+                    send_failure,
                 ));
                 if should_retry_send_error(&error) && attempt < max_attempts {
                     let backoff = compute_retry_backoff(cfg, attempt, None);
@@ -195,31 +199,29 @@ pub async fn chat_step<R: Router>(
         let body = match resp.text().await {
             Ok(body) => body,
             Err(error) => {
-                trace_chat_http_error(
+                let body_failure = classify_body_failure(&error);
+                trace_chat_http_error(ChatHttpErrorTrace {
                     request_id,
                     attempt,
                     max_attempts,
-                    "body",
-                    &resp_url,
-                    start.elapsed(),
-                    error.is_timeout(),
-                    &error.to_string(),
-                );
-                let phase = if error.is_timeout() {
-                    HttpBodyFailure::Timeout
-                } else if error.is_decode() {
-                    HttpBodyFailure::DecodeFailed
-                } else {
-                    HttpBodyFailure::ReadFailed
-                };
+                    phase: "body",
+                    url: &resp_url,
+                    status: Some(status),
+                    failure: "receive",
+                    receive_phase: Some("body"),
+                    body_failure: Some(body_failure.as_str()),
+                    elapsed: start.elapsed(),
+                    is_timeout: error.is_timeout(),
+                    raw_error: &error.to_string(),
+                });
                 let failure = LlmError::Http(HttpFailure::receive(
                     Some(resp_url.clone()),
                     Some(start.elapsed().as_millis()),
                     Some(status),
                     format!("while reading response body (status {status}): {error}"),
-                    HttpReceivePhase::Body(phase),
+                    HttpReceivePhase::Body(body_failure.clone()),
                 ));
-                if should_retry_body_error(&error) && attempt < max_attempts {
+                if should_retry_body_failure(status, &body_failure) && attempt < max_attempts {
                     let backoff = compute_retry_backoff(cfg, attempt, retry_after);
                     trace_chat_http_retry_scheduled(
                         request_id,
@@ -233,6 +235,17 @@ pub async fn chat_step<R: Router>(
                     );
                     sleep(backoff).await;
                     continue;
+                } else if attempt < max_attempts {
+                    trace_chat_http_retry_suppressed(
+                        request_id,
+                        attempt,
+                        max_attempts,
+                        &resp_url,
+                        "body",
+                        Some(status),
+                        Some(body_failure.as_str()),
+                        start.elapsed(),
+                    );
                 }
                 return Err(failure);
             }
@@ -527,38 +540,89 @@ fn trace_chat_http_completed(
     );
 }
 
-fn trace_chat_http_error(
+struct ChatHttpErrorTrace<'a> {
     request_id: u64,
     attempt: u32,
     max_attempts: u32,
-    phase: &str,
-    url: &str,
+    phase: &'a str,
+    url: &'a str,
+    status: Option<u16>,
+    failure: &'a str,
+    receive_phase: Option<&'a str>,
+    body_failure: Option<&'a str>,
     elapsed: Duration,
     is_timeout: bool,
-    error: &str,
-) {
+    raw_error: &'a str,
+}
+
+fn trace_chat_http_error(event: ChatHttpErrorTrace<'_>) {
     emit_chat_http_stderr_line(serde_json::json!({
         "event": "chat_http_request_error",
+        "request_id": event.request_id,
+        "attempt": event.attempt,
+        "max_attempts": event.max_attempts,
+        "phase": event.phase,
+        "url": event.url,
+        "status": event.status,
+        "failure": event.failure,
+        "receive_phase": event.receive_phase,
+        "body_failure": event.body_failure,
+        "elapsed_ms": event.elapsed.as_millis(),
+        "is_timeout": event.is_timeout,
+        "raw_error": event.raw_error
+    }));
+    tracing::warn!(
+        target: "chat_http",
+        event = "chat_http_request_error",
+        request_id = event.request_id,
+        attempt = event.attempt,
+        max_attempts = event.max_attempts,
+        phase = event.phase,
+        url = event.url,
+        status = event.status,
+        failure = event.failure,
+        receive_phase = event.receive_phase,
+        body_failure = event.body_failure,
+        elapsed_ms = event.elapsed.as_millis(),
+        is_timeout = event.is_timeout,
+        raw_error = event.raw_error
+    );
+}
+
+fn trace_chat_http_retry_suppressed(
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
+    url: &str,
+    phase: &str,
+    status: Option<u16>,
+    body_failure: Option<&str>,
+    elapsed: Duration,
+) {
+    emit_chat_http_stderr_line(serde_json::json!({
+        "event": "chat_http_retry_suppressed",
         "request_id": request_id,
         "attempt": attempt,
         "max_attempts": max_attempts,
         "phase": phase,
         "url": url,
-        "elapsed_ms": elapsed.as_millis(),
-        "is_timeout": is_timeout,
-        "error": error
+        "status": status,
+        "body_failure": body_failure,
+        "reason": "classified_non_retryable",
+        "elapsed_ms": elapsed.as_millis()
     }));
     tracing::warn!(
         target: "chat_http",
-        event = "chat_http_request_error",
+        event = "chat_http_retry_suppressed",
         request_id,
         attempt,
         max_attempts,
         phase,
         url,
-        elapsed_ms = elapsed.as_millis(),
-        is_timeout,
-        error
+        status,
+        body_failure,
+        reason = "classified_non_retryable",
+        elapsed_ms = elapsed.as_millis()
     );
 }
 
@@ -566,8 +630,41 @@ fn should_retry_send_error(error: &reqwest::Error) -> bool {
     error.is_timeout() || error.is_connect() || error.is_request() || error.is_body()
 }
 
-fn should_retry_body_error(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_body()
+fn should_retry_body_failure(status: u16, failure: &HttpBodyFailure) -> bool {
+    match failure {
+        HttpBodyFailure::Timeout => !(200..300).contains(&status) && should_retry_status(status),
+        HttpBodyFailure::ReadFailed => true,
+        HttpBodyFailure::DecodeFailed => false,
+    }
+}
+
+fn classify_body_failure(error: &reqwest::Error) -> HttpBodyFailure {
+    if error.is_timeout() {
+        HttpBodyFailure::Timeout
+    } else if error.is_decode() {
+        HttpBodyFailure::DecodeFailed
+    } else {
+        HttpBodyFailure::ReadFailed
+    }
+}
+
+impl HttpSendFailure {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl HttpBodyFailure {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::ReadFailed => "read_failed",
+            Self::DecodeFailed => "decode_failed",
+        }
+    }
 }
 
 fn should_retry_status(status: u16) -> bool {
@@ -1150,5 +1247,24 @@ mod tests {
             Duration::from_secs(2)
         );
         assert_eq!(compute_retry_backoff(&cfg, 3, None), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn body_timeout_after_success_status_is_not_retried() {
+        assert!(!should_retry_body_failure(200, &HttpBodyFailure::Timeout));
+        assert!(!should_retry_body_failure(204, &HttpBodyFailure::Timeout));
+        assert!(should_retry_body_failure(503, &HttpBodyFailure::Timeout));
+    }
+
+    #[test]
+    fn body_decode_failure_is_not_retried() {
+        assert!(!should_retry_body_failure(
+            200,
+            &HttpBodyFailure::DecodeFailed
+        ));
+        assert!(!should_retry_body_failure(
+            503,
+            &HttpBodyFailure::DecodeFailed
+        ));
     }
 }
