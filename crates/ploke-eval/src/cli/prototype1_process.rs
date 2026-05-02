@@ -740,6 +740,15 @@ fn cleanup_prototype1_child_build_products(
     }
 
     let target_dir = node.node_dir.join("target");
+    remove_node_target(manifest_path, campaign_id, node, &target_dir)
+}
+
+fn remove_node_target(
+    manifest_path: &Path,
+    campaign_id: &str,
+    node: &crate::intervention::Prototype1NodeRecord,
+    target_dir: &Path,
+) -> Result<(), PrepareError> {
     ensure_node_child_path(&node.node_dir, &target_dir)?;
     match fs::remove_dir_all(&target_dir) {
         Ok(()) => observe::Step::start(observe::span!(
@@ -773,7 +782,7 @@ fn cleanup_prototype1_child_build_products(
             ))
             .fail("node_target_remove", &source);
             return Err(PrepareError::WriteManifest {
-                path: target_dir,
+                path: target_dir.to_path_buf(),
                 source,
             });
         }
@@ -1596,6 +1605,15 @@ fn build_prototype1_runner_binary(
         path: node.binary_path.clone(),
         source,
     })?;
+    // The promoted executable is the child launch artifact. Cargo's build tree is
+    // scratch space and can exceed several GiB, so remove it before any later
+    // stage can fail and strand it under the node.
+    remove_node_target(
+        campaign_manifest_path,
+        campaign_id,
+        &node,
+        target_dir.as_path(),
+    )?;
     let _ = update_node_status(
         campaign_id,
         campaign_manifest_path,
