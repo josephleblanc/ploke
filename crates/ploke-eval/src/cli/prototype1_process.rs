@@ -148,6 +148,7 @@ use crate::cli::prototype1_state::journal::{
     ActiveCheckoutAdvancedEntry, ChildArtifactCommittedEntry, JournalEntry, PrototypeJournal,
     Streams, SuccessorHandoffEntry, prototype1_transition_journal_path,
 };
+use crate::cli::prototype1_state::observe;
 use crate::cli::prototype1_state::parent::{Parent, Retired, Selectable};
 use crate::cli::prototype1_state::successor::Record as SuccessorRecord;
 use crate::intervention::{
@@ -545,7 +546,8 @@ fn install_prototype1_successor_artifact(
                 phase: "prototype1_successor_worktree_cleanup",
                 detail: source.to_string(),
             })?;
-        cleanup_prototype1_child_build_products(node)?;
+        let manifest_path = campaign_manifest_path(campaign_id)?;
+        cleanup_prototype1_child_build_products(&manifest_path, campaign_id, node)?;
         install_committed_successor_artifact(
             campaign_id,
             active_parent_root,
@@ -584,6 +586,7 @@ fn install_committed_successor_artifact(
     previous_parent: Option<ParentIdentity>,
 ) -> Result<SurfaceCommitment, PrepareError> {
     let backend = GitWorktreeBackend;
+    let manifest_path = campaign_manifest_path(campaign_id)?;
     backend
         .verify_artifact_target(
             active_parent_root,
@@ -596,7 +599,7 @@ fn install_committed_successor_artifact(
             detail: source.to_string(),
         })?;
     append_prototype1_journal_entry(
-        &campaign_manifest_path(campaign_id)?,
+        &manifest_path,
         JournalEntry::Successor(SuccessorRecord::checkout(
             campaign_id.to_string(),
             node.node_id.clone(),
@@ -607,12 +610,30 @@ fn install_committed_successor_artifact(
         )),
         "prototype1_successor_checkout_before_journal",
     )?;
-    let installed_commit = backend
-        .install_artifact_in_active_checkout(active_parent_root, &workspace.branch)
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_successor_checkout_switch",
-            detail: source.to_string(),
-        })?;
+    let checkout_step = observe::Step::start(observe::span!(
+        "prototype1.parent.checkout.active",
+        campaign_id = %campaign_id,
+        node_id = %node.node_id,
+        generation = node.generation,
+        active_parent_root = %active_parent_root.display(),
+        selected_branch = %workspace.branch.0,
+        target_relpath = %resolved.target_relpath.display(),
+    ));
+    let installed_commit =
+        match backend.install_artifact_in_active_checkout(active_parent_root, &workspace.branch) {
+            Ok(installed_commit) => {
+                checkout_step.success();
+                installed_commit
+            }
+            Err(source) => {
+                let error = PrepareError::DatabaseSetup {
+                    phase: "prototype1_successor_checkout_switch",
+                    detail: source.to_string(),
+                };
+                checkout_step.fail("prototype1_successor_checkout_switch", &error);
+                return Err(error);
+            }
+        };
     let identity =
         crate::cli::prototype1_state::identity::load_parent_identity(active_parent_root)?;
     identity.validate_for_command(campaign_id, Some(&node.node_id))?;
@@ -623,7 +644,7 @@ fn install_committed_successor_artifact(
             detail: source.to_string(),
         })?;
     append_prototype1_journal_entry(
-        &campaign_manifest_path(campaign_id)?,
+        &manifest_path,
         JournalEntry::Successor(SuccessorRecord::checkout(
             campaign_id.to_string(),
             node.node_id.clone(),
@@ -635,18 +656,29 @@ fn install_committed_successor_artifact(
         "prototype1_successor_checkout_after_journal",
     )?;
     append_prototype1_journal_entry(
-        &campaign_manifest_path(campaign_id)?,
+        &manifest_path,
         JournalEntry::ActiveCheckoutAdvanced(ActiveCheckoutAdvancedEntry {
             recorded_at: RecordedAt::now(),
             campaign_id: campaign_id.to_string(),
             previous_parent_identity: previous_parent,
-            selected_parent_identity: identity,
+            selected_parent_identity: identity.clone(),
             active_parent_root: active_parent_root.to_path_buf(),
             selected_branch: workspace.branch.0.clone(),
-            installed_commit: installed_commit.0,
+            installed_commit: installed_commit.0.clone(),
         }),
         "prototype1_successor_checkout_journal",
     )?;
+    observe::Step::start(observe::span!(
+        "prototype1.parent.checkout.advanced",
+        campaign_id = %campaign_id,
+        selected_parent_id = %identity.parent_id,
+        selected_node_id = %identity.node_id,
+        selected_generation = identity.generation,
+        selected_branch = %workspace.branch.0,
+        installed_commit = %installed_commit.0,
+        active_parent_root = %active_parent_root.display(),
+    ))
+    .success();
     Ok(surface)
 }
 
@@ -664,13 +696,42 @@ fn ensure_node_child_path(node_dir: &Path, path: &Path) -> Result<(), PrepareErr
 }
 
 fn cleanup_prototype1_child_build_products(
+    manifest_path: &Path,
+    campaign_id: &str,
     node: &crate::intervention::Prototype1NodeRecord,
 ) -> Result<(), PrepareError> {
     ensure_node_child_path(&node.node_dir, &node.binary_path)?;
     match fs::remove_file(&node.binary_path) {
-        Ok(()) => {}
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(()) => observe::Step::start(observe::span!(
+            "prototype1.cleanup.binary",
+            campaign_id = %campaign_id,
+            node_id = %node.node_id,
+            generation = node.generation,
+            manifest_path = %manifest_path.display(),
+            path = %node.binary_path.display(),
+        ))
+        .removed(),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.binary",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %node.binary_path.display(),
+            ))
+            .missing()
+        }
         Err(source) => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.binary",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %node.binary_path.display(),
+            ))
+            .fail("child_binary_remove", &source);
             return Err(PrepareError::WriteManifest {
                 path: node.binary_path.clone(),
                 source,
@@ -681,9 +742,36 @@ fn cleanup_prototype1_child_build_products(
     let target_dir = node.node_dir.join("target");
     ensure_node_child_path(&node.node_dir, &target_dir)?;
     match fs::remove_dir_all(&target_dir) {
-        Ok(()) => {}
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(()) => observe::Step::start(observe::span!(
+            "prototype1.cleanup.target",
+            campaign_id = %campaign_id,
+            node_id = %node.node_id,
+            generation = node.generation,
+            manifest_path = %manifest_path.display(),
+            path = %target_dir.display(),
+        ))
+        .removed(),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.target",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %target_dir.display(),
+            ))
+            .missing()
+        }
         Err(source) => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.target",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %target_dir.display(),
+            ))
+            .fail("node_target_remove", &source);
             return Err(PrepareError::WriteManifest {
                 path: target_dir,
                 source,
@@ -695,6 +783,8 @@ fn cleanup_prototype1_child_build_products(
 
 fn cleanup_prototype1_child_workspace(
     active_parent_root: &Path,
+    manifest_path: &Path,
+    campaign_id: &str,
     node: &crate::intervention::Prototype1NodeRecord,
 ) -> Result<(), PrepareError> {
     let backend = GitWorktreeBackend;
@@ -704,13 +794,33 @@ fn cleanup_prototype1_child_workspace(
             phase: "prototype1_child_cleanup_prepare",
             detail: source.to_string(),
         })?;
-    backend
-        .remove(active_parent_root, &workspace)
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_child_worktree_cleanup",
-            detail: source.to_string(),
-        })?;
-    cleanup_prototype1_child_build_products(node)
+    match backend.remove(active_parent_root, &workspace) {
+        Ok(()) => observe::Step::start(observe::span!(
+            "prototype1.cleanup.workspace",
+            campaign_id = %campaign_id,
+            node_id = %node.node_id,
+            generation = node.generation,
+            manifest_path = %manifest_path.display(),
+            path = %node.workspace_root.display(),
+        ))
+        .removed(),
+        Err(source) => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.workspace",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %node.workspace_root.display(),
+            ))
+            .fail("child_worktree_remove", &source);
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_child_worktree_cleanup",
+                detail: source.to_string(),
+            });
+        }
+    }
+    cleanup_prototype1_child_build_products(manifest_path, campaign_id, node)
 }
 
 pub(crate) fn persist_prototype1_buildable_child_artifact(
@@ -963,8 +1073,17 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         expected_state,
         artifact_key,
     } = handoff_block;
-    let (retired_parent, sealed_block) = parent
-        .seal_block_with_artifact(open, seal, |crown| {
+    let predecessor_block_hash = expected_state.head().block_hash().copied();
+    let seal_step = observe::Step::start(observe::span!(
+        "prototype1.history.seal",
+        campaign_id = %campaign_id,
+        node_id = %node.node_id,
+        generation = node.generation,
+        runtime_id = %runtime_id,
+        predecessor_block_hash = ?predecessor_block_hash,
+    ));
+    let (retired_parent, sealed_block) =
+        match parent.seal_block_with_artifact(open, seal, |crown| {
             let environment = OperationalEnvironment::new()
                 .artifact(successor_artifact.clone())
                 .binary(EvidenceRef::new(format!(
@@ -984,12 +1103,37 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
                 )
                 .map_err(|source| source.into_history_error())?;
             Ok(artifact_claim)
-        })
-        .map_err(history_prepare_error)?;
+        }) {
+            Ok(result) => {
+                seal_step.success();
+                result
+            }
+            Err(source) => {
+                let error = history_prepare_error(source);
+                seal_step.fail("history_seal", &error);
+                return Err(error);
+            }
+        };
     let history_store = FsBlockStore::for_campaign_manifest(&manifest_path);
-    let stored_block = history_store
-        .append(&expected_state, &sealed_block)
-        .map_err(block_store_prepare_error)?;
+    let append_step = observe::Step::start(observe::span!(
+        "prototype1.history.append",
+        campaign_id = %campaign_id,
+        node_id = %node.node_id,
+        generation = node.generation,
+        runtime_id = %runtime_id,
+        predecessor_block_hash = ?predecessor_block_hash,
+    ));
+    let stored_block = match history_store.append(&expected_state, &sealed_block) {
+        Ok(stored_block) => {
+            append_step.success();
+            stored_block
+        }
+        Err(source) => {
+            let error = block_store_prepare_error(source);
+            append_step.fail("history_append", &error);
+            return Err(error);
+        }
+    };
     debug!(
         target: EXECUTION_DEBUG_TARGET,
         campaign = %campaign_id,
@@ -1033,14 +1177,34 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         "spawning detached prototype1 successor from active checkout"
     );
 
-    let mut child = spawn_prototype1_successor(
+    let spawn_step = observe::Step::start(observe::span!(
+        "prototype1.successor.spawn",
+        campaign_id = %campaign_id,
+        node_id = %node.node_id,
+        generation = node.generation,
+        runtime_id = %runtime_id,
+        active_parent_root = %active_parent_root.display(),
+        binary_path = %active_successor_binary_path.display(),
+        invocation_path = %invocation_path.display(),
+        ready_path = %ready_path.display(),
+    ));
+    let mut child = match spawn_prototype1_successor(
         &active_successor_binary_path,
         active_parent_root,
         &invocation_path,
         &invocation,
         &retired_parent,
         &streams,
-    )?;
+    ) {
+        Ok(child) => {
+            spawn_step.success();
+            child
+        }
+        Err(error) => {
+            spawn_step.fail("successor_spawn", &error);
+            return Err(error);
+        }
+    };
     let pid = child.id();
     append_successor_record(
         invocation.journal_path(),
@@ -1055,8 +1219,21 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         ),
         "prototype1_successor_start_journal",
     )?;
+    let ready_step = observe::Step::start(observe::span!(
+        "prototype1.successor.ready_wait",
+        campaign_id = %campaign_id,
+        node_id = %node.node_id,
+        generation = node.generation,
+        runtime_id = %runtime_id,
+        pid = pid,
+        active_parent_root = %active_parent_root.display(),
+        binary_path = %active_successor_binary_path.display(),
+        invocation_path = %invocation_path.display(),
+        ready_path = %ready_path.display(),
+    ));
     match wait_for_prototype1_successor_ready(&mut child, &ready_path)? {
         SuccessorWait::Ready => {
+            ready_step.success();
             append_prototype1_journal_entry(
                 &manifest_path,
                 JournalEntry::SuccessorHandoff(SuccessorHandoffEntry {
@@ -1083,6 +1260,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
             ))
         }
         SuccessorWait::TimedOut { waited_ms } => {
+            ready_step.timed_out();
             append_successor_record(
                 invocation.journal_path(),
                 SuccessorRecord::timed_out(&invocation, waited_ms, ready_path),
@@ -1091,6 +1269,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
             Ok((retired_parent, None))
         }
         SuccessorWait::ExitedBeforeReady { exit_code } => {
+            ready_step.exited_before_ready();
             append_successor_record(
                 invocation.journal_path(),
                 SuccessorRecord::exited_before_ready(&invocation, exit_code),
@@ -1806,7 +1985,12 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
         &node.node_id,
     )? {
         Prototype1NodeBuildOutcome::CompileFailed(result) => {
-            cleanup_prototype1_child_workspace(repo_root, &node)?;
+            cleanup_prototype1_child_workspace(
+                repo_root,
+                &baseline_manifest_path,
+                baseline_campaign_id,
+                &node,
+            )?;
             return Ok(Prototype1NodeExecutionOutcome::Failed(result));
         }
         Prototype1NodeBuildOutcome::Built => {}
@@ -1878,7 +2062,12 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
     };
 
     if runner_result.disposition != Prototype1RunnerDisposition::Succeeded {
-        cleanup_prototype1_child_workspace(repo_root, &node)?;
+        cleanup_prototype1_child_workspace(
+            repo_root,
+            &baseline_manifest_path,
+            baseline_campaign_id,
+            &node,
+        )?;
         return Ok(Prototype1NodeExecutionOutcome::Failed(runner_result));
     }
 
@@ -1896,7 +2085,12 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
         let report = load_prototype1_branch_evaluation_report(evaluation_artifact_path)?;
         Ok(Prototype1NodeExecutionOutcome::Evaluated(report))
     })();
-    cleanup_prototype1_child_workspace(repo_root, &node)?;
+    cleanup_prototype1_child_workspace(
+        repo_root,
+        &baseline_manifest_path,
+        baseline_campaign_id,
+        &node,
+    )?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
         campaign = %baseline_campaign_id,

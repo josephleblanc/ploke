@@ -211,6 +211,65 @@ pub(crate) struct ParentStartedEntry {
     pub pid: u32,
 }
 
+/// Operational resource observations emitted by the runtime.
+///
+/// These records are telemetry, not History authority. They live in the shared
+/// transition journal because they are cross-runtime observations that should
+/// be easy to deserialize for long-horizon introspection.
+pub(crate) mod resource {
+    use super::*;
+
+    /// Resource being measured.
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum Subject {
+        /// Cargo's build artifact directory for the active parent checkout.
+        CargoTarget,
+    }
+
+    /// Parent-turn boundary at which the resource was measured.
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum Phase {
+        /// The parent has entered the typed parent path.
+        ParentStart,
+        /// The parent turn is returning a successful command result.
+        ParentComplete,
+    }
+
+    /// Measurement outcome.
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum Status {
+        /// The resource existed and was measured.
+        Measured,
+        /// The resource path did not exist.
+        Missing,
+        /// The resource path existed but could not be fully measured.
+        Failed,
+    }
+
+    /// Machine-readable resource sample for operational introspection.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Sample {
+        pub recorded_at: RecordedAt,
+        pub campaign_id: String,
+        pub parent_id: String,
+        pub node_id: String,
+        pub generation: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub runtime_id: Option<RuntimeId>,
+        pub subject: Subject,
+        pub phase: Phase,
+        pub path: PathBuf,
+        pub status: Status,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub bytes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub error: Option<String>,
+    }
+}
+
 /// Legacy storage label for a durable child artifact commit record produced
 /// before a child can be selected as successor.
 ///
@@ -280,6 +339,7 @@ pub(crate) struct SuccessorHandoffEntry {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum JournalEntry {
     ParentStarted(ParentStartedEntry),
+    Resource(resource::Sample),
     ChildArtifactCommitted(ChildArtifactCommittedEntry),
     ActiveCheckoutAdvanced(ActiveCheckoutAdvancedEntry),
     SuccessorHandoff(SuccessorHandoffEntry),
@@ -461,6 +521,7 @@ impl PrototypeJournal {
                 JournalEntry::MaterializeBranch(_)
                 | JournalEntry::BuildChild(_)
                 | JournalEntry::ParentStarted(_)
+                | JournalEntry::Resource(_)
                 | JournalEntry::ChildArtifactCommitted(_)
                 | JournalEntry::ActiveCheckoutAdvanced(_)
                 | JournalEntry::SuccessorHandoff(_)

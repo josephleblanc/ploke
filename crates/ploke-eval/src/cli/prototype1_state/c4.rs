@@ -28,6 +28,7 @@ use super::invocation::result_path;
 use super::journal::{
     CompletionEntry, JournalEntry, ObservedChildResult, PrototypeJournal, PrototypeJournalError,
 };
+use super::observe;
 
 const RESULT_POLL: Duration = Duration::from_millis(100);
 
@@ -270,6 +271,15 @@ impl Intervention<C4, C5> for ObserveChild {
         let runner_result_path = RunnerResultSurface
             .read_view(&from, &())
             .map_err(CommitError::Transition)?;
+        let mut wait = Some(observe::Step::start(observe::span!(
+            "prototype1.child.observe.wait_for_result",
+            transition_id = ?self.transition_id,
+            campaign_id = %from.campaign_id,
+            node_id = %from.node.node_id,
+            generation = from.node.generation,
+            runtime_id = %runtime_id,
+            expected_runner_result_path = %runner_result_path.display(),
+        )));
 
         records
             .append(JournalEntry::ObserveChild(completion_entry(
@@ -295,6 +305,9 @@ impl Intervention<C4, C5> for ObserveChild {
             if let Some(runner_result_path) =
                 child_result_path(records, runtime_id).map_err(CommitError::Transition)?
             {
+                if let Some(wait) = wait.take() {
+                    wait.success();
+                }
                 let runner_result =
                     load_runner_result_at(&runner_result_path).map_err(|source| {
                         CommitError::Transition(ObserveChildError::LoadRunnerResult {
@@ -302,6 +315,21 @@ impl Intervention<C4, C5> for ObserveChild {
                             source,
                         })
                     })?;
+                let runner_outcome = observe::Step::start(observe::span!(
+                    "prototype1.child.observe.load_runner_result",
+                    transition_id = ?self.transition_id,
+                    campaign_id = %from.campaign_id,
+                    node_id = %from.node.node_id,
+                    generation = from.node.generation,
+                    runtime_id = %runtime_id,
+                    runner_result_path = %runner_result_path.display(),
+                    runner_disposition = ?runner_result.disposition,
+                ));
+                if runner_result.disposition == Prototype1RunnerDisposition::Succeeded {
+                    runner_outcome.success();
+                } else {
+                    runner_outcome.rejected();
+                }
                 let node = load_node_record(&from.campaign_manifest_path, &from.node.node_id)
                     .map_err(|source| {
                         CommitError::Transition(ObserveChildError::LoadNode {
@@ -351,6 +379,18 @@ impl Intervention<C4, C5> for ObserveChild {
                     )?;
                 let report =
                     load_report(&evaluation_artifact_path).map_err(CommitError::Transition)?;
+                observe::Step::start(observe::span!(
+                    "prototype1.child.observe.load_evaluation_report",
+                    transition_id = ?self.transition_id,
+                    campaign_id = %from.campaign_id,
+                    node_id = %from.node.node_id,
+                    generation = from.node.generation,
+                    runtime_id = %runtime_id,
+                    runner_result_path = %runner_result_path.display(),
+                    evaluation_artifact_path = %evaluation_artifact_path.display(),
+                    branch_disposition = ?report.overall_disposition,
+                ))
+                .success();
                 let next = C5 {
                     base: C4 { node, ..from },
                     report: Report {

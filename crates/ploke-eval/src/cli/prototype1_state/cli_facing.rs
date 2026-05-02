@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     str::FromStr,
     thread,
@@ -12,7 +12,7 @@ use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_llm::{ModelId, ProviderKey};
 use ploke_tui::tools::ToolName;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument, warn};
 
 use crate::{
     BranchDisposition, BranchEvaluationInput, BranchEvaluationResult, CampaignManifest,
@@ -56,9 +56,10 @@ use crate::{
                 self, InvocationAuthority, SuccessorCompletionStatus, SuccessorInvocation,
             },
             journal::{
-                JournalEntry, ParentStartedEntry, PrototypeJournal,
+                self, JournalEntry, ParentStartedEntry, PrototypeJournal,
                 prototype1_transition_journal_path,
             },
+            observe,
             parent::{
                 Check, Checked, ChildPlan, ChildPlanFile, ChildPlanFiles, Genesis, Parent, Planned,
                 Predecessor, Ready, Selectable, Startup, Unchecked,
@@ -2173,6 +2174,21 @@ fn journal_entry_summary(entry: &JournalEntry) -> String {
             entry.parent_identity.generation,
             entry.pid
         ),
+        JournalEntry::Resource(entry) => format!(
+            "{} subject={:?} phase={:?} parent={} node={} generation={} status={:?} bytes={} path={}",
+            "resource",
+            entry.subject,
+            entry.phase,
+            entry.parent_id,
+            entry.node_id,
+            entry.generation,
+            entry.status,
+            entry
+                .bytes
+                .map(|bytes| bytes.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            entry.path.display()
+        ),
         JournalEntry::ChildArtifactCommitted(entry) => format!(
             "{} node={} generation={} branch={} target_commit={} identity_commit={}",
             "child_artifact_committed",
@@ -2274,6 +2290,7 @@ fn journal_entry_summary(entry: &JournalEntry) -> String {
 fn journal_entry_kind(entry: &JournalEntry) -> &'static str {
     match entry {
         JournalEntry::ParentStarted(_) => "parent_started",
+        JournalEntry::Resource(_) => "resource",
         JournalEntry::ChildArtifactCommitted(_) => "child_artifact_committed",
         JournalEntry::ActiveCheckoutAdvanced(_) => "active_checkout_advanced",
         JournalEntry::SuccessorHandoff(_) => "successor_handoff",
@@ -3154,6 +3171,88 @@ fn record_failed_successor_turn(invocation_path: &Path, error: &PrepareError) {
     }
 }
 
+fn directory_size_bytes(path: &Path) -> io::Result<u64> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+    if !metadata.is_dir() {
+        return Ok(0);
+    }
+
+    let mut bytes = 0_u64;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        bytes = bytes.saturating_add(directory_size_bytes(&entry.path())?);
+    }
+    Ok(bytes)
+}
+
+fn append_parent_target_sample(
+    journal: &mut PrototypeJournal,
+    campaign_id: &str,
+    parent_identity: &ParentIdentity,
+    runtime_id: Option<crate::cli::prototype1_state::event::RuntimeId>,
+    repo_root: &Path,
+    phase: journal::resource::Phase,
+) {
+    let path = repo_root.join("target");
+    let measurement = match directory_size_bytes(&path) {
+        Ok(bytes) => (journal::resource::Status::Measured, Some(bytes), None),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            (journal::resource::Status::Missing, None, None)
+        }
+        Err(source) => (
+            journal::resource::Status::Failed,
+            None,
+            Some(source.to_string()),
+        ),
+    };
+    let sample = journal::resource::Sample {
+        recorded_at: RecordedAt::now(),
+        campaign_id: campaign_id.to_string(),
+        parent_id: parent_identity.parent_id.clone(),
+        node_id: parent_identity.node_id.clone(),
+        generation: parent_identity.generation,
+        runtime_id,
+        subject: journal::resource::Subject::CargoTarget,
+        phase,
+        path,
+        status: measurement.0,
+        bytes: measurement.1,
+        error: measurement.2,
+    };
+
+    info!(
+        target: EXECUTION_DEBUG_TARGET,
+        event = "prototype1_resource_sample",
+        campaign = %sample.campaign_id,
+        parent_id = %sample.parent_id,
+        node_id = %sample.node_id,
+        generation = sample.generation,
+        runtime_id = ?sample.runtime_id,
+        subject = ?sample.subject,
+        phase = ?sample.phase,
+        status = ?sample.status,
+        bytes = ?sample.bytes,
+        path = %sample.path.display(),
+        "recorded prototype1 resource sample"
+    );
+
+    if let Err(source) = journal.append(JournalEntry::Resource(sample)) {
+        warn!(
+            target: EXECUTION_DEBUG_TARGET,
+            event = "prototype1_resource_sample_record_failed",
+            campaign = %campaign_id,
+            parent_id = %parent_identity.parent_id,
+            node_id = %parent_identity.node_id,
+            generation = parent_identity.generation,
+            error = %source,
+            "failed to append prototype1 resource sample"
+        );
+    }
+}
+
 impl Prototype1StateCommand {
     #[instrument(
         target = "ploke_exec",
@@ -3248,6 +3347,16 @@ impl Prototype1StateCommand {
             .map_err(|err| {
                 prototype1_state_transition_error("prototype1_parent_start", err.to_string())
             })?;
+        append_parent_target_sample(
+            &mut journal,
+            &campaign_id,
+            &parent_identity,
+            handoff_invocation
+                .as_ref()
+                .map(|invocation| invocation.runtime_id()),
+            &repo_root,
+            journal::resource::Phase::ParentStart,
+        );
 
         debug!(
             target: EXECUTION_DEBUG_TARGET,
@@ -3440,6 +3549,17 @@ impl Prototype1StateCommand {
                                                         decide_node_successor_continuation(
                                                             &scheduler, &node, None,
                                                         );
+                                                    observe::Step::start(observe::span!(
+                                                        "prototype1.parent.select_successor",
+                                                        campaign_id = %campaign_id,
+                                                        node_id = %node.node_id,
+                                                        generation = node.generation,
+                                                        disposition = ?decision.disposition,
+                                                        selected_next_branch_id = ?decision.selected_next_branch_id,
+                                                        next_generation = decision.next_generation,
+                                                        total_nodes_after_continue = decision.total_nodes_after_continue,
+                                                    ))
+                                                    .success();
                                                     journal
                                                         .append(JournalEntry::Successor(
                                                             SuccessorRecord::selected(
@@ -3527,6 +3647,16 @@ impl Prototype1StateCommand {
             };
 
         let node = load_node_record(&manifest_path, &candidate_node_id)?;
+        append_parent_target_sample(
+            &mut journal,
+            &campaign_id,
+            &parent_identity,
+            handoff_invocation
+                .as_ref()
+                .map(|invocation| invocation.runtime_id()),
+            &repo_root,
+            journal::resource::Phase::ParentComplete,
+        );
         let report = Prototype1StateReport {
             campaign_id,
             node_id: candidate_node_id,

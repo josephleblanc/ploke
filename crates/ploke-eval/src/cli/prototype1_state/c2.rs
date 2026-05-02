@@ -37,6 +37,7 @@ use super::c1::{
 };
 use super::event::{ContentHash, Hashes, Paths, RecordedAt, Refs, TransitionId, World};
 use super::journal::{BuildEntry, BuildResult, FailureInfo, JournalEntry, PrototypeJournal};
+use super::observe;
 
 /// `C3`: parent binary over child artifact world with a promoted child binary
 /// present but not running.
@@ -355,7 +356,6 @@ impl Intervention<C2, C3> for BuildChild {
         let built_binary = scratch_dir
             .join("debug")
             .join(format!("ploke-eval{}", std::env::consts::EXE_SUFFIX));
-
         if from.binary.child_path.exists() {
             return Err(CommitError::Transition(
                 BuildChildError::ChildBinaryAlreadyPresent {
@@ -398,16 +398,30 @@ impl Intervention<C2, C3> for BuildChild {
             })?;
         }
 
-        let check = ProcessCommand::new("cargo")
-            .arg("check")
-            .arg("-p")
-            .arg("ploke-eval")
-            .arg("--bin")
-            .arg("ploke-eval")
-            .env("CARGO_TARGET_DIR", &scratch_dir)
-            .current_dir(&repo_root)
-            .output()
-            .map_err(|source| CommitError::Transition(BuildChildError::CheckInvoke { source }))?;
+        let check = observe::command_output(
+            observe::span!(
+                "prototype1.child.build.cargo_check",
+                transition_id = ?self.transition_id,
+                campaign_id = %from.campaign_id,
+                node_id = %from.node.node_id,
+                generation = from.node.generation,
+                scratch_dir = %scratch_dir.display(),
+                child_binary = %from.binary.child_path.display(),
+            ),
+            "cargo",
+            || {
+                ProcessCommand::new("cargo")
+                    .arg("check")
+                    .arg("-p")
+                    .arg("ploke-eval")
+                    .arg("--bin")
+                    .arg("ploke-eval")
+                    .env("CARGO_TARGET_DIR", &scratch_dir)
+                    .current_dir(&repo_root)
+                    .output()
+            },
+        )
+        .map_err(|source| CommitError::Transition(BuildChildError::CheckInvoke { source }))?;
 
         if !check.status.success() {
             let rejected = Rejected::CheckFailed(failure(&check));
@@ -452,16 +466,30 @@ impl Intervention<C2, C3> for BuildChild {
             return Ok(Outcome::Rejected(rejected));
         }
 
-        let build = ProcessCommand::new("cargo")
-            .arg("build")
-            .arg("-p")
-            .arg("ploke-eval")
-            .arg("--bin")
-            .arg("ploke-eval")
-            .env("CARGO_TARGET_DIR", &scratch_dir)
-            .current_dir(&repo_root)
-            .output()
-            .map_err(|source| CommitError::Transition(BuildChildError::BuildInvoke { source }))?;
+        let build = observe::command_output(
+            observe::span!(
+                "prototype1.child.build.cargo_build",
+                transition_id = ?self.transition_id,
+                campaign_id = %from.campaign_id,
+                node_id = %from.node.node_id,
+                generation = from.node.generation,
+                scratch_dir = %scratch_dir.display(),
+                child_binary = %from.binary.child_path.display(),
+            ),
+            "cargo",
+            || {
+                ProcessCommand::new("cargo")
+                    .arg("build")
+                    .arg("-p")
+                    .arg("ploke-eval")
+                    .arg("--bin")
+                    .arg("ploke-eval")
+                    .env("CARGO_TARGET_DIR", &scratch_dir)
+                    .current_dir(&repo_root)
+                    .output()
+            },
+        )
+        .map_err(|source| CommitError::Transition(BuildChildError::BuildInvoke { source }))?;
 
         if !build.status.success() {
             let rejected = Rejected::BuildFailed(failure(&build));
@@ -512,7 +540,20 @@ impl Intervention<C2, C3> for BuildChild {
             ));
         }
 
-        fs::copy(&built_binary, &from.binary.child_path).map_err(|source| {
+        observe::io_result(
+            observe::span!(
+                "prototype1.child.build.promote_binary",
+                transition_id = ?self.transition_id,
+                campaign_id = %from.campaign_id,
+                node_id = %from.node.node_id,
+                generation = from.node.generation,
+                source_binary = %built_binary.display(),
+                child_binary = %from.binary.child_path.display(),
+            ),
+            "promote_binary",
+            || fs::copy(&built_binary, &from.binary.child_path),
+        )
+        .map_err(|source| {
             CommitError::Transition(BuildChildError::PromoteBinary {
                 path: from.binary.child_path.clone(),
                 source,

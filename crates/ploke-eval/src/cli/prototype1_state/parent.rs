@@ -14,6 +14,7 @@ use crate::{
         },
         identity::{ParentIdentity, parent_identity_path},
         inner::{At, File, LineageKey, Message, MessageBox, Transition},
+        observe,
     },
     intervention::{
         Prototype1NodeRecord, load_node_record, prototype1_branch_registry_path,
@@ -444,12 +445,30 @@ impl Startup<Genesis> {
         identity: &ParentIdentity,
         manifest_path: &Path,
     ) -> Result<Startup<Validated>, PrepareError> {
+        let startup = observe::Step::start(observe::span!(
+            "prototype1.parent.startup.genesis",
+            campaign_id = %identity.campaign_id,
+            parent_id = %identity.parent_id,
+            node_id = %identity.node_id,
+            generation = identity.generation,
+            manifest_path = %manifest_path.display(),
+        ));
         let store = FsBlockStore::for_campaign_manifest(manifest_path);
         let lineage_id = LineageId::new(identity.campaign_id.clone());
-        let state = store
-            .lineage_state(&lineage_id)
-            .map_err(block_store_prepare_error)?;
-        Self::validated_from_state(identity, state)
+        let state = match store.lineage_state(&lineage_id) {
+            Ok(state) => state,
+            Err(source) => {
+                let error = block_store_prepare_error(source);
+                startup.fail("lineage_state", &error);
+                return Err(error);
+            }
+        };
+        let result = Self::validated_from_state(identity, state);
+        match &result {
+            Ok(_) => startup.success(),
+            Err(error) => startup.fail("genesis_startup", error),
+        }
+        result
     }
 
     fn validated_from_state(
@@ -484,41 +503,89 @@ impl Startup<Predecessor> {
         manifest_path: &Path,
         active_parent_root: &Path,
     ) -> Result<Startup<Validated>, PrepareError> {
+        let startup = observe::Step::start(observe::span!(
+            "prototype1.parent.startup.predecessor",
+            campaign_id = %identity.campaign_id,
+            parent_id = %identity.parent_id,
+            node_id = %identity.node_id,
+            generation = identity.generation,
+            manifest_path = %manifest_path.display(),
+            active_parent_root = %active_parent_root.display(),
+        ));
         let store = FsBlockStore::for_campaign_manifest(manifest_path);
         let lineage_id = LineageId::new(identity.campaign_id.clone());
-        let state = store
-            .lineage_state(&lineage_id)
-            .map_err(block_store_prepare_error)?;
+        let state = match store.lineage_state(&lineage_id) {
+            Ok(state) => state,
+            Err(source) => {
+                let error = block_store_prepare_error(source);
+                startup.fail("lineage_state", &error);
+                return Err(error);
+            }
+        };
         let head = match state.head() {
             StoreHead::Present(head) => head.clone(),
             StoreHead::Absent { .. } => {
-                return Err(PrepareError::DatabaseSetup {
+                let error = PrepareError::DatabaseSetup {
                     phase: "prototype1_history_successor_startup",
                     detail: format!(
                         "successor startup for campaign '{}' has no sealed History head to verify",
                         identity.campaign_id
                     ),
-                });
+                };
+                startup.fail("missing_predecessor_head", &error);
+                return Err(error);
             }
         };
-        let sealed = store
-            .sealed_head_block(&head)
-            .map_err(block_store_prepare_error)?;
-        let current_artifact = GitWorktreeBackend
-            .clean_tree_key(active_parent_root)
-            .map_err(backend_prepare_error)?
-            .tree_key_hash()
-            .map_err(history_prepare_error)?;
-        sealed
-            .verify_current_artifact_tree(&current_artifact, &ArtifactLocator)
-            .map_err(history_prepare_error)?;
-        let current_surface = GitWorktreeBackend
-            .surface_commitment(active_parent_root, active_parent_root)
-            .map_err(backend_prepare_error)?;
-        sealed
-            .verify_current_surface(&current_surface)
-            .map_err(history_prepare_error)?;
-        Self::validated_from_state(identity, state)
+        let sealed = match store.sealed_head_block(&head) {
+            Ok(sealed) => sealed,
+            Err(source) => {
+                let error = block_store_prepare_error(source);
+                startup.fail("sealed_head_block", &error);
+                return Err(error);
+            }
+        };
+        let current_artifact = match GitWorktreeBackend.clean_tree_key(active_parent_root) {
+            Ok(key) => match key.tree_key_hash() {
+                Ok(hash) => hash,
+                Err(source) => {
+                    let error = history_prepare_error(source);
+                    startup.fail("tree_key_hash", &error);
+                    return Err(error);
+                }
+            },
+            Err(source) => {
+                let error = backend_prepare_error(source);
+                startup.fail("clean_tree_key", &error);
+                return Err(error);
+            }
+        };
+        if let Err(source) =
+            sealed.verify_current_artifact_tree(&current_artifact, &ArtifactLocator)
+        {
+            let error = history_prepare_error(source);
+            startup.fail("verify_current_artifact_tree", &error);
+            return Err(error);
+        }
+        let current_surface =
+            match GitWorktreeBackend.surface_commitment(active_parent_root, active_parent_root) {
+                Ok(surface) => surface,
+                Err(source) => {
+                    let error = backend_prepare_error(source);
+                    startup.fail("surface_commitment", &error);
+                    return Err(error);
+                }
+            };
+        if let Err(source) = sealed.verify_current_surface(&current_surface) {
+            let error = history_prepare_error(source);
+            startup.fail("verify_current_surface", &error);
+            return Err(error);
+        }
+        let result = Self::validated_from_state(identity, state);
+        match &result {
+            Ok(_) => startup.success(),
+            Err(error) => startup.fail("predecessor_startup", error),
+        }
+        result
     }
 
     fn validated_from_state(

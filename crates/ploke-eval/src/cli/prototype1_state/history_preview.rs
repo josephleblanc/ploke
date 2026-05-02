@@ -724,6 +724,7 @@ struct JournalProjection {
 fn project_journal_entry(entry: &JournalEntry) -> JournalProjection {
     match entry {
         JournalEntry::ParentStarted(entry) => parent_started(entry),
+        JournalEntry::Resource(entry) => resource_sample(entry),
         JournalEntry::ChildArtifactCommitted(entry) => child_artifact_committed(entry),
         JournalEntry::ActiveCheckoutAdvanced(entry) => active_checkout_advanced(entry),
         JournalEntry::SuccessorHandoff(entry) => successor_handoff(entry),
@@ -734,6 +735,40 @@ fn project_journal_entry(entry: &JournalEntry) -> JournalProjection {
         JournalEntry::Child(entry) => child_record(entry),
         JournalEntry::ChildReady(entry) => child_ready(entry),
         JournalEntry::ObserveChild(entry) => observe_child(entry),
+    }
+}
+
+fn resource_sample(entry: &super::journal::resource::Sample) -> JournalProjection {
+    let mut missing = Vec::new();
+    if entry.status == super::journal::resource::Status::Failed {
+        missing.push(
+            entry
+                .error
+                .clone()
+                .unwrap_or_else(|| "resource sample failed without detail".to_string()),
+        );
+    }
+
+    JournalProjection {
+        entry_kind: EntryKind::Observation,
+        subject: format!("resource:{:?}:{}", entry.subject, entry.path.display()),
+        executor: format!("parent:{}", entry.parent_id),
+        observer: format!("parent:{}", entry.parent_id),
+        procedure_or_policy: "prototype1.resource.sample".to_string(),
+        generation: Some(entry.generation),
+        recorded_at: Some(entry.recorded_at),
+        input_refs: vec![format!("phase:{:?}", entry.phase)],
+        output_refs: vec![
+            format!("status:{:?}", entry.status),
+            format!(
+                "bytes:{}",
+                entry
+                    .bytes
+                    .map(|bytes| bytes.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+        ],
+        missing,
     }
 }
 

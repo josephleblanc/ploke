@@ -568,6 +568,7 @@ impl DedupedFields {
                     runtime_ids.insert(entry.runtime_id.to_string());
                 }
                 JournalEntry::ParentStarted(_)
+                | JournalEntry::Resource(_)
                 | JournalEntry::ChildArtifactCommitted(_)
                 | JournalEntry::ActiveCheckoutAdvanced(_)
                 | JournalEntry::MaterializeBranch(_)
@@ -717,6 +718,7 @@ fn summarize_compared_instances(report: &Prototype1BranchEvaluationReport) -> Ev
 fn journal_kind(entry: &JournalEntry) -> &'static str {
     match entry {
         JournalEntry::ParentStarted(_) => "parent_started",
+        JournalEntry::Resource(_) => "resource",
         JournalEntry::ChildArtifactCommitted(_) => "artifact:committed",
         JournalEntry::ActiveCheckoutAdvanced(_) => "checkout:advanced",
         JournalEntry::SuccessorHandoff(_) => "successor:handoff",

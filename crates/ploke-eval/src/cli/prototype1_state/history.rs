@@ -190,6 +190,16 @@
 //! consensus work must make the lineage coordinate explicit, so "one Crown"
 //! means one Crown per lineage, not one global singleton for the whole tree.
 //!
+//! Update recorded 2026-05-01 16:26 PDT: Artifact identity is not exclusive to
+//! one lineage. Multiple lineage heads may reference the same Artifact/tree key
+//! under policy. Lineage authority is keyed by the History lineage coordinate,
+//! not by git branch, worktree path, process id, runtime id, or Artifact
+//! identity alone. Therefore a sealed head should not accidentally turn
+//! `selected_successor` transport/debug identity into the authority source. The
+//! authority question is whether the incoming Runtime satisfies
+//! `MayEnterRuling(H, L, P, R_i)` for the lineage `L` under the current
+//! policy-bearing runtime surface and sealed Artifact/surface commitments.
+//!
 //! A sealed block must be a projection of the authority transition, not a caller
 //! assembled status blob. Mutable files such as `scheduler.json`,
 //! `branches.json`, node records, invocation files, ready/completion files, and

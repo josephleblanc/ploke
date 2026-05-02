@@ -142,6 +142,14 @@
 //! A Tree is operated over by a Runtime through an Intervention when the Runtime performs actions
 //! like checking out a branch, restoring an Artifact, or commiting a new Artifact. These operations
 //! also change the Artifact, and therefore are Interventions over the Configuration.
+//! Update recorded 2026-05-01 16:26 PDT: Tree and lineage are distinct. The
+//! Tree is the Artifact substrate; History lineage is an authority coordinate
+//! over admitted Artifact continuity. The same Artifact/tree key may be used by
+//! more than one lineage head under policy. Same branch, same worktree-derived
+//! Artifact, or same backend tree key is not by itself an authority conflict;
+//! the conflict is two authorities advancing the same History lineage head
+//! without the required local Crown, lock/lease, consensus, or fork-choice
+//! rule.
 //!
 //! ## Role and checkout model
 //!
@@ -761,6 +769,7 @@ pub(crate) mod inner;
 pub(crate) mod invocation;
 pub(crate) mod journal;
 pub(crate) mod metrics;
+pub(crate) mod observe;
 pub(crate) mod parent;
 pub(crate) mod record;
 pub(crate) mod report;
