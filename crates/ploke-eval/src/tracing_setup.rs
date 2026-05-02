@@ -14,6 +14,8 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::layout::ploke_eval_home;
 
+const CHAT_HTTP_TARGET: &str = "chat_http";
+
 #[allow(dead_code)]
 pub struct LoggingGuards {
     pub main: WorkerGuard,
@@ -133,7 +135,9 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
                     .with_line_number(true)
                     .with_writer(writer)
                     .with_filter(
-                        filter::Targets::new().with_target(EXECUTION_DEBUG_TARGET, Level::TRACE),
+                        filter::Targets::new()
+                            .with_target(EXECUTION_DEBUG_TARGET, Level::TRACE)
+                            .with_target(CHAT_HTTP_TARGET, Level::TRACE),
                     ),
             )
             .try_init()

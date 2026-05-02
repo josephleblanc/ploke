@@ -1940,6 +1940,7 @@ struct NodeEvidence {
     streams: Vec<StreamEvidence>,
     traces: Vec<TurnTrace>,
     observation_steps: Vec<ObservationStep>,
+    provider_http: Vec<ProviderHttpEvent>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1992,6 +1993,29 @@ struct ObservationStep {
     duration_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ProviderHttpEvent {
+    source: PathBuf,
+    timestamp: Option<String>,
+    campaign_id: Option<String>,
+    node_id: Option<String>,
+    branch_id: Option<String>,
+    generation: Option<u64>,
+    request_id: u64,
+    attempt: u32,
+    max_attempts: Option<u32>,
+    event: String,
+    phase: Option<String>,
+    status: Option<u16>,
+    elapsed_ms: Option<u64>,
+    backoff_ms: Option<u64>,
+    model: Option<String>,
+    request_bytes: Option<u64>,
+    response_bytes: Option<u64>,
+    is_timeout: Option<bool>,
+    failure: Option<String>,
+}
+
 fn print_prototype1_monitor_timing(
     campaign_id: &str,
     manifest_path: &Path,
@@ -2018,7 +2042,7 @@ impl Report {
     ) -> Result<Self, PrepareError> {
         let prototype_root = prototype1_campaign_root(manifest_path);
         let scheduler = load_or_default_scheduler_state(campaign_id, manifest_path)?;
-        let observations = load_observation_timings(campaign_id);
+        let observations = load_observation_evidence(campaign_id);
         let traces = find_agent_turn_traces(campaign_id);
         let mut nodes = Vec::new();
 
@@ -2030,11 +2054,27 @@ impl Report {
                 .unwrap_or_else(|_| scheduled.clone());
             let result = load_runner_result(manifest_path, &node.node_id).ok();
             let observation_steps = observations
+                .steps
                 .iter()
                 .filter(|step| {
                     step.node_id
                         .as_deref()
                         .is_some_and(|node_id| node_id == node.node_id)
+                })
+                .cloned()
+                .collect();
+            let provider_http = observations
+                .provider_http
+                .iter()
+                .filter(|event| {
+                    event
+                        .node_id
+                        .as_deref()
+                        .is_some_and(|node_id| node_id == node.node_id)
+                        || event
+                            .branch_id
+                            .as_deref()
+                            .is_some_and(|branch_id| branch_id == node.branch_id)
                 })
                 .cloned()
                 .collect();
@@ -2061,6 +2101,7 @@ impl Report {
                 streams: load_stream_timings(&node.node_dir)?,
                 traces,
                 observation_steps,
+                provider_http,
             });
         }
 
@@ -2090,420 +2131,57 @@ impl Report {
             return;
         }
 
-        let mut out = String::new();
-        match depth {
-            Depth::Node => Table::from_rows(self.nodes.iter().map(Row::new)).render(&mut out, 0),
-            Depth::Phase | Depth::Turn | Depth::Call => {
-                let mut omitted = 0usize;
-                for node in &self.nodes {
-                    if node.should_expand() || self.nodes.len() == 1 {
-                        render_node(node, depth, show_paths).render(&mut out, 0);
-                        out.push('\n');
-                    } else {
-                        omitted += 1;
-                    }
-                }
-                if omitted > 0 {
-                    out.push_str(&format!("omitted nodes_without_timing={omitted}\n"));
-                }
+        self.forest(depth, show_paths).render(depth);
+    }
+
+    fn forest(&self, depth: Depth, show_paths: bool) -> Forest {
+        let mut roots = Vec::new();
+        let mut omitted_roots = 0usize;
+        for node in &self.nodes {
+            if matches!(depth, Depth::Node) || node.should_expand() || self.nodes.len() == 1 {
+                roots.push(node.span(depth, show_paths));
+            } else {
+                omitted_roots += 1;
             }
         }
-        print!("{}", out.trim_end());
-        println!();
+        Forest {
+            roots,
+            omitted_roots,
+        }
     }
 }
 
-#[derive(Clone)]
-struct Measurement {
+#[derive(Debug, Clone, Serialize)]
+struct Field {
     label: &'static str,
     value: String,
 }
 
-trait Timing {
-    fn heading(&self) -> String;
-    fn measurements(&self) -> Vec<Measurement>;
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case", tag = "state")]
+enum Elapsed {
+    Measured { ms: u64 },
+    Missing { reason: &'static str },
 }
 
-trait Render {
-    fn render(&self, out: &mut String, indent: usize);
+#[derive(Debug, Clone, Serialize)]
+struct Span {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    elapsed: Option<Elapsed>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    fields: Vec<Field>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    children: Vec<Span>,
 }
 
-struct Row<T> {
-    value: T,
+#[derive(Debug, Clone, Serialize)]
+struct Forest {
+    roots: Vec<Span>,
+    omitted_roots: usize,
 }
 
-impl<T> Row<T> {
-    fn new(value: T) -> Self {
-        Self { value }
-    }
-}
-
-struct Table<R> {
-    rows: Vec<R>,
-}
-
-impl<R> Table<R> {
-    fn from_rows<I>(rows: I) -> Self
-    where
-        I: IntoIterator<Item = R>,
-    {
-        Self {
-            rows: rows.into_iter().collect(),
-        }
-    }
-}
-
-struct Node<T, C = ()> {
-    value: T,
-    children: C,
-}
-
-struct Tree<N> {
-    root: N,
-}
-
-struct Lines {
-    text: String,
-}
-
-#[derive(Clone)]
-struct Phase {
-    name: &'static str,
-    duration_ms: Option<u64>,
-    measurements: Vec<Measurement>,
-}
-
-impl Lines {
-    fn new() -> Self {
-        Self {
-            text: String::new(),
-        }
-    }
-}
-
-impl Phase {
-    fn new(
-        name: &'static str,
-        duration_ms: Option<u64>,
-        measurements: Vec<Measurement>,
-    ) -> Option<Self> {
-        if duration_ms.is_none() && measurements.is_empty() {
-            None
-        } else {
-            Some(Self {
-                name,
-                duration_ms,
-                measurements,
-            })
-        }
-    }
-}
-
-impl<T> Render for Row<T>
-where
-    T: Timing,
-{
-    fn render(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str(&self.value.heading());
-        for measurement in self.value.measurements() {
-            out.push(' ');
-            out.push_str(measurement.label);
-            out.push('=');
-            out.push_str(&measurement.value);
-        }
-        out.push('\n');
-    }
-}
-
-impl<R> Render for Table<R>
-where
-    R: Render,
-{
-    fn render(&self, out: &mut String, indent: usize) {
-        for row in &self.rows {
-            row.render(out, indent);
-        }
-    }
-}
-
-impl<T, C> Render for Node<T, C>
-where
-    T: Timing,
-    C: Render,
-{
-    fn render(&self, out: &mut String, indent: usize) {
-        Row::new(&self.value).render(out, indent);
-        self.children.render(out, indent + 2);
-    }
-}
-
-impl<N> Render for Tree<N>
-where
-    N: Render,
-{
-    fn render(&self, out: &mut String, indent: usize) {
-        self.root.render(out, indent);
-    }
-}
-
-impl<R> Render for Vec<R>
-where
-    R: Render,
-{
-    fn render(&self, out: &mut String, indent: usize) {
-        for item in self {
-            item.render(out, indent);
-        }
-    }
-}
-
-impl<R> Render for Option<R>
-where
-    R: Render,
-{
-    fn render(&self, out: &mut String, indent: usize) {
-        if let Some(item) = self {
-            item.render(out, indent);
-        }
-    }
-}
-
-impl Render for () {
-    fn render(&self, _out: &mut String, _indent: usize) {}
-}
-
-impl<A, B> Render for (A, B)
-where
-    A: Render,
-    B: Render,
-{
-    fn render(&self, out: &mut String, indent: usize) {
-        self.0.render(out, indent);
-        self.1.render(out, indent);
-    }
-}
-
-impl<T> Timing for &T
-where
-    T: Timing,
-{
-    fn heading(&self) -> String {
-        (*self).heading()
-    }
-
-    fn measurements(&self) -> Vec<Measurement> {
-        (*self).measurements()
-    }
-}
-
-impl Timing for NodeEvidence {
-    fn heading(&self) -> String {
-        format!("node {}", self.node_id)
-    }
-
-    fn measurements(&self) -> Vec<Measurement> {
-        let build_ms = self.observation_duration_by_prefix("prototype1.child.build.");
-        let wait_ms = self.observation_duration_by_name("prototype1.child.observe.wait_for_result");
-        let agent_seconds = self.agent_seconds();
-        let tools = self.tool_count();
-        let failed_tools = self.failed_tool_count();
-        let tool_latency_ms = self.tool_latency_ms();
-        let tokens = self.response_token_count();
-
-        vec![
-            Measurement::new("gen", self.generation),
-            Measurement::new("branch", self.branch_id.clone()),
-            Measurement::new("status", self.status.clone()),
-            Measurement::new("build", format_optional_millis(build_ms)),
-            Measurement::new("wait", format_optional_millis(wait_ms)),
-            Measurement::new(
-                "agent",
-                agent_seconds
-                    .map(format_seconds)
-                    .unwrap_or_else(|| "-".to_string()),
-            ),
-            Measurement::new(
-                "tools",
-                tools
-                    .zip(failed_tools)
-                    .map(|(tools, failed)| format!("{tools}/{failed}"))
-                    .unwrap_or_else(|| "-".to_string()),
-            ),
-            Measurement::new(
-                "tool_latency",
-                tool_latency_ms
-                    .map(format_millis)
-                    .unwrap_or_else(|| "-".to_string()),
-            ),
-            Measurement::new(
-                "tokens",
-                tokens
-                    .map(format_token_count)
-                    .unwrap_or_else(|| "-".to_string()),
-            ),
-        ]
-    }
-}
-
-impl Timing for Phase {
-    fn heading(&self) -> String {
-        self.name.to_string()
-    }
-
-    fn measurements(&self) -> Vec<Measurement> {
-        let mut measurements = vec![Measurement::new(
-            "duration",
-            format_optional_millis(self.duration_ms),
-        )];
-        measurements.extend(self.measurements.clone());
-        measurements
-    }
-}
-
-impl Timing for RunArtifacts {
-    fn heading(&self) -> String {
-        "run".to_string()
-    }
-
-    fn measurements(&self) -> Vec<Measurement> {
-        let response_count = self
-            .responses
-            .as_ref()
-            .map(|responses| responses.records.len())
-            .unwrap_or(0);
-        vec![
-            Measurement::new(
-                "wall",
-                self.record
-                    .timing
-                    .as_ref()
-                    .map(|timing| format_seconds(timing.total_wall_clock_secs))
-                    .unwrap_or_else(|| "-".to_string()),
-            ),
-            Measurement::new(
-                "agent",
-                self.record
-                    .timing
-                    .as_ref()
-                    .and_then(|timing| timing.agent_wall_clock_secs)
-                    .map(format_seconds)
-                    .unwrap_or_else(|| "-".to_string()),
-            ),
-            Measurement::new("turns", self.record.phases.agent_turns.len()),
-            Measurement::new("responses", response_count),
-            Measurement::new("tools", run_tool_count(&self.record)),
-            Measurement::new("failed_tools", run_failed_tool_count(&self.record)),
-            Measurement::new(
-                "tokens",
-                format_token_count(
-                    self.responses
-                        .as_ref()
-                        .map(ResponseSidecar::token_count)
-                        .unwrap_or(0),
-                ),
-            ),
-        ]
-    }
-}
-
-impl Timing for crate::record::TurnRecord {
-    fn heading(&self) -> String {
-        format!("turn {}", self.turn_number)
-    }
-
-    fn measurements(&self) -> Vec<Measurement> {
-        vec![
-            Measurement::new("duration", format_optional_millis(turn_duration_ms(self))),
-            Measurement::new("outcome", turn_outcome_label(&self.outcome)),
-            Measurement::new("tools", self.tool_calls.len()),
-            Measurement::new(
-                "failed_tools",
-                self.tool_calls
-                    .iter()
-                    .filter(|call| matches!(call.result, crate::record::ToolResult::Failed(_)))
-                    .count(),
-            ),
-            Measurement::new(
-                "tool_latency",
-                format_millis(self.tool_calls.iter().map(|call| call.latency_ms).sum()),
-            ),
-        ]
-    }
-}
-
-impl Timing for crate::record::ToolExecutionRecord {
-    fn heading(&self) -> String {
-        format!("tool {}", self.request.tool)
-    }
-
-    fn measurements(&self) -> Vec<Measurement> {
-        vec![
-            Measurement::new(
-                "status",
-                match &self.result {
-                    crate::record::ToolResult::Completed(_) => "completed",
-                    crate::record::ToolResult::Failed(_) => "failed",
-                },
-            ),
-            Measurement::new("latency", format_millis(self.latency_ms)),
-            Measurement::new("call_id", short_id(&self.request.call_id).to_string()),
-        ]
-    }
-}
-
-impl Timing for RawFullResponseRecord {
-    fn heading(&self) -> String {
-        format!("response {}", self.response_index)
-    }
-
-    fn measurements(&self) -> Vec<Measurement> {
-        let usage = self.response.usage.as_ref();
-        vec![
-            Measurement::new(
-                "finish",
-                self.response
-                    .choices
-                    .first()
-                    .and_then(|choice| choice.finish_reason.as_ref())
-                    .map(serde_name)
-                    .unwrap_or_else(|| "-".to_string()),
-            ),
-            Measurement::new(
-                "tokens",
-                usage
-                    .map(|usage| format_token_count(usage.total_tokens))
-                    .unwrap_or_else(|| "-".to_string()),
-            ),
-            Measurement::new(
-                "model",
-                if self.response.model.is_empty() {
-                    "-".to_string()
-                } else {
-                    self.response.model.clone()
-                },
-            ),
-        ]
-    }
-}
-
-impl Timing for ObservationStep {
-    fn heading(&self) -> String {
-        self.step.clone()
-    }
-
-    fn measurements(&self) -> Vec<Measurement> {
-        vec![
-            Measurement::new("duration", format_millis(self.duration_ms)),
-            Measurement::new(
-                "outcome",
-                self.outcome.clone().unwrap_or_else(|| "-".to_string()),
-            ),
-        ]
-    }
-}
-
-impl Measurement {
+impl Field {
     fn new(label: &'static str, value: impl ToString) -> Self {
         Self {
             label,
@@ -2512,7 +2190,452 @@ impl Measurement {
     }
 }
 
+impl Span {
+    fn new(name: impl Into<String>, elapsed_ms: Option<u64>) -> Self {
+        Self {
+            name: name.into(),
+            elapsed: elapsed_ms.map(|ms| Elapsed::Measured { ms }),
+            fields: Vec::new(),
+            children: Vec::new(),
+        }
+    }
+
+    fn missing_elapsed(mut self, reason: &'static str) -> Self {
+        self.elapsed = Some(Elapsed::Missing { reason });
+        self
+    }
+
+    fn field(mut self, label: &'static str, value: impl ToString) -> Self {
+        self.fields.push(Field::new(label, value));
+        self
+    }
+
+    fn child(mut self, child: Span) -> Self {
+        self.children.push(child);
+        self
+    }
+
+    fn children<I>(mut self, children: I) -> Self
+    where
+        I: IntoIterator<Item = Span>,
+    {
+        self.children.extend(children);
+        self
+    }
+
+    fn self_ms(&self) -> Option<u64> {
+        self.elapsed_ms().map(|elapsed| {
+            let child_total = self.children.iter().filter_map(Span::elapsed_ms).sum();
+            elapsed.saturating_sub(child_total)
+        })
+    }
+
+    fn elapsed_ms(&self) -> Option<u64> {
+        match &self.elapsed {
+            Some(Elapsed::Measured { ms }) => Some(*ms),
+            Some(Elapsed::Missing { .. }) | None => None,
+        }
+    }
+
+    fn missing_elapsed_reason(&self) -> Option<&'static str> {
+        match &self.elapsed {
+            Some(Elapsed::Missing { reason }) => Some(*reason),
+            Some(Elapsed::Measured { .. }) | None => None,
+        }
+    }
+}
+
+impl Forest {
+    fn render(&self, depth: Depth) {
+        let depth_remaining = match depth {
+            Depth::Node => Some(0),
+            Depth::Phase => Some(4),
+            Depth::Turn => Some(5),
+            Depth::Call => None,
+        };
+        let global_ms: u64 = self.roots.iter().filter_map(Span::elapsed_ms).sum();
+        let budget = Budget::new(&self.roots, depth_remaining);
+
+        println!("{}", "═".repeat(budget.display_width));
+        for root in &self.roots {
+            print_span(root, global_ms, "", "", depth_remaining, budget);
+        }
+
+        print_containment_check(&self.roots, budget.display_width);
+        print_span_stats(&self.roots, budget.display_width);
+        print_missing_elapsed(&self.roots, budget.display_width);
+
+        println!("{}", "─".repeat(budget.display_width));
+        println!(
+            "{:<width$} {:>8}            {:>6}",
+            fit_cell("Observed total", budget.name_col),
+            format_duration(global_ms),
+            pct_text(global_ms, global_ms),
+            width = budget.name_col,
+        );
+        if self.omitted_roots > 0 {
+            println!("Omitted nodes_without_timing={}", self.omitted_roots);
+        }
+        println!("{}", "═".repeat(budget.display_width));
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Budget {
+    display_width: usize,
+    name_col: usize,
+}
+
+impl Budget {
+    const DEFAULT_WIDTH: usize = 120;
+    const MIN_WIDTH: usize = 80;
+    const NUMBER_COLS: usize = 30;
+    const MIN_NAME_COL: usize = 28;
+
+    fn new(roots: &[Span], depth_remaining: Option<usize>) -> Self {
+        let width_limit = terminal_width()
+            .unwrap_or(Self::DEFAULT_WIDTH)
+            .clamp(Self::MIN_WIDTH, Self::DEFAULT_WIDTH);
+        let name_limit = width_limit.saturating_sub(Self::NUMBER_COLS);
+        let natural_name_col = roots
+            .iter()
+            .map(|root| structural_width(root, 0, depth_remaining))
+            .max()
+            .unwrap_or(0)
+            .max(Self::MIN_NAME_COL)
+            + 2;
+        let name_col = natural_name_col.min(name_limit);
+
+        Self {
+            display_width: name_col + Self::NUMBER_COLS,
+            name_col,
+        }
+    }
+}
+
+fn terminal_width() -> Option<usize> {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|width| *width > 0)
+}
+
+fn fit_cell(value: &str, width: usize) -> String {
+    let len = value.chars().count();
+    if len <= width {
+        return value.to_string();
+    }
+    if width <= 3 {
+        return ".".repeat(width);
+    }
+
+    let mut out = value
+        .chars()
+        .take(width.saturating_sub(3))
+        .collect::<String>();
+    out.push_str("...");
+    out
+}
+
+fn structural_width(span: &Span, depth: usize, depth_remaining: Option<usize>) -> usize {
+    let prefix_width = if depth == 0 { 0 } else { 3 * depth };
+    let width = prefix_width + span.name.chars().count();
+    if depth_remaining == Some(0) || (span.name == "responses" && depth_remaining.is_some()) {
+        return width;
+    }
+
+    let next_depth = depth_remaining.map(|depth| depth.saturating_sub(1));
+    span.children
+        .iter()
+        .map(|child| structural_width(child, depth + 1, next_depth))
+        .fold(width, usize::max)
+}
+
+fn print_span(
+    span: &Span,
+    global_ms: u64,
+    prefix: &str,
+    connector: &str,
+    depth_remaining: Option<usize>,
+    budget: Budget,
+) {
+    let label = fit_cell(
+        &format!("{prefix}{connector}{}", span.name),
+        budget.name_col,
+    );
+    let elapsed = match &span.elapsed {
+        Some(Elapsed::Measured { ms }) => format_duration(*ms),
+        Some(Elapsed::Missing { .. }) => "missing".to_string(),
+        None => "-".to_string(),
+    };
+    let self_part = if span.children.is_empty() {
+        "           ".to_string()
+    } else {
+        span.self_ms()
+            .map(|self_ms| format!("{:>11}", format!("({})", format_duration(self_ms))))
+            .unwrap_or_else(|| "           ".to_string())
+    };
+    let pct = span
+        .elapsed_ms()
+        .map(|elapsed| pct_text(elapsed, global_ms))
+        .unwrap_or_else(|| "-".to_string());
+    println!(
+        "{:<width$} {:>8}{} {:>6}",
+        label,
+        elapsed,
+        self_part,
+        pct,
+        width = budget.name_col,
+    );
+
+    if depth_remaining == Some(0) || (span.name == "responses" && depth_remaining.is_some()) {
+        return;
+    }
+    let next_depth = depth_remaining.map(|depth| depth.saturating_sub(1));
+    let child_prefix = if connector.is_empty() {
+        prefix.to_string()
+    } else if connector.starts_with('└') {
+        format!("{prefix}   ")
+    } else {
+        format!("{prefix}│  ")
+    };
+    let count = span.children.len();
+    for (index, child) in span.children.iter().enumerate() {
+        let child_connector = if index + 1 == count {
+            "└─ "
+        } else {
+            "├─ "
+        };
+        print_span(
+            child,
+            global_ms,
+            &child_prefix,
+            child_connector,
+            next_depth,
+            budget,
+        );
+    }
+}
+
+fn print_containment_check(roots: &[Span], display_width: usize) {
+    let rows = roots
+        .iter()
+        .filter_map(run_containment_row)
+        .collect::<Vec<_>>();
+    if rows.is_empty() {
+        return;
+    }
+    print_section("containment", display_width);
+    println!("  {:<18} {:>9} {:>9} {:>9}", "node", "wait", "run", "delta");
+    for row in rows {
+        println!(
+            "  {:<18} {:>9} {:>9} {:>9}",
+            row.node,
+            format_duration(row.wait_ms),
+            format_duration(row.run_ms),
+            format_duration_signed(row.wait_ms as i128 - row.run_ms as i128),
+        );
+    }
+}
+
+fn print_span_stats(roots: &[Span], display_width: usize) {
+    let mut groups: BTreeMap<&'static str, Vec<u64>> = BTreeMap::new();
+    for root in roots {
+        collect_span_stat(root, &mut groups);
+    }
+    if groups.is_empty() {
+        return;
+    }
+    print_section("stats", display_width);
+    println!(
+        "  {:<8} {:>2} {:>9} {:>9} {:>9} {:>9}",
+        "span", "n", "min", "avg", "max", "std"
+    );
+    for (name, values) in groups {
+        if let Some(stats) = DurationStats::new(&values) {
+            println!(
+                "  {:<8} {:>2} {:>9} {:>9} {:>9} {:>9}",
+                name,
+                values.len(),
+                format_duration(stats.min),
+                format_duration(stats.avg),
+                format_duration(stats.max),
+                format_duration(stats.std),
+            );
+        }
+    }
+}
+
+fn print_missing_elapsed(roots: &[Span], display_width: usize) {
+    let mut groups: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for root in roots {
+        collect_missing_elapsed(root, &mut groups);
+    }
+    if groups.is_empty() {
+        return;
+    }
+    print_section("missing duration evidence", display_width);
+    for (reason, count) in groups {
+        println!("  {:<28} {:>4}", reason, count);
+    }
+}
+
+fn print_section(title: &str, display_width: usize) {
+    let label = format!("── {title} ");
+    println!(
+        "{label}{}",
+        "─".repeat(display_width.saturating_sub(label.chars().count()))
+    );
+}
+
+fn collect_span_stat(span: &Span, groups: &mut BTreeMap<&'static str, Vec<u64>>) {
+    let key = match span.name.as_str() {
+        "build" => Some("build"),
+        "observe" => Some("observe"),
+        "run" => Some("run"),
+        "agent" => Some("agent"),
+        _ => None,
+    };
+    if let (Some(key), Some(elapsed_ms)) = (key, span.elapsed_ms()) {
+        groups.entry(key).or_default().push(elapsed_ms);
+    }
+    for child in &span.children {
+        collect_span_stat(child, groups);
+    }
+}
+
+fn collect_missing_elapsed(span: &Span, groups: &mut BTreeMap<&'static str, usize>) {
+    if let Some(reason) = span.missing_elapsed_reason() {
+        *groups.entry(reason).or_default() += 1;
+    }
+    for child in &span.children {
+        collect_missing_elapsed(child, groups);
+    }
+}
+
+struct ContainmentRow {
+    node: String,
+    wait_ms: u64,
+    run_ms: u64,
+}
+
+fn run_containment_row(root: &Span) -> Option<ContainmentRow> {
+    let observe = root.children.iter().find(|child| child.name == "observe")?;
+    let wait = observe
+        .children
+        .iter()
+        .find(|child| child.name == "wait_for_result")?;
+    let run = wait.children.iter().find(|child| child.name == "run")?;
+    Some(ContainmentRow {
+        node: root.name.clone(),
+        wait_ms: wait.elapsed_ms()?,
+        run_ms: run.elapsed_ms()?,
+    })
+}
+
+struct DurationStats {
+    min: u64,
+    avg: u64,
+    max: u64,
+    std: u64,
+}
+
+impl DurationStats {
+    fn new(values: &[u64]) -> Option<Self> {
+        let min = *values.iter().min()?;
+        let max = *values.iter().max()?;
+        let sum: u64 = values.iter().sum();
+        let avg = sum / values.len() as u64;
+        let variance = values
+            .iter()
+            .map(|value| {
+                let diff = *value as f64 - avg as f64;
+                diff * diff
+            })
+            .sum::<f64>()
+            / values.len() as f64;
+        Some(Self {
+            min,
+            avg,
+            max,
+            std: variance.sqrt() as u64,
+        })
+    }
+}
+
+fn pct_text(elapsed_ms: u64, global_ms: u64) -> String {
+    if global_ms == 0 {
+        "-".to_string()
+    } else {
+        format!("{:>5.1}%", elapsed_ms as f64 / global_ms as f64 * 100.0)
+    }
+}
+
+fn format_duration(ms: u64) -> String {
+    if ms >= 1000 {
+        format!("{:.3}s", ms as f64 / 1000.0)
+    } else {
+        format!("{ms}ms")
+    }
+}
+
+fn format_duration_signed(ms: i128) -> String {
+    let sign = if ms >= 0 { "+" } else { "-" };
+    format!("{sign}{}", format_duration(ms.unsigned_abs() as u64))
+}
+
 impl NodeEvidence {
+    fn span(&self, depth: Depth, show_paths: bool) -> Span {
+        let mut span = Span::new(
+            format!("gen{} {}", self.generation, short_id(&self.node_id)),
+            self.elapsed_ms(),
+        )
+        .field("status", self.status.clone())
+        .field("branch", short_id(&self.branch_id));
+
+        if let (Some(tools), Some(failed)) = (self.tool_count(), self.failed_tool_count()) {
+            span = span.field("tools", format!("{tools}/{failed}"));
+        }
+        if let Some(tokens) = self.response_token_count() {
+            span = span.field("tokens", format_token_count(tokens));
+        }
+        if self
+            .streams
+            .iter()
+            .any(|stream| stream.http_body_timeouts > 0)
+        {
+            span = span.field("http_timeouts", self.http_body_timeouts());
+        }
+        if self.streams.iter().any(|stream| stream.chat_retries > 0) {
+            span = span.field("chat_retries", self.chat_retries());
+        }
+        if !self.provider_http.is_empty() {
+            let requests = self.provider_http_requests();
+            span = span.field("provider_requests", requests.len()).field(
+                "provider_http",
+                format_duration(provider_http_total_ms(&requests)),
+            );
+        }
+        if show_paths {
+            span = span
+                .field("branch_full", self.branch_id.clone())
+                .field("runner_result", yes_no(self.runner_result_exists));
+        }
+
+        span.children(self.phase_spans(depth, show_paths))
+    }
+
+    fn elapsed_ms(&self) -> Option<u64> {
+        let mut found = false;
+        let total = self
+            .phase_spans(Depth::Phase, false)
+            .into_iter()
+            .filter_map(|span| span.elapsed_ms())
+            .inspect(|_| found = true)
+            .sum();
+        found.then_some(total)
+    }
+
     fn observation_duration_by_prefix(&self, prefix: &str) -> Option<u64> {
         let mut found = false;
         let total = self
@@ -2537,26 +2660,15 @@ impl NodeEvidence {
         found.then_some(total)
     }
 
-    fn agent_seconds(&self) -> Option<f64> {
-        let mut found = false;
-        let total = self
-            .runs
+    fn http_body_timeouts(&self) -> usize {
+        self.streams
             .iter()
-            .filter_map(|run| {
-                run.record
-                    .timing
-                    .as_ref()
-                    .and_then(|timing| timing.agent_wall_clock_secs)
-                    .or_else(|| {
-                        run.record
-                            .timing
-                            .as_ref()
-                            .map(|timing| timing.total_wall_clock_secs)
-                    })
-            })
-            .inspect(|_| found = true)
-            .sum();
-        found.then_some(total)
+            .map(|stream| stream.http_body_timeouts)
+            .sum()
+    }
+
+    fn chat_retries(&self) -> usize {
+        self.streams.iter().map(|stream| stream.chat_retries).sum()
     }
 
     fn tool_count(&self) -> Option<usize> {
@@ -2596,27 +2708,6 @@ impl NodeEvidence {
         }
     }
 
-    fn tool_latency_ms(&self) -> Option<u64> {
-        if !self.runs.is_empty() {
-            return Some(
-                self.runs
-                    .iter()
-                    .map(|run| run_tool_latency_ms(&run.record))
-                    .sum(),
-            );
-        }
-        if self.traces.is_empty() {
-            None
-        } else {
-            Some(
-                self.traces
-                    .iter()
-                    .map(|trace| trace.tool_latency_ms_total)
-                    .sum(),
-            )
-        }
-    }
-
     fn response_token_count(&self) -> Option<u32> {
         let mut found = false;
         let total = self
@@ -2629,92 +2720,163 @@ impl NodeEvidence {
         found.then_some(total)
     }
 
-    fn phases(&self) -> Vec<Phase> {
-        [
-            self.phase(
-                "build",
-                "prototype1.child.build.",
-                &[
-                    ("check", "prototype1.child.build.cargo_check"),
-                    ("cargo", "prototype1.child.build.cargo_build"),
-                    ("promote", "prototype1.child.build.promote_binary"),
-                ],
-            ),
-            self.phase(
-                "observe",
-                "prototype1.child.observe.",
-                &[
-                    ("wait", "prototype1.child.observe.wait_for_result"),
-                    ("result", "prototype1.child.observe.load_runner_result"),
-                    ("eval", "prototype1.child.observe.load_evaluation_report"),
-                ],
-            ),
-            self.phase(
-                "parent",
-                "prototype1.parent.",
-                &[
-                    ("genesis", "prototype1.parent.startup.genesis"),
-                    ("predecessor", "prototype1.parent.startup.predecessor"),
-                    ("select", "prototype1.parent.select_successor"),
-                    ("checkout", "prototype1.parent.checkout.active"),
-                ],
-            ),
-            self.phase(
-                "history",
-                "prototype1.history.",
-                &[
-                    ("seal", "prototype1.history.seal"),
-                    ("append", "prototype1.history.append"),
-                ],
-            ),
-            self.phase(
-                "successor",
-                "prototype1.successor.",
-                &[
-                    ("spawn", "prototype1.successor.spawn"),
-                    ("ready", "prototype1.successor.ready_wait"),
-                ],
-            ),
-            self.phase(
-                "cleanup",
-                "prototype1.cleanup.",
-                &[
-                    ("binary", "prototype1.cleanup.binary"),
-                    ("target", "prototype1.cleanup.target"),
-                ],
-            ),
-        ]
-        .into_iter()
-        .flatten()
-        .collect()
+    fn phase_spans(&self, depth: Depth, show_paths: bool) -> Vec<Span> {
+        let mut spans = Vec::new();
+        spans.extend(self.phase(
+            "build",
+            "prototype1.child.build.",
+            &[
+                ("check", "prototype1.child.build.cargo_check"),
+                ("cargo", "prototype1.child.build.cargo_build"),
+                ("promote", "prototype1.child.build.promote_binary"),
+            ],
+        ));
+        spans.extend(self.observe_span(depth, show_paths));
+        spans.extend(self.phase(
+            "parent",
+            "prototype1.parent.",
+            &[
+                ("genesis", "prototype1.parent.startup.genesis"),
+                ("predecessor", "prototype1.parent.startup.predecessor"),
+                ("select", "prototype1.parent.select_successor"),
+                ("checkout", "prototype1.parent.checkout.active"),
+            ],
+        ));
+        spans.extend(self.phase(
+            "history",
+            "prototype1.history.",
+            &[
+                ("seal", "prototype1.history.seal"),
+                ("append", "prototype1.history.append"),
+            ],
+        ));
+        spans.extend(self.phase(
+            "successor",
+            "prototype1.successor.",
+            &[
+                ("spawn", "prototype1.successor.spawn"),
+                ("ready", "prototype1.successor.ready_wait"),
+            ],
+        ));
+        spans.extend(self.phase(
+            "cleanup",
+            "prototype1.cleanup.",
+            &[
+                ("binary", "prototype1.cleanup.binary"),
+                ("target", "prototype1.cleanup.target"),
+            ],
+        ));
+        spans
     }
 
     fn has_timing_evidence(&self) -> bool {
-        !self.runs.is_empty() || !self.phases().is_empty()
+        !self.runs.is_empty() || !self.phase_spans(Depth::Phase, false).is_empty()
     }
 
     fn should_expand(&self) -> bool {
         self.status != "planned" && self.has_timing_evidence()
     }
 
+    fn observe_span(&self, depth: Depth, show_paths: bool) -> Option<Span> {
+        let mut observe = Span::new(
+            "observe",
+            self.observation_duration_by_prefix("prototype1.child.observe."),
+        );
+        let mut wait = self
+            .observation_duration_by_name("prototype1.child.observe.wait_for_result")
+            .map(|duration| Span::new("wait_for_result", Some(duration)));
+        let provider_span = self.provider_http_span(depth, show_paths);
+        for (index, run) in self.runs.iter().enumerate() {
+            let provider_span = (index == 0).then(|| provider_span.clone()).flatten();
+            if let Some(wait) = &mut wait {
+                wait.children
+                    .push(run.span(depth, show_paths, provider_span));
+            } else {
+                observe
+                    .children
+                    .push(run.span(depth, show_paths, provider_span));
+            }
+        }
+        if self.runs.is_empty() {
+            if let Some(provider_span) = provider_span {
+                if let Some(wait) = &mut wait {
+                    wait.children.push(provider_span);
+                } else {
+                    observe.children.push(provider_span);
+                }
+            }
+        }
+        if let Some(wait) = wait {
+            observe.children.push(wait);
+        }
+        for (name, step) in [
+            (
+                "load_runner_result",
+                "prototype1.child.observe.load_runner_result",
+            ),
+            (
+                "load_evaluation_report",
+                "prototype1.child.observe.load_evaluation_report",
+            ),
+        ] {
+            if let Some(duration) = self.observation_duration_by_name(step) {
+                observe.children.push(Span::new(name, Some(duration)));
+            }
+        }
+        (!observe.children.is_empty() || observe.elapsed.is_some()).then_some(observe)
+    }
+
+    fn provider_http_requests(&self) -> Vec<ProviderHttpRequest> {
+        provider_http_requests(&self.provider_http)
+    }
+
+    fn provider_http_span(&self, depth: Depth, show_paths: bool) -> Option<Span> {
+        let requests = self.provider_http_requests();
+        if requests.is_empty() {
+            return self.response_token_count().is_some().then(|| {
+                Span::new("provider_http", None).missing_elapsed("chat_http_not_recorded")
+            });
+        }
+
+        let retries: usize = requests.iter().map(ProviderHttpRequest::retry_count).sum();
+        let errors: usize = requests.iter().map(ProviderHttpRequest::error_count).sum();
+        let backoff_ms: u64 = requests.iter().map(ProviderHttpRequest::backoff_ms).sum();
+        let total_ms = provider_http_total_ms(&requests);
+        let name = format!(
+            "provider_http requests={} retries={} backoff={}",
+            requests.len(),
+            retries,
+            format_duration(backoff_ms)
+        );
+        let mut span = Span::new(name, Some(total_ms))
+            .field("errors", errors)
+            .field("timeouts", provider_http_timeout_count(&requests));
+        if show_paths {
+            span = span.field("sources", provider_http_source_count(&requests));
+        }
+        if matches!(depth, Depth::Turn | Depth::Call) {
+            span = span.children(
+                requests
+                    .iter()
+                    .map(|request| request.span(depth, show_paths)),
+            );
+        }
+        Some(span)
+    }
+
     fn phase(
         &self,
         name: &'static str,
         prefix: &str,
-        fields: &[(&'static str, &str)],
-    ) -> Option<Phase> {
-        let measurements = fields
-            .iter()
-            .filter_map(|(label, step)| {
+        children: &[(&'static str, &str)],
+    ) -> Option<Span> {
+        let span = Span::new(name, self.observation_duration_by_prefix(prefix)).children(
+            children.iter().filter_map(|(label, step)| {
                 self.observation_duration_by_name(step)
-                    .map(|duration| Measurement::new(*label, format_millis(duration)))
-            })
-            .collect();
-        Phase::new(
-            name,
-            self.observation_duration_by_prefix(prefix),
-            measurements,
-        )
+                    .map(|duration| Span::new(*label, Some(duration)))
+            }),
+        );
+        (!span.children.is_empty() || span.elapsed.is_some()).then_some(span)
     }
 }
 
@@ -2726,80 +2888,296 @@ impl ResponseSidecar {
             .map(|usage| usage.total_tokens)
             .sum()
     }
-}
 
-fn render_node(
-    node: &NodeEvidence,
-    depth: Depth,
-    show_paths: bool,
-) -> Tree<Node<&NodeEvidence, Lines>> {
-    let mut children = Lines::new();
-    if show_paths {
-        push_indent(&mut children.text, 2);
-        children.text.push_str(&format!(
-            "runner_result_path exists={}\n",
-            yes_no(node.runner_result_exists)
-        ));
-    }
-
-    if matches!(depth, Depth::Phase | Depth::Turn | Depth::Call) {
-        render_phase_rows(node, &mut children.text, 2);
-        Table::from_rows(node.runs.iter().map(Row::new)).render(&mut children.text, 2);
-    }
-
-    if matches!(depth, Depth::Turn | Depth::Call) {
-        for run in &node.runs {
-            render_run_children(run, depth, show_paths, &mut children.text, 4);
+    fn span(&self, show_paths: bool, _include_records: bool) -> Span {
+        let mut span = Span::new("responses", None)
+            .field("count", self.records.len())
+            .field("tokens", format_token_count(self.token_count()));
+        if show_paths {
+            span = span.field("path", self.path.display());
         }
-    }
-
-    Tree {
-        root: Node {
-            value: node,
-            children,
-        },
+        span.children(self.records.iter().map(response_span))
     }
 }
 
-impl Render for Lines {
-    fn render(&self, out: &mut String, _indent: usize) {
-        out.push_str(&self.text);
-    }
-}
+impl RunArtifacts {
+    fn span(&self, depth: Depth, show_paths: bool, provider_http: Option<Span>) -> Span {
+        let timing = self.record.timing.as_ref();
+        let mut span = Span::new(
+            "run",
+            timing.map(|timing| seconds_to_millis(timing.total_wall_clock_secs)),
+        )
+        .field("turns", self.record.phases.agent_turns.len())
+        .field("tools", run_tool_count(&self.record))
+        .field("failed_tools", run_failed_tool_count(&self.record));
 
-fn render_phase_rows(node: &NodeEvidence, out: &mut String, indent: usize) {
-    for phase in node.phases() {
-        Row::new(phase).render(out, indent);
-    }
-}
-
-fn render_run_children(
-    run: &RunArtifacts,
-    depth: Depth,
-    show_paths: bool,
-    out: &mut String,
-    indent: usize,
-) {
-    Table::from_rows(run.record.phases.agent_turns.iter().map(Row::new)).render(out, indent);
-    if matches!(depth, Depth::Call) {
-        for turn in &run.record.phases.agent_turns {
-            Table::from_rows(turn.tool_calls.iter().map(Row::new)).render(out, indent + 2);
+        if let Some(responses) = &self.responses {
+            span = span
+                .field("responses", responses.records.len())
+                .field("tokens", format_token_count(responses.token_count()));
         }
-        if let Some(responses) = &run.responses {
-            if show_paths {
-                push_indent(out, indent);
-                out.push_str(&format!("record_path path={}\n", run.record_path.display()));
-            }
-            push_indent(out, indent);
-            out.push_str("response_sidecar");
-            out.push_str(&format!(" responses={}", responses.records.len()));
-            if show_paths {
-                out.push_str(&format!(" path={}", responses.path.display()));
-            }
-            out.push('\n');
-            Table::from_rows(responses.records.iter().map(Row::new)).render(out, indent + 2);
+        if show_paths {
+            span = span.field("record", self.record_path.display());
         }
+
+        if let Some(agent_ms) = timing
+            .and_then(|timing| timing.agent_wall_clock_secs)
+            .map(seconds_to_millis)
+        {
+            span = span.child(
+                Span::new("agent", Some(agent_ms))
+                    .children(self.record.phases.agent_turns.iter().map(turn_span)),
+            );
+        } else {
+            span = span.children(self.record.phases.agent_turns.iter().map(turn_span));
+        }
+
+        if let Some(responses) = &self.responses {
+            span = span.child(responses.span(show_paths, matches!(depth, Depth::Call)));
+        }
+        if let Some(provider_http) = provider_http {
+            span = span.child(provider_http);
+        } else if self.responses.is_some() {
+            span = span
+                .child(Span::new("provider_http", None).missing_elapsed("chat_http_not_recorded"));
+        }
+
+        span
     }
+}
+
+fn turn_span(turn: &crate::record::TurnRecord) -> Span {
+    let span = Span::new(
+        format!("turn {}", turn.turn_number),
+        turn_duration_ms(turn).filter(|duration| *duration > 0),
+    );
+    let span = if span.elapsed.is_none() {
+        span.missing_elapsed("turn_duration_not_recorded")
+    } else {
+        span
+    };
+    span.field("outcome", turn_outcome_label(&turn.outcome))
+        .field("tools", turn.tool_calls.len())
+        .field("failed_tools", turn_failed_tool_count(turn))
+        .children(turn.tool_calls.iter().map(tool_span))
+}
+
+fn tool_span(call: &crate::record::ToolExecutionRecord) -> Span {
+    Span::new(format!("tool {}", call.request.tool), Some(call.latency_ms))
+        .field(
+            "status",
+            match &call.result {
+                crate::record::ToolResult::Completed(_) => "completed",
+                crate::record::ToolResult::Failed(_) => "failed",
+            },
+        )
+        .field("call_id", short_id(&call.request.call_id))
+}
+
+fn response_span(record: &RawFullResponseRecord) -> Span {
+    let usage = record.response.usage.as_ref();
+    let mut span = Span::new(format!("response {}", record.response_index), None)
+        .missing_elapsed("provider_latency_not_recorded")
+        .field(
+            "finish",
+            record
+                .response
+                .choices
+                .first()
+                .and_then(|choice| choice.finish_reason.as_ref())
+                .map(serde_name)
+                .unwrap_or_else(|| "-".to_string()),
+        );
+    if let Some(usage) = usage {
+        span = span.field("tokens", format_token_count(usage.total_tokens));
+    }
+    if !record.response.model.is_empty() {
+        span = span.field("model", record.response.model.clone());
+    }
+    if let Some(provider) = &record.response.provider {
+        span = span.field("provider", format!("{provider:?}"));
+    }
+    span
+}
+
+#[derive(Debug, Clone)]
+struct ProviderHttpRequest {
+    source: PathBuf,
+    request_id: u64,
+    max_attempts: Option<u32>,
+    model: Option<String>,
+    status: Option<u16>,
+    attempts: BTreeMap<u32, ProviderHttpAttempt>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ProviderHttpAttempt {
+    elapsed_ms: Option<u64>,
+    backoff_ms: u64,
+    status: Option<u16>,
+    events: BTreeSet<String>,
+    has_error: bool,
+    is_timeout: bool,
+}
+
+impl ProviderHttpRequest {
+    fn elapsed_ms(&self) -> u64 {
+        self.attempts
+            .values()
+            .map(ProviderHttpAttempt::wall_ms)
+            .sum()
+    }
+
+    fn retry_count(&self) -> usize {
+        self.attempts
+            .values()
+            .filter(|attempt| attempt.events.contains("chat_http_retry_scheduled"))
+            .count()
+    }
+
+    fn error_count(&self) -> usize {
+        self.attempts
+            .values()
+            .filter(|attempt| attempt.has_error)
+            .count()
+    }
+
+    fn timeout_count(&self) -> usize {
+        self.attempts
+            .values()
+            .filter(|attempt| attempt.is_timeout)
+            .count()
+    }
+
+    fn backoff_ms(&self) -> u64 {
+        self.attempts
+            .values()
+            .map(|attempt| attempt.backoff_ms)
+            .sum()
+    }
+
+    fn span(&self, depth: Depth, show_paths: bool) -> Span {
+        let retries = self.retry_count();
+        let mut name = format!("request {}", self.request_id);
+        if retries > 0 {
+            name.push_str(&format!(" retries={retries}"));
+        }
+        if let Some(status) = self.status {
+            name.push_str(&format!(" status={status}"));
+        }
+        let mut span = Span::new(name, Some(self.elapsed_ms()));
+        if let Some(model) = &self.model {
+            span = span.field("model", model);
+        }
+        if let Some(max_attempts) = self.max_attempts {
+            span = span.field("max_attempts", max_attempts);
+        }
+        if show_paths {
+            span = span.field("source", self.source.display());
+        }
+        if matches!(depth, Depth::Call) {
+            span = span.children(
+                self.attempts
+                    .iter()
+                    .map(|(attempt, evidence)| evidence.span(*attempt)),
+            );
+        }
+        span
+    }
+}
+
+impl ProviderHttpAttempt {
+    fn wall_ms(&self) -> u64 {
+        self.elapsed_ms.unwrap_or(0) + self.backoff_ms
+    }
+
+    fn span(&self, attempt: u32) -> Span {
+        let mut name = format!("attempt {attempt}");
+        if self.events.contains("chat_http_retry_scheduled") {
+            name.push_str(" retry");
+        }
+        if self.has_error {
+            name.push_str(" error");
+        }
+        if self.is_timeout {
+            name.push_str(" timeout");
+        }
+        if let Some(status) = self.status {
+            name.push_str(&format!(" status={status}"));
+        }
+
+        let mut children = Vec::new();
+        if let Some(elapsed_ms) = self.elapsed_ms {
+            children.push(Span::new("http", Some(elapsed_ms)));
+        }
+        if self.backoff_ms > 0 {
+            children.push(Span::new("backoff", Some(self.backoff_ms)));
+        }
+        Span::new(name, Some(self.wall_ms())).children(children)
+    }
+}
+
+fn provider_http_requests(events: &[ProviderHttpEvent]) -> Vec<ProviderHttpRequest> {
+    let mut requests: BTreeMap<(PathBuf, u64), ProviderHttpRequest> = BTreeMap::new();
+    for event in events {
+        let request = requests
+            .entry((event.source.clone(), event.request_id))
+            .or_insert_with(|| ProviderHttpRequest {
+                source: event.source.clone(),
+                request_id: event.request_id,
+                max_attempts: event.max_attempts,
+                model: event.model.clone(),
+                status: event.status,
+                attempts: BTreeMap::new(),
+            });
+        request.max_attempts = request.max_attempts.or(event.max_attempts);
+        if request.model.is_none() {
+            request.model = event.model.clone();
+        }
+        request.status = event.status.or(request.status);
+
+        let attempt = request.attempts.entry(event.attempt).or_default();
+        attempt.events.insert(event.event.clone());
+        if let Some(elapsed_ms) = event.elapsed_ms {
+            attempt.elapsed_ms = Some(attempt.elapsed_ms.unwrap_or(0).max(elapsed_ms));
+        }
+        if let Some(backoff_ms) = event.backoff_ms {
+            attempt.backoff_ms = attempt.backoff_ms.saturating_add(backoff_ms);
+        }
+        attempt.status = event.status.or(attempt.status);
+        attempt.has_error |= matches!(
+            event.event.as_str(),
+            "chat_http_request_error"
+                | "chat_http_response_error_status"
+                | "chat_http_retry_suppressed"
+        );
+        attempt.is_timeout |= event.is_timeout.unwrap_or(false);
+    }
+
+    requests.into_values().collect()
+}
+
+fn provider_http_total_ms(requests: &[ProviderHttpRequest]) -> u64 {
+    requests.iter().map(ProviderHttpRequest::elapsed_ms).sum()
+}
+
+fn provider_http_timeout_count(requests: &[ProviderHttpRequest]) -> usize {
+    requests
+        .iter()
+        .map(ProviderHttpRequest::timeout_count)
+        .sum()
+}
+
+fn provider_http_source_count(requests: &[ProviderHttpRequest]) -> usize {
+    requests
+        .iter()
+        .map(|request| &request.source)
+        .collect::<BTreeSet<_>>()
+        .len()
+}
+
+fn seconds_to_millis(seconds: f64) -> u64 {
+    (seconds.max(0.0) * 1000.0).round() as u64
 }
 
 fn load_run_artifacts(
@@ -2918,24 +3296,11 @@ fn run_failed_tool_count(record: &RunRecord) -> usize {
         .count()
 }
 
-fn run_tool_latency_ms(record: &RunRecord) -> u64 {
-    record
-        .phases
-        .agent_turns
+fn turn_failed_tool_count(turn: &crate::record::TurnRecord) -> usize {
+    turn.tool_calls
         .iter()
-        .flat_map(|turn| &turn.tool_calls)
-        .map(|call| call.latency_ms)
-        .sum()
-}
-
-fn format_optional_millis(ms: Option<u64>) -> String {
-    ms.map(format_millis).unwrap_or_else(|| "-".to_string())
-}
-
-fn push_indent(out: &mut String, indent: usize) {
-    for _ in 0..indent {
-        out.push(' ');
-    }
+        .filter(|call| matches!(call.result, crate::record::ToolResult::Failed(_)))
+        .count()
 }
 
 fn load_stream_timings(node_dir: &Path) -> Result<Vec<StreamEvidence>, PrepareError> {
@@ -3121,21 +3486,32 @@ fn parse_turn_trace(path: PathBuf) -> Result<TurnTrace, PrepareError> {
     })
 }
 
-fn load_observation_timings(campaign_id: &str) -> Vec<ObservationStep> {
+#[derive(Debug, Default)]
+struct ObservationEvidence {
+    steps: Vec<ObservationStep>,
+    provider_http: Vec<ProviderHttpEvent>,
+}
+
+fn load_observation_evidence(campaign_id: &str) -> ObservationEvidence {
     let Some(log_root) = home_dir().map(|home| home.join(".ploke-eval").join("logs")) else {
-        return Vec::new();
+        return ObservationEvidence::default();
     };
     let mut paths = Vec::new();
     collect_observation_logs(&log_root, &mut paths);
-    let mut timings = Vec::new();
+    let mut evidence = ObservationEvidence::default();
     for path in paths {
-        parse_observation_log(campaign_id, &path, &mut timings);
+        parse_observation_log(campaign_id, &path, &mut evidence);
     }
-    timings.sort_by(|left, right| left.timestamp.cmp(&right.timestamp));
-    timings
+    evidence
+        .steps
+        .sort_by(|left, right| left.timestamp.cmp(&right.timestamp));
+    evidence
+        .provider_http
+        .sort_by(|left, right| left.timestamp.cmp(&right.timestamp));
+    evidence
 }
 
-fn parse_observation_log(campaign_id: &str, path: &Path, timings: &mut Vec<ObservationStep>) {
+fn parse_observation_log(campaign_id: &str, path: &Path, evidence: &mut ObservationEvidence) {
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
@@ -3143,35 +3519,72 @@ fn parse_observation_log(campaign_id: &str, path: &Path, timings: &mut Vec<Obser
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        let Some(duration_ms) = value.get("duration_ms").and_then(|value| value.as_u64()) else {
-            continue;
-        };
         let span = value.get("span");
-        let event_campaign =
-            string_field(span, "campaign_id").or_else(|| string_field(Some(&value), "campaign"));
+        let event_campaign = trace_string_field(&value, "campaign_id")
+            .or_else(|| trace_string_field(&value, "campaign"));
         if event_campaign.as_deref() != Some(campaign_id) {
             continue;
         }
+        if value
+            .get("target")
+            .and_then(|value| value.as_str())
+            .is_some_and(|target| target == "chat_http")
+            || value
+                .get("event")
+                .and_then(|value| value.as_str())
+                .is_some_and(|event| event.starts_with("chat_http_"))
+        {
+            if let Some(event) = provider_http_event(path, &value, event_campaign) {
+                evidence.provider_http.push(event);
+            }
+            continue;
+        }
+        let Some(duration_ms) = value.get("duration_ms").and_then(|value| value.as_u64()) else {
+            continue;
+        };
         let step = string_field(span, "name")
             .or_else(|| string_field(Some(&value), "phase"))
             .or_else(|| string_field(Some(&value), "message"))
             .unwrap_or_else(|| "(unnamed)".to_string());
-        timings.push(ObservationStep {
+        evidence.steps.push(ObservationStep {
             timestamp: string_field(Some(&value), "timestamp"),
-            node_id: string_field(span, "node_id")
-                .or_else(|| string_field(Some(&value), "node_id")),
-            generation: value
-                .get("generation")
-                .and_then(|value| value.as_u64())
-                .or_else(|| {
-                    span.and_then(|span| span.get("generation"))
-                        .and_then(|value| value.as_u64())
-                }),
+            node_id: trace_string_field(&value, "node_id"),
+            generation: trace_u64_field(&value, "generation"),
             step,
             outcome: string_field(Some(&value), "outcome"),
             duration_ms,
         });
     }
+}
+
+fn provider_http_event(
+    path: &Path,
+    value: &serde_json::Value,
+    campaign_id: Option<String>,
+) -> Option<ProviderHttpEvent> {
+    Some(ProviderHttpEvent {
+        source: path.to_path_buf(),
+        timestamp: string_field(Some(value), "timestamp"),
+        campaign_id,
+        node_id: trace_string_field(value, "node_id"),
+        branch_id: trace_string_field(value, "branch_id"),
+        generation: trace_u64_field(value, "generation"),
+        request_id: u64_field(value, "request_id")?,
+        attempt: u64_field(value, "attempt")
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(1),
+        max_attempts: u64_field(value, "max_attempts").and_then(|value| u32::try_from(value).ok()),
+        event: string_field(Some(value), "event")?,
+        phase: string_field(Some(value), "phase"),
+        status: u64_field(value, "status").and_then(|value| u16::try_from(value).ok()),
+        elapsed_ms: u64_field(value, "elapsed_ms"),
+        backoff_ms: u64_field(value, "backoff_ms"),
+        model: string_field(Some(value), "model"),
+        request_bytes: u64_field(value, "request_bytes"),
+        response_bytes: u64_field(value, "response_bytes"),
+        is_timeout: value.get("is_timeout").and_then(|value| value.as_bool()),
+        failure: string_field(Some(value), "failure"),
+    })
 }
 
 fn collect_named_files(root: &Path, name: &str, paths: &mut Vec<PathBuf>) {
@@ -3211,6 +3624,46 @@ fn string_field(value: Option<&serde_json::Value>, field: &str) -> Option<String
         .map(ToString::to_string)
 }
 
+fn u64_field(value: &serde_json::Value, field: &str) -> Option<u64> {
+    value.get(field).and_then(|value| {
+        value
+            .as_u64()
+            .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+    })
+}
+
+fn trace_string_field(value: &serde_json::Value, field: &str) -> Option<String> {
+    string_field(Some(value), field)
+        .or_else(|| string_field(value.get("span"), field))
+        .or_else(|| string_field_from_spans(value, field))
+}
+
+fn trace_u64_field(value: &serde_json::Value, field: &str) -> Option<u64> {
+    u64_field(value, field)
+        .or_else(|| value.get("span").and_then(|span| u64_field(span, field)))
+        .or_else(|| u64_field_from_spans(value, field))
+}
+
+fn string_field_from_spans(value: &serde_json::Value, field: &str) -> Option<String> {
+    value
+        .get("spans")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .rev()
+        .find_map(|span| string_field(Some(span), field))
+}
+
+fn u64_field_from_spans(value: &serde_json::Value, field: &str) -> Option<u64> {
+    value
+        .get("spans")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .rev()
+        .find_map(|span| u64_field(span, field))
+}
+
 fn path_mentions(path: &Path, needle: &str) -> bool {
     path.components().any(|component| {
         component
@@ -3227,18 +3680,6 @@ fn home_dir() -> Option<PathBuf> {
 fn file_modified_at(path: &Path) -> Option<String> {
     let modified = fs::metadata(path).ok()?.modified().ok()?;
     Some(DateTime::<Utc>::from(modified).to_rfc3339())
-}
-
-fn format_seconds(seconds: f64) -> String {
-    format!("{seconds:.3}s")
-}
-
-fn format_millis(ms: u64) -> String {
-    if ms >= 1000 {
-        format!("{:.3}s", ms as f64 / 1000.0)
-    } else {
-        format!("{ms}ms")
-    }
 }
 
 fn format_token_count(tokens: u32) -> String {
@@ -6613,5 +7054,39 @@ mod tests {
         let generation = prototype1_child_generation(Some(&parent), &registry, &source);
 
         assert_eq!(generation, 1);
+    }
+
+    #[test]
+    fn observation_log_loads_chat_http_attempts_from_trace_spans() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let log_path = tmp.path().join("prototype1_observation_test.jsonl");
+        fs::write(
+            &log_path,
+            concat!(
+                r#"{"timestamp":"2026-05-02T00:00:00Z","target":"chat_http","event":"chat_http_request_start","request_id":7,"attempt":1,"max_attempts":3,"model":"model-a","span":{"campaign_id":"campaign-a","node_id":"node-a","branch_id":"branch-a","generation":2}}"#,
+                "\n",
+                r#"{"timestamp":"2026-05-02T00:00:01Z","target":"chat_http","event":"chat_http_retry_scheduled","request_id":7,"attempt":1,"max_attempts":3,"phase":"body","status":503,"elapsed_ms":1000,"backoff_ms":250,"spans":[{"name":"prototype1.child.evaluate.eval_closure","campaign_id":"campaign-a","branch_id":"branch-a","generation":2}]}"#,
+                "\n",
+                r#"{"timestamp":"2026-05-02T00:00:03Z","target":"chat_http","event":"chat_http_request_completed","request_id":7,"attempt":2,"max_attempts":3,"status":200,"elapsed_ms":2000,"spans":[{"name":"prototype1.child.evaluate.eval_closure","campaign_id":"campaign-a","branch_id":"branch-a","generation":2}]}"#,
+                "\n",
+            ),
+        )
+        .expect("write log");
+
+        let mut evidence = ObservationEvidence::default();
+        parse_observation_log("campaign-a", &log_path, &mut evidence);
+
+        assert!(evidence.steps.is_empty());
+        assert_eq!(evidence.provider_http.len(), 3);
+        assert_eq!(evidence.provider_http[0].node_id.as_deref(), Some("node-a"));
+        assert_eq!(
+            evidence.provider_http[1].branch_id.as_deref(),
+            Some("branch-a")
+        );
+
+        let requests = provider_http_requests(&evidence.provider_http);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].retry_count(), 1);
+        assert_eq!(requests[0].elapsed_ms(), 3250);
     }
 }
