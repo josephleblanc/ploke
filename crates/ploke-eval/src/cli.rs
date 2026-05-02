@@ -458,6 +458,8 @@ pub enum Prototype1MonitorSubcommand {
     Peek(Prototype1MonitorPeekCommand),
     /// Summarize the current campaign records as a provisional History input.
     Report(Prototype1MonitorReportCommand),
+    /// Summarize per-node timing from persisted observation, stream, and trace records.
+    Timing(Prototype1MonitorTimingCommand),
     /// Poll expected output locations and print file changes.
     Watch(Prototype1MonitorWatchCommand),
 }
@@ -542,6 +544,16 @@ pub struct Prototype1HistoryPreviewCommand {
 pub struct Prototype1MonitorReportCommand {
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1MonitorTimingCommand {
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Restrict output to one node id.
+    #[arg(long)]
+    pub node: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -12195,6 +12207,36 @@ mod tests {
             }) => match cmd.command {
                 Prototype1MonitorSubcommand::Report(report) => {
                     assert_eq!(report.format, InspectOutputFormat::Json);
+                }
+                other => panic!("unexpected monitor subcommand: {:?}", other),
+            },
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_monitor_timing_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-monitor",
+            "--campaign",
+            "prototype1-campaign",
+            "timing",
+            "--node",
+            "node-abc123",
+            "--format",
+            "json",
+        ])
+        .expect("loop prototype1-monitor timing should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Monitor(cmd),
+            }) => match cmd.command {
+                Prototype1MonitorSubcommand::Timing(timing) => {
+                    assert_eq!(timing.node.as_deref(), Some("node-abc123"));
+                    assert_eq!(timing.format, InspectOutputFormat::Json);
                 }
                 other => panic!("unexpected monitor subcommand: {:?}", other),
             },

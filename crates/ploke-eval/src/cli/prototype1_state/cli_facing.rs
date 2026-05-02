@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_llm::{ModelId, ProviderKey};
 use ploke_tui::tools::ToolName;
@@ -27,11 +27,12 @@ use crate::{
         Prototype1BranchSelectCommand, Prototype1BranchShowCommand, Prototype1BranchStatusCommand,
         Prototype1HistoryPreviewCommand, Prototype1LoopCommand, Prototype1LoopStopAfter,
         Prototype1MetricsCommand, Prototype1MonitorCommand, Prototype1MonitorPeekCommand,
-        Prototype1MonitorSubcommand, Prototype1MonitorWatchCommand, Prototype1RunnerCommand,
-        Prototype1StateCommand, Prototype1StateStopAfter, TimingTrace, advance_eval_closure,
-        advance_protocol_closure, default_batch_id, pending_prototype1_stages,
-        persist_intervention_apply_for_record, persist_intervention_synthesis_for_record,
-        persist_issue_detection_for_record, print_issue_case_block,
+        Prototype1MonitorSubcommand, Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand,
+        Prototype1RunnerCommand, Prototype1StateCommand, Prototype1StateStopAfter, TimingTrace,
+        advance_eval_closure, advance_protocol_closure, default_batch_id,
+        pending_prototype1_stages, persist_intervention_apply_for_record,
+        persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
+        print_issue_case_block,
         prototype1_process::{
             Prototype1NodeExecutionOutcome, execute_prototype1_runner_invocation,
             execute_prototype1_runner_node, persist_prototype1_buildable_child_artifact,
@@ -1511,6 +1512,9 @@ impl Prototype1MonitorCommand {
             Prototype1MonitorSubcommand::Report(command) => {
                 crate::cli::prototype1_state::report::run(&campaign_id, &manifest_path, &command)
             }
+            Prototype1MonitorSubcommand::Timing(command) => {
+                print_prototype1_monitor_timing(&campaign_id, &manifest_path, &command)
+            }
             Prototype1MonitorSubcommand::HistoryPreview(command) => {
                 run_history_preview(&campaign_id, &manifest_path, &command)
             }
@@ -1903,6 +1907,568 @@ fn print_prototype1_monitor_locations(manifest_path: &Path, repo_root: Option<&P
         println!("  volatility: {}", location.volatility);
         println!("  description: {}", location.description);
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct MonitorTimingReport {
+    schema_version: &'static str,
+    generated_at: String,
+    campaign_id: String,
+    prototype_root: PathBuf,
+    scheduler_updated_at: String,
+    nodes: Vec<NodeTiming>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct NodeTiming {
+    node_id: String,
+    generation: u32,
+    parent_node_id: Option<String>,
+    branch_id: String,
+    status: String,
+    created_at: String,
+    updated_at: String,
+    runner_result_exists: bool,
+    runner_result_recorded_at: Option<String>,
+    runner_result_disposition: Option<String>,
+    streams: Vec<StreamTiming>,
+    traces: Vec<TurnTraceTiming>,
+    observation_steps: Vec<ObservationTiming>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StreamTiming {
+    runtime_id: String,
+    stderr_path: PathBuf,
+    stderr_modified_at: Option<String>,
+    branch_eval_started_at: Option<String>,
+    branch_eval_seconds: Option<f64>,
+    http_body_timeouts: usize,
+    http_body_timeout_seconds: f64,
+    chat_retries: usize,
+    chat_backoff_seconds: f64,
+    llm_errors: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TurnTraceTiming {
+    path: PathBuf,
+    modified_at: Option<String>,
+    event_counts: BTreeMap<String, usize>,
+    tool_completed: usize,
+    tool_failed: usize,
+    tool_latency_ms_total: u64,
+    tool_latency_ms_max: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ObservationTiming {
+    timestamp: Option<String>,
+    node_id: Option<String>,
+    generation: Option<u64>,
+    step: String,
+    outcome: Option<String>,
+    duration_ms: u64,
+}
+
+fn print_prototype1_monitor_timing(
+    campaign_id: &str,
+    manifest_path: &Path,
+    command: &Prototype1MonitorTimingCommand,
+) -> Result<(), PrepareError> {
+    let report = MonitorTimingReport::load(campaign_id, manifest_path, command.node.as_deref())?;
+    match command.format {
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+            );
+        }
+        InspectOutputFormat::Table => report.print(),
+    }
+    Ok(())
+}
+
+impl MonitorTimingReport {
+    fn load(
+        campaign_id: &str,
+        manifest_path: &Path,
+        node_filter: Option<&str>,
+    ) -> Result<Self, PrepareError> {
+        let prototype_root = prototype1_campaign_root(manifest_path);
+        let scheduler = load_or_default_scheduler_state(campaign_id, manifest_path)?;
+        let observations = load_observation_timings(campaign_id);
+        let traces = find_agent_turn_traces(campaign_id);
+        let mut nodes = Vec::new();
+
+        for scheduled in &scheduler.nodes {
+            if node_filter.is_some_and(|filter| filter != scheduled.node_id) {
+                continue;
+            }
+            let node = load_node_record(manifest_path, &scheduled.node_id)
+                .unwrap_or_else(|_| scheduled.clone());
+            let result = load_runner_result(manifest_path, &node.node_id).ok();
+            let observation_steps = observations
+                .iter()
+                .filter(|step| {
+                    step.node_id
+                        .as_deref()
+                        .is_some_and(|node_id| node_id == node.node_id)
+                })
+                .cloned()
+                .collect();
+            let traces = traces
+                .iter()
+                .filter(|trace| path_mentions(&trace.path, &node.branch_id))
+                .cloned()
+                .collect();
+
+            nodes.push(NodeTiming {
+                node_id: node.node_id.clone(),
+                generation: node.generation,
+                parent_node_id: node.parent_node_id.clone(),
+                branch_id: node.branch_id.clone(),
+                status: serde_name(&node.status).to_string(),
+                created_at: node.created_at.clone(),
+                updated_at: node.updated_at.clone(),
+                runner_result_exists: node.runner_result_path.exists(),
+                runner_result_recorded_at: result.as_ref().map(|result| result.recorded_at.clone()),
+                runner_result_disposition: result
+                    .as_ref()
+                    .map(|result| serde_name(&result.disposition).to_string()),
+                streams: load_stream_timings(&node.node_dir)?,
+                traces,
+                observation_steps,
+            });
+        }
+
+        Ok(Self {
+            schema_version: "prototype1-monitor-timing.v1",
+            generated_at: Utc::now().to_rfc3339(),
+            campaign_id: campaign_id.to_string(),
+            prototype_root,
+            scheduler_updated_at: scheduler.updated_at,
+            nodes,
+        })
+    }
+
+    fn print(&self) {
+        println!("prototype1 timing");
+        println!("{}", "-".repeat(40));
+        println!("schema_version: {}", self.schema_version);
+        println!("generated_at: {}", self.generated_at);
+        println!("campaign_id: {}", self.campaign_id);
+        println!("prototype_root: {}", self.prototype_root.display());
+        println!("scheduler_updated_at: {}", self.scheduler_updated_at);
+        println!();
+
+        if self.nodes.is_empty() {
+            println!("nodes: (none)");
+            return;
+        }
+
+        for node in &self.nodes {
+            node.print();
+            println!();
+        }
+    }
+}
+
+impl NodeTiming {
+    fn print(&self) {
+        println!(
+            "node {} gen={} branch={} status={}",
+            self.node_id, self.generation, self.branch_id, self.status
+        );
+        println!(
+            "  parent={} created_at={} updated_at={}",
+            self.parent_node_id.as_deref().unwrap_or("(none)"),
+            self.created_at,
+            self.updated_at
+        );
+        println!(
+            "  runner_result: exists={} recorded_at={} disposition={}",
+            yes_no(self.runner_result_exists),
+            self.runner_result_recorded_at.as_deref().unwrap_or("-"),
+            self.runner_result_disposition.as_deref().unwrap_or("-")
+        );
+
+        if self.streams.is_empty() {
+            println!("  streams: (none)");
+        } else {
+            println!("  streams:");
+            for stream in &self.streams {
+                println!(
+                    "    runtime={} stderr_mtime={} branch_eval={} http_body_timeouts={}/{} chat_retries={}/{} llm_errors={}",
+                    stream.runtime_id,
+                    stream.stderr_modified_at.as_deref().unwrap_or("-"),
+                    stream
+                        .branch_eval_seconds
+                        .map(format_seconds)
+                        .unwrap_or_else(|| {
+                            stream
+                                .branch_eval_started_at
+                                .as_ref()
+                                .map(|started| format!("running since {started}"))
+                                .unwrap_or_else(|| "-".to_string())
+                        }),
+                    stream.http_body_timeouts,
+                    format_seconds(stream.http_body_timeout_seconds),
+                    stream.chat_retries,
+                    format_seconds(stream.chat_backoff_seconds),
+                    stream.llm_errors
+                );
+                println!("      stderr: {}", stream.stderr_path.display());
+            }
+        }
+
+        if self.traces.is_empty() {
+            println!("  traces: (none)");
+        } else {
+            println!("  traces:");
+            for trace in &self.traces {
+                println!(
+                    "    mtime={} tools_completed={} tools_failed={} tool_latency_total={} tool_latency_max={} events={}",
+                    trace.modified_at.as_deref().unwrap_or("-"),
+                    trace.tool_completed,
+                    trace.tool_failed,
+                    format_millis(trace.tool_latency_ms_total),
+                    format_millis(trace.tool_latency_ms_max),
+                    format_event_counts(&trace.event_counts)
+                );
+                println!("      trace: {}", trace.path.display());
+            }
+        }
+
+        if self.observation_steps.is_empty() {
+            println!("  observation_steps: (none)");
+        } else {
+            println!("  observation_steps:");
+            for step in &self.observation_steps {
+                println!(
+                    "    {} {} outcome={} duration={}",
+                    step.timestamp.as_deref().unwrap_or("-"),
+                    step.step,
+                    step.outcome.as_deref().unwrap_or("-"),
+                    format_millis(step.duration_ms)
+                );
+            }
+        }
+    }
+}
+
+fn load_stream_timings(node_dir: &Path) -> Result<Vec<StreamTiming>, PrepareError> {
+    let streams_dir = node_dir.join("streams");
+    let mut timings = Vec::new();
+    if !streams_dir.exists() {
+        return Ok(timings);
+    }
+    for entry in fs::read_dir(&streams_dir).map_err(|source| PrepareError::ReadManifest {
+        path: streams_dir.clone(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| PrepareError::ReadManifest {
+            path: streams_dir.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let runtime_id = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("(unknown)")
+            .to_string();
+        let stderr_path = path.join("stderr.log");
+        if stderr_path.is_file() {
+            timings.push(parse_stderr_timing(runtime_id, stderr_path)?);
+        }
+    }
+    timings.sort_by(|left, right| left.runtime_id.cmp(&right.runtime_id));
+    Ok(timings)
+}
+
+fn parse_stderr_timing(
+    runtime_id: String,
+    stderr_path: PathBuf,
+) -> Result<StreamTiming, PrepareError> {
+    let text = fs::read_to_string(&stderr_path).map_err(|source| PrepareError::ReadManifest {
+        path: stderr_path.clone(),
+        source,
+    })?;
+    let ansi = regex::Regex::new(r"\x1b\[[0-9;]*m").expect("valid ANSI regex");
+    let elapsed = regex::Regex::new(r"elapsed_ms=([0-9]+)").expect("valid elapsed regex");
+    let backoff = regex::Regex::new(r"retry_delay_secs=([0-9.]+)").expect("valid backoff regex");
+    let branch_eval_start = regex::Regex::new(
+        r"^([0-9]{2}:[0-9]{2}:[0-9]{2}) loop\.prototype1_branch\.evaluate\.[^ ]+\.start",
+    )
+    .expect("valid branch eval start regex");
+    let branch_eval_end =
+        regex::Regex::new(r"loop\.prototype1_branch\.evaluate\.[^ ]+\.end \+([0-9.]+)s")
+            .expect("valid branch eval end regex");
+
+    let mut branch_eval_started_at = None;
+    let mut branch_eval_seconds = None;
+    let mut http_body_timeouts = 0;
+    let mut http_body_timeout_seconds = 0.0;
+    let mut chat_retries = 0;
+    let mut chat_backoff_seconds = 0.0;
+    let mut llm_errors = 0;
+
+    for raw_line in text.lines() {
+        let line = ansi.replace_all(raw_line, "");
+        if branch_eval_started_at.is_none() {
+            if let Some(captures) = branch_eval_start.captures(&line) {
+                branch_eval_started_at = captures.get(1).map(|value| value.as_str().to_string());
+            }
+        }
+        if let Some(captures) = branch_eval_end.captures(&line) {
+            branch_eval_seconds = captures
+                .get(1)
+                .and_then(|value| value.as_str().parse::<f64>().ok());
+        }
+        if line.contains("chat_http_request_error")
+            && line.contains("body_failure")
+            && line.contains("timeout")
+            && line.contains("status=200")
+        {
+            http_body_timeouts += 1;
+            if let Some(captures) = elapsed.captures(&line) {
+                if let Some(ms) = captures
+                    .get(1)
+                    .and_then(|value| value.as_str().parse::<u64>().ok())
+                {
+                    http_body_timeout_seconds += ms as f64 / 1000.0;
+                }
+            }
+        }
+        if line.contains("chat_step failed; retrying") {
+            chat_retries += 1;
+            if let Some(captures) = backoff.captures(&line) {
+                if let Some(seconds) = captures
+                    .get(1)
+                    .and_then(|value| value.as_str().parse::<f64>().ok())
+                {
+                    chat_backoff_seconds += seconds;
+                }
+            }
+        }
+        if line.contains("LLM request ended with error") {
+            llm_errors += 1;
+        }
+    }
+
+    Ok(StreamTiming {
+        runtime_id,
+        stderr_modified_at: file_modified_at(&stderr_path),
+        stderr_path,
+        branch_eval_started_at,
+        branch_eval_seconds,
+        http_body_timeouts,
+        http_body_timeout_seconds,
+        chat_retries,
+        chat_backoff_seconds,
+        llm_errors,
+    })
+}
+
+fn find_agent_turn_traces(campaign_id: &str) -> Vec<TurnTraceTiming> {
+    let Some(root) = home_dir().map(|home| {
+        home.join(".ploke-eval")
+            .join("instances")
+            .join("prototype1")
+            .join(campaign_id)
+    }) else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    collect_named_files(&root, "agent-turn-trace.json", &mut paths);
+    let mut traces = paths
+        .into_iter()
+        .filter_map(|path| parse_turn_trace(path).ok())
+        .collect::<Vec<_>>();
+    traces.sort_by(|left, right| left.path.cmp(&right.path));
+    traces
+}
+
+fn parse_turn_trace(path: PathBuf) -> Result<TurnTraceTiming, PrepareError> {
+    let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
+        path: path.clone(),
+        source,
+    })?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
+            path: path.clone(),
+            source,
+        })?;
+    let mut event_counts = BTreeMap::new();
+    let mut tool_completed = 0;
+    let mut tool_failed = 0;
+    let mut tool_latency_ms_total = 0;
+    let mut tool_latency_ms_max = 0;
+
+    if let Some(events) = value.get("events").and_then(|events| events.as_array()) {
+        for event in events {
+            let Some((kind, payload)) = event.as_object().and_then(|object| object.iter().next())
+            else {
+                continue;
+            };
+            *event_counts.entry(kind.clone()).or_insert(0) += 1;
+            if kind == "ToolCompleted" || kind == "ToolFailed" {
+                if kind == "ToolCompleted" {
+                    tool_completed += 1;
+                } else {
+                    tool_failed += 1;
+                }
+                if let Some(latency) = payload.get("latency_ms").and_then(|value| value.as_u64()) {
+                    tool_latency_ms_total += latency;
+                    tool_latency_ms_max = tool_latency_ms_max.max(latency);
+                }
+            }
+        }
+    }
+
+    Ok(TurnTraceTiming {
+        modified_at: file_modified_at(&path),
+        path,
+        event_counts,
+        tool_completed,
+        tool_failed,
+        tool_latency_ms_total,
+        tool_latency_ms_max,
+    })
+}
+
+fn load_observation_timings(campaign_id: &str) -> Vec<ObservationTiming> {
+    let Some(log_root) = home_dir().map(|home| home.join(".ploke-eval").join("logs")) else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    collect_observation_logs(&log_root, &mut paths);
+    let mut timings = Vec::new();
+    for path in paths {
+        parse_observation_log(campaign_id, &path, &mut timings);
+    }
+    timings.sort_by(|left, right| left.timestamp.cmp(&right.timestamp));
+    timings
+}
+
+fn parse_observation_log(campaign_id: &str, path: &Path, timings: &mut Vec<ObservationTiming>) {
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(duration_ms) = value.get("duration_ms").and_then(|value| value.as_u64()) else {
+            continue;
+        };
+        let span = value.get("span");
+        let event_campaign =
+            string_field(span, "campaign_id").or_else(|| string_field(Some(&value), "campaign"));
+        if event_campaign.as_deref() != Some(campaign_id) {
+            continue;
+        }
+        let step = string_field(span, "name")
+            .or_else(|| string_field(Some(&value), "phase"))
+            .or_else(|| string_field(Some(&value), "message"))
+            .unwrap_or_else(|| "(unnamed)".to_string());
+        timings.push(ObservationTiming {
+            timestamp: string_field(Some(&value), "timestamp"),
+            node_id: string_field(span, "node_id")
+                .or_else(|| string_field(Some(&value), "node_id")),
+            generation: value
+                .get("generation")
+                .and_then(|value| value.as_u64())
+                .or_else(|| {
+                    span.and_then(|span| span.get("generation"))
+                        .and_then(|value| value.as_u64())
+                }),
+            step,
+            outcome: string_field(Some(&value), "outcome"),
+            duration_ms,
+        });
+    }
+}
+
+fn collect_named_files(root: &Path, name: &str, paths: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_named_files(&path, name, paths);
+        } else if path.file_name().and_then(|value| value.to_str()) == Some(name) {
+            paths.push(path);
+        }
+    }
+}
+
+fn collect_observation_logs(root: &Path, paths: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if path.is_file() && name.starts_with("prototype1_observation_") && name.ends_with(".jsonl")
+        {
+            paths.push(path);
+        }
+    }
+}
+
+fn string_field(value: Option<&serde_json::Value>, field: &str) -> Option<String> {
+    value?
+        .get(field)
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+}
+
+fn path_mentions(path: &Path, needle: &str) -> bool {
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|part| part == needle)
+    })
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+fn file_modified_at(path: &Path) -> Option<String> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    Some(DateTime::<Utc>::from(modified).to_rfc3339())
+}
+
+fn format_seconds(seconds: f64) -> String {
+    format!("{seconds:.3}s")
+}
+
+fn format_millis(ms: u64) -> String {
+    if ms >= 1000 {
+        format!("{:.3}s", ms as f64 / 1000.0)
+    } else {
+        format!("{ms}ms")
+    }
+}
+
+fn format_event_counts(counts: &BTreeMap<String, usize>) -> String {
+    if counts.is_empty() {
+        return "-".to_string();
+    }
+    counts
+        .iter()
+        .map(|(kind, count)| format!("{kind}:{count}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn peek_prototype1_monitor_locations(
