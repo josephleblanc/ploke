@@ -34,12 +34,12 @@ use crate::{
         persist_intervention_apply_for_record, persist_intervention_synthesis_for_record,
         persist_issue_detection_for_record, print_issue_case_block,
         prototype1_process::{
-            Prototype1NodeExecutionOutcome, execute_prototype1_runner_invocation,
-            execute_prototype1_runner_node, persist_prototype1_buildable_child_artifact,
-            record_prototype1_successor_completion, record_prototype1_successor_ready,
-            run_prototype1_branch_evaluation, run_prototype1_branch_evaluation_via_child,
-            spawn_and_handoff_prototype1_successor, validate_child_surface,
-            validate_prototype1_successor_continuation,
+            Prototype1NodeExecutionOutcome, SuccessorHandoffMode,
+            execute_prototype1_runner_invocation, execute_prototype1_runner_node,
+            persist_prototype1_buildable_child_artifact, record_prototype1_successor_completion,
+            record_prototype1_successor_ready, run_prototype1_branch_evaluation,
+            run_prototype1_branch_evaluation_via_child, spawn_and_handoff_prototype1_successor,
+            validate_child_surface, validate_prototype1_successor_continuation,
         },
         prototype1_state::{
             backend::{GitWorktreeBackend, WorkspaceBackend},
@@ -5085,6 +5085,16 @@ fn append_parent_target_sample(
 }
 
 impl Prototype1StateCommand {
+    #[cfg(feature = "demo")]
+    fn successor_handoff_mode(&self) -> SuccessorHandoffMode {
+        SuccessorHandoffMode::Exec
+    }
+
+    #[cfg(not(feature = "demo"))]
+    fn successor_handoff_mode(&self) -> SuccessorHandoffMode {
+        SuccessorHandoffMode::Detached
+    }
+
     #[instrument(
         target = "ploke_exec",
         level = "debug",
@@ -5418,6 +5428,7 @@ impl Prototype1StateCommand {
                                                             &candidate_node_id,
                                                             &repo_root,
                                                             parent,
+                                                            self.successor_handoff_mode(),
                                                         )? {
                                                             (_retired, Some(successor)) => {
                                                                 (

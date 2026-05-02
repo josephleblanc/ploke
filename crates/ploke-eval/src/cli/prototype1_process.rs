@@ -211,6 +211,16 @@ pub(crate) struct Prototype1SuccessorHandoff {
     pub ready_path: PathBuf,
 }
 
+/// How a selected successor runtime is launched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SuccessorHandoffMode {
+    /// Spawn successor as a child process and wait for its ready record.
+    Detached,
+    /// Demo-only: replace the current parent process with the successor.
+    #[cfg(feature = "demo")]
+    Exec,
+}
+
 #[must_use = "node build outcomes must be checked before attempting to spawn a child binary"]
 enum Prototype1NodeBuildOutcome {
     Built,
@@ -972,6 +982,45 @@ fn spawn_prototype1_successor(
         })
 }
 
+#[cfg(feature = "demo")]
+fn exec_prototype1_successor(
+    binary_path: &Path,
+    repo_root: &Path,
+    invocation_path: &Path,
+    invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
+    retired_parent: &Parent<Retired>,
+) -> Result<(), PrepareError> {
+    let child_argv = invocation.launch_args_for_retired_parent(retired_parent, invocation_path)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = ProcessCommand::new(binary_path);
+        command
+            .args(&child_argv)
+            .current_dir(repo_root)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit());
+
+        let source = command.exec();
+        Err(PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_exec",
+            detail: source.to_string(),
+        })
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (binary_path, repo_root, child_argv);
+        Err(PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_exec",
+            detail: "demo exec handoff is only supported on Unix".to_string(),
+        })
+    }
+}
+
 fn runtime_streams(
     node_dir: &Path,
     runtime_id: crate::cli::prototype1_state::event::RuntimeId,
@@ -1051,6 +1100,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     node_id: &str,
     active_parent_root: &Path,
     parent: Parent<Selectable>,
+    mode: SuccessorHandoffMode,
 ) -> Result<(Parent<Retired>, Option<Prototype1SuccessorHandoff>), PrepareError> {
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let node = load_node_record(&manifest_path, node_id)?;
@@ -1197,6 +1247,64 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         invocation_path = %invocation_path.display(),
         ready_path = %ready_path.display(),
     ));
+
+    #[cfg(feature = "demo")]
+    if mode == SuccessorHandoffMode::Exec {
+        crate::cli::prototype1_state::invocation::write_successor_invocation_for_retired_parent(
+            &retired_parent,
+            &invocation_path,
+            &invocation,
+        )?;
+        let pid = std::process::id();
+        append_successor_record(
+            invocation.journal_path(),
+            SuccessorRecord::spawned(
+                &invocation,
+                pid,
+                active_parent_root.to_path_buf(),
+                active_successor_binary_path.clone(),
+                invocation_path.clone(),
+                ready_path.clone(),
+                streams.clone(),
+            ),
+            "prototype1_successor_exec_journal",
+        )?;
+        append_prototype1_journal_entry(
+            &manifest_path,
+            JournalEntry::SuccessorHandoff(SuccessorHandoffEntry {
+                recorded_at: RecordedAt::now(),
+                campaign_id: campaign_id.to_string(),
+                node_id: node.node_id.clone(),
+                runtime_id,
+                active_parent_root: active_parent_root.to_path_buf(),
+                binary_path: active_successor_binary_path.clone(),
+                invocation_path: invocation_path.clone(),
+                ready_path: ready_path.clone(),
+                streams: Some(streams.clone()),
+                pid,
+            }),
+            "prototype1_successor_exec_handoff_journal",
+        )?;
+        spawn_step.success();
+        debug!(
+            target: EXECUTION_DEBUG_TARGET,
+            campaign = %campaign_id,
+            node_id = %node_id,
+            runtime_id = %runtime_id,
+            pid,
+            "demo exec handoff replacing parent process with successor"
+        );
+        exec_prototype1_successor(
+            &active_successor_binary_path,
+            active_parent_root,
+            &invocation_path,
+            &invocation,
+            &retired_parent,
+        )?;
+        unreachable!("successful exec replaces the current process");
+    }
+
+    let _ = mode;
     let mut child = match spawn_prototype1_successor(
         &active_successor_binary_path,
         active_parent_root,
