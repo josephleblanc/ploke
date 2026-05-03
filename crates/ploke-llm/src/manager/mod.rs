@@ -2,6 +2,7 @@ mod commands;
 pub mod events;
 mod session;
 pub use session::{ChatHttpConfig, ChatStepData, ChatStepOutcome, chat_step, parse_chat_outcome};
+pub mod builders;
 
 use crate::error::LlmError;
 use crate::manager::events::endpoint;
