@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
-use ploke_core::TypeId;
+use ploke_core::{TypeId, TypeKind};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -240,6 +240,82 @@ impl Ref {
     }
 }
 
+/// Where a structural type occurrence was observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum TypeUseRole {
+    FunctionReturn,
+    FunctionParam,
+    MethodReturn,
+    MethodParam,
+    Field,
+    Const,
+    Static,
+    TypeAliasTarget,
+    ImplSelf,
+    ImplTrait,
+    TraitSuper,
+}
+
+impl TypeUseRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FunctionReturn => "function_return",
+            Self::FunctionParam => "function_param",
+            Self::MethodReturn => "method_return",
+            Self::MethodParam => "method_param",
+            Self::Field => "field",
+            Self::Const => "const",
+            Self::Static => "static",
+            Self::TypeAliasTarget => "type_alias_target",
+            Self::ImplSelf => "impl_self",
+            Self::ImplTrait => "impl_trait",
+            Self::TraitSuper => "trait_super",
+        }
+    }
+
+    fn expects_trait_target(self) -> bool {
+        matches!(self, Self::ImplTrait | Self::TraitSuper)
+    }
+}
+
+/// Semantic result for one resolvable type occurrence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeUseResolution {
+    pub owner: AnyNodeId,
+    pub role: TypeUseRole,
+    pub source_type_id: TypeId,
+    pub resolved_ref: Ref,
+    pub resolved_type_id: Option<TypeId>,
+}
+
+impl TypeUseResolution {
+    pub fn item_target(&self) -> Option<AnyNodeId> {
+        match self.resolved_ref.state {
+            State::Resolved(Target::Item(item_id)) | State::Resolved(Target::SelfType(item_id)) => {
+                Some(item_id)
+            }
+            State::Resolved(Target::GenericParam(_))
+            | State::Ambiguous(_)
+            | State::Unresolved(_) => None,
+        }
+    }
+}
+
+/// Collected output for a complete late type-resolution pass.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeResolutionReport {
+    pub resolutions: Vec<TypeUseResolution>,
+    pub summary: Summary,
+}
+
+impl TypeResolutionReport {
+    pub fn item_backed_resolutions(&self) -> impl Iterator<Item = &TypeUseResolution> {
+        self.resolutions
+            .iter()
+            .filter(|resolution| resolution.item_target().is_some())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedTarget {
     Ordinary,
@@ -288,8 +364,42 @@ impl<'a> LateResolver<'a> {
             other => panic!("NamedTypeId points to unexpected TypeKind: {other:?}"),
         };
 
-        let provenance = Provenance::new(type_id.into(), path, is_fully_qualified, containing_module, owner);
+        let provenance = Provenance::new(
+            type_id.into(),
+            path,
+            is_fully_qualified,
+            containing_module,
+            owner,
+        );
         self.resolve_named_path(provenance)
+    }
+
+    pub fn resolve_named_trait(
+        &self,
+        type_id: NamedTypeId,
+        containing_module: Option<ModuleNodeId>,
+        owner: Option<AnyNodeId>,
+    ) -> Ref {
+        let type_node = self
+            .graph
+            .resolve_type(type_id.into())
+            .expect("NamedTypeId should exist in the graph type table");
+        let (path, is_fully_qualified) = match &type_node.kind {
+            ploke_core::TypeKind::Named {
+                path,
+                is_fully_qualified,
+            } => (path.clone(), *is_fully_qualified),
+            other => panic!("NamedTypeId points to unexpected TypeKind: {other:?}"),
+        };
+
+        let provenance = Provenance::new(
+            type_id.into(),
+            path,
+            is_fully_qualified,
+            containing_module,
+            owner,
+        );
+        self.resolve_trait_path(provenance)
     }
 
     pub fn resolve_trait_bound(
@@ -310,7 +420,13 @@ impl<'a> LateResolver<'a> {
             other => panic!("TraitBoundTypeId points to unexpected TypeKind: {other:?}"),
         };
 
-        let provenance = Provenance::new(type_id.into(), path, is_fully_qualified, containing_module, owner);
+        let provenance = Provenance::new(
+            type_id.into(),
+            path,
+            is_fully_qualified,
+            containing_module,
+            owner,
+        );
         self.resolve_trait_path(provenance)
     }
 
@@ -322,7 +438,10 @@ impl<'a> LateResolver<'a> {
         self.resolve_provenance(provenance, ExpectedTarget::Trait)
     }
 
-    pub fn promote_resolved_type_id(&self, resolved: &Ref) -> Result<Option<TypeId>, SynParserError> {
+    pub fn promote_resolved_type_id(
+        &self,
+        resolved: &Ref,
+    ) -> Result<Option<TypeId>, SynParserError> {
         let item_id = match &resolved.state {
             State::Resolved(Target::Item(item_id)) | State::Resolved(Target::SelfType(item_id)) => {
                 *item_id
@@ -526,7 +645,11 @@ impl<'a> LateResolver<'a> {
             };
         };
 
-        let Some(impl_node) = owner_node.as_impl() else {
+        let impl_node = if let Some(impl_node) = owner_node.as_impl() {
+            impl_node
+        } else if let Some(impl_node) = self.impl_for_method_owner(owner) {
+            impl_node
+        } else {
             return Ref {
                 provenance: provenance.clone(),
                 state: State::Unresolved(Unresolved {
@@ -784,24 +907,19 @@ impl<'a> LateResolver<'a> {
             },
             1 => Ref {
                 provenance,
-                state: State::Resolved(
-                    Target::Item(
-                        resolved_targets
+                state: State::Resolved(Target::Item(
+                    resolved_targets
                         .into_iter()
                         .next()
                         .expect("one resolved target"),
-                    ),
-                ),
+                )),
             },
             _ => Ref {
                 provenance: provenance.clone(),
                 state: State::Ambiguous(Ambiguous {
                     provenance,
                     reason: AmbiguousReason::MultipleVisibleDefinitions,
-                    candidates: resolved_targets
-                        .into_iter()
-                        .map(Target::Item)
-                        .collect(),
+                    candidates: resolved_targets.into_iter().map(Target::Item).collect(),
                 }),
             },
         }
@@ -855,6 +973,19 @@ impl<'a> LateResolver<'a> {
         })
     }
 
+    fn impl_for_method_owner(&self, owner: AnyNodeId) -> Option<&crate::parser::nodes::ImplNode> {
+        let AnyNodeId::Method(method_id) = owner else {
+            return None;
+        };
+
+        self.graph.impls().iter().find(|impl_node| {
+            impl_node
+                .methods
+                .iter()
+                .any(|method| method.id == method_id)
+        })
+    }
+
     fn canonical_item_path(
         &self,
         item_id: PrimaryNodeId,
@@ -876,16 +1007,12 @@ impl<'a> LateResolver<'a> {
                 ))
             })?;
 
-        let module = self
-            .tree
-            .modules()
-            .get(&containing_module)
-            .ok_or_else(|| {
-                SynParserError::InternalState(format!(
-                    "module {} missing from ModuleTree while generating canonical type path",
-                    containing_module
-                ))
-            })?;
+        let module = self.tree.modules().get(&containing_module).ok_or_else(|| {
+            SynParserError::InternalState(format!(
+                "module {} missing from ModuleTree while generating canonical type path",
+                containing_module
+            ))
+        })?;
         let mut path = module.path().clone();
         path.push(name.to_string());
         NodePath::try_from(path)
@@ -936,8 +1063,299 @@ impl<'a> LateResolver<'a> {
     }
 }
 
+pub fn resolve_type_uses_after_tree(
+    graph: &ParsedCodeGraph,
+    tree: &ModuleTree,
+) -> Result<TypeResolutionReport, SynParserError> {
+    let mut walker = TypeUseWalker::new(graph, tree);
+    walker.collect()?;
+    let summary = Summary::from_results(
+        walker
+            .resolutions
+            .iter()
+            .map(|resolution| &resolution.resolved_ref),
+    );
+
+    Ok(TypeResolutionReport {
+        resolutions: walker.resolutions,
+        summary,
+    })
+}
+
+struct TypeUseWalker<'a> {
+    graph: &'a ParsedCodeGraph,
+    resolver: LateResolver<'a>,
+    resolutions: Vec<TypeUseResolution>,
+}
+
+impl<'a> TypeUseWalker<'a> {
+    fn new(graph: &'a ParsedCodeGraph, tree: &'a ModuleTree) -> Self {
+        Self {
+            graph,
+            resolver: LateResolver::new(graph, tree),
+            resolutions: Vec::new(),
+        }
+    }
+
+    fn collect(&mut self) -> Result<(), SynParserError> {
+        for function in self.graph.functions() {
+            let owner = function.id.as_any();
+            let module = self.module_for_scope(owner);
+            for param in &function.parameters {
+                self.visit_type_use(
+                    owner,
+                    owner,
+                    module,
+                    TypeUseRole::FunctionParam,
+                    param.type_id,
+                )?;
+            }
+            if let Some(type_id) = function.return_type {
+                self.visit_type_use(owner, owner, module, TypeUseRole::FunctionReturn, type_id)?;
+            }
+        }
+
+        for defined_type in self.graph.defined_types() {
+            match defined_type {
+                crate::parser::nodes::TypeDefNode::Struct(node) => {
+                    let scope_owner = node.id.as_any();
+                    let module = self.module_for_scope(scope_owner);
+                    for field in &node.fields {
+                        self.visit_type_use(
+                            field.id.as_any(),
+                            scope_owner,
+                            module,
+                            TypeUseRole::Field,
+                            field.type_id,
+                        )?;
+                    }
+                }
+                crate::parser::nodes::TypeDefNode::Enum(node) => {
+                    let scope_owner = node.id.as_any();
+                    let module = self.module_for_scope(scope_owner);
+                    for variant in &node.variants {
+                        for field in &variant.fields {
+                            self.visit_type_use(
+                                field.id.as_any(),
+                                scope_owner,
+                                module,
+                                TypeUseRole::Field,
+                                field.type_id,
+                            )?;
+                        }
+                    }
+                }
+                crate::parser::nodes::TypeDefNode::TypeAlias(node) => {
+                    let owner = node.id.as_any();
+                    let module = self.module_for_scope(owner);
+                    self.visit_type_use(
+                        owner,
+                        owner,
+                        module,
+                        TypeUseRole::TypeAliasTarget,
+                        node.type_id,
+                    )?;
+                }
+                crate::parser::nodes::TypeDefNode::Union(node) => {
+                    let scope_owner = node.id.as_any();
+                    let module = self.module_for_scope(scope_owner);
+                    for field in &node.fields {
+                        self.visit_type_use(
+                            field.id.as_any(),
+                            scope_owner,
+                            module,
+                            TypeUseRole::Field,
+                            field.type_id,
+                        )?;
+                    }
+                }
+            }
+        }
+
+        for trait_node in self.graph.traits() {
+            let owner = trait_node.id.as_any();
+            let module = self.module_for_scope(owner);
+            for type_id in &trait_node.super_traits {
+                self.visit_type_use(owner, owner, module, TypeUseRole::TraitSuper, *type_id)?;
+            }
+            for method in &trait_node.methods {
+                self.collect_method(method, method.id.as_any(), module, true)?;
+            }
+        }
+
+        for impl_node in self.graph.impls() {
+            let owner = impl_node.id.as_any();
+            let module = self.module_for_scope(owner);
+            self.visit_type_use(
+                owner,
+                owner,
+                module,
+                TypeUseRole::ImplSelf,
+                impl_node.self_type,
+            )?;
+            if let Some(type_id) = impl_node.trait_type {
+                self.visit_type_use(owner, owner, module, TypeUseRole::ImplTrait, type_id)?;
+            }
+            for method in &impl_node.methods {
+                self.collect_method(method, method.id.as_any(), module, false)?;
+            }
+        }
+
+        for const_node in self.graph.consts() {
+            let owner = const_node.id.as_any();
+            let module = self.module_for_scope(owner);
+            self.visit_type_use(owner, owner, module, TypeUseRole::Const, const_node.type_id)?;
+        }
+
+        for static_node in self.graph.statics() {
+            let owner = static_node.id.as_any();
+            let module = self.module_for_scope(owner);
+            self.visit_type_use(
+                owner,
+                owner,
+                module,
+                TypeUseRole::Static,
+                static_node.type_id,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn collect_method(
+        &mut self,
+        method: &crate::parser::nodes::MethodNode,
+        owner: AnyNodeId,
+        module: Option<ModuleNodeId>,
+        _in_trait: bool,
+    ) -> Result<(), SynParserError> {
+        for param in &method.parameters {
+            self.visit_type_use(
+                owner,
+                owner,
+                module,
+                TypeUseRole::MethodParam,
+                param.type_id,
+            )?;
+        }
+        if let Some(type_id) = method.return_type {
+            self.visit_type_use(owner, owner, module, TypeUseRole::MethodReturn, type_id)?;
+        }
+        Ok(())
+    }
+
+    fn visit_type_use(
+        &mut self,
+        edge_owner: AnyNodeId,
+        scope_owner: AnyNodeId,
+        containing_module: Option<ModuleNodeId>,
+        role: TypeUseRole,
+        type_id: TypeId,
+    ) -> Result<(), SynParserError> {
+        let mut seen = HashSet::new();
+        self.visit_type_tree(
+            edge_owner,
+            scope_owner,
+            containing_module,
+            role,
+            type_id,
+            role.expects_trait_target(),
+            &mut seen,
+        )
+    }
+
+    fn visit_type_tree(
+        &mut self,
+        edge_owner: AnyNodeId,
+        scope_owner: AnyNodeId,
+        containing_module: Option<ModuleNodeId>,
+        role: TypeUseRole,
+        type_id: TypeId,
+        expects_trait_target: bool,
+        seen: &mut HashSet<TypeId>,
+    ) -> Result<(), SynParserError> {
+        if !seen.insert(type_id) {
+            return Ok(());
+        }
+
+        let type_node = self.graph.resolve_type(type_id).ok_or_else(|| {
+            SynParserError::InternalState(format!(
+                "type use {type_id} referenced by {edge_owner:?} was not found in type graph"
+            ))
+        })?;
+        let related_types = type_node.related_types.clone();
+
+        let resolved_ref = match &type_node.kind {
+            TypeKind::Named { .. } => {
+                let named_id = NamedTypeId::try_from(type_node).map_err(|err| {
+                    SynParserError::InternalState(format!(
+                        "failed to refine named type {type_id}: {err}"
+                    ))
+                })?;
+                if expects_trait_target {
+                    Some(self.resolver.resolve_named_trait(
+                        named_id,
+                        containing_module,
+                        Some(scope_owner),
+                    ))
+                } else {
+                    Some(self.resolver.resolve_named(
+                        named_id,
+                        containing_module,
+                        Some(scope_owner),
+                    ))
+                }
+            }
+            TypeKind::TraitBound { .. } => {
+                let trait_bound_id = TraitBoundTypeId::try_from(type_node).map_err(|err| {
+                    SynParserError::InternalState(format!(
+                        "failed to refine trait-bound type {type_id}: {err}"
+                    ))
+                })?;
+                Some(self.resolver.resolve_trait_bound(
+                    trait_bound_id,
+                    containing_module,
+                    Some(scope_owner),
+                ))
+            }
+            _ => None,
+        };
+
+        if let Some(resolved_ref) = resolved_ref {
+            let resolved_type_id = self.resolver.promote_resolved_type_id(&resolved_ref)?;
+            self.resolutions.push(TypeUseResolution {
+                owner: edge_owner,
+                role,
+                source_type_id: type_id,
+                resolved_ref,
+                resolved_type_id,
+            });
+        }
+
+        for related_type_id in related_types {
+            self.visit_type_tree(
+                edge_owner,
+                scope_owner,
+                containing_module,
+                role,
+                related_type_id,
+                false,
+                seen,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn module_for_scope(&self, scope_owner: AnyNodeId) -> Option<ModuleNodeId> {
+        self.graph
+            .module_for_any_id(scope_owner)
+            .map(|module| module.id)
+    }
+}
+
 /// Debug-focused summary surface for the late named-type resolution pass.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Summary {
     pub total: usize,
     pub resolved: usize,
@@ -1043,7 +1461,12 @@ mod tests {
         name: &str,
     ) -> AnyNodeId {
         let module = graph
-            .find_module_by_path_checked(&module_path.iter().map(|seg| (*seg).to_string()).collect::<Vec<_>>())
+            .find_module_by_path_checked(
+                &module_path
+                    .iter()
+                    .map(|seg| (*seg).to_string())
+                    .collect::<Vec<_>>(),
+            )
             .expect("module for trait lookup");
 
         tree.get_iter_relations_from(&module.id.as_any())
@@ -1161,7 +1584,10 @@ mod tests {
         };
 
         let resolved = resolver.resolve_named_path(named_type.provenance.clone());
-        assert_eq!(resolved.state, State::Resolved(Target::Item(sample_struct_id)));
+        assert_eq!(
+            resolved.state,
+            State::Resolved(Target::Item(sample_struct_id))
+        );
 
         let promoted = resolver
             .promote_resolved_type_id(&resolved)
@@ -1180,17 +1606,18 @@ mod tests {
         let documented_trait_id =
             trait_id_in_module(&graph, &tree, &["crate", "traits"], "DocumentedTrait");
 
-        let resolved = resolver.resolve_trait_path(
-            Provenance::new(
-                TypeId::Synthetic(Uuid::nil()),
-                vec!["DocumentedTrait".to_string()],
-                false,
-                Some(imports_module.id),
-                None,
-            ),
-        );
+        let resolved = resolver.resolve_trait_path(Provenance::new(
+            TypeId::Synthetic(Uuid::nil()),
+            vec!["DocumentedTrait".to_string()],
+            false,
+            Some(imports_module.id),
+            None,
+        ));
 
-        assert_eq!(resolved.state, State::Resolved(Target::Item(documented_trait_id)));
+        assert_eq!(
+            resolved.state,
+            State::Resolved(Target::Item(documented_trait_id))
+        );
     }
 
     #[test]
@@ -1204,18 +1631,51 @@ mod tests {
                 "trait_chain".to_string(),
             ])
             .expect("trait_chain module");
-        let simple_trait_id = trait_id_in_module(&graph, &tree, &["crate", "traits"], "SimpleTrait");
+        let simple_trait_id =
+            trait_id_in_module(&graph, &tree, &["crate", "traits"], "SimpleTrait");
 
-        let resolved = resolver.resolve_trait_path(
-            Provenance::new(
-                TypeId::Synthetic(Uuid::nil()),
-                vec!["ChainPublicTraitAlias".to_string()],
-                false,
-                Some(chain_module.id),
-                None,
-            ),
+        let resolved = resolver.resolve_trait_path(Provenance::new(
+            TypeId::Synthetic(Uuid::nil()),
+            vec!["ChainPublicTraitAlias".to_string()],
+            false,
+            Some(chain_module.id),
+            None,
+        ));
+
+        assert_eq!(
+            resolved.state,
+            State::Resolved(Target::Item(simple_trait_id))
         );
+    }
 
-        assert_eq!(resolved.state, State::Resolved(Target::Item(simple_trait_id)));
+    #[test]
+    fn report_resolves_impl_method_self_return_types() {
+        let (graph, tree) = build_tree_for_tests("fixture_nodes");
+        let report =
+            resolve_type_uses_after_tree(&graph, &tree).expect("late type-use resolution report");
+        let method = graph
+            .impls()
+            .iter()
+            .flat_map(|impl_node| &impl_node.methods)
+            .find(|method| method.name == "new")
+            .expect("fixture method");
+
+        let resolved_method_return_targets = report
+            .resolutions
+            .iter()
+            .filter(|resolution| {
+                resolution.owner == method.id.as_any()
+                    && resolution.role == TypeUseRole::MethodReturn
+                    && resolution.resolved_type_id.is_some()
+            })
+            .filter_map(TypeUseResolution::item_target)
+            .filter_map(|target| graph.find_node_unique(target).ok())
+            .map(|node| node.name().to_string())
+            .collect::<BTreeSet<_>>();
+
+        assert!(
+            resolved_method_return_targets.contains("SimpleStruct"),
+            "Self return should include resolved SimpleStruct target; got {resolved_method_return_targets:?}"
+        );
     }
 }

@@ -9,6 +9,7 @@ pub mod backlink_imports_spp_cfg;
 pub mod path_attribute;
 
 pub mod prune_unlinked_imports;
+pub mod type_use_resolution;
 
 #[cfg(not(feature = "type_bearing_ids"))]
 pub mod shortest_path;

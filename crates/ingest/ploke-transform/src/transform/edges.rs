@@ -80,10 +80,11 @@
 
 use cozo::{Db, MemStorage};
 use syn_parser::parser::relations::SyntacticRelation;
+use syn_parser::resolve::type_resolution::TypeResolutionReport;
 use tracing::instrument;
 
 use super::*;
-use crate::schema::edges::SyntacticRelationSchema;
+use crate::schema::edges::{ResolvedTypeUseSchema, SyntacticRelationSchema};
 
 #[instrument(skip_all)]
 pub(super) fn transform_relations(
@@ -97,6 +98,18 @@ pub(super) fn transform_relations(
     // any relation filtering here stays lossless for those variants.
     for relation in relations {
         schema.insert_relation(db, &relation)?;
+    }
+    Ok(())
+}
+
+#[instrument(skip_all)]
+pub(super) fn transform_resolved_type_uses(
+    db: &Db<MemStorage>,
+    report: &TypeResolutionReport,
+) -> Result<(), TransformError> {
+    let schema = &ResolvedTypeUseSchema::SCHEMA;
+    for resolution in report.item_backed_resolutions() {
+        schema.insert_resolution(db, resolution)?;
     }
     Ok(())
 }

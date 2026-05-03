@@ -28,3 +28,14 @@ answer cannot be found by the main agent.
 Notable inconsistencies in the code base, task, or documentation. This is to
 help note any areas where the project might be later improved, and should not
 be immediately addressed. To be reviewed by user periodically.
+
+## Active Areas
+
+- [`2026-03-20-backup-dbs`](2026-03-20-backup-dbs) - Backup database fixture work and coordination.
+- [`2026-03-24-coordination`](2026-03-24-coordination) - Cross-agent coordination notes.
+- [`2026-03-29_corpus-triage`](2026-03-29_corpus-triage) - Corpus triage notes.
+- [`2026-03-30_syn_parser_repro_rca`](2026-03-30_syn_parser_repro_rca) - Syn parser reproduction and RCA notes.
+- [`2026-03-workspaces`](2026-03-workspaces) - Workspace coordination notes.
+- [`2026-04-01_ux-polish`](2026-04-01_ux-polish) - UX polish planning and notes.
+- [`2026-04-08_eval-postmortems`](2026-04-08_eval-postmortems) - Evaluation postmortem notes.
+- [`2026-05-02_tt-expr-core_type-resolution-test-review`](2026-05-02_tt-expr-core_type-resolution-test-review) - Independent reviews of type-use resolution tests.

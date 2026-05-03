@@ -12,6 +12,7 @@ use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
 use syn_parser::resolve::RelationIndexer;
 use syn_parser::resolve::module_tree::ModuleTree;
+use syn_parser::resolve::type_resolution::resolve_type_uses_after_tree;
 use syn_parser::utils::LogStyle;
 
 // ---- local imports ----
@@ -23,7 +24,7 @@ use crate::error::TransformError;
 
 // -- transforms
 use consts::transform_consts;
-use edges::transform_relations;
+use edges::{transform_relations, transform_resolved_type_uses};
 use enums::transform_enums;
 use impls::transform_impls;
 use imports::transform_imports;
@@ -128,6 +129,11 @@ pub fn transform_parsed_graph(
     parsed_graph: ParsedCodeGraph,
     tree: &ModuleTree,
 ) -> Result<(), TransformError> {
+    let type_resolution_report =
+        resolve_type_uses_after_tree(&parsed_graph, tree).map_err(|err| {
+            TransformError::Transformation(format!("late type resolution failed: {err}"))
+        })?;
+
     // ANCHOR: transform_parsed_graph_methods
     let code_graph = parsed_graph.graph;
     let crate_context = parsed_graph
@@ -164,6 +170,8 @@ pub fn transform_parsed_graph(
     transform_imports(db, code_graph.use_statements)?;
     tracing::trace!("{}: Starting", "relations".log_step());
     transform_relations(db, code_graph.relations)?;
+    tracing::trace!("{}: Starting", "resolved_type_uses".log_step());
+    transform_resolved_type_uses(db, &type_resolution_report)?;
 
     tracing::trace!("{}: Starting", "crate_context".log_step());
     transform_crate_context(db, crate_context)?;
@@ -199,8 +207,9 @@ fn transform_defined_types(
 
 #[cfg(test)]
 mod tests {
-    use cozo::{Db, MemStorage};
+    use cozo::{Db, MemStorage, ScriptMutability};
     use ploke_test_utils::test_run_phases_and_collect;
+    use std::collections::BTreeMap;
     use syn_parser::parser::ParsedCodeGraph;
 
     use crate::{error::TransformError, schema::create_schema_all};
@@ -231,6 +240,22 @@ mod tests {
         });
 
         transform_parsed_graph(&db, merged, &tree)?;
+
+        let resolved_returns = db.run_script(
+            r#"?[owner_id, type_id, target_id] :=
+                *resolved_type_use {
+                    owner_id,
+                    type_id,
+                    target_id,
+                    role: "method_return" @ 'NOW'
+                }"#,
+            BTreeMap::new(),
+            ScriptMutability::Immutable,
+        )?;
+        assert!(
+            !resolved_returns.rows.is_empty(),
+            "expected resolved method return type edges"
+        );
 
         Ok(())
     }
