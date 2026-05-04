@@ -33,6 +33,8 @@ mod prototype1_process;
 mod prototype1_state;
 
 const TOOL_REVIEW_CALL_LIMIT: usize = 8;
+const PROTOCOL_HTTP_MAX_ATTEMPTS: u32 = 1;
+const TOOL_CALL_REVIEW_TIMEOUT_SECS: u64 = ploke_llm::LLM_TIMEOUT_SECS;
 
 use crate::campaign::{
     CampaignManifest, CampaignOverrides, CampaignValidationCheck, EvalCampaignPolicy,
@@ -1400,6 +1402,7 @@ async fn persist_intervention_synthesis_for_record(
         model_id: model_id.to_string(),
         provider_slug,
         timeout_secs: 120,
+        max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
         max_tokens: 3200,
     };
     let run = synthesize_intervention_with_llm(input.clone(), cfg.clone())
@@ -4324,7 +4327,8 @@ impl ProtocolToolCallReviewCommand {
         let cfg = JsonLlmConfig {
             model_id: model_id.to_string(),
             provider_slug,
-            timeout_secs: 30,
+            timeout_secs: TOOL_CALL_REVIEW_TIMEOUT_SECS,
+            max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
             max_tokens: 400,
         };
         let protocol = review::ToolCallReview::new(JsonAdjudicator::new(client, cfg.clone()));
@@ -5304,7 +5308,13 @@ async fn execute_protocol_run_task(
     let call_subjects = call_review_subjects(&task.record_path, &plan.missing_call_indices)?;
     let call_reviews = review_calls(
         call_subjects,
-        protocol_llm_config(Some(model_id.clone()), provider_slug.clone(), 30, 400)?,
+        protocol_llm_config(
+            Some(model_id.clone()),
+            provider_slug.clone(),
+            TOOL_CALL_REVIEW_TIMEOUT_SECS,
+            PROTOCOL_HTTP_MAX_ATTEMPTS,
+            400,
+        )?,
         review_permits.clone(),
     )
     .await
@@ -5630,6 +5640,7 @@ async fn execute_protocol_intent_segments_quiet(
         model_id: model_id.to_string(),
         provider_slug,
         timeout_secs: 120,
+        max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
         max_tokens: 1200,
     };
     let segmented = 'retry: loop {
@@ -5686,7 +5697,13 @@ async fn execute_protocol_tool_call_review_quiet(
         })?;
     let review = review_call(
         subject,
-        protocol_llm_config(model_id, provider, 30, 400)?,
+        protocol_llm_config(
+            model_id,
+            provider,
+            TOOL_CALL_REVIEW_TIMEOUT_SECS,
+            PROTOCOL_HTTP_MAX_ATTEMPTS,
+            400,
+        )?,
         Arc::new(Semaphore::new(1)),
     )
     .await?;
@@ -5729,6 +5746,7 @@ fn protocol_llm_config(
     model_id: Option<String>,
     provider: Option<String>,
     timeout_secs: u64,
+    max_attempts: u32,
     max_tokens: u32,
 ) -> Result<JsonLlmConfig, PrepareError> {
     let model_id = resolve_protocol_model_id(model_id)?;
@@ -5737,6 +5755,7 @@ fn protocol_llm_config(
         model_id: model_id.to_string(),
         provider_slug,
         timeout_secs,
+        max_attempts,
         max_tokens,
     })
 }
@@ -5862,6 +5881,7 @@ async fn execute_protocol_tool_call_segment_review_quiet(
         model_id: model_id.to_string(),
         provider_slug,
         timeout_secs: 120,
+        max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
         max_tokens: 1200,
     };
     let protocol = review::ToolCallSegmentReview::new(JsonAdjudicator::new(client, cfg.clone()));
@@ -6158,6 +6178,7 @@ impl ProtocolToolCallSegmentReviewCommand {
             model_id: model_id.to_string(),
             provider_slug,
             timeout_secs: 120,
+            max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
             max_tokens: 1200,
         };
         let adjudicator = JsonAdjudicator::new(client, cfg.clone());
@@ -6300,6 +6321,7 @@ impl ProtocolToolCallIntentSegmentsCommand {
             model_id: model_id.to_string(),
             provider_slug,
             timeout_secs: 120,
+            max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
             max_tokens: 1200,
         };
         let protocol =

@@ -626,6 +626,7 @@ async fn live_intervention_synthesis_fans_out_replacement_candidates() {
         model_id: active_model.model_id.to_string(),
         provider_slug: Some(provider.slug.as_str().to_string()),
         timeout_secs: 45,
+        max_attempts: 1,
         max_tokens: 3200,
     };
 

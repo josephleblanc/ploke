@@ -26,6 +26,7 @@ pub struct JsonLlmConfig {
     pub model_id: String,
     pub provider_slug: Option<String>,
     pub timeout_secs: u64,
+    pub max_attempts: u32,
     pub max_tokens: u32,
 }
 
@@ -35,6 +36,7 @@ impl Default for JsonLlmConfig {
             model_id: "moonshotai/kimi-k2".to_string(),
             provider_slug: None,
             timeout_secs: 30,
+            max_attempts: 1,
             max_tokens: 400,
         }
     }
@@ -230,8 +232,7 @@ pub async fn adjudicate_json<T: DeserializeOwned>(
         );
     }
 
-    let mut http = ChatHttpConfig::default();
-    http.attempt_timeout = AttemptTimeout::fixed(Duration::from_secs(cfg.timeout_secs));
+    let http = chat_http_config_for_json_llm(cfg);
 
     let response = chat_step(client, &request, &http)
         .await
@@ -250,6 +251,13 @@ pub async fn adjudicate_json<T: DeserializeOwned>(
         }
         ChatStepOutcome::ToolCalls { .. } => Err(ProtocolLlmError::UnexpectedToolCalls),
     }
+}
+
+fn chat_http_config_for_json_llm(cfg: &JsonLlmConfig) -> ChatHttpConfig {
+    let mut http = ChatHttpConfig::default();
+    http.attempt_timeout = AttemptTimeout::fixed(Duration::from_secs(cfg.timeout_secs));
+    http.max_attempts = cfg.max_attempts;
+    http
 }
 
 #[cfg(test)]
@@ -298,5 +306,21 @@ mod tests {
                 overall_rationale: "coherent sequence".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn json_llm_config_controls_http_attempt_count() {
+        let cfg = JsonLlmConfig {
+            model_id: "test/model".to_string(),
+            provider_slug: None,
+            timeout_secs: 42,
+            max_attempts: 3,
+            max_tokens: 400,
+        };
+
+        let http = chat_http_config_for_json_llm(&cfg);
+
+        assert_eq!(http.max_attempts, 3);
+        assert_eq!(http.attempt_timeout.for_attempt(1), Duration::from_secs(42));
     }
 }
