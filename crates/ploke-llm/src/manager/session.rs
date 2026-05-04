@@ -63,7 +63,7 @@ impl Default for ChatHttpConfig {
             referer: HTTP_REFERER,
             title: HTTP_TITLE,
             attempt_timeout: AttemptTimeout::default(),
-            max_attempts: 2,
+            max_attempts: 1,
             initial_backoff: Duration::from_millis(250),
             max_backoff: Duration::from_secs(2),
             retry: RetryTuning::default(),
@@ -1511,7 +1511,8 @@ mod tests {
         );
         assert_eq!(
             ChatHttpConfig::default().attempt_timeout.for_attempt(2),
-            Duration::from_secs(crate::LLM_TIMEOUT_SECS.saturating_mul(2))
+            Duration::from_secs(crate::LLM_TIMEOUT_SECS)
         );
+        assert_eq!(ChatHttpConfig::default().max_attempts, 1);
     }
 }

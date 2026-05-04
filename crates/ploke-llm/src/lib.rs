@@ -31,8 +31,8 @@ pub use manager::{
     chat_step_with_attempts, handle_endpoint_request_async,
 };
 pub use registry::calibration::{
-    AttemptTimeout, CalibrationEntry, CalibrationInput, CalibrationStore, CalibrationTuning,
-    OpenRouterCalibrationKey, ProviderTiming, RetryTuning, RouterCalibration,
+    AttemptTimeout, CalibrationInput, OpenRouterCalibrationKey, ProviderTiming, RetryTuning,
+    RouterCalibration,
 };
 
 pub use embeddings::{
@@ -47,4 +47,4 @@ use serde::{Deserialize, Serialize};
 
 /// The default number of seconds for a non-streaming LLM HTTP response.
 // TODO: Add this to user config
-pub const LLM_TIMEOUT_SECS: u64 = 100;
+pub const LLM_TIMEOUT_SECS: u64 = 300;

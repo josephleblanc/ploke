@@ -1,19 +1,10 @@
-use std::ops::Mul;
-use std::{
-    collections::HashMap,
-    env, fs,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, fs, sync::Arc, time::Duration};
 
 use crate::user_config::{ChatPolicy, ChatTimeoutStrategy};
 use chrono::DateTime;
 use ploke_llm::ChatStepOutcome;
 use ploke_llm::manager::ChatStepData;
-use ploke_llm::registry::calibration::{
-    AttemptTimeout, CalibrationStore, CalibrationTuning, RouterCalibration,
-};
+use ploke_llm::registry::calibration::{AttemptTimeout, RouterCalibration};
 use ploke_llm::response::ToolCall;
 use ploke_llm::{ChatHttpConfig, ProviderAttempt, ProviderRetryDecision};
 use ploke_test_utils::workspace_root;
@@ -613,81 +604,6 @@ async fn wait_for_cancel_signal(cancel_rx: &mut watch::Receiver<CancelChatToken>
     }
 }
 
-fn provider_calibration_path() -> PathBuf {
-    if let Some(path) = env::var_os("PLOKE_PROVIDER_CALIBRATION_PATH") {
-        return PathBuf::from(path);
-    }
-
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("ploke/provider-calibration.json")
-}
-
-fn provider_calibration_tuning() -> CalibrationTuning {
-    let mut tuning = CalibrationTuning::default();
-    if let Some(value) = env_u8("PLOKE_PROVIDER_CALIBRATION_LOWER_QUANTILE") {
-        tuning.lower_quantile_percent = value;
-    }
-    if let Some(value) = env_u8("PLOKE_PROVIDER_CALIBRATION_UPPER_QUANTILE") {
-        tuning.upper_quantile_percent = value;
-    }
-    if let Some(value) = env_usize("PLOKE_PROVIDER_CALIBRATION_SAMPLE_LIMIT") {
-        tuning.sample_limit = value;
-    }
-    if let Some(value) = env_usize("PLOKE_PROVIDER_CALIBRATION_MIN_SUCCESS_SAMPLES") {
-        tuning.min_success_samples = value;
-    }
-    if let Some(value) = env_u64("PLOKE_PROVIDER_CALIBRATION_MAX_TIMEOUT_SECS") {
-        tuning.max_timeout = Duration::from_secs(value);
-    }
-    if let Some(value) = env_u16("PLOKE_PROVIDER_CALIBRATION_BODY_TIMEOUT_GROWTH_PERCENT") {
-        tuning.body_timeout_growth_percent = value;
-    }
-    tuning.normalized()
-}
-
-fn env_u8(name: &str) -> Option<u8> {
-    env::var(name).ok()?.trim().parse().ok()
-}
-
-fn env_u16(name: &str) -> Option<u16> {
-    env::var(name).ok()?.trim().parse().ok()
-}
-
-fn env_u64(name: &str) -> Option<u64> {
-    env::var(name).ok()?.trim().parse().ok()
-}
-
-fn env_usize(name: &str) -> Option<usize> {
-    env::var(name).ok()?.trim().parse().ok()
-}
-
-fn load_provider_calibration(path: &Path) -> CalibrationStore {
-    match CalibrationStore::load_from_path(path) {
-        Ok(store) => store,
-        Err(error) => {
-            tracing::warn!(
-                target = "chat-loop",
-                path = %path.display(),
-                %error,
-                "failed to load provider calibration; using defaults"
-            );
-            CalibrationStore::default()
-        }
-    }
-}
-
-fn save_provider_calibration(path: &Path, store: &CalibrationStore) {
-    if let Err(error) = store.save_to_path(path) {
-        tracing::warn!(
-            target = "chat-loop",
-            path = %path.display(),
-            %error,
-            "failed to persist provider calibration"
-        );
-    }
-}
-
 async fn abort_for_user_cancel(
     report: &mut ChatSessionReport,
     state_cmd_tx: &mpsc::Sender<StateCommand>,
@@ -746,9 +662,6 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     let policy = tool_policy_from_chat(&chat_policy);
     let finish_policy = finish_policy_from_chat(&chat_policy);
     let http_timeout = Duration::from_secs(llm_timeout_secs);
-    let calibration_path = provider_calibration_path();
-    let calibration_tuning = provider_calibration_tuning();
-    let mut calibration_store = load_provider_calibration(&calibration_path);
     let mut loop_state = ChatLoopState::default();
     let model_key = req.model_key.clone();
     let session_id = Uuid::new_v4();
@@ -793,15 +706,9 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
             );
         }
         let calibration_input = R::calibration_input(&req);
-        let calibration_key = R::calibration_key(&calibration_input);
-        let mut default_provider_timing = R::resolve_provider_timing(calibration_input.clone());
-        default_provider_timing.attempt_timeout =
-            AttemptTimeout::backoff(http_timeout, 200, http_timeout.saturating_mul(2));
-        let provider_timing = calibration_store.resolve_with_default::<R>(
-            &calibration_input,
-            default_provider_timing,
-            &calibration_tuning,
-        );
+        let mut provider_timing = R::resolve_provider_timing(calibration_input);
+        provider_timing.attempt_timeout = AttemptTimeout::fixed(http_timeout);
+        provider_timing.max_attempts = 1;
         let mut cfg = ChatHttpConfig::from(&provider_timing);
         let ChatStepData {
             outcome,
@@ -826,15 +733,6 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
             Err(chat_step_error) => {
                 let provider_attempts = chat_step_error.provider_attempts;
                 let provider_exhausted = provider_retry_exhausted(&provider_attempts);
-                if let Some(key) = calibration_key.as_deref() {
-                    calibration_store.record_attempts_with_tuning(
-                        key,
-                        &provider_timing,
-                        &provider_attempts,
-                        &calibration_tuning,
-                    );
-                    save_provider_calibration(&calibration_path, &calibration_store);
-                }
                 report.record_chat_step(chain_index, provider_timing.clone(), provider_attempts);
                 let err = chat_step_error.source;
                 let allowed = allowed_tool_names();
@@ -959,15 +857,6 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 return report;
             }
         };
-        if let Some(key) = calibration_key.as_deref() {
-            calibration_store.record_attempts_with_tuning(
-                key,
-                &provider_timing,
-                &provider_attempts,
-                &calibration_tuning,
-            );
-            save_provider_calibration(&calibration_path, &calibration_store);
-        }
         report.record_chat_step(chain_index, provider_timing, provider_attempts);
 
         let token_usage = full_response.usage;
@@ -1820,16 +1709,13 @@ async fn add_tool_failed_message(
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
-    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use once_cell::sync::Lazy;
     use ploke_llm::ProviderSlug;
     use ploke_llm::manager::{ApproxCharTokenizer, Role, TokenCounter, parse_chat_outcome};
-    use ploke_llm::registry::calibration::{
-        CalibrationEntry, CalibrationStore, ProviderTiming, RouterCalibration,
-    };
+    use ploke_llm::registry::calibration::{AttemptTimeout, ProviderTiming, RouterCalibration};
     use ploke_llm::router_only::ChatCompRequest;
     use ploke_llm::router_only::Router;
     use ploke_llm::router_only::openrouter::ChatCompFields;
@@ -1928,39 +1814,11 @@ mod tests {
             }
         }
 
-        fn calibration_key(input: &ploke_llm::CalibrationInput<Self>) -> Option<String> {
-            input
-                .key
-                .as_ref()
-                .map(|model| test_router_calibration_key(&model.to_string()))
-        }
-    }
-
-    struct EnvVarGuard {
-        name: &'static str,
-        previous: Option<String>,
-    }
-
-    impl EnvVarGuard {
-        fn set(name: &'static str, value: impl AsRef<str>) -> Self {
-            let previous = std::env::var(name).ok();
-            unsafe {
-                std::env::set_var(name, value.as_ref());
-            }
-            Self { name, previous }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            if let Some(previous) = self.previous.take() {
-                unsafe {
-                    std::env::set_var(self.name, previous);
-                }
-            } else {
-                unsafe {
-                    std::env::remove_var(self.name);
-                }
+        fn resolve_provider_timing(_input: ploke_llm::CalibrationInput<Self>) -> ProviderTiming {
+            ProviderTiming {
+                attempt_timeout: AttemptTimeout::fixed(Duration::from_secs(17)),
+                max_attempts: 3,
+                ..ProviderTiming::default()
             }
         }
     }
@@ -2038,13 +1896,13 @@ mod tests {
         responses: Vec<String>,
         request_count: std::sync::Arc<AtomicUsize>,
     ) -> tokio::task::JoinHandle<()> {
+        let listener = TcpListener::bind(bind_addr)
+            .await
+            .expect("bind test router");
         tokio::spawn(async move {
-            let listener = TcpListener::bind(bind_addr)
-                .await
-                .expect("bind test router");
             for body in responses {
                 let Ok(Ok((mut stream, _))) =
-                    timeout(Duration::from_millis(500), listener.accept()).await
+                    timeout(Duration::from_secs(5), listener.accept()).await
                 else {
                     break;
                 };
@@ -2139,28 +1997,6 @@ mod tests {
         .to_string()
     }
 
-    fn test_router_calibration_key(model: &str) -> String {
-        format!("test-router:{model}:provider:any")
-    }
-
-    fn temp_provider_calibration_path(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "ploke-provider-calibration-{label}-{}.json",
-            Uuid::new_v4()
-        ))
-    }
-
-    fn write_calibration_entry(path: &Path, key: String, entry: CalibrationEntry) {
-        let mut entries = BTreeMap::new();
-        entries.insert(key, entry);
-        CalibrationStore {
-            version: CalibrationStore::VERSION,
-            entries,
-        }
-        .save_to_path(path)
-        .expect("seed provider calibration");
-    }
-
     async fn run_calibrated_test_router_session() -> ChatSessionReport {
         let responses = vec![content_response("final answer")];
         let request_count = std::sync::Arc::new(AtomicUsize::new(0));
@@ -2196,7 +2032,11 @@ mod tests {
 
         server.await.expect("server task");
         drain.abort();
-        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "report={report:#?}"
+        );
         report
     }
 
@@ -2488,30 +2328,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_chat_session_uses_persisted_success_quantiles_for_provider_timing() {
+    async fn run_chat_session_uses_static_session_timeout_for_provider_timing() {
         let _guard = TEST_ROUTER_LOCK.lock().await;
         let _api_key = ApiKeyGuard::set("test-key");
-        let path = temp_provider_calibration_path("success-quantiles");
-        let _path_guard = EnvVarGuard::set(
-            "PLOKE_PROVIDER_CALIBRATION_PATH",
-            path.display().to_string(),
-        );
-        let _lower_guard = EnvVarGuard::set("PLOKE_PROVIDER_CALIBRATION_LOWER_QUANTILE", "20");
-        let _upper_guard = EnvVarGuard::set("PLOKE_PROVIDER_CALIBRATION_UPPER_QUANTILE", "80");
-        let key = test_router_calibration_key("moonshotai/kimi-k2");
-        write_calibration_entry(
-            &path,
-            key.clone(),
-            CalibrationEntry {
-                observations: 5,
-                successes: 5,
-                recent_success_ms: vec![10_000, 20_000, 30_000, 40_000, 50_000],
-                success_ewma_ms: Some(30_000),
-                success_max_ms: Some(50_000),
-                last_timing: Some(ProviderTiming::default()),
-                ..CalibrationEntry::default()
-            },
-        );
 
         let report = run_calibrated_test_router_session().await;
 
@@ -2520,90 +2339,13 @@ mod tests {
         let step = report.chat_steps.first().expect("chat step report");
         assert_eq!(
             step.provider_timing.first_timeout(),
-            Duration::from_secs(50)
-        );
-
-        let calibration =
-            CalibrationStore::load_from_path(&path).expect("load updated calibration");
-        let entry = calibration.entries.get(&key).expect("updated entry");
-        assert_eq!(entry.successes, 6);
-        assert_eq!(
-            entry
-                .last_timing
-                .as_ref()
-                .map(ProviderTiming::first_timeout),
-            Some(Duration::from_secs(50))
-        );
-        let _ = fs::remove_file(path);
-    }
-
-    #[tokio::test]
-    async fn run_chat_session_uses_session_timeout_before_calibration_exists() {
-        let _guard = TEST_ROUTER_LOCK.lock().await;
-        let _api_key = ApiKeyGuard::set("test-key");
-        let path = temp_provider_calibration_path("cold-start");
-        let _path_guard = EnvVarGuard::set(
-            "PLOKE_PROVIDER_CALIBRATION_PATH",
-            path.display().to_string(),
-        );
-
-        let report = run_calibrated_test_router_session().await;
-
-        assert!(matches!(report.outcome, SessionOutcome::Completed));
-        let step = report.chat_steps.first().expect("chat step report");
-        assert_eq!(
-            step.provider_timing.first_timeout(),
             Duration::from_secs(90)
         );
         assert_eq!(
             step.provider_timing.attempt_timeout.for_attempt(2),
-            Duration::from_secs(180)
+            Duration::from_secs(90)
         );
-        let _ = fs::remove_file(path);
-    }
-
-    #[tokio::test]
-    async fn run_chat_session_uses_persisted_body_timeout_retry_cap() {
-        let _guard = TEST_ROUTER_LOCK.lock().await;
-        let _api_key = ApiKeyGuard::set("test-key");
-        let path = temp_provider_calibration_path("body-timeout-cap");
-        let _path_guard = EnvVarGuard::set(
-            "PLOKE_PROVIDER_CALIBRATION_PATH",
-            path.display().to_string(),
-        );
-        let key = test_router_calibration_key("moonshotai/kimi-k2");
-        write_calibration_entry(
-            &path,
-            key.clone(),
-            CalibrationEntry {
-                observations: 2,
-                failures: 2,
-                body_timeouts: 2,
-                retry_exhausted: 2,
-                last_timing: Some(ProviderTiming::default()),
-                ..CalibrationEntry::default()
-            },
-        );
-
-        let report = run_calibrated_test_router_session().await;
-
-        assert!(matches!(report.outcome, SessionOutcome::Completed));
-        let step = report.chat_steps.first().expect("chat step report");
-        assert_eq!(
-            step.provider_timing.first_timeout(),
-            Duration::from_secs(150)
-        );
-        assert_eq!(step.provider_timing.max_attempts, 2);
-        assert_eq!(step.provider_timing.retry.body_timeout_retry_limit, Some(1));
-
-        let calibration =
-            CalibrationStore::load_from_path(&path).expect("load updated calibration");
-        let entry = calibration.entries.get(&key).expect("updated entry");
-        let last_timing = entry.last_timing.as_ref().expect("last timing");
-        assert_eq!(last_timing.first_timeout(), Duration::from_secs(150));
-        assert_eq!(last_timing.max_attempts, 2);
-        assert_eq!(last_timing.retry.body_timeout_retry_limit, Some(1));
-        let _ = fs::remove_file(path);
+        assert_eq!(step.provider_timing.max_attempts, 1);
     }
 
     #[tokio::test]
@@ -2654,27 +2396,27 @@ mod tests {
         assert_eq!(report.errors.len(), 1);
         assert_eq!(report.chat_steps.len(), 1);
         let step = report.chat_steps.first().expect("chat step report");
-        assert_eq!(step.provider_attempts.len(), 2);
+        assert_eq!(step.provider_attempts.len(), 1);
         assert_eq!(
             step.provider_attempts
                 .last()
                 .map(|attempt| attempt.retry_decision),
             Some(ProviderRetryDecision::Exhausted)
         );
-        assert_eq!(request_count.load(Ordering::SeqCst), 2);
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     #[ignore = "live OpenRouter API smoke test; requires OPENROUTER_API_KEY"]
-    async fn live_openrouter_agent_turn_records_provider_attempt_calibration_entry() {
+    async fn live_openrouter_agent_turn_records_provider_attempt_report() {
         if std::env::var(OpenRouter::API_KEY_NAME)
             .ok()
             .filter(|key| !key.trim().is_empty())
             .is_none()
         {
             eprintln!(
-                "skipping live_openrouter_agent_turn_records_provider_attempt_calibration_entry: {} not set",
+                "skipping live_openrouter_agent_turn_records_provider_attempt_report: {} not set",
                 OpenRouter::API_KEY_NAME
             );
             return;
@@ -2757,13 +2499,11 @@ mod tests {
             "unexpected assistant content: {assistant_update:?}"
         );
 
-        let calibration_key = format!("openrouter:{model}:provider:{provider}");
-        let calibration = CalibrationStore::load_from_path(&provider_calibration_path())
-            .expect("load provider calibration after live turn");
-        assert!(
-            calibration.entries.contains_key(&calibration_key),
-            "expected persisted calibration entry {calibration_key}, entries={:?}",
-            calibration.entries.keys().collect::<Vec<_>>()
+        let step = report.chat_steps.first().expect("chat step report");
+        assert_eq!(step.provider_timing.max_attempts, 1);
+        assert_eq!(
+            step.provider_timing.first_timeout(),
+            Duration::from_secs(45)
         );
     }
 
