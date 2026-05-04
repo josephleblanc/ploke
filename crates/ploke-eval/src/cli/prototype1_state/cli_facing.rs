@@ -1,7 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
-    io::{self, Write},
+    fs, io,
     path::{Path, PathBuf},
     str::FromStr,
     thread,
@@ -2018,6 +2017,14 @@ struct ProviderHttpEvent {
     provider_attempt: Option<ProviderAttempt>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ProviderAttemptEventKey {
+    source: PathBuf,
+    timestamp: Option<String>,
+    request_id: u64,
+    attempt: u32,
+}
+
 fn print_prototype1_monitor_timing(
     campaign_id: &str,
     manifest_path: &Path,
@@ -2038,29 +2045,128 @@ fn watch_prototype1_monitor_timing(
 ) -> Result<(), PrepareError> {
     let prototype_root = prototype1_campaign_root(manifest_path);
     let interval = Duration::from_millis(command.interval_ms.max(1));
+    let mut seen = BTreeSet::new();
+    for event in load_observation_evidence(campaign_id).provider_http {
+        if event.provider_attempt.is_some() {
+            seen.insert(provider_attempt_event_key(&event));
+        }
+    }
+
+    println!("watching provider attempts");
+    println!("campaign_id: {campaign_id}");
+    println!("campaign_root: {}", prototype_root.display());
+    println!("interval_ms: {}", interval.as_millis());
+    println!("press Ctrl-C to stop");
 
     loop {
-        print!("\x1b[2J\x1b[H");
-        io::stdout().flush().ok();
-        println!("prototype1 timing watch");
-        println!("campaign_id: {campaign_id}");
-        println!("campaign_root: {}", prototype_root.display());
-        println!("interval_ms: {}", interval.as_millis());
-        println!("press Ctrl-C to stop early");
-        println!();
-
-        let report = Report::load(campaign_id, manifest_path, command.node.as_deref())?;
-        print_timing_report(&report, command)?;
+        let observations = load_observation_evidence(campaign_id);
+        for event in observations
+            .provider_http
+            .iter()
+            .filter(|event| event.provider_attempt.is_some())
+            .filter(|event| {
+                command
+                    .node
+                    .as_deref()
+                    .is_none_or(|node| event.node_id.as_deref() == Some(node))
+            })
+        {
+            let key = provider_attempt_event_key(event);
+            if seen.insert(key) {
+                print_provider_attempt_event(event, command)?;
+            }
+        }
 
         let snapshot = collect_prototype1_monitor_snapshot(&prototype_root, None)?;
         if let Some(terminal) = terminal_state(manifest_path, &prototype_root, &snapshot) {
-            println!();
             print_terminal_state(&terminal);
             return Ok(());
         }
 
         thread::sleep(interval);
     }
+}
+
+fn provider_attempt_event_key(event: &ProviderHttpEvent) -> ProviderAttemptEventKey {
+    ProviderAttemptEventKey {
+        source: event.source.clone(),
+        timestamp: event.timestamp.clone(),
+        request_id: event.request_id,
+        attempt: event.attempt,
+    }
+}
+
+fn print_provider_attempt_event(
+    event: &ProviderHttpEvent,
+    command: &Prototype1MonitorTimingCommand,
+) -> Result<(), PrepareError> {
+    let Some(attempt) = event.provider_attempt.as_ref() else {
+        return Ok(());
+    };
+    if matches!(command.format, InspectOutputFormat::Json) {
+        println!(
+            "{}",
+            serde_json::to_string(event).map_err(PrepareError::Serialize)?
+        );
+        return Ok(());
+    }
+
+    let timestamp = event.timestamp.as_deref().unwrap_or("-");
+    let generation = event
+        .generation
+        .map(|generation| generation.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let branch = event
+        .branch_id
+        .as_deref()
+        .map(short_id)
+        .unwrap_or("-")
+        .to_string();
+    let node = event
+        .node_id
+        .as_deref()
+        .map(short_id)
+        .unwrap_or("-")
+        .to_string();
+    let max_attempts = event
+        .max_attempts
+        .or(Some(attempt.max_attempts))
+        .map(|max_attempts| max_attempts.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let elapsed = provider_attempt_elapsed_ms(attempt)
+        .map(format_duration)
+        .unwrap_or_else(|| "-".to_string());
+    let backoff = attempt
+        .backoff
+        .map(|duration| format_duration(duration.as_millis() as u64))
+        .unwrap_or_else(|| "-".to_string());
+    let status = attempt
+        .status
+        .map(|status| status.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let body = attempt
+        .body_failure
+        .as_ref()
+        .map(serde_name)
+        .unwrap_or_else(|| "-".to_string());
+
+    let mut line = format!(
+        "{timestamp} provider_attempt gen={generation} node={node} branch={branch} request={} attempt={}/{} elapsed={} backoff={} outcome={} retry={} status={} body={}",
+        attempt.request_id,
+        attempt.attempt,
+        max_attempts,
+        elapsed,
+        backoff,
+        serde_name(&attempt.outcome),
+        serde_name(&attempt.retry_decision),
+        status,
+        body,
+    );
+    if command.show_paths {
+        line.push_str(&format!(" source={}", event.source.display()));
+    }
+    println!("{line}");
+    Ok(())
 }
 
 fn print_timing_report(
