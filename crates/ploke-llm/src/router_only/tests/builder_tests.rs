@@ -101,6 +101,7 @@ fn test_builder_with_model() -> Result<()> {
     let request = TestChatCompRequest::default().with_model(model.clone());
 
     assert_eq!(request.core.model, model);
+    assert_eq!(request.model_key, Some(model.key));
     Ok(())
 }
 
@@ -109,6 +110,10 @@ fn test_builder_with_model_str() -> Result<()> {
     let request = TestChatCompRequest::default().with_model_str("test/model")?;
 
     assert_eq!(request.core.model.to_string(), "test/model");
+    assert_eq!(
+        request.model_key.map(|key| key.to_string()).as_deref(),
+        Some("test/model")
+    );
     Ok(())
 }
 

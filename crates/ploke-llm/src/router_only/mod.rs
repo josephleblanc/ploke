@@ -437,6 +437,7 @@ where
 
     /// Set the model for the completion request
     pub fn with_model(mut self, model: ModelId) -> Self {
+        self.model_key = Some(model.key.clone());
         self.core = self.core.with_model(model);
         self
     }

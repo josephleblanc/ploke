@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use ploke_core::ArcStr;
 use ploke_llm::{
     ApiErrorSource, HttpBodyFailure, HttpPhase, HttpReceivePhase, HttpSendFailure, LlmError,
-    response::FinishReason,
+    ProviderAttempt, ProviderTiming, response::FinishReason,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -150,6 +150,15 @@ pub struct ChatSessionReport {
     pub errors: Vec<LoopError>,
     pub commit_phase: CommitPhase,
     pub attempts: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub chat_steps: Vec<ChatStepReport>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ChatStepReport {
+    pub chain_index: usize,
+    pub provider_timing: ProviderTiming,
+    pub provider_attempts: Vec<ProviderAttempt>,
 }
 
 impl ChatSessionReport {
@@ -168,11 +177,28 @@ impl ChatSessionReport {
             errors: Vec::new(),
             commit_phase: CommitPhase::PreCommit,
             attempts: 0,
+            chat_steps: Vec::new(),
         }
     }
 
     pub fn record_error(&mut self, error: LoopError) {
         self.errors.push(error);
+    }
+
+    pub fn record_chat_step(
+        &mut self,
+        chain_index: usize,
+        provider_timing: ProviderTiming,
+        provider_attempts: Vec<ProviderAttempt>,
+    ) {
+        if provider_attempts.is_empty() {
+            return;
+        }
+        self.chat_steps.push(ChatStepReport {
+            chain_index,
+            provider_timing,
+            provider_attempts,
+        });
     }
 
     pub fn last_error(&self) -> Option<&LoopError> {

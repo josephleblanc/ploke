@@ -1,8 +1,12 @@
+pub mod builders;
 mod commands;
 pub mod events;
 mod session;
-pub use session::{ChatHttpConfig, ChatStepData, ChatStepOutcome, chat_step, parse_chat_outcome};
-pub mod builders;
+pub use builders::attempt::{ProviderAttempt, ProviderFailurePhase, ProviderRetryDecision};
+pub use session::{
+    ChatHttpConfig, ChatStepData, ChatStepError, ChatStepOutcome, chat_step,
+    chat_step_with_attempts, parse_chat_outcome,
+};
 
 use crate::error::LlmError;
 use crate::manager::events::endpoint;

@@ -26,7 +26,13 @@ pub use types::params::LLMParameters;
 pub use wire::WireRequest;
 
 pub use manager::{
-    ChatHttpConfig, ChatStepOutcome, RequestMessage, chat_step, handle_endpoint_request_async,
+    ChatHttpConfig, ChatStepError, ChatStepOutcome, ProviderAttempt, ProviderFailurePhase,
+    ProviderRetryDecision, RequestMessage, chat_step, chat_step_with_attempts,
+    handle_endpoint_request_async,
+};
+pub use registry::calibration::{
+    CalibrationEntry, CalibrationInput, CalibrationStore, CalibrationTuning,
+    OpenRouterCalibrationKey, ProviderTiming, RetryTuning, RouterCalibration,
 };
 
 pub use embeddings::{
