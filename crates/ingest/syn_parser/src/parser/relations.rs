@@ -1,9 +1,10 @@
 // Import specific typed IDs AND the new category enums
 use super::nodes::{AnyNodeId, PrimaryNodeIdTrait};
 use crate::parser::nodes::{
-    AssociatedItemNodeId, EnumNodeId, FieldNodeId, ImplNodeId, ImportNodeId, ModuleNodeId,
-    OrdinaryTypeSourceId, OrdinaryTypeTargetId, PrimaryNodeId, StructNodeId, TraitNodeId,
-    TraitTypeSourceId, TraitTypeTargetId, UnionNodeId, VariantNodeId,
+    AnyGenericParamId, AnyTypeId, AssociatedItemNodeId, ConstGenericParamNodeId, EnumNodeId,
+    FieldNodeId, GenericParamOwnerId, ImplNodeId, ImportNodeId, ModuleNodeId, OrdinaryTypeSourceId,
+    OrdinaryTypeTargetId, PrimaryNodeId, StructNodeId, TraitNodeId, TraitTypeSourceId,
+    TraitTypeTargetId, TypeGenericParamNodeId, UnionNodeId, VariantNodeId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -53,6 +54,71 @@ impl TypeRelation {
         match self {
             Self::Ordinary { .. } => "Ordinary",
             Self::Trait { .. } => "Trait",
+        }
+    }
+}
+
+/// Represents type-safe relations around generic parameter declarations and
+/// generic parameter type syntax.
+///
+/// These are not type-resolution edges. They describe where generic parameters
+/// are declared and which structural type occurrences appear in generic bounds,
+/// defaults, or const-generic type declarations.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GenericRelation {
+    /// A node that may declare generic parameters contains a generic parameter.
+    ///
+    /// ```text
+    /// DeclaresParam ⊆ GenericParamOwnerId × AnyGenericParamId
+    /// ```
+    DeclaresParam {
+        source: GenericParamOwnerId,
+        target: AnyGenericParamId,
+    },
+    /// A type generic parameter has a trait-bound type occurrence, such as
+    /// `T: Display`.
+    ///
+    /// ```text
+    /// TypeBound ⊆ TypeGenericParamNodeId × TraitTypeSourceId
+    /// ```
+    TypeBound {
+        source: TypeGenericParamNodeId,
+        target: TraitTypeSourceId,
+    },
+    /// A type generic parameter has a default type occurrence, such as
+    /// `T = Vec<u8>`.
+    ///
+    /// The target is `AnyTypeId` because defaults may be arbitrary type syntax,
+    /// not only named type-resolution sources.
+    ///
+    /// ```text
+    /// TypeDefault ⊆ TypeGenericParamNodeId × AnyTypeId
+    /// ```
+    TypeDefault {
+        source: TypeGenericParamNodeId,
+        target: AnyTypeId,
+    },
+    /// A const generic parameter declares the type of the const parameter, such
+    /// as `const N: usize`.
+    ///
+    /// ```text
+    /// ConstParamType ⊆ ConstGenericParamNodeId × AnyTypeId
+    /// ```
+    ConstParamType {
+        source: ConstGenericParamNodeId,
+        target: AnyTypeId,
+    },
+}
+
+impl GenericRelation {
+    /// Returns the relation kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::DeclaresParam { .. } => "DeclaresParam",
+            Self::TypeBound { .. } => "TypeBound",
+            Self::TypeDefault { .. } => "TypeDefault",
+            Self::ConstParamType { .. } => "ConstParamType",
         }
     }
 }

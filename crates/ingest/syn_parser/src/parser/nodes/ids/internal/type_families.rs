@@ -4,10 +4,114 @@
 //! `PrimaryNodeId` plays for module containment: they define which already-
 //! typed IDs are admissible at a given boundary, so later relations can be
 //! sharp about source and target shape instead of relying on conventions.
+//!
+//! The families in this module span two universes:
+//!
+//! ```text
+//! V_type = the universe of structural type vertices, keyed by TypeId
+//! V_node = the universe of code-graph node vertices, keyed by NodeId
+//! ```
+//!
+//! Type-source families are subsets of `V_type`; they identify structural type
+//! occurrences that can be resolved. Target families are subsets of `V_node`;
+//! they identify code-graph definitions or generic parameters that a type
+//! occurrence may resolve to.
+//!
+//! The currently encoded type-id families are:
+//!
+//! ```text
+//! AnyTypeId =
+//!     NamedTypeId
+//!   ∪ ReferenceTypeId
+//!   ∪ SliceTypeId
+//!   ∪ ArrayTypeId
+//!   ∪ TupleTypeId
+//!   ∪ FunctionTypeId
+//!   ∪ NeverTypeId
+//!   ∪ InferredTypeId
+//!   ∪ RawPointerTypeId
+//!   ∪ TraitObjectTypeId
+//!   ∪ ImplTraitTypeId
+//!   ∪ TraitBoundTypeId
+//!   ∪ ParenTypeId
+//!   ∪ MacroTypeId
+//!   ∪ UnknownTypeId
+//!
+//! TypeSourceId         = NamedTypeId ∪ TraitBoundTypeId
+//! OrdinaryTypeSourceId = NamedTypeId
+//! TraitTypeSourceId    = NamedTypeId ∪ TraitBoundTypeId
+//! ```
+//!
+//! The currently encoded node-target families are:
+//!
+//! ```text
+//! OrdinaryTypeDefId =
+//!     StructNodeId
+//!   ∪ EnumNodeId
+//!   ∪ UnionNodeId
+//!   ∪ TypeAliasNodeId
+//!
+//! OrdinaryTypeTargetId =
+//!     OrdinaryTypeDefId
+//!   ∪ TypeGenericParamNodeId
+//!
+//! TraitTypeTargetId = TraitNodeId
+//! ```
+//!
+//! Therefore the corresponding relation endpoint products are:
+//!
+//! ```text
+//! Ordinary ⊆ OrdinaryTypeSourceId × OrdinaryTypeTargetId
+//! Trait    ⊆ TraitTypeSourceId    × TraitTypeTargetId
+//! ```
+//!
+//! Some useful subset consequences are encoded directly in conversion APIs:
+//!
+//! ```text
+//! OrdinaryTypeSourceId ⊂ TypeSourceId
+//! TraitTypeSourceId    = TypeSourceId
+//!
+//! OrdinaryTypeDefId    ⊂ OrdinaryTypeTargetId
+//! OrdinaryTypeTargetId ⊆ AnyNodeId
+//! TraitTypeTargetId    ⊆ AnyNodeId
+//! ```
+//!
+//! The forward arrows are infallible widenings, so they should be represented
+//! with `From` when the membership proof is already present:
+//!
+//! ```text
+//! OrdinaryTypeSourceId → TypeSourceId
+//! TraitTypeSourceId    → TypeSourceId
+//! OrdinaryTypeTargetId → AnyNodeId
+//! TraitTypeTargetId    → AnyNodeId
+//! ```
+//!
+//! The reverse arrows are refinements. They are `TryFrom` only when the source
+//! value carries the discriminant needed to prove membership in the smaller
+//! family:
+//!
+//! ```text
+//! TypeSourceId ⇀ OrdinaryTypeSourceId
+//! TypeSourceId ⇀ TraitTypeSourceId
+//! ```
+//!
+//! By contrast, no general `TryFrom<AnyNodeId>` should be added here for target
+//! families whose members may require payload refinement. For example,
+//! `AnyNodeId::GenericParam` proves only `GenericParamNodeId`, not
+//! `TypeGenericParamNodeId`; that narrower proof needs the corresponding
+//! `GenericParamNode` payload.
+//!
+//! `Self`, primitives, builtins, and external dependency targets are not in
+//! these node-backed target families. They require semantic target variants or
+//! dependency graph vertices before they can be represented without weakening
+//! the endpoint sets.
 
 use super::{
-    AnyNodeId, AnyTypedId, CategoricalTypedId, EnumNodeId, NamedTypeId, StructNodeId,
-    TraitBoundTypeId, TraitNodeId, TypeAliasNodeId, TypeGenericParamNodeId, UnionNodeId,
+    AnyNodeId, AnyTypedId, ArrayTypeId, CategoricalTypedId, EnumNodeId, FunctionTypeId,
+    ImplTraitTypeId, InferredTypeId, MacroTypeId, NamedTypeId, NeverTypeId, ParenTypeId,
+    RawPointerTypeId, ReferenceTypeId, SliceTypeId, StructNodeId, TraitBoundTypeId, TraitNodeId,
+    TraitObjectTypeId, TupleTypeId, TypeAliasNodeId, TypeGenericParamNodeId, UnionNodeId,
+    UnknownTypeId,
 };
 use crate::parser::nodes::ids::StructuralTypeId;
 use ploke_core::{ItemKind, TypeId};
@@ -69,6 +173,28 @@ impl Display for TryFromTraitTypeTargetError {
 }
 
 impl Error for TryFromTraitTypeTargetError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TryFromAnyTypeError;
+
+impl Display for TryFromAnyTypeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AnyTypeId variant mismatch")
+    }
+}
+
+impl Error for TryFromAnyTypeError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TryFromOrdinaryTypeDefError;
+
+impl Display for TryFromOrdinaryTypeDefError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "OrdinaryTypeDefId variant mismatch")
+    }
+}
+
+impl Error for TryFromOrdinaryTypeDefError {}
 
 macro_rules! define_structural_type_family {
     (
@@ -424,6 +550,32 @@ macro_rules! define_node_type_target_family {
 }
 
 define_structural_type_family!(
+    /// Represents the ID of any currently modeled structural type node.
+    ///
+    /// Set-theoretically, this is the top family for the type-id universe,
+    /// analogous to `AnyNodeId` for node IDs.
+    AnyTypeId,
+    TryFromAnyTypeError,
+    [
+        (Named, NamedTypeId),
+        (Reference, ReferenceTypeId),
+        (Slice, SliceTypeId),
+        (Array, ArrayTypeId),
+        (Tuple, TupleTypeId),
+        (Function, FunctionTypeId),
+        (Never, NeverTypeId),
+        (Inferred, InferredTypeId),
+        (RawPointer, RawPointerTypeId),
+        (TraitObject, TraitObjectTypeId),
+        (ImplTrait, ImplTraitTypeId),
+        (TraitBound, TraitBoundTypeId),
+        (Paren, ParenTypeId),
+        (Macro, MacroTypeId),
+        (Unknown, UnknownTypeId),
+    ]
+);
+
+define_structural_type_family!(
     /// Structural type-source classes that can directly participate in resolution.
     ///
     /// This is intentionally narrower than "all type IDs". Composite type nodes
@@ -511,6 +663,22 @@ impl TryFrom<TypeSourceId> for TraitTypeSourceId {
 }
 
 define_node_type_target_family!(
+    /// Node-ID family for ordinary nominal type definitions.
+    ///
+    /// This is the node-backed definition subset of ordinary type targets. It
+    /// intentionally excludes generic parameters, which are admissible ordinary
+    /// type targets but not type definitions.
+    OrdinaryTypeDefId,
+    TryFromOrdinaryTypeDefError,
+    [
+        (Struct, StructNodeId, ItemKind::Struct),
+        (Enum, EnumNodeId, ItemKind::Enum),
+        (Union, UnionNodeId, ItemKind::Union),
+        (TypeAlias, TypeAliasNodeId, ItemKind::TypeAlias),
+    ]
+);
+
+define_node_type_target_family!(
     /// Node-ID family for ordinary type-position targets.
     ///
     /// This covers the code-graph nodes that are structurally valid targets for
@@ -571,6 +739,42 @@ mod tests {
             TraitBoundTypeId::try_from(bound_src).expect("trait bound"),
             bound
         );
+    }
+
+    #[test]
+    fn any_type_accepts_all_structural_type_wrappers() {
+        let named = NamedTypeId::try_refine(
+            TypeId::Synthetic(Uuid::new_v4()),
+            &ploke_core::TypeKind::Named {
+                path: vec!["Example".into()],
+                is_fully_qualified: false,
+            },
+        )
+        .expect("named kind should refine");
+        let never = NeverTypeId::try_refine(
+            TypeId::Synthetic(Uuid::new_v4()),
+            &ploke_core::TypeKind::Never,
+        )
+        .expect("never kind should refine");
+
+        let named_any = AnyTypeId::from(named);
+        let never_any = AnyTypeId::from(never);
+
+        assert_eq!(NamedTypeId::try_from(named_any).expect("named"), named);
+        assert_eq!(NeverTypeId::try_from(never_any).expect("never"), never);
+        assert!(NeverTypeId::try_from(named_any).is_err());
+    }
+
+    #[test]
+    fn ordinary_type_defs_are_separate_from_generic_type_targets() {
+        let struct_id = StructNodeId::create(synthetic_node_id());
+        let def = OrdinaryTypeDefId::from(struct_id);
+        let target = OrdinaryTypeTargetId::from(struct_id);
+
+        assert_eq!(def.kind(), ItemKind::Struct);
+        assert_eq!(target.kind(), ItemKind::Struct);
+        assert_eq!(AnyNodeId::from(def), AnyNodeId::from(struct_id));
+        assert_eq!(AnyNodeId::from(target), AnyNodeId::from(struct_id));
     }
 
     #[test]

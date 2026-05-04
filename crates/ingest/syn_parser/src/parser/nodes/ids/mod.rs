@@ -15,6 +15,12 @@ use super::*;
 
 // --- type-bearing ids ---
 pub use internal::{
+    AnyTypeId, OrdinaryTypeDefId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, TraitTypeSourceId,
+    TraitTypeTargetId, TryFromAnyTypeError, TryFromOrdinaryTypeDefError,
+    TryFromOrdinaryTypeSourceError, TryFromOrdinaryTypeTargetError, TryFromTraitTypeSourceError,
+    TryFromTraitTypeTargetError, TryFromTypeSourceError, TypeSourceId,
+};
+pub use internal::{
     ArrayTypeId, FunctionTypeId, ImplTraitTypeId, InferredTypeId, MacroTypeId, NamedTypeId,
     NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId, StructuralTypeId,
     TraitBoundTypeId, TraitObjectTypeId, TupleTypeId, TypeIdRefinementError, UnknownTypeId,
@@ -25,11 +31,6 @@ pub use internal::{
     MethodNodeId, ModuleNodeId, ParamNodeId, ReexportNodeId, StaticNodeId, StructNodeId,
     TraitNodeId, TypeAliasNodeId, TypeGenericParamNodeId, UnionNodeId, UnresolvedNodeId,
     VariantNodeId,
-};
-pub use internal::{
-    OrdinaryTypeSourceId, OrdinaryTypeTargetId, TraitTypeSourceId, TraitTypeTargetId,
-    TryFromOrdinaryTypeSourceError, TryFromOrdinaryTypeTargetError, TryFromTraitTypeSourceError,
-    TryFromTraitTypeTargetError, TryFromTypeSourceError, TypeSourceId,
 };
 // --- traits ---
 // Re-export marker traits (adjust list as needed)
@@ -48,15 +49,16 @@ pub use internal::{ToCozoUuid, ToUuidString};
 // --- enums ---
 // Re-export category enums
 pub use internal::{
-    AnyNodeId, AssociatedItemNodeId, AssociatedItemOwnerId, GenericParamOwnerId, PrimaryNodeId,
-    SecondaryNodeId, SelfScopeOwnerId, TypeUseOwnerId,
+    AnyGenericParamId, AnyNodeId, AssociatedItemNodeId, AssociatedItemOwnerId, GenericParamOwnerId,
+    PrimaryNodeId, SecondaryNodeId, SelfScopeOwnerId, TypeUseOwnerId,
 };
 // --- macro rules ---
 // --- error types ---
 pub use internal::{
-    AnyNodeIdConversionError, GenericParamIdRefinementError, TryFromAssociatedItemError,
-    TryFromAssociatedItemOwnerError, TryFromGenericParamOwnerError, TryFromPrimaryError,
-    TryFromSecondaryError, TryFromSelfScopeOwnerError, TryFromTypeUseOwnerError,
+    AnyNodeIdConversionError, GenericParamIdRefinementError, TryFromAnyGenericParamError,
+    TryFromAssociatedItemError, TryFromAssociatedItemOwnerError, TryFromGenericParamOwnerError,
+    TryFromPrimaryError, TryFromSecondaryError, TryFromSelfScopeOwnerError,
+    TryFromTypeUseOwnerError,
 };
 
 // --- semi-private ---
