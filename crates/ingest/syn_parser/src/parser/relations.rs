@@ -2,7 +2,8 @@
 use super::nodes::{AnyNodeId, PrimaryNodeIdTrait};
 use crate::parser::nodes::{
     AssociatedItemNodeId, EnumNodeId, FieldNodeId, ImplNodeId, ImportNodeId, ModuleNodeId,
-    PrimaryNodeId, StructNodeId, TraitNodeId, UnionNodeId, VariantNodeId,
+    OrdinaryTypeSourceId, OrdinaryTypeTargetId, PrimaryNodeId, StructNodeId, TraitNodeId,
+    TraitTypeSourceId, TraitTypeTargetId, UnionNodeId, VariantNodeId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -12,6 +13,48 @@ use thiserror::Error;
 pub enum RelationConversionError {
     #[error("Relation kind {0:?} is not applicable for ScopeKind conversion")]
     NotApplicable(SyntacticRelation),
+}
+
+/// Represents a type-safe semantic relation from a structural type source to a
+/// resolved code-graph type target.
+///
+/// Like [`SyntacticRelation`], each variant encodes an admissible subset of a
+/// Cartesian product. Set-theoretically:
+///
+/// ```text
+/// Ordinary ⊆ OrdinaryTypeSourceId × OrdinaryTypeTargetId
+/// Trait    ⊆ TraitTypeSourceId    × TraitTypeTargetId
+/// ```
+///
+/// The relation is constructed only after the resolver has proven both endpoint
+/// memberships. Failed proof belongs at the resolver boundary as unresolved or
+/// ambiguous state; it should not be represented as a broad `AnyNodeId` target
+/// inside this relation.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TypeRelation {
+    /// Ordinary type-position resolution, such as `Foo` resolving to a struct,
+    /// enum, union, type alias, or generic type parameter.
+    Ordinary {
+        source: OrdinaryTypeSourceId,
+        target: OrdinaryTypeTargetId,
+    },
+    /// Trait-position resolution, such as `impl Display for T`,
+    /// `trait T: Display`, or a bound `U: Display`.
+    Trait {
+        source: TraitTypeSourceId,
+        target: TraitTypeTargetId,
+    },
+}
+
+impl TypeRelation {
+    /// Returns the relation kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::Ordinary { .. } => "Ordinary",
+            Self::Trait { .. } => "Trait",
+        }
+    }
 }
 
 // ANCHOR: syntactic_relation

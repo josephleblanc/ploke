@@ -1,11 +1,10 @@
 //! Type-resolution artifacts for the post-merge semantic bridge.
 //!
-//! This module intentionally models the result surface *before* implementing the
-//! resolver. `syn_parser` already builds a structural type graph during phase 2:
-//! each observed type occurrence gets a deterministic `TypeId::Synthetic` plus a
-//! `TypeNode` describing its structure. What is missing is the late pass that can
-//! answer what a `TypeKind::Named` actually refers to once the merged graph,
-//! module tree, import backlinks, and canonical path state exist.
+//! `syn_parser` builds a structural type graph during phase 2: each observed type
+//! occurrence gets a deterministic `TypeId::Synthetic` plus a `TypeNode`
+//! describing its syntax-level shape. This module is the late semantic pass that
+//! answers what a `TypeKind::Named` or `TypeKind::TraitBound` refers to once the
+//! merged graph, module tree, import backlinks, and canonical path state exist.
 //!
 //! The important constraint is correctness:
 //! - a named type should only be promoted to a resolved meaning when the merged
@@ -14,8 +13,30 @@
 //! - unresolved cases should retain provenance-rich reasons rather than being
 //!   flattened into "best effort".
 //!
-//! The actual traversal/lookup engine is still to be implemented. These types are
-//! the contract that engine should produce.
+//! Terminology in this module intentionally follows the Rust Reference where
+//! possible:
+//! - a **scope** is the region where a named entity may be referenced;
+//! - **generic parameters** are in scope within the item definition where they
+//!   are declared;
+//! - methods, associated types, and associated constants are **associated
+//!   items** of traits or implementations;
+//! - implicit `Self` is treated similarly to a generic type parameter in
+//!   structs, enums, unions, traits, and implementations.
+//!
+//! Reference anchors:
+//! - <https://doc.rust-lang.org/reference/names/scopes.html>
+//! - <https://doc.rust-lang.org/reference/items/generics.html>
+//! - <https://doc.rust-lang.org/reference/items/associated-items.html>
+//!
+//! The implementation still has a local distinction that is not a Reference term:
+//! a **type-use site** is the codegraph node where the resolved edge/report row
+//! should be attached, while the **resolution context** is the module/import,
+//! generic-parameter, and `Self` context used to interpret the type occurrence.
+//! For a function item these are often the same node. For a struct field, the
+//! type-use site is the field, but the relevant generic parameter scope is the
+//! struct. For an associated item in an impl, the type-use site is the method or
+//! associated item, while `Self` and impl-level generics come from the enclosing
+//! implementation.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
@@ -96,9 +117,15 @@ impl Kind {
 /// A successfully justified semantic target for a structural `TypeId`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Target {
+    /// A named type or trait resolved to a defining item in the code graph.
     Item(AnyNodeId),
+    /// A generic type parameter resolved to the `GenericParamNode` that declares it.
     GenericParam(GenericParamNodeId),
-    /// `Self` resolved in an impl/trait context to the underlying item.
+    /// `Self` resolved through its `Self` scope.
+    ///
+    /// In an implementation this should resolve through the implementing type,
+    /// matching the Rust Reference's description of method `Self`. Trait `Self`
+    /// needs a distinct representation as the resolver becomes more complete.
     SelfType(AnyNodeId),
 }
 
@@ -165,12 +192,26 @@ impl AmbiguousReason {
 }
 
 /// Provenance needed to explain a late named-type resolution attempt.
+///
+/// This is the resolution-context half of a type-use report. It records the
+/// syntactic type occurrence being resolved, the path found in the `TypeNode`,
+/// and enough surrounding context to apply Rust name-resolution rules.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Provenance {
+    /// Structural `TypeId` for the exact type occurrence being resolved.
     pub type_id: TypeId,
+    /// Path segments as parsed from `TypeKind::Named` or `TypeKind::TraitBound`.
     pub path: Vec<String>,
+    /// Coarse syntactic path form used for diagnostics and summary reporting.
     pub path_form: PathForm,
+    /// Module whose item scope and imports are queried for path resolution.
     pub containing_module: Option<ModuleNodeId>,
+    /// Codegraph node whose generic parameter scope and `Self` context should be used.
+    ///
+    /// This is intentionally not always the same as the final `TypeUseResolution::owner`.
+    /// Example: in `struct S<T> { field: T }`, the report row belongs to the field
+    /// type-use site, but `T` is declared by `S`. In Reference language, `S` is the
+    /// item definition whose generic parameters are in scope for that field type.
     pub owner: Option<AnyNodeId>,
 }
 
@@ -240,7 +281,12 @@ impl Ref {
     }
 }
 
-/// Where a structural type occurrence was observed.
+/// The kind of type-use site where a structural type occurrence was observed.
+///
+/// A role describes the slot where the type was written, not the semantic target
+/// it eventually resolves to. For example, `impl Trait for Type` has separate
+/// `ImplTrait` and `ImplSelf` roles even though both are represented by
+/// structural `TypeNode`s before resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum TypeUseRole {
     FunctionReturn,
@@ -278,13 +324,26 @@ impl TypeUseRole {
     }
 }
 
-/// Semantic result for one resolvable type occurrence.
+/// Semantic result for one resolvable type occurrence at a type-use site.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypeUseResolution {
+    /// Codegraph node where this type-use row should be attached.
+    ///
+    /// This is the local "type-use site" concept. It is usually the item carrying
+    /// the slot (`FunctionNode`, `MethodNode`, `ConstNode`), but for fields it is
+    /// the `FieldNode`, while generic lookup may use the enclosing struct/enum/union
+    /// as the `Provenance::owner` resolution context.
     pub owner: AnyNodeId,
+    /// Slot kind for the observed type occurrence.
     pub role: TypeUseRole,
+    /// Structural source occurrence from the phase-2 type graph.
     pub source_type_id: TypeId,
+    /// Resolved, ambiguous, or unresolved semantic state plus provenance.
     pub resolved_ref: Ref,
+    /// Canonical resolved type ID when the target is item-backed.
+    ///
+    /// Generic params, builtins, external dependencies, ambiguous paths, and
+    /// unresolved paths currently do not promote to a `TypeId::Resolved`.
     pub resolved_type_id: Option<TypeId>,
 }
 
@@ -333,6 +392,13 @@ enum BindingFailure {
 /// The important distinction is between:
 /// - structural type nodes (`TypeId::Synthetic`, `TypeKind::Named`, `TypeKind::TraitBound`)
 /// - semantic targets justified by module/import visibility
+///
+/// `LateResolver` works on one resolution context at a time. The caller supplies
+/// the containing module plus the item/associated-item context used for generic
+/// parameter and `Self` lookup. This mirrors Reference terminology: item scopes
+/// and generic parameter scopes decide which names are in scope, while associated
+/// items inside impls/traits inherit important context from their enclosing
+/// implementation or trait.
 ///
 /// This resolver does not guess. It walks the existing scope/import graph, including glob
 /// bindings and re-export chains, and produces explicit resolved/ambiguous/unresolved states.
@@ -942,6 +1008,10 @@ impl<'a> LateResolver<'a> {
         path: &[String],
         expected: ExpectedTarget,
     ) -> Option<GenericParamNodeId> {
+        // The Rust Reference says generic parameters are in scope within the item definition
+        // where they are declared. This lookup currently checks one declaring item at a time.
+        // Associated items may need an enclosing impl/trait lookup before this fully matches
+        // Rust's effective resolution context for method signatures.
         if expected != ExpectedTarget::Ordinary || path.len() != 1 {
             return None;
         }
@@ -1100,7 +1170,7 @@ impl<'a> TypeUseWalker<'a> {
     fn collect(&mut self) -> Result<(), SynParserError> {
         for function in self.graph.functions() {
             let owner = function.id.as_any();
-            let module = self.module_for_scope(owner);
+            let module = self.containing_module(owner);
             for param in &function.parameters {
                 self.visit_type_use(
                     owner,
@@ -1118,12 +1188,12 @@ impl<'a> TypeUseWalker<'a> {
         for defined_type in self.graph.defined_types() {
             match defined_type {
                 crate::parser::nodes::TypeDefNode::Struct(node) => {
-                    let scope_owner = node.id.as_any();
-                    let module = self.module_for_scope(scope_owner);
+                    let resolution_context_owner = node.id.as_any();
+                    let module = self.containing_module(resolution_context_owner);
                     for field in &node.fields {
                         self.visit_type_use(
                             field.id.as_any(),
-                            scope_owner,
+                            resolution_context_owner,
                             module,
                             TypeUseRole::Field,
                             field.type_id,
@@ -1131,13 +1201,13 @@ impl<'a> TypeUseWalker<'a> {
                     }
                 }
                 crate::parser::nodes::TypeDefNode::Enum(node) => {
-                    let scope_owner = node.id.as_any();
-                    let module = self.module_for_scope(scope_owner);
+                    let resolution_context_owner = node.id.as_any();
+                    let module = self.containing_module(resolution_context_owner);
                     for variant in &node.variants {
                         for field in &variant.fields {
                             self.visit_type_use(
                                 field.id.as_any(),
-                                scope_owner,
+                                resolution_context_owner,
                                 module,
                                 TypeUseRole::Field,
                                 field.type_id,
@@ -1147,7 +1217,7 @@ impl<'a> TypeUseWalker<'a> {
                 }
                 crate::parser::nodes::TypeDefNode::TypeAlias(node) => {
                     let owner = node.id.as_any();
-                    let module = self.module_for_scope(owner);
+                    let module = self.containing_module(owner);
                     self.visit_type_use(
                         owner,
                         owner,
@@ -1157,12 +1227,12 @@ impl<'a> TypeUseWalker<'a> {
                     )?;
                 }
                 crate::parser::nodes::TypeDefNode::Union(node) => {
-                    let scope_owner = node.id.as_any();
-                    let module = self.module_for_scope(scope_owner);
+                    let resolution_context_owner = node.id.as_any();
+                    let module = self.containing_module(resolution_context_owner);
                     for field in &node.fields {
                         self.visit_type_use(
                             field.id.as_any(),
-                            scope_owner,
+                            resolution_context_owner,
                             module,
                             TypeUseRole::Field,
                             field.type_id,
@@ -1174,7 +1244,7 @@ impl<'a> TypeUseWalker<'a> {
 
         for trait_node in self.graph.traits() {
             let owner = trait_node.id.as_any();
-            let module = self.module_for_scope(owner);
+            let module = self.containing_module(owner);
             for type_id in &trait_node.super_traits {
                 self.visit_type_use(owner, owner, module, TypeUseRole::TraitSuper, *type_id)?;
             }
@@ -1185,7 +1255,7 @@ impl<'a> TypeUseWalker<'a> {
 
         for impl_node in self.graph.impls() {
             let owner = impl_node.id.as_any();
-            let module = self.module_for_scope(owner);
+            let module = self.containing_module(owner);
             self.visit_type_use(
                 owner,
                 owner,
@@ -1203,13 +1273,13 @@ impl<'a> TypeUseWalker<'a> {
 
         for const_node in self.graph.consts() {
             let owner = const_node.id.as_any();
-            let module = self.module_for_scope(owner);
+            let module = self.containing_module(owner);
             self.visit_type_use(owner, owner, module, TypeUseRole::Const, const_node.type_id)?;
         }
 
         for static_node in self.graph.statics() {
             let owner = static_node.id.as_any();
-            let module = self.module_for_scope(owner);
+            let module = self.containing_module(owner);
             self.visit_type_use(
                 owner,
                 owner,
@@ -1246,16 +1316,20 @@ impl<'a> TypeUseWalker<'a> {
 
     fn visit_type_use(
         &mut self,
-        edge_owner: AnyNodeId,
-        scope_owner: AnyNodeId,
+        type_use_site: AnyNodeId,
+        resolution_context_owner: AnyNodeId,
         containing_module: Option<ModuleNodeId>,
         role: TypeUseRole,
         type_id: TypeId,
     ) -> Result<(), SynParserError> {
+        // `type_use_site` is where the semantic row is attached. `resolution_context_owner`
+        // is where generic parameters and `Self` are looked up. These are often the same
+        // node, but they intentionally differ for fields and should eventually differ for
+        // associated items whose signatures use impl/trait-level generic parameters.
         let mut seen = HashSet::new();
         self.visit_type_tree(
-            edge_owner,
-            scope_owner,
+            type_use_site,
+            resolution_context_owner,
             containing_module,
             role,
             type_id,
@@ -1266,8 +1340,8 @@ impl<'a> TypeUseWalker<'a> {
 
     fn visit_type_tree(
         &mut self,
-        edge_owner: AnyNodeId,
-        scope_owner: AnyNodeId,
+        type_use_site: AnyNodeId,
+        resolution_context_owner: AnyNodeId,
         containing_module: Option<ModuleNodeId>,
         role: TypeUseRole,
         type_id: TypeId,
@@ -1280,7 +1354,7 @@ impl<'a> TypeUseWalker<'a> {
 
         let type_node = self.graph.resolve_type(type_id).ok_or_else(|| {
             SynParserError::InternalState(format!(
-                "type use {type_id} referenced by {edge_owner:?} was not found in type graph"
+                "type use {type_id} referenced by {type_use_site:?} was not found in type graph"
             ))
         })?;
         let related_types = type_node.related_types.clone();
@@ -1296,13 +1370,13 @@ impl<'a> TypeUseWalker<'a> {
                     Some(self.resolver.resolve_named_trait(
                         named_id,
                         containing_module,
-                        Some(scope_owner),
+                        Some(resolution_context_owner),
                     ))
                 } else {
                     Some(self.resolver.resolve_named(
                         named_id,
                         containing_module,
-                        Some(scope_owner),
+                        Some(resolution_context_owner),
                     ))
                 }
             }
@@ -1315,7 +1389,7 @@ impl<'a> TypeUseWalker<'a> {
                 Some(self.resolver.resolve_trait_bound(
                     trait_bound_id,
                     containing_module,
-                    Some(scope_owner),
+                    Some(resolution_context_owner),
                 ))
             }
             _ => None,
@@ -1324,7 +1398,7 @@ impl<'a> TypeUseWalker<'a> {
         if let Some(resolved_ref) = resolved_ref {
             let resolved_type_id = self.resolver.promote_resolved_type_id(&resolved_ref)?;
             self.resolutions.push(TypeUseResolution {
-                owner: edge_owner,
+                owner: type_use_site,
                 role,
                 source_type_id: type_id,
                 resolved_ref,
@@ -1334,8 +1408,8 @@ impl<'a> TypeUseWalker<'a> {
 
         for related_type_id in related_types {
             self.visit_type_tree(
-                edge_owner,
-                scope_owner,
+                type_use_site,
+                resolution_context_owner,
                 containing_module,
                 role,
                 related_type_id,
@@ -1347,9 +1421,9 @@ impl<'a> TypeUseWalker<'a> {
         Ok(())
     }
 
-    fn module_for_scope(&self, scope_owner: AnyNodeId) -> Option<ModuleNodeId> {
+    fn containing_module(&self, resolution_context_owner: AnyNodeId) -> Option<ModuleNodeId> {
         self.graph
-            .module_for_any_id(scope_owner)
+            .module_for_any_id(resolution_context_owner)
             .map(|module| module.id)
     }
 }

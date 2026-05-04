@@ -6,8 +6,8 @@
 //! sharp about source and target shape instead of relying on conventions.
 
 use super::{
-    AnyNodeId, AnyTypedId, CategoricalTypedId, EnumNodeId, GenericParamNodeId, NamedTypeId,
-    StructNodeId, TraitBoundTypeId, TraitNodeId, TypeAliasNodeId, UnionNodeId,
+    AnyNodeId, AnyTypedId, CategoricalTypedId, EnumNodeId, NamedTypeId, StructNodeId,
+    TraitBoundTypeId, TraitNodeId, TypeAliasNodeId, TypeGenericParamNodeId, UnionNodeId,
 };
 use crate::parser::nodes::ids::StructuralTypeId;
 use ploke_core::{ItemKind, TypeId};
@@ -25,6 +25,28 @@ impl Display for TryFromTypeSourceError {
 }
 
 impl Error for TryFromTypeSourceError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TryFromOrdinaryTypeSourceError;
+
+impl Display for TryFromOrdinaryTypeSourceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "OrdinaryTypeSourceId variant mismatch")
+    }
+}
+
+impl Error for TryFromOrdinaryTypeSourceError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TryFromTraitTypeSourceError;
+
+impl Display for TryFromTraitTypeSourceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TraitTypeSourceId variant mismatch")
+    }
+}
+
+impl Error for TryFromTraitTypeSourceError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct TryFromOrdinaryTypeTargetError;
@@ -48,248 +70,469 @@ impl Display for TryFromTraitTypeTargetError {
 
 impl Error for TryFromTraitTypeTargetError {}
 
-/// Structural type-source classes that can directly participate in resolution.
-///
-/// This is intentionally narrower than "all type IDs". Composite type nodes
-/// like tuples, references, or arrays remain containers in the type graph and
-/// are traversed through their nested children instead of resolving directly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub enum TypeSourceId {
-    Named(NamedTypeId),
-    TraitBound(TraitBoundTypeId),
-}
-
-impl TypeSourceId {
-    #[inline]
-    pub fn kind_name(&self) -> &'static str {
-        match self {
-            Self::Named(_) => "NamedTypeId",
-            Self::TraitBound(_) => "TraitBoundTypeId",
+macro_rules! define_structural_type_family {
+    (
+        $(#[$outer:meta])*
+        $Family:ident,
+        $Error:ty,
+        [
+            ($Variant:ident, $IdType:ty $(,)?)
+        ]
+    ) => {
+        $(#[$outer])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+        pub enum $Family {
+            $Variant($IdType),
         }
-    }
-}
 
-impl StructuralTypeId for TypeSourceId {
-    #[inline]
-    fn base_id(self) -> TypeId {
-        match self {
-            Self::Named(id) => id.base_id(),
-            Self::TraitBound(id) => id.base_id(),
-        }
-    }
-}
-
-impl AnyTypedId for TypeSourceId {}
-impl CategoricalTypedId for TypeSourceId {}
-
-impl From<NamedTypeId> for TypeSourceId {
-    #[inline]
-    fn from(id: NamedTypeId) -> Self {
-        Self::Named(id)
-    }
-}
-
-impl From<TraitBoundTypeId> for TypeSourceId {
-    #[inline]
-    fn from(id: TraitBoundTypeId) -> Self {
-        Self::TraitBound(id)
-    }
-}
-
-impl TryFrom<TypeSourceId> for NamedTypeId {
-    type Error = TryFromTypeSourceError;
-
-    #[inline]
-    fn try_from(value: TypeSourceId) -> Result<Self, Self::Error> {
-        match value {
-            TypeSourceId::Named(id) => Ok(id),
-            _ => Err(TryFromTypeSourceError),
-        }
-    }
-}
-
-impl TryFrom<TypeSourceId> for TraitBoundTypeId {
-    type Error = TryFromTypeSourceError;
-
-    #[inline]
-    fn try_from(value: TypeSourceId) -> Result<Self, Self::Error> {
-        match value {
-            TypeSourceId::TraitBound(id) => Ok(id),
-            _ => Err(TryFromTypeSourceError),
-        }
-    }
-}
-
-impl From<TypeSourceId> for TypeId {
-    #[inline]
-    fn from(id: TypeSourceId) -> Self {
-        id.base_id()
-    }
-}
-
-impl Display for TypeSourceId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Named(id) => write!(f, "Named({})", id),
-            Self::TraitBound(id) => write!(f, "TraitBound({})", id),
-        }
-    }
-}
-
-/// Node-ID family for ordinary type-position targets.
-///
-/// This covers the code-graph nodes that are structurally valid targets for
-/// plain named type use-sites. Semantic-only targets like builtins or `Self`
-/// are intentionally left out of this family because they are not node IDs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub enum OrdinaryTypeTargetId {
-    Struct(StructNodeId),
-    Enum(EnumNodeId),
-    Union(UnionNodeId),
-    TypeAlias(TypeAliasNodeId),
-    GenericParam(GenericParamNodeId),
-}
-
-impl OrdinaryTypeTargetId {
-    #[inline]
-    pub fn base_id(&self) -> ploke_core::NodeId {
-        match *self {
-            Self::Struct(id) => id.base_id(),
-            Self::Enum(id) => id.base_id(),
-            Self::Union(id) => id.base_id(),
-            Self::TypeAlias(id) => id.base_id(),
-            Self::GenericParam(id) => id.base_id(),
-        }
-    }
-
-    #[inline]
-    pub fn kind(&self) -> ItemKind {
-        match *self {
-            Self::Struct(_) => ItemKind::Struct,
-            Self::Enum(_) => ItemKind::Enum,
-            Self::Union(_) => ItemKind::Union,
-            Self::TypeAlias(_) => ItemKind::TypeAlias,
-            Self::GenericParam(_) => ItemKind::GenericParam,
-        }
-    }
-}
-
-impl AnyTypedId for OrdinaryTypeTargetId {}
-impl CategoricalTypedId for OrdinaryTypeTargetId {}
-
-impl From<OrdinaryTypeTargetId> for AnyNodeId {
-    #[inline]
-    fn from(id: OrdinaryTypeTargetId) -> Self {
-        match id {
-            OrdinaryTypeTargetId::Struct(id) => id.into(),
-            OrdinaryTypeTargetId::Enum(id) => id.into(),
-            OrdinaryTypeTargetId::Union(id) => id.into(),
-            OrdinaryTypeTargetId::TypeAlias(id) => id.into(),
-            OrdinaryTypeTargetId::GenericParam(id) => id.into(),
-        }
-    }
-}
-
-macro_rules! impl_ordinary_type_target_variant {
-    ($SpecificId:ty, $Variant:ident) => {
-        impl From<$SpecificId> for OrdinaryTypeTargetId {
+        impl $Family {
             #[inline]
-            fn from(id: $SpecificId) -> Self {
+            pub fn kind_name(&self) -> &'static str {
+                match self {
+                    Self::$Variant(_) => stringify!($IdType),
+                }
+            }
+        }
+
+        impl StructuralTypeId for $Family {
+            #[inline]
+            fn base_id(self) -> TypeId {
+                match self {
+                    Self::$Variant(id) => id.base_id(),
+                }
+            }
+        }
+
+        impl AnyTypedId for $Family {}
+        impl CategoricalTypedId for $Family {}
+
+        impl From<$IdType> for $Family {
+            #[inline]
+            fn from(id: $IdType) -> Self {
                 Self::$Variant(id)
             }
         }
 
-        impl TryFrom<OrdinaryTypeTargetId> for $SpecificId {
-            type Error = TryFromOrdinaryTypeTargetError;
+        impl TryFrom<$Family> for $IdType {
+            type Error = $Error;
 
             #[inline]
-            fn try_from(value: OrdinaryTypeTargetId) -> Result<Self, Self::Error> {
+            fn try_from(value: $Family) -> Result<Self, Self::Error> {
                 match value {
-                    OrdinaryTypeTargetId::$Variant(id) => Ok(id),
-                    _ => Err(TryFromOrdinaryTypeTargetError),
+                    $Family::$Variant(id) => Ok(id),
+                }
+            }
+        }
+
+        impl From<$Family> for TypeId {
+            #[inline]
+            fn from(id: $Family) -> Self {
+                id.base_id()
+            }
+        }
+
+        impl Display for $Family {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                match self {
+                    Self::$Variant(id) => write!(f, "{}({})", stringify!($Variant), id),
+                }
+            }
+        }
+    };
+
+    (
+        $(#[$outer:meta])*
+        $Family:ident,
+        $Error:ty,
+        [
+            ($FirstVariant:ident, $FirstIdType:ty),
+            $(($Variant:ident, $IdType:ty)),+ $(,)?
+        ]
+    ) => {
+        $(#[$outer])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+        pub enum $Family {
+            $FirstVariant($FirstIdType),
+            $(
+                $Variant($IdType),
+            )+
+        }
+
+        impl $Family {
+            #[inline]
+            pub fn kind_name(&self) -> &'static str {
+                match self {
+                    Self::$FirstVariant(_) => stringify!($FirstIdType),
+                    $(
+                        Self::$Variant(_) => stringify!($IdType),
+                    )+
+                }
+            }
+        }
+
+        impl StructuralTypeId for $Family {
+            #[inline]
+            fn base_id(self) -> TypeId {
+                match self {
+                    Self::$FirstVariant(id) => id.base_id(),
+                    $(
+                        Self::$Variant(id) => id.base_id(),
+                    )+
+                }
+            }
+        }
+
+        impl AnyTypedId for $Family {}
+        impl CategoricalTypedId for $Family {}
+
+        impl From<$FirstIdType> for $Family {
+            #[inline]
+            fn from(id: $FirstIdType) -> Self {
+                Self::$FirstVariant(id)
+            }
+        }
+
+        impl TryFrom<$Family> for $FirstIdType {
+            type Error = $Error;
+
+            #[inline]
+            fn try_from(value: $Family) -> Result<Self, Self::Error> {
+                match value {
+                    $Family::$FirstVariant(id) => Ok(id),
+                    _ => Err(<$Error>::default()),
+                }
+            }
+        }
+
+        $(
+            impl From<$IdType> for $Family {
+                #[inline]
+                fn from(id: $IdType) -> Self {
+                    Self::$Variant(id)
+                }
+            }
+
+            impl TryFrom<$Family> for $IdType {
+                type Error = $Error;
+
+                #[inline]
+                fn try_from(value: $Family) -> Result<Self, Self::Error> {
+                    match value {
+                        $Family::$Variant(id) => Ok(id),
+                        _ => Err(<$Error>::default()),
+                    }
+                }
+            }
+        )+
+
+        impl From<$Family> for TypeId {
+            #[inline]
+            fn from(id: $Family) -> Self {
+                id.base_id()
+            }
+        }
+
+        impl Display for $Family {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                match self {
+                    Self::$FirstVariant(id) => write!(f, "{}({})", stringify!($FirstVariant), id),
+                    $(
+                        Self::$Variant(id) => write!(f, "{}({})", stringify!($Variant), id),
+                    )+
                 }
             }
         }
     };
 }
 
-impl_ordinary_type_target_variant!(StructNodeId, Struct);
-impl_ordinary_type_target_variant!(EnumNodeId, Enum);
-impl_ordinary_type_target_variant!(UnionNodeId, Union);
-impl_ordinary_type_target_variant!(TypeAliasNodeId, TypeAlias);
-impl_ordinary_type_target_variant!(GenericParamNodeId, GenericParam);
-
-impl Display for OrdinaryTypeTargetId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Self::Struct(id) => write!(f, "Struct({})", id),
-            Self::Enum(id) => write!(f, "Enum({})", id),
-            Self::Union(id) => write!(f, "Union({})", id),
-            Self::TypeAlias(id) => write!(f, "TypeAlias({})", id),
-            Self::GenericParam(id) => write!(f, "GenericParam({})", id),
+macro_rules! define_node_type_target_family {
+    (
+        $(#[$outer:meta])*
+        $Family:ident,
+        $Error:ty,
+        [
+            ($Variant:ident, $IdType:ty, $ItemKindVal:expr $(,)?)
+        ]
+    ) => {
+        $(#[$outer])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+        pub enum $Family {
+            $Variant($IdType),
         }
-    }
-}
 
-/// Node-ID family for trait-position targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub enum TraitTypeTargetId {
-    Trait(TraitNodeId),
-}
+        impl $Family {
+            #[inline]
+            pub fn base_id(&self) -> ploke_core::NodeId {
+                match *self {
+                    Self::$Variant(id) => id.base_id(),
+                }
+            }
 
-impl TraitTypeTargetId {
-    #[inline]
-    pub fn base_id(&self) -> ploke_core::NodeId {
-        match *self {
-            Self::Trait(id) => id.base_id(),
+            #[inline]
+            pub fn kind(&self) -> ItemKind {
+                match *self {
+                    Self::$Variant(_) => $ItemKindVal,
+                }
+            }
         }
-    }
 
-    #[inline]
-    pub fn kind(&self) -> ItemKind {
-        match *self {
-            Self::Trait(_) => ItemKind::Trait,
+        impl AnyTypedId for $Family {}
+        impl CategoricalTypedId for $Family {}
+
+        impl From<$Family> for AnyNodeId {
+            #[inline]
+            fn from(id: $Family) -> Self {
+                match id {
+                    $Family::$Variant(id) => id.into(),
+                }
+            }
         }
-    }
+
+        impl From<$IdType> for $Family {
+            #[inline]
+            fn from(id: $IdType) -> Self {
+                Self::$Variant(id)
+            }
+        }
+
+        impl TryFrom<$Family> for $IdType {
+            type Error = $Error;
+
+            #[inline]
+            fn try_from(value: $Family) -> Result<Self, Self::Error> {
+                match value {
+                    $Family::$Variant(id) => Ok(id),
+                }
+            }
+        }
+
+        impl Display for $Family {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                match *self {
+                    Self::$Variant(id) => write!(f, "{}({})", stringify!($Variant), id),
+                }
+            }
+        }
+    };
+
+    (
+        $(#[$outer:meta])*
+        $Family:ident,
+        $Error:ty,
+        [
+            ($FirstVariant:ident, $FirstIdType:ty, $FirstItemKindVal:expr),
+            $(($Variant:ident, $IdType:ty, $ItemKindVal:expr)),+ $(,)?
+        ]
+    ) => {
+        $(#[$outer])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+        pub enum $Family {
+            $FirstVariant($FirstIdType),
+            $(
+                $Variant($IdType),
+            )+
+        }
+
+        impl $Family {
+            #[inline]
+            pub fn base_id(&self) -> ploke_core::NodeId {
+                match *self {
+                    Self::$FirstVariant(id) => id.base_id(),
+                    $(
+                        Self::$Variant(id) => id.base_id(),
+                    )+
+                }
+            }
+
+            #[inline]
+            pub fn kind(&self) -> ItemKind {
+                match *self {
+                    Self::$FirstVariant(_) => $FirstItemKindVal,
+                    $(
+                        Self::$Variant(_) => $ItemKindVal,
+                    )+
+                }
+            }
+        }
+
+        impl AnyTypedId for $Family {}
+        impl CategoricalTypedId for $Family {}
+
+        impl From<$Family> for AnyNodeId {
+            #[inline]
+            fn from(id: $Family) -> Self {
+                match id {
+                    $Family::$FirstVariant(id) => id.into(),
+                    $(
+                        $Family::$Variant(id) => id.into(),
+                    )+
+                }
+            }
+        }
+
+        impl From<$FirstIdType> for $Family {
+            #[inline]
+            fn from(id: $FirstIdType) -> Self {
+                Self::$FirstVariant(id)
+            }
+        }
+
+        impl TryFrom<$Family> for $FirstIdType {
+            type Error = $Error;
+
+            #[inline]
+            fn try_from(value: $Family) -> Result<Self, Self::Error> {
+                match value {
+                    $Family::$FirstVariant(id) => Ok(id),
+                    _ => Err(<$Error>::default()),
+                }
+            }
+        }
+
+        $(
+            impl From<$IdType> for $Family {
+                #[inline]
+                fn from(id: $IdType) -> Self {
+                    Self::$Variant(id)
+                }
+            }
+
+            impl TryFrom<$Family> for $IdType {
+                type Error = $Error;
+
+                #[inline]
+                fn try_from(value: $Family) -> Result<Self, Self::Error> {
+                    match value {
+                        $Family::$Variant(id) => Ok(id),
+                        _ => Err(<$Error>::default()),
+                    }
+                }
+            }
+        )+
+
+        impl Display for $Family {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                match *self {
+                    Self::$FirstVariant(id) => write!(f, "{}({})", stringify!($FirstVariant), id),
+                    $(
+                        Self::$Variant(id) => write!(f, "{}({})", stringify!($Variant), id),
+                    )+
+                }
+            }
+        }
+    };
 }
 
-impl AnyTypedId for TraitTypeTargetId {}
-impl CategoricalTypedId for TraitTypeTargetId {}
+define_structural_type_family!(
+    /// Structural type-source classes that can directly participate in resolution.
+    ///
+    /// This is intentionally narrower than "all type IDs". Composite type nodes
+    /// like tuples, references, or arrays remain containers in the type graph and
+    /// are traversed through their nested children instead of resolving directly.
+    TypeSourceId,
+    TryFromTypeSourceError,
+    [(Named, NamedTypeId), (TraitBound, TraitBoundTypeId)]
+);
 
-impl From<TraitNodeId> for TraitTypeTargetId {
-    #[inline]
-    fn from(id: TraitNodeId) -> Self {
-        Self::Trait(id)
-    }
-}
+define_structural_type_family!(
+    /// Type-source family for ordinary type-position resolution.
+    ///
+    /// Set-theoretically:
+    ///
+    /// ```text
+    /// OrdinaryTypeSourceId = NamedTypeId
+    /// ```
+    ///
+    /// This admits syntactic named type occurrences such as `Foo`, `crate::m::Foo`,
+    /// or the `Vec` in `Vec<T>`. Trait-bound syntax is intentionally excluded
+    /// because it resolves in trait position, not ordinary type position.
+    OrdinaryTypeSourceId,
+    TryFromOrdinaryTypeSourceError,
+    [(Named, NamedTypeId)]
+);
 
-impl From<TraitTypeTargetId> for AnyNodeId {
+impl From<OrdinaryTypeSourceId> for TypeSourceId {
     #[inline]
-    fn from(id: TraitTypeTargetId) -> Self {
+    fn from(id: OrdinaryTypeSourceId) -> Self {
         match id {
-            TraitTypeTargetId::Trait(id) => id.into(),
+            OrdinaryTypeSourceId::Named(id) => TypeSourceId::Named(id),
         }
     }
 }
 
-impl TryFrom<TraitTypeTargetId> for TraitNodeId {
-    type Error = TryFromTraitTypeTargetError;
+impl TryFrom<TypeSourceId> for OrdinaryTypeSourceId {
+    type Error = TryFromOrdinaryTypeSourceError;
 
     #[inline]
-    fn try_from(value: TraitTypeTargetId) -> Result<Self, Self::Error> {
+    fn try_from(value: TypeSourceId) -> Result<Self, Self::Error> {
         match value {
-            TraitTypeTargetId::Trait(id) => Ok(id),
+            TypeSourceId::Named(id) => Ok(Self::Named(id)),
+            TypeSourceId::TraitBound(_) => Err(TryFromOrdinaryTypeSourceError),
         }
     }
 }
 
-impl Display for TraitTypeTargetId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Self::Trait(id) => write!(f, "Trait({})", id),
+define_structural_type_family!(
+    /// Type-source family for trait-position resolution.
+    ///
+    /// Set-theoretically:
+    ///
+    /// ```text
+    /// TraitTypeSourceId = NamedTypeId ∪ TraitBoundTypeId
+    /// ```
+    ///
+    /// `NamedTypeId` covers trait paths in positions such as `impl Display for T`
+    /// or supertrait paths. `TraitBoundTypeId` covers bounds such as `T: Display`.
+    TraitTypeSourceId,
+    TryFromTraitTypeSourceError,
+    [(Named, NamedTypeId), (TraitBound, TraitBoundTypeId)]
+);
+
+impl From<TraitTypeSourceId> for TypeSourceId {
+    #[inline]
+    fn from(id: TraitTypeSourceId) -> Self {
+        match id {
+            TraitTypeSourceId::Named(id) => TypeSourceId::Named(id),
+            TraitTypeSourceId::TraitBound(id) => TypeSourceId::TraitBound(id),
         }
     }
 }
+
+impl TryFrom<TypeSourceId> for TraitTypeSourceId {
+    type Error = TryFromTraitTypeSourceError;
+
+    #[inline]
+    fn try_from(value: TypeSourceId) -> Result<Self, Self::Error> {
+        match value {
+            TypeSourceId::Named(id) => Ok(Self::Named(id)),
+            TypeSourceId::TraitBound(id) => Ok(Self::TraitBound(id)),
+        }
+    }
+}
+
+define_node_type_target_family!(
+    /// Node-ID family for ordinary type-position targets.
+    ///
+    /// This covers the code-graph nodes that are structurally valid targets for
+    /// plain named type use-sites. Semantic-only targets like builtins or `Self`
+    /// are intentionally left out of this family because they are not node IDs.
+    OrdinaryTypeTargetId,
+    TryFromOrdinaryTypeTargetError,
+    [
+        (Struct, StructNodeId, ItemKind::Struct),
+        (Enum, EnumNodeId, ItemKind::Enum),
+        (Union, UnionNodeId, ItemKind::Union),
+        (TypeAlias, TypeAliasNodeId, ItemKind::TypeAlias),
+        (GenericParam, TypeGenericParamNodeId, ItemKind::GenericParam),
+    ]
+);
+
+define_node_type_target_family!(
+    /// Node-ID family for trait-position targets.
+    TraitTypeTargetId,
+    TryFromTraitTypeTargetError,
+    [(Trait, TraitNodeId, ItemKind::Trait)]
+);
 
 #[cfg(test)]
 mod tests {

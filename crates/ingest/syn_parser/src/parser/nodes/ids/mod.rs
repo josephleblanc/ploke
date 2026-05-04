@@ -20,13 +20,15 @@ pub use internal::{
     TraitBoundTypeId, TraitObjectTypeId, TupleTypeId, TypeIdRefinementError, UnknownTypeId,
 };
 pub use internal::{
-    ConstNodeId, EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamNodeId, ImplNodeId,
-    ImportNodeId, MacroNodeId, MethodNodeId, ModuleNodeId, ParamNodeId, ReexportNodeId,
-    StaticNodeId, StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, UnresolvedNodeId,
+    ConstGenericParamNodeId, ConstNodeId, EnumNodeId, FieldNodeId, FunctionNodeId,
+    GenericParamNodeId, ImplNodeId, ImportNodeId, LifetimeGenericParamNodeId, MacroNodeId,
+    MethodNodeId, ModuleNodeId, ParamNodeId, ReexportNodeId, StaticNodeId, StructNodeId,
+    TraitNodeId, TypeAliasNodeId, TypeGenericParamNodeId, UnionNodeId, UnresolvedNodeId,
     VariantNodeId,
 };
 pub use internal::{
-    OrdinaryTypeTargetId, TraitTypeTargetId, TryFromOrdinaryTypeTargetError,
+    OrdinaryTypeSourceId, OrdinaryTypeTargetId, TraitTypeSourceId, TraitTypeTargetId,
+    TryFromOrdinaryTypeSourceError, TryFromOrdinaryTypeTargetError, TryFromTraitTypeSourceError,
     TryFromTraitTypeTargetError, TryFromTypeSourceError, TypeSourceId,
 };
 // --- traits ---
@@ -45,12 +47,16 @@ pub use internal::{ToCozoUuid, ToUuidString};
 // pub(crate) use internal::TypedNodeIdGet;
 // --- enums ---
 // Re-export category enums
-pub use internal::{AnyNodeId, AssociatedItemNodeId, PrimaryNodeId, SecondaryNodeId};
+pub use internal::{
+    AnyNodeId, AssociatedItemNodeId, AssociatedItemOwnerId, GenericParamOwnerId, PrimaryNodeId,
+    SecondaryNodeId, SelfScopeOwnerId, TypeUseOwnerId,
+};
 // --- macro rules ---
 // --- error types ---
 pub use internal::{
-    AnyNodeIdConversionError, TryFromAssociatedItemError, TryFromPrimaryError,
-    TryFromSecondaryError,
+    AnyNodeIdConversionError, GenericParamIdRefinementError, TryFromAssociatedItemError,
+    TryFromAssociatedItemOwnerError, TryFromGenericParamOwnerError, TryFromPrimaryError,
+    TryFromSecondaryError, TryFromSelfScopeOwnerError, TryFromTypeUseOwnerError,
 };
 
 // --- semi-private ---
