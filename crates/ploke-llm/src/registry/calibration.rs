@@ -16,8 +16,85 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttemptTimeout {
+    Fixed(Duration),
+    Backoff {
+        initial: Duration,
+        multiplier_percent: u16,
+        max: Duration,
+    },
+}
+
+impl AttemptTimeout {
+    pub fn fixed(timeout: Duration) -> Self {
+        Self::Fixed(timeout)
+    }
+
+    pub fn backoff(initial: Duration, multiplier_percent: u16, max: Duration) -> Self {
+        Self::Backoff {
+            initial,
+            multiplier_percent: multiplier_percent.max(100),
+            max: max.max(initial),
+        }
+    }
+
+    pub fn for_attempt(&self, attempt: u32) -> Duration {
+        match self {
+            Self::Fixed(timeout) => *timeout,
+            Self::Backoff {
+                initial,
+                multiplier_percent,
+                max,
+            } => {
+                let mut timeout = *initial;
+                for _ in 1..attempt.max(1) {
+                    timeout = duration_mul_percent(timeout, *multiplier_percent).min(*max);
+                }
+                timeout
+            }
+        }
+    }
+
+    pub fn first_attempt(&self) -> Duration {
+        self.for_attempt(1)
+    }
+
+    pub fn with_first_attempt(self, timeout: Duration) -> Self {
+        match self {
+            Self::Fixed(_) => Self::Fixed(timeout),
+            Self::Backoff {
+                multiplier_percent,
+                max,
+                ..
+            } => Self::backoff(timeout, multiplier_percent, max.max(timeout)),
+        }
+    }
+
+    pub fn with_ceiling(self, ceiling: Duration) -> Self {
+        match self {
+            Self::Fixed(timeout) => Self::Fixed(timeout.min(ceiling)),
+            Self::Backoff {
+                initial,
+                multiplier_percent,
+                max,
+            } => Self::backoff(initial.min(ceiling), multiplier_percent, max.min(ceiling)),
+        }
+    }
+}
+
+impl Default for AttemptTimeout {
+    fn default() -> Self {
+        Self::backoff(
+            Duration::from_secs(crate::LLM_TIMEOUT_SECS),
+            200,
+            Duration::from_secs(crate::LLM_TIMEOUT_SECS.saturating_mul(2)),
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderTiming {
-    pub timeout: Duration,
+    pub attempt_timeout: AttemptTimeout,
     pub max_attempts: u32,
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
@@ -26,16 +103,24 @@ pub struct ProviderTiming {
 
 impl ProviderTiming {
     pub fn with_timeout_ceiling(mut self, ceiling: Duration) -> Self {
-        self.timeout = self.timeout.min(ceiling);
+        self.attempt_timeout = self.attempt_timeout.with_ceiling(ceiling);
         self
+    }
+
+    pub fn first_timeout(&self) -> Duration {
+        self.attempt_timeout.first_attempt()
+    }
+
+    pub fn set_first_timeout(&mut self, timeout: Duration) {
+        self.attempt_timeout = self.attempt_timeout.clone().with_first_attempt(timeout);
     }
 }
 
 impl Default for ProviderTiming {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(crate::LLM_TIMEOUT_SECS),
-            max_attempts: 3,
+            attempt_timeout: AttemptTimeout::default(),
+            max_attempts: 2,
             initial_backoff: Duration::from_millis(250),
             max_backoff: Duration::from_secs(2),
             retry: RetryTuning::default(),
@@ -361,17 +446,17 @@ impl CalibrationEntry {
             let spread = upper.saturating_sub(lower);
             let margin = Duration::from_millis(spread / 2).max(tuning.min_margin);
             let target = Duration::from_millis(upper).saturating_add(margin);
-            timing.timeout = target.max(tuning.min_timeout).min(tuning.max_timeout);
+            timing.set_first_timeout(target.max(tuning.min_timeout).min(tuning.max_timeout));
         }
         if self.body_timeouts >= 2 && self.body_timeouts > self.successes {
             let base = self
                 .last_timing
                 .as_ref()
-                .map(|timing| timing.timeout)
-                .unwrap_or(timing.timeout);
+                .map(ProviderTiming::first_timeout)
+                .unwrap_or_else(|| timing.first_timeout());
             let grown = duration_mul_percent(base, tuning.body_timeout_growth_percent)
                 .max(base.saturating_add(tuning.min_margin));
-            timing.timeout = timing.timeout.max(grown).min(tuning.max_timeout);
+            timing.set_first_timeout(timing.first_timeout().max(grown).min(tuning.max_timeout));
             timing.max_attempts = timing.max_attempts.min(2);
             timing.retry.body_timeout_retry_limit = Some(1);
         }
@@ -474,8 +559,15 @@ mod tests {
     fn default_provider_timing_matches_current_chat_timeout_defaults() {
         let timing = OpenRouter::default_provider_timing();
 
-        assert_eq!(timing.timeout, Duration::from_secs(crate::LLM_TIMEOUT_SECS));
-        assert_eq!(timing.max_attempts, 3);
+        assert_eq!(
+            timing.attempt_timeout.for_attempt(1),
+            Duration::from_secs(crate::LLM_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            timing.attempt_timeout.for_attempt(2),
+            Duration::from_secs(crate::LLM_TIMEOUT_SECS.saturating_mul(2))
+        );
+        assert_eq!(timing.max_attempts, 2);
         assert_eq!(timing.initial_backoff, Duration::from_millis(250));
         assert_eq!(timing.max_backoff, Duration::from_secs(2));
     }
@@ -584,7 +676,7 @@ mod tests {
 
         let timing = entry.provider_timing(ProviderTiming::default(), &tuning);
 
-        assert_eq!(timing.timeout, Duration::from_secs(50));
+        assert_eq!(timing.first_timeout(), Duration::from_secs(50));
     }
 
     fn successful_attempt(output_completed: Duration) -> ProviderAttempt {
@@ -646,7 +738,7 @@ mod tests {
         let timing = store.entries["openrouter:test/model:provider:any"]
             .provider_timing(ProviderTiming::default(), &CalibrationTuning::default());
 
-        assert_eq!(timing.timeout, Duration::from_secs(180));
+        assert_eq!(timing.first_timeout(), Duration::from_secs(150));
         assert_eq!(timing.max_attempts, 2);
         assert_eq!(timing.retry.body_timeout_retry_limit, Some(1));
     }

@@ -562,6 +562,14 @@ pub struct Prototype1MonitorTimingCommand {
     /// Include evidence paths in table output.
     #[arg(long)]
     pub show_paths: bool,
+
+    /// Poll and redraw the timing projection until interrupted or the loop reaches a terminal state.
+    #[arg(long)]
+    pub watch: bool,
+
+    /// Polling interval in milliseconds for --watch.
+    #[arg(long, default_value_t = 1000)]
+    pub interval_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]

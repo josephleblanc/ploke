@@ -23,7 +23,7 @@ use crate::error::{HttpBodyFailure, HttpFailure, HttpReceivePhase, HttpSendFailu
 use crate::manager::builders::attempt::{
     AttemptBuilder, NonStreaming, ProviderAttempt, ProviderFailurePhase, ProviderRetryDecision,
 };
-use crate::registry::calibration::{ProviderTiming, RetryTuning};
+use crate::registry::calibration::{AttemptTimeout, ProviderTiming, RetryTuning};
 use crate::response::FinishReason;
 use crate::response::OpenAiResponse;
 use crate::response::ToolCall;
@@ -50,7 +50,7 @@ pub enum ChatStepOutcome {
 pub struct ChatHttpConfig {
     referer: &'static str,
     title: &'static str,
-    pub timeout: Duration,
+    pub attempt_timeout: AttemptTimeout,
     pub max_attempts: u32,
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
@@ -62,8 +62,8 @@ impl Default for ChatHttpConfig {
         Self {
             referer: HTTP_REFERER,
             title: HTTP_TITLE,
-            timeout: Duration::from_secs(crate::LLM_TIMEOUT_SECS),
-            max_attempts: 3,
+            attempt_timeout: AttemptTimeout::default(),
+            max_attempts: 2,
             initial_backoff: Duration::from_millis(250),
             max_backoff: Duration::from_secs(2),
             retry: RetryTuning::default(),
@@ -74,7 +74,7 @@ impl Default for ChatHttpConfig {
 impl From<&ProviderTiming> for ChatHttpConfig {
     fn from(timing: &ProviderTiming) -> Self {
         Self {
-            timeout: timing.timeout,
+            attempt_timeout: timing.attempt_timeout.clone(),
             max_attempts: timing.max_attempts,
             initial_backoff: timing.initial_backoff,
             max_backoff: timing.max_backoff,
@@ -141,6 +141,7 @@ pub async fn chat_step_with_attempts<R: Router>(
     }
     let chat_step_start = Instant::now();
     for attempt in 1..=max_attempts {
+        let attempt_timeout = cfg.attempt_timeout.for_attempt(attempt);
         let mut attempt_record =
             AttemptBuilder::<NonStreaming<R>>::non_streaming_from(chat_step_start);
         trace_chat_http_start(
@@ -149,7 +150,7 @@ pub async fn chat_step_with_attempts<R: Router>(
             max_attempts,
             url,
             &req.core.model.to_string(),
-            cfg.timeout,
+            attempt_timeout,
             message_count,
             tool_count,
             request_bytes,
@@ -162,7 +163,7 @@ pub async fn chat_step_with_attempts<R: Router>(
             .header("HTTP-Referer", cfg.referer)
             .header("X-Title", cfg.title)
             .json(req)
-            .timeout(cfg.timeout);
+            .timeout(attempt_timeout);
         attempt_record = attempt_record.request_sent();
         let resp = match request_builder.send().await {
             Ok(resp) => {
@@ -217,7 +218,7 @@ pub async fn chat_step_with_attempts<R: Router>(
                             .failure_phase(ProviderFailurePhase::Send)
                             .retry_decision(ProviderRetryDecision::Scheduled)
                             .backoff(backoff)
-                            .finish(request_id, attempt, max_attempts),
+                            .finish_traced(request_id, attempt, max_attempts),
                     );
                     sleep(backoff).await;
                     continue;
@@ -231,7 +232,7 @@ pub async fn chat_step_with_attempts<R: Router>(
                     attempt_record
                         .failure_phase(ProviderFailurePhase::Send)
                         .retry_decision(retry_decision)
-                        .finish(request_id, attempt, max_attempts),
+                        .finish_traced(request_id, attempt, max_attempts),
                 );
                 return Err(ChatStepError::with_provider_attempts(
                     failure,
@@ -312,7 +313,7 @@ pub async fn chat_step_with_attempts<R: Router>(
                             .body_failure(body_failure.clone())
                             .retry_decision(ProviderRetryDecision::Scheduled)
                             .backoff(backoff)
-                            .finish(request_id, attempt, max_attempts),
+                            .finish_traced(request_id, attempt, max_attempts),
                     );
                     sleep(backoff).await;
                     continue;
@@ -341,7 +342,7 @@ pub async fn chat_step_with_attempts<R: Router>(
                         .failure_phase(ProviderFailurePhase::Body)
                         .body_failure(body_failure)
                         .retry_decision(retry_decision)
-                        .finish(request_id, attempt, max_attempts),
+                        .finish_traced(request_id, attempt, max_attempts),
                 );
                 return Err(ChatStepError::with_provider_attempts(
                     failure,
@@ -399,7 +400,7 @@ pub async fn chat_step_with_attempts<R: Router>(
                         .failure_phase(ProviderFailurePhase::Status)
                         .retry_decision(ProviderRetryDecision::Scheduled)
                         .backoff(backoff)
-                        .finish(request_id, attempt, max_attempts),
+                        .finish_traced(request_id, attempt, max_attempts),
                 );
                 sleep(backoff).await;
                 continue;
@@ -413,7 +414,7 @@ pub async fn chat_step_with_attempts<R: Router>(
                 attempt_record
                     .failure_phase(ProviderFailurePhase::Status)
                     .retry_decision(retry_decision)
-                    .finish(request_id, attempt, max_attempts),
+                    .finish_traced(request_id, attempt, max_attempts),
             );
             return Err(ChatStepError::with_provider_attempts(
                 LlmError::Api {
@@ -434,7 +435,11 @@ pub async fn chat_step_with_attempts<R: Router>(
         let parsed = match parse_chat_outcome(&body) {
             Ok(parsed) => parsed,
             Err(error) => {
-                provider_attempts.push(attempt_record.finish(request_id, attempt, max_attempts));
+                provider_attempts.push(attempt_record.finish_traced(
+                    request_id,
+                    attempt,
+                    max_attempts,
+                ));
                 return Err(ChatStepError::with_provider_attempts(
                     error,
                     provider_attempts,
@@ -449,7 +454,7 @@ pub async fn chat_step_with_attempts<R: Router>(
             status,
             body_elapsed,
         );
-        provider_attempts.push(attempt_record.finish(request_id, attempt, max_attempts));
+        provider_attempts.push(attempt_record.finish_traced(request_id, attempt, max_attempts));
         return Ok(parsed.with_provider_attempts(provider_attempts));
     }
 
@@ -1501,8 +1506,12 @@ mod tests {
     #[test]
     fn chat_http_default_timeout_uses_llm_timeout_constant() {
         assert_eq!(
-            ChatHttpConfig::default().timeout,
+            ChatHttpConfig::default().attempt_timeout.for_attempt(1),
             Duration::from_secs(crate::LLM_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            ChatHttpConfig::default().attempt_timeout.for_attempt(2),
+            Duration::from_secs(crate::LLM_TIMEOUT_SECS.saturating_mul(2))
         );
     }
 }

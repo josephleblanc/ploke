@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs, io,
+    fs,
+    io::{self, Write},
     path::{Path, PathBuf},
     str::FromStr,
     thread,
@@ -9,7 +10,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use ploke_core::EXECUTION_DEBUG_TARGET;
-use ploke_llm::{ModelId, ProviderKey};
+use ploke_llm::{HttpBodyFailure, ModelId, ProviderAttempt, ProviderAttemptOutcome, ProviderKey};
 use ploke_tui::tools::ToolName;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument, warn};
@@ -2014,6 +2015,7 @@ struct ProviderHttpEvent {
     response_bytes: Option<u64>,
     is_timeout: Option<bool>,
     failure: Option<String>,
+    provider_attempt: Option<ProviderAttempt>,
 }
 
 fn print_prototype1_monitor_timing(
@@ -2021,12 +2023,55 @@ fn print_prototype1_monitor_timing(
     manifest_path: &Path,
     command: &Prototype1MonitorTimingCommand,
 ) -> Result<(), PrepareError> {
+    if command.watch {
+        return watch_prototype1_monitor_timing(campaign_id, manifest_path, command);
+    }
     let report = Report::load(campaign_id, manifest_path, command.node.as_deref())?;
+    print_timing_report(&report, command)?;
+    Ok(())
+}
+
+fn watch_prototype1_monitor_timing(
+    campaign_id: &str,
+    manifest_path: &Path,
+    command: &Prototype1MonitorTimingCommand,
+) -> Result<(), PrepareError> {
+    let prototype_root = prototype1_campaign_root(manifest_path);
+    let interval = Duration::from_millis(command.interval_ms.max(1));
+
+    loop {
+        print!("\x1b[2J\x1b[H");
+        io::stdout().flush().ok();
+        println!("prototype1 timing watch");
+        println!("campaign_id: {campaign_id}");
+        println!("campaign_root: {}", prototype_root.display());
+        println!("interval_ms: {}", interval.as_millis());
+        println!("press Ctrl-C to stop early");
+        println!();
+
+        let report = Report::load(campaign_id, manifest_path, command.node.as_deref())?;
+        print_timing_report(&report, command)?;
+
+        let snapshot = collect_prototype1_monitor_snapshot(&prototype_root, None)?;
+        if let Some(terminal) = terminal_state(manifest_path, &prototype_root, &snapshot) {
+            println!();
+            print_terminal_state(&terminal);
+            return Ok(());
+        }
+
+        thread::sleep(interval);
+    }
+}
+
+fn print_timing_report(
+    report: &Report,
+    command: &Prototype1MonitorTimingCommand,
+) -> Result<(), PrepareError> {
     match command.format {
         InspectOutputFormat::Json => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                serde_json::to_string_pretty(report).map_err(PrepareError::Serialize)?
             );
         }
         InspectOutputFormat::Table => report.print(command.depth, command.show_paths),
@@ -3138,23 +3183,49 @@ fn provider_http_requests(events: &[ProviderHttpEvent]) -> Vec<ProviderHttpReque
 
         let attempt = request.attempts.entry(event.attempt).or_default();
         attempt.events.insert(event.event.clone());
-        if let Some(elapsed_ms) = event.elapsed_ms {
-            attempt.elapsed_ms = Some(attempt.elapsed_ms.unwrap_or(0).max(elapsed_ms));
+        if let Some(provider_attempt) = &event.provider_attempt {
+            if let Some(elapsed_ms) = provider_attempt_elapsed_ms(provider_attempt) {
+                attempt.elapsed_ms = Some(attempt.elapsed_ms.unwrap_or(0).max(elapsed_ms));
+            }
+            if let Some(backoff_ms) = provider_attempt
+                .backoff
+                .map(|duration| duration.as_millis() as u64)
+            {
+                attempt.backoff_ms = attempt.backoff_ms.max(backoff_ms);
+            }
+            attempt.status = provider_attempt.status.or(attempt.status);
+            attempt.has_error |= provider_attempt.outcome == ProviderAttemptOutcome::Failed;
+            attempt.is_timeout |= provider_attempt
+                .body_failure
+                .as_ref()
+                .is_some_and(|failure| matches!(failure, HttpBodyFailure::Timeout));
+        } else {
+            if let Some(elapsed_ms) = event.elapsed_ms {
+                attempt.elapsed_ms = Some(attempt.elapsed_ms.unwrap_or(0).max(elapsed_ms));
+            }
+            if let Some(backoff_ms) = event.backoff_ms {
+                attempt.backoff_ms = attempt.backoff_ms.saturating_add(backoff_ms);
+            }
+            attempt.status = event.status.or(attempt.status);
+            attempt.has_error |= matches!(
+                event.event.as_str(),
+                "chat_http_request_error"
+                    | "chat_http_response_error_status"
+                    | "chat_http_retry_suppressed"
+            );
+            attempt.is_timeout |= event.is_timeout.unwrap_or(false);
         }
-        if let Some(backoff_ms) = event.backoff_ms {
-            attempt.backoff_ms = attempt.backoff_ms.saturating_add(backoff_ms);
-        }
-        attempt.status = event.status.or(attempt.status);
-        attempt.has_error |= matches!(
-            event.event.as_str(),
-            "chat_http_request_error"
-                | "chat_http_response_error_status"
-                | "chat_http_retry_suppressed"
-        );
-        attempt.is_timeout |= event.is_timeout.unwrap_or(false);
     }
 
     requests.into_values().collect()
+}
+
+fn provider_attempt_elapsed_ms(attempt: &ProviderAttempt) -> Option<u64> {
+    attempt
+        .failed
+        .or(attempt.output_completed)
+        .or(attempt.headers_received)
+        .map(|duration| duration.as_millis() as u64)
 }
 
 fn provider_http_total_ms(requests: &[ProviderHttpRequest]) -> u64 {
@@ -3562,6 +3633,7 @@ fn provider_http_event(
     value: &serde_json::Value,
     campaign_id: Option<String>,
 ) -> Option<ProviderHttpEvent> {
+    let provider_attempt = provider_attempt_field(value);
     Some(ProviderHttpEvent {
         source: path.to_path_buf(),
         timestamp: string_field(Some(value), "timestamp"),
@@ -3569,11 +3641,19 @@ fn provider_http_event(
         node_id: trace_string_field(value, "node_id"),
         branch_id: trace_string_field(value, "branch_id"),
         generation: trace_u64_field(value, "generation"),
-        request_id: u64_field(value, "request_id")?,
+        request_id: u64_field(value, "request_id")
+            .or_else(|| provider_attempt.as_ref().map(|attempt| attempt.request_id))?,
         attempt: u64_field(value, "attempt")
             .and_then(|value| u32::try_from(value).ok())
+            .or_else(|| provider_attempt.as_ref().map(|attempt| attempt.attempt))
             .unwrap_or(1),
-        max_attempts: u64_field(value, "max_attempts").and_then(|value| u32::try_from(value).ok()),
+        max_attempts: u64_field(value, "max_attempts")
+            .and_then(|value| u32::try_from(value).ok())
+            .or_else(|| {
+                provider_attempt
+                    .as_ref()
+                    .map(|attempt| attempt.max_attempts)
+            }),
         event: string_field(Some(value), "event")?,
         phase: string_field(Some(value), "phase"),
         status: u64_field(value, "status").and_then(|value| u16::try_from(value).ok()),
@@ -3584,7 +3664,16 @@ fn provider_http_event(
         response_bytes: u64_field(value, "response_bytes"),
         is_timeout: value.get("is_timeout").and_then(|value| value.as_bool()),
         failure: string_field(Some(value), "failure"),
+        provider_attempt,
     })
+}
+
+fn provider_attempt_field(value: &serde_json::Value) -> Option<ProviderAttempt> {
+    let field = value.get("provider_attempt")?;
+    if let Some(text) = field.as_str() {
+        return serde_json::from_str(text).ok();
+    }
+    serde_json::from_value(field.clone()).ok()
 }
 
 fn collect_named_files(root: &Path, name: &str, paths: &mut Vec<PathBuf>) {
@@ -7104,5 +7193,66 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].retry_count(), 1);
         assert_eq!(requests[0].elapsed_ms(), 3250);
+    }
+
+    #[test]
+    fn observation_log_loads_provider_attempt_event() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let log_path = tmp
+            .path()
+            .join("prototype1_observation_provider_attempt.jsonl");
+        let provider_attempt = ProviderAttempt {
+            request_id: 9,
+            attempt: 2,
+            max_attempts: 2,
+            started_at: Duration::from_millis(0),
+            request_sent: Some(Duration::from_millis(5)),
+            headers_received: Some(Duration::from_millis(20)),
+            output_started: None,
+            output_progress: None,
+            output_completed: None,
+            failed: Some(Duration::from_millis(200_000)),
+            status: Some(200),
+            response_bytes: None,
+            outcome: ProviderAttemptOutcome::Failed,
+            failure_phase: Some(ploke_llm::ProviderFailurePhase::Body),
+            body_failure: Some(HttpBodyFailure::Timeout),
+            retry_decision: ploke_llm::ProviderRetryDecision::Exhausted,
+            backoff: Some(Duration::from_millis(500)),
+        };
+        let line = serde_json::json!({
+            "timestamp": "2026-05-02T00:00:04Z",
+            "target": "chat_http",
+            "event": "provider_attempt",
+            "request_id": 9,
+            "attempt": 2,
+            "max_attempts": 2,
+            "provider_attempt": serde_json::to_string(&provider_attempt).expect("provider attempt json"),
+            "spans": [{
+                "name": "prototype1.child.evaluate.eval_closure",
+                "campaign_id": "campaign-a",
+                "branch_id": "branch-a",
+                "generation": 2
+            }]
+        });
+        fs::write(&log_path, format!("{line}\n")).expect("write log");
+
+        let mut evidence = ObservationEvidence::default();
+        parse_observation_log("campaign-a", &log_path, &mut evidence);
+
+        assert_eq!(evidence.provider_http.len(), 1);
+        assert!(evidence.provider_http[0].provider_attempt.is_some());
+        assert_eq!(
+            evidence.provider_http[0].campaign_id.as_deref(),
+            Some("campaign-a")
+        );
+        assert_eq!(
+            evidence.provider_http[0].branch_id.as_deref(),
+            Some("branch-a")
+        );
+        let requests = provider_http_requests(&evidence.provider_http);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].timeout_count(), 1);
+        assert_eq!(requests[0].elapsed_ms(), 200_500);
     }
 }

@@ -2,7 +2,9 @@ pub mod builders;
 mod commands;
 pub mod events;
 mod session;
-pub use builders::attempt::{ProviderAttempt, ProviderFailurePhase, ProviderRetryDecision};
+pub use builders::attempt::{
+    ProviderAttempt, ProviderAttemptOutcome, ProviderFailurePhase, ProviderRetryDecision,
+};
 pub use session::{
     ChatHttpConfig, ChatStepData, ChatStepError, ChatStepOutcome, chat_step,
     chat_step_with_attempts, parse_chat_outcome,

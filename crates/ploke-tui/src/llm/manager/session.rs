@@ -9,11 +9,13 @@ use std::{
 
 use crate::user_config::{ChatPolicy, ChatTimeoutStrategy};
 use chrono::DateTime;
-use ploke_llm::ChatHttpConfig;
 use ploke_llm::ChatStepOutcome;
 use ploke_llm::manager::ChatStepData;
-use ploke_llm::registry::calibration::{CalibrationStore, CalibrationTuning, RouterCalibration};
+use ploke_llm::registry::calibration::{
+    AttemptTimeout, CalibrationStore, CalibrationTuning, RouterCalibration,
+};
 use ploke_llm::response::ToolCall;
+use ploke_llm::{ChatHttpConfig, ProviderAttempt, ProviderRetryDecision};
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -375,6 +377,12 @@ struct ChatLoopState {
     repair_attempts: u32,
 }
 
+fn provider_retry_exhausted(attempts: &[ProviderAttempt]) -> bool {
+    attempts
+        .last()
+        .is_some_and(|attempt| attempt.retry_decision == ProviderRetryDecision::Exhausted)
+}
+
 /// Borrowed context required to evaluate finish reasons.
 struct ChatLoopContext<'a> {
     cfg: &'a mut ChatHttpConfig,
@@ -482,7 +490,7 @@ impl FinishPolicy {
                     if let Some(next_timout) = self.timeout.next_timout_dur(state.timeout_attempts)
                     {
                         // if some, change timout for next loop and ocntinue
-                        ctx.cfg.timeout = next_timout;
+                        ctx.cfg.attempt_timeout = AttemptTimeout::fixed(next_timout);
                         continue_chain = true;
                         if continue_reason.is_none() {
                             continue_reason = Some(finish_reason.clone());
@@ -787,7 +795,8 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
         let calibration_input = R::calibration_input(&req);
         let calibration_key = R::calibration_key(&calibration_input);
         let mut default_provider_timing = R::resolve_provider_timing(calibration_input.clone());
-        default_provider_timing.timeout = http_timeout;
+        default_provider_timing.attempt_timeout =
+            AttemptTimeout::backoff(http_timeout, 200, http_timeout.saturating_mul(2));
         let provider_timing = calibration_store.resolve_with_default::<R>(
             &calibration_input,
             default_provider_timing,
@@ -816,6 +825,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
             Ok(step) => step,
             Err(chat_step_error) => {
                 let provider_attempts = chat_step_error.provider_attempts;
+                let provider_exhausted = provider_retry_exhausted(&provider_attempts);
                 if let Some(key) = calibration_key.as_deref() {
                     calibration_store.record_attempts_with_tuning(
                         key,
@@ -874,7 +884,8 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                     assistant_message_id,
                 );
                 let loop_error = classify_llm_error(&err, context, commit_phase.clone());
-                if matches!(&loop_error.recovery, RecoveryDecision::Retry { .. })
+                if !provider_exhausted
+                    && matches!(&loop_error.recovery, RecoveryDecision::Retry { .. })
                     && loop_state.request_error_retries < chat_policy.error_retry_limit
                 {
                     loop_state.request_error_retries =
@@ -2053,6 +2064,38 @@ mod tests {
         })
     }
 
+    async fn spawn_nonresponding_test_router_server(
+        bind_addr: &'static str,
+        request_count: std::sync::Arc<AtomicUsize>,
+    ) -> (
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind(bind_addr)
+            .await
+            .expect("bind test router");
+        let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut stop_rx => break,
+                    accepted = listener.accept() => {
+                        let Ok((mut stream, _)) = accepted else {
+                            break;
+                        };
+                        request_count.fetch_add(1, Ordering::SeqCst);
+                        tokio::spawn(async move {
+                            read_http_request(&mut stream).await;
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                            let _ = stream.shutdown().await;
+                        });
+                    }
+                }
+            }
+        });
+        (stop_tx, handle)
+    }
+
     fn malformed_tool_call_response(index: usize) -> String {
         json!({
             "id": format!("repair-{index}"),
@@ -2475,14 +2518,20 @@ mod tests {
         assert!(matches!(report.outcome, SessionOutcome::Completed));
         assert_eq!(report.attempts, 1);
         let step = report.chat_steps.first().expect("chat step report");
-        assert_eq!(step.provider_timing.timeout, Duration::from_secs(50));
+        assert_eq!(
+            step.provider_timing.first_timeout(),
+            Duration::from_secs(50)
+        );
 
         let calibration =
             CalibrationStore::load_from_path(&path).expect("load updated calibration");
         let entry = calibration.entries.get(&key).expect("updated entry");
         assert_eq!(entry.successes, 6);
         assert_eq!(
-            entry.last_timing.as_ref().map(|timing| timing.timeout),
+            entry
+                .last_timing
+                .as_ref()
+                .map(ProviderTiming::first_timeout),
             Some(Duration::from_secs(50))
         );
         let _ = fs::remove_file(path);
@@ -2502,7 +2551,14 @@ mod tests {
 
         assert!(matches!(report.outcome, SessionOutcome::Completed));
         let step = report.chat_steps.first().expect("chat step report");
-        assert_eq!(step.provider_timing.timeout, Duration::from_secs(90));
+        assert_eq!(
+            step.provider_timing.first_timeout(),
+            Duration::from_secs(90)
+        );
+        assert_eq!(
+            step.provider_timing.attempt_timeout.for_attempt(2),
+            Duration::from_secs(180)
+        );
         let _ = fs::remove_file(path);
     }
 
@@ -2533,7 +2589,10 @@ mod tests {
 
         assert!(matches!(report.outcome, SessionOutcome::Completed));
         let step = report.chat_steps.first().expect("chat step report");
-        assert_eq!(step.provider_timing.timeout, Duration::from_secs(180));
+        assert_eq!(
+            step.provider_timing.first_timeout(),
+            Duration::from_secs(150)
+        );
         assert_eq!(step.provider_timing.max_attempts, 2);
         assert_eq!(step.provider_timing.retry.body_timeout_retry_limit, Some(1));
 
@@ -2541,10 +2600,68 @@ mod tests {
             CalibrationStore::load_from_path(&path).expect("load updated calibration");
         let entry = calibration.entries.get(&key).expect("updated entry");
         let last_timing = entry.last_timing.as_ref().expect("last timing");
-        assert_eq!(last_timing.timeout, Duration::from_secs(180));
+        assert_eq!(last_timing.first_timeout(), Duration::from_secs(150));
         assert_eq!(last_timing.max_attempts, 2);
         assert_eq!(last_timing.retry.body_timeout_retry_limit, Some(1));
         let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn provider_retry_exhaustion_does_not_outer_retry_chat_step() {
+        let _guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let (stop_server, server) =
+            spawn_nonresponding_test_router_server("127.0.0.1:39181", request_count.clone()).await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let chat_policy = ChatPolicy {
+            error_retry_limit: 2,
+            timeout_base_secs: 1,
+            ..ChatPolicy::default()
+        };
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy,
+                cancel_rx,
+            },
+            1,
+        )
+        .await;
+
+        let _ = stop_server.send(());
+        server.await.expect("server task");
+        drain.abort();
+
+        assert!(matches!(report.outcome, SessionOutcome::Aborted { .. }));
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.chat_steps.len(), 1);
+        let step = report.chat_steps.first().expect("chat step report");
+        assert_eq!(step.provider_attempts.len(), 2);
+        assert_eq!(
+            step.provider_attempts
+                .last()
+                .map(|attempt| attempt.retry_decision),
+            Some(ProviderRetryDecision::Exhausted)
+        );
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

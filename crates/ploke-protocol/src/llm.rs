@@ -2,11 +2,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use fxhash::FxBuildHasher;
-use ploke_llm::ProviderSlug;
 use ploke_llm::manager::{ChatHttpConfig, ChatStepOutcome, RequestMessage, chat_step};
 use ploke_llm::response::OpenAiResponse;
 use ploke_llm::router_only::Router;
 use ploke_llm::router_only::openrouter::{OpenRouter, ProviderPreferences};
+use ploke_llm::{AttemptTimeout, ProviderSlug};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -231,7 +231,7 @@ pub async fn adjudicate_json<T: DeserializeOwned>(
     }
 
     let mut http = ChatHttpConfig::default();
-    http.timeout = Duration::from_secs(cfg.timeout_secs);
+    http.attempt_timeout = AttemptTimeout::fixed(Duration::from_secs(cfg.timeout_secs));
 
     let response = chat_step(client, &request, &http)
         .await

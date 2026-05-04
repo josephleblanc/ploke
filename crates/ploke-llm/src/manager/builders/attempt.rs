@@ -293,6 +293,44 @@ impl<R: StreamingMarker> AttemptBuilder<R> {
             backoff: self.backoff,
         }
     }
+
+    #[must_use]
+    pub fn finish_traced(
+        self,
+        request_id: u64,
+        attempt: u32,
+        max_attempts: u32,
+    ) -> ProviderAttempt {
+        let attempt = self.finish(request_id, attempt, max_attempts);
+        trace_provider_attempt(&attempt);
+        attempt
+    }
+}
+
+fn trace_provider_attempt(attempt: &ProviderAttempt) {
+    let provider_attempt = serde_json::to_string(attempt)
+        .unwrap_or_else(|error| format!(r#"{{"serialization_error":"{error}"}}"#));
+    let elapsed_ms = attempt
+        .failed
+        .or(attempt.output_completed)
+        .or(attempt.headers_received)
+        .map(|duration| duration.as_millis() as u64);
+    tracing::info!(
+        target: "chat_http",
+        event = "provider_attempt",
+        request_id = attempt.request_id,
+        attempt = attempt.attempt,
+        max_attempts = attempt.max_attempts,
+        status = attempt.status,
+        response_bytes = attempt.response_bytes,
+        outcome = ?attempt.outcome,
+        failure_phase = ?attempt.failure_phase,
+        body_failure = ?attempt.body_failure,
+        retry_decision = ?attempt.retry_decision,
+        backoff_ms = attempt.backoff.map(|duration| duration.as_millis() as u64),
+        elapsed_ms,
+        provider_attempt = %provider_attempt
+    );
 }
 
 impl<R: Router> AttemptBuilder<Streaming<R>> {
