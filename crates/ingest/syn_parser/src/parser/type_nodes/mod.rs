@@ -13,9 +13,9 @@
 use crate::parser::nodes::{
     AnyTypeId, ArrayTypeId, FunctionTypeId, ImplTraitTypeId, InferredTypeId, MacroTypeId,
     NamedTypeId, NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId,
-    StructuralTypeId, TraitBoundTypeId, TraitObjectTypeId, TupleTypeId, UnknownTypeId,
+    TraitBoundTypeId, TraitObjectTypeId, TupleTypeId, UnknownTypeId,
 };
-use ploke_core::TypeId;
+use crate::parser::type_slots::{OrdinaryTypeUseId, TraitTypeUseId};
 use serde::{Deserialize, Serialize};
 
 /// Erased structural type node.
@@ -64,30 +64,113 @@ impl TypeNode {
         }
     }
 
+    pub fn child_type_ids(&self) -> ChildTypeIds<'_> {
+        match self {
+            Self::Named(node) => ChildTypeIds::ordinary_slice(&node.arguments),
+            Self::Reference(node) => ChildTypeIds::single_ordinary(node.referenced),
+            Self::Slice(node) => ChildTypeIds::single_ordinary(node.element),
+            Self::Array(node) => ChildTypeIds::single_ordinary(node.element),
+            Self::Tuple(node) => ChildTypeIds::ordinary_slice(&node.elements),
+            Self::Function(node) => ChildTypeIds::function(&node.parameters, node.return_type),
+            Self::Never(_) | Self::Inferred(_) | Self::Macro(_) | Self::Unknown(_) => {
+                ChildTypeIds::empty()
+            }
+            Self::RawPointer(node) => ChildTypeIds::single_ordinary(node.pointee),
+            Self::TraitObject(node) => ChildTypeIds::trait_slice(&node.bounds),
+            Self::ImplTrait(node) => ChildTypeIds::trait_slice(&node.bounds),
+            Self::TraitBound(node) => ChildTypeIds::ordinary_slice(&node.arguments),
+            Self::Paren(node) => ChildTypeIds::single_ordinary(node.inner),
+        }
+    }
+}
+
+/// Iterator over child type IDs widened to the type-graph vertex umbrella.
+///
+/// Typed type-node payloads keep the narrow family proven by each syntactic
+/// position. This iterator is the explicit traversal boundary where those
+/// families widen into `AnyTypeId`.
+pub enum ChildTypeIds<'a> {
+    Empty,
+    SingleOrdinary(Option<OrdinaryTypeUseId>),
+    OrdinarySlice {
+        ids: &'a [OrdinaryTypeUseId],
+        index: usize,
+    },
+    TraitSlice {
+        ids: &'a [TraitTypeUseId],
+        index: usize,
+    },
+    Function {
+        parameters: &'a [OrdinaryTypeUseId],
+        index: usize,
+        return_type: Option<OrdinaryTypeUseId>,
+    },
+}
+
+impl<'a> ChildTypeIds<'a> {
     #[inline]
-    pub fn base_id(&self) -> TypeId {
-        self.id().base_id()
+    fn empty() -> Self {
+        Self::Empty
     }
 
-    pub fn child_type_ids(&self) -> impl Iterator<Item = AnyTypeId> + '_ {
-        let children: &[AnyTypeId] = match self {
-            Self::Named(node) => &node.arguments,
-            Self::Reference(node) => std::slice::from_ref(&node.referenced),
-            Self::Slice(node) => std::slice::from_ref(&node.element),
-            Self::Array(node) => std::slice::from_ref(&node.element),
-            Self::Tuple(node) => &node.elements,
-            Self::Function(node) => &node.parameters,
-            Self::Never(_) | Self::Inferred(_) | Self::Macro(_) | Self::Unknown(_) => &[],
-            Self::RawPointer(node) => std::slice::from_ref(&node.pointee),
-            Self::TraitObject(node) => &node.bounds,
-            Self::ImplTrait(node) => &node.bounds,
-            Self::TraitBound(node) => &node.arguments,
-            Self::Paren(node) => std::slice::from_ref(&node.inner),
-        };
-        children.iter().copied().chain(match self {
-            Self::Function(node) => node.return_type.into_iter(),
-            _ => None.into_iter(),
-        })
+    #[inline]
+    fn single_ordinary(id: OrdinaryTypeUseId) -> Self {
+        Self::SingleOrdinary(Some(id))
+    }
+
+    #[inline]
+    fn ordinary_slice(ids: &'a [OrdinaryTypeUseId]) -> Self {
+        Self::OrdinarySlice { ids, index: 0 }
+    }
+
+    #[inline]
+    fn trait_slice(ids: &'a [TraitTypeUseId]) -> Self {
+        Self::TraitSlice { ids, index: 0 }
+    }
+
+    #[inline]
+    fn function(
+        parameters: &'a [OrdinaryTypeUseId],
+        return_type: Option<OrdinaryTypeUseId>,
+    ) -> Self {
+        Self::Function {
+            parameters,
+            index: 0,
+            return_type,
+        }
+    }
+}
+
+impl Iterator for ChildTypeIds<'_> {
+    type Item = AnyTypeId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Empty => None,
+            Self::SingleOrdinary(id) => id.take().map(AnyTypeId::from),
+            Self::OrdinarySlice { ids, index } => {
+                let id = ids.get(*index).copied()?;
+                *index += 1;
+                Some(id.into())
+            }
+            Self::TraitSlice { ids, index } => {
+                let id = ids.get(*index).copied()?;
+                *index += 1;
+                Some(id.into())
+            }
+            Self::Function {
+                parameters,
+                index,
+                return_type,
+            } => {
+                if let Some(id) = parameters.get(*index).copied() {
+                    *index += 1;
+                    Some(id.into())
+                } else {
+                    return_type.take().map(AnyTypeId::from)
+                }
+            }
+        }
     }
 }
 
@@ -108,7 +191,7 @@ pub struct NamedTypeNode {
     pub id: NamedTypeId,
     pub path: Vec<String>,
     pub is_fully_qualified: bool,
-    pub arguments: Vec<AnyTypeId>,
+    pub arguments: Vec<OrdinaryTypeUseId>,
 }
 
 impl_type_node_from!(NamedTypeNode, Named);
@@ -119,7 +202,7 @@ pub struct ReferenceTypeNode {
     pub id: ReferenceTypeId,
     pub lifetime: Option<String>,
     pub is_mutable: bool,
-    pub referenced: AnyTypeId,
+    pub referenced: OrdinaryTypeUseId,
 }
 
 impl_type_node_from!(ReferenceTypeNode, Reference);
@@ -128,7 +211,7 @@ impl_type_node_from!(ReferenceTypeNode, Reference);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SliceTypeNode {
     pub id: SliceTypeId,
-    pub element: AnyTypeId,
+    pub element: OrdinaryTypeUseId,
 }
 
 impl_type_node_from!(SliceTypeNode, Slice);
@@ -137,7 +220,7 @@ impl_type_node_from!(SliceTypeNode, Slice);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArrayTypeNode {
     pub id: ArrayTypeId,
-    pub element: AnyTypeId,
+    pub element: OrdinaryTypeUseId,
     pub size: Option<String>,
 }
 
@@ -147,7 +230,7 @@ impl_type_node_from!(ArrayTypeNode, Array);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TupleTypeNode {
     pub id: TupleTypeId,
-    pub elements: Vec<AnyTypeId>,
+    pub elements: Vec<OrdinaryTypeUseId>,
 }
 
 impl_type_node_from!(TupleTypeNode, Tuple);
@@ -156,8 +239,8 @@ impl_type_node_from!(TupleTypeNode, Tuple);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionTypeNode {
     pub id: FunctionTypeId,
-    pub parameters: Vec<AnyTypeId>,
-    pub return_type: Option<AnyTypeId>,
+    pub parameters: Vec<OrdinaryTypeUseId>,
+    pub return_type: Option<OrdinaryTypeUseId>,
     pub is_unsafe: bool,
     pub is_extern: bool,
     pub abi: Option<String>,
@@ -186,7 +269,7 @@ impl_type_node_from!(InferredTypeNode, Inferred);
 pub struct RawPointerTypeNode {
     pub id: RawPointerTypeId,
     pub is_mutable: bool,
-    pub pointee: AnyTypeId,
+    pub pointee: OrdinaryTypeUseId,
 }
 
 impl_type_node_from!(RawPointerTypeNode, RawPointer);
@@ -196,7 +279,7 @@ impl_type_node_from!(RawPointerTypeNode, RawPointer);
 pub struct TraitObjectTypeNode {
     pub id: TraitObjectTypeId,
     pub dyn_token: bool,
-    pub bounds: Vec<AnyTypeId>,
+    pub bounds: Vec<TraitTypeUseId>,
 }
 
 impl_type_node_from!(TraitObjectTypeNode, TraitObject);
@@ -205,7 +288,7 @@ impl_type_node_from!(TraitObjectTypeNode, TraitObject);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImplTraitTypeNode {
     pub id: ImplTraitTypeId,
-    pub bounds: Vec<AnyTypeId>,
+    pub bounds: Vec<TraitTypeUseId>,
 }
 
 impl_type_node_from!(ImplTraitTypeNode, ImplTrait);
@@ -216,7 +299,7 @@ pub struct TraitBoundTypeNode {
     pub id: TraitBoundTypeId,
     pub path: Vec<String>,
     pub is_fully_qualified: bool,
-    pub arguments: Vec<AnyTypeId>,
+    pub arguments: Vec<OrdinaryTypeUseId>,
 }
 
 impl_type_node_from!(TraitBoundTypeNode, TraitBound);
@@ -225,7 +308,7 @@ impl_type_node_from!(TraitBoundTypeNode, TraitBound);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParenTypeNode {
     pub id: ParenTypeId,
-    pub inner: AnyTypeId,
+    pub inner: OrdinaryTypeUseId,
 }
 
 impl_type_node_from!(ParenTypeNode, Paren);
@@ -277,6 +360,5 @@ mod tests {
         });
 
         assert_eq!(node.id(), AnyTypeId::from(id));
-        assert_eq!(node.base_id(), TypeId::from(id));
     }
 }

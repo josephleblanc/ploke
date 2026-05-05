@@ -1,7 +1,7 @@
 #![allow(unused_must_use)]
 // Needed to get rid of proc-macro induced warning for `ExpectedData`
 
-use crate::parser::type_slots::AnyTypeUseId;
+use crate::parser::type_slots::OrdinaryTypeUseId;
 use crate::parser::types::GenericParamNode;
 use derive_test_helpers::ExpectedData;
 // Removed define_node_info_struct import
@@ -22,7 +22,7 @@ pub struct TypeAliasNode {
     pub name: String,
     pub span: (usize, usize),
     pub visibility: VisibilityKind,
-    pub type_id: AnyTypeUseId, // The ID of the aliased type
+    pub type_id: OrdinaryTypeUseId, // The ID of the aliased type
     pub generic_params: Vec<GenericParamNode>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,

@@ -135,7 +135,7 @@ fn cfgs_for_uuid(graph: &ParsedCodeGraph, id: Uuid) -> Option<&[String]> {
     if graph
         .type_graph()
         .iter()
-        .any(|t: &TypeNode| t.base_id().uuid() == id)
+        .any(|t: &TypeNode| t.id().uuid() == id)
     {
         return None;
     }

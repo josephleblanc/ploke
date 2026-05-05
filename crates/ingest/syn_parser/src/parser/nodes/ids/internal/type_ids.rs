@@ -49,7 +49,7 @@ impl TypeIdRefinementError {
     }
 }
 
-pub trait StructuralTypeId:
+pub(in crate::parser) trait StructuralTypeId:
     Copy + fmt::Debug + std::hash::Hash + Eq + Ord + Serialize + for<'a> Deserialize<'a> + Send + Sync
 {
     fn base_id(self) -> TypeId;
@@ -74,7 +74,10 @@ macro_rules! define_structural_type_id {
             }
 
             #[inline]
-            pub fn try_refine(id: TypeId, kind: &TypeKind) -> Result<Self, TypeIdRefinementError> {
+            pub(in crate::parser) fn try_refine(
+                id: TypeId,
+                kind: &TypeKind,
+            ) -> Result<Self, TypeIdRefinementError> {
                 if Self::matches(kind) {
                     Ok(Self(id))
                 } else {
@@ -116,6 +119,14 @@ macro_rules! define_structural_type_id {
             }
         }
 
+        impl super::ToCozoUuid for $Name {
+            #[inline]
+            fn to_cozo_uuid(self) -> cozo::DataValue {
+                cozo::DataValue::Uuid(cozo::UuidWrapper(self.uuid()))
+            }
+        }
+
+        #[cfg(not(feature = "typed_type_graph"))]
         impl From<$Name> for TypeId {
             #[inline]
             fn from(id: $Name) -> Self {
@@ -154,7 +165,10 @@ macro_rules! define_structural_type_id {
             }
 
             #[inline]
-            pub fn try_refine(id: TypeId, kind: &TypeKind) -> Result<Self, TypeIdRefinementError> {
+            pub(in crate::parser) fn try_refine(
+                id: TypeId,
+                kind: &TypeKind,
+            ) -> Result<Self, TypeIdRefinementError> {
                 if Self::matches(kind) {
                     Ok(Self(id))
                 } else {
@@ -196,6 +210,14 @@ macro_rules! define_structural_type_id {
             }
         }
 
+        impl super::ToCozoUuid for $Name {
+            #[inline]
+            fn to_cozo_uuid(self) -> cozo::DataValue {
+                cozo::DataValue::Uuid(cozo::UuidWrapper(self.uuid()))
+            }
+        }
+
+        #[cfg(not(feature = "typed_type_graph"))]
         impl From<$Name> for TypeId {
             #[inline]
             fn from(id: $Name) -> Self {
@@ -256,7 +278,7 @@ mod tests {
     fn refines_named_type_ids() {
         let node = named_node();
         let named = NamedTypeId::try_from(&node).expect("named type should refine");
-        assert_eq!(TypeId::from(named), node.id);
+        assert_eq!(named.base_id(), node.id);
     }
 
     #[test]

@@ -26,7 +26,6 @@
 
 use std::collections::HashMap;
 
-use ploke_core::TypeId;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -37,7 +36,7 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyNodeId, AnyTypeId, AsAnyNodeId, AssociatedItemNodeId, ImportNodeId, MethodNodeId,
-            ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, StructuralTypeId as _,
+            ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId,
             TraitTypeSourceId, TraitTypeTargetId, TypeGenericParamNodeId,
         },
         relations::{SyntacticRelation, TypeRelation},
@@ -50,21 +49,6 @@ use super::{RelationIndexer, module_tree::ModuleTree};
 const MAX_IMPORT_CHAIN_DEPTH: usize = 100;
 const MAX_TYPE_TREE_STACK: usize = 128;
 const MAX_TYPE_TREE_STEPS: usize = 4096;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TypeUseRole {
-    FunctionReturn,
-    FunctionParam,
-    MethodReturn,
-    MethodParam,
-    Field,
-    Const,
-    Static,
-    TypeAliasTarget,
-    ImplSelf,
-    ImplTrait,
-    TraitSuper,
-}
 
 /// Owned collection adapter for the v2 typed type-relation stream.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,10 +83,20 @@ enum TargetProof {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TypeUseSite {
+    context: ResolutionContext,
+    source: TypeWorkItem,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResolutionContext {
     resolution_context_owner: AnyNodeId,
     containing_module: Option<ModuleNodeId>,
-    source_type_id: AnyTypeId,
-    expects_trait_target: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeWorkItem {
+    Ordinary(OrdinaryTypeUseId),
+    Trait(TraitTypeSourceId),
 }
 
 /// V2 resolver that treats `ModuleTree` as the indexed topology and constructs
@@ -110,7 +104,7 @@ struct TypeUseSite {
 pub struct TypeRelationResolver<'a> {
     graph: &'a ParsedCodeGraph,
     tree: &'a ModuleTree,
-    type_by_id: HashMap<TypeId, &'a TypeNode>,
+    type_by_id: HashMap<AnyTypeId, &'a TypeNode>,
 }
 
 impl<'a> TypeRelationResolver<'a> {
@@ -118,7 +112,7 @@ impl<'a> TypeRelationResolver<'a> {
         let type_by_id = graph
             .type_graph()
             .iter()
-            .map(|type_node| (type_node.base_id(), type_node))
+            .map(|type_node| (type_node.id(), type_node))
             .collect();
 
         Self {
@@ -149,57 +143,48 @@ impl<'a> TypeRelationResolver<'a> {
             .flat_map_iter(|site| TypeTreeRelationIter::new(self, site))
     }
 
-    fn type_node(&self, type_id: AnyTypeId) -> Result<&'a TypeNode, SynParserError> {
-        self.type_by_id
-            .get(&type_id.base_id())
-            .copied()
-            .ok_or_else(|| {
-                SynParserError::InternalState(format!(
-                    "type id {type_id} was not found in type graph"
-                ))
-            })
+    fn type_node(&self, type_id: impl Into<AnyTypeId>) -> Result<&'a TypeNode, SynParserError> {
+        let type_id = type_id.into();
+        self.type_by_id.get(&type_id).copied().ok_or_else(|| {
+            SynParserError::InternalState(format!("type id {type_id} was not found in type graph"))
+        })
     }
 
-    fn resolve_site(&self, site: TypeUseSite) -> Result<Option<TypeRelation>, SynParserError> {
-        let type_node = self.type_node(site.source_type_id)?;
-        match type_node {
-            TypeNode::Named(node) => {
-                if site.expects_trait_target {
-                    self.resolve_source(
-                        SourceProof::Trait(TraitTypeSourceId::from(node.id)),
-                        site.source_type_id.base_id(),
-                        &node.path,
-                        node.is_fully_qualified,
-                        site.containing_module,
-                        Some(site.resolution_context_owner),
-                    )
-                } else {
-                    self.resolve_source(
-                        SourceProof::Ordinary(OrdinaryTypeSourceId::from(node.id)),
-                        site.source_type_id.base_id(),
-                        &node.path,
-                        node.is_fully_qualified,
-                        site.containing_module,
-                        Some(site.resolution_context_owner),
-                    )
-                }
-            }
-            TypeNode::TraitBound(node) => self.resolve_source(
-                SourceProof::Trait(TraitTypeSourceId::from(node.id)),
-                site.source_type_id.base_id(),
-                &node.path,
-                node.is_fully_qualified,
-                site.containing_module,
-                Some(site.resolution_context_owner),
-            ),
-            _ => Ok(None),
-        }
+    fn resolve_ordinary_source(
+        &self,
+        context: ResolutionContext,
+        source: OrdinaryTypeSourceId,
+        path: &[String],
+        is_fully_qualified: bool,
+    ) -> Result<Option<TypeRelation>, SynParserError> {
+        self.resolve_source(
+            SourceProof::Ordinary(source),
+            path,
+            is_fully_qualified,
+            context.containing_module,
+            Some(context.resolution_context_owner),
+        )
+    }
+
+    fn resolve_trait_source(
+        &self,
+        context: ResolutionContext,
+        source: TraitTypeSourceId,
+        path: &[String],
+        is_fully_qualified: bool,
+    ) -> Result<Option<TypeRelation>, SynParserError> {
+        self.resolve_source(
+            SourceProof::Trait(source),
+            path,
+            is_fully_qualified,
+            context.containing_module,
+            Some(context.resolution_context_owner),
+        )
     }
 
     fn resolve_source(
         &self,
         source: SourceProof,
-        _type_id: TypeId,
         path: &[String],
         is_fully_qualified: bool,
         containing_module: Option<ModuleNodeId>,
@@ -970,12 +955,9 @@ impl Iterator for DirectTypeUseIter<'_> {
                 method_state,
             } => next_callable_type_use(
                 node.id.as_any(),
-                node.id.as_any(),
                 *module,
                 &node.parameters,
                 node.return_type,
-                TypeUseRole::FunctionParam,
-                TypeUseRole::FunctionReturn,
                 method_state,
             ),
             Self::Struct {
@@ -985,11 +967,9 @@ impl Iterator for DirectTypeUseIter<'_> {
             } => {
                 let field = node.fields.get(*field_idx)?;
                 *field_idx += 1;
-                Some(type_use_site(
-                    field.id.as_any(),
+                Some(ordinary_type_use_site(
                     node.id.as_any(),
                     *module,
-                    TypeUseRole::Field,
                     field.type_id,
                 ))
             }
@@ -1002,11 +982,9 @@ impl Iterator for DirectTypeUseIter<'_> {
                 let variant = node.variants.get(*variant_idx)?;
                 if let Some(field) = variant.fields.get(*field_idx) {
                     *field_idx += 1;
-                    return Some(type_use_site(
-                        field.id.as_any(),
+                    return Some(ordinary_type_use_site(
                         node.id.as_any(),
                         *module,
-                        TypeUseRole::Field,
                         field.type_id,
                     ));
                 }
@@ -1022,11 +1000,9 @@ impl Iterator for DirectTypeUseIter<'_> {
                     return None;
                 }
                 *yielded = true;
-                Some(type_use_site(
-                    node.id.as_any(),
+                Some(ordinary_type_use_site(
                     node.id.as_any(),
                     *module,
-                    TypeUseRole::TypeAliasTarget,
                     node.type_id,
                 ))
             }
@@ -1037,11 +1013,9 @@ impl Iterator for DirectTypeUseIter<'_> {
             } => {
                 let field = node.fields.get(*field_idx)?;
                 *field_idx += 1;
-                Some(type_use_site(
-                    field.id.as_any(),
+                Some(ordinary_type_use_site(
                     node.id.as_any(),
                     *module,
-                    TypeUseRole::Field,
                     field.type_id,
                 ))
             }
@@ -1054,24 +1028,15 @@ impl Iterator for DirectTypeUseIter<'_> {
             } => {
                 if let Some(type_id) = node.super_traits.get(*super_idx).copied() {
                     *super_idx += 1;
-                    return Some(type_use_site(
-                        node.id.as_any(),
-                        node.id.as_any(),
-                        *module,
-                        TypeUseRole::TraitSuper,
-                        type_id.into(),
-                    ));
+                    return Some(trait_type_use_site(node.id.as_any(), *module, type_id));
                 }
                 loop {
                     let method = node.methods.get(*method_idx)?;
                     if let Some(site) = next_callable_type_use(
                         method.id.as_any(),
-                        method.id.as_any(),
                         *module,
                         &method.parameters,
                         method.return_type,
-                        TypeUseRole::MethodParam,
-                        TypeUseRole::MethodReturn,
                         method_state,
                     ) {
                         return Some(site);
@@ -1090,36 +1055,25 @@ impl Iterator for DirectTypeUseIter<'_> {
             } => {
                 if !*yielded_self {
                     *yielded_self = true;
-                    return Some(type_use_site(
-                        node.id.as_any(),
+                    return Some(ordinary_type_use_site(
                         node.id.as_any(),
                         *module,
-                        TypeUseRole::ImplSelf,
                         node.self_type,
                     ));
                 }
                 if !*yielded_trait {
                     *yielded_trait = true;
                     if let Some(type_id) = node.trait_type {
-                        return Some(type_use_site(
-                            node.id.as_any(),
-                            node.id.as_any(),
-                            *module,
-                            TypeUseRole::ImplTrait,
-                            type_id.into(),
-                        ));
+                        return Some(trait_type_use_site(node.id.as_any(), *module, type_id));
                     }
                 }
                 loop {
                     let method = node.methods.get(*method_idx)?;
                     if let Some(site) = next_callable_type_use(
                         method.id.as_any(),
-                        method.id.as_any(),
                         *module,
                         &method.parameters,
                         method.return_type,
-                        TypeUseRole::MethodParam,
-                        TypeUseRole::MethodReturn,
                         method_state,
                     ) {
                         return Some(site);
@@ -1137,11 +1091,9 @@ impl Iterator for DirectTypeUseIter<'_> {
                     return None;
                 }
                 *yielded = true;
-                Some(type_use_site(
-                    node.id.as_any(),
+                Some(ordinary_type_use_site(
                     node.id.as_any(),
                     *module,
-                    TypeUseRole::Const,
                     node.type_id,
                 ))
             }
@@ -1154,11 +1106,9 @@ impl Iterator for DirectTypeUseIter<'_> {
                     return None;
                 }
                 *yielded = true;
-                Some(type_use_site(
-                    node.id.as_any(),
+                Some(ordinary_type_use_site(
                     node.id.as_any(),
                     *module,
-                    TypeUseRole::Static,
                     node.type_id,
                 ))
             }
@@ -1167,33 +1117,26 @@ impl Iterator for DirectTypeUseIter<'_> {
 }
 
 fn next_callable_type_use(
-    type_use_owner: AnyNodeId,
     resolution_context_owner: AnyNodeId,
     module: Option<ModuleNodeId>,
     parameters: &[crate::parser::nodes::ParamData],
-    return_type: Option<AnyTypeId>,
-    param_role: TypeUseRole,
-    return_role: TypeUseRole,
+    return_type: Option<OrdinaryTypeUseId>,
     state: &mut MethodIterState,
 ) -> Option<TypeUseSite> {
     if let Some(param) = parameters.get(state.param_idx) {
         state.param_idx += 1;
-        return Some(type_use_site(
-            type_use_owner,
+        return Some(ordinary_type_use_site(
             resolution_context_owner,
             module,
-            param_role,
             param.type_id,
         ));
     }
     if !state.yielded_return {
         state.yielded_return = true;
         if let Some(type_id) = return_type {
-            return Some(type_use_site(
-                type_use_owner,
+            return Some(ordinary_type_use_site(
                 resolution_context_owner,
                 module,
-                return_role,
                 type_id,
             ));
         }
@@ -1201,25 +1144,38 @@ fn next_callable_type_use(
     None
 }
 
-fn type_use_site(
-    _type_use_owner: AnyNodeId,
+fn ordinary_type_use_site(
     resolution_context_owner: AnyNodeId,
     containing_module: Option<ModuleNodeId>,
-    role: TypeUseRole,
-    source_type_id: AnyTypeId,
+    source: OrdinaryTypeUseId,
 ) -> TypeUseSite {
     TypeUseSite {
-        resolution_context_owner,
-        containing_module,
-        source_type_id,
-        expects_trait_target: expects_trait_target(role),
+        context: ResolutionContext {
+            resolution_context_owner,
+            containing_module,
+        },
+        source: TypeWorkItem::Ordinary(source),
+    }
+}
+
+fn trait_type_use_site(
+    resolution_context_owner: AnyNodeId,
+    containing_module: Option<ModuleNodeId>,
+    source: TraitTypeSourceId,
+) -> TypeUseSite {
+    TypeUseSite {
+        context: ResolutionContext {
+            resolution_context_owner,
+            containing_module,
+        },
+        source: TypeWorkItem::Trait(source),
     }
 }
 
 struct TypeTreeRelationIter<'a, 'resolver> {
     resolver: &'resolver TypeRelationResolver<'a>,
-    site: TypeUseSite,
-    stack: [Option<(AnyTypeId, bool)>; MAX_TYPE_TREE_STACK],
+    context: ResolutionContext,
+    stack: [Option<TypeWorkItem>; MAX_TYPE_TREE_STACK],
     len: usize,
     steps: usize,
     terminal_error: Option<SynParserError>,
@@ -1229,33 +1185,139 @@ impl<'a, 'resolver> TypeTreeRelationIter<'a, 'resolver> {
     fn new(resolver: &'resolver TypeRelationResolver<'a>, site: TypeUseSite) -> Self {
         let mut iter = Self {
             resolver,
-            site,
+            context: site.context,
             stack: [None; MAX_TYPE_TREE_STACK],
             len: 0,
             steps: 0,
             terminal_error: None,
         };
-        iter.push(site.source_type_id, site.expects_trait_target);
+        iter.push(site.source);
         iter
     }
 
-    fn push(&mut self, type_id: AnyTypeId, expects_trait_target: bool) {
+    fn push(&mut self, work_item: TypeWorkItem) {
         if self.len >= MAX_TYPE_TREE_STACK {
             self.terminal_error = Some(SynParserError::InternalState(format!(
                 "type resolution exceeded type-tree stack limit of {MAX_TYPE_TREE_STACK}"
             )));
             return;
         }
-        self.stack[self.len] = Some((type_id, expects_trait_target));
+        self.stack[self.len] = Some(work_item);
         self.len += 1;
     }
 
-    fn pop(&mut self) -> Option<(AnyTypeId, bool)> {
+    fn pop(&mut self) -> Option<TypeWorkItem> {
         if self.len == 0 {
             return None;
         }
         self.len -= 1;
         self.stack[self.len].take()
+    }
+
+    fn push_ordinary_children_rev(&mut self, ids: &[OrdinaryTypeUseId]) {
+        for id in ids.iter().rev().copied() {
+            self.push(TypeWorkItem::Ordinary(id));
+        }
+    }
+
+    fn push_trait_children_rev(&mut self, ids: &[TraitTypeSourceId]) {
+        for id in ids.iter().rev().copied() {
+            self.push(TypeWorkItem::Trait(id));
+        }
+    }
+
+    fn visit_ordinary(
+        &mut self,
+        resolver: &TypeRelationResolver<'a>,
+        source: OrdinaryTypeUseId,
+    ) -> Result<Option<TypeRelation>, SynParserError> {
+        match resolver.type_node(source)? {
+            TypeNode::Named(node) => {
+                self.push_ordinary_children_rev(&node.arguments);
+                resolver.resolve_ordinary_source(
+                    self.context,
+                    OrdinaryTypeSourceId::from(node.id),
+                    &node.path,
+                    node.is_fully_qualified,
+                )
+            }
+            TypeNode::Reference(node) => {
+                self.push(TypeWorkItem::Ordinary(node.referenced));
+                Ok(None)
+            }
+            TypeNode::Slice(node) => {
+                self.push(TypeWorkItem::Ordinary(node.element));
+                Ok(None)
+            }
+            TypeNode::Array(node) => {
+                self.push(TypeWorkItem::Ordinary(node.element));
+                Ok(None)
+            }
+            TypeNode::Tuple(node) => {
+                self.push_ordinary_children_rev(&node.elements);
+                Ok(None)
+            }
+            TypeNode::Function(node) => {
+                if let Some(return_type) = node.return_type {
+                    self.push(TypeWorkItem::Ordinary(return_type));
+                }
+                self.push_ordinary_children_rev(&node.parameters);
+                Ok(None)
+            }
+            TypeNode::Never(_)
+            | TypeNode::Inferred(_)
+            | TypeNode::Macro(_)
+            | TypeNode::Unknown(_) => Ok(None),
+            TypeNode::RawPointer(node) => {
+                self.push(TypeWorkItem::Ordinary(node.pointee));
+                Ok(None)
+            }
+            TypeNode::TraitObject(node) => {
+                self.push_trait_children_rev(&node.bounds);
+                Ok(None)
+            }
+            TypeNode::ImplTrait(node) => {
+                self.push_trait_children_rev(&node.bounds);
+                Ok(None)
+            }
+            TypeNode::TraitBound(_) => Err(SynParserError::InternalState(format!(
+                "ordinary type-use work item resolved to trait-bound node {source}"
+            ))),
+            TypeNode::Paren(node) => {
+                self.push(TypeWorkItem::Ordinary(node.inner));
+                Ok(None)
+            }
+        }
+    }
+
+    fn visit_trait(
+        &mut self,
+        resolver: &TypeRelationResolver<'a>,
+        source: TraitTypeSourceId,
+    ) -> Result<Option<TypeRelation>, SynParserError> {
+        match resolver.type_node(source)? {
+            TypeNode::Named(node) => {
+                self.push_ordinary_children_rev(&node.arguments);
+                resolver.resolve_trait_source(
+                    self.context,
+                    TraitTypeSourceId::from(node.id),
+                    &node.path,
+                    node.is_fully_qualified,
+                )
+            }
+            TypeNode::TraitBound(node) => {
+                self.push_ordinary_children_rev(&node.arguments);
+                resolver.resolve_trait_source(
+                    self.context,
+                    TraitTypeSourceId::from(node.id),
+                    &node.path,
+                    node.is_fully_qualified,
+                )
+            }
+            _ => Err(SynParserError::InternalState(format!(
+                "trait type-use work item resolved to non-trait-source node {source}"
+            ))),
+        }
     }
 }
 
@@ -1267,7 +1329,8 @@ impl Iterator for TypeTreeRelationIter<'_, '_> {
             return Some(Err(err));
         }
 
-        while let Some((type_id, expects_trait_target)) = self.pop() {
+        let resolver = self.resolver;
+        while let Some(work_item) = self.pop() {
             self.steps += 1;
             if self.steps > MAX_TYPE_TREE_STEPS {
                 return Some(Err(SynParserError::InternalState(format!(
@@ -1275,26 +1338,14 @@ impl Iterator for TypeTreeRelationIter<'_, '_> {
                 ))));
             }
 
-            let type_node = match self.resolver.type_node(type_id) {
-                Ok(type_node) => type_node,
-                Err(err) => return Some(Err(err)),
+            let result = match work_item {
+                TypeWorkItem::Ordinary(source) => self.visit_ordinary(resolver, source),
+                TypeWorkItem::Trait(source) => self.visit_trait(resolver, source),
             };
-            for related_type_id in type_node
-                .child_type_ids()
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-            {
-                self.push(related_type_id, false);
-            }
             if let Some(err) = self.terminal_error.take() {
                 return Some(Err(err));
             }
-
-            let mut site = self.site;
-            site.source_type_id = type_id;
-            site.expects_trait_target = expects_trait_target;
-            match self.resolver.resolve_site(site) {
+            match result {
                 Ok(Some(relation)) => return Some(Ok(relation)),
                 Ok(None) => {}
                 Err(err) => return Some(Err(err)),
@@ -1303,10 +1354,6 @@ impl Iterator for TypeTreeRelationIter<'_, '_> {
 
         None
     }
-}
-
-fn expects_trait_target(role: TypeUseRole) -> bool {
-    matches!(role, TypeUseRole::ImplTrait | TypeUseRole::TraitSuper)
 }
 
 /// Resolves type uses into typed v2 relation facts after the `ModuleTree` has

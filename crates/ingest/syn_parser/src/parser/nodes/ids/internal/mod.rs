@@ -165,8 +165,8 @@
 //! UnionField    ⊆ UnionNodeId             × FieldNodeId
 //! DeclaresParam ⊆ GenericParamOwnerId     × AnyGenericParamId
 //! TypeBound     ⊆ TypeGenericParamNodeId  × TraitTypeSourceId
-//! TypeDefault   ⊆ TypeGenericParamNodeId  × AnyTypeId
-//! ConstParamType ⊆ ConstGenericParamNodeId × AnyTypeId
+//! TypeDefault   ⊆ TypeGenericParamNodeId  × OrdinaryTypeUseId
+//! ConstParamType ⊆ ConstGenericParamNodeId × OrdinaryTypeUseId
 //! ```
 //!
 //! In Rust, the endpoint fields encode that product directly:
@@ -217,15 +217,16 @@ use std::error::Error;
 use std::fmt::Display;
 
 pub use type_families::{
-    AnyTypeId, OrdinaryTypeDefId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, TraitTypeSourceId,
-    TraitTypeTargetId, TryFromAnyTypeError, TryFromOrdinaryTypeDefError,
-    TryFromOrdinaryTypeSourceError, TryFromOrdinaryTypeTargetError, TryFromTraitTypeSourceError,
-    TryFromTraitTypeTargetError, TryFromTypeSourceError, TypeSourceId,
+    AnyTypeId, OrdinaryTypeDefId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId,
+    TraitTypeSourceId, TraitTypeTargetId, TryFromAnyTypeError, TryFromOrdinaryTypeDefError,
+    TryFromOrdinaryTypeSourceError, TryFromOrdinaryTypeTargetError, TryFromOrdinaryTypeUseError,
+    TryFromTraitTypeSourceError, TryFromTraitTypeTargetError, TryFromTypeSourceError, TypeSourceId,
 };
+pub(in crate::parser) use type_ids::StructuralTypeId;
 pub use type_ids::{
     ArrayTypeId, FunctionTypeId, ImplTraitTypeId, InferredTypeId, MacroTypeId, NamedTypeId,
-    NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId, StructuralTypeId,
-    TraitBoundTypeId, TraitObjectTypeId, TupleTypeId, TypeIdRefinementError, UnknownTypeId,
+    NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId, TraitBoundTypeId,
+    TraitObjectTypeId, TupleTypeId, TypeIdRefinementError, UnknownTypeId,
 };
 
 // NOTE: WIP, turn this into macro for, e.g. FunctionNodeId, StructNodeId, etc
@@ -292,15 +293,6 @@ impl ToCozoUuid for GenericParamNodeId {
 }
 
 impl ToCozoUuid for TypeId {
-    fn to_cozo_uuid(self) -> DataValue {
-        DataValue::Uuid(UuidWrapper(self.uuid()))
-    }
-}
-
-impl<T> ToCozoUuid for T
-where
-    T: StructuralTypeId,
-{
     fn to_cozo_uuid(self) -> DataValue {
         DataValue::Uuid(UuidWrapper(self.uuid()))
     }

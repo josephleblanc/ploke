@@ -37,10 +37,27 @@
 //!   ∪ MacroTypeId
 //!   ∪ UnknownTypeId
 //!
+//! OrdinaryTypeUseId =
+//!     AnyTypeId ∖ TraitBoundTypeId
+//!
 //! TypeSourceId         = NamedTypeId ∪ TraitBoundTypeId
 //! OrdinaryTypeSourceId = NamedTypeId
 //! TraitTypeSourceId    = NamedTypeId ∪ TraitBoundTypeId
 //! ```
+//!
+//! `OrdinaryTypeUseId` is intentionally broader than "things that directly
+//! resolve". It is the admissible family for ordinary `syn::Type` payloads on
+//! parser nodes. That includes composite/container syntax such as `&Foo`,
+//! `(A, B)`, `[T]`, `fn(A) -> B`, `dyn Display`, and `impl Display`. Those
+//! container nodes are still real type-graph vertices, but they do not directly
+//! resolve to code-graph definition nodes. The resolver walks through their
+//! child type IDs until it reaches named terminals.
+//!
+//! `OrdinaryTypeSourceId` is the named subset that can be used as the source
+//! endpoint of an ordinary type-resolution relation. For example, in `&Foo`,
+//! the parameter slot stores a `ReferenceTypeId` through `OrdinaryTypeUseId`,
+//! while the ordinary resolution edge is built from the child `NamedTypeId` for
+//! `Foo`.
 //!
 //! The currently encoded node-target families are:
 //!
@@ -68,6 +85,7 @@
 //! Some useful subset consequences are encoded directly in conversion APIs:
 //!
 //! ```text
+//! OrdinaryTypeSourceId ⊂ OrdinaryTypeUseId ⊂ AnyTypeId
 //! OrdinaryTypeSourceId ⊂ TypeSourceId
 //! TraitTypeSourceId    = TypeSourceId
 //!
@@ -80,6 +98,8 @@
 //! with `From` when the membership proof is already present:
 //!
 //! ```text
+//! OrdinaryTypeUseId    → AnyTypeId
+//! OrdinaryTypeSourceId → OrdinaryTypeUseId
 //! OrdinaryTypeSourceId → TypeSourceId
 //! TraitTypeSourceId    → TypeSourceId
 //! OrdinaryTypeTargetId → AnyNodeId
@@ -91,6 +111,7 @@
 //! family:
 //!
 //! ```text
+//! AnyTypeId    ⇀ OrdinaryTypeUseId
 //! TypeSourceId ⇀ OrdinaryTypeSourceId
 //! TypeSourceId ⇀ TraitTypeSourceId
 //! ```
@@ -151,6 +172,17 @@ impl Display for TryFromTraitTypeSourceError {
 }
 
 impl Error for TryFromTraitTypeSourceError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TryFromOrdinaryTypeUseError;
+
+impl Display for TryFromOrdinaryTypeUseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "OrdinaryTypeUseId variant mismatch")
+    }
+}
+
+impl Error for TryFromOrdinaryTypeUseError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct TryFromOrdinaryTypeTargetError;
@@ -267,10 +299,10 @@ macro_rules! define_structural_type_family {
             }
         }
 
-        impl From<$Family> for TypeId {
+        impl super::ToCozoUuid for $Family {
             #[inline]
-            fn from(id: $Family) -> Self {
-                id.base_id()
+            fn to_cozo_uuid(self) -> cozo::DataValue {
+                cozo::DataValue::Uuid(cozo::UuidWrapper(self.uuid()))
             }
         }
 
@@ -282,12 +314,6 @@ macro_rules! define_structural_type_family {
             }
         }
 
-        impl Into<cozo::DataValue> for $Family {
-            #[inline]
-            fn into(self) -> cozo::DataValue {
-                cozo::DataValue::Uuid(cozo::UuidWrapper(self.uuid()))
-            }
-        }
     };
 
     (
@@ -392,10 +418,10 @@ macro_rules! define_structural_type_family {
             }
         )+
 
-        impl From<$Family> for TypeId {
+        impl super::ToCozoUuid for $Family {
             #[inline]
-            fn from(id: $Family) -> Self {
-                id.base_id()
+            fn to_cozo_uuid(self) -> cozo::DataValue {
+                cozo::DataValue::Uuid(cozo::UuidWrapper(self.uuid()))
             }
         }
 
@@ -410,12 +436,6 @@ macro_rules! define_structural_type_family {
             }
         }
 
-        impl Into<cozo::DataValue> for $Family {
-            #[inline]
-            fn into(self) -> cozo::DataValue {
-                cozo::DataValue::Uuid(cozo::UuidWrapper(self.uuid()))
-            }
-        }
     };
 }
 
@@ -624,6 +644,93 @@ define_structural_type_family!(
 );
 
 define_structural_type_family!(
+    /// Structural type family for ordinary `syn::Type` use-sites.
+    ///
+    /// Set-theoretically:
+    ///
+    /// ```text
+    /// OrdinaryTypeUseId = AnyTypeId ∖ TraitBoundTypeId
+    /// ```
+    ///
+    /// This is the family used by parser node payloads for ordinary type
+    /// positions: function parameters and returns, fields, type aliases, impl
+    /// self types, type defaults, and const-generic type declarations. It
+    /// intentionally excludes `TraitBoundTypeId`, which is produced from
+    /// `TypeParamBound::Trait` and belongs to trait-position syntax rather than
+    /// ordinary `syn::Type` syntax.
+    ///
+    /// This family includes both named terminals and composite/container
+    /// syntax. A field of type `&Foo` stores the root `ReferenceTypeId` through
+    /// this family; the resolver later walks to its child `NamedTypeId` before
+    /// constructing an ordinary resolution relation.
+    OrdinaryTypeUseId,
+    TryFromOrdinaryTypeUseError,
+    [
+        (Named, NamedTypeId),
+        (Reference, ReferenceTypeId),
+        (Slice, SliceTypeId),
+        (Array, ArrayTypeId),
+        (Tuple, TupleTypeId),
+        (Function, FunctionTypeId),
+        (Never, NeverTypeId),
+        (Inferred, InferredTypeId),
+        (RawPointer, RawPointerTypeId),
+        (TraitObject, TraitObjectTypeId),
+        (ImplTrait, ImplTraitTypeId),
+        (Paren, ParenTypeId),
+        (Macro, MacroTypeId),
+        (Unknown, UnknownTypeId),
+    ]
+);
+
+impl From<OrdinaryTypeUseId> for AnyTypeId {
+    #[inline]
+    fn from(id: OrdinaryTypeUseId) -> Self {
+        match id {
+            OrdinaryTypeUseId::Named(id) => AnyTypeId::Named(id),
+            OrdinaryTypeUseId::Reference(id) => AnyTypeId::Reference(id),
+            OrdinaryTypeUseId::Slice(id) => AnyTypeId::Slice(id),
+            OrdinaryTypeUseId::Array(id) => AnyTypeId::Array(id),
+            OrdinaryTypeUseId::Tuple(id) => AnyTypeId::Tuple(id),
+            OrdinaryTypeUseId::Function(id) => AnyTypeId::Function(id),
+            OrdinaryTypeUseId::Never(id) => AnyTypeId::Never(id),
+            OrdinaryTypeUseId::Inferred(id) => AnyTypeId::Inferred(id),
+            OrdinaryTypeUseId::RawPointer(id) => AnyTypeId::RawPointer(id),
+            OrdinaryTypeUseId::TraitObject(id) => AnyTypeId::TraitObject(id),
+            OrdinaryTypeUseId::ImplTrait(id) => AnyTypeId::ImplTrait(id),
+            OrdinaryTypeUseId::Paren(id) => AnyTypeId::Paren(id),
+            OrdinaryTypeUseId::Macro(id) => AnyTypeId::Macro(id),
+            OrdinaryTypeUseId::Unknown(id) => AnyTypeId::Unknown(id),
+        }
+    }
+}
+
+impl TryFrom<AnyTypeId> for OrdinaryTypeUseId {
+    type Error = TryFromOrdinaryTypeUseError;
+
+    #[inline]
+    fn try_from(value: AnyTypeId) -> Result<Self, Self::Error> {
+        match value {
+            AnyTypeId::Named(id) => Ok(Self::Named(id)),
+            AnyTypeId::Reference(id) => Ok(Self::Reference(id)),
+            AnyTypeId::Slice(id) => Ok(Self::Slice(id)),
+            AnyTypeId::Array(id) => Ok(Self::Array(id)),
+            AnyTypeId::Tuple(id) => Ok(Self::Tuple(id)),
+            AnyTypeId::Function(id) => Ok(Self::Function(id)),
+            AnyTypeId::Never(id) => Ok(Self::Never(id)),
+            AnyTypeId::Inferred(id) => Ok(Self::Inferred(id)),
+            AnyTypeId::RawPointer(id) => Ok(Self::RawPointer(id)),
+            AnyTypeId::TraitObject(id) => Ok(Self::TraitObject(id)),
+            AnyTypeId::ImplTrait(id) => Ok(Self::ImplTrait(id)),
+            AnyTypeId::TraitBound(_) => Err(TryFromOrdinaryTypeUseError),
+            AnyTypeId::Paren(id) => Ok(Self::Paren(id)),
+            AnyTypeId::Macro(id) => Ok(Self::Macro(id)),
+            AnyTypeId::Unknown(id) => Ok(Self::Unknown(id)),
+        }
+    }
+}
+
+define_structural_type_family!(
     /// Structural type-source classes that can directly participate in resolution.
     ///
     /// This is intentionally narrower than "all type IDs". Composite type nodes
@@ -646,6 +753,10 @@ define_structural_type_family!(
     /// This admits syntactic named type occurrences such as `Foo`, `crate::m::Foo`,
     /// or the `Vec` in `Vec<T>`. Trait-bound syntax is intentionally excluded
     /// because it resolves in trait position, not ordinary type position.
+    ///
+    /// This is narrower than `OrdinaryTypeUseId`: the use family stores whole
+    /// ordinary type expressions, while this source family stores only the named
+    /// terminals that can directly resolve to ordinary code-graph targets.
     OrdinaryTypeSourceId,
     TryFromOrdinaryTypeSourceError,
     [(Named, NamedTypeId)]
@@ -665,6 +776,35 @@ impl From<OrdinaryTypeSourceId> for AnyTypeId {
     fn from(id: OrdinaryTypeSourceId) -> Self {
         match id {
             OrdinaryTypeSourceId::Named(id) => AnyTypeId::Named(id),
+        }
+    }
+}
+
+impl From<OrdinaryTypeSourceId> for OrdinaryTypeUseId {
+    /// Widens a direct ordinary resolution source into the broader ordinary
+    /// type-use family without changing the underlying `NamedTypeId`.
+    #[inline]
+    fn from(id: OrdinaryTypeSourceId) -> Self {
+        match id {
+            OrdinaryTypeSourceId::Named(id) => OrdinaryTypeUseId::Named(id),
+        }
+    }
+}
+
+impl TryFrom<OrdinaryTypeUseId> for OrdinaryTypeSourceId {
+    type Error = TryFromOrdinaryTypeSourceError;
+
+    /// Narrows an ordinary type-use root to a direct ordinary resolution source.
+    ///
+    /// This succeeds only for the named subset. Composite/container type uses
+    /// like `&Foo`, `(A, B)`, or `fn(A) -> B` remain valid ordinary type uses,
+    /// but their children must be walked before a resolution source can be
+    /// proven.
+    #[inline]
+    fn try_from(value: OrdinaryTypeUseId) -> Result<Self, Self::Error> {
+        match value {
+            OrdinaryTypeUseId::Named(id) => Ok(Self::Named(id)),
+            _ => Err(TryFromOrdinaryTypeSourceError),
         }
     }
 }
@@ -830,6 +970,31 @@ mod tests {
         assert_eq!(NamedTypeId::try_from(named_any).expect("named"), named);
         assert_eq!(NeverTypeId::try_from(never_any).expect("never"), never);
         assert!(NeverTypeId::try_from(named_any).is_err());
+    }
+
+    #[test]
+    fn ordinary_type_use_excludes_trait_bound_syntax() {
+        let named = NamedTypeId::try_refine(
+            TypeId::Synthetic(Uuid::new_v4()),
+            &ploke_core::TypeKind::Named {
+                path: vec!["Example".into()],
+                is_fully_qualified: false,
+            },
+        )
+        .expect("named kind should refine");
+        let bound = TraitBoundTypeId::try_refine(
+            TypeId::Synthetic(Uuid::new_v4()),
+            &ploke_core::TypeKind::TraitBound {
+                path: vec!["Display".into()],
+                is_fully_qualified: false,
+            },
+        )
+        .expect("trait-bound kind should refine");
+
+        let ordinary = OrdinaryTypeUseId::from(named);
+
+        assert_eq!(AnyTypeId::from(ordinary), AnyTypeId::from(named));
+        assert!(OrdinaryTypeUseId::try_from(AnyTypeId::from(bound)).is_err());
     }
 
     #[test]

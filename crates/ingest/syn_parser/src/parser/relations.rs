@@ -1,10 +1,10 @@
 // Import specific typed IDs AND the new category enums
 use super::nodes::{AnyNodeId, PrimaryNodeIdTrait};
 use crate::parser::nodes::{
-    AnyGenericParamId, AnyTypeId, AssociatedItemNodeId, ConstGenericParamNodeId, EnumNodeId,
-    FieldNodeId, GenericParamOwnerId, ImplNodeId, ImportNodeId, ModuleNodeId, OrdinaryTypeSourceId,
-    OrdinaryTypeTargetId, PrimaryNodeId, StructNodeId, TraitNodeId, TraitTypeSourceId,
-    TraitTypeTargetId, TypeGenericParamNodeId, UnionNodeId, VariantNodeId,
+    AnyGenericParamId, AssociatedItemNodeId, ConstGenericParamNodeId, EnumNodeId, FieldNodeId,
+    GenericParamOwnerId, ImplNodeId, ImportNodeId, ModuleNodeId, OrdinaryTypeSourceId,
+    OrdinaryTypeTargetId, OrdinaryTypeUseId, PrimaryNodeId, StructNodeId, TraitNodeId,
+    TraitTypeSourceId, TraitTypeTargetId, TypeGenericParamNodeId, UnionNodeId, VariantNodeId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -88,25 +88,25 @@ pub enum GenericRelation {
     /// A type generic parameter has a default type occurrence, such as
     /// `T = Vec<u8>`.
     ///
-    /// The target is `AnyTypeId` because defaults may be arbitrary type syntax,
-    /// not only named type-resolution sources.
+    /// The target is `OrdinaryTypeUseId` because defaults may be arbitrary
+    /// ordinary type syntax, not only named type-resolution sources.
     ///
     /// ```text
-    /// TypeDefault ⊆ TypeGenericParamNodeId × AnyTypeId
+    /// TypeDefault ⊆ TypeGenericParamNodeId × OrdinaryTypeUseId
     /// ```
     TypeDefault {
         source: TypeGenericParamNodeId,
-        target: AnyTypeId,
+        target: OrdinaryTypeUseId,
     },
     /// A const generic parameter declares the type of the const parameter, such
     /// as `const N: usize`.
     ///
     /// ```text
-    /// ConstParamType ⊆ ConstGenericParamNodeId × AnyTypeId
+    /// ConstParamType ⊆ ConstGenericParamNodeId × OrdinaryTypeUseId
     /// ```
     ConstParamType {
         source: ConstGenericParamNodeId,
-        target: AnyTypeId,
+        target: OrdinaryTypeUseId,
     },
 }
 

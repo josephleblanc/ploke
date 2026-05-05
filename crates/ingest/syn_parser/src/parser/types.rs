@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use super::nodes::GenericParamNodeId;
-use super::type_slots::{AnyTypeUseId, TraitTypeUseId, any_type_use_base_id};
+use super::type_slots::{OrdinaryTypeUseId, TraitTypeUseId, ordinary_type_use_base_id};
 
 // ANCHOR: TypeNode
 // Represents a type reference with full metadata
@@ -40,7 +40,7 @@ impl GenericParamNode {
         match &self.kind {
             GenericParamKind::Type { name, default, .. } => {
                 if let Some(type_id) = r#default {
-                    if any_type_use_base_id(*type_id) == ty_id {
+                    if ordinary_type_use_base_id(*type_id) == ty_id {
                         Some(name)
                     } else {
                         None
@@ -51,7 +51,7 @@ impl GenericParamNode {
             }
             GenericParamKind::Lifetime { .. } => None,
             GenericParamKind::Const { name, type_id } => {
-                if any_type_use_base_id(*type_id) == ty_id {
+                if ordinary_type_use_base_id(*type_id) == ty_id {
                     Some(name)
                 } else {
                     None
@@ -68,7 +68,7 @@ pub enum GenericParamKind {
     Type {
         name: String,
         bounds: Vec<TraitTypeUseId>,
-        default: Option<AnyTypeUseId>,
+        default: Option<OrdinaryTypeUseId>,
     },
     Lifetime {
         name: String,
@@ -76,7 +76,7 @@ pub enum GenericParamKind {
     },
     Const {
         name: String,
-        type_id: AnyTypeUseId,
+        type_id: OrdinaryTypeUseId,
     },
 }
 
@@ -109,7 +109,7 @@ impl GenericParamKind {
     }
 
     /// Returns the default type of the generic parameter, if applicable.
-    pub fn default(&self) -> Option<&AnyTypeUseId> {
+    pub fn default(&self) -> Option<&OrdinaryTypeUseId> {
         match self {
             GenericParamKind::Type { default, .. } => default.as_ref(),
             GenericParamKind::Lifetime { .. } => None,
@@ -118,7 +118,7 @@ impl GenericParamKind {
     }
 
     /// Returns the type ID of the const generic parameter, if applicable.
-    pub fn const_type_id(&self) -> Option<&AnyTypeUseId> {
+    pub fn const_type_id(&self) -> Option<&OrdinaryTypeUseId> {
         match self {
             GenericParamKind::Type { .. } => None,
             GenericParamKind::Lifetime { .. } => None,

@@ -83,7 +83,7 @@ fn process_func(
     // Might want to change this to `()`
     let return_type_id = function
         .return_type
-        .map(|id| id.into())
+        .map(|id| id.to_cozo_uuid())
         .unwrap_or(DataValue::Null);
     // Can be empty, None->Null
 
@@ -314,7 +314,10 @@ mod test {
                     DataValue::from(i as i64),
                 ),
                 (param_schema.name().to_string(), param_name),
-                (param_schema.type_id().to_string(), param.type_id.into()),
+                (
+                    param_schema.type_id().to_string(),
+                    param.type_id.to_cozo_uuid(),
+                ),
                 (
                     param_schema.is_mutable().to_string(),
                     DataValue::from(param.is_mutable),

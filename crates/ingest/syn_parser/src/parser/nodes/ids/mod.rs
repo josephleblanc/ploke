@@ -14,16 +14,17 @@ use super::*;
 // and the TypedNodeIdGet trait from `internal` here later.
 
 // --- type-bearing ids ---
+pub(in crate::parser) use internal::StructuralTypeId;
 pub use internal::{
-    AnyTypeId, OrdinaryTypeDefId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, TraitTypeSourceId,
-    TraitTypeTargetId, TryFromAnyTypeError, TryFromOrdinaryTypeDefError,
-    TryFromOrdinaryTypeSourceError, TryFromOrdinaryTypeTargetError, TryFromTraitTypeSourceError,
-    TryFromTraitTypeTargetError, TryFromTypeSourceError, TypeSourceId,
+    AnyTypeId, OrdinaryTypeDefId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId,
+    TraitTypeSourceId, TraitTypeTargetId, TryFromAnyTypeError, TryFromOrdinaryTypeDefError,
+    TryFromOrdinaryTypeSourceError, TryFromOrdinaryTypeTargetError, TryFromOrdinaryTypeUseError,
+    TryFromTraitTypeSourceError, TryFromTraitTypeTargetError, TryFromTypeSourceError, TypeSourceId,
 };
 pub use internal::{
     ArrayTypeId, FunctionTypeId, ImplTraitTypeId, InferredTypeId, MacroTypeId, NamedTypeId,
-    NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId, StructuralTypeId,
-    TraitBoundTypeId, TraitObjectTypeId, TupleTypeId, TypeIdRefinementError, UnknownTypeId,
+    NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId, TraitBoundTypeId,
+    TraitObjectTypeId, TupleTypeId, TypeIdRefinementError, UnknownTypeId,
 };
 pub use internal::{
     ConstGenericParamNodeId, ConstNodeId, EnumNodeId, FieldNodeId, FunctionNodeId,

@@ -1,4 +1,4 @@
-use crate::parser::type_slots::{AnyTypeUseId, TraitTypeUseId};
+use crate::parser::type_slots::{OrdinaryTypeUseId, TraitTypeUseId};
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
@@ -13,7 +13,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct ImplNode {
     pub id: ImplNodeId, // Use typed ID
-    pub self_type: AnyTypeUseId,
+    pub self_type: OrdinaryTypeUseId,
     pub span: (usize, usize),
     pub trait_type: Option<TraitTypeUseId>,
     pub methods: Vec<MethodNode>, // Changed from FunctionNode
@@ -34,7 +34,7 @@ impl ImplNode {
         self.id
     }
 
-    pub fn self_type(&self) -> AnyTypeUseId {
+    pub fn self_type(&self) -> OrdinaryTypeUseId {
         self.self_type
     }
 

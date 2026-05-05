@@ -137,7 +137,7 @@ fn collect_type_nodes(types: &[TypeNode], out: &mut HashSet<Uuid>) {
     while let Some(t) = stack.pop() {
         #[cfg(feature = "typed_type_graph")]
         {
-            out.insert(t.base_id().uuid());
+            out.insert(t.id().uuid());
             for rt in t.child_type_ids() {
                 out.insert(rt.uuid());
             }
