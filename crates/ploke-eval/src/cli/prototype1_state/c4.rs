@@ -266,6 +266,25 @@ fn child_result_path_from_channel(
     Ok((cursor, result_path))
 }
 
+fn observed_result_path(
+    expected_result_path: &Path,
+    channel: &Channel<C4, FileTransport>,
+    cursor: Cursor,
+    records: &PrototypeJournal,
+    runtime_id: RuntimeId,
+) -> Result<(Cursor, Option<PathBuf>), ObserveChildError> {
+    if expected_result_path.exists() {
+        return Ok((cursor, Some(expected_result_path.to_path_buf())));
+    }
+
+    let (cursor, channel_path) = child_result_path_from_channel(channel, cursor)?;
+    if channel_path.is_some() {
+        return Ok((cursor, channel_path));
+    }
+
+    Ok((cursor, child_result_path(records, runtime_id)?))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Rejected {}
 
@@ -338,13 +357,16 @@ impl Intervention<C4, C5> for ObserveChild {
         );
         let mut channel_cursor = Cursor::start();
         loop {
-            let channel_result = child_result_path_from_channel(&parent_channel, channel_cursor)
-                .map_err(CommitError::Transition)?;
-            channel_cursor = channel_result.0;
-            if let Some(runner_result_path) = channel_result
-                .1
-                .or(child_result_path(records, runtime_id).map_err(CommitError::Transition)?)
-            {
+            let result_path = observed_result_path(
+                &runner_result_path,
+                &parent_channel,
+                channel_cursor,
+                records,
+                runtime_id,
+            )
+            .map_err(CommitError::Transition)?;
+            channel_cursor = result_path.0;
+            if let Some(runner_result_path) = result_path.1 {
                 if let Some(wait) = wait.take() {
                     wait.success();
                 }

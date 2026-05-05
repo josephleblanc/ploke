@@ -121,7 +121,7 @@
 //! Keeping this path local makes it easier to audit for runaway-process risks.
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use std::process::Command as ProcessCommand;
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 
 use super::*;
 use crate::BranchDisposition;
@@ -2185,18 +2185,24 @@ pub(super) async fn execute_prototype1_runner_invocation(
         invocation.runtime_id(),
         result,
     )?;
+    let _child = child
+        .result_written(runner_result_path.clone())
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "prototype1_child_result_written",
+            detail: err.to_string(),
+        })?;
     if let Some(channel) = channel {
-        let _ = channel
-            .send_result_written(runner_result_path.clone())
-            .map_err(|err| channel_error_phase("prototype1_child_channel_result_written", err))?;
+        if let Err(err) = channel.send_result_written(runner_result_path.clone()) {
+            warn!(
+                target: EXECUTION_DEBUG_TARGET,
+                campaign = %invocation.campaign_id(),
+                node_id = %invocation.node_id(),
+                runtime_id = %invocation.runtime_id(),
+                error = ?err,
+                "failed to write child result channel projection after attempt result was persisted"
+            );
+        }
     }
-    let _child =
-        child
-            .result_written(runner_result_path)
-            .map_err(|err| PrepareError::DatabaseSetup {
-                phase: "prototype1_child_result_written",
-                detail: err.to_string(),
-            })?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
         campaign = %invocation.campaign_id(),

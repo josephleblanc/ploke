@@ -49,10 +49,6 @@ pub(crate) mod message {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum Exited {}
 
-    /// Parent may send `ToChild::StartEvaluation`.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub(crate) enum StartEvaluation {}
-
     /// Parent may send `ToChild::Cancel`.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum Cancel {}
@@ -95,7 +91,6 @@ impl<S, M> CanRecv<M> for Parent<S> where S: CanRecv<M> {}
 impl CanRecv<stream::FromParent> for child::Ready {}
 impl CanRecv<stream::FromParent> for child::Evaluating {}
 
-impl CanSend<message::StartEvaluation> for parent::Selectable {}
 impl CanSend<message::Cancel> for parent::Selectable {}
 impl CanRecv<stream::FromChild> for parent::Selectable {}
 impl CanRecv<stream::FromChild> for super::c3::C3 {}
@@ -328,6 +323,22 @@ impl<M> Envelope<M>
 where
     M: Serialize,
 {
+    fn validate_body_hash(&self) -> Result<(), EnvelopeError> {
+        let actual = body_hash(&self.body).map_err(EnvelopeError::BodyHashEncode)?;
+        if self.body_hash != actual {
+            return Err(EnvelopeError::BodyHash {
+                expected: self.body_hash.clone(),
+                actual,
+            });
+        }
+        Ok(())
+    }
+}
+
+impl<M> Envelope<M>
+where
+    M: Serialize,
+{
     fn new(endpoint: &Endpoint, body: M) -> Result<Self, serde_json::Error> {
         Ok(Self {
             schema_version: SCHEMA_VERSION.to_string(),
@@ -355,8 +366,6 @@ where
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ToChild {
-    /// Child may enter evaluation.
-    StartEvaluation,
     /// Parent asks this child runtime to stop.
     Cancel { reason: String },
 }
@@ -427,17 +436,6 @@ impl<S, T> Channel<Child<S>, T> {
     /// Construct a child-side channel only from a real child role/state.
     pub(crate) fn for_child(_child: &Child<S>, endpoints: Endpoints, transport: T) -> Self {
         Self::new(endpoints, transport)
-    }
-}
-
-impl<S, T> Channel<Parent<S>, T>
-where
-    S: CanSend<message::StartEvaluation>,
-    T: Transport,
-{
-    /// Send the child permission to enter evaluation.
-    pub(crate) fn send_start_evaluation(&self) -> Result<Receipt, ChannelError<T::Error>> {
-        self.write(&self.endpoints.parent_to_child(), ToChild::StartEvaluation)
     }
 }
 
@@ -591,7 +589,7 @@ where
         cursor: Cursor,
     ) -> Result<(Cursor, Vec<Envelope<M>>), ChannelError<T::Error>>
     where
-        M: DeserializeOwned,
+        M: DeserializeOwned + Serialize,
     {
         let (cursor, records) = self
             .transport
@@ -604,6 +602,9 @@ where
                     serde_json::from_slice(&record).map_err(ChannelError::Decode)?;
                 envelope
                     .validate_endpoint(endpoint)
+                    .map_err(ChannelError::Envelope)?;
+                envelope
+                    .validate_body_hash()
                     .map_err(ChannelError::Envelope)?;
                 Ok(envelope)
             })
@@ -626,7 +627,7 @@ pub(crate) enum ChannelError<E> {
 }
 
 /// Envelope identity mismatch.
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub(crate) enum EnvelopeError {
     /// Unsupported schema version.
     #[error("channel schema mismatch: expected {expected}, got {actual}")]
@@ -668,6 +669,17 @@ pub(crate) enum EnvelopeError {
         /// Actual runtime id.
         actual: RuntimeId,
     },
+    /// Body hash did not match the decoded payload.
+    #[error("channel body hash mismatch: expected {expected}, got {actual}")]
+    BodyHash {
+        /// Expected body hash carried by the envelope.
+        expected: String,
+        /// Actual body hash computed from the decoded body.
+        actual: String,
+    },
+    /// Could not compute the body hash during validation.
+    #[error("failed to encode channel body for hash validation: {0}")]
+    BodyHashEncode(#[source] serde_json::Error),
 }
 
 /// Filesystem JSONL transport for the parent/child channel.
@@ -818,7 +830,7 @@ mod tests {
         let parent = channel::<Parent<parent::Selectable>>(endpoints.clone());
         let child = Channel::for_child(&child_role, endpoints, FileTransport);
 
-        parent.send_start_evaluation().unwrap();
+        parent.send_cancel("test cancellation").unwrap();
         let (child, _) = child.send_ready().unwrap();
 
         let (_, child_messages) = child.recv_from_parent(Cursor::start()).unwrap();
@@ -826,7 +838,12 @@ mod tests {
 
         assert_eq!(child_messages.len(), 1);
         assert_eq!(child_messages[0].direction(), Direction::ParentToChild);
-        assert_eq!(child_messages[0].body(), &ToChild::StartEvaluation);
+        assert_eq!(
+            child_messages[0].body(),
+            &ToChild::Cancel {
+                reason: "test cancellation".to_string()
+            }
+        );
         assert_eq!(parent_messages.len(), 1);
         assert_eq!(parent_messages[0].direction(), Direction::ChildToParent);
         assert_eq!(parent_messages[0].body(), &ToParent::Ready);
@@ -862,5 +879,18 @@ mod tests {
         let error = envelope.validate_endpoint(&parent_endpoint).unwrap_err();
 
         assert!(matches!(error, EnvelopeError::Direction { .. }));
+    }
+
+    #[test]
+    fn envelope_validation_rejects_wrong_body_hash() {
+        let temp = tempfile::tempdir().unwrap();
+        let endpoints = endpoints(temp.path().join("channels/runtime-1"));
+        let child_endpoint = endpoints.child_to_parent();
+        let mut envelope = Envelope::new(&child_endpoint, ToParent::Ready).unwrap();
+        envelope.body_hash = "not-the-real-hash".to_string();
+
+        let error = envelope.validate_body_hash().unwrap_err();
+
+        assert!(matches!(error, EnvelopeError::BodyHash { .. }));
     }
 }

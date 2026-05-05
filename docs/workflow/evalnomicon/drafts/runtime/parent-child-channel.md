@@ -178,6 +178,196 @@ endpoint.
 The file paths are deterministic projections of the typed channel contract. The
 file path does not confer authority by itself.
 
+## Expected Communication Pattern
+
+This section describes the protocol shape the implementation should converge
+on. It is intentionally written as a contract between runtimes, not as a list of
+current helper functions.
+
+### Authority, Evidence, And Projections
+
+The parent/child runtime protocol should keep four categories separate:
+
+- `Invocation`
+  - Attempt-scoped bootstrap contract. It tells a fresh runtime which role it
+    has, which campaign/node/runtime it belongs to, and where the per-runtime
+    channel endpoints live.
+  - It is not terminal evidence and it is not a mutable status file.
+
+- `Channel<Role<State>, Transport>`
+  - Live per-runtime communication authority.
+  - The role/state parameter is the authority token. The transport address is
+    only the backend used to move bytes.
+  - Parent and child may use the channel because both runtimes were constructed
+    with the same compiled protocol contract.
+
+- attempt result
+  - Terminal child evidence for one concrete runtime attempt.
+  - For the file transport migration this is
+    `nodes/<node-id>/results/<runtime-id>.json`.
+  - A `ResultWritten` channel message points at this evidence; it does not
+    replace it.
+
+- projections
+  - Shared journal entries, scheduler updates, latest-node runner results,
+    branch registry summaries, monitor tables, and diagnostic streams.
+  - These are views or compatibility surfaces derived from protocol evidence.
+    They should not become the authority for a child attempt unless a specific
+    transition says so.
+
+- evaluation telemetry
+  - Structured observations emitted by work that happens inside child
+    evaluation, such as per-chat-step provider attempts from
+    `crates/ploke-llm/src/manager/session.rs`.
+  - These records are useful for operators and monitors because they show live
+    child activity before the child writes its terminal attempt result.
+  - They are not parent/child lifecycle authority. The parent may read them to
+    report progress or diagnose slow children, but child selection and terminal
+    classification should still flow through attempt results and explicit
+    protocol messages.
+
+### Normal Flow
+
+The expected parent-to-child flow is:
+
+```text
+Parent:
+  materialize child artifact/worktree
+  build child binary
+  write ChildInvocation {
+    role,
+    campaign_id,
+    node_id,
+    runtime_id,
+    channel_root,
+    ...
+  }
+  spawn child with the invocation path
+```
+
+The expected child startup flow is:
+
+```text
+Child<Starting>:
+  load invocation
+  construct Channel<Child<Starting>, Transport>
+  send ToParent::Ready
+  enter Child<Ready>
+```
+
+The expected evaluation flow is immediate after readiness:
+
+```text
+Parent:
+  observe ToParent::Ready
+
+Child<Ready>:
+  send ToParent::Evaluating
+  enter Child<Evaluating>
+```
+
+There is no parent `StartEvaluation` gate in the current protocol. The
+`Ready` message tells the parent the child runtime is observable; it does not
+wait for a second permission message before starting evaluation.
+
+The expected terminal flow is:
+
+```text
+Child<Evaluating>:
+  run evaluation
+  write attempt result
+  send ToParent::ResultWritten { result_ref }
+  exit
+
+Parent:
+  observe ToParent::ResultWritten { result_ref }
+  load attempt result
+  classify child outcome
+  write journal/scheduler/history projections
+```
+
+The ordering matters. The attempt result is terminal evidence. The
+`ResultWritten` message is notification and reference. The old shared journal
+entry is a migration projection. A channel write failure must not prevent the
+child from leaving terminal evidence that the parent can recover.
+
+During `run evaluation`, the child may call subsystems that emit their own
+structured external observations. For example, the LLM chat-step path records
+`ProviderAttempt` telemetry through tracing when HTTP attempts complete. These
+events let a monitor show that a child is still active, waiting on a provider,
+retrying, or making progress through chat steps. They should be modeled as an
+observer-readable telemetry stream associated with the child runtime, not as
+the child-to-parent lifecycle channel itself.
+
+### Failure And Termination Rules
+
+The channel protocol should make child failure observable without requiring the
+parent to infer everything from timeouts:
+
+```text
+Child<Starting | Ready | Evaluating>:
+  on known local failure:
+    send ToParent::Failed { detail }
+    write terminal attempt result when possible
+    exit
+
+Child<Starting | Ready | Evaluating>:
+  before or during normal process shutdown:
+    send ToParent::Exited { status } when possible
+```
+
+The parent should handle terminal conditions in this order of authority:
+
+```text
+1. attempt result exists for this runtime
+2. child channel reports ResultWritten/Failed/Exited
+3. child process status says the process exited
+4. bounded observation timeout expires
+5. compatibility projections such as the old shared journal
+```
+
+The exact implementation may poll more than one surface in the same loop, but
+it should not wait indefinitely after the child process exits. A post-ready
+child that exits without `ResultWritten` should become durable failed child
+evidence, not an unbounded parent wait.
+
+Telemetry may influence operator display, timeout diagnostics, and later
+adaptive policy, but it should not by itself advance the child lifecycle state.
+For example, a recent provider-attempt event can explain why a child has not
+finished yet, but it is not equivalent to `Child<Evaluating>` or
+`Child<ResultWritten>`.
+
+### File Transport Shape
+
+The first transport projection remains file-backed:
+
+```text
+nodes/<node-id>/channels/<runtime-id>/
+  parent-to-child.jsonl
+  child-to-parent.jsonl
+```
+
+Those files are per-runtime buffers. A child runtime gets write authority only
+to its own `child-to-parent.jsonl`; it does not get authority to write sibling
+child endpoints. The parent may read all child-to-parent endpoints for children
+it spawned and may write parent-to-child endpoints according to its current
+role/state.
+
+The file transport should validate envelope identity on read:
+
+```text
+schema_version
+direction
+campaign_id
+node_id
+runtime_id
+body_hash
+```
+
+The body hash is part of the boundary check. If it is present in the envelope,
+readers should recompute and validate it rather than treating it as decorative
+metadata.
+
 ## Candidate Type Shape
 
 This is the direction to refine, not final API.
@@ -221,8 +411,6 @@ small set of messages:
 
 ```rust
 enum ParentToChild {
-    Bootstrap,
-    StartEvaluation,
     Cancel,
 }
 
@@ -301,4 +489,3 @@ role carrier that can write to it.
   receiver.
 - History/Crown authority remains separate. Channel messages are evidence until
   admitted or imported under explicit policy.
-
