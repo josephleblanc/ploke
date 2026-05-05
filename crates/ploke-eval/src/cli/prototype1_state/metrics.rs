@@ -1009,7 +1009,7 @@ struct Assembly {
 impl Assembly {
     fn apply_journal(&mut self, entry: &JournalEntry, source: SourceRef) {
         if let JournalEntry::Successor(record) = entry {
-            if let super::successor::State::Selected { decision } = &record.state {
+            if let super::successor::State::Selected { decision, .. } = &record.state {
                 if let Some(branch_id) = decision.selected_next_branch_id.as_ref() {
                     self.record_selection(
                         branch_id,

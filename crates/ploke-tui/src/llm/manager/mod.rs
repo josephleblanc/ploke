@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{env, fs, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
-use tracing::instrument;
+use tracing::{Instrument, instrument};
 use uuid::Uuid;
 
 pub use ploke_llm::RequestMessage;
@@ -57,6 +57,11 @@ use crate::{
 
 const TOKENS_LOG_ENV: &str = "PLOKE_LOG_TOKENS";
 const TOKENS_LOG_MAX_CHARS: usize = 4_000;
+const PROTOTYPE1_CAMPAIGN_ID_ENV: &str = "PLOKE_PROTOTYPE1_CAMPAIGN_ID";
+const PROTOTYPE1_NODE_ID_ENV: &str = "PLOKE_PROTOTYPE1_NODE_ID";
+const PROTOTYPE1_BRANCH_ID_ENV: &str = "PLOKE_PROTOTYPE1_BRANCH_ID";
+const PROTOTYPE1_GENERATION_ENV: &str = "PLOKE_PROTOTYPE1_GENERATION";
+const PROTOTYPE1_RUNTIME_ID_ENV: &str = "PLOKE_PROTOTYPE1_RUNTIME_ID";
 
 /// Opt-in toggle for token diagnostics (avoid logging sensitive content by default).
 pub(super) fn tokens_logging_enabled() -> bool {
@@ -75,6 +80,26 @@ pub(super) fn truncate_for_tokens_log(input: &str) -> String {
     format!(
         "{truncated}...<truncated {} chars>",
         total - TOKENS_LOG_MAX_CHARS
+    )
+}
+
+fn prototype1_chat_request_span() -> tracing::Span {
+    let campaign_id = env::var(PROTOTYPE1_CAMPAIGN_ID_ENV).ok();
+    let node_id = env::var(PROTOTYPE1_NODE_ID_ENV).ok();
+    let branch_id = env::var(PROTOTYPE1_BRANCH_ID_ENV).ok();
+    let generation = env::var(PROTOTYPE1_GENERATION_ENV).ok();
+    let runtime_id = env::var(PROTOTYPE1_RUNTIME_ID_ENV).ok();
+    let prototype1 = campaign_id.is_some() || node_id.is_some() || runtime_id.is_some();
+
+    tracing::info_span!(
+        target: "chat-loop",
+        "prototype1.chat_request",
+        prototype1,
+        campaign_id = campaign_id.as_deref().unwrap_or(""),
+        node_id = node_id.as_deref().unwrap_or(""),
+        branch_id = branch_id.as_deref().unwrap_or(""),
+        generation = generation.as_deref().unwrap_or(""),
+        runtime_id = runtime_id.as_deref().unwrap_or(""),
     )
 }
 
@@ -245,7 +270,10 @@ fn handle_event(
                 let req = pending_requests
                     .remove(&event_key)
                     .expect("Event key-val must exist");
-                tokio::spawn(process_llm_request(req, context, args, cancel_rx));
+                tokio::spawn(
+                    process_llm_request(req, context, args, cancel_rx)
+                        .instrument(prototype1_chat_request_span()),
+                );
             }
         }
         AppEvent::System(SystemEvent::ToolCallRequested {

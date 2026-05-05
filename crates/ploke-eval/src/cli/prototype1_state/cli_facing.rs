@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs, io,
+    fs,
+    io::{self, Write},
     path::{Path, PathBuf},
     str::FromStr,
     thread,
@@ -76,7 +77,7 @@ use crate::{
         InterventionSpec, IssueCase, Outcome, Prototype1BranchRegistry,
         Prototype1ContinuationDecision, Prototype1ContinuationDisposition, Prototype1NodeRecord,
         Prototype1NodeStatus, Prototype1RunnerResult, Prototype1SchedulerState,
-        Prototype1SearchPolicy, RecordStore, ValidationPolicy, decide_node_successor_continuation,
+        Prototype1SearchPolicy, RecordStore, ValidationPolicy, decide_continuation,
         execute_intervention_apply, load_node_record, load_or_default_branch_registry,
         load_or_default_scheduler_state, load_runner_request, load_runner_result,
         load_scheduler_state, mark_treatment_branch_applied, prototype1_branch_registry_path,
@@ -91,8 +92,11 @@ use crate::{
     provider_prefs::load_provider_for_model,
     record::{RawFullResponseRecord, RunRecord, read_compressed_record},
     repos_dir, resolve_campaign_config, save_campaign_manifest,
-    selection::load_active_selection,
+    selection::{
+        ActivePrototype1MonitorTarget, load_active_selection, save_active_prototype1_monitor_target,
+    },
     spec::PrepareError,
+    successor_selection::{self, CandidateRef, RunComparison, SelectionInput},
 };
 
 impl Prototype1LoopCommand {
@@ -117,6 +121,7 @@ impl Prototype1LoopCommand {
     pub async fn run_setup(self) -> Result<(), PrepareError> {
         let format = self.format;
         let setup = prepare_prototype1_parent_setup(&self)?;
+        record_active_prototype1_monitor_target(&setup.campaign_id, &setup.repo_root);
 
         match format {
             InspectOutputFormat::Table => print_prototype1_setup_report(&setup),
@@ -2046,30 +2051,35 @@ fn watch_prototype1_monitor_timing(
     let prototype_root = prototype1_campaign_root(manifest_path);
     let interval = Duration::from_millis(command.interval_ms.max(1));
     let mut seen = BTreeSet::new();
-    for event in load_observation_evidence(campaign_id).provider_http {
-        if event.provider_attempt.is_some() {
-            seen.insert(provider_attempt_event_key(&event));
-        }
+
+    if !command.phone {
+        println!("watching provider attempts");
+        println!("campaign_id: {campaign_id}");
+        println!("campaign_root: {}", prototype_root.display());
+        println!("interval_ms: {}", interval.as_millis());
+        println!("press Ctrl-C to stop");
+    }
+    if matches!(command.format, InspectOutputFormat::Table) && !command.phone {
+        println!("{}", provider_attempt_watch_header(command.show_paths));
     }
 
-    println!("watching provider attempts");
-    println!("campaign_id: {campaign_id}");
-    println!("campaign_root: {}", prototype_root.display());
-    println!("interval_ms: {}", interval.as_millis());
-    println!("press Ctrl-C to stop");
+    let observations = load_observation_evidence(campaign_id);
+    for event in observations
+        .provider_http
+        .iter()
+        .filter(|event| should_watch_provider_attempt(event, command))
+    {
+        seen.insert(provider_attempt_event_key(event));
+        print_provider_attempt_event(event, command)?;
+    }
+    std::io::stdout().flush().ok();
 
     loop {
         let observations = load_observation_evidence(campaign_id);
         for event in observations
             .provider_http
             .iter()
-            .filter(|event| event.provider_attempt.is_some())
-            .filter(|event| {
-                command
-                    .node
-                    .as_deref()
-                    .is_none_or(|node| event.node_id.as_deref() == Some(node))
-            })
+            .filter(|event| should_watch_provider_attempt(event, command))
         {
             let key = provider_attempt_event_key(event);
             if seen.insert(key) {
@@ -2079,12 +2089,27 @@ fn watch_prototype1_monitor_timing(
 
         let snapshot = collect_prototype1_monitor_snapshot(&prototype_root, None)?;
         if let Some(terminal) = terminal_state(manifest_path, &prototype_root, &snapshot) {
-            print_terminal_state(&terminal);
+            if command.phone {
+                print_phone_terminal_state(&terminal);
+            } else {
+                print_terminal_state(&terminal);
+            }
             return Ok(());
         }
 
         thread::sleep(interval);
     }
+}
+
+fn should_watch_provider_attempt(
+    event: &ProviderHttpEvent,
+    command: &Prototype1MonitorTimingCommand,
+) -> bool {
+    event.provider_attempt.is_some()
+        && command
+            .node
+            .as_deref()
+            .is_none_or(|node| event.node_id.as_deref() == Some(node))
 }
 
 fn provider_attempt_event_key(event: &ProviderHttpEvent) -> ProviderAttemptEventKey {
@@ -2100,9 +2125,9 @@ fn print_provider_attempt_event(
     event: &ProviderHttpEvent,
     command: &Prototype1MonitorTimingCommand,
 ) -> Result<(), PrepareError> {
-    let Some(attempt) = event.provider_attempt.as_ref() else {
+    if event.provider_attempt.is_none() {
         return Ok(());
-    };
+    }
     if matches!(command.format, InspectOutputFormat::Json) {
         println!(
             "{}",
@@ -2111,6 +2136,41 @@ fn print_provider_attempt_event(
         return Ok(());
     }
 
+    let row = if command.phone {
+        provider_attempt_phone_row(event)
+    } else {
+        provider_attempt_watch_row(event, command.show_paths)
+    };
+    if let Some(line) = row {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn provider_attempt_watch_header(show_paths: bool) -> String {
+    let mut line = format!(
+        "{:<30} {:>3} {:<12} {:<12} {:>7} {:>7} {:>9} {:>9} {:<10} {:<12} {:>6} {:<12}",
+        "time",
+        "gen",
+        "node",
+        "branch",
+        "request",
+        "attempt",
+        "elapsed",
+        "backoff",
+        "outcome",
+        "retry",
+        "status",
+        "body"
+    );
+    if show_paths {
+        line.push_str(" source");
+    }
+    line
+}
+
+fn provider_attempt_watch_row(event: &ProviderHttpEvent, show_paths: bool) -> Option<String> {
+    let attempt = event.provider_attempt.as_ref()?;
     let timestamp = event.timestamp.as_deref().unwrap_or("-");
     let generation = event
         .generation
@@ -2151,22 +2211,100 @@ fn print_provider_attempt_event(
         .unwrap_or_else(|| "-".to_string());
 
     let mut line = format!(
-        "{timestamp} provider_attempt gen={generation} node={node} branch={branch} request={} attempt={}/{} elapsed={} backoff={} outcome={} retry={} status={} body={}",
+        "{:<30} {:>3} {:<12} {:<12} {:>7} {:>7} {:>9} {:>9} {:<10} {:<12} {:>6} {:<12}",
+        fit_cell(timestamp, 30),
+        fit_cell(&generation, 3),
+        fit_cell(&node, 12),
+        fit_cell(&branch, 12),
         attempt.request_id,
-        attempt.attempt,
-        max_attempts,
-        elapsed,
-        backoff,
-        serde_name(&attempt.outcome),
-        serde_name(&attempt.retry_decision),
-        status,
-        body,
+        format!("{}/{}", attempt.attempt, max_attempts),
+        fit_cell(&elapsed, 9),
+        fit_cell(&backoff, 9),
+        fit_cell(&serde_name(&attempt.outcome), 10),
+        fit_cell(&serde_name(&attempt.retry_decision), 12),
+        fit_cell(&status, 6),
+        fit_cell(&body, 12),
     );
-    if command.show_paths {
+    if show_paths {
         line.push_str(&format!(" source={}", event.source.display()));
     }
-    println!("{line}");
-    Ok(())
+    Some(line)
+}
+
+fn provider_attempt_phone_row(event: &ProviderHttpEvent) -> Option<String> {
+    let attempt = event.provider_attempt.as_ref()?;
+    let time = phone_time(event.timestamp.as_deref());
+    let generation = event
+        .generation
+        .map(|generation| generation.min(999).to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let node = phone_node(event.node_id.as_deref());
+    let elapsed = provider_attempt_elapsed_ms(attempt)
+        .map(phone_duration)
+        .unwrap_or_else(|| "-".to_string());
+    let code = phone_outcome_code(attempt);
+
+    Some(format!(
+        "{time} g{:>3} {node:<5} r{:>3}/{:<1} {:>4} {code:<2}",
+        generation, attempt.request_id, attempt.attempt, elapsed
+    ))
+}
+
+fn phone_time(timestamp: Option<&str>) -> String {
+    timestamp
+        .and_then(|timestamp| DateTime::parse_from_rfc3339(timestamp).ok())
+        .map(|timestamp| timestamp.with_timezone(&Utc).format("%H:%M").to_string())
+        .unwrap_or_else(|| "--:--".to_string())
+}
+
+fn phone_node(node_id: Option<&str>) -> String {
+    let Some(node_id) = node_id else {
+        return "n----".to_string();
+    };
+    let body = node_id.strip_prefix("node-").unwrap_or(node_id);
+    let short = body.chars().take(4).collect::<String>();
+    format!("n{short}")
+}
+
+fn phone_duration(elapsed_ms: u64) -> String {
+    let seconds = ((elapsed_ms + 500) / 1000).min(999);
+    if elapsed_ms >= 999_500 {
+        "999+".to_string()
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn phone_outcome_code(attempt: &ProviderAttempt) -> &'static str {
+    if attempt.body_failure == Some(HttpBodyFailure::Timeout) {
+        return "TO";
+    }
+    if attempt.outcome == ProviderAttemptOutcome::Completed {
+        return "OK";
+    }
+    if attempt
+        .status
+        .is_some_and(|status| !(200..300).contains(&status))
+    {
+        return "HT";
+    }
+    if attempt.retry_decision == ploke_llm::ProviderRetryDecision::Exhausted {
+        return "EX";
+    }
+    "ER"
+}
+
+fn print_phone_terminal_state(terminal: &TerminalState) {
+    let reason = match terminal.reason {
+        "node_failed" => "node_fail",
+        "parent_process_exited" => "parent_exit",
+        other => other,
+    };
+    println!(
+        "{} term {}",
+        Utc::now().format("%H:%M"),
+        fit_cell(reason, 22)
+    );
 }
 
 fn print_timing_report(
@@ -3692,13 +3830,17 @@ fn parse_observation_log(campaign_id: &str, path: &Path, evidence: &mut Observat
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
+    let file_mentions_campaign = observation_log_mentions_campaign(&text, campaign_id);
     for line in text.lines() {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
         let span = value.get("span");
-        let event_campaign = trace_string_field(&value, "campaign_id")
+        let mut event_campaign = trace_string_field(&value, "campaign_id")
             .or_else(|| trace_string_field(&value, "campaign"));
+        if event_campaign.is_none() && file_mentions_campaign {
+            event_campaign = Some(campaign_id.to_string());
+        }
         if event_campaign.as_deref() != Some(campaign_id) {
             continue;
         }
@@ -3732,6 +3874,25 @@ fn parse_observation_log(campaign_id: &str, path: &Path, evidence: &mut Observat
             duration_ms,
         });
     }
+}
+
+fn observation_log_mentions_campaign(text: &str, campaign_id: &str) -> bool {
+    // TEMPORARY 2026-05-05: this keeps older Prototype 1 observation JSONL
+    // useful when provider_attempt events were emitted without span-scoped
+    // campaign fields. It can misattribute unscoped provider attempts if one
+    // log file contains multiple campaigns. Task stack:
+    // `prototype1-remove-unscoped-provider-attribution-bridge`; remove after
+    // 2026-05-06 if span-scoped provider attempts remain durable in live runs.
+    text.lines().any(|line| {
+        serde_json::from_str::<serde_json::Value>(line)
+            .ok()
+            .and_then(|value| {
+                trace_string_field(&value, "campaign_id")
+                    .or_else(|| trace_string_field(&value, "campaign"))
+            })
+            .as_deref()
+            == Some(campaign_id)
+    })
 }
 
 fn provider_http_event(
@@ -4644,6 +4805,16 @@ fn infer_campaign_from_parent_identity(repo_root: &Path) -> Result<Option<String
         .map(|identity| identity.map(|identity| identity.campaign_id))
 }
 
+fn record_active_prototype1_monitor_target(campaign_id: &str, repo_root: &Path) {
+    let target = ActivePrototype1MonitorTarget {
+        campaign_id: campaign_id.to_string(),
+        repo_root: repo_root.to_path_buf(),
+    };
+    if let Err(error) = save_active_prototype1_monitor_target(&target) {
+        warn!(%campaign_id, repo_root = %repo_root.display(), error = %error, "failed to cache active Prototype 1 monitor target");
+    }
+}
+
 fn resolve_prototype1_state_campaign(
     command: &Prototype1StateCommand,
     repo_root: &Path,
@@ -5314,6 +5485,7 @@ impl Prototype1StateCommand {
             current_dir_as_repo_root()?
         };
         let campaign_id = resolve_prototype1_state_campaign(&self, &repo_root)?;
+        record_active_prototype1_monitor_target(&campaign_id, &repo_root);
         let manifest_path = campaign_manifest_path(&campaign_id)?;
         let journal_path = prototype1_transition_journal_path(&manifest_path);
         let mut journal = PrototypeJournal::new(journal_path.clone());
@@ -5561,17 +5733,9 @@ impl Prototype1StateCommand {
                                                     disposition = ?c5.report.overall_disposition,
                                                     "child completion observed"
                                                 );
-                                                // TEMPORARY SHORT-CIRCUIT ADDED 2026-04-26 13:41:53 PDT.
-                                                // Revert by 2026-04-26 14:41:53 PDT at the latest:
-                                                // this deliberately treats any completed child
-                                                // evaluation as successor-eligible even when the
-                                                // evaluator disposition is Reject. This is only for
-                                                // live loop handoff testing; compile/build failures
-                                                // must still block continuation.
-                                                if matches!(
-                                                    &c5.observed,
-                                                    ObservedChild::Succeeded(_)
-                                                ) {
+                                                if let ObservedChild::Succeeded(successful) =
+                                                    &c5.observed
+                                                {
                                                     let node = load_node_record(
                                                         &manifest_path,
                                                         &candidate_node_id,
@@ -5581,15 +5745,29 @@ impl Prototype1StateCommand {
                                                             &campaign_id,
                                                             &manifest_path,
                                                         )?;
-                                                    let decision =
-                                                        decide_node_successor_continuation(
-                                                            &scheduler, &node, None,
+                                                    let selection_decision =
+                                                        successor_selection::decide(
+                                                            selection_input_from_child_report(
+                                                                &node,
+                                                                &successful.evaluation,
+                                                            ),
                                                         );
+                                                    let decision = decide_continuation(
+                                                        &scheduler,
+                                                        node.generation,
+                                                        selection_decision
+                                                            .selected_branch_id
+                                                            .as_deref(),
+                                                        selection_decision
+                                                            .selected_branch_disposition(),
+                                                    );
                                                     observe::Step::start(observe::span!(
                                                         "prototype1.parent.select_successor",
                                                         campaign_id = %campaign_id,
                                                         node_id = %node.node_id,
                                                         generation = node.generation,
+                                                        selection_procedure = %selection_decision.procedure_id,
+                                                        selection_outcome = ?selection_decision.outcome,
                                                         disposition = ?decision.disposition,
                                                         selected_next_branch_id = ?decision.selected_next_branch_id,
                                                         next_generation = decision.next_generation,
@@ -5598,10 +5776,11 @@ impl Prototype1StateCommand {
                                                     .success();
                                                     journal
                                                         .append(JournalEntry::Successor(
-                                                            SuccessorRecord::selected(
+                                                            SuccessorRecord::selected_with_decision(
                                                                 campaign_id.clone(),
                                                                 node.node_id.clone(),
                                                                 decision.clone(),
+                                                                selection_decision,
                                                             ),
                                                         ))
                                                         .map_err(|err| {
@@ -6638,6 +6817,33 @@ pub(crate) struct Prototype1ComparedInstanceReport {
     pub(crate) status: String,
 }
 
+fn selection_input_from_child_report(
+    node: &Prototype1NodeRecord,
+    report: &Prototype1BranchEvaluationReport,
+) -> SelectionInput {
+    let comparisons = report
+        .compared_instances
+        .iter()
+        .map(|instance| RunComparison {
+            instance_id: instance.instance_id.clone(),
+            parent_metrics: instance.baseline_metrics.clone(),
+            child_metrics: instance.treatment_metrics.clone(),
+            status: instance.status.clone(),
+        })
+        .collect();
+
+    SelectionInput::new(
+        CandidateRef {
+            node_id: node.node_id.clone(),
+            branch_id: node.branch_id.clone(),
+            generation: node.generation,
+        },
+        report.overall_disposition.clone(),
+        report.evaluation_artifact_path.clone(),
+        comparisons,
+    )
+}
+
 pub(crate) struct Prototype1LoopCampaign {
     pub(crate) campaign_id: String,
     pub(crate) manifest_path: PathBuf,
@@ -7334,6 +7540,12 @@ mod tests {
             "attempt": 2,
             "max_attempts": 2,
             "provider_attempt": serde_json::to_string(&provider_attempt).expect("provider attempt json"),
+        });
+        let scoped_line = serde_json::json!({
+            "timestamp": "2026-05-02T00:00:03Z",
+            "level": "INFO",
+            "message": "prototype1 result step finished",
+            "duration_ms": 0,
             "spans": [{
                 "name": "prototype1.child.evaluate.eval_closure",
                 "campaign_id": "campaign-a",
@@ -7341,7 +7553,7 @@ mod tests {
                 "generation": 2
             }]
         });
-        fs::write(&log_path, format!("{line}\n")).expect("write log");
+        fs::write(&log_path, format!("{scoped_line}\n{line}\n")).expect("write log");
 
         let mut evidence = ObservationEvidence::default();
         parse_observation_log("campaign-a", &log_path, &mut evidence);
@@ -7352,13 +7564,130 @@ mod tests {
             evidence.provider_http[0].campaign_id.as_deref(),
             Some("campaign-a")
         );
-        assert_eq!(
-            evidence.provider_http[0].branch_id.as_deref(),
-            Some("branch-a")
-        );
+        assert_eq!(evidence.provider_http[0].branch_id.as_deref(), None);
         let requests = provider_http_requests(&evidence.provider_http);
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].timeout_count(), 1);
         assert_eq!(requests[0].elapsed_ms(), 200_500);
+    }
+
+    #[test]
+    fn provider_attempt_watch_row_renders_table_cells() {
+        let provider_attempt = ProviderAttempt {
+            request_id: 9,
+            attempt: 2,
+            max_attempts: 2,
+            started_at: Duration::from_millis(0),
+            request_sent: Some(Duration::from_millis(5)),
+            headers_received: Some(Duration::from_millis(20)),
+            output_started: None,
+            output_progress: None,
+            output_completed: None,
+            failed: Some(Duration::from_millis(200_000)),
+            status: Some(200),
+            response_bytes: None,
+            outcome: ProviderAttemptOutcome::Failed,
+            failure_phase: Some(ploke_llm::ProviderFailurePhase::Body),
+            body_failure: Some(HttpBodyFailure::Timeout),
+            retry_decision: ploke_llm::ProviderRetryDecision::Exhausted,
+            backoff: Some(Duration::from_millis(500)),
+        };
+        let event = ProviderHttpEvent {
+            source: PathBuf::from("/tmp/attempts.jsonl"),
+            timestamp: Some("2026-05-02T00:00:04Z".to_string()),
+            campaign_id: Some("campaign-a".to_string()),
+            node_id: Some("node-abcdef1234567890".to_string()),
+            branch_id: Some("branch-abcdef1234567890".to_string()),
+            generation: Some(2),
+            request_id: 9,
+            attempt: 2,
+            max_attempts: Some(2),
+            event: "provider_attempt".to_string(),
+            phase: None,
+            status: Some(200),
+            elapsed_ms: Some(200_000),
+            backoff_ms: Some(500),
+            model: None,
+            request_bytes: None,
+            response_bytes: None,
+            is_timeout: Some(true),
+            failure: None,
+            provider_attempt: Some(provider_attempt),
+        };
+
+        let header = provider_attempt_watch_header(false);
+        let row = provider_attempt_watch_row(&event, false).expect("row");
+
+        assert!(header.contains("request"));
+        assert!(row.contains("node-abcdef"));
+        assert!(row.contains("branch-abcde"));
+        assert!(row.contains("2/2"));
+        assert!(row.contains("200.000s"));
+        assert!(row.contains("failed"));
+        assert!(row.contains("exhausted"));
+        assert!(row.to_lowercase().contains("timeout"));
+    }
+
+    #[test]
+    fn provider_attempt_phone_row_keeps_fixed_columns() {
+        let mut provider_attempt = ProviderAttempt {
+            request_id: 15,
+            attempt: 1,
+            max_attempts: 1,
+            started_at: Duration::from_millis(0),
+            request_sent: Some(Duration::from_millis(5)),
+            headers_received: None,
+            output_started: None,
+            output_progress: None,
+            output_completed: None,
+            failed: Some(Duration::from_millis(300_000)),
+            status: None,
+            response_bytes: None,
+            outcome: ProviderAttemptOutcome::Failed,
+            failure_phase: Some(ploke_llm::ProviderFailurePhase::Body),
+            body_failure: Some(HttpBodyFailure::Timeout),
+            retry_decision: ploke_llm::ProviderRetryDecision::Exhausted,
+            backoff: None,
+        };
+        let mut event = ProviderHttpEvent {
+            source: PathBuf::from("/tmp/attempts.jsonl"),
+            timestamp: Some("2026-05-02T00:00:04Z".to_string()),
+            campaign_id: Some("campaign-a".to_string()),
+            node_id: Some("node-abcdef1234567890".to_string()),
+            branch_id: None,
+            generation: Some(2),
+            request_id: 15,
+            attempt: 1,
+            max_attempts: Some(1),
+            event: "provider_attempt".to_string(),
+            phase: None,
+            status: None,
+            elapsed_ms: Some(300_000),
+            backoff_ms: None,
+            model: None,
+            request_bytes: None,
+            response_bytes: None,
+            is_timeout: Some(true),
+            failure: None,
+            provider_attempt: Some(provider_attempt.clone()),
+        };
+
+        let timeout_row = provider_attempt_phone_row(&event).expect("timeout row");
+        provider_attempt.request_id = 2;
+        provider_attempt.failed = None;
+        provider_attempt.output_completed = Some(Duration::from_millis(1_000));
+        provider_attempt.status = Some(200);
+        provider_attempt.outcome = ProviderAttemptOutcome::Completed;
+        provider_attempt.failure_phase = None;
+        provider_attempt.body_failure = None;
+        provider_attempt.retry_decision = ploke_llm::ProviderRetryDecision::None;
+        event.request_id = 2;
+        event.provider_attempt = Some(provider_attempt);
+        let completed_row = provider_attempt_phone_row(&event).expect("completed row");
+
+        assert_eq!(timeout_row, "00:00 g  2 nabcd r 15/1 300s TO");
+        assert_eq!(completed_row, "00:00 g  2 nabcd r  2/1   1s OK");
+        assert!(timeout_row.len() <= 34);
+        assert_eq!(timeout_row.len(), completed_row.len());
     }
 }

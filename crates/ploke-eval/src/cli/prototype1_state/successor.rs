@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::intervention::CommitPhase;
 use crate::intervention::Prototype1ContinuationDecision;
+use crate::successor_selection::SuccessorDecision;
 
 use super::event::{RecordedAt, RuntimeId};
 use super::invocation::{SuccessorCompletionStatus, SuccessorInvocation};
@@ -23,6 +24,8 @@ pub(crate) enum State {
     /// Parent selected this child artifact as the next parent candidate.
     Selected {
         decision: Prototype1ContinuationDecision,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selection_decision: Option<SuccessorDecision>,
     },
     /// Parent spawned the successor process.
     Spawned {
@@ -66,6 +69,7 @@ pub(crate) struct Record {
 }
 
 impl Record {
+    #[cfg(test)]
     pub(crate) fn selected(
         campaign_id: String,
         node_id: String,
@@ -76,7 +80,28 @@ impl Record {
             recorded_at: RecordedAt::now(),
             campaign_id,
             node_id,
-            state: State::Selected { decision },
+            state: State::Selected {
+                decision,
+                selection_decision: None,
+            },
+        }
+    }
+
+    pub(crate) fn selected_with_decision(
+        campaign_id: String,
+        node_id: String,
+        decision: Prototype1ContinuationDecision,
+        selection_decision: SuccessorDecision,
+    ) -> Self {
+        Self {
+            runtime_id: None,
+            recorded_at: RecordedAt::now(),
+            campaign_id,
+            node_id,
+            state: State::Selected {
+                decision,
+                selection_decision: Some(selection_decision),
+            },
         }
     }
 

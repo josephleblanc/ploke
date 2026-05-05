@@ -102,9 +102,9 @@ use crate::runner::{
     resolve_provider_for_model,
 };
 use crate::selection::{
-    ActiveSelection, ActiveSelectionSlot, clear_active_selection, load_active_selection,
-    load_active_selection_at, render_selection_warnings, save_active_selection,
-    unset_active_selection_slot,
+    ActiveSelection, ActiveSelectionSlot, clear_active_selection,
+    load_active_prototype1_monitor_target, load_active_selection, load_active_selection_at,
+    render_selection_warnings, save_active_selection, unset_active_selection_slot,
 };
 use crate::spec::{
     EvalBudget, IssueInput, OutputMode, PrepareError, PrepareSingleRunRequest, PrepareWrite,
@@ -366,6 +366,28 @@ pub enum JustSubcommand {
     #[command(display_order = 50, alias = "replay-msb-batch")]
     /// Shortcut for `run replay batch`.
     ReplayBatch(ReplayMsbBatchCommand),
+    #[command(display_order = 60)]
+    /// Shortcut for a compact Prototype 1 call timing watch.
+    Watch(JustWatchCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct JustWatchCommand {
+    /// Campaign id. Defaults to parent identity, then active `select campaign`.
+    #[arg(long)]
+    pub campaign: Option<String>,
+
+    /// Parent checkout root. Defaults to the current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Print narrow fixed-width rows for phone/tmux viewing.
+    #[arg(long)]
+    pub phone: bool,
+
+    /// Polling interval in milliseconds.
+    #[arg(long, default_value_t = 1000)]
+    pub interval_ms: u64,
 }
 
 #[derive(Debug, Parser)]
@@ -568,6 +590,10 @@ pub struct Prototype1MonitorTimingCommand {
     /// Poll and redraw the timing projection until interrupted or the loop reaches a terminal state.
     #[arg(long)]
     pub watch: bool,
+
+    /// Print narrow fixed-width rows for phone/tmux viewing.
+    #[arg(long, requires = "watch")]
+    pub phone: bool,
 
     /// Polling interval in milliseconds for --watch.
     #[arg(long, default_value_t = 1000)]
@@ -1153,6 +1179,29 @@ impl JustCommand {
             JustSubcommand::BatchSetup(cmd) => cmd.run().await,
             JustSubcommand::Batch(cmd) => cmd.run().await,
             JustSubcommand::ReplayBatch(cmd) => cmd.run().await,
+            JustSubcommand::Watch(cmd) => {
+                let target = load_active_prototype1_monitor_target()?;
+                Prototype1MonitorCommand {
+                    campaign: cmd
+                        .campaign
+                        .or_else(|| target.as_ref().map(|target| target.campaign_id.clone())),
+                    repo_root: cmd
+                        .repo_root
+                        .or_else(|| target.as_ref().map(|target| target.repo_root.clone())),
+                    command: Some(Prototype1MonitorSubcommand::Timing(
+                        Prototype1MonitorTimingCommand {
+                            format: InspectOutputFormat::Table,
+                            node: None,
+                            depth: Depth::Call,
+                            show_paths: false,
+                            watch: true,
+                            phone: cmd.phone,
+                            interval_ms: cmd.interval_ms,
+                        },
+                    )),
+                }
+                .run()
+            }
         }
     }
 }
@@ -11822,6 +11871,38 @@ mod tests {
             Command::Just(JustCommand {
                 command: JustSubcommand::Single(cmd),
             }) => assert_eq!(cmd.instance.as_deref(), Some("BurntSushi__ripgrep-2209")),
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn just_watch_phone_shortcut_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "just",
+            "watch",
+            "--campaign",
+            "prototype1-campaign",
+            "--repo-root",
+            "/tmp/repo",
+            "--phone",
+            "--interval-ms",
+            "250",
+        ])
+        .expect("just watch --phone should parse");
+
+        match parsed.command {
+            Command::Just(JustCommand {
+                command: JustSubcommand::Watch(cmd),
+            }) => {
+                assert_eq!(cmd.campaign.as_deref(), Some("prototype1-campaign"));
+                assert_eq!(
+                    cmd.repo_root.as_deref(),
+                    Some(std::path::Path::new("/tmp/repo"))
+                );
+                assert!(cmd.phone);
+                assert_eq!(cmd.interval_ms, 250);
+            }
             other => panic!("unexpected command shape: {:?}", other),
         }
     }

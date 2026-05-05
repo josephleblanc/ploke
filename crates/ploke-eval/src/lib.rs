@@ -24,6 +24,7 @@ pub mod run_registry;
 pub mod runner;
 pub mod selection;
 pub mod spec;
+pub(crate) mod successor_selection;
 pub mod target_registry;
 pub mod tracing_setup;
 

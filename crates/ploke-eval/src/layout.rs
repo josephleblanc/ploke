@@ -75,6 +75,10 @@ pub fn active_selection_file() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("selection.json"))
 }
 
+pub fn prototype1_monitor_target_file() -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?.join("prototype1-monitor-target.json"))
+}
+
 pub fn starting_db_cache_dir() -> Result<PathBuf, PrepareError> {
     Ok(cache_dir()?.join("starting-dbs"))
 }

@@ -934,12 +934,37 @@ fn spawn_prototype1_child_runner(
     repo_root: &Path,
     invocation_path: &Path,
     invocation: &crate::cli::prototype1_state::invocation::ChildInvocation,
+    node: &crate::intervention::Prototype1NodeRecord,
 ) -> Result<std::process::Output, PrepareError> {
     crate::cli::prototype1_state::invocation::write_child_invocation(invocation_path, invocation)?;
     let child_argv = invocation.launch_args(invocation_path);
     ProcessCommand::new(binary_path)
         .args(&child_argv)
         .current_dir(repo_root)
+        .env(
+            crate::cli::prototype1_state::c3::CAMPAIGN_ID_ENV,
+            invocation.campaign_id(),
+        )
+        .env(
+            crate::cli::prototype1_state::c3::NODE_ID_ENV,
+            invocation.node_id(),
+        )
+        .env(
+            crate::cli::prototype1_state::c3::RUNTIME_ID_ENV,
+            invocation.runtime_id().to_string(),
+        )
+        .env(
+            crate::cli::prototype1_state::c3::JOURNAL_PATH_ENV,
+            invocation.journal_path(),
+        )
+        .env(
+            crate::cli::prototype1_state::c3::BRANCH_ID_ENV,
+            &node.branch_id,
+        )
+        .env(
+            crate::cli::prototype1_state::c3::GENERATION_ENV,
+            node.generation.to_string(),
+        )
         .output()
         .map_err(|source| PrepareError::DatabaseSetup {
             phase: "prototype1_runner_spawn",
@@ -2248,6 +2273,7 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
         &node.workspace_root,
         &invocation_path,
         &invocation,
+        &node,
     )?;
 
     let attempt_result_path =

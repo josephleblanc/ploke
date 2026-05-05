@@ -1,11 +1,11 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
 use crate::campaign::load_campaign_manifest;
-use crate::layout::{active_selection_file, batches_dir};
+use crate::layout::{active_selection_file, batches_dir, prototype1_monitor_target_file};
 use crate::spec::{PrepareError, PreparedMsbBatch};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -18,6 +18,12 @@ pub struct ActiveSelection {
     pub instance: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivePrototype1MonitorTarget {
+    pub campaign_id: String,
+    pub repo_root: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -40,6 +46,56 @@ impl ActiveSelection {
 pub fn load_active_selection() -> Result<ActiveSelection, PrepareError> {
     let path = active_selection_file()?;
     load_active_selection_from_path(&path)
+}
+
+pub fn load_active_prototype1_monitor_target()
+-> Result<Option<ActivePrototype1MonitorTarget>, PrepareError> {
+    let path = prototype1_monitor_target_file()?;
+    load_active_prototype1_monitor_target_from_path(&path)
+}
+
+fn load_active_prototype1_monitor_target_from_path(
+    path: &Path,
+) -> Result<Option<ActivePrototype1MonitorTarget>, PrepareError> {
+    match fs::read_to_string(path) {
+        Ok(text) => {
+            serde_json::from_str(&text)
+                .map(Some)
+                .map_err(|source| PrepareError::ParseManifest {
+                    path: path.to_path_buf(),
+                    source,
+                })
+        }
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(PrepareError::ReadManifest {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+pub fn save_active_prototype1_monitor_target(
+    target: &ActivePrototype1MonitorTarget,
+) -> Result<(), PrepareError> {
+    let path = prototype1_monitor_target_file()?;
+    save_active_prototype1_monitor_target_to_path(target, &path)
+}
+
+fn save_active_prototype1_monitor_target_to_path(
+    target: &ActivePrototype1MonitorTarget,
+    path: &Path,
+) -> Result<(), PrepareError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let json = serde_json::to_string_pretty(target).map_err(PrepareError::Serialize)?;
+    fs::write(path, json).map_err(|source| PrepareError::WriteManifest {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 pub(crate) fn load_active_selection_at(eval_home: &Path) -> Result<ActiveSelection, PrepareError> {
@@ -194,5 +250,20 @@ mod tests {
             instance_family("not-a-normal-instance"),
             Some("not-a-normal")
         );
+    }
+
+    #[test]
+    fn prototype1_monitor_target_round_trips() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("prototype1-monitor-target.json");
+        let target = ActivePrototype1MonitorTarget {
+            campaign_id: "campaign-a".to_string(),
+            repo_root: PathBuf::from("/tmp/prototype-worktree"),
+        };
+
+        save_active_prototype1_monitor_target_to_path(&target, &path).expect("save target");
+        let loaded = load_active_prototype1_monitor_target_from_path(&path).expect("load target");
+
+        assert_eq!(loaded, Some(target));
     }
 }

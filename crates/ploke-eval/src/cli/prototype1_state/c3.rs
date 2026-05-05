@@ -44,6 +44,18 @@ use super::journal::{
 /// Environment key used to tell the child which runtime instance it is.
 pub(crate) const RUNTIME_ID_ENV: &str = "PLOKE_PROTOTYPE1_RUNTIME_ID";
 
+/// Environment key used to tell the child which campaign owns this runtime.
+pub(crate) const CAMPAIGN_ID_ENV: &str = "PLOKE_PROTOTYPE1_CAMPAIGN_ID";
+
+/// Environment key used to tell the child which node owns this runtime.
+pub(crate) const NODE_ID_ENV: &str = "PLOKE_PROTOTYPE1_NODE_ID";
+
+/// Environment key used to tell the child which branch is under evaluation.
+pub(crate) const BRANCH_ID_ENV: &str = "PLOKE_PROTOTYPE1_BRANCH_ID";
+
+/// Environment key used to tell the child which generation is under evaluation.
+pub(crate) const GENERATION_ENV: &str = "PLOKE_PROTOTYPE1_GENERATION";
+
 /// Environment key used to tell the child which journal to append to.
 pub(crate) const JOURNAL_PATH_ENV: &str = "PLOKE_PROTOTYPE1_TRANSITION_JOURNAL";
 
@@ -566,6 +578,12 @@ impl Intervention<C3, C4> for SpawnChild {
         let mut child = ProcessCommand::new(&binary_path)
             .args(&child_argv)
             .current_dir(&from.artifact.repo_root)
+            .env(CAMPAIGN_ID_ENV, &from.campaign_id)
+            .env(NODE_ID_ENV, &from.node.node_id)
+            .env(RUNTIME_ID_ENV, self.runtime_id.to_string())
+            .env(JOURNAL_PATH_ENV, handoff.path.as_os_str())
+            .env(BRANCH_ID_ENV, &from.resolved.branch.branch_id)
+            .env(GENERATION_ENV, from.node.generation.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))
