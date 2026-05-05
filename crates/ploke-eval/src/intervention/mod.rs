@@ -37,11 +37,12 @@ pub use issue::{
 };
 pub use scheduler::{
     PROTOTYPE1_SCHEDULER_SCHEMA_VERSION, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
-    Prototype1ContinuationDecision, Prototype1ContinuationDisposition, Prototype1NodeRecord,
-    Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerRequest,
-    Prototype1RunnerResult, Prototype1SchedulerState, Prototype1SearchPolicy, clear_runner_result,
-    decide_continuation, decide_node_successor_continuation, load_node_record,
-    load_or_default_scheduler_state, load_or_register_treatment_evaluation_node,
+    Prototype1ChildBudget, Prototype1ContinuationDecision, Prototype1ContinuationDisposition,
+    Prototype1NodeRecord, Prototype1NodeStatus, Prototype1RunnerDisposition,
+    Prototype1RunnerRequest, Prototype1RunnerResult, Prototype1SchedulerState,
+    Prototype1SearchPolicy, Prototype1SelectionPolicyOutcome, clear_runner_result,
+    decide_continuation, decide_continuation_with_selection, decide_node_successor_continuation,
+    load_node_record, load_or_default_scheduler_state, load_or_register_treatment_evaluation_node,
     load_runner_request, load_runner_result, load_runner_result_at, load_scheduler_state,
     prototype1_node_dir, prototype1_node_id, prototype1_node_record_path,
     prototype1_runner_request_path, prototype1_runner_result_path, prototype1_scheduler_path,

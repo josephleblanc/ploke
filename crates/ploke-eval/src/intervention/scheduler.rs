@@ -16,8 +16,12 @@ pub const PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION: &str = "prototype1-treatment
 pub struct Prototype1SearchPolicy {
     pub max_generations: u32,
     pub max_total_nodes: u32,
+    #[serde(default)]
+    pub child_budget: Prototype1ChildBudget,
     pub stop_on_first_keep: bool,
     pub require_keep_for_continuation: bool,
+    #[serde(default = "default_explore_from_rejected")]
+    pub explore_from_rejected: bool,
 }
 
 impl Default for Prototype1SearchPolicy {
@@ -25,9 +29,27 @@ impl Default for Prototype1SearchPolicy {
         Self {
             max_generations: 1,
             max_total_nodes: 32,
+            child_budget: Prototype1ChildBudget::default(),
             stop_on_first_keep: false,
             require_keep_for_continuation: true,
+            explore_from_rejected: true,
         }
+    }
+}
+
+fn default_explore_from_rejected() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Prototype1ChildBudget {
+    pub min: u32,
+    pub max: u32,
+}
+
+impl Default for Prototype1ChildBudget {
+    fn default() -> Self {
+        Self { min: 2, max: 6 }
     }
 }
 
@@ -35,11 +57,28 @@ impl Default for Prototype1SearchPolicy {
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1ContinuationDisposition {
     ContinueReady,
+    ContinueExploreFromRejected,
     StopMaxGenerations,
     StopMaxTotalNodes,
     StopNoSelectedBranch,
     StopOnFirstKeepSatisfied,
     StopSelectedBranchRejected,
+}
+
+impl Prototype1ContinuationDisposition {
+    pub fn allows_successor(self) -> bool {
+        matches!(
+            self,
+            Self::ContinueReady | Self::ContinueExploreFromRejected
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1SelectionPolicyOutcome {
+    Accepted,
+    ExploreFromRejected,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,6 +88,8 @@ pub struct Prototype1ContinuationDecision {
     pub selected_next_branch_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_branch_disposition: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_policy_outcome: Option<Prototype1SelectionPolicyOutcome>,
     pub next_generation: u32,
     pub total_nodes_after_continue: u32,
 }
@@ -630,13 +671,33 @@ pub fn decide_continuation(
     selected_next_branch_id: Option<&str>,
     selected_branch_disposition: Option<&str>,
 ) -> Prototype1ContinuationDecision {
+    decide_continuation_with_selection(
+        scheduler,
+        current_generation,
+        selected_next_branch_id,
+        selected_branch_disposition,
+        None,
+    )
+}
+
+pub fn decide_continuation_with_selection(
+    scheduler: &Prototype1SchedulerState,
+    current_generation: u32,
+    selected_next_branch_id: Option<&str>,
+    selected_branch_disposition: Option<&str>,
+    selection_policy_outcome: Option<Prototype1SelectionPolicyOutcome>,
+) -> Prototype1ContinuationDecision {
     let next_generation = current_generation.saturating_add(1);
     let total_nodes_after_continue = scheduler.nodes.len() as u32;
+    let selected_rejected = selected_branch_disposition.is_some_and(|value| value != "keep");
+    let explore_from_rejected = scheduler.policy.explore_from_rejected
+        && selection_policy_outcome == Some(Prototype1SelectionPolicyOutcome::ExploreFromRejected);
 
     let disposition = if selected_next_branch_id.is_none() {
         Prototype1ContinuationDisposition::StopNoSelectedBranch
     } else if scheduler.policy.require_keep_for_continuation
-        && selected_branch_disposition.is_some_and(|value| value != "keep")
+        && selected_rejected
+        && !explore_from_rejected
     {
         Prototype1ContinuationDisposition::StopSelectedBranchRejected
     } else if scheduler.policy.stop_on_first_keep
@@ -647,6 +708,8 @@ pub fn decide_continuation(
         Prototype1ContinuationDisposition::StopMaxGenerations
     } else if total_nodes_after_continue >= scheduler.policy.max_total_nodes {
         Prototype1ContinuationDisposition::StopMaxTotalNodes
+    } else if explore_from_rejected {
+        Prototype1ContinuationDisposition::ContinueExploreFromRejected
     } else {
         Prototype1ContinuationDisposition::ContinueReady
     };
@@ -655,6 +718,7 @@ pub fn decide_continuation(
         disposition,
         selected_next_branch_id: selected_next_branch_id.map(ToOwned::to_owned),
         selected_branch_disposition: selected_branch_disposition.map(ToOwned::to_owned),
+        selection_policy_outcome,
         next_generation,
         total_nodes_after_continue,
     }
@@ -1156,8 +1220,10 @@ mod tests {
         let policy = Prototype1SearchPolicy {
             max_generations: 2,
             max_total_nodes: 8,
+            child_budget: Prototype1ChildBudget::default(),
             stop_on_first_keep: false,
             require_keep_for_continuation: true,
+            explore_from_rejected: true,
         };
         let scheduler = update_scheduler_policy("test-campaign", &manifest, policy.clone())
             .expect("persist policy");
@@ -1207,6 +1273,64 @@ mod tests {
         assert_eq!(
             stop_on_keep.disposition,
             Prototype1ContinuationDisposition::StopOnFirstKeepSatisfied
+        );
+    }
+
+    #[test]
+    fn continuation_decision_can_explore_from_rejected_under_explicit_policy() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let scheduler = update_scheduler_policy(
+            "test-campaign",
+            &manifest,
+            Prototype1SearchPolicy {
+                max_generations: 2,
+                max_total_nodes: 8,
+                child_budget: Prototype1ChildBudget::default(),
+                stop_on_first_keep: false,
+                require_keep_for_continuation: true,
+                explore_from_rejected: true,
+            },
+        )
+        .expect("persist policy");
+
+        let decision = decide_continuation_with_selection(
+            &scheduler,
+            1,
+            Some("branch-1"),
+            Some("reject"),
+            Some(Prototype1SelectionPolicyOutcome::ExploreFromRejected),
+        );
+
+        assert_eq!(
+            decision.disposition,
+            Prototype1ContinuationDisposition::ContinueExploreFromRejected
+        );
+        assert!(decision.disposition.allows_successor());
+        assert_eq!(
+            decision.selection_policy_outcome,
+            Some(Prototype1SelectionPolicyOutcome::ExploreFromRejected)
+        );
+
+        let strict_scheduler = update_scheduler_policy(
+            "test-campaign",
+            &manifest,
+            Prototype1SearchPolicy {
+                explore_from_rejected: false,
+                ..scheduler.policy
+            },
+        )
+        .expect("persist strict policy");
+        let strict = decide_continuation_with_selection(
+            &strict_scheduler,
+            1,
+            Some("branch-1"),
+            Some("reject"),
+            Some(Prototype1SelectionPolicyOutcome::ExploreFromRejected),
+        );
+        assert_eq!(
+            strict.disposition,
+            Prototype1ContinuationDisposition::StopSelectedBranchRejected
         );
     }
 

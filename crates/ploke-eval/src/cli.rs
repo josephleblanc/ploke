@@ -905,6 +905,14 @@ pub struct Prototype1LoopCommand {
     #[arg(long, default_value_t = 32)]
     pub max_total_nodes: u32,
 
+    /// Minimum direct child candidates to evaluate before generation-level fallback selection.
+    #[arg(long, default_value_t = 2)]
+    pub min_children: u32,
+
+    /// Maximum direct child candidates to evaluate for one parent generation.
+    #[arg(long, default_value_t = 6)]
+    pub max_children: u32,
+
     /// Stop search continuation once a keep-worthy branch is found.
     #[arg(long)]
     pub stop_on_first_keep: bool,
@@ -912,6 +920,10 @@ pub struct Prototype1LoopCommand {
     /// Require the selected next branch to have overall disposition=keep before continuation.
     #[arg(long, action = ArgAction::Set, default_value_t = true)]
     pub require_keep_for_continuation: bool,
+
+    /// Permit the best rejected child to become the next exploration parent when no child is acceptable.
+    #[arg(long, action = ArgAction::Set, default_value_t = true)]
+    pub explore_from_rejected: bool,
 
     /// Stop the wrapper after the selected implemented stage.
     #[arg(long, value_enum, default_value_t = Prototype1LoopStopAfter::Compare)]
@@ -12119,7 +12131,10 @@ mod tests {
                 assert_eq!(cmd.instance, vec!["clap-rs__clap-3670".to_string()]);
                 assert_eq!(cmd.max_generations, 1);
                 assert_eq!(cmd.max_total_nodes, 32);
+                assert_eq!(cmd.min_children, 2);
+                assert_eq!(cmd.max_children, 6);
                 assert!(cmd.require_keep_for_continuation);
+                assert!(cmd.explore_from_rejected);
                 assert_eq!(cmd.stop_after, Prototype1LoopStopAfter::InterventionApply);
                 assert!(cmd.dry_run);
             }
@@ -12797,8 +12812,14 @@ mod tests {
             "5",
             "--max-total-nodes",
             "99",
+            "--min-children",
+            "3",
+            "--max-children",
+            "5",
             "--stop-on-first-keep",
             "--require-keep-for-continuation",
+            "false",
+            "--explore-from-rejected",
             "false",
         ])
         .expect("loop prototype1 search-policy form should parse");
@@ -12809,8 +12830,11 @@ mod tests {
             }) => {
                 assert_eq!(cmd.max_generations, 5);
                 assert_eq!(cmd.max_total_nodes, 99);
+                assert_eq!(cmd.min_children, 3);
+                assert_eq!(cmd.max_children, 5);
                 assert!(cmd.stop_on_first_keep);
                 assert!(!cmd.require_keep_for_continuation);
+                assert!(!cmd.explore_from_rejected);
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

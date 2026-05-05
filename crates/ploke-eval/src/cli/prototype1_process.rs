@@ -152,9 +152,8 @@ use crate::cli::prototype1_state::observe;
 use crate::cli::prototype1_state::parent::{Parent, Retired, Selectable};
 use crate::cli::prototype1_state::successor::Record as SuccessorRecord;
 use crate::intervention::{
-    CommitPhase, Prototype1ContinuationDisposition, Prototype1NodeStatus,
-    Prototype1RunnerDisposition, Prototype1RunnerResult, RecordStore,
-    TreatmentBranchEvaluationSummary, clear_runner_result, load_node_record,
+    CommitPhase, Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerResult,
+    RecordStore, TreatmentBranchEvaluationSummary, clear_runner_result, load_node_record,
     load_or_default_branch_registry, load_or_register_treatment_evaluation_node,
     load_runner_request, load_runner_result_at, load_scheduler_state,
     prototype1_branch_registry_path, record_runner_result, record_treatment_branch_evaluation,
@@ -428,7 +427,7 @@ fn validate_prototype1_successor_node_continuation(
             ),
         })?;
 
-    if decision.disposition == Prototype1ContinuationDisposition::ContinueReady
+    if decision.disposition.allows_successor()
         && decision.selected_next_branch_id.as_deref() == Some(node.branch_id.as_str())
     {
         return Ok(());

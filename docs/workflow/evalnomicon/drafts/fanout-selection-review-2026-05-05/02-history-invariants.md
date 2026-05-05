@@ -1,0 +1,52 @@
+# Prototype 1 Fanout Selection Review: History Invariants
+
+## Findings
+
+### High: successor admission still depends on mutable scheduler projection
+
+The fanout path records the selected continuation decision into `scheduler.last_continuation_decision` through `record_continuation_decision` before spawning a successor ([cli_facing.rs:5999](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5999)). Successor validation then authorizes continuation by loading the scheduler and checking that `last_continuation_decision` allows a successor and names the node's branch ([prototype1_process.rs:418](../../../../../../crates/ploke-eval/src/cli/prototype1_process.rs#L418), [prototype1_process.rs:430](../../../../../../crates/ploke-eval/src/cli/prototype1_process.rs#L430)).
+
+This is a pre-existing authority gap, but fanout makes it more important because the parent now evaluates a generation set and may select a rejected child as an exploration coordinate. The authoritative docs are explicit that History is not a scheduler snapshot, branch registry, CLI report, or side table ([history.rs:52](../../../../../../crates/ploke-eval/src/cli/prototype1_state/history.rs#L52)), and that mutable files such as `scheduler.json`, node records, invocation files, and reports are evidence or projections, not History authority until admitted into a sealed block or ingress ([history.rs:203](../../../../../../crates/ploke-eval/src/cli/prototype1_state/history.rs#L203)).
+
+The implementation does append a `Successor(State::Selected)` journal record carrying both the continuation decision and `SuccessorDecision` ([cli_facing.rs:5984](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5984), [successor.rs:90](../../../../../../crates/ploke-eval/src/cli/prototype1_state/successor.rs#L90)), so child evidence is not directly treated as Crown authority. The weak point is that the live successor gate still consults the scheduler singleton rather than a handoff-scoped authority object, sealed block claim, or decision hash bound to the invocation.
+
+Suggested fix: make successor validation use handoff-scoped material: selected node id, selected branch id, parent node id, parent/runtime id, decision hash, and History block/head reference carried by the successor invocation or sealed handoff. Treat `last_continuation_decision` as monitor/cache state only.
+
+### Medium: generation-level join evidence is not structurally recorded
+
+The child-plan message is structural and already supports multiple children ([parent.rs:96](../../../../../../crates/ploke-eval/src/cli/prototype1_state/parent.rs#L96), [parent.rs:102](../../../../../../crates/ploke-eval/src/cli/prototype1_state/parent.rs#L102)). The parent receives that message through `Parent<Planned> -> Parent<Selectable>` ([parent.rs:203](../../../../../../crates/ploke-eval/src/cli/prototype1_state/parent.rs#L203), [parent.rs:211](../../../../../../crates/ploke-eval/src/cli/prototype1_state/parent.rs#L211), [cli_facing.rs:475](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L475)). Individual child transitions still run through typed transition producers: materialize, build, spawn, and observe ([cli_facing.rs:5261](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5261), [cli_facing.rs:5289](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5289), [cli_facing.rs:5321](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5321), [cli_facing.rs:5353](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5353)).
+
+The new generation-level operation itself is only represented by local orchestration structs and functions: `PlannedChildren`, `PlannedChildOutcome`, `run_child_fanout`, `accepted_selection`, and `generation_selection` ([cli_facing.rs:318](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L318), [cli_facing.rs:324](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L324), [cli_facing.rs:5411](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5411), [cli_facing.rs:5502](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5502), [cli_facing.rs:5512](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5512)). Those structs are not History authority, but they also do not leave a durable structural record saying: this parent considered this child set, these children completed, no accepted child existed, and therefore policy chose `ExploreFromRejected`.
+
+That matters because `decide_generation` can only justify fallback if "no accepted child in the generation set" is true ([successor_selection/mod.rs:28](../../../../../../crates/ploke-eval/src/successor_selection/mod.rs#L28), [successor_selection/mod.rs:46](../../../../../../crates/ploke-eval/src/successor_selection/mod.rs#L46)). Right now that fact is implicit in the in-memory `Vec<PlannedChildOutcome>` and the final `SuccessorDecision` rationale string, not a transition-shaped record.
+
+Suggested fix: introduce a structural parent-side selection carrier, for example `Parent<Selecting>` or `Selection<Joined>`, with a journal projection containing parent identity, child plan message id/path, considered child node ids, completed child evidence refs, selected outcome, and selection procedure id. Do not make it a History entry directly; make it durable evidence that can later be admitted into History.
+
+### Medium: `ExploreFrom` can collapse back into `Accepted`
+
+`SuccessorDecision::selection_policy_outcome` maps `SuccessorOutcome::ExploreFrom` with branch disposition `"reject"` to `ExploreFromRejected`, but maps any other `ExploreFrom` to `Accepted` ([decision.rs:64](../../../../../../crates/ploke-eval/src/successor_selection/decision.rs#L64), [decision.rs:70](../../../../../../crates/ploke-eval/src/successor_selection/decision.rs#L70)). Current `decide_generation` only creates `ExploreFrom` from rejected inputs ([successor_selection/mod.rs:41](../../../../../../crates/ploke-eval/src/successor_selection/mod.rs#L41), [successor_selection/mod.rs:50](../../../../../../crates/ploke-eval/src/successor_selection/mod.rs#L50)), so this does not appear to be a live bug today.
+
+The invariant risk is future drift: the outcome enum says "exploration", but the policy projection can reclassify it as accepted based on a string disposition. That weakens the separation between accepted successor selection and exploratory continuation.
+
+Suggested fix: make the distinction impossible to lose in the type. Either split the outcome into `Accepted` and `ExploreFromRejected`, or make `ExploreFrom` carry a structured disposition and reject non-rejected exploration explicitly.
+
+### Low: fanout appends child transition records concurrently to one journal
+
+`run_child_fanout` uses `JoinSet::spawn_blocking` to run multiple planned children at once ([cli_facing.rs:5441](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5441), [cli_facing.rs:5448](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5448)). Each task constructs its own `PrototypeJournal` over the same JSONL path ([cli_facing.rs:5239](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5239), [cli_facing.rs:5244](../../../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L5244)). The journal uses append mode, writes one JSON line, and syncs ([journal.rs:667](../../../../../../crates/ploke-eval/src/cli/prototype1_state/journal.rs#L667), [journal.rs:675](../../../../../../crates/ploke-eval/src/cli/prototype1_state/journal.rs#L675), [journal.rs:682](../../../../../../crates/ploke-eval/src/cli/prototype1_state/journal.rs#L682)).
+
+This probably preserves append-only evidence well enough for Prototype 1 telemetry, but it is not a semantic ordering guarantee. The docs say journal records should be projections of allowed transitions, and legacy records must be normalized into role/state facts before History admission ([journal.rs:15](../../../../../../crates/ploke-eval/src/cli/prototype1_state/journal.rs#L15), [journal.rs:332](../../../../../../crates/ploke-eval/src/cli/prototype1_state/journal.rs#L332), [history.rs:376](../../../../../../crates/ploke-eval/src/cli/prototype1_state/history.rs#L376)). Concurrent append order should therefore not be interpreted as generation order, selection order, or authority order.
+
+Suggested fix: keep per-child transition ids and add the generation-level joined selection record described above. Projections can sort by plan index or recorded timestamps, but History admission should use explicit parent/plan/child references rather than line order.
+
+## Open Questions And Assumptions
+
+- I assume `scheduler.last_continuation_decision` was already known as a temporary projection. The fanout patch does not create that pattern, but it now relies on it for the more meaningful `Accepted` vs `ExploreFromRejected` distinction.
+- I assume the intended semantics are: accepted child wins as a successor candidate; rejected fallback is allowed only as an explicit exploration continuation, not as evidence that the child is better.
+- I did not find a direct path where child self-report or selection metrics are admitted into History/Crown authority. The current gap is weaker: mutable projection state remains part of live successor gating.
+- I assume `PlannedChildren` and `PlannedChildOutcome` are intended as private orchestration carriers. Their names are acceptable as local implementation names, but they should not become durable ontology or History entry kinds.
+
+## Summary
+
+The fanout/join implementation mostly preserves the core conceptual split: children produce evidence, the parent makes the successor decision, and individual child lifecycle records still come from typed transitions. It does not appear to let child evidence directly become Crown authority.
+
+The main invariant gap is that the live successor gate still treats mutable scheduler state as the continuation authorization surface. The second gap is missing durable structure for the generation-level join decision. Before relying on this for long runs as a History-backed protocol, the joined child set and selected continuation should be recorded as explicit parent-side evidence, and successor validation should be bound to handoff-scoped material rather than `scheduler.last_continuation_decision`.

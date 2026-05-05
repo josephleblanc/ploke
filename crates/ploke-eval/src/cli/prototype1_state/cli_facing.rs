@@ -13,7 +13,7 @@ use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_llm::{HttpBodyFailure, ModelId, ProviderAttempt, ProviderAttemptOutcome, ProviderKey};
 use ploke_tui::tools::ToolName;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     BranchDisposition, BranchEvaluationInput, BranchEvaluationResult, CampaignManifest,
@@ -74,17 +74,17 @@ use crate::{
     evaluate_branch, instances_dir,
     intervention::{
         ArtifactEdit, Intervention, InterventionApplyInput, InterventionCandidate,
-        InterventionSpec, IssueCase, Outcome, Prototype1BranchRegistry,
-        Prototype1ContinuationDecision, Prototype1ContinuationDisposition, Prototype1NodeRecord,
-        Prototype1NodeStatus, Prototype1RunnerResult, Prototype1SchedulerState,
-        Prototype1SearchPolicy, RecordStore, ValidationPolicy, decide_continuation,
-        execute_intervention_apply, load_node_record, load_or_default_branch_registry,
-        load_or_default_scheduler_state, load_runner_request, load_runner_result,
-        load_scheduler_state, mark_treatment_branch_applied, prototype1_branch_registry_path,
-        prototype1_scheduler_path, record_continuation_decision, record_synthesized_branches,
-        register_root_parent_node, register_treatment_evaluation_node, resolve_treatment_branch,
-        restore_treatment_branch, select_primary_issue, select_treatment_branch,
-        treatment_branch_id, update_node_status, update_scheduler_policy,
+        InterventionSpec, IssueCase, Outcome, Prototype1BranchRegistry, Prototype1ChildBudget,
+        Prototype1ContinuationDecision, Prototype1NodeRecord, Prototype1NodeStatus,
+        Prototype1RunnerResult, Prototype1SchedulerState, Prototype1SearchPolicy,
+        Prototype1SelectionPolicyOutcome, RecordStore, ValidationPolicy,
+        decide_continuation_with_selection, execute_intervention_apply, load_node_record,
+        load_or_default_branch_registry, load_or_default_scheduler_state, load_runner_request,
+        load_runner_result, load_scheduler_state, mark_treatment_branch_applied,
+        prototype1_branch_registry_path, prototype1_scheduler_path, record_continuation_decision,
+        record_synthesized_branches, register_root_parent_node, register_treatment_evaluation_node,
+        resolve_treatment_branch, restore_treatment_branch, select_primary_issue,
+        select_treatment_branch, treatment_branch_id, update_node_status, update_scheduler_policy,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -96,7 +96,7 @@ use crate::{
         ActivePrototype1MonitorTarget, load_active_selection, save_active_prototype1_monitor_target,
     },
     spec::PrepareError,
-    successor_selection::{self, CandidateRef, RunComparison, SelectionInput},
+    successor_selection::{self, CandidateRef, RunComparison, SelectionInput, SuccessorDecision},
 };
 
 impl Prototype1LoopCommand {
@@ -174,11 +174,14 @@ fn prepare_prototype1_parent_setup(
         path: PathBuf::from("."),
         source,
     })?;
+    let child_budget = child_budget_from_command(command)?;
     let search_policy = Prototype1SearchPolicy {
         max_generations: command.max_generations,
         max_total_nodes: command.max_total_nodes,
+        child_budget,
         stop_on_first_keep: command.stop_on_first_keep,
         require_keep_for_continuation: command.require_keep_for_continuation,
+        explore_from_rejected: command.explore_from_rejected,
     };
     let artifact_branch = format!(
         "prototype1-parent-{}-gen0",
@@ -258,11 +261,14 @@ fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
     println!("generation: {}", report.generation);
     println!("branch_id: {}", report.branch_id);
     println!(
-        "search_policy: generations<={} nodes<={} stop_on_first_keep={} require_keep_for_continuation={}",
+        "search_policy: generations<={} nodes<={} children={}..={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
         report.search_policy.max_generations,
         report.search_policy.max_total_nodes,
+        report.search_policy.child_budget.min,
+        report.search_policy.child_budget.max,
         yes_no(report.search_policy.stop_on_first_keep),
-        yes_no(report.search_policy.require_keep_for_continuation)
+        yes_no(report.search_policy.require_keep_for_continuation),
+        yes_no(report.search_policy.explore_from_rejected)
     );
     println!();
     println!("next:");
@@ -309,30 +315,22 @@ struct ChildPlanReceipt {
     plan: Received<ChildPlan>,
 }
 
-struct SelectedChild {
+struct PlannedChildren {
     parent: Parent<Selectable>,
     plan: Received<ChildPlan>,
-    node_id: String,
+    nodes: Vec<Prototype1NodeRecord>,
 }
 
-impl SelectedChild {
-    fn load_c1(
-        self,
-        campaign_id: String,
-        manifest_path: PathBuf,
-        repo_root: PathBuf,
-    ) -> Result<(Parent<Selectable>, C1, String), PrepareError> {
-        let Self {
-            parent,
-            plan,
-            node_id,
-        } = self;
-        validate_received_child_plan(parent.identity(), &plan, &node_id)?;
-        let c1 = C1::load(campaign_id, manifest_path, &node_id, repo_root).map_err(|err| {
-            prototype1_state_transition_error("prototype1_state_load_c1", err.to_string())
-        })?;
-        Ok((parent, c1, node_id))
-    }
+#[derive(Debug)]
+struct PlannedChildOutcome {
+    plan_index: usize,
+    node_id: String,
+    outcome: String,
+    node_status: Prototype1NodeStatus,
+    workspace_root: PathBuf,
+    binary_path: PathBuf,
+    child_runtime: Option<String>,
+    selection_input: Option<SelectionInput>,
 }
 
 async fn run_parent_target_selection(
@@ -677,6 +675,7 @@ impl Prototype1LoopControllerInput {
             path: PathBuf::from("."),
             source,
         })?;
+        let child_budget = child_budget_from_command(command)?;
 
         Ok(Self {
             stop_after: command.stop_after,
@@ -687,8 +686,10 @@ impl Prototype1LoopControllerInput {
             search_policy: Prototype1SearchPolicy {
                 max_generations: command.max_generations,
                 max_total_nodes: command.max_total_nodes,
+                child_budget,
                 stop_on_first_keep: command.stop_on_first_keep,
                 require_keep_for_continuation: command.require_keep_for_continuation,
+                explore_from_rejected: command.explore_from_rejected,
             },
             source_campaign: command.source_campaign.clone(),
             source_branch_id: command.source_branch_id.clone(),
@@ -701,6 +702,28 @@ impl Prototype1LoopControllerInput {
             campaign,
         })
     }
+}
+
+fn child_budget_from_command(
+    command: &Prototype1LoopCommand,
+) -> Result<Prototype1ChildBudget, PrepareError> {
+    if command.min_children == 0 || command.max_children == 0 {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "child budget values must be nonzero".to_string(),
+        });
+    }
+    if command.min_children > command.max_children {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "--min-children {} cannot exceed --max-children {}",
+                command.min_children, command.max_children
+            ),
+        });
+    }
+    Ok(Prototype1ChildBudget {
+        min: command.min_children,
+        max: command.max_children,
+    })
 }
 
 async fn run_prototype1_loop_controller(
@@ -926,7 +949,11 @@ async fn run_prototype1_loop_controller(
                 .source_parent
                 .as_ref()
                 .map(|parent| parent.node_id.as_str());
-            for branch in &source_node.branches {
+            for branch in source_node
+                .branches
+                .iter()
+                .take(search_policy.child_budget.max as usize)
+            {
                 if scheduler.nodes.len() as u32 >= search_policy.max_total_nodes {
                     break;
                 }
@@ -962,7 +989,11 @@ async fn run_prototype1_loop_controller(
                 continue;
             };
 
-            for branch in &source_node.branches {
+            for branch in source_node
+                .branches
+                .iter()
+                .take(search_policy.child_budget.max as usize)
+            {
                 let report = {
                     let _scope = TimingTrace::scope(format!(
                         "loop.prototype1.branch_evaluate.{}.{}",
@@ -1027,11 +1058,19 @@ async fn run_prototype1_loop_controller(
                 .find(|row| row.branch_id == id)
                 .map(|row| serde_name(&row.overall_disposition).to_string())
         });
-        let decision = crate::intervention::decide_continuation(
+        let selection_policy_outcome = selected_branch_disposition.as_deref().map(|disposition| {
+            if disposition == "keep" {
+                Prototype1SelectionPolicyOutcome::Accepted
+            } else {
+                Prototype1SelectionPolicyOutcome::ExploreFromRejected
+            }
+        });
+        let decision = decide_continuation_with_selection(
             &scheduler,
             current_generation,
             selected_next_branch_id.as_deref(),
             selected_branch_disposition.as_deref(),
+            selection_policy_outcome,
         );
         let _ = record_continuation_decision(
             &campaign.campaign_id,
@@ -4512,7 +4551,7 @@ fn terminal_state(
     let scheduler = load_scheduler_state(manifest_path).ok();
     if let Some(scheduler) = scheduler.as_ref() {
         if let Some(decision) = scheduler.last_continuation_decision.as_ref() {
-            if decision.disposition != Prototype1ContinuationDisposition::ContinueReady {
+            if !decision.disposition.allows_successor() {
                 return Some(TerminalState {
                     reason: "scheduler_stopped",
                     detail: format!(
@@ -5120,13 +5159,13 @@ fn resolve_initial_parent_node_id(
     )
 }
 
-async fn resolve_next_child(
+async fn resolve_child_plan(
     command: &Prototype1StateCommand,
     campaign_id: &str,
     manifest_path: &Path,
     repo_root: &Path,
     parent: Parent<Ready>,
-) -> Result<SelectedChild, PrepareError> {
+) -> Result<PlannedChildren, PrepareError> {
     let parent_identity = parent.identity().clone();
     // Prototype 1 currently enforces direct-child lineage: Parent k may only
     // materialize candidates produced as generation k + 1.
@@ -5152,7 +5191,7 @@ async fn resolve_next_child(
         receive_existing_child_plan(campaign_id, manifest_path, repo_root, parent, &nodes)?
     };
 
-    let node_id = if let Some(node_id) = command.node_id.as_ref() {
+    let nodes = if let Some(node_id) = command.node_id.as_ref() {
         let candidate = load_node_record(manifest_path, node_id)?;
         if candidate.generation != required_generation {
             return Err(PrepareError::InvalidBatchSelection {
@@ -5178,24 +5217,316 @@ async fn resolve_next_child(
                 ),
             });
         }
-        node_id.clone()
+        vec![candidate]
     } else {
-        resolve_prototype1_candidate_node_id(
-            command,
-            campaign_id,
-            manifest_path,
-            Some(required_generation),
-            Some(parent_node_id.as_str()),
-            "next child candidate",
-        )?
+        nodes
     };
 
-    validate_received_child_plan(&parent_identity, &receipt.plan, &node_id)?;
-    Ok(SelectedChild {
+    for node in &nodes {
+        validate_received_child_plan(&parent_identity, &receipt.plan, &node.node_id)?;
+    }
+    Ok(PlannedChildren {
         parent: receipt.parent,
         plan: receipt.plan,
-        node_id,
+        nodes,
     })
+}
+
+fn run_planned_child(
+    campaign_id: String,
+    manifest_path: PathBuf,
+    repo_root: PathBuf,
+    journal_path: PathBuf,
+    stop_after: Prototype1StateStopAfter,
+    plan_index: usize,
+    node_id: String,
+) -> Result<PlannedChildOutcome, PrepareError> {
+    let mut journal = PrototypeJournal::new(journal_path);
+    let c1 = C1::load(
+        campaign_id.clone(),
+        manifest_path.clone(),
+        &node_id,
+        repo_root.clone(),
+    )
+    .map_err(|err| {
+        prototype1_state_transition_error("prototype1_state_load_c1", err.to_string())
+    })?;
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %campaign_id,
+        candidate_node_id = %node_id,
+        "resolved prototype1 candidate for parent turn"
+    );
+
+    let c2 = match MaterializeBranch::new()
+        .transition(c1, &mut journal)
+        .map_err(|err| {
+            prototype1_state_transition_error("prototype1_state_materialize", format!("{err:?}"))
+        })? {
+        Outcome::Advanced(next) => {
+            debug!(
+                target: EXECUTION_DEBUG_TARGET,
+                campaign = %campaign_id,
+                candidate_node_id = %node_id,
+                workspace_root = %next.artifact.repo_root.display(),
+                "materialize completed"
+            );
+            next
+        }
+        Outcome::Rejected(never) => match never {},
+    };
+
+    let mut child_runtime = None;
+    let mut selection_input = None;
+    let outcome = if stop_after == Prototype1StateStopAfter::Materialize {
+        "materialized".to_string()
+    } else {
+        let _surface = validate_child_surface(
+            &repo_root,
+            &c2.artifact.repo_root,
+            "prototype1_state_child_surface_commitment_before_build",
+        )?;
+        match BuildChild::new()
+            .transition(c2, &mut journal)
+            .map_err(|err| {
+                prototype1_state_transition_error("prototype1_state_build", format!("{err:?}"))
+            })? {
+            Outcome::Rejected(rejected) => {
+                debug!(
+                    target: EXECUTION_DEBUG_TARGET,
+                    campaign = %campaign_id,
+                    candidate_node_id = %node_id,
+                    rejected = ?rejected,
+                    "build rejected"
+                );
+                format!("build_rejected:{rejected:?}")
+            }
+            Outcome::Advanced(c3) => {
+                let _surface = persist_prototype1_buildable_child_artifact(
+                    &campaign_id,
+                    &manifest_path,
+                    &repo_root,
+                    c3.node(),
+                )?;
+                debug!(
+                    target: EXECUTION_DEBUG_TARGET,
+                    campaign = %campaign_id,
+                    candidate_node_id = %node_id,
+                    binary_path = %c3.binary.child_path.display(),
+                    "build completed"
+                );
+                if stop_after == Prototype1StateStopAfter::Build {
+                    "built".to_string()
+                } else {
+                    match SpawnChild::new()
+                        .transition(c3, &mut journal)
+                        .map_err(|err| {
+                            prototype1_state_transition_error(
+                                "prototype1_state_spawn",
+                                format!("{err:?}"),
+                            )
+                        })? {
+                        Outcome::Rejected(rejected) => {
+                            debug!(
+                                target: EXECUTION_DEBUG_TARGET,
+                                campaign = %campaign_id,
+                                candidate_node_id = %node_id,
+                                rejected = ?rejected,
+                                "spawn rejected"
+                            );
+                            format!("spawn_rejected:{rejected:?}")
+                        }
+                        Outcome::Advanced(c4) => {
+                            child_runtime = c4.binary.child_runtime.map(
+                                |id: crate::cli::prototype1_state::event::RuntimeId| id.to_string(),
+                            );
+                            debug!(
+                                target: EXECUTION_DEBUG_TARGET,
+                                campaign = %campaign_id,
+                                candidate_node_id = %node_id,
+                                child_runtime = ?child_runtime,
+                                "spawn completed"
+                            );
+                            if stop_after == Prototype1StateStopAfter::Spawn {
+                                "spawned".to_string()
+                            } else {
+                                match ObserveChild::new().transition(c4, &mut journal).map_err(
+                                    |err| {
+                                        prototype1_state_transition_error(
+                                            "prototype1_state_complete",
+                                            format!("{err:?}"),
+                                        )
+                                    },
+                                )? {
+                                    Outcome::Rejected(rejected) => {
+                                        debug!(
+                                            target: EXECUTION_DEBUG_TARGET,
+                                            campaign = %campaign_id,
+                                            candidate_node_id = %node_id,
+                                            rejected = ?rejected,
+                                            "child completion rejected"
+                                        );
+                                        format!("completion_rejected:{rejected:?}")
+                                    }
+                                    Outcome::Advanced(c5) => {
+                                        debug!(
+                                            target: EXECUTION_DEBUG_TARGET,
+                                            campaign = %campaign_id,
+                                            candidate_node_id = %node_id,
+                                            disposition = ?c5.report.overall_disposition,
+                                            "child completion observed"
+                                        );
+                                        if let ObservedChild::Succeeded(successful) = &c5.observed {
+                                            let node = load_node_record(&manifest_path, &node_id)?;
+                                            selection_input =
+                                                Some(selection_input_from_child_report(
+                                                    &node,
+                                                    &successful.evaluation,
+                                                ));
+                                        }
+                                        format!("completed:{:?}", c5.report.overall_disposition)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    let node = load_node_record(&manifest_path, &node_id)?;
+    Ok(PlannedChildOutcome {
+        plan_index,
+        node_id,
+        outcome,
+        node_status: node.status,
+        workspace_root: node.workspace_root,
+        binary_path: node.binary_path,
+        child_runtime,
+        selection_input,
+    })
+}
+
+async fn run_child_fanout(
+    campaign_id: &str,
+    manifest_path: &Path,
+    repo_root: &Path,
+    journal_path: &Path,
+    stop_after: Prototype1StateStopAfter,
+    child_budget: Prototype1ChildBudget,
+    nodes: Vec<Prototype1NodeRecord>,
+) -> Result<Vec<PlannedChildOutcome>, PrepareError> {
+    if nodes.is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "child plan contained no runnable child nodes".to_string(),
+        });
+    }
+
+    let fanout_width = usize::min(child_budget.min as usize, nodes.len()).max(1);
+    if nodes.len() < child_budget.min as usize {
+        warn!(
+            target: EXECUTION_DEBUG_TARGET,
+            campaign = %campaign_id,
+            planned_children = nodes.len(),
+            configured_min_children = child_budget.min,
+            "child plan has fewer nodes than configured fanout width"
+        );
+    }
+
+    let mut completed = Vec::new();
+    let mut next = 0usize;
+    while next < nodes.len() {
+        let end = usize::min(next + fanout_width, nodes.len());
+        let mut join_set = tokio::task::JoinSet::new();
+        for (offset, node) in nodes[next..end].iter().cloned().enumerate() {
+            let plan_index = next + offset;
+            let campaign_id = campaign_id.to_string();
+            let manifest_path = manifest_path.to_path_buf();
+            let repo_root = repo_root.to_path_buf();
+            let journal_path = journal_path.to_path_buf();
+            join_set.spawn_blocking(move || {
+                run_planned_child(
+                    campaign_id,
+                    manifest_path,
+                    repo_root,
+                    journal_path,
+                    stop_after,
+                    plan_index,
+                    node.node_id,
+                )
+            });
+        }
+
+        let mut first_error = None;
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok(outcome)) => completed.push(outcome),
+                Ok(Err(err)) => {
+                    error!(
+                        target: EXECUTION_DEBUG_TARGET,
+                        error = %err,
+                        "planned child task failed"
+                    );
+                    if first_error.is_none() {
+                        first_error = Some(err);
+                    }
+                }
+                Err(err) => {
+                    if first_error.is_none() {
+                        first_error = Some(PrepareError::InvalidBatchSelection {
+                            detail: format!("planned child task failed to join: {err}"),
+                        });
+                    }
+                }
+            }
+        }
+        if let Some(err) = first_error {
+            return Err(err);
+        }
+
+        completed.sort_by_key(|outcome| outcome.plan_index);
+        if stop_after != Prototype1StateStopAfter::Complete {
+            break;
+        }
+        if accepted_selection(&completed).is_some() {
+            break;
+        }
+        next = end;
+    }
+
+    completed.sort_by_key(|outcome| outcome.plan_index);
+    Ok(completed)
+}
+
+fn accepted_selection(outcomes: &[PlannedChildOutcome]) -> Option<SuccessorDecision> {
+    outcomes
+        .iter()
+        .filter_map(|outcome| outcome.selection_input.as_ref())
+        .map(|input| successor_selection::decide(input.clone()))
+        .find(|decision| {
+            decision.selection_policy_outcome() == Some(Prototype1SelectionPolicyOutcome::Accepted)
+        })
+}
+
+fn generation_selection(outcomes: &[PlannedChildOutcome]) -> Option<SuccessorDecision> {
+    accepted_selection(outcomes).or_else(|| {
+        successor_selection::decide_generation(
+            outcomes
+                .iter()
+                .filter_map(|outcome| outcome.selection_input.clone())
+                .collect(),
+        )
+    })
+}
+
+fn outcome_for_report<'a>(
+    outcomes: &'a [PlannedChildOutcome],
+    selected_node_id: Option<&str>,
+) -> Option<&'a PlannedChildOutcome> {
+    selected_node_id
+        .and_then(|node_id| outcomes.iter().find(|outcome| outcome.node_id == node_id))
+        .or_else(|| outcomes.last())
 }
 
 fn initialize_prototype1_parent_identity(
@@ -5575,294 +5906,137 @@ impl Prototype1StateCommand {
             journal_path = %journal_path.display(),
             "starting typed prototype1 parent turn"
         );
-        let selected_child =
-            resolve_next_child(&self, &campaign_id, &manifest_path, &repo_root, parent).await?;
-        let (parent, c1, candidate_node_id) = selected_child.load_c1(
-            campaign_id.clone(),
-            manifest_path.clone(),
-            repo_root.clone(),
-        )?;
-        debug!(
-            target: EXECUTION_DEBUG_TARGET,
-            campaign = %campaign_id,
-            candidate_node_id = %candidate_node_id,
-            parent_id = %parent_identity.parent_id,
-            generation = parent_identity.generation,
-            "resolved prototype1 candidate for parent turn"
-        );
-        let c2 = match MaterializeBranch::new()
-            .transition(c1, &mut journal)
-            .map_err(|err| {
-                prototype1_state_transition_error(
-                    "prototype1_state_materialize",
-                    format!("{err:?}"),
-                )
-            })? {
-            Outcome::Advanced(next) => {
-                debug!(
-                    target: EXECUTION_DEBUG_TARGET,
-                    campaign = %campaign_id,
-                    candidate_node_id = %candidate_node_id,
-                    workspace_root = %next.artifact.repo_root.display(),
-                    "materialize completed"
-                );
-                next
-            }
-            Outcome::Rejected(never) => match never {},
+        let planned_children =
+            resolve_child_plan(&self, &campaign_id, &manifest_path, &repo_root, parent).await?;
+        let PlannedChildren {
+            parent,
+            plan,
+            mut nodes,
+        } = planned_children;
+        let planned_child_count = plan.body().children().len();
+        let scheduler = load_or_default_scheduler_state(&campaign_id, &manifest_path)?;
+        let child_budget = if self.stop_after == Prototype1StateStopAfter::Complete {
+            scheduler.policy.child_budget.clone()
+        } else {
+            Prototype1ChildBudget { min: 1, max: 1 }
         };
+        if self.node_id.is_none() {
+            nodes.truncate(child_budget.max as usize);
+        }
 
-        let (outcome, child_runtime, successor_runtime, successor_pid, successor_ready_path) =
-            if self.stop_after == Prototype1StateStopAfter::Materialize {
-                ("materialized".to_string(), None, None, None, None)
-            } else {
-                let _surface = validate_child_surface(
+        let child_outcomes = run_child_fanout(
+            &campaign_id,
+            &manifest_path,
+            &repo_root,
+            &journal_path,
+            self.stop_after,
+            child_budget,
+            nodes,
+        )
+        .await?;
+        let selection_decision = if self.stop_after == Prototype1StateStopAfter::Complete {
+            generation_selection(&child_outcomes)
+        } else {
+            None
+        };
+        let selected_node_id = selection_decision
+            .as_ref()
+            .map(|decision| decision.candidate_node_id.as_str());
+        let report_child =
+            outcome_for_report(&child_outcomes, selected_node_id).ok_or_else(|| {
+                PrepareError::InvalidBatchSelection {
+                    detail: "child fanout completed without any child outcome".to_string(),
+                }
+            })?;
+        let mut outcome = format!(
+            "{};children_ran={};children_planned={}",
+            report_child.outcome,
+            child_outcomes.len(),
+            planned_child_count
+        );
+        let child_runtime = report_child.child_runtime.clone();
+        let mut successor_runtime = None;
+        let mut successor_pid = None;
+        let mut successor_ready_path = None;
+
+        if let Some(selection_decision) = selection_decision {
+            let node = load_node_record(&manifest_path, &selection_decision.candidate_node_id)?;
+            let decision = decide_continuation_with_selection(
+                &scheduler,
+                node.generation,
+                selection_decision.selected_branch_id.as_deref(),
+                selection_decision.selected_branch_disposition(),
+                selection_decision.selection_policy_outcome(),
+            );
+            observe::Step::start(observe::span!(
+                "prototype1.parent.select_successor",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                selection_procedure = %selection_decision.procedure_id,
+                selection_outcome = ?selection_decision.outcome,
+                disposition = ?decision.disposition,
+                selected_next_branch_id = ?decision.selected_next_branch_id,
+                next_generation = decision.next_generation,
+                total_nodes_after_continue = decision.total_nodes_after_continue,
+            ))
+            .success();
+            journal
+                .append(JournalEntry::Successor(
+                    SuccessorRecord::selected_with_decision(
+                        campaign_id.clone(),
+                        node.node_id.clone(),
+                        decision.clone(),
+                        selection_decision.clone(),
+                    ),
+                ))
+                .map_err(|err| {
+                    prototype1_state_transition_error(
+                        "prototype1_successor_selection",
+                        err.to_string(),
+                    )
+                })?;
+            let _ = record_continuation_decision(&campaign_id, &manifest_path, decision.clone())?;
+            outcome.push_str(&format!(
+                ";selection={:?};successor={}",
+                selection_decision.outcome, selection_decision.candidate_node_id
+            ));
+            if decision.disposition.allows_successor() {
+                match spawn_and_handoff_prototype1_successor(
+                    &campaign_id,
+                    &selection_decision.candidate_node_id,
                     &repo_root,
-                    &c2.artifact.repo_root,
-                    "prototype1_state_child_surface_commitment_before_build",
-                )?;
-                match BuildChild::new()
-                    .transition(c2, &mut journal)
-                    .map_err(|err| {
-                        prototype1_state_transition_error(
-                            "prototype1_state_build",
-                            format!("{err:?}"),
-                        )
-                    })? {
-                    Outcome::Rejected(rejected) => {
-                        debug!(
-                            target: EXECUTION_DEBUG_TARGET,
-                            campaign = %campaign_id,
-                            candidate_node_id = %candidate_node_id,
-                            rejected = ?rejected,
-                            "build rejected"
-                        );
-                        (
-                            format!("build_rejected:{rejected:?}"),
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
+                    parent,
+                    self.successor_handoff_mode(),
+                )? {
+                    (_retired, Some(successor)) => {
+                        successor_runtime = Some(successor.runtime_id.to_string());
+                        successor_pid = Some(successor.pid);
+                        successor_ready_path = Some(successor.ready_path);
+                        outcome.push_str(";successor_handoff=acknowledged");
                     }
-                    Outcome::Advanced(c3) => {
-                        let _surface = persist_prototype1_buildable_child_artifact(
-                            &campaign_id,
-                            &manifest_path,
-                            &repo_root,
-                            c3.node(),
-                        )?;
-                        debug!(
-                            target: EXECUTION_DEBUG_TARGET,
-                            campaign = %campaign_id,
-                            candidate_node_id = %candidate_node_id,
-                            binary_path = %c3.binary.child_path.display(),
-                            "build completed"
-                        );
-                        if self.stop_after == Prototype1StateStopAfter::Build {
-                            ("built".to_string(), None, None, None, None)
-                        } else {
-                            match SpawnChild::new()
-                                .transition(c3, &mut journal)
-                                .map_err(|err| {
-                                    prototype1_state_transition_error(
-                                        "prototype1_state_spawn",
-                                        format!("{err:?}"),
-                                    )
-                                })? {
-                                Outcome::Rejected(rejected) => {
-                                    debug!(
-                                        target: EXECUTION_DEBUG_TARGET,
-                                        campaign = %campaign_id,
-                                        candidate_node_id = %candidate_node_id,
-                                        rejected = ?rejected,
-                                        "spawn rejected"
-                                    );
-                                    (
-                                        format!("spawn_rejected:{rejected:?}"),
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                    )
-                                }
-                                Outcome::Advanced(c4) => {
-                                    let child_runtime = c4.binary.child_runtime.map(
-                                        |id: crate::cli::prototype1_state::event::RuntimeId| {
-                                            id.to_string()
-                                        },
-                                    );
-                                    debug!(
-                                            target: EXECUTION_DEBUG_TARGET,
-                                            campaign = %campaign_id,
-                                            candidate_node_id = %candidate_node_id,
-                                        child_runtime = ?child_runtime,
-                                        "spawn completed"
-                                    );
-                                    if self.stop_after == Prototype1StateStopAfter::Spawn {
-                                        ("spawned".to_string(), child_runtime, None, None, None)
-                                    } else {
-                                        match ObserveChild::new()
-                                            .transition(c4, &mut journal)
-                                            .map_err(|err| {
-                                                prototype1_state_transition_error(
-                                                    "prototype1_state_complete",
-                                                    format!("{err:?}"),
-                                                )
-                                            })? {
-                                            Outcome::Rejected(rejected) => {
-                                                debug!(
-                                                    target: EXECUTION_DEBUG_TARGET,
-                                                    campaign = %campaign_id,
-                                                    candidate_node_id = %candidate_node_id,
-                                                    rejected = ?rejected,
-                                                    "child completion rejected"
-                                                );
-                                                (
-                                                    format!("completion_rejected:{rejected:?}"),
-                                                    child_runtime,
-                                                    None,
-                                                    None,
-                                                    None,
-                                                )
-                                            }
-                                            Outcome::Advanced(c5) => {
-                                                debug!(
-                                                    target: EXECUTION_DEBUG_TARGET,
-                                                    campaign = %campaign_id,
-                                                    candidate_node_id = %candidate_node_id,
-                                                    disposition = ?c5.report.overall_disposition,
-                                                    "child completion observed"
-                                                );
-                                                if let ObservedChild::Succeeded(successful) =
-                                                    &c5.observed
-                                                {
-                                                    let node = load_node_record(
-                                                        &manifest_path,
-                                                        &candidate_node_id,
-                                                    )?;
-                                                    let scheduler =
-                                                        load_or_default_scheduler_state(
-                                                            &campaign_id,
-                                                            &manifest_path,
-                                                        )?;
-                                                    let selection_decision =
-                                                        successor_selection::decide(
-                                                            selection_input_from_child_report(
-                                                                &node,
-                                                                &successful.evaluation,
-                                                            ),
-                                                        );
-                                                    let decision = decide_continuation(
-                                                        &scheduler,
-                                                        node.generation,
-                                                        selection_decision
-                                                            .selected_branch_id
-                                                            .as_deref(),
-                                                        selection_decision
-                                                            .selected_branch_disposition(),
-                                                    );
-                                                    observe::Step::start(observe::span!(
-                                                        "prototype1.parent.select_successor",
-                                                        campaign_id = %campaign_id,
-                                                        node_id = %node.node_id,
-                                                        generation = node.generation,
-                                                        selection_procedure = %selection_decision.procedure_id,
-                                                        selection_outcome = ?selection_decision.outcome,
-                                                        disposition = ?decision.disposition,
-                                                        selected_next_branch_id = ?decision.selected_next_branch_id,
-                                                        next_generation = decision.next_generation,
-                                                        total_nodes_after_continue = decision.total_nodes_after_continue,
-                                                    ))
-                                                    .success();
-                                                    journal
-                                                        .append(JournalEntry::Successor(
-                                                            SuccessorRecord::selected_with_decision(
-                                                                campaign_id.clone(),
-                                                                node.node_id.clone(),
-                                                                decision.clone(),
-                                                                selection_decision,
-                                                            ),
-                                                        ))
-                                                        .map_err(|err| {
-                                                            prototype1_state_transition_error(
-                                                                "prototype1_successor_selection",
-                                                                err.to_string(),
-                                                            )
-                                                        })?;
-                                                    let _ = record_continuation_decision(
-                                                        &campaign_id,
-                                                        &manifest_path,
-                                                        decision.clone(),
-                                                    )?;
-                                                    if decision.disposition
-                                                        == Prototype1ContinuationDisposition::ContinueReady
-                                                    {
-                                                        match spawn_and_handoff_prototype1_successor(
-                                                            &campaign_id,
-                                                            &candidate_node_id,
-                                                            &repo_root,
-                                                            parent,
-                                                            self.successor_handoff_mode(),
-                                                        )? {
-                                                            (_retired, Some(successor)) => {
-                                                                (
-                                                                    format!(
-                                                                        "completed:{:?};successor_handoff=acknowledged",
-                                                                        c5.report.overall_disposition
-                                                                    ),
-                                                                    child_runtime,
-                                                                    Some(successor.runtime_id.to_string()),
-                                                                    Some(successor.pid),
-                                                                    Some(successor.ready_path),
-                                                                )
-                                                            }
-                                                            (_retired, None) => (
-                                                                format!(
-                                                                    "completed:{:?};successor_handoff=timed_out",
-                                                                    c5.report.overall_disposition
-                                                                ),
-                                                                child_runtime,
-                                                                None,
-                                                                None,
-                                                                None,
-                                                            ),
-                                                        }
-                                                    } else {
-                                                        (
-                                                            format!(
-                                                                "completed:{:?};successor_handoff=skipped:{:?}",
-                                                                c5.report.overall_disposition,
-                                                                decision.disposition
-                                                            ),
-                                                            child_runtime,
-                                                            None,
-                                                            None,
-                                                            None,
-                                                        )
-                                                    }
-                                                } else {
-                                                    (
-                                                        format!(
-                                                            "completed:{:?}",
-                                                            c5.report.overall_disposition
-                                                        ),
-                                                        child_runtime,
-                                                        None,
-                                                        None,
-                                                        None,
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    (_retired, None) => {
+                        outcome.push_str(";successor_handoff=timed_out");
                     }
                 }
-            };
+            } else {
+                outcome.push_str(&format!(
+                    ";successor_handoff=skipped:{:?}",
+                    decision.disposition
+                ));
+            }
+        } else if self.stop_after == Prototype1StateStopAfter::Complete {
+            let decision = decide_continuation_with_selection(
+                &scheduler,
+                parent_identity.generation.saturating_add(1),
+                None,
+                None,
+                None,
+            );
+            let _ = record_continuation_decision(&campaign_id, &manifest_path, decision.clone())?;
+            outcome.push_str(&format!(";selection=none:{:?}", decision.disposition));
+        }
 
-        let node = load_node_record(&manifest_path, &candidate_node_id)?;
         append_parent_target_sample(
             &mut journal,
             &campaign_id,
@@ -5875,14 +6049,14 @@ impl Prototype1StateCommand {
         );
         let report = Prototype1StateReport {
             campaign_id,
-            node_id: candidate_node_id,
+            node_id: report_child.node_id.clone(),
             repo_root,
             journal_path,
             stop_after: self.stop_after,
             outcome,
-            node_status: node.status,
-            workspace_root: node.workspace_root,
-            binary_path: node.binary_path,
+            node_status: report_child.node_status,
+            workspace_root: report_child.workspace_root.clone(),
+            binary_path: report_child.binary_path.clone(),
             child_runtime,
             successor_runtime,
             successor_pid,
@@ -6304,18 +6478,28 @@ fn select_most_promising_branch(
 ) -> Option<String> {
     evaluations
         .iter()
-        .max_by_key(|row| {
-            (
-                row.oracle_eligible_instances,
-                row.converged_instances,
-                row.nonempty_submission_instances,
-                row.applied_patch_instances,
-                matches!(row.overall_disposition, BranchDisposition::Keep) as usize,
-                usize::MAX.saturating_sub(row.failed_tool_calls),
-                usize::MAX.saturating_sub(row.total_tool_calls),
-            )
+        .filter(|row| matches!(row.overall_disposition, BranchDisposition::Keep))
+        .max_by_key(|row| promising_branch_score(row))
+        .or_else(|| {
+            evaluations
+                .iter()
+                .max_by_key(|row| promising_branch_score(row))
         })
         .map(|row| row.branch_id.clone())
+}
+
+fn promising_branch_score(
+    row: &Prototype1LoopBranchEvaluationSummary,
+) -> (usize, usize, usize, usize, usize, usize, usize) {
+    (
+        row.oracle_eligible_instances,
+        row.converged_instances,
+        row.nonempty_submission_instances,
+        row.applied_patch_instances,
+        matches!(row.overall_disposition, BranchDisposition::Keep) as usize,
+        usize::MAX.saturating_sub(row.failed_tool_calls),
+        usize::MAX.saturating_sub(row.total_tool_calls),
+    )
 }
 
 pub(crate) fn prototype1_source_generation(
@@ -6858,15 +7042,18 @@ fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
     println!("stage_reached: {}", serde_name(&report.stage_reached));
     println!("dry_run: {}", yes_no(report.dry_run));
     println!(
-        "search_policy: generations<={} nodes<={} stop_on_first_keep={} require_keep_for_continuation={}",
+        "search_policy: generations<={} nodes<={} children={}..={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
         report.search_policy.max_generations,
         report.search_policy.max_total_nodes,
+        report.search_policy.child_budget.min,
+        report.search_policy.child_budget.max,
         yes_no(report.search_policy.stop_on_first_keep),
-        yes_no(report.search_policy.require_keep_for_continuation)
+        yes_no(report.search_policy.require_keep_for_continuation),
+        yes_no(report.search_policy.explore_from_rejected)
     );
     if let Some(decision) = report.continuation_decision.as_ref() {
         println!(
-            "continuation: {} next_generation={} total_nodes_after_continue={} selected_next_branch_id={} selected_branch_disposition={}",
+            "continuation: {} next_generation={} total_nodes_after_continue={} selected_next_branch_id={} selected_branch_disposition={} selection_policy_outcome={}",
             serde_name(&decision.disposition),
             decision.next_generation,
             decision.total_nodes_after_continue,
@@ -6877,7 +7064,11 @@ fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
             decision
                 .selected_branch_disposition
                 .as_deref()
-                .unwrap_or("(none)")
+                .unwrap_or("(none)"),
+            decision
+                .selection_policy_outcome
+                .as_ref()
+                .map_or_else(|| "(none)".to_string(), serde_name)
         );
     }
     println!(
@@ -7215,15 +7406,18 @@ fn print_prototype1_runner_report(report: &Prototype1RunnerReport) {
     println!("scheduler: {}", report.scheduler_path.display());
     let scheduler = &report.scheduler;
     println!(
-        "search_policy: generations<={} nodes<={} stop_on_first_keep={} require_keep_for_continuation={}",
+        "search_policy: generations<={} nodes<={} children={}..={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
         scheduler.policy.max_generations,
         scheduler.policy.max_total_nodes,
+        scheduler.policy.child_budget.min,
+        scheduler.policy.child_budget.max,
         yes_no(scheduler.policy.stop_on_first_keep),
-        yes_no(scheduler.policy.require_keep_for_continuation)
+        yes_no(scheduler.policy.require_keep_for_continuation),
+        yes_no(scheduler.policy.explore_from_rejected)
     );
     if let Some(decision) = scheduler.last_continuation_decision.as_ref() {
         println!(
-            "continuation: {} next_generation={} total_nodes_after_continue={} selected_next_branch_id={} selected_branch_disposition={}",
+            "continuation: {} next_generation={} total_nodes_after_continue={} selected_next_branch_id={} selected_branch_disposition={} selection_policy_outcome={}",
             serde_name(&decision.disposition),
             decision.next_generation,
             decision.total_nodes_after_continue,
@@ -7234,7 +7428,11 @@ fn print_prototype1_runner_report(report: &Prototype1RunnerReport) {
             decision
                 .selected_branch_disposition
                 .as_deref()
-                .unwrap_or("(none)")
+                .unwrap_or("(none)"),
+            decision
+                .selection_policy_outcome
+                .as_ref()
+                .map_or_else(|| "(none)".to_string(), serde_name)
         );
     }
     println!("frontier: {}", scheduler.frontier_node_ids.join(", "));

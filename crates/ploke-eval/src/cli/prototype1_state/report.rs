@@ -203,14 +203,18 @@ impl SchedulerView {
         }
         if let Some(decision) = self.last_continuation_decision.as_ref() {
             println!(
-                "continuation: {} next_generation={} selected_next_branch_id={} total_nodes_after_continue={}",
+                "continuation: {} next_generation={} selected_next_branch_id={} total_nodes_after_continue={} selection_policy_outcome={}",
                 serde_name(&decision.disposition),
                 decision.next_generation,
                 decision
                     .selected_next_branch_id
                     .as_deref()
                     .unwrap_or("(none)"),
-                decision.total_nodes_after_continue
+                decision.total_nodes_after_continue,
+                decision
+                    .selection_policy_outcome
+                    .as_ref()
+                    .map_or_else(|| "(none)".to_string(), serde_name)
             );
         } else {
             println!("continuation: (none)");

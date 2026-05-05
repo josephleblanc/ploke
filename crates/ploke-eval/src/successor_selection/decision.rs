@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::domains::{DomainFinding, Verdict};
 use super::evidence::SelectionInput;
 use super::{PROCEDURE_ID, disposition_as_str};
+use crate::intervention::Prototype1SelectionPolicyOutcome;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SuccessorDecision {
@@ -24,14 +25,14 @@ impl SuccessorDecision {
             .find(|finding| finding.domain == super::domains::DomainName::Operational);
 
         let outcome = match operational.map(|finding| finding.verdict) {
-            Some(Verdict::Better) => SuccessorOutcome::Select,
-            Some(Verdict::Mixed) => SuccessorOutcome::ContinueWithRisk,
+            Some(Verdict::Better) => SuccessorOutcome::Accepted,
+            Some(Verdict::Mixed) => SuccessorOutcome::Stop,
             Some(Verdict::Worse) => SuccessorOutcome::Stop,
             _ => SuccessorOutcome::Stop,
         };
 
         let selected_branch_id = match outcome {
-            SuccessorOutcome::Select | SuccessorOutcome::ContinueWithRisk => {
+            SuccessorOutcome::Accepted | SuccessorOutcome::ExploreFrom => {
                 Some(input.candidate.branch_id.clone())
             }
             SuccessorOutcome::Stop => None,
@@ -59,12 +60,23 @@ impl SuccessorDecision {
             .as_ref()
             .map(|_| self.branch_disposition.as_str())
     }
+
+    pub(crate) fn selection_policy_outcome(&self) -> Option<Prototype1SelectionPolicyOutcome> {
+        match self.outcome {
+            SuccessorOutcome::Accepted => Some(Prototype1SelectionPolicyOutcome::Accepted),
+            SuccessorOutcome::ExploreFrom if self.branch_disposition == "reject" => {
+                Some(Prototype1SelectionPolicyOutcome::ExploreFromRejected)
+            }
+            SuccessorOutcome::ExploreFrom => Some(Prototype1SelectionPolicyOutcome::Accepted),
+            SuccessorOutcome::Stop => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SuccessorOutcome {
-    Select,
-    ContinueWithRisk,
+    Accepted,
+    ExploreFrom,
     Stop,
 }
