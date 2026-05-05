@@ -3,6 +3,7 @@ pub mod diagnostics;
 pub mod graph; // Make these public
 pub mod nodes;
 pub mod relations;
+pub mod type_nodes;
 pub mod types;
 pub mod utils;
 pub mod visibility;
