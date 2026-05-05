@@ -5,6 +5,7 @@
 //! let later code express admissible source kinds at the type level instead of
 //! relying on conventions over a bare `TypeId`.
 
+#[cfg(not(feature = "typed_type_graph"))]
 use crate::parser::types::TypeNode;
 use ploke_core::{IdTrait, TypeId, TypeKind};
 use serde::{Deserialize, Serialize};
@@ -98,6 +99,23 @@ macro_rules! define_structural_type_id {
             }
         }
 
+        impl IdTrait for $Name {
+            #[inline]
+            fn uuid(&self) -> uuid::Uuid {
+                self.0.uuid()
+            }
+
+            #[inline]
+            fn is_resolved(&self) -> bool {
+                self.0.is_resolved()
+            }
+
+            #[inline]
+            fn is_synthetic(&self) -> bool {
+                self.0.is_synthetic()
+            }
+        }
+
         impl From<$Name> for TypeId {
             #[inline]
             fn from(id: $Name) -> Self {
@@ -105,6 +123,7 @@ macro_rules! define_structural_type_id {
             }
         }
 
+        #[cfg(not(feature = "typed_type_graph"))]
         impl TryFrom<&TypeNode> for $Name {
             type Error = TypeIdRefinementError;
 
@@ -160,6 +179,23 @@ macro_rules! define_structural_type_id {
             }
         }
 
+        impl IdTrait for $Name {
+            #[inline]
+            fn uuid(&self) -> uuid::Uuid {
+                self.0.uuid()
+            }
+
+            #[inline]
+            fn is_resolved(&self) -> bool {
+                self.0.is_resolved()
+            }
+
+            #[inline]
+            fn is_synthetic(&self) -> bool {
+                self.0.is_synthetic()
+            }
+        }
+
         impl From<$Name> for TypeId {
             #[inline]
             fn from(id: $Name) -> Self {
@@ -167,6 +203,7 @@ macro_rules! define_structural_type_id {
             }
         }
 
+        #[cfg(not(feature = "typed_type_graph"))]
         impl TryFrom<&TypeNode> for $Name {
             type Error = TypeIdRefinementError;
 
@@ -200,7 +237,7 @@ define_structural_type_id!(ParenTypeId, Paren { .. });
 define_structural_type_id!(MacroTypeId, Macro { .. });
 define_structural_type_id!(UnknownTypeId, Unknown { .. });
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "typed_type_graph")))]
 mod tests {
     use super::*;
 

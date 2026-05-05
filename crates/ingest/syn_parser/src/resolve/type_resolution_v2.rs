@@ -26,7 +26,7 @@
 
 use std::collections::HashMap;
 
-use ploke_core::{TypeId, TypeKind};
+use ploke_core::TypeId;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -36,8 +36,8 @@ use crate::{
         ParsedCodeGraph,
         graph::GraphAccess,
         nodes::{
-            AnyNodeId, AsAnyNodeId, AssociatedItemNodeId, ImportNodeId, MethodNodeId, ModuleNodeId,
-            NamedTypeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, TraitBoundTypeId,
+            AnyNodeId, AnyTypeId, AsAnyNodeId, AssociatedItemNodeId, ImportNodeId, MethodNodeId,
+            ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, StructuralTypeId as _,
             TraitTypeSourceId, TraitTypeTargetId, TypeGenericParamNodeId,
         },
         relations::{SyntacticRelation, TypeRelation},
@@ -101,7 +101,7 @@ enum TargetProof {
 struct TypeUseSite {
     resolution_context_owner: AnyNodeId,
     containing_module: Option<ModuleNodeId>,
-    source_type_id: TypeId,
+    source_type_id: AnyTypeId,
     expects_trait_target: bool,
 }
 
@@ -118,7 +118,7 @@ impl<'a> TypeRelationResolver<'a> {
         let type_by_id = graph
             .type_graph()
             .iter()
-            .map(|type_node| (type_node.id, type_node))
+            .map(|type_node| (type_node.base_id(), type_node))
             .collect();
 
         Self {
@@ -149,64 +149,49 @@ impl<'a> TypeRelationResolver<'a> {
             .flat_map_iter(|site| TypeTreeRelationIter::new(self, site))
     }
 
-    fn type_node(&self, type_id: TypeId) -> Result<&'a TypeNode, SynParserError> {
-        self.type_by_id.get(&type_id).copied().ok_or_else(|| {
-            SynParserError::InternalState(format!("type id {type_id} was not found in type graph"))
-        })
+    fn type_node(&self, type_id: AnyTypeId) -> Result<&'a TypeNode, SynParserError> {
+        self.type_by_id
+            .get(&type_id.base_id())
+            .copied()
+            .ok_or_else(|| {
+                SynParserError::InternalState(format!(
+                    "type id {type_id} was not found in type graph"
+                ))
+            })
     }
 
     fn resolve_site(&self, site: TypeUseSite) -> Result<Option<TypeRelation>, SynParserError> {
         let type_node = self.type_node(site.source_type_id)?;
-        match &type_node.kind {
-            TypeKind::Named {
-                path,
-                is_fully_qualified,
-            } => {
-                let named_id = NamedTypeId::try_from(type_node).map_err(|err| {
-                    SynParserError::InternalState(format!(
-                        "failed to refine named type {}: {err}",
-                        site.source_type_id
-                    ))
-                })?;
+        match type_node {
+            TypeNode::Named(node) => {
                 if site.expects_trait_target {
                     self.resolve_source(
-                        SourceProof::Trait(TraitTypeSourceId::from(named_id)),
-                        site.source_type_id,
-                        path,
-                        *is_fully_qualified,
+                        SourceProof::Trait(TraitTypeSourceId::from(node.id)),
+                        site.source_type_id.base_id(),
+                        &node.path,
+                        node.is_fully_qualified,
                         site.containing_module,
                         Some(site.resolution_context_owner),
                     )
                 } else {
                     self.resolve_source(
-                        SourceProof::Ordinary(OrdinaryTypeSourceId::from(named_id)),
-                        site.source_type_id,
-                        path,
-                        *is_fully_qualified,
+                        SourceProof::Ordinary(OrdinaryTypeSourceId::from(node.id)),
+                        site.source_type_id.base_id(),
+                        &node.path,
+                        node.is_fully_qualified,
                         site.containing_module,
                         Some(site.resolution_context_owner),
                     )
                 }
             }
-            TypeKind::TraitBound {
-                path,
-                is_fully_qualified,
-            } => {
-                let trait_bound_id = TraitBoundTypeId::try_from(type_node).map_err(|err| {
-                    SynParserError::InternalState(format!(
-                        "failed to refine trait-bound type {}: {err}",
-                        site.source_type_id
-                    ))
-                })?;
-                self.resolve_source(
-                    SourceProof::Trait(TraitTypeSourceId::from(trait_bound_id)),
-                    site.source_type_id,
-                    path,
-                    *is_fully_qualified,
-                    site.containing_module,
-                    Some(site.resolution_context_owner),
-                )
-            }
+            TypeNode::TraitBound(node) => self.resolve_source(
+                SourceProof::Trait(TraitTypeSourceId::from(node.id)),
+                site.source_type_id.base_id(),
+                &node.path,
+                node.is_fully_qualified,
+                site.containing_module,
+                Some(site.resolution_context_owner),
+            ),
             _ => Ok(None),
         }
     }
@@ -1074,7 +1059,7 @@ impl Iterator for DirectTypeUseIter<'_> {
                         node.id.as_any(),
                         *module,
                         TypeUseRole::TraitSuper,
-                        type_id,
+                        type_id.into(),
                     ));
                 }
                 loop {
@@ -1121,7 +1106,7 @@ impl Iterator for DirectTypeUseIter<'_> {
                             node.id.as_any(),
                             *module,
                             TypeUseRole::ImplTrait,
-                            type_id,
+                            type_id.into(),
                         ));
                     }
                 }
@@ -1186,7 +1171,7 @@ fn next_callable_type_use(
     resolution_context_owner: AnyNodeId,
     module: Option<ModuleNodeId>,
     parameters: &[crate::parser::nodes::ParamData],
-    return_type: Option<TypeId>,
+    return_type: Option<AnyTypeId>,
     param_role: TypeUseRole,
     return_role: TypeUseRole,
     state: &mut MethodIterState,
@@ -1221,7 +1206,7 @@ fn type_use_site(
     resolution_context_owner: AnyNodeId,
     containing_module: Option<ModuleNodeId>,
     role: TypeUseRole,
-    source_type_id: TypeId,
+    source_type_id: AnyTypeId,
 ) -> TypeUseSite {
     TypeUseSite {
         resolution_context_owner,
@@ -1234,7 +1219,7 @@ fn type_use_site(
 struct TypeTreeRelationIter<'a, 'resolver> {
     resolver: &'resolver TypeRelationResolver<'a>,
     site: TypeUseSite,
-    stack: [Option<(TypeId, bool)>; MAX_TYPE_TREE_STACK],
+    stack: [Option<(AnyTypeId, bool)>; MAX_TYPE_TREE_STACK],
     len: usize,
     steps: usize,
     terminal_error: Option<SynParserError>,
@@ -1254,7 +1239,7 @@ impl<'a, 'resolver> TypeTreeRelationIter<'a, 'resolver> {
         iter
     }
 
-    fn push(&mut self, type_id: TypeId, expects_trait_target: bool) {
+    fn push(&mut self, type_id: AnyTypeId, expects_trait_target: bool) {
         if self.len >= MAX_TYPE_TREE_STACK {
             self.terminal_error = Some(SynParserError::InternalState(format!(
                 "type resolution exceeded type-tree stack limit of {MAX_TYPE_TREE_STACK}"
@@ -1265,7 +1250,7 @@ impl<'a, 'resolver> TypeTreeRelationIter<'a, 'resolver> {
         self.len += 1;
     }
 
-    fn pop(&mut self) -> Option<(TypeId, bool)> {
+    fn pop(&mut self) -> Option<(AnyTypeId, bool)> {
         if self.len == 0 {
             return None;
         }
@@ -1294,7 +1279,12 @@ impl Iterator for TypeTreeRelationIter<'_, '_> {
                 Ok(type_node) => type_node,
                 Err(err) => return Some(Err(err)),
             };
-            for related_type_id in type_node.related_types.iter().rev().copied() {
+            for related_type_id in type_node
+                .child_type_ids()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+            {
                 self.push(related_type_id, false);
             }
             if let Some(err) = self.terminal_error.take() {

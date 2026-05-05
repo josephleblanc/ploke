@@ -1,10 +1,11 @@
 #![allow(unused_must_use)]
 // Needed to get rid of proc-macro induced warning for `ExpectedData`
 
+use crate::parser::type_slots::AnyTypeUseId;
 use crate::parser::types::GenericParamNode;
 use derive_test_helpers::ExpectedData;
 // Removed define_node_info_struct import
-use ploke_core::{TrackingHash, TypeId};
+use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
 
@@ -43,7 +44,7 @@ impl StructNode {
 pub struct FieldNode {
     pub id: FieldNodeId, // Use typed ID
     pub name: Option<String>,
-    pub type_id: TypeId,
+    pub type_id: AnyTypeUseId,
     pub visibility: VisibilityKind,
     pub attributes: Vec<Attribute>,
     pub cfgs: Vec<String>,

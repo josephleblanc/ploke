@@ -1,5 +1,23 @@
 use super::state::VisitorState;
 use crate::parser::nodes::GenerateTypeId as _;
+#[cfg(feature = "typed_type_graph")]
+use crate::parser::nodes::{
+    AnyTypeId, ArrayTypeId, FunctionTypeId, ImplTraitTypeId, InferredTypeId, MacroTypeId,
+    NamedTypeId, NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId,
+    StructuralTypeId as _, TraitBoundTypeId, TraitObjectTypeId, TraitTypeSourceId, TupleTypeId,
+    UnknownTypeId,
+};
+#[cfg(feature = "typed_type_graph")]
+use crate::parser::type_nodes::{
+    ArrayTypeNode, FunctionTypeNode, ImplTraitTypeNode, InferredTypeNode, MacroTypeNode,
+    NamedTypeNode, NeverTypeNode, ParenTypeNode, RawPointerTypeNode, ReferenceTypeNode,
+    SliceTypeNode, TraitBoundTypeNode, TraitObjectTypeNode, TupleTypeNode,
+    TypeNode as TypedTypeNode, UnknownTypeNode,
+};
+#[cfg(feature = "typed_type_graph")]
+use crate::parser::type_slots::any_type_use_base_id;
+use crate::parser::type_slots::{AnyTypeUseId, TraitTypeUseId};
+#[cfg(not(feature = "typed_type_graph"))]
 use crate::parser::types::TypeNode; // Removed unused import: utils::type_to_string
 use ploke_core::TypeId;
 use ploke_core::TypeKind;
@@ -20,7 +38,8 @@ use syn::{
 ///
 /// # Returns
 /// The `TypeId` (Synthetic variant in Phase 2) for the given type.
-pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId {
+#[cfg(not(feature = "typed_type_graph"))]
+pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> AnyTypeUseId {
     // --- New Type Processing ---
 
     // 1. Process the type structure first to get TypeKind and related TypeIds
@@ -37,6 +56,12 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
     get_or_create_type_node(state, type_kind, related_types)
 }
 
+#[cfg(feature = "typed_type_graph")]
+pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> AnyTypeUseId {
+    process_typed_type(state, ty)
+}
+
+#[cfg(not(feature = "typed_type_graph"))]
 fn get_or_create_type_node(
     state: &mut VisitorState,
     type_kind: TypeKind,
@@ -58,6 +83,90 @@ fn get_or_create_type_node(
     new_id
 }
 
+#[cfg(feature = "typed_type_graph")]
+fn insert_typed_type_node(state: &mut VisitorState, type_node: TypedTypeNode) -> AnyTypeUseId {
+    let type_id = type_node.id();
+    if state
+        .code_graph
+        .type_graph
+        .iter()
+        .any(|tn| tn.id() == type_id)
+    {
+        return type_id;
+    }
+
+    state.code_graph.type_graph.push(type_node);
+    type_id
+}
+
+#[cfg(feature = "typed_type_graph")]
+fn related_base_ids(related_types: &[AnyTypeUseId]) -> Vec<TypeId> {
+    related_types
+        .iter()
+        .copied()
+        .map(any_type_use_base_id)
+        .collect()
+}
+
+#[cfg(feature = "typed_type_graph")]
+fn collect_path_segments_and_type_arguments(
+    state: &mut VisitorState,
+    path: &Path,
+    arguments: &mut Vec<AnyTypeUseId>,
+) -> Vec<String> {
+    path.segments
+        .iter()
+        .map(|seg| {
+            match &seg.arguments {
+                PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) => {
+                    for arg in args {
+                        match arg {
+                            GenericArgument::Type(arg_type) => {
+                                arguments.push(get_or_create_type(state, arg_type));
+                            }
+                            GenericArgument::AssocType(assoc_type) => {
+                                arguments.push(get_or_create_type(state, &assoc_type.ty));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                PathArguments::Parenthesized(parenthesized) => {
+                    for input in &parenthesized.inputs {
+                        arguments.push(get_or_create_type(state, input));
+                    }
+                    if let ReturnType::Type(_, return_ty) = &parenthesized.output {
+                        arguments.push(get_or_create_type(state, return_ty));
+                    }
+                }
+                PathArguments::None => {}
+            }
+
+            seg.ident.to_string()
+        })
+        .collect()
+}
+
+#[cfg(feature = "typed_type_graph")]
+fn trait_source_from_any(type_id: AnyTypeUseId) -> TraitTypeUseId {
+    match type_id {
+        AnyTypeId::Named(id) => TraitTypeSourceId::from(id),
+        AnyTypeId::TraitBound(id) => TraitTypeSourceId::from(id),
+        _ => panic!("type id {type_id} is not admissible in trait position"),
+    }
+}
+
+#[cfg(feature = "typed_type_graph")]
+pub(crate) fn get_or_create_trait_type(state: &mut VisitorState, ty: &Type) -> TraitTypeUseId {
+    trait_source_from_any(get_or_create_type(state, ty))
+}
+
+#[cfg(not(feature = "typed_type_graph"))]
+pub(crate) fn get_or_create_trait_type(state: &mut VisitorState, ty: &Type) -> TraitTypeUseId {
+    get_or_create_type(state, ty)
+}
+
+#[cfg(not(feature = "typed_type_graph"))]
 fn collect_path_segments_and_related_types(
     state: &mut VisitorState,
     path: &Path,
@@ -96,10 +205,11 @@ fn collect_path_segments_and_related_types(
         .collect()
 }
 
+#[cfg(not(feature = "typed_type_graph"))]
 pub(crate) fn get_or_create_trait_bound_type(
     state: &mut VisitorState,
     bound: &TraitBound,
-) -> TypeId {
+) -> TraitTypeUseId {
     let mut related_types = Vec::new();
     let path = collect_path_segments_and_related_types(state, &bound.path, &mut related_types);
     let kind = TypeKind::TraitBound {
@@ -108,6 +218,30 @@ pub(crate) fn get_or_create_trait_bound_type(
     };
 
     get_or_create_type_node(state, kind, related_types)
+}
+
+#[cfg(feature = "typed_type_graph")]
+pub(crate) fn get_or_create_trait_bound_type(
+    state: &mut VisitorState,
+    bound: &TraitBound,
+) -> TraitTypeUseId {
+    let mut arguments = Vec::new();
+    let path = collect_path_segments_and_type_arguments(state, &bound.path, &mut arguments);
+    let kind = TypeKind::TraitBound {
+        path: path.clone(),
+        is_fully_qualified: bound.path.leading_colon.is_some(),
+    };
+    let related = related_base_ids(&arguments);
+    let id = TraitBoundTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+        .expect("trait-bound TypeKind must refine to TraitBoundTypeId");
+
+    let node = TraitBoundTypeNode {
+        id,
+        path,
+        is_fully_qualified: bound.path.leading_colon.is_some(),
+        arguments,
+    };
+    trait_source_from_any(insert_typed_type_node(state, node.into()))
 }
 
 // Process a type and get its kind and related types
@@ -120,6 +254,7 @@ pub(crate) fn get_or_create_trait_bound_type(
 ///
 /// # Returns
 /// A tuple containing the `TypeKind` and a `Vec<TypeId>` of related types.
+#[cfg(not(feature = "typed_type_graph"))]
 pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Vec<TypeId>) {
     let mut related_types = Vec::new();
 
@@ -271,5 +406,317 @@ pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Ve
                 Vec::new(), // No known related types
             )
         }
+    }
+}
+
+#[cfg(feature = "typed_type_graph")]
+fn process_typed_type(state: &mut VisitorState, ty: &Type) -> AnyTypeUseId {
+    match ty {
+        Type::Path(TypePath { path, qself }) => {
+            let mut arguments = Vec::new();
+            let segments = collect_path_segments_and_type_arguments(state, path, &mut arguments);
+            let kind = TypeKind::Named {
+                path: segments.clone(),
+                is_fully_qualified: qself.is_some(),
+            };
+            let related = related_base_ids(&arguments);
+            let id = NamedTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+                .expect("named TypeKind must refine to NamedTypeId");
+
+            insert_typed_type_node(
+                state,
+                NamedTypeNode {
+                    id,
+                    path: segments,
+                    is_fully_qualified: qself.is_some(),
+                    arguments,
+                }
+                .into(),
+            )
+        }
+        Type::Reference(TypeReference {
+            elem,
+            lifetime,
+            mutability,
+            ..
+        }) => {
+            let referenced = get_or_create_type(state, elem);
+            let kind = TypeKind::Reference {
+                lifetime: lifetime.as_ref().map(|lt| lt.ident.to_string()),
+                is_mutable: mutability.is_some(),
+            };
+            let related = [referenced.base_id()];
+            let id = ReferenceTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+                .expect("reference TypeKind must refine to ReferenceTypeId");
+
+            insert_typed_type_node(
+                state,
+                ReferenceTypeNode {
+                    id,
+                    lifetime: lifetime.as_ref().map(|lt| lt.ident.to_string()),
+                    is_mutable: mutability.is_some(),
+                    referenced,
+                }
+                .into(),
+            )
+        }
+        Type::Slice(type_slice) => {
+            let element = get_or_create_type(state, &type_slice.elem);
+            let kind = TypeKind::Slice {};
+            let related = [element.base_id()];
+            let id = SliceTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+                .expect("slice TypeKind must refine to SliceTypeId");
+            insert_typed_type_node(state, SliceTypeNode { id, element }.into())
+        }
+        Type::Array(type_array) => {
+            let element = get_or_create_type(state, &type_array.elem);
+            let size = Some(type_array.len.to_token_stream().to_string());
+            let kind = TypeKind::Array { size: size.clone() };
+            let related = [element.base_id()];
+            let id = ArrayTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+                .expect("array TypeKind must refine to ArrayTypeId");
+            insert_typed_type_node(state, ArrayTypeNode { id, element, size }.into())
+        }
+        Type::Tuple(type_tuple) => {
+            let elements: Vec<_> = type_tuple
+                .elems
+                .iter()
+                .map(|elem| get_or_create_type(state, elem))
+                .collect();
+            let kind = TypeKind::Tuple {};
+            let related = related_base_ids(&elements);
+            let id = TupleTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+                .expect("tuple TypeKind must refine to TupleTypeId");
+            insert_typed_type_node(state, TupleTypeNode { id, elements }.into())
+        }
+        Type::BareFn(type_bare_fn) => {
+            let parameters: Vec<_> = type_bare_fn
+                .inputs
+                .iter()
+                .map(|input| get_or_create_type(state, &input.ty))
+                .collect();
+            let return_type = match &type_bare_fn.output {
+                ReturnType::Type(_, return_ty) => Some(get_or_create_type(state, return_ty)),
+                ReturnType::Default => None,
+            };
+            let kind = TypeKind::Function {
+                is_unsafe: type_bare_fn.unsafety.is_some(),
+                is_extern: type_bare_fn.abi.is_some(),
+                abi: type_bare_fn
+                    .abi
+                    .as_ref()
+                    .and_then(|abi| abi.name.as_ref().map(|name| name.value())),
+            };
+            let related: Vec<_> = parameters
+                .iter()
+                .copied()
+                .chain(return_type)
+                .map(|id| id.base_id())
+                .collect();
+            let id = FunctionTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+                .expect("function TypeKind must refine to FunctionTypeId");
+            insert_typed_type_node(
+                state,
+                FunctionTypeNode {
+                    id,
+                    parameters,
+                    return_type,
+                    is_unsafe: type_bare_fn.unsafety.is_some(),
+                    is_extern: type_bare_fn.abi.is_some(),
+                    abi: type_bare_fn
+                        .abi
+                        .as_ref()
+                        .and_then(|abi| abi.name.as_ref().map(|name| name.value())),
+                }
+                .into(),
+            )
+        }
+        Type::Never(_) => {
+            let kind = TypeKind::Never;
+            let id = NeverTypeId::try_refine(state.generate_type_id(&kind, &[]), &kind)
+                .expect("never TypeKind must refine to NeverTypeId");
+            insert_typed_type_node(state, NeverTypeNode { id }.into())
+        }
+        Type::Infer(_) => {
+            let kind = TypeKind::Inferred;
+            let id = InferredTypeId::try_refine(state.generate_type_id(&kind, &[]), &kind)
+                .expect("inferred TypeKind must refine to InferredTypeId");
+            insert_typed_type_node(state, InferredTypeNode { id }.into())
+        }
+        Type::Ptr(type_ptr) => {
+            let pointee = get_or_create_type(state, &type_ptr.elem);
+            let kind = TypeKind::RawPointer {
+                is_mutable: type_ptr.mutability.is_some(),
+            };
+            let related = [pointee.base_id()];
+            let id = RawPointerTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+                .expect("raw pointer TypeKind must refine to RawPointerTypeId");
+            insert_typed_type_node(
+                state,
+                RawPointerTypeNode {
+                    id,
+                    is_mutable: type_ptr.mutability.is_some(),
+                    pointee,
+                }
+                .into(),
+            )
+        }
+        Type::TraitObject(type_trait_object) => {
+            let bounds: Vec<_> = type_trait_object
+                .bounds
+                .iter()
+                .filter_map(|bound| match bound {
+                    TypeParamBound::Trait(trait_bound) => Some(AnyTypeId::from(
+                        TraitBoundTypeId::try_from(get_or_create_trait_bound_type(
+                            state,
+                            trait_bound,
+                        ))
+                        .expect("trait-bound source should contain TraitBoundTypeId"),
+                    )),
+                    TypeParamBound::Lifetime(_) => None,
+                    _ => None,
+                })
+                .collect();
+            let kind = TypeKind::TraitObject {
+                dyn_token: type_trait_object.dyn_token.is_some(),
+            };
+            let related = related_base_ids(&bounds);
+            let id = TraitObjectTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+                .expect("trait object TypeKind must refine to TraitObjectTypeId");
+            insert_typed_type_node(
+                state,
+                TraitObjectTypeNode {
+                    id,
+                    dyn_token: type_trait_object.dyn_token.is_some(),
+                    bounds,
+                }
+                .into(),
+            )
+        }
+        Type::ImplTrait(type_impl_trait) => {
+            let bounds: Vec<_> = type_impl_trait
+                .bounds
+                .iter()
+                .filter_map(|bound| match bound {
+                    TypeParamBound::Trait(trait_bound) => Some(AnyTypeId::from(
+                        TraitBoundTypeId::try_from(get_or_create_trait_bound_type(
+                            state,
+                            trait_bound,
+                        ))
+                        .expect("trait-bound source should contain TraitBoundTypeId"),
+                    )),
+                    TypeParamBound::Lifetime(_) => None,
+                    _ => None,
+                })
+                .collect();
+            let kind = TypeKind::ImplTrait {};
+            let related = related_base_ids(&bounds);
+            let id = ImplTraitTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+                .expect("impl Trait TypeKind must refine to ImplTraitTypeId");
+            insert_typed_type_node(state, ImplTraitTypeNode { id, bounds }.into())
+        }
+        Type::Paren(type_paren) => {
+            let inner = get_or_create_type(state, &type_paren.elem);
+            let kind = TypeKind::Paren {};
+            let related = [inner.base_id()];
+            let id = ParenTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+                .expect("paren TypeKind must refine to ParenTypeId");
+            insert_typed_type_node(state, ParenTypeNode { id, inner }.into())
+        }
+        Type::Macro(type_macro) => {
+            let name = type_macro.mac.path.to_token_stream().to_string();
+            let tokens = type_macro.mac.tokens.to_string();
+            let kind = TypeKind::Macro {
+                name: name.clone(),
+                tokens: tokens.clone(),
+            };
+            let id = MacroTypeId::try_refine(state.generate_type_id(&kind, &[]), &kind)
+                .expect("macro TypeKind must refine to MacroTypeId");
+            insert_typed_type_node(state, MacroTypeNode { id, name, tokens }.into())
+        }
+        Type::Group(type_group) => process_typed_type(state, &type_group.elem),
+        _ => {
+            let type_str = ty.to_token_stream().to_string();
+            let kind = TypeKind::Unknown {
+                type_str: type_str.clone(),
+            };
+            let id = UnknownTypeId::try_refine(state.generate_type_id(&kind, &[]), &kind)
+                .expect("unknown TypeKind must refine to UnknownTypeId");
+            insert_typed_type_node(state, UnknownTypeNode { id, type_str }.into())
+        }
+    }
+}
+
+#[cfg(all(test, feature = "typed_type_graph"))]
+mod typed_tests {
+    use super::*;
+    use crate::discovery::{CrateContext, Dependencies, DevDependencies, Features};
+    use crate::parser::nodes::{GeneratesAnyNodeId as _, ModuleNodeId};
+    use ploke_core::ItemKind;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn test_state() -> VisitorState {
+        let namespace = Uuid::new_v4();
+        let root = PathBuf::from("/tmp/typed-type-graph-test");
+        let context = CrateContext {
+            name: "typed_type_graph_test".into(),
+            version: "0.0.0".into(),
+            namespace,
+            root_path: root.clone(),
+            files: vec![root.join("src/lib.rs")],
+            targets: Vec::new(),
+            features: Features::default(),
+            dependencies: Dependencies::default(),
+            dev_dependencies: DevDependencies::default(),
+            workspace_path: None,
+        };
+        let mut state = VisitorState::new(namespace, root.join("src/lib.rs"), &context);
+        let module_any = state.generate_synthetic_node_id("crate", ItemKind::Module, None);
+        let module_id: ModuleNodeId = module_any.try_into().expect("module id");
+        state.current_primary_defn_scope.push(module_id.into());
+        state
+    }
+
+    #[test]
+    fn constructs_typed_named_type_with_typed_argument() {
+        let mut state = test_state();
+        let ty: Type = syn::parse_str("Vec<Result<String, Error>>").expect("type syntax");
+
+        let root_id = get_or_create_type(&mut state, &ty);
+        let root = state
+            .code_graph
+            .type_graph
+            .iter()
+            .find(|node| node.id() == root_id)
+            .expect("root type node");
+
+        let TypedTypeNode::Named(named) = root else {
+            panic!("expected named root type");
+        };
+        assert_eq!(named.path, vec!["Vec"]);
+        assert_eq!(named.arguments.len(), 1);
+        assert_eq!(state.code_graph.type_graph.len(), 4);
+    }
+
+    #[test]
+    fn constructs_reference_node_with_typed_child_id() {
+        let mut state = test_state();
+        let ty: Type = syn::parse_str("&'a mut Foo").expect("type syntax");
+
+        let root_id = get_or_create_type(&mut state, &ty);
+        let root = state
+            .code_graph
+            .type_graph
+            .iter()
+            .find(|node| node.id() == root_id)
+            .expect("root type node");
+
+        let TypedTypeNode::Reference(reference) = root else {
+            panic!("expected reference root type");
+        };
+        assert_eq!(reference.lifetime.as_deref(), Some("a"));
+        assert!(reference.is_mutable);
+        assert!(matches!(reference.referenced, AnyTypeId::Named(_)));
     }
 }

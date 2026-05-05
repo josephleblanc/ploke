@@ -10,7 +10,9 @@
 
 use super::attribute_processing::{extract_attributes, extract_cfg_strings, extract_docstring};
 use super::state::VisitorState;
-use super::type_processing::{get_or_create_trait_bound_type, get_or_create_type};
+use super::type_processing::{
+    get_or_create_trait_bound_type, get_or_create_trait_type, get_or_create_type,
+};
 use crate::parser::graph::GraphAccess;
 use crate::parser::nodes::{FunctionNodeId, GeneratesAnyNodeId};
 // NodeId wrapper types for individual node types
@@ -37,10 +39,10 @@ use crate::parser::types::*;
 use crate::parser::visitor::calculate_cfg_hash_bytes;
 
 use crate::error::CodeVisitorError; // Import the new error type
+use crate::parser::type_slots::TraitTypeUseId;
 use crate::utils::LogStyleDebug;
 use crate::utils::logging::LogErrorConversion as _;
 use itertools::Itertools;
-use ploke_core::TypeId;
 
 use colored::*;
 use quote::ToTokens;
@@ -1601,7 +1603,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             });
 
             // Return TraitId
-            get_or_create_type(self.state, &ty)
+            get_or_create_trait_type(self.state, &ty)
         });
 
         // Process methods
@@ -1938,7 +1940,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let generic_params = self.state.process_generics(&item_trait.generics);
 
         // Process super traits
-        let super_traits: Vec<TypeId> = item_trait
+        let super_traits: Vec<TraitTypeUseId> = item_trait
             .supertraits
             .iter()
             .filter_map(|bound| {

@@ -297,6 +297,15 @@ impl ToCozoUuid for TypeId {
     }
 }
 
+impl<T> ToCozoUuid for T
+where
+    T: StructuralTypeId,
+{
+    fn to_cozo_uuid(self) -> DataValue {
+        DataValue::Uuid(UuidWrapper(self.uuid()))
+    }
+}
+
 pub mod test_ids {
     use ploke_core::NodeId;
 

@@ -1,7 +1,8 @@
 #![allow(unused_must_use)]
 // Needed to get rid of proc-macro induced warning for `ExpectedData`
+use crate::parser::type_slots::AnyTypeUseId;
 use derive_test_helpers::ExpectedData;
-use ploke_core::{TrackingHash, TypeId};
+use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -15,7 +16,7 @@ pub struct StaticNode {
     pub name: String,
     pub span: (usize, usize),
     pub visibility: VisibilityKind,
-    pub type_id: TypeId,
+    pub type_id: AnyTypeUseId,
     pub is_mutable: bool,
     pub value: Option<String>,
     pub attributes: Vec<Attribute>,
@@ -38,7 +39,7 @@ impl StaticNode {
         &self.visibility
     }
 
-    pub fn type_id(&self) -> TypeId {
+    pub fn type_id(&self) -> AnyTypeUseId {
         self.type_id
     }
 

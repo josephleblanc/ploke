@@ -1,5 +1,5 @@
+use crate::parser::type_slots::{AnyTypeUseId, TraitTypeUseId};
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
-use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
 
@@ -13,9 +13,9 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct ImplNode {
     pub id: ImplNodeId, // Use typed ID
-    pub self_type: TypeId,
+    pub self_type: AnyTypeUseId,
     pub span: (usize, usize),
-    pub trait_type: Option<TypeId>,
+    pub trait_type: Option<TraitTypeUseId>,
     pub methods: Vec<MethodNode>, // Changed from FunctionNode
     pub generic_params: Vec<GenericParamNode>,
     pub cfgs: Vec<String>,
@@ -34,7 +34,7 @@ impl ImplNode {
         self.id
     }
 
-    pub fn self_type(&self) -> TypeId {
+    pub fn self_type(&self) -> AnyTypeUseId {
         self.self_type
     }
 
@@ -42,7 +42,7 @@ impl ImplNode {
         self.span
     }
 
-    pub fn trait_type(&self) -> Option<TypeId> {
+    pub fn trait_type(&self) -> Option<TraitTypeUseId> {
         self.trait_type
     }
 

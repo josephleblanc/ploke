@@ -68,6 +68,27 @@ impl TypeNode {
     pub fn base_id(&self) -> TypeId {
         self.id().base_id()
     }
+
+    pub fn child_type_ids(&self) -> impl Iterator<Item = AnyTypeId> + '_ {
+        let children: &[AnyTypeId] = match self {
+            Self::Named(node) => &node.arguments,
+            Self::Reference(node) => std::slice::from_ref(&node.referenced),
+            Self::Slice(node) => std::slice::from_ref(&node.element),
+            Self::Array(node) => std::slice::from_ref(&node.element),
+            Self::Tuple(node) => &node.elements,
+            Self::Function(node) => &node.parameters,
+            Self::Never(_) | Self::Inferred(_) | Self::Macro(_) | Self::Unknown(_) => &[],
+            Self::RawPointer(node) => std::slice::from_ref(&node.pointee),
+            Self::TraitObject(node) => &node.bounds,
+            Self::ImplTrait(node) => &node.bounds,
+            Self::TraitBound(node) => &node.arguments,
+            Self::Paren(node) => std::slice::from_ref(&node.inner),
+        };
+        children.iter().copied().chain(match self {
+            Self::Function(node) => node.return_type.into_iter(),
+            _ => None.into_iter(),
+        })
+    }
 }
 
 macro_rules! impl_type_node_from {

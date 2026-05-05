@@ -114,7 +114,7 @@ use super::{
     UnknownTypeId,
 };
 use crate::parser::nodes::ids::StructuralTypeId;
-use ploke_core::{ItemKind, TypeId};
+use ploke_core::{IdTrait, ItemKind, TypeId};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::{self, Display};
@@ -229,6 +229,23 @@ macro_rules! define_structural_type_family {
             }
         }
 
+        impl IdTrait for $Family {
+            #[inline]
+            fn uuid(&self) -> uuid::Uuid {
+                self.base_id().uuid()
+            }
+
+            #[inline]
+            fn is_resolved(&self) -> bool {
+                self.base_id().is_resolved()
+            }
+
+            #[inline]
+            fn is_synthetic(&self) -> bool {
+                self.base_id().is_synthetic()
+            }
+        }
+
         impl AnyTypedId for $Family {}
         impl CategoricalTypedId for $Family {}
 
@@ -262,6 +279,13 @@ macro_rules! define_structural_type_family {
                 match self {
                     Self::$Variant(id) => write!(f, "{}({})", stringify!($Variant), id),
                 }
+            }
+        }
+
+        impl Into<cozo::DataValue> for $Family {
+            #[inline]
+            fn into(self) -> cozo::DataValue {
+                cozo::DataValue::Uuid(cozo::UuidWrapper(self.uuid()))
             }
         }
     };
@@ -305,6 +329,23 @@ macro_rules! define_structural_type_family {
                         Self::$Variant(id) => id.base_id(),
                     )+
                 }
+            }
+        }
+
+        impl IdTrait for $Family {
+            #[inline]
+            fn uuid(&self) -> uuid::Uuid {
+                self.base_id().uuid()
+            }
+
+            #[inline]
+            fn is_resolved(&self) -> bool {
+                self.base_id().is_resolved()
+            }
+
+            #[inline]
+            fn is_synthetic(&self) -> bool {
+                self.base_id().is_synthetic()
             }
         }
 
@@ -366,6 +407,13 @@ macro_rules! define_structural_type_family {
                         Self::$Variant(id) => write!(f, "{}({})", stringify!($Variant), id),
                     )+
                 }
+            }
+        }
+
+        impl Into<cozo::DataValue> for $Family {
+            #[inline]
+            fn into(self) -> cozo::DataValue {
+                cozo::DataValue::Uuid(cozo::UuidWrapper(self.uuid()))
             }
         }
     };
@@ -612,6 +660,15 @@ impl From<OrdinaryTypeSourceId> for TypeSourceId {
     }
 }
 
+impl From<OrdinaryTypeSourceId> for AnyTypeId {
+    #[inline]
+    fn from(id: OrdinaryTypeSourceId) -> Self {
+        match id {
+            OrdinaryTypeSourceId::Named(id) => AnyTypeId::Named(id),
+        }
+    }
+}
+
 impl TryFrom<TypeSourceId> for OrdinaryTypeSourceId {
     type Error = TryFromOrdinaryTypeSourceError;
 
@@ -646,6 +703,16 @@ impl From<TraitTypeSourceId> for TypeSourceId {
         match id {
             TraitTypeSourceId::Named(id) => TypeSourceId::Named(id),
             TraitTypeSourceId::TraitBound(id) => TypeSourceId::TraitBound(id),
+        }
+    }
+}
+
+impl From<TraitTypeSourceId> for AnyTypeId {
+    #[inline]
+    fn from(id: TraitTypeSourceId) -> Self {
+        match id {
+            TraitTypeSourceId::Named(id) => AnyTypeId::Named(id),
+            TraitTypeSourceId::TraitBound(id) => AnyTypeId::TraitBound(id),
         }
     }
 }

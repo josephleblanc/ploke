@@ -2,9 +2,10 @@
 // Needed to get rid of proc-macro induced warning for `ExpectedData`
 
 use crate::parser::graph::GraphAccess;
+use crate::parser::type_slots::AnyTypeUseId;
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
 use derive_test_helpers::ExpectedData;
-use ploke_core::{TrackingHash, TypeId};
+use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
 
@@ -22,7 +23,7 @@ pub struct FunctionNode {
     pub span: (usize, usize),
     pub visibility: VisibilityKind,
     pub parameters: Vec<ParamData>,
-    pub return_type: Option<TypeId>,
+    pub return_type: Option<AnyTypeUseId>,
     pub generic_params: Vec<GenericParamNode>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
@@ -75,7 +76,7 @@ impl HasAttributes for FunctionNode {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ParamData {
     pub name: Option<String>,
-    pub type_id: TypeId, // The ID of the parameter's type
+    pub type_id: AnyTypeUseId, // The ID of the parameter's type
     pub is_mutable: bool,
     pub is_self: bool,
 }

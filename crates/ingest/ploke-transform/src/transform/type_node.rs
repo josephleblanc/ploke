@@ -1,11 +1,27 @@
+#[cfg(not(feature = "typed_type_graph"))]
 use ploke_core::TypeKind;
+#[cfg(not(feature = "typed_type_graph"))]
 use syn_parser::{resolve::Colorize, utils::LogStyleDebug};
 use tracing::instrument;
 
+#[cfg(not(feature = "typed_type_graph"))]
 use crate::schema::types::*;
 
 use super::*;
 
+#[cfg(feature = "typed_type_graph")]
+#[instrument(skip_all)]
+pub(super) fn transform_types(
+    _db: &Db<MemStorage>,
+    type_nodes: Vec<TypeNode>,
+) -> Result<(), TransformError> {
+    Err(TransformError::Transformation(format!(
+        "typed_type_graph type-node transform is not implemented for {} type nodes",
+        type_nodes.len()
+    )))
+}
+
+#[cfg(not(feature = "typed_type_graph"))]
 #[instrument(skip_all)]
 pub(super) fn transform_types(
     db: &Db<MemStorage>,
@@ -271,6 +287,7 @@ pub(super) fn transform_types(
     Ok(())
 }
 
+#[cfg(not(feature = "typed_type_graph"))]
 fn process_element_type(type_node: &TypeNode) -> DataValue {
     let cozo_element_type = type_node
         .related_types
@@ -280,7 +297,7 @@ fn process_element_type(type_node: &TypeNode) -> DataValue {
     cozo_element_type
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "typed_type_graph")))]
 mod tests {
 
     use cozo::{Db, MemStorage};

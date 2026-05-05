@@ -1,10 +1,11 @@
 #![allow(unused_must_use)]
 // Needed to get rid of proc-macro induced warning for `ExpectedData`
 
+use crate::parser::type_slots::TraitTypeUseId;
 use crate::parser::types::GenericParamNode;
 use derive_test_helpers::ExpectedData;
 // Removed define_node_info_struct import
-use ploke_core::{TrackingHash, TypeId};
+use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
 
@@ -24,7 +25,7 @@ pub struct TraitNode {
     pub methods: Vec<MethodNode>, // Changed from FunctionNode
     pub generic_params: Vec<GenericParamNode>,
     // TODO: Update super_traits to use a Vec of TraitNodeId
-    pub super_traits: Vec<TypeId>,
+    pub super_traits: Vec<TraitTypeUseId>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
