@@ -126,7 +126,8 @@ use tracing::{debug, instrument};
 use super::*;
 use crate::BranchDisposition;
 use crate::cli::prototype1_state::backend::{GitWorktreeBackend, RealizeRequest, WorkspaceBackend};
-use crate::cli::prototype1_state::child::{Child, Ready};
+use crate::cli::prototype1_state::channel::{Channel, Endpoints, FileTransport};
+use crate::cli::prototype1_state::child::{Child, Ready, Starting};
 use crate::cli::prototype1_state::cli_facing::{
     Prototype1BranchEvaluationReport, build_prototype1_branch_evaluation_report,
     ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
@@ -256,6 +257,29 @@ fn record_prototype1_child_ready(
     runtime_id: crate::cli::prototype1_state::event::RuntimeId,
     journal_path: &Path,
 ) -> Result<Child<Ready>, PrepareError> {
+    prototype1_child_starting(
+        campaign_id,
+        manifest_path,
+        node,
+        workspace_root,
+        runtime_id,
+        journal_path,
+    )?
+    .ready()
+    .map_err(|err| PrepareError::DatabaseSetup {
+        phase: "prototype1_child_ready",
+        detail: err.to_string(),
+    })
+}
+
+fn prototype1_child_starting(
+    campaign_id: &str,
+    manifest_path: &Path,
+    node: &crate::intervention::Prototype1NodeRecord,
+    workspace_root: &Path,
+    runtime_id: crate::cli::prototype1_state::event::RuntimeId,
+    journal_path: &Path,
+) -> Result<Child<Starting>, PrepareError> {
     let resolved = resolve_treatment_branch(campaign_id, manifest_path, &node.branch_id)?;
     let refs = Refs {
         campaign_id: campaign_id.to_string(),
@@ -284,19 +308,26 @@ fn record_prototype1_child_ready(
         "recording child ready handshake"
     );
 
-    Child::new(
+    Ok(Child::new(
         journal_path.to_path_buf(),
         runtime_id,
         node.generation,
         refs,
         paths,
         std::process::id(),
-    )
-    .ready()
-    .map_err(|err| PrepareError::DatabaseSetup {
-        phase: "prototype1_child_ready",
-        detail: err.to_string(),
-    })
+    ))
+}
+
+fn channel_error_phase(
+    phase: &'static str,
+    error: crate::cli::prototype1_state::channel::ChannelError<
+        crate::cli::prototype1_state::channel::FileTransportError,
+    >,
+) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase,
+        detail: format!("{error:?}"),
+    }
 }
 
 fn record_prototype1_child_ready_if_configured(
@@ -2084,19 +2115,45 @@ pub(super) async fn execute_prototype1_runner_invocation(
         invocation.node_id(),
         Prototype1NodeStatus::Running,
     )?;
-    let child = record_prototype1_child_ready(
+    let child = prototype1_child_starting(
         invocation.campaign_id(),
         &manifest_path,
         &node,
         &request.workspace_root,
         invocation.runtime_id(),
         invocation.journal_path(),
-    )?
-    .evaluating()
-    .map_err(|err| PrepareError::DatabaseSetup {
-        phase: "prototype1_child_evaluating",
+    )?;
+    let channel = invocation
+        .channel_endpoints()
+        .map(|endpoints: Endpoints| Channel::for_child(&child, endpoints, FileTransport));
+    let channel = match channel {
+        Some(channel) => Some(
+            channel
+                .send_ready()
+                .map_err(|err| channel_error_phase("prototype1_child_channel_ready", err))?
+                .0,
+        ),
+        None => None,
+    };
+    let child = child.ready().map_err(|err| PrepareError::DatabaseSetup {
+        phase: "prototype1_child_ready",
         detail: err.to_string(),
     })?;
+    let channel = match channel {
+        Some(channel) => Some(
+            channel
+                .send_evaluating()
+                .map_err(|err| channel_error_phase("prototype1_child_channel_evaluating", err))?
+                .0,
+        ),
+        None => None,
+    };
+    let child = child
+        .evaluating()
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "prototype1_child_evaluating",
+            detail: err.to_string(),
+        })?;
 
     let outcome = run_prototype1_branch_evaluation(
         invocation.campaign_id(),
@@ -2128,6 +2185,11 @@ pub(super) async fn execute_prototype1_runner_invocation(
         invocation.runtime_id(),
         result,
     )?;
+    if let Some(channel) = channel {
+        let _ = channel
+            .send_result_written(runner_result_path.clone())
+            .map_err(|err| channel_error_phase("prototype1_child_channel_result_written", err))?;
+    }
     let _child =
         child
             .result_written(runner_result_path)
@@ -2250,11 +2312,14 @@ pub(super) async fn run_prototype1_branch_evaluation_via_child(
     let journal_path = prototype1_transition_journal_path(&baseline_manifest_path);
     let invocation_path =
         crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
+    let channel_root =
+        crate::cli::prototype1_state::invocation::channel_root(&node.node_dir, runtime_id);
     let invocation = crate::cli::prototype1_state::invocation::ChildInvocation::new(
         baseline_campaign_id.to_string(),
         node.node_id.clone(),
         runtime_id,
         journal_path.clone(),
+        channel_root,
     );
     debug!(
         target: EXECUTION_DEBUG_TARGET,

@@ -34,8 +34,9 @@ use crate::intervention::{
 use crate::spec::PrepareError;
 
 use super::c1::{Acknowledged, Artifact, Binary, Child, ChildAckState, Parent, Present, Prototype};
+use super::channel::{Channel, Cursor, FileTransport, ToParent};
 use super::event::{ChildRuntimeLifecycle, ContentHash, Paths, RecordedAt, Refs, RuntimeId};
-use super::invocation::{ChildInvocation, invocation_path, write_child_invocation};
+use super::invocation::{ChildInvocation, channel_root, invocation_path, write_child_invocation};
 use super::journal::{
     JournalEntry, PrototypeJournal, PrototypeJournalError, ReadyEntry, SpawnEntry,
     SpawnObservation, SpawnPhase, Streams,
@@ -354,6 +355,11 @@ pub(crate) enum SpawnChildError {
         #[source]
         source: PrototypeJournalError,
     },
+    #[error("failed to read child channel for runtime '{runtime_id}': {detail}")]
+    ReadChannel {
+        runtime_id: RuntimeId,
+        detail: String,
+    },
 }
 
 /// Committed non-success result for the `C3 -> C4` handoff transition.
@@ -540,11 +546,13 @@ impl Intervention<C3, C4> for SpawnChild {
             },
         )?;
         let invocation_path = invocation_path(&from.node.node_dir, self.runtime_id);
+        let channel_root = channel_root(&from.node.node_dir, self.runtime_id);
         let invocation = ChildInvocation::new(
             from.campaign_id.clone(),
             from.node.node_id.clone(),
             self.runtime_id,
             records.path().to_path_buf(),
+            channel_root,
         );
         write_child_invocation(&invocation_path, &invocation).map_err(|source| {
             CommitError::Transition(SpawnChildError::WriteInvocation {
@@ -623,11 +631,19 @@ impl Intervention<C3, C4> for SpawnChild {
                 source,
             })?;
 
-        let outcome = wait_for_ready(&handoff, &mut child, self.runtime_id)
-            .map_err(CommitError::Transition)?;
+        let parent_channel = invocation
+            .channel_endpoints()
+            .map(|endpoints| Channel::for_role(&from, endpoints, FileTransport));
+        let outcome = wait_for_ready(
+            &handoff,
+            parent_channel.as_ref(),
+            &mut child,
+            self.runtime_id,
+        )
+        .map_err(CommitError::Transition)?;
 
         match outcome {
-            WaitOutcome::Ready(_ready) => {
+            WaitOutcome::Ready(_) | WaitOutcome::ReadyFromChannel => {
                 let (_, node) = update_node_status(
                     &from.campaign_id,
                     &from.campaign_manifest_path,
@@ -741,16 +757,41 @@ impl Intervention<C3, C4> for SpawnChild {
 
 enum WaitOutcome {
     Ready(Box<ReadyEntry>),
+    ReadyFromChannel,
     Rejected(Rejected),
 }
 
 fn wait_for_ready(
     handoff: &Handoff,
+    channel: Option<&Channel<C3, FileTransport>>,
     child: &mut ProcessChild,
     runtime_id: RuntimeId,
 ) -> Result<WaitOutcome, SpawnChildError> {
     let start = Instant::now();
+    let mut cursor = Cursor::start();
     loop {
+        if let Some(channel) = channel {
+            let (next_cursor, messages) =
+                channel
+                    .recv_from_child(cursor)
+                    .map_err(|source| SpawnChildError::ReadChannel {
+                        runtime_id,
+                        detail: format!("{source:?}"),
+                    })?;
+            cursor = next_cursor;
+            if messages
+                .iter()
+                .any(|message| matches!(message.body(), ToParent::Ready))
+            {
+                debug!(
+                    target: ploke_core::EXECUTION_DEBUG_TARGET,
+                    runtime_id = %runtime_id,
+                    "observed child ready channel message"
+                );
+                return Ok(WaitOutcome::ReadyFromChannel);
+            }
+        }
+
         if let Some(ready) = handoff
             .find_ready(runtime_id)
             .map_err(|source| SpawnChildError::ReadJournal { source })?

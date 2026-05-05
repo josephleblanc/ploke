@@ -20,11 +20,12 @@ use crate::intervention::{
 use crate::spec::PrepareError;
 
 use super::c3::C4;
+use super::channel::{Channel, Cursor, FileTransport, ToParent};
 use super::event::{
     ChildRuntimeLifecycle, ObservedChildTerminal, Paths, RecordedAt, Refs, RuntimeId, TransitionId,
     World,
 };
-use super::invocation::result_path;
+use super::invocation::{channel_root, result_path};
 use super::journal::{
     CompletionEntry, JournalEntry, ObservedChildResult, PrototypeJournal, PrototypeJournalError,
 };
@@ -175,6 +176,8 @@ pub(crate) enum ObserveChildError {
         #[source]
         source: PrototypeJournalError,
     },
+    #[error("failed to read child channel: {detail}")]
+    ReadChannel { detail: String },
 }
 
 /// Surface over the runner result path used by child-completion observation.
@@ -241,6 +244,28 @@ fn child_result_path(
         })
 }
 
+fn child_result_path_from_channel(
+    channel: &Channel<C4, FileTransport>,
+    cursor: Cursor,
+) -> Result<(Cursor, Option<PathBuf>), ObserveChildError> {
+    let (cursor, messages) =
+        channel
+            .recv_from_child(cursor)
+            .map_err(|source| ObserveChildError::ReadChannel {
+                detail: format!("{source:?}"),
+            })?;
+    let result_path = messages
+        .into_iter()
+        .find_map(|message| match message.body() {
+            ToParent::ResultWritten { runner_result_path } => Some(runner_result_path.clone()),
+            ToParent::Ready
+            | ToParent::Evaluating
+            | ToParent::Failed { .. }
+            | ToParent::Exited { .. } => None,
+        });
+    Ok((cursor, result_path))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Rejected {}
 
@@ -301,9 +326,24 @@ impl Intervention<C4, C5> for ObserveChild {
             "recorded completion before entry"
         );
 
+        let parent_channel = Channel::for_role(
+            &from,
+            super::channel::Endpoints::new(
+                channel_root(&from.node.node_dir, runtime_id),
+                from.campaign_id.clone(),
+                from.node.node_id.clone(),
+                runtime_id,
+            ),
+            FileTransport,
+        );
+        let mut channel_cursor = Cursor::start();
         loop {
-            if let Some(runner_result_path) =
-                child_result_path(records, runtime_id).map_err(CommitError::Transition)?
+            let channel_result = child_result_path_from_channel(&parent_channel, channel_cursor)
+                .map_err(CommitError::Transition)?;
+            channel_cursor = channel_result.0;
+            if let Some(runner_result_path) = channel_result
+                .1
+                .or(child_result_path(records, runtime_id).map_err(CommitError::Transition)?)
             {
                 if let Some(wait) = wait.take() {
                     wait.success();

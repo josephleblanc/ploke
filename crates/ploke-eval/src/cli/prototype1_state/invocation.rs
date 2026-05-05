@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use crate::spec::PrepareError;
 
 use super::{
+    channel::Endpoints,
     event::RuntimeId,
     parent::{Parent, Retired},
 };
@@ -100,6 +101,8 @@ pub(crate) struct Invocation {
     pub runtime_id: RuntimeId,
     pub journal_path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_root: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_parent_root: Option<PathBuf>,
     pub created_at: String,
 }
@@ -132,6 +135,7 @@ impl Invocation {
         node_id: String,
         runtime_id: RuntimeId,
         journal_path: PathBuf,
+        channel_root: PathBuf,
     ) -> Self {
         Self {
             schema_version: SCHEMA_VERSION.to_string(),
@@ -140,6 +144,7 @@ impl Invocation {
             node_id,
             runtime_id,
             journal_path,
+            channel_root: Some(channel_root),
             active_parent_root: None,
             created_at: Utc::now().to_rfc3339(),
         }
@@ -160,6 +165,7 @@ impl Invocation {
             node_id,
             runtime_id,
             journal_path,
+            channel_root: None,
             active_parent_root: Some(active_parent_root),
             created_at: Utc::now().to_rfc3339(),
         }
@@ -181,9 +187,10 @@ impl ChildInvocation {
         node_id: String,
         runtime_id: RuntimeId,
         journal_path: PathBuf,
+        channel_root: PathBuf,
     ) -> Self {
         Self {
-            inner: Invocation::child(campaign_id, node_id, runtime_id, journal_path),
+            inner: Invocation::child(campaign_id, node_id, runtime_id, journal_path, channel_root),
         }
     }
 
@@ -210,6 +217,18 @@ impl ChildInvocation {
     /// Shared journal path used for child acknowledgement.
     pub(crate) fn journal_path(&self) -> &Path {
         &self.inner.journal_path
+    }
+
+    /// Per-runtime parent/child channel endpoints for this leaf invocation.
+    pub(crate) fn channel_endpoints(&self) -> Option<Endpoints> {
+        self.inner.channel_root.as_ref().map(|root| {
+            Endpoints::new(
+                root.clone(),
+                self.inner.campaign_id.clone(),
+                self.inner.node_id.clone(),
+                self.inner.runtime_id,
+            )
+        })
     }
 
     /// CLI argv for launching exactly one leaf child evaluation.
@@ -321,6 +340,11 @@ pub(crate) fn invocations_dir(node_dir: &Path) -> PathBuf {
 /// Attempt-scoped invocation path for one concrete runtime.
 pub(crate) fn invocation_path(node_dir: &Path, runtime_id: RuntimeId) -> PathBuf {
     invocations_dir(node_dir).join(format!("{runtime_id}.json"))
+}
+
+/// Per-runtime parent/child channel root.
+pub(crate) fn channel_root(node_dir: &Path, runtime_id: RuntimeId) -> PathBuf {
+    node_dir.join("channels").join(runtime_id.to_string())
 }
 
 /// Directory containing attempt-scoped result artifacts for one node.
