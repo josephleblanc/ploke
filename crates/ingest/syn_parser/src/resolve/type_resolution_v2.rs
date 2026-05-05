@@ -64,24 +64,6 @@ pub struct TypeRelationSummary {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExpectedTarget {
-    Ordinary,
-    Trait,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SourceProof {
-    Ordinary(OrdinaryTypeSourceId),
-    Trait(TraitTypeSourceId),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TargetProof {
-    Ordinary(OrdinaryTypeTargetId),
-    Trait(TraitTypeTargetId),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TypeUseSite {
     context: ResolutionContext,
     source: TypeWorkItem,
@@ -123,9 +105,11 @@ impl<'a> TypeRelationResolver<'a> {
     }
 
     pub fn resolve_type_relations(&self) -> Result<TypeRelationReport, SynParserError> {
-        let relations: Vec<TypeRelation> = self
+        let mut relations: Vec<TypeRelation> = self
             .type_relation_results()
             .collect::<Result<Vec<_>, SynParserError>>()?;
+        relations.sort_unstable();
+        relations.dedup();
 
         Ok(TypeRelationReport {
             summary: TypeRelationSummary {
@@ -157,12 +141,51 @@ impl<'a> TypeRelationResolver<'a> {
         path: &[String],
         is_fully_qualified: bool,
     ) -> Result<Option<TypeRelation>, SynParserError> {
-        self.resolve_source(
-            SourceProof::Ordinary(source),
-            path,
-            is_fully_qualified,
-            context.containing_module,
-            Some(context.resolution_context_owner),
+        if path.len() == 1 && path[0] == "Self" {
+            return self
+                .resolve_self_target(context)
+                .map(|target| target.map(|target| TypeRelation::Ordinary { source, target }));
+        }
+
+        if let Some(type_param_id) =
+            self.resolve_type_generic_param(context.resolution_context_owner, path)
+        {
+            return Ok(Some(TypeRelation::Ordinary {
+                source,
+                target: OrdinaryTypeTargetId::from(type_param_id),
+            }));
+        }
+
+        self.resolve_path_target(context, path, is_fully_qualified, |candidate| {
+            self.prove_ordinary_target(candidate)
+        })
+        .map(|target| target.map(|target| TypeRelation::Ordinary { source, target }))
+    }
+
+    fn resolve_self_target(
+        &self,
+        context: ResolutionContext,
+    ) -> Result<Option<OrdinaryTypeTargetId>, SynParserError> {
+        let Some(impl_node) = self.impl_for_self_context(context.resolution_context_owner) else {
+            return Ok(None);
+        };
+
+        let self_context = ResolutionContext {
+            resolution_context_owner: impl_node.id.as_any(),
+            containing_module: context
+                .containing_module
+                .or_else(|| self.containing_module(impl_node.id.as_any())),
+        };
+
+        let TypeNode::Named(node) = self.type_node(impl_node.self_type)? else {
+            return Ok(None);
+        };
+
+        self.resolve_path_target(
+            self_context,
+            &node.path,
+            node.is_fully_qualified,
+            |candidate| self.prove_ordinary_target(candidate),
         )
     }
 
@@ -173,46 +196,19 @@ impl<'a> TypeRelationResolver<'a> {
         path: &[String],
         is_fully_qualified: bool,
     ) -> Result<Option<TypeRelation>, SynParserError> {
-        self.resolve_source(
-            SourceProof::Trait(source),
-            path,
-            is_fully_qualified,
-            context.containing_module,
-            Some(context.resolution_context_owner),
-        )
+        self.resolve_path_target(context, path, is_fully_qualified, |candidate| {
+            self.prove_trait_target(candidate)
+        })
+        .map(|target| target.map(|target| TypeRelation::Trait { source, target }))
     }
 
-    fn resolve_source(
+    fn resolve_path_target<T>(
         &self,
-        source: SourceProof,
+        context: ResolutionContext,
         path: &[String],
         is_fully_qualified: bool,
-        containing_module: Option<ModuleNodeId>,
-        owner: Option<AnyNodeId>,
-    ) -> Result<Option<TypeRelation>, SynParserError> {
-        let expected = match source {
-            SourceProof::Ordinary(_) => ExpectedTarget::Ordinary,
-            SourceProof::Trait(_) => ExpectedTarget::Trait,
-        };
-        self.resolve_path_source(
-            source,
-            path,
-            is_fully_qualified,
-            containing_module,
-            owner,
-            expected,
-        )
-    }
-
-    fn resolve_path_source(
-        &self,
-        source: SourceProof,
-        path: &[String],
-        is_fully_qualified: bool,
-        containing_module: Option<ModuleNodeId>,
-        owner: Option<AnyNodeId>,
-        expected: ExpectedTarget,
-    ) -> Result<Option<TypeRelation>, SynParserError> {
+        mut prove_target: impl FnMut(AnyNodeId) -> Option<T>,
+    ) -> Result<Option<T>, SynParserError> {
         if path.is_empty() {
             return Ok(None);
         }
@@ -225,15 +221,9 @@ impl<'a> TypeRelationResolver<'a> {
             return Ok(None);
         }
 
-        if let Some(owner) = owner
-            && let Some(type_param_id) = self.resolve_type_generic_param(owner, path)
-        {
-            let target = OrdinaryTypeTargetId::from(type_param_id);
-            return self.resolved_relation(source, TargetProof::Ordinary(target));
-        }
-
-        let containing_module =
-            containing_module.or_else(|| owner.and_then(|owner| self.containing_module(owner)));
+        let containing_module = context
+            .containing_module
+            .or_else(|| self.containing_module(context.resolution_context_owner));
         let Some(mut current_module) = containing_module else {
             return Ok(None);
         };
@@ -247,7 +237,7 @@ impl<'a> TypeRelationResolver<'a> {
             let is_last = idx == path.len() - 1;
             let segment = path[idx].as_str();
             if is_last {
-                return self.resolve_terminal_segment(source, current_module, segment, expected);
+                return self.resolve_terminal_target(current_module, segment, &mut prove_target);
             }
 
             current_module = match self.resolve_module_segment(current_module, segment)? {
@@ -259,44 +249,24 @@ impl<'a> TypeRelationResolver<'a> {
         Ok(None)
     }
 
-    fn resolved_relation(
-        &self,
-        source: SourceProof,
-        target: TargetProof,
-    ) -> Result<Option<TypeRelation>, SynParserError> {
-        let relation = match (source, target) {
-            (SourceProof::Ordinary(source), TargetProof::Ordinary(target)) => {
-                TypeRelation::Ordinary { source, target }
-            }
-            (SourceProof::Trait(source), TargetProof::Trait(target)) => {
-                TypeRelation::Trait { source, target }
-            }
-            _ => {
-                return Ok(None);
-            }
-        };
-
-        Ok(Some(relation))
+    fn prove_ordinary_target(&self, target: AnyNodeId) -> Option<OrdinaryTypeTargetId> {
+        match target {
+            AnyNodeId::Struct(id) => Some(id.into()),
+            AnyNodeId::Enum(id) => Some(id.into()),
+            AnyNodeId::Union(id) => Some(id.into()),
+            AnyNodeId::TypeAlias(id) => Some(id.into()),
+            AnyNodeId::GenericParam(id) => self
+                .generic_param_node(id)
+                .and_then(|param| TypeGenericParamNodeId::try_refine(id, &param.kind).ok())
+                .map(OrdinaryTypeTargetId::from),
+            _ => None,
+        }
     }
 
-    fn prove_target(&self, target: AnyNodeId, expected: ExpectedTarget) -> Option<TargetProof> {
-        match expected {
-            ExpectedTarget::Ordinary => match target {
-                AnyNodeId::Struct(id) => Some(TargetProof::Ordinary(id.into())),
-                AnyNodeId::Enum(id) => Some(TargetProof::Ordinary(id.into())),
-                AnyNodeId::Union(id) => Some(TargetProof::Ordinary(id.into())),
-                AnyNodeId::TypeAlias(id) => Some(TargetProof::Ordinary(id.into())),
-                AnyNodeId::GenericParam(id) => self
-                    .generic_param_node(id)
-                    .and_then(|param| TypeGenericParamNodeId::try_refine(id, &param.kind).ok())
-                    .map(OrdinaryTypeTargetId::from)
-                    .map(TargetProof::Ordinary),
-                _ => None,
-            },
-            ExpectedTarget::Trait => match target {
-                AnyNodeId::Trait(id) => Some(TargetProof::Trait(TraitTypeTargetId::from(id))),
-                _ => None,
-            },
+    fn prove_trait_target(&self, target: AnyNodeId) -> Option<TraitTypeTargetId> {
+        match target {
+            AnyNodeId::Trait(id) => Some(TraitTypeTargetId::from(id)),
+            _ => None,
         }
     }
 
@@ -462,18 +432,17 @@ impl<'a> TypeRelationResolver<'a> {
         Ok(resolved_module)
     }
 
-    fn resolve_terminal_segment(
+    fn resolve_terminal_target<T>(
         &self,
-        source: SourceProof,
         module_id: ModuleNodeId,
         segment: &str,
-        expected: ExpectedTarget,
-    ) -> Result<Option<TypeRelation>, SynParserError> {
+        prove_target: &mut impl FnMut(AnyNodeId) -> Option<T>,
+    ) -> Result<Option<T>, SynParserError> {
         let mut resolved_target = None;
         self.visit_scope_candidates(module_id, segment, &mut |candidate| {
-            if let Some(target) = self.prove_target(candidate, expected) {
-                if let Some((existing_id, _)) = resolved_target
-                    && existing_id != candidate
+            if let Some(target) = prove_target(candidate) {
+                if let Some((existing_id, _)) = &resolved_target
+                    && *existing_id != candidate
                 {
                     return Err(SynParserError::InternalState(format!(
                         "type resolution found multiple type candidates for `{segment}`: {existing_id} and {candidate}"
@@ -485,7 +454,7 @@ impl<'a> TypeRelationResolver<'a> {
         })?;
 
         match resolved_target {
-            Some((_, target)) => self.resolved_relation(source, target),
+            Some((_, target)) => Ok(Some(target)),
             None => Ok(None),
         }
     }
@@ -567,6 +536,20 @@ impl<'a> TypeRelationResolver<'a> {
                 }
                 _ => None,
             })
+    }
+
+    fn impl_for_self_context(
+        &self,
+        owner: AnyNodeId,
+    ) -> Option<&'a crate::parser::nodes::ImplNode> {
+        match owner {
+            AnyNodeId::Impl(id) => self.graph.impls().iter().find(|node| node.id == id),
+            AnyNodeId::Method(method_id) => match self.associated_owner_for_method(method_id)? {
+                AnyNodeId::Impl(id) => self.graph.impls().iter().find(|node| node.id == id),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     fn generic_params_for_owner(&self, owner: AnyNodeId) -> Option<&'a [GenericParamNode]> {

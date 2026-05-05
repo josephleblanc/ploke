@@ -815,6 +815,78 @@ macro_rules! type_use_slot_resolution_case {
 }
 
 #[macro_export]
+macro_rules! type_relation_case {
+    (
+        $test_name:ident,
+        graph: $graph:expr,
+        report: $report:expr,
+        expected: $expected:expr
+    ) => {
+        #[test]
+        fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
+            let _ = env_logger::builder()
+                .is_test(true)
+                .format_timestamp(None)
+                .try_init();
+
+            $crate::common::type_relation_resolution::assert_type_relation_once(
+                $graph, $report, &$expected,
+            )?;
+
+            Ok(())
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! type_relation_cases {
+    (
+        graph: $graph:expr,
+        report: $report:expr,
+        cases: [
+            $(
+                $test_name:ident => $expected:expr
+            ),* $(,)?
+        ]
+    ) => {
+        $(
+            $crate::type_relation_case!(
+                $test_name,
+                graph: $graph,
+                report: $report,
+                expected: $expected
+            );
+        )*
+    };
+}
+
+#[macro_export]
+macro_rules! type_relations_present_case {
+    (
+        $test_name:ident,
+        graph: $graph:expr,
+        report: $report:expr,
+        expected: [$($expected:expr),* $(,)?]
+    ) => {
+        #[test]
+        fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
+            let _ = env_logger::builder()
+                .is_test(true)
+                .format_timestamp(None)
+                .try_init();
+
+            $crate::common::type_relation_resolution::assert_type_relations_present(
+                $graph,
+                $report,
+                &[$($expected),*],
+            )?;
+
+            Ok(())
+        }
+    };
+}
+
+#[macro_export]
 macro_rules! run_paranoid_test {
     ($setup:ident, $test_name:ident $(, $test_body:expr)?) => {
         #[test]
