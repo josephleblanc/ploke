@@ -1,6 +1,6 @@
 //! Typed type-resolution facts for the post-merge semantic bridge.
 //!
-//! This module is the v2 shape of [`super::type_resolution`]. The older module
+//! This module is the v2 shape of the legacy `type_resolution` pass. The older module
 //! emits report rows that combine the type-use site, resolution state, broad
 //! target enum, and resolved `TypeId` promotion. This module keeps those facts
 //! separate and constructs [`TypeRelation`] values at the boundary where source
@@ -45,11 +45,26 @@ use crate::{
     },
 };
 
-use super::{RelationIndexer, module_tree::ModuleTree, type_resolution::TypeUseRole};
+use super::{RelationIndexer, module_tree::ModuleTree};
 
 const MAX_IMPORT_CHAIN_DEPTH: usize = 100;
 const MAX_TYPE_TREE_STACK: usize = 128;
 const MAX_TYPE_TREE_STEPS: usize = 4096;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeUseRole {
+    FunctionReturn,
+    FunctionParam,
+    MethodReturn,
+    MethodParam,
+    Field,
+    Const,
+    Static,
+    TypeAliasTarget,
+    ImplSelf,
+    ImplTrait,
+    TraitSuper,
+}
 
 /// Owned collection adapter for the v2 typed type-relation stream.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]

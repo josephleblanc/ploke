@@ -3,6 +3,7 @@
 // -- external
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
 
+#[cfg(not(feature = "typed_type_graph"))]
 use crate_context::transform_crate_context;
 pub use workspace::transform_parsed_workspace;
 // -- from workspace
@@ -12,7 +13,10 @@ use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
 use syn_parser::resolve::RelationIndexer;
 use syn_parser::resolve::module_tree::ModuleTree;
+#[cfg(not(feature = "typed_type_graph"))]
 use syn_parser::resolve::type_resolution::resolve_type_uses_after_tree;
+#[cfg(feature = "typed_type_graph")]
+use syn_parser::resolve::type_resolution_v2::resolve_type_relations_after_tree;
 use syn_parser::utils::LogStyle;
 
 // ---- local imports ----
@@ -24,7 +28,9 @@ use crate::error::TransformError;
 
 // -- transforms
 use consts::transform_consts;
-use edges::{transform_relations, transform_resolved_type_uses};
+use edges::transform_relations;
+#[cfg(not(feature = "typed_type_graph"))]
+use edges::transform_resolved_type_uses;
 use enums::transform_enums;
 use impls::transform_impls;
 use imports::transform_imports;
@@ -123,6 +129,25 @@ pub fn transform_code_graph(
 }
 
 /// Transforms a CodeGraph into CozoDB relations, inserts into the cozo database
+#[cfg(feature = "typed_type_graph")]
+#[instrument(skip_all)]
+pub fn transform_parsed_graph(
+    _db: &Db<MemStorage>,
+    parsed_graph: ParsedCodeGraph,
+    tree: &ModuleTree,
+) -> Result<(), TransformError> {
+    let type_relation_report =
+        resolve_type_relations_after_tree(&parsed_graph, tree).map_err(|err| {
+            TransformError::Transformation(format!("typed type relation resolution failed: {err}"))
+        })?;
+    Err(TransformError::Transformation(format!(
+        "typed_type_graph Cozo transform is not implemented for {} typed type relations",
+        type_relation_report.summary.resolved
+    )))
+}
+
+/// Transforms a CodeGraph into CozoDB relations, inserts into the cozo database
+#[cfg(not(feature = "typed_type_graph"))]
 #[instrument(skip_all)]
 pub fn transform_parsed_graph(
     db: &Db<MemStorage>,

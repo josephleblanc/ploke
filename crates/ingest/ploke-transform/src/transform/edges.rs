@@ -80,11 +80,14 @@
 
 use cozo::{Db, MemStorage};
 use syn_parser::parser::relations::SyntacticRelation;
+#[cfg(not(feature = "typed_type_graph"))]
 use syn_parser::resolve::type_resolution::TypeResolutionReport;
 use tracing::instrument;
 
 use super::*;
-use crate::schema::edges::{ResolvedTypeUseSchema, SyntacticRelationSchema};
+#[cfg(not(feature = "typed_type_graph"))]
+use crate::schema::edges::ResolvedTypeUseSchema;
+use crate::schema::edges::SyntacticRelationSchema;
 
 #[instrument(skip_all)]
 pub(super) fn transform_relations(
@@ -103,6 +106,7 @@ pub(super) fn transform_relations(
 }
 
 #[instrument(skip_all)]
+#[cfg(not(feature = "typed_type_graph"))]
 pub(super) fn transform_resolved_type_uses(
     db: &Db<MemStorage>,
     report: &TypeResolutionReport,

@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use syn_parser::parser::nodes::ToCozoUuid;
 use syn_parser::parser::relations::SyntacticRelation;
 use syn_parser::resolve::Colorize;
+#[cfg(not(feature = "typed_type_graph"))]
 use syn_parser::resolve::type_resolution::TypeUseResolution;
 use syn_parser::utils::{LogStyle, LogStyleDebug};
 
@@ -25,6 +26,7 @@ define_schema!(SyntacticRelationSchema {
     target_kind: "String"
 });
 
+#[cfg(not(feature = "typed_type_graph"))]
 define_schema!(ResolvedTypeUseSchema {
     "resolved_type_use",
     owner_id: "Uuid",
@@ -109,6 +111,7 @@ impl SyntacticRelationSchema {
     }
 }
 
+#[cfg(not(feature = "typed_type_graph"))]
 impl ResolvedTypeUseSchema {
     pub fn insert_resolution(
         &self,
