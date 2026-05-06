@@ -30,7 +30,7 @@ mod prototype1_process;
 ///
 /// See `prototype1_state::mod` for the implementation split and the on-disk
 /// campaign layout under `~/.ploke-eval/campaigns/<campaign-id>/prototype1/`.
-mod prototype1_state;
+pub(crate) mod prototype1_state;
 
 const TOOL_REVIEW_CALL_LIMIT: usize = 8;
 const PROTOCOL_HTTP_MAX_ATTEMPTS: u32 = 1;
@@ -423,6 +423,13 @@ pub enum Prototype1StateStopAfter {
     Complete,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1SuccessorSelection {
+    GenerationLocal,
+    HistoryTraversal,
+}
+
 #[derive(Debug, Parser)]
 #[command(about = "Run the typed Prototype 1 state transitions for the active parent checkout")]
 pub struct Prototype1StateCommand {
@@ -452,6 +459,14 @@ pub struct Prototype1StateCommand {
 
     #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Complete)]
     pub stop_after: Prototype1StateStopAfter,
+
+    /// Successor-selection policy. History traversal is opt-in and only uses sealed History candidates.
+    #[arg(long, value_enum, default_value_t = Prototype1SuccessorSelection::GenerationLocal)]
+    pub successor_selection: Prototype1SuccessorSelection,
+
+    /// Replay seed committed by History-backed traversal selection.
+    #[arg(long, default_value_t = 0)]
+    pub successor_selection_seed: u64,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,

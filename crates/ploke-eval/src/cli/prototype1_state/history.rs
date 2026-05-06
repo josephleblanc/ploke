@@ -3267,8 +3267,18 @@ pub(crate) struct SelectionDecisionEntry {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
 
+    /// Replay parameters for History-backed traversal policies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) traversal: Option<SelectionTraversalEvidence>,
+
     /// Decision result under `procedure_or_policy`.
     pub(crate) decision: crate::successor_selection::SuccessorDecision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SelectionTraversalEvidence {
+    pub(crate) seed: u64,
+    pub(crate) normalize_frontier: bool,
 }
 
 impl SelectionDecisionEntry {
@@ -3278,6 +3288,26 @@ impl SelectionDecisionEntry {
         selected_candidate: Option<SubjectRef>,
         considered: Vec<EvaluationPayload>,
         projection_failures: Vec<SelectionProjectionFailure>,
+        decision: crate::successor_selection::SuccessorDecision,
+    ) -> Result<Self, HistoryError> {
+        Self::new_with_traversal(
+            procedure_or_policy,
+            scope,
+            selected_candidate,
+            considered,
+            projection_failures,
+            None,
+            decision,
+        )
+    }
+
+    pub(crate) fn new_with_traversal(
+        procedure_or_policy: ProcedureRef,
+        scope: SelectionScope,
+        selected_candidate: Option<SubjectRef>,
+        considered: Vec<EvaluationPayload>,
+        projection_failures: Vec<SelectionProjectionFailure>,
+        traversal: Option<SelectionTraversalEvidence>,
         decision: crate::successor_selection::SuccessorDecision,
     ) -> Result<Self, HistoryError> {
         Self::validate_decision(
@@ -3300,6 +3330,7 @@ impl SelectionDecisionEntry {
             considered_order_hash,
             candidate_set,
             projection_failures,
+            traversal,
             decision,
         })
     }
@@ -3324,12 +3355,20 @@ impl SelectionDecisionEntry {
             )));
         }
 
+        let expected_payload_procedure = if procedure_or_policy.as_str()
+            == crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID
+        {
+            crate::successor_selection::PROCEDURE_ID
+        } else {
+            procedure_or_policy.as_str()
+        };
+
         for payload in considered {
-            if payload.procedure.as_str() != procedure_or_policy.as_str() {
+            if payload.procedure.as_str() != expected_payload_procedure {
                 return Err(invalid(format!(
-                    "considered payload procedure mismatch: candidate={}, entry={}, payload={}",
+                    "considered payload procedure mismatch: candidate={}, expected={}, payload={}",
                     payload.candidate.as_str(),
-                    procedure_or_policy.as_str(),
+                    expected_payload_procedure,
                     payload.procedure.as_str()
                 )));
             }
@@ -3472,6 +3511,12 @@ pub(crate) struct SelectionProjectionFailureId(pub(crate) HistoryHash);
 pub(crate) enum SelectionProjectionFailureKind {
     MissingSelectionInput,
     ChildEvidenceStoreLoadFailed,
+    SelectionInputBindingInvalid,
+    SelectionProcedureMismatch,
+    CandidateSetMembershipMissing,
+    CandidateSetPayloadHashMismatch,
+    CandidateSetProofInvalid,
+    DecisionGradeIneligible,
 }
 
 /// [`SelectionProjectionFailureId`] preimage: only fields that are also present on the serialized
@@ -5107,36 +5152,97 @@ mod tests {
     }
 
     fn evaluation_payload(node_id: &str, branch_id: &str, plan_index: u32) -> EvaluationPayload {
-        EvaluationPayload {
+        let input = crate::successor_selection::SelectionInput::new(
+            crate::successor_selection::CandidateRef {
+                node_id: node_id.to_string(),
+                branch_id: branch_id.to_string(),
+                generation: 2,
+            },
+            crate::BranchDisposition::Keep,
+            PathBuf::from(format!("evaluations/{branch_id}.json")),
+            vec![crate::successor_selection::RunComparison {
+                instance_id: "instance-a".to_string(),
+                parent_metrics: Some(test_metrics(false, false, 0)),
+                child_metrics: Some(test_metrics(true, true, 0)),
+                status: "compared".to_string(),
+            }],
+        );
+        EvaluationPayload::builder(
+            SubjectRef::new(format!("candidate:{node_id}:plan_index={plan_index}")),
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+        )
+        .selection_input(input)
+        .expect("selection input")
+        .sealed_candidate_evidence(SealedCandidateEvidence {
             schema_version: 2,
-            candidate: SubjectRef::new(format!("candidate:{node_id}:plan_index={plan_index}")),
-            procedure: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
-            selection_input: None,
-            selection_input_hash: None,
-            projection_failures: Vec::new(),
-            source_refs: Vec::new(),
-            source_hashes: Vec::new(),
-            sealed_evidence: Some(SealedCandidateEvidence {
-                schema_version: 2,
-                coordinate: CandidateCoordinate {
-                    node_id: node_id.to_string(),
-                    parent_node_id: None,
-                    branch_id: Some(branch_id.to_string()),
-                    generation: Some(2),
-                    plan_index: Some(plan_index),
-                    primary_runtime_id: Some(format!("runtime:{node_id}")),
-                },
-                lifecycle: CandidateLifecycle {
-                    planner_outcome: "done".to_string(),
-                    node_status: "completed".to_string(),
-                },
-                evaluations: Vec::new(),
-                runtimes: Vec::new(),
-                branches: Vec::new(),
-                extra_document_citations: Vec::new(),
-                extra_journal_citations: Vec::new(),
-                child_diagnostics: Vec::new(),
-            }),
+            coordinate: CandidateCoordinate {
+                node_id: node_id.to_string(),
+                parent_node_id: None,
+                branch_id: Some(branch_id.to_string()),
+                generation: Some(2),
+                plan_index: Some(plan_index),
+                primary_runtime_id: Some(format!("runtime:{node_id}")),
+            },
+            lifecycle: CandidateLifecycle {
+                planner_outcome: "done".to_string(),
+                node_status: "completed".to_string(),
+            },
+            evaluations: vec![test_sealed_evaluation(branch_id)],
+            runtimes: Vec::new(),
+            branches: Vec::new(),
+            extra_document_citations: Vec::new(),
+            extra_journal_citations: Vec::new(),
+            child_diagnostics: Vec::new(),
+        })
+        .build()
+    }
+
+    fn test_sealed_evaluation(branch_id: &str) -> SealedEvaluationEvidence {
+        SealedEvaluationEvidence {
+            branch_id: branch_id.to_string(),
+            evaluation_procedure_id: Some(
+                super::super::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID.to_string(),
+            ),
+            evaluator_identity: Some(serde_json::json!({"id":"test","version":"1"})),
+            eval_set_identity: Some(serde_json::json!({"id":"eval-set"})),
+            evaluation_artifact_citation: None,
+            overall_disposition: Some("keep".to_string()),
+            primary_report_citation: SealedEvidenceCitation {
+                ref_id: format!("report:{branch_id}"),
+                content_hash: None,
+                record_name: None,
+            },
+            compared_runs: Vec::new(),
+        }
+    }
+
+    fn test_metrics(
+        oracle_eligible: bool,
+        convergence: bool,
+        failed_tool_calls: usize,
+    ) -> OperationalRunMetrics {
+        OperationalRunMetrics {
+            tool_calls_total: 5,
+            tool_calls_failed: failed_tool_calls,
+            patch_attempted: true,
+            patch_apply_state: if convergence {
+                crate::PatchApplyState::Applied
+            } else {
+                crate::PatchApplyState::No
+            },
+            submission_artifact_state: if oracle_eligible {
+                crate::record::SubmissionArtifactState::Nonempty
+            } else {
+                crate::record::SubmissionArtifactState::Missing
+            },
+            partial_patch_failures: 0,
+            same_file_patch_retry_count: 0,
+            same_file_patch_max_streak: 0,
+            aborted: false,
+            aborted_repair_loop: false,
+            nonempty_valid_patch: convergence,
+            convergence,
+            oracle_eligible,
         }
     }
 
@@ -5410,6 +5516,89 @@ mod tests {
         assert_eq!(
             exact.candidates[0].payload.candidate.as_str(),
             "candidate:child-c:plan_index=0"
+        );
+    }
+
+    #[test]
+    fn history_traversal_selector_seals_cross_generation_considered_set() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+
+        let state0 = store.lineage_state(&lineage).expect("read empty state");
+        let mut block0 = open_block_from_state(&state0, 0, Vec::new());
+        let gen0 = selection_entry_for_scope(
+            SelectionScope::new("generation_local:parent_node_id=root;generation=1"),
+            "child-a",
+            "branch-a",
+            vec![evaluation_payload("child-a", "branch-a", 0)],
+        );
+        block0
+            .admit(proposed_selection_entry(gen0), actor("admitter"))
+            .expect("admit gen0 selection");
+        let sealed0 = seal(block0);
+        let sealed0_hash = *sealed0.block_hash();
+        store.append(&state0, &sealed0).expect("append gen0");
+
+        let state1 = store.lineage_state(&lineage).expect("read gen0 state");
+        let mut block1 = open_block_from_state(&state1, 1, vec![sealed0_hash]);
+        let gen1 = selection_entry_for_scope(
+            SelectionScope::new("generation_local:parent_node_id=child-a;generation=2"),
+            "child-b",
+            "branch-b",
+            vec![evaluation_payload("child-b", "branch-b", 0)],
+        );
+        block1
+            .admit(proposed_selection_entry(gen1), actor("admitter"))
+            .expect("admit gen1 selection");
+        let sealed1 = seal(block1);
+        store.append(&state1, &sealed1).expect("append gen1");
+
+        let history = History::new(store);
+        let scope = SelectionScope::all_admitted_candidates();
+        let traversal = crate::successor_selection::traversal::decide_history_traversal(
+            history.candidates(&scope).expect("history candidates"),
+            crate::successor_selection::HistoryTraversalConfig {
+                seed: 7,
+                normalize_frontier: true,
+            },
+        )
+        .expect("traversal decision")
+        .expect("selected candidate");
+
+        let entry = SelectionDecisionEntry::new_with_traversal(
+            ProcedureRef::new(crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID),
+            scope,
+            Some(traversal.selected_payload.candidate.clone()),
+            traversal.considered,
+            traversal.projection_failures,
+            Some(SelectionTraversalEvidence {
+                seed: 7,
+                normalize_frontier: true,
+            }),
+            traversal.decision,
+        )
+        .expect("history traversal entry");
+
+        assert_eq!(entry.considered.len(), 2);
+        assert_eq!(
+            entry.procedure_or_policy.as_str(),
+            crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID
+        );
+        assert_eq!(
+            entry.traversal.as_ref().map(|evidence| evidence.seed),
+            Some(7)
+        );
+        assert_eq!(
+            entry
+                .verify_candidate_set_commitment()
+                .expect("candidate set verifies"),
+            Some(true)
+        );
+        assert!(
+            entry
+                .candidate_set_membership(entry.selected_candidate.as_ref().expect("selected"))
+                .is_some()
         );
     }
 

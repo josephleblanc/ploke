@@ -20,12 +20,15 @@ pub mod decision;
 pub mod domains;
 pub mod evidence;
 pub mod registry;
+pub mod traversal;
 
 pub(crate) use decision::SuccessorDecision;
 pub(crate) use evidence::{RunComparison, SelectionInput};
 pub(crate) use registry::SelectionRegistry;
+pub(crate) use traversal::HistoryTraversalConfig;
 
 pub(crate) const PROCEDURE_ID: &str = "successor-selection:v1";
+pub(crate) const HISTORY_TRAVERSAL_PROCEDURE_ID: &str = "successor-selection:history-traversal:v1";
 
 /// Build the default first-pass successor decision from available evidence.
 pub(crate) fn decide(input: SelectionInput) -> SuccessorDecision {
