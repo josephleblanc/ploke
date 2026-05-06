@@ -103,8 +103,8 @@ impl ChildEvidenceSet {
         assembly.finish()
     }
 
-    /// Empty projection used when the store cannot be assembled; callers record a decision-level projection failure.
-    pub(crate) fn empty_projection_fallback() -> Self {
+    /// No grouped children — used after the filesystem child-evidence assembly failed; callers record a sealed decision diagnostic.
+    pub(crate) fn empty_after_unreadable_store() -> Self {
         Self {
             schema_version: SCHEMA_VERSION.to_string(),
             children: Vec::new(),
@@ -512,6 +512,40 @@ fn seal_compared_run_evidence(row: &ComparedRunEvidence) -> SealedComparedRunEvi
         &row.treatment_run,
         &row.treatment_registration_path,
     );
+    let mut diagnostics: Vec<String> = row
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            format!(
+                "{}:{}:{}",
+                diagnostic.severity, diagnostic.field, diagnostic.message
+            )
+        })
+        .collect();
+    let baseline_run = match row.baseline_run.as_ref() {
+        Some(run) => match serde_json::to_value(run) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                diagnostics.push(format!(
+                    "baseline_run:history_seal_json_failed:{err}"
+                ));
+                None
+            }
+        },
+        None => None,
+    };
+    let treatment_run = match row.treatment_run.as_ref() {
+        Some(run) => match serde_json::to_value(run) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                diagnostics.push(format!(
+                    "treatment_run:history_seal_json_failed:{err}"
+                ));
+                None
+            }
+        },
+        None => None,
+    };
     SealedComparedRunEvidence {
         instance_id: row.instance_id.clone(),
         status: row.status.clone(),
@@ -519,24 +553,9 @@ fn seal_compared_run_evidence(row: &ComparedRunEvidence) -> SealedComparedRunEvi
         treatment_citation,
         baseline_metrics: row.baseline_metrics.clone(),
         treatment_metrics: row.treatment_metrics.clone(),
-        diagnostics: row
-            .diagnostics
-            .iter()
-            .map(|diagnostic| {
-                format!(
-                    "{}:{}:{}",
-                    diagnostic.severity, diagnostic.field, diagnostic.message
-                )
-            })
-            .collect(),
-        baseline_run: row
-            .baseline_run
-            .as_ref()
-            .and_then(|run| serde_json::to_value(run).ok()),
-        treatment_run: row
-            .treatment_run
-            .as_ref()
-            .and_then(|run| serde_json::to_value(run).ok()),
+        diagnostics,
+        baseline_run,
+        treatment_run,
     }
 }
 

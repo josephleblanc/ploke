@@ -541,6 +541,8 @@ pub(crate) struct SealedSelectionDecisionRow {
     pub(crate) selected_candidate: Option<String>,
     pub(crate) candidates: Vec<SealedEvaluationCandidateRow>,
     pub(crate) decision_projection_failure_count: usize,
+    /// One line per [`super::history::SelectionProjectionFailure`] (kind, scope subject, committed text).
+    pub(crate) decision_projection_failure_notes: Vec<String>,
     pub(crate) row_ok: bool,
 }
 
@@ -548,7 +550,8 @@ pub(crate) struct SealedSelectionDecisionRow {
 pub(crate) struct SealedEvaluationCandidateRow {
     pub(crate) candidate_subject: String,
     pub(crate) recomputed_payload_hash: String,
-    pub(crate) payload_digest_ok: bool,
+    /// `None` until entries commit an independent per-candidate payload digest to cross-check; `Some(false)` means a mismatch when that exists.
+    pub(crate) cross_checked_eval_payload_digest: Option<bool>,
     pub(crate) selection_input_binding_ok: bool,
     pub(crate) source_ref_count: usize,
     pub(crate) source_hash_count: usize,
@@ -616,7 +619,7 @@ fn collect_selection_decision_rows(
         let mut candidates = Vec::new();
         for evaluation in &selection.considered {
             let payload_hash = evaluation.payload_hash()?;
-            let payload_digest_ok = true;
+            let cross_checked_eval_payload_digest: Option<bool> = None;
             let selection_input_binding_ok = evaluation.verify_selection_input_binding()?;
             let source_ref_count = evaluation.source_refs.len();
             let source_hash_count = evaluation.source_hashes.len();
@@ -639,7 +642,7 @@ fn collect_selection_decision_rows(
             candidates.push(SealedEvaluationCandidateRow {
                 candidate_subject: evaluation.candidate.as_str().to_string(),
                 recomputed_payload_hash: recomputed_hex,
-                payload_digest_ok,
+                cross_checked_eval_payload_digest,
                 selection_input_binding_ok,
                 source_ref_count,
                 source_hash_count,
@@ -655,10 +658,30 @@ fn collect_selection_decision_rows(
         let row_ok = decision_observation_ok
             && considered_order_ok
             && candidates.iter().all(|c| {
-                c.payload_digest_ok
+                c.cross_checked_eval_payload_digest != Some(false)
                     && c.selection_input_binding_ok
                     && c.source_evidence_alignment_ok
             });
+
+        let decision_projection_failure_notes: Vec<String> = selection
+            .projection_failures
+            .iter()
+            .map(|failure| {
+                let scope_subject = failure
+                    .candidate
+                    .as_ref()
+                    .map(|subject| subject.as_str())
+                    .unwrap_or("whole_considered_set");
+                let message = failure
+                    .committed_message
+                    .as_deref()
+                    .unwrap_or("(no committed_message on record)");
+                format!(
+                    "{:?} subject={}: {}",
+                    failure.kind, scope_subject, message
+                )
+            })
+            .collect();
 
         out.push(SealedSelectionDecisionRow {
             segment_line_index: line_index,
@@ -680,6 +703,7 @@ fn collect_selection_decision_rows(
                 .map(|subject| subject.as_str().to_string()),
             candidates,
             decision_projection_failure_count: selection.projection_failures.len(),
+            decision_projection_failure_notes,
             row_ok,
         });
     }
@@ -1044,11 +1068,19 @@ impl HistoryPreview {
                     row.scope,
                     row.selected_candidate.as_deref().unwrap_or("-")
                 );
+                for note in &row.decision_projection_failure_notes {
+                    println!("    seal_gap: {note}");
+                }
                 for cand in &row.candidates {
+                    let digest_xcheck = match cand.cross_checked_eval_payload_digest {
+                        None => "n/a",
+                        Some(true) => "ok",
+                        Some(false) => "mismatch",
+                    };
                     println!(
-                        "  candidate={} payload_ok={} sel_input_ok={} refs={} hashes={} ref_alignment_ok={}",
+                        "  candidate={} eval_payload_digest_xcheck={} sel_input_ok={} refs={} hashes={} ref_alignment_ok={}",
                         cand.candidate_subject,
-                        cand.payload_digest_ok,
+                        digest_xcheck,
                         cand.selection_input_binding_ok,
                         cand.source_ref_count,
                         cand.source_hash_count,

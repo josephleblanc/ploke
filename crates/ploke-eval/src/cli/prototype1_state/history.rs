@@ -2726,10 +2726,10 @@ pub(crate) struct SelectionDecisionEntry {
     /// Domain-separated commitment to the ordered considered list.
     pub(crate) considered_order_hash: HistoryHash,
 
-    /// Projection failures encountered while attempting to form a considered set.
+    /// Gaps or load errors while assembling seal-time selection material (stored in the sealed entry).
     ///
-    /// These are diagnostics and must not be treated as members of the ordered
-    /// considered list used by the selector.
+    /// Must not be treated as members of the ordered considered list used by the selector.
+    /// Each failure carries [`SelectionProjectionFailure::committed_message`] when prose detail is intended for replay.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
 
@@ -2792,11 +2792,68 @@ pub(crate) enum SelectionProjectionFailureKind {
     ChildEvidenceStoreLoadFailed,
 }
 
+/// [`SelectionProjectionFailureId`] preimage; domain `prototype1.history.selection_projection_failure.v2`.
+#[derive(Serialize)]
+struct SelectionProjectionFailureIdPreimage<'a> {
+    kind: &'a SelectionProjectionFailureKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_subject: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    committed_message: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    missing_selection_outcome_debug: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SelectionProjectionFailure {
     pub(crate) id: SelectionProjectionFailureId,
-    pub(crate) candidate: SubjectRef,
     pub(crate) kind: SelectionProjectionFailureKind,
+    /// Single-candidate coordinate when this failure is local to one considered child; absent when it applies to the whole considered set (e.g. store assembly).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) candidate: Option<SubjectRef>,
+    /// Operator-readable detail committed with the decision (not only in the hash preimage).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) committed_message: Option<String>,
+}
+
+impl SelectionProjectionFailure {
+    pub(crate) fn committed(
+        kind: SelectionProjectionFailureKind,
+        candidate: Option<SubjectRef>,
+        committed_message: Option<String>,
+        missing_selection_outcome_debug: Option<String>,
+    ) -> Result<Self, HistoryError> {
+        let id = Self::identity_hash(
+            &kind,
+            candidate.as_ref(),
+            committed_message.as_deref(),
+            missing_selection_outcome_debug.as_deref(),
+        )?;
+        Ok(Self {
+            id: SelectionProjectionFailureId(id),
+            kind,
+            candidate,
+            committed_message,
+        })
+    }
+
+    fn identity_hash(
+        kind: &SelectionProjectionFailureKind,
+        candidate: Option<&SubjectRef>,
+        committed_message: Option<&str>,
+        missing_selection_outcome_debug: Option<&str>,
+    ) -> Result<HistoryHash, HistoryError> {
+        let preimage = SelectionProjectionFailureIdPreimage {
+            kind,
+            candidate_subject: candidate.map(SubjectRef::as_str),
+            committed_message,
+            missing_selection_outcome_debug,
+        };
+        HistoryHash::of_domain_json(
+            "prototype1.history.selection_projection_failure.v2",
+            &preimage,
+        )
+    }
 }
 
 /// Candidate-universe description for a selection decision.

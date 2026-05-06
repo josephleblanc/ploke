@@ -53,8 +53,8 @@ use crate::{
             c4::{ObserveChild, ObservedChild},
             event::RecordedAt,
             history::{
-                EvaluationPayload, HistoryHash, ProcedureRef, SelectionDecisionEntry,
-                SelectionProjectionFailure, SelectionProjectionFailureId,
+                EvaluationPayload, ProcedureRef, SelectionDecisionEntry,
+                SelectionProjectionFailure,
                 SelectionProjectionFailureKind, SelectionScope, SubjectRef,
             },
             identity::{
@@ -6067,6 +6067,25 @@ impl Prototype1StateCommand {
                 selection_decision.selected_branch_disposition(),
                 selection_decision.selection_policy_outcome(),
             );
+            if decision.disposition.allows_successor() {
+                let in_considered = child_outcomes.iter().any(|outcome| {
+                    outcome.node_id == selection_decision.candidate_node_id
+                });
+                if !in_considered {
+                    let considered_nodes = child_outcomes
+                        .iter()
+                        .map(|o| format!("{}:plan_index={}", o.node_id, o.plan_index))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "selection decision selected candidate_node_id={} which is absent from sealed considered outcomes [{}]",
+                            selection_decision.candidate_node_id,
+                            considered_nodes
+                        ),
+                    });
+                }
+            }
             observe::Step::start(observe::span!(
                 "prototype1.parent.select_successor",
                 campaign_id = %campaign_id,
@@ -6109,26 +6128,19 @@ impl Prototype1StateCommand {
                     Ok(set) => set,
                     Err(err) => {
                         let detail = err.to_string();
-                        let failure_id = HistoryHash::of_domain_json(
-                            "prototype1.history.selection_projection_failure.v1",
-                            &serde_json::json!({
-                                "kind": "child_evidence_store_load_failed",
-                                "detail": detail,
-                            }),
+                        let failure = SelectionProjectionFailure::committed(
+                            SelectionProjectionFailureKind::ChildEvidenceStoreLoadFailed,
+                            None,
+                            Some(detail),
+                            None,
                         )
                         .map_err(|e| PrepareError::InvalidBatchSelection {
                             detail: format!(
-                                "failed to hash child evidence load projection failure id: {e}"
+                                "failed to commit child evidence store failure id: {e}"
                             ),
                         })?;
-                        projection_failures.push(SelectionProjectionFailure {
-                            id: SelectionProjectionFailureId(failure_id),
-                            candidate: SubjectRef::new(
-                                "selection_projection:global_child_evidence_store",
-                            ),
-                            kind: SelectionProjectionFailureKind::ChildEvidenceStoreLoadFailed,
-                        });
-                        crate::cli::prototype1_state::evidence::ChildEvidenceSet::empty_projection_fallback()
+                        projection_failures.push(failure);
+                        crate::cli::prototype1_state::evidence::ChildEvidenceSet::empty_after_unreadable_store()
                     }
                 };
                 let mut considered = Vec::new();
@@ -6163,45 +6175,30 @@ impl Prototype1StateCommand {
                                 ),
                             })?;
                     } else {
-                        let failure_id = HistoryHash::of_domain_json(
-                            "prototype1.history.selection_projection_failure.v1",
-                            &(&candidate, &outcome.outcome),
+                        let failure = SelectionProjectionFailure::committed(
+                            SelectionProjectionFailureKind::MissingSelectionInput,
+                            Some(candidate.clone()),
+                            None,
+                            Some(format!("{:?}", outcome.outcome)),
                         )
                         .map_err(|err| PrepareError::InvalidBatchSelection {
                             detail: format!(
-                                "failed to hash selection projection failure id for node_id={}: {err}",
+                                "failed to commit selection projection failure id for node_id={}: {err}",
                                 outcome.node_id
                             ),
                         })?;
-                        let failure = SelectionProjectionFailure {
-                            id: SelectionProjectionFailureId(failure_id),
-                            candidate: candidate.clone(),
-                            kind: SelectionProjectionFailureKind::MissingSelectionInput,
-                        };
                         projection_failures.push(failure.clone());
                         builder = builder.projection_failure(failure);
                     }
 
                     considered.push(builder.build());
                 }
-                let selected_outcome =
-                    child_outcomes
-                        .iter()
-                        .find(|outcome| outcome.node_id == selection_decision.candidate_node_id);
-                let Some(selected_outcome) = selected_outcome else {
-                    let considered_nodes = child_outcomes
-                        .iter()
-                        .map(|o| format!("{}:plan_index={}", o.node_id, o.plan_index))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: format!(
-                            "selection decision selected candidate_node_id={} which is absent from sealed considered outcomes [{}]",
-                            selection_decision.candidate_node_id,
-                            considered_nodes
-                        ),
-                    });
-                };
+                let selected_outcome = child_outcomes
+                    .iter()
+                    .find(|outcome| outcome.node_id == selection_decision.candidate_node_id)
+                    .expect(
+                        "selected candidate validated against child outcomes before journaling",
+                    );
                 let selected_candidate = Some(SubjectRef::new(format!(
                     "candidate:{}:plan_index={}",
                     selected_outcome.node_id, selected_outcome.plan_index
