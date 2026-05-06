@@ -69,3 +69,12 @@ Keep traversal policy stable until evaluation evidence is mature.
 ```
 
 For Ploke, that means the durable design wants a traversal layer above successor choice. The Crown path can still install exactly one next Parent, but the candidate for that next Parent should eventually come from archive traversal, not only from direct children of the current parent.
+
+Update recorded 2026-05-06: in Ploke, that archive should be an
+`ArchiveView`/`CandidateArchive` projection over History-admitted candidate,
+evaluation, judgment, validator, import, and selection records, not a separate
+off-chain truth source. The traversal policy may sample from the broad archive,
+but the sampled candidate set, evidence refs, validator score distributions,
+known exclusions, and policy identity must be recorded as the basis for the
+next `SelectionDecision`. Another Parent's report is only a claim until the
+current Parent's policy verifies, resamples, imports, or otherwise admits it.

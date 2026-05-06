@@ -869,11 +869,14 @@ mod tests {
     use crate::inner::registry::RunRegistration;
     use crate::spec::EvalBudget;
     use serde_json::Value;
+    use std::ffi::OsString;
+    use std::path::Path;
     use std::sync::{Mutex, MutexGuard, OnceLock};
     use tempfile::TempDir;
 
     struct TestRunFixture {
         _env_lock: MutexGuard<'static, ()>,
+        _env: EnvVarGuard,
         _tmp: TempDir,
         record_path: PathBuf,
     }
@@ -883,12 +886,60 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<OsString>,
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.prev.as_ref() {
+                Some(value) => unsafe {
+                    std::env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.key);
+                },
+            }
+        }
+    }
+
+    fn set_env_var_scoped(key: &'static str, value: impl Into<OsString>) -> EnvVarGuard {
+        let prev = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value.into());
+        }
+        EnvVarGuard { key, prev }
+    }
+
+    fn write_test_run_record(path: &Path, subject_id: &str) {
+        let prepared = crate::spec::PreparedSingleRun {
+            task_id: subject_id.to_string(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            output_dir: PathBuf::from("/tmp/output"),
+            issue: crate::spec::IssueInput {
+                title: None,
+                body: None,
+                body_path: None,
+            },
+            base_sha: None,
+            head_sha: None,
+            budget: crate::spec::EvalBudget::default(),
+            source: None,
+            campaign: None,
+        };
+        let record =
+            crate::record::RunRecord::new(&prepared, crate::runner::RunArm::shell_only_control());
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("record dir");
+        }
+        crate::record::write_compressed_record(path, &record).expect("write record");
+    }
+
     fn registered_run(run_id: &str, subject_id: &str) -> TestRunFixture {
         let env_lock = env_lock().lock().expect("env lock");
         let tmp = tempfile::tempdir().expect("tmp");
-        unsafe {
-            std::env::set_var("PLOKE_EVAL_HOME", tmp.path());
-        }
+        let env = set_env_var_scoped("PLOKE_EVAL_HOME", tmp.path());
 
         let intent = RunIntent {
             task_id: subject_id.to_string(),
@@ -909,10 +960,12 @@ mod tests {
         let registration =
             RunRegistration::register_with_run_id(intent, run_id).expect("registration");
         let record_path = registration.artifacts.record_path.clone();
+        write_test_run_record(&record_path, subject_id);
         registration.persist().expect("persist registration");
 
         TestRunFixture {
             _env_lock: env_lock,
+            _env: env,
             _tmp: tmp,
             record_path,
         }

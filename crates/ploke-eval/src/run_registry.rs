@@ -108,45 +108,59 @@ pub fn list_registrations_for_instance(
     instances_root: &Path,
     instance_id: &str,
 ) -> Result<Vec<RunRegistration>, PrepareError> {
-    let registry_root = registries_dir()?.join("runs");
     let mut registrations = Vec::new();
-    let entries = match fs::read_dir(&registry_root) {
-        Ok(entries) => entries,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(registrations),
-        Err(source) => {
-            return Err(PrepareError::ReadManifest {
-                path: registry_root,
-                source,
-            });
-        }
-    };
-
     let expected_runs_dir = instances_root.join(instance_id).join("runs");
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
+    for registry_root in registry_roots_for_instances_root(instances_root)? {
+        let entries = match fs::read_dir(&registry_root) {
+            Ok(entries) => entries,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(PrepareError::ReadManifest {
+                    path: registry_root,
+                    source,
+                });
+            }
         };
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let registration = match RunRegistration::load(&path) {
+                Ok(registration) => registration,
+                Err(_) => continue,
+            };
+            if registration.frozen_spec.task_id != instance_id {
+                continue;
+            }
+            if registration.frozen_spec.storage_roots.runs_dir != expected_runs_dir {
+                continue;
+            }
+            registrations.push(registration);
         }
-        let registration = match RunRegistration::load(&path) {
-            Ok(registration) => registration,
-            Err(_) => continue,
-        };
-        if registration.frozen_spec.task_id != instance_id {
-            continue;
-        }
-        if registration.frozen_spec.storage_roots.runs_dir != expected_runs_dir {
-            continue;
-        }
-        registrations.push(registration);
     }
 
     registrations
         .sort_by(|left, right| registration_sort_key(right).cmp(&registration_sort_key(left)));
     Ok(registrations)
+}
+
+fn registry_roots_for_instances_root(instances_root: &Path) -> Result<Vec<PathBuf>, PrepareError> {
+    let mut roots = Vec::new();
+    if let Ok(root) = registries_dir() {
+        roots.push(root.join("runs"));
+    }
+    if let Some(eval_home) = instances_root.parent() {
+        roots.push(eval_home.join("registries").join("runs"));
+    }
+    roots.sort();
+    roots.dedup();
+    Ok(roots)
 }
 
 pub fn preferred_registration_for_instance(
@@ -172,39 +186,40 @@ pub fn preferred_registration_for_instance(
 pub fn completed_record_paths_for_instances_root(
     instances_root: &Path,
 ) -> Result<Vec<PathBuf>, PrepareError> {
-    let registry_root = registries_dir()?.join("runs");
     let mut paths = Vec::new();
-    let entries = match fs::read_dir(&registry_root) {
-        Ok(entries) => entries,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(paths),
-        Err(source) => {
-            return Err(PrepareError::ReadManifest {
-                path: registry_root,
-                source,
-            });
-        }
-    };
+    for registry_root in registry_roots_for_instances_root(instances_root)? {
+        let entries = match fs::read_dir(&registry_root) {
+            Ok(entries) => entries,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(PrepareError::ReadManifest {
+                    path: registry_root,
+                    source,
+                });
+            }
+        };
 
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let registration = match RunRegistration::load(&path) {
+                Ok(registration) => registration,
+                Err(_) => continue,
+            };
+            if registration.lifecycle.execution_status != RunExecutionStatus::Completed {
+                continue;
+            }
+            if !registration.artifacts.run_root.starts_with(instances_root) {
+                continue;
+            }
+            paths.push(registration.artifacts.record_path.clone());
         }
-        let registration = match RunRegistration::load(&path) {
-            Ok(registration) => registration,
-            Err(_) => continue,
-        };
-        if registration.lifecycle.execution_status != RunExecutionStatus::Completed {
-            continue;
-        }
-        if !registration.artifacts.run_root.starts_with(instances_root) {
-            continue;
-        }
-        paths.push(registration.artifacts.record_path.clone());
     }
 
     paths.sort();
@@ -322,12 +337,40 @@ mod tests {
     use super::*;
     use crate::inner::core::RegisteredRunRole;
     use crate::spec::EvalBudget;
+    use std::ffi::OsString;
+    use std::path::Path;
     use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<OsString>,
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.prev.as_ref() {
+                Some(value) => unsafe {
+                    std::env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.key);
+                },
+            }
+        }
+    }
+
+    fn set_env_var_scoped(key: &'static str, value: impl Into<OsString>) -> EnvVarGuard {
+        let prev = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value.into());
+        }
+        EnvVarGuard { key, prev }
     }
 
     fn sample_intent(base: &Path, instances_root: &Path) -> RunIntent {
@@ -349,13 +392,34 @@ mod tests {
         }
     }
 
+    fn write_test_run_record(path: &Path) {
+        let prepared = crate::spec::PreparedSingleRun {
+            task_id: "org__repo-1".to_string(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            output_dir: PathBuf::from("/tmp/output"),
+            issue: crate::spec::IssueInput {
+                title: None,
+                body: None,
+                body_path: None,
+            },
+            base_sha: None,
+            head_sha: None,
+            budget: crate::spec::EvalBudget::default(),
+            source: None,
+            campaign: None,
+        };
+        let record = crate::record::RunRecord::new(&prepared, crate::runner::RunArm::shell_only_control());
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("record dir");
+        }
+        crate::record::write_compressed_record(path, &record).expect("write record");
+    }
+
     #[test]
     fn preferred_registration_uses_registration_store_before_dir_guessing() {
         let _env_lock = env_lock().lock().expect("env lock");
         let tmp = tempdir().expect("tmp");
-        unsafe {
-            std::env::set_var("PLOKE_EVAL_HOME", tmp.path());
-        }
+        let env_guard = set_env_var_scoped("PLOKE_EVAL_HOME", tmp.path());
         let instances_root = tmp.path().join("instances");
         let intent = sample_intent(tmp.path(), &instances_root);
         let mut registration =
@@ -372,20 +436,20 @@ mod tests {
         .expect("preferred")
         .expect("registration");
         assert_eq!(selected.run_id, "run-123");
+        drop(env_guard);
     }
 
     #[test]
     fn resolve_protocol_run_identity_prefers_registration_authority() {
         let _env_lock = env_lock().lock().expect("env lock");
         let tmp = tempdir().expect("tmp");
-        unsafe {
-            std::env::set_var("PLOKE_EVAL_HOME", tmp.path());
-        }
+        let env_guard = set_env_var_scoped("PLOKE_EVAL_HOME", tmp.path());
         let instances_root = tmp.path().join("instances");
         let intent = sample_intent(tmp.path(), &instances_root);
         let registration =
             RunRegistration::register_with_run_id(intent, "run-123").expect("registration");
         let record_path = registration.artifacts.record_path.clone();
+        write_test_run_record(&record_path);
         registration.persist().expect("persist");
 
         let resolved = resolve_protocol_run_identity(&record_path).expect("resolved identity");
@@ -393,5 +457,6 @@ mod tests {
         assert_eq!(resolved.subject_id, "org__repo-1");
         assert_eq!(resolved.record_path, record_path);
         assert_eq!(resolved.run_dir, registration.artifacts.run_root);
+        drop(env_guard);
     }
 }

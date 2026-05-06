@@ -75,6 +75,13 @@ Consensus/Reputation:
   candidate artifact quality and reporter/ruler reliability.
 ```
 
+Update recorded 2026-05-06: the Archive used for traversal should be a
+projection over these History-admitted samples and claims, not an independent
+off-chain source of truth. A ruler seeing another ruler's candidate should read
+it as a claim package with refs and hashes. The local policy decides whether to
+treat it as provenance-only, hash-checked, replayed, resampled,
+quorum-attested, or reputation-weighted evidence.
+
 The powerful move is second-order validation:
 
 ```text
@@ -171,6 +178,7 @@ Validation:
   independent evaluator refs
   validation sample refs
   reputation/ranking weights
+  score distributions and confidence/sample counts
 
 Hashing:
   entries root
@@ -190,7 +198,9 @@ The larger model is:
 ```text
 many local candidate histories
   -> independent validation
-  -> reputation-weighted/evidence-weighted admission
+  -> reputation-weighted/evidence-weighted Archive views
+  -> policy-bounded sampled selection cases
+  -> admitted selection decisions
   -> CompleteHistory
 ```
 

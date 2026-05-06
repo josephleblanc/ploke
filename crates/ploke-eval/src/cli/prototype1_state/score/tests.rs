@@ -584,7 +584,7 @@ fn protocol_artifact_attachment_ignores_payload_identity_fields() {
 #[test]
 fn operational_default_unchanged_with_protocol_aggregate_payloads() {
     let tmp = tempfile::tempdir().expect("tmp");
-    let _env = eval_home_guard(tmp.path());
+    let env_guard = eval_home_guard(tmp.path());
     let manifest = campaign_manifest(tmp.path());
     write_node(tmp.path(), "node-a", "branch-a");
     let (baseline_registration, treatment_registration) =
@@ -625,12 +625,13 @@ fn operational_default_unchanged_with_protocol_aggregate_payloads() {
         &run.diagnostics,
         "treatment.protocol.protocol_anchor"
     ));
+    drop(env_guard);
 }
 
 #[test]
 fn protocol_enabled_profile_creates_protocol_component() {
     let tmp = tempfile::tempdir().expect("tmp");
-    let _env = eval_home_guard(tmp.path());
+    let env_guard = eval_home_guard(tmp.path());
     let manifest = campaign_manifest(tmp.path());
     write_node(tmp.path(), "node-a", "branch-a");
     let (baseline_registration, treatment_registration) =
@@ -673,12 +674,13 @@ fn protocol_enabled_profile_creates_protocol_component() {
         &protocol.diagnostics,
         "treatment.protocol.protocol_anchor"
     ));
+    drop(env_guard);
 }
 
 #[test]
 fn missing_protocol_evidence_affects_only_protocol_profile_component() {
     let tmp = tempfile::tempdir().expect("tmp");
-    let _env = eval_home_guard(tmp.path());
+    let env_guard = eval_home_guard(tmp.path());
     let manifest = campaign_manifest(tmp.path());
     write_node(tmp.path(), "node-a", "branch-a");
     let mut baseline_registration = write_run_registration(
@@ -744,6 +746,7 @@ fn missing_protocol_evidence_affects_only_protocol_profile_component() {
     ));
     assert_eq!(child.state, ScoreState::Incomplete);
     assert_eq!(child.comparable_score(), None);
+    drop(env_guard);
 }
 
 #[test]

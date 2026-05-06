@@ -4,6 +4,13 @@
 //! selection cache in `crate::selection`. It models generation-local evidence
 //! used by a ruling parent when deciding whether a completed child should be
 //! selected as the next successor.
+//!
+//! This is the current compatibility slice, not the final archive traversal
+//! substrate. The longer-term selector should consume an admissible
+//! `ArchiveView`/candidate projection derived from History-admitted
+//! candidate, evaluation, judgment, validator, import, and selection records.
+//! Selection evidence remains evidence: the Crown/History path is what makes a
+//! selected successor authoritative for a lineage.
 
 use std::path::PathBuf;
 
@@ -30,6 +37,9 @@ pub(crate) fn decide(input: SelectionInput) -> SuccessorDecision {
 /// This keeps acceptance and exploration distinct: the first accepted child wins
 /// immediately, while a rejected child can only be selected as an exploration
 /// coordinate after no accepted child exists in the provided generation set.
+/// Future archive traversal should generalize this from one generation to a
+/// recorded sampled view over prior candidates, with scope and exclusions
+/// preserved in the decision evidence.
 pub(crate) fn decide_generation(inputs: Vec<SelectionInput>) -> Option<SuccessorDecision> {
     let mut rejected = Vec::new();
 
