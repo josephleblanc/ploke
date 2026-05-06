@@ -6132,7 +6132,6 @@ impl Prototype1StateCommand {
                             SelectionProjectionFailureKind::ChildEvidenceStoreLoadFailed,
                             None,
                             Some(detail),
-                            None,
                         )
                         .map_err(|e| PrepareError::InvalidBatchSelection {
                             detail: format!(
@@ -6178,8 +6177,10 @@ impl Prototype1StateCommand {
                         let failure = SelectionProjectionFailure::committed(
                             SelectionProjectionFailureKind::MissingSelectionInput,
                             Some(candidate.clone()),
-                            None,
-                            Some(format!("{:?}", outcome.outcome)),
+                            Some(format!(
+                                "missing_selection_input: child_fanout_outcome={:?}",
+                                outcome.outcome
+                            )),
                         )
                         .map_err(|err| PrepareError::InvalidBatchSelection {
                             detail: format!(
