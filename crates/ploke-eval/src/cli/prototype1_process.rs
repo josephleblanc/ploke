@@ -137,9 +137,9 @@ use crate::cli::prototype1_state::event::{Paths, RecordedAt, Refs};
 use crate::cli::prototype1_state::history::{
     ActorRef, ArtifactLocator, ArtifactRef, BlockStore, DraftEntry, Entry, EntryKind, EvidenceRef,
     FsBlockStore, GenesisAuthority, LineageId, LineageState, Observation, OpenBlock,
-    OpeningAuthority, OperationalEnvironment, ParentIdentityRef, PredecessorAuthority, ProcedureRef,
-    Proposal, Regime, SealBlock, StoreHead, SubjectRef, SuccessorRef, SurfaceCommitment,
-    TreeKeyCommitment, TreeKeyHash,
+    OpeningAuthority, OperationalEnvironment, ParentIdentityRef, PredecessorAuthority,
+    ProcedureRef, Proposal, Regime, SealBlock, StoreHead, SubjectRef, SuccessorRef,
+    SurfaceCommitment, TreeKeyCommitment, TreeKeyHash,
 };
 use crate::cli::prototype1_state::identity::{
     ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,

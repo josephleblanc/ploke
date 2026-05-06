@@ -28,12 +28,11 @@ use crate::{OperationalRunMetrics, PatchApplyState};
 use super::evidence::{
     ChildEvidenceRecords, ChildEvidenceSet, ComparedRunEvidence, EvidenceSource,
 };
-use super::history_preview::{
-    EvidenceClass, EvidenceStore, FsEvidenceStore, SelectionPreviewRecords,
-};
+use super::evidence_class::EvidenceClass;
+use super::history_preview::{EvidenceStore, FsEvidenceStore, SelectionPreviewRecords};
 use super::journal::JournalEntry;
 
-const SCHEMA_VERSION: &str = "prototype1-metrics-projection.v1";
+const SCHEMA_VERSION: &str = "prototype1-metrics-projection.v2";
 const DERIVATION: &str = "prototype1.metrics.projection.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -281,11 +280,13 @@ impl EvidenceProjection {
             evaluation_sources,
             source_treatments: treatments
                 .into_iter()
-                .map(|((class, treatment), sources)| SourceTreatment {
-                    class,
-                    treatment,
-                    sources,
-                })
+                .map(
+                    |((class, preview_import_treatment), sources)| SourceTreatment {
+                        class,
+                        preview_import_treatment,
+                        sources,
+                    },
+                )
                 .collect(),
         }
     }
@@ -307,7 +308,7 @@ impl EvidenceProjection {
 #[derive(Debug, Clone, Serialize)]
 struct SourceTreatment {
     class: String,
-    treatment: String,
+    preview_import_treatment: String,
     sources: usize,
 }
 
@@ -317,7 +318,10 @@ fn record_treatment(
     treatments: &mut BTreeMap<(String, String), usize>,
 ) {
     if counted_sources.insert(source.pointer.ref_id().to_string()) {
-        let key = (source.class.as_str().to_string(), source.treatment.clone());
+        let key = (
+            source.class.as_str().to_string(),
+            source.preview_import_treatment.clone(),
+        );
         *treatments.entry(key).or_default() += 1;
     }
 }
@@ -2277,7 +2281,7 @@ mod tests {
                 .source_treatments
                 .iter()
                 .any(|treatment| treatment.class == "evaluation"
-                    && treatment.treatment == "admitted_preview_raw"
+                    && treatment.preview_import_treatment == "admitted_preview_raw"
                     && treatment.sources == 1)
         );
         assert!(row.source_refs.iter().any(|source| {

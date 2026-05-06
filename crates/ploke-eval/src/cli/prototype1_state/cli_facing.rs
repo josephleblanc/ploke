@@ -54,8 +54,8 @@ use crate::{
             event::RecordedAt,
             history::{
                 EvaluationPayload, ProcedureRef, SelectionDecisionEntry,
-                SelectionProjectionFailure,
-                SelectionProjectionFailureKind, SelectionScope, SubjectRef,
+                SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope,
+                SubjectRef,
             },
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -1824,7 +1824,9 @@ fn print_preview_slice(slice: &PreviewSlice) {
         println!("{}", "-".repeat(40));
         print_json_scalar(sealed, "blocks_scanned");
         print_json_scalar(sealed, "all_checks_pass");
-        if let Some(rows) = sealed.get("decision_entries").and_then(serde_json::Value::as_array)
+        if let Some(rows) = sealed
+            .get("decision_entries")
+            .and_then(serde_json::Value::as_array)
         {
             println!("decision_entry_rows: {}", rows.len());
         }
@@ -6068,9 +6070,9 @@ impl Prototype1StateCommand {
                 selection_decision.selection_policy_outcome(),
             );
             if decision.disposition.allows_successor() {
-                let in_considered = child_outcomes.iter().any(|outcome| {
-                    outcome.node_id == selection_decision.candidate_node_id
-                });
+                let in_considered = child_outcomes
+                    .iter()
+                    .any(|outcome| outcome.node_id == selection_decision.candidate_node_id);
                 if !in_considered {
                     let considered_nodes = child_outcomes
                         .iter()
@@ -6080,8 +6082,7 @@ impl Prototype1StateCommand {
                     return Err(PrepareError::InvalidBatchSelection {
                         detail: format!(
                             "selection decision selected candidate_node_id={} which is absent from sealed considered outcomes [{}]",
-                            selection_decision.candidate_node_id,
-                            considered_nodes
+                            selection_decision.candidate_node_id, considered_nodes
                         ),
                     });
                 }
@@ -6121,9 +6122,10 @@ impl Prototype1StateCommand {
             ));
             if decision.disposition.allows_successor() {
                 let mut projection_failures = Vec::new();
-                let child_evidence_store = crate::cli::prototype1_state::history_preview::FsEvidenceStore::new(
-                    manifest_path.clone(),
-                );
+                let child_evidence_store =
+                    crate::cli::prototype1_state::history_preview::FsEvidenceStore::new(
+                        manifest_path.clone(),
+                    );
                 let child_evidence_set = match child_evidence_store.child_evidence() {
                     Ok(set) => set,
                     Err(err) => {
@@ -6133,10 +6135,12 @@ impl Prototype1StateCommand {
                             None,
                             Some(detail),
                         )
-                        .map_err(|e| PrepareError::InvalidBatchSelection {
-                            detail: format!(
-                                "failed to commit child evidence store failure id: {e}"
-                            ),
+                        .map_err(|e| {
+                            PrepareError::InvalidBatchSelection {
+                                detail: format!(
+                                    "failed to commit child evidence store failure id: {e}"
+                                ),
+                            }
                         })?;
                         projection_failures.push(failure);
                         crate::cli::prototype1_state::evidence::ChildEvidenceSet::empty_after_unreadable_store()
@@ -6165,14 +6169,14 @@ impl Prototype1StateCommand {
                         .sealed_candidate_evidence(sealed_body);
 
                     if let Some(input) = outcome.selection_input.as_ref() {
-                        builder = builder
-                            .selection_input(input.clone())
-                            .map_err(|err| PrepareError::InvalidBatchSelection {
+                        builder = builder.selection_input(input.clone()).map_err(|err| {
+                            PrepareError::InvalidBatchSelection {
                                 detail: format!(
                                     "failed to build selection input payload for node_id={}: {err}",
                                     outcome.node_id
                                 ),
-                            })?;
+                            }
+                        })?;
                     } else {
                         let failure = SelectionProjectionFailure::committed(
                             SelectionProjectionFailureKind::MissingSelectionInput,

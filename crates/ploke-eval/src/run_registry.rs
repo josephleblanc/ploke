@@ -408,7 +408,8 @@ mod tests {
             source: None,
             campaign: None,
         };
-        let record = crate::record::RunRecord::new(&prepared, crate::runner::RunArm::shell_only_control());
+        let record =
+            crate::record::RunRecord::new(&prepared, crate::runner::RunArm::shell_only_control());
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("record dir");
         }

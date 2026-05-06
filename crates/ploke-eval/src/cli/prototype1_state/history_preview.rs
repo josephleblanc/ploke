@@ -31,6 +31,10 @@ use super::evidence::{
     ChildEvidenceRecords, ChildEvidenceSet, ComparedRunEvidence, EvaluationEvidence,
     EvidenceDiagnostic, EvidenceSource,
 };
+pub(crate) use super::evidence_class::EvidenceClass;
+use super::evidence_inventory::{
+    HistoryCommitmentLane, InventoryRow, prototype1_evidence_inventory_rows,
+};
 use crate::cli::prototype1_state::cli_facing::Prototype1BranchEvaluationReport;
 use crate::intervention::{
     PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION, PROTOTYPE1_SCHEDULER_SCHEMA_VERSION,
@@ -38,8 +42,8 @@ use crate::intervention::{
     Prototype1RunnerRequest, Prototype1RunnerResult, Prototype1SchedulerState,
 };
 
-const SCHEMA_VERSION: &str = "prototype1-history-preview.v1";
-const SEALED_SELECTION_SCHEMA_VERSION: &str = "prototype1-history-preview.sealed_selection.v1";
+const SCHEMA_VERSION: &str = "prototype1-history-preview.v2";
+const SEALED_SELECTION_SCHEMA_VERSION: &str = "prototype1-history-preview.sealed_selection.v2";
 const CHILD_EVIDENCE_TABLE_LIMIT: usize = 20;
 const CHILD_EVIDENCE_COMPARED_LIMIT: usize = 3;
 
@@ -521,6 +525,10 @@ pub(crate) struct SealedSelectionCommitmentsProjection {
     pub(crate) decision_entries: Vec<SealedSelectionDecisionRow>,
     /// True when every surfaced row passed structural digest checks.
     pub(crate) all_checks_pass: bool,
+    /// True when every sealed candidate projection is [`SealedEvaluationCandidateRow::decision_grade_eligible`].
+    ///
+    /// This is **orthogonal** to [`Self::all_checks_pass`]; digest-only payloads can still validate here.
+    pub(crate) all_decision_grade_eligible: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -544,6 +552,7 @@ pub(crate) struct SealedSelectionDecisionRow {
     /// One line per [`super::history::SelectionProjectionFailure`] (kind, scope subject, committed text).
     pub(crate) decision_projection_failure_notes: Vec<String>,
     pub(crate) row_ok: bool,
+    pub(crate) decision_grade_all_candidates_eligible: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -562,6 +571,9 @@ pub(crate) struct SealedEvaluationCandidateRow {
     pub(crate) sealed_branch_row_count: usize,
     pub(crate) sealed_runtime_row_count: usize,
     pub(crate) sealed_compared_run_row_count: usize,
+    pub(crate) decision_grade_eligible: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) identity_gaps: Vec<String>,
 }
 
 /// Verify and surface selection-decision entries from the append-only sealed
@@ -581,6 +593,10 @@ pub(crate) fn project_sealed_selection_commitments(
     }
 
     let all_checks_pass = decision_entries.iter().all(|row| row.row_ok);
+    let all_decision_grade_eligible = !decision_entries.is_empty()
+        && decision_entries
+            .iter()
+            .all(|row| row.decision_grade_all_candidates_eligible);
 
     Ok(SealedSelectionCommitmentsProjection {
         schema_version: SEALED_SELECTION_SCHEMA_VERSION,
@@ -588,6 +604,7 @@ pub(crate) fn project_sealed_selection_commitments(
         blocks_scanned,
         decision_entries,
         all_checks_pass,
+        all_decision_grade_eligible,
     })
 }
 
@@ -629,8 +646,7 @@ fn collect_selection_decision_rows(
             let sealed_evaluation_row_count =
                 sealed_summary.map(|s| s.evaluations.len()).unwrap_or(0);
             let sealed_branch_row_count = sealed_summary.map(|s| s.branches.len()).unwrap_or(0);
-            let sealed_runtime_row_count =
-                sealed_summary.map(|s| s.runtimes.len()).unwrap_or(0);
+            let sealed_runtime_row_count = sealed_summary.map(|s| s.runtimes.len()).unwrap_or(0);
             let sealed_compared_run_row_count = sealed_summary
                 .map(|s| {
                     s.evaluations
@@ -639,6 +655,7 @@ fn collect_selection_decision_rows(
                         .sum::<usize>()
                 })
                 .unwrap_or(0);
+            let grade = evaluation.decision_grade_eligibility();
             candidates.push(SealedEvaluationCandidateRow {
                 candidate_subject: evaluation.candidate.as_str().to_string(),
                 recomputed_payload_hash: recomputed_hex,
@@ -652,8 +669,13 @@ fn collect_selection_decision_rows(
                 sealed_branch_row_count,
                 sealed_runtime_row_count,
                 sealed_compared_run_row_count,
+                decision_grade_eligible: grade.eligible,
+                identity_gaps: grade.identity_gaps,
             });
         }
+
+        let decision_grade_all_candidates_eligible =
+            candidates.iter().all(|c| c.decision_grade_eligible);
 
         let row_ok = decision_observation_ok
             && considered_order_ok
@@ -676,10 +698,7 @@ fn collect_selection_decision_rows(
                     .committed_message
                     .as_deref()
                     .unwrap_or("(no committed_message on record)");
-                format!(
-                    "{:?} subject={}: {}",
-                    failure.kind, scope_subject, message
-                )
+                format!("{:?} subject={}: {}", failure.kind, scope_subject, message)
             })
             .collect();
 
@@ -705,6 +724,7 @@ fn collect_selection_decision_rows(
             decision_projection_failure_count: selection.projection_failures.len(),
             decision_projection_failure_notes,
             row_ok,
+            decision_grade_all_candidates_eligible,
         });
     }
     Ok(())
@@ -740,8 +760,7 @@ where
     let sources = source_summary(&journal, &documents);
     let deferred = deferred_documents(&documents);
 
-    let sealed_selection_commitments =
-        project_sealed_selection_commitments(manifest_path)?;
+    let sealed_selection_commitments = project_sealed_selection_commitments(manifest_path)?;
 
     Ok(HistoryPreview {
         schema_version: SCHEMA_VERSION,
@@ -755,6 +774,7 @@ where
         deferred,
         diagnostics,
         sealed_selection_commitments,
+        evidence_inventory: prototype1_evidence_inventory_rows(),
     })
 }
 
@@ -771,6 +791,8 @@ pub(crate) struct HistoryPreview {
     deferred: Vec<DeferredEvidence>,
     diagnostics: Vec<PreviewDiagnostic>,
     sealed_selection_commitments: SealedSelectionCommitmentsProjection,
+    /// Canonical evidence surface catalog with sealed History vs projection-only lanes.
+    evidence_inventory: Vec<InventoryRow>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -977,10 +999,10 @@ fn print_compared(compared: &ComparedRunEvidence) {
 
 fn print_source(source: &EvidenceSource) {
     println!(
-        "class={} kind={} treatment={} ref={}",
+        "class={} kind={} preview_import_treatment={} ref={}",
         source.class.as_str(),
         source.kind,
-        source.treatment,
+        source.preview_import_treatment,
         source.pointer.ref_id()
     );
 }
@@ -1038,6 +1060,22 @@ impl HistoryPreview {
             "sealed selection digests ok: {}",
             self.sealed_selection_commitments.all_checks_pass
         );
+        println!(
+            "sealed selection decision-grade eligible (all candidates): {}",
+            self.sealed_selection_commitments
+                .all_decision_grade_eligible
+        );
+        println!();
+        println!("evidence inventory (sealed History vs projection)");
+        println!("{}", "-".repeat(40));
+        println!(
+            "rows: {} — commitment lanes (replay axis):",
+            self.evidence_inventory.len()
+        );
+        for (lane, count) in evidence_inventory_lane_counts(&self.evidence_inventory) {
+            println!("  {}: {count}", lane.as_str());
+        }
+        println!("(full inventory table: use --format json)");
         println!();
 
         println!("sealed selection decisions (block segment)");
@@ -1052,16 +1090,21 @@ impl HistoryPreview {
             "blocks scanned: {}",
             self.sealed_selection_commitments.blocks_scanned
         );
-        if self.sealed_selection_commitments.decision_entries.is_empty() {
+        if self
+            .sealed_selection_commitments
+            .decision_entries
+            .is_empty()
+        {
             println!("(no sealed selection entries in segment)");
         } else {
             for row in &self.sealed_selection_commitments.decision_entries {
                 println!(
-                    "line={} block_height={} block={} row_ok={} decision_hash_ok={} order_ok={} procedure={} scope={} selected={}",
+                    "line={} block_height={} block={} row_ok={} decision_grade_all={} decision_hash_ok={} order_ok={} procedure={} scope={} selected={}",
                     row.segment_line_index,
                     row.block_height,
                     &row.block_hash[..16.min(row.block_hash.len())],
                     row.row_ok,
+                    row.decision_grade_all_candidates_eligible,
                     row.decision_observation_ok,
                     row.considered_order_ok,
                     row.procedure_or_policy,
@@ -1078,8 +1121,14 @@ impl HistoryPreview {
                         Some(false) => "mismatch",
                     };
                     println!(
-                        "  candidate={} eval_payload_digest_xcheck={} sel_input_ok={} refs={} hashes={} ref_alignment_ok={}",
+                        "  candidate={} decision_grade_eligible={} identity_gaps={} eval_payload_digest_xcheck={} sel_input_ok={} refs={} hashes={} ref_alignment_ok={}",
                         cand.candidate_subject,
+                        cand.decision_grade_eligible,
+                        if cand.identity_gaps.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            cand.identity_gaps.join("; ")
+                        },
                         digest_xcheck,
                         cand.selection_input_binding_ok,
                         cand.source_ref_count,
@@ -1107,8 +1156,8 @@ impl HistoryPreview {
         println!("{}", "-".repeat(40));
         for source in &self.sources {
             println!(
-                "{} count={} treatment={}",
-                source.class, source.count, source.treatment
+                "{} count={} preview_import_treatment={}",
+                source.class, source.count, source.preview_import_treatment
             );
         }
         println!();
@@ -1192,7 +1241,7 @@ struct AuthorityPreview {
 #[derive(Debug, Clone, Serialize)]
 struct SourceSummary {
     class: &'static str,
-    treatment: &'static str,
+    preview_import_treatment: &'static str,
     count: usize,
 }
 
@@ -1200,7 +1249,7 @@ struct SourceSummary {
 struct DeferredEvidence {
     class: EvidenceClass,
     source: EvidencePointer,
-    treatment: &'static str,
+    preview_import_treatment: &'static str,
     reason: &'static str,
 }
 
@@ -1475,56 +1524,6 @@ impl EvidenceIndex {
                 str_field(value, "branch_id")
                     .and_then(|branch_id| self.branch_generation.get(branch_id).copied())
             })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum EvidenceClass {
-    TransitionJournal,
-    Evaluation,
-    Invocation,
-    AttemptResult,
-    SuccessorReady,
-    SuccessorCompletion,
-    Scheduler,
-    BranchRegistry,
-    NodeRecord,
-    RunnerRequest,
-    RunnerResult,
-}
-
-impl EvidenceClass {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::TransitionJournal => "transition_journal",
-            Self::Evaluation => "evaluation",
-            Self::Invocation => "invocation",
-            Self::AttemptResult => "attempt_result",
-            Self::SuccessorReady => "successor_ready",
-            Self::SuccessorCompletion => "successor_completion",
-            Self::Scheduler => "scheduler",
-            Self::BranchRegistry => "branch_registry",
-            Self::NodeRecord => "node_record",
-            Self::RunnerRequest => "runner_request",
-            Self::RunnerResult => "runner_result",
-        }
-    }
-
-    pub(crate) fn treatment(self) -> &'static str {
-        match self {
-            Self::TransitionJournal => "admitted_preview",
-            Self::Evaluation => "admitted_preview_raw",
-            Self::Invocation => "admitted_preview_raw",
-            Self::AttemptResult => "admitted_preview_raw",
-            Self::SuccessorReady => "admitted_preview_raw_or_ingress",
-            Self::SuccessorCompletion => "admitted_preview_raw",
-            Self::Scheduler => "projection_only",
-            Self::BranchRegistry => "projection_plus_evidence_refs",
-            Self::NodeRecord => "projection_or_degraded_evidence",
-            Self::RunnerRequest => "admitted_preview_raw",
-            Self::RunnerResult => "projection_unless_attempt_result_missing",
-        }
     }
 }
 
@@ -2498,7 +2497,7 @@ fn deferred_documents(documents: &[Document]) -> Vec<DeferredEvidence> {
         .map(|document| DeferredEvidence {
             class: document.class,
             source: document.pointer.clone(),
-            treatment: document.class.treatment(),
+            preview_import_treatment: document.class.preview_import_treatment(),
             reason: match document.class {
                 EvidenceClass::Scheduler => "mutable scheduler state is projection-only",
                 EvidenceClass::BranchRegistry => {
@@ -2547,10 +2546,18 @@ fn provisional_blocks(entries: &[PreviewEntry]) -> Vec<PreviewBlock> {
         .collect()
 }
 
+fn evidence_inventory_lane_counts(rows: &[InventoryRow]) -> BTreeMap<HistoryCommitmentLane, usize> {
+    let mut counts = BTreeMap::new();
+    for row in rows {
+        *counts.entry(row.history_commitment).or_insert(0) += 1;
+    }
+    counts
+}
+
 fn source_summary(journal: &[Stored<JournalEntry>], documents: &[Document]) -> Vec<SourceSummary> {
     let mut summaries = vec![SourceSummary {
         class: EvidenceClass::TransitionJournal.as_str(),
-        treatment: EvidenceClass::TransitionJournal.treatment(),
+        preview_import_treatment: EvidenceClass::TransitionJournal.preview_import_treatment(),
         count: journal.len(),
     }];
     for class in [
@@ -2572,7 +2579,7 @@ fn source_summary(journal: &[Stored<JournalEntry>], documents: &[Document]) -> V
         if count > 0 {
             summaries.push(SourceSummary {
                 class: class.as_str(),
-                treatment: class.treatment(),
+                preview_import_treatment: class.preview_import_treatment(),
                 count,
             });
         }
@@ -2795,9 +2802,18 @@ mod tests {
         assert_eq!(proj.blocks_scanned, 0);
         assert!(proj.decision_entries.is_empty());
         assert!(proj.all_checks_pass);
+        assert!(
+            !proj.all_decision_grade_eligible,
+            "empty segment must not report decision-grade coverage"
+        );
 
         let preview = build("campaign-a", &manifest).expect("preview");
         assert_eq!(preview.sealed_selection_commitments.blocks_scanned, 0);
         assert!(preview.sealed_selection_commitments.all_checks_pass);
+        assert!(
+            !preview
+                .sealed_selection_commitments
+                .all_decision_grade_eligible
+        );
     }
 }

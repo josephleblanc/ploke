@@ -64,12 +64,13 @@ use serde::{Deserialize, Serialize};
 use super::cli_facing::{
     Prototype1BranchEvaluationReport, Prototype1EvalSetIdentity, Prototype1EvaluatorIdentity,
 };
+use super::evidence_class::EvidenceClass;
 use super::history::{
     CandidateCoordinate, CandidateLifecycle, SealedBranchEvidence, SealedCandidateEvidence,
     SealedComparedRunEvidence, SealedEvaluationEvidence, SealedEvidenceCitation,
     SealedRuntimeEvidence,
 };
-use super::history_preview::{EvidenceClass, EvidencePointer, EvidenceRecord, Stored};
+use super::history_preview::{EvidencePointer, EvidenceRecord, Stored};
 use super::invocation::{Invocation, SuccessorCompletionRecord, SuccessorReadyRecord};
 use super::journal::{JournalEntry, SpawnPhase};
 use crate::inner::core::RegisteredRunRole;
@@ -354,7 +355,10 @@ pub(crate) fn seal_candidate_evidence_for_history(
             branch_id: child.branch_id.clone(),
             generation: child.generation,
             plan_index: Some(plan_index as u32),
-            primary_runtime_id: child.runtimes.first().map(|runtime| runtime.runtime_id.clone()),
+            primary_runtime_id: child
+                .runtimes
+                .first()
+                .map(|runtime| runtime.runtime_id.clone()),
         }
     } else {
         CandidateCoordinate {
@@ -388,14 +392,13 @@ pub(crate) fn seal_candidate_evidence_for_history(
                         .eval_set_identity
                         .as_ref()
                         .and_then(|identity| serde_json::to_value(identity).ok()),
-                    evaluation_artifact_citation: evaluation
-                        .evaluation_artifact_path
-                        .as_ref()
-                        .map(|path| SealedEvidenceCitation {
+                    evaluation_artifact_citation: evaluation.evaluation_artifact_path.as_ref().map(
+                        |path| SealedEvidenceCitation {
                             ref_id: format!("opaque_evaluation_artifact:{}", path.display()),
                             content_hash: None,
                             record_name: None,
-                        }),
+                        },
+                    ),
                     overall_disposition: evaluation.overall_disposition.clone(),
                     primary_report_citation: citation_from_evidence_source(&evaluation.source),
                     compared_runs: evaluation
@@ -496,22 +499,15 @@ fn citation_from_evidence_source(source: &EvidenceSource) -> SealedEvidenceCitat
     SealedEvidenceCitation {
         ref_id: source.pointer.ref_id().to_string(),
         content_hash: Some(source.pointer.hash().clone()),
-        record_name: source
-            .record
-            .as_ref()
-            .map(|record| record.name.clone()),
+        record_name: source.record.as_ref().map(|record| record.name.clone()),
     }
 }
 
 fn seal_compared_run_evidence(row: &ComparedRunEvidence) -> SealedComparedRunEvidence {
-    let baseline_citation = compared_run_registration_citation(
-        &row.baseline_run,
-        &row.baseline_registration_path,
-    );
-    let treatment_citation = compared_run_registration_citation(
-        &row.treatment_run,
-        &row.treatment_registration_path,
-    );
+    let baseline_citation =
+        compared_run_registration_citation(&row.baseline_run, &row.baseline_registration_path);
+    let treatment_citation =
+        compared_run_registration_citation(&row.treatment_run, &row.treatment_registration_path);
     let mut diagnostics: Vec<String> = row
         .diagnostics
         .iter()
@@ -526,9 +522,7 @@ fn seal_compared_run_evidence(row: &ComparedRunEvidence) -> SealedComparedRunEvi
         Some(run) => match serde_json::to_value(run) {
             Ok(value) => Some(value),
             Err(err) => {
-                diagnostics.push(format!(
-                    "baseline_run:history_seal_json_failed:{err}"
-                ));
+                diagnostics.push(format!("baseline_run:history_seal_json_failed:{err}"));
                 None
             }
         },
@@ -538,9 +532,7 @@ fn seal_compared_run_evidence(row: &ComparedRunEvidence) -> SealedComparedRunEvi
         Some(run) => match serde_json::to_value(run) {
             Ok(value) => Some(value),
             Err(err) => {
-                diagnostics.push(format!(
-                    "treatment_run:history_seal_json_failed:{err}"
-                ));
+                diagnostics.push(format!("treatment_run:history_seal_json_failed:{err}"));
                 None
             }
         },
@@ -963,7 +955,9 @@ pub(crate) enum SelectionProjectionField {
 pub(crate) struct EvidenceSource {
     pub(crate) class: EvidenceClass,
     pub(crate) kind: String,
-    pub(crate) treatment: String,
+    /// How the preview importer labels this class (legacy JSON used `treatment`).
+    #[serde(alias = "treatment")]
+    pub(crate) preview_import_treatment: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) record: Option<EvidenceRecordSource>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -980,7 +974,7 @@ impl EvidenceSource {
         Self {
             class,
             kind: kind.into(),
-            treatment: class.treatment().to_string(),
+            preview_import_treatment: class.preview_import_treatment().to_string(),
             record: Some(EvidenceRecordSource {
                 name: T::RECORD_NAME.to_string(),
                 schema: T::SCHEMA.to_string(),
@@ -994,7 +988,9 @@ impl EvidenceSource {
         Self {
             class: EvidenceClass::TransitionJournal,
             kind: journal_kind(entry).to_string(),
-            treatment: EvidenceClass::TransitionJournal.treatment().to_string(),
+            preview_import_treatment: EvidenceClass::TransitionJournal
+                .preview_import_treatment()
+                .to_string(),
             record: Some(EvidenceRecordSource {
                 name: <JournalEntry as EvidenceRecord>::RECORD_NAME.to_string(),
                 schema: <JournalEntry as EvidenceRecord>::SCHEMA.to_string(),
@@ -2142,7 +2138,8 @@ mod tests {
         ChildEvidence, EvidenceDiagnostic, EvidenceFactOrigin, EvidenceSource,
         SelectionProjectionError, SelectionProjectionField,
     };
-    use crate::cli::prototype1_state::history_preview::{EvidenceClass, FsEvidenceStore};
+    use crate::cli::prototype1_state::evidence_class::EvidenceClass;
+    use crate::cli::prototype1_state::history_preview::FsEvidenceStore;
     use crate::record::SubmissionArtifactState;
     use crate::{BranchDisposition, OperationalRunMetrics, PatchApplyState};
 
