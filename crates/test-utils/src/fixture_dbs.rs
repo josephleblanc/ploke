@@ -31,6 +31,8 @@ pub enum FixtureImportMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixtureStatus {
     Active,
+    Planned,
+    TypedTypeGraph,
     Legacy,
     Orphaned,
 }
@@ -57,6 +59,17 @@ pub enum FixtureAutomation {
     },
     WorkspaceCrate {
         crate_name: &'static str,
+        output_stem: &'static str,
+    },
+    /// Clone or reuse a pinned GitHub corpus checkout and transform it into a
+    /// plain graph backup. These fixtures are intentionally source-pinned:
+    /// the checkout identity is part of the fixture contract, not ambient
+    /// local state under `tests/fixture_github_clones/corpus`.
+    GithubCorpusCrate {
+        normalized_repo: &'static str,
+        checkout_slug: &'static str,
+        clone_url: &'static str,
+        rev: &'static str,
         output_stem: &'static str,
     },
     /// Extract a single member crate from a workspace fixture.
@@ -136,6 +149,10 @@ impl FixtureDb {
                 output_stem,
                 ..
             })
+            | FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+                output_stem,
+                ..
+            })
             | FixtureCreationStrategy::Automated(FixtureAutomation::FixtureWorkspaceMember {
                 output_stem,
                 ..
@@ -166,7 +183,7 @@ pub const FIXTURE_NODES_CANONICAL: FixtureDb = FixtureDb {
     id: "fixture_nodes_canonical",
     rel_path: "tests/backup_dbs/fixture_nodes_canonical_2026-04-01.sqlite",
     parsed_targets: &["tests/fixture_crates/fixture_nodes"],
-    status: FixtureStatus::Active,
+    status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureCrateMultiEmbedding {
         fixture_name: "fixture_nodes",
         output_stem: "fixture_nodes_canonical",
@@ -184,7 +201,7 @@ pub const FIXTURE_NODES_LOCAL_EMBEDDINGS: FixtureDb = FixtureDb {
     id: "fixture_nodes_local_embeddings",
     rel_path: "tests/backup_dbs/fixture_nodes_local_embeddings_2026-04-01.sqlite",
     parsed_targets: &["tests/fixture_crates/fixture_nodes"],
-    status: FixtureStatus::Active,
+    status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureCrateLocalEmbeddings {
         fixture_name: "fixture_nodes",
         output_stem: "fixture_nodes_local_embeddings",
@@ -231,7 +248,7 @@ pub const PLOKE_DB_PRIMARY: FixtureDb = FixtureDb {
     id: "ploke_db_primary",
     rel_path: "tests/backup_dbs/ploke_db_primary_2026-03-22.sqlite",
     parsed_targets: &["crates/ploke-db"],
-    status: FixtureStatus::Active,
+    status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceCrate {
         crate_name: "ploke-db",
         output_stem: "ploke_db_primary",
@@ -249,7 +266,7 @@ pub const WS_FIXTURE_01_CANONICAL: FixtureDb = FixtureDb {
     id: "ws_fixture_01_canonical",
     rel_path: "tests/backup_dbs/ws_fixture_01_canonical_2026-03-21.sqlite",
     parsed_targets: &["tests/fixture_workspace/ws_fixture_01"],
-    status: FixtureStatus::Active,
+    status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceFixture {
         fixture_name: "ws_fixture_01",
         output_stem: "ws_fixture_01_canonical",
@@ -285,6 +302,90 @@ pub const WS_FIXTURE_01_MEMBER_SINGLE: FixtureDb = FixtureDb {
     notes: "Single-member slice of ws_fixture_01 containing only `member_root`. Used for testing scenarios where a workspace is loaded but only one member crate is indexed/focused. Regeneration extracts only the member crate's graph plus workspace metadata (without other members).",
 };
 
+pub const CORPUS_SEMVER_TYPE_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_semver_type_graph",
+    rel_path: "tests/backup_dbs/corpus_semver_type_graph_2026-05-06.sqlite",
+    parsed_targets: &["github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+        normalized_repo: "dtolnay/semver",
+        checkout_slug: "dtolnay__semver",
+        clone_url: "https://github.com/dtolnay/semver.git",
+        rev: "8591f2344b52b31d85b538de58b76a676fe9ff90",
+        output_stem: "corpus_semver_type_graph",
+    }),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-05-06",
+    notes: "Corpus-backed type graph contract fixture for graphRAG traversal tests over semver's VersionReq/Version/Comparator type surface. Recreate with `cargo run -p xtask --features ploke-db/typed_type_graph,ploke-transform/typed_type_graph,syn_parser/typed_type_graph -- recreate-backup-db --fixture corpus_semver_type_graph`.",
+};
+
+pub const CORPUS_MEMCHR_TYPE_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_memchr_type_graph",
+    rel_path: "tests/backup_dbs/corpus_memchr_type_graph_2026-05-06.sqlite",
+    parsed_targets: &["github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+        normalized_repo: "BurntSushi/memchr",
+        checkout_slug: "BurntSushi__memchr",
+        clone_url: "https://github.com/BurntSushi/memchr.git",
+        rev: "24f5daa5257e00e87007c936761600e034827905",
+        output_stem: "corpus_memchr_type_graph",
+    }),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-05-06",
+    notes: "Corpus-backed type graph contract fixture for iterator-return and trait-impl graphRAG traversal over memchr.",
+};
+
+pub const CORPUS_GENERIC_ARRAY_TYPE_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_generic_array_type_graph",
+    rel_path: "tests/backup_dbs/corpus_generic_array_type_graph_2026-05-06.sqlite",
+    parsed_targets: &["github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+        normalized_repo: "fizyk20/generic-array",
+        checkout_slug: "fizyk20__generic-array",
+        clone_url: "https://github.com/fizyk20/generic-array.git",
+        rev: "80bab87431c2e29823dc551a3311324812838a23",
+        output_stem: "corpus_generic_array_type_graph",
+    }),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-05-06",
+    notes: "Corpus-backed type graph contract fixture for const-generic alias and GenericArray traversal.",
+};
+
+pub const CORPUS_CHRONO_TYPE_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_chrono_type_graph",
+    rel_path: "tests/backup_dbs/corpus_chrono_type_graph_2026-05-06.sqlite",
+    parsed_targets: &["github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+        normalized_repo: "chronotope/chrono",
+        checkout_slug: "chronotope__chrono",
+        clone_url: "https://github.com/chronotope/chrono.git",
+        rev: "120686c82c5da90377e815edb82c9a80b6b4f2be",
+        output_stem: "corpus_chrono_type_graph",
+    }),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-05-06",
+    notes: "Corpus-backed type graph contract fixture for LocalResult/MappedLocalTime and timezone generic traversal.",
+};
+
 pub const PLOKE_DB_ORPHANED: FixtureDb = FixtureDb {
     id: "ploke_db_orphaned",
     rel_path: "tests/backup_dbs/ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45",
@@ -313,6 +414,10 @@ pub const BACKUP_DB_FIXTURES: &[&FixtureDb] = &[
     &PLOKE_DB_PRIMARY,
     &WS_FIXTURE_01_CANONICAL,
     &WS_FIXTURE_01_MEMBER_SINGLE,
+    &CORPUS_SEMVER_TYPE_GRAPH,
+    &CORPUS_MEMCHR_TYPE_GRAPH,
+    &CORPUS_GENERIC_ARRAY_TYPE_GRAPH,
+    &CORPUS_CHRONO_TYPE_GRAPH,
     &PLOKE_DB_ORPHANED,
 ];
 
@@ -458,6 +563,27 @@ mod tests {
         );
         assert_eq!(fixture.import_mode, FixtureImportMode::PlainBackup);
         assert_eq!(fixture.status, FixtureStatus::Active);
+    }
+
+    #[test]
+    fn corpus_type_graph_fixtures_are_registered_as_typed_graph_source_pinned_targets() {
+        let fixture = backup_db_fixture("corpus_semver_type_graph")
+            .expect("semver corpus fixture should be registered");
+
+        assert_eq!(fixture.status, FixtureStatus::TypedTypeGraph);
+        assert_eq!(fixture.import_mode, FixtureImportMode::PlainBackup);
+        assert_eq!(
+            fixture.parsed_targets,
+            &["github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90"]
+        );
+        assert!(matches!(
+            fixture.creation,
+            FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+                normalized_repo: "dtolnay/semver",
+                checkout_slug: "dtolnay__semver",
+                ..
+            })
+        ));
     }
 
     #[test]

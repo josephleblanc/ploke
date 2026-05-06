@@ -11,7 +11,9 @@ use cozo::{Db, MemStorage};
 use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::ToCozoUuid;
-use syn_parser::parser::relations::{SyntacticRelation, TypeRelation};
+use syn_parser::parser::relations::SyntacticRelation;
+#[cfg(feature = "typed_type_graph")]
+use syn_parser::parser::relations::TypeRelation;
 use syn_parser::resolve::Colorize;
 #[cfg(not(feature = "typed_type_graph"))]
 use syn_parser::resolve::type_resolution::TypeUseResolution;
@@ -46,6 +48,112 @@ define_schema!(TypeRelationSchema {
     source_kind: "String",
     target_kind: "String"
 });
+
+#[cfg(feature = "typed_type_graph")]
+pub struct TypeUseSchema;
+
+#[cfg(feature = "typed_type_graph")]
+impl TypeUseSchema {
+    pub const RELATION: &'static str = "type_use";
+
+    pub fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+        db.run_script(
+            r#":create type_use {
+                owner_id: Uuid,
+                root_type_id: Uuid,
+                role: String,
+                slot_index: Int,
+                at: Validity
+            }"#,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_relation(
+        db: &Db<MemStorage>,
+        owner_id: cozo::DataValue,
+        root_type_id: cozo::DataValue,
+        role: &'static str,
+        slot_index: Option<usize>,
+    ) -> Result<(), TransformError> {
+        let mut params = BTreeMap::new();
+        params.insert("owner_id".to_string(), owner_id);
+        params.insert("root_type_id".to_string(), root_type_id);
+        params.insert("role".to_string(), cozo::DataValue::from(role));
+        params.insert(
+            "slot_index".to_string(),
+            cozo::DataValue::from(slot_index.map_or(-1_i64, |idx| idx as i64)),
+        );
+
+        db.run_script(
+            r#"?[owner_id, root_type_id, role, slot_index, at] :=
+                owner_id = $owner_id,
+                root_type_id = $root_type_id,
+                role = $role,
+                slot_index = $slot_index,
+                at = 'ASSERT'
+            :put type_use { owner_id, root_type_id, role, slot_index, at }"#,
+            params,
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "typed_type_graph")]
+pub struct TypeContainsSchema;
+
+#[cfg(feature = "typed_type_graph")]
+impl TypeContainsSchema {
+    pub const RELATION: &'static str = "type_contains";
+
+    pub fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+        db.run_script(
+            r#":create type_contains {
+                parent_type_id: Uuid,
+                child_type_id: Uuid,
+                kind: String,
+                position: Int,
+                at: Validity
+            }"#,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_relation(
+        db: &Db<MemStorage>,
+        parent_type_id: cozo::DataValue,
+        child_type_id: cozo::DataValue,
+        kind: &'static str,
+        position: Option<usize>,
+    ) -> Result<(), TransformError> {
+        let mut params = BTreeMap::new();
+        params.insert("parent_type_id".to_string(), parent_type_id);
+        params.insert("child_type_id".to_string(), child_type_id);
+        params.insert("kind".to_string(), cozo::DataValue::from(kind));
+        params.insert(
+            "position".to_string(),
+            cozo::DataValue::from(position.map_or(-1_i64, |idx| idx as i64)),
+        );
+
+        db.run_script(
+            r#"?[parent_type_id, child_type_id, kind, position, at] :=
+                parent_type_id = $parent_type_id,
+                child_type_id = $child_type_id,
+                kind = $kind,
+                position = $position,
+                at = 'ASSERT'
+            :put type_contains { parent_type_id, child_type_id, kind, position, at }"#,
+            params,
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+}
 
 impl SyntacticRelationSchema {
     /// Transforms a SyntacticRelation into parameters for database insertion

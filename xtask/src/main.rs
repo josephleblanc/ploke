@@ -25,7 +25,7 @@ use std::{
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
-    process::ExitCode,
+    process::{Command as ProcessCommand, ExitCode},
     sync::Arc,
     time::Duration,
 };
@@ -550,6 +550,28 @@ fn recreate_automated_fixture(
                 .map_err(|err| format!("build workspace crate fixture database: {err}"))?;
             Arc::new(Database::new(cozo_db))
         }
+        FixtureAutomation::GithubCorpusCrate {
+            normalized_repo,
+            checkout_slug,
+            clone_url,
+            rev,
+            ..
+        } => {
+            let checkout_path = ensure_github_corpus_fixture_checkout(
+                normalized_repo,
+                checkout_slug,
+                clone_url,
+                rev,
+            )
+            .map_err(|err| format!("prepare corpus checkout: {err}"))?;
+            let cozo_db = setup_db_full_parse_target(&checkout_path).map_err(|err| {
+                format!(
+                    "build corpus fixture database from {}: {err}",
+                    display_relative(&checkout_path, &workspace_root())
+                )
+            })?;
+            Arc::new(Database::new(cozo_db))
+        }
         FixtureAutomation::FixtureWorkspaceMember {
             fixture_name,
             member_crate,
@@ -571,6 +593,132 @@ fn recreate_automated_fixture(
 
     verify_output_backup(fixture, output_path)?;
     Ok(())
+}
+
+fn setup_db_full_parse_target(target: &Path) -> Result<cozo::Db<cozo::MemStorage>, String> {
+    let db = cozo::Db::new(cozo::MemStorage::default())
+        .map_err(|err| format!("create in-memory cozo db: {err}"))?;
+    db.initialize()
+        .map_err(|err| format!("initialize in-memory cozo db: {err}"))?;
+    ploke_transform::schema::create_schema_all(&db)
+        .map_err(|err| format!("create transform schema: {err}"))?;
+
+    let mut output = syn_parser::try_run_phases_and_merge(target)
+        .map_err(|err| format!("parse and merge target {}: {err}", target.display()))?;
+    let mut merged = output
+        .extract_merged_graph()
+        .ok_or_else(|| "parser output missing merged graph".to_string())?;
+    let tree = match output.extract_module_tree() {
+        Some(tree) => tree,
+        None => merged
+            .build_tree_and_prune()
+            .map_err(|err| format!("build module tree: {err}"))?,
+    };
+
+    ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)
+        .map_err(|err| format!("transform parsed graph: {err}"))?;
+    Ok(db)
+}
+
+fn ensure_github_corpus_fixture_checkout(
+    normalized_repo: &str,
+    checkout_slug: &str,
+    clone_url: &str,
+    rev: &str,
+) -> Result<PathBuf, String> {
+    let checkout_root = workspace_root().join("tests/fixture_github_clones/corpus");
+    let checkout_path = checkout_root.join(checkout_slug);
+    if checkout_path.exists() && !checkout_path.join(".git").is_dir() {
+        return Err(format!(
+            "checkout path {} exists but is not a git repository",
+            checkout_path.display()
+        ));
+    }
+
+    if !checkout_path.exists() {
+        fs::create_dir_all(&checkout_root).map_err(|err| {
+            format!(
+                "create corpus checkout root {}: {err}",
+                checkout_root.display()
+            )
+        })?;
+        run_git(
+            None,
+            &[
+                "clone",
+                clone_url,
+                checkout_path
+                    .to_str()
+                    .ok_or_else(|| format!("non-utf8 checkout path {}", checkout_path.display()))?,
+            ],
+        )
+        .map_err(|err| format!("clone {normalized_repo}: {err}"))?;
+    }
+
+    if !git_has_commit(&checkout_path, rev) {
+        run_git(Some(&checkout_path), &["fetch", "origin", rev])
+            .map_err(|err| format!("fetch {normalized_repo}@{rev}: {err}"))?;
+    }
+    run_git(Some(&checkout_path), &["checkout", "--detach", rev])
+        .map_err(|err| format!("checkout {normalized_repo}@{rev}: {err}"))?;
+
+    let actual = git_stdout(Some(&checkout_path), &["rev-parse", "HEAD"])
+        .map_err(|err| format!("read checked-out commit for {normalized_repo}: {err}"))?;
+    if actual.trim() != rev {
+        return Err(format!(
+            "checkout {} resolved to {}, expected {}",
+            checkout_path.display(),
+            actual.trim(),
+            rev
+        ));
+    }
+
+    Ok(checkout_path)
+}
+
+fn git_has_commit(repo: &Path, rev: &str) -> bool {
+    let commitish = format!("{rev}^{{commit}}");
+    git_output(Some(repo), &["cat-file", "-e", &commitish])
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn run_git(cwd: Option<&Path>, args: &[&str]) -> Result<(), String> {
+    let output = git_output(cwd, args)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(stderr_or_status(&output))
+    }
+}
+
+fn git_stdout(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
+    let output = git_output(cwd, args)?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(stderr_or_status(&output))
+    }
+}
+
+fn git_output(cwd: Option<&Path>, args: &[&str]) -> Result<std::process::Output, String> {
+    let mut command = ProcessCommand::new("git");
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command
+        .args(args)
+        .output()
+        .map_err(|err| format!("spawn git {}: {err}", args.join(" ")))
+}
+
+fn stderr_or_status(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        format!("process exited with status {}", output.status)
+    } else {
+        stderr
+    }
 }
 
 fn verify_output_backup(fixture: &'static FixtureDb, output_path: &Path) -> Result<(), String> {

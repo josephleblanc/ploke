@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-04-03
-Last updated: 2026-04-03
+Last reviewed: 2026-05-06
+Last updated: 2026-05-06
 
 This document is the current inventory for backup database fixtures under
 `tests/backup_dbs/`. It records which source targets produced each fixture,
@@ -54,6 +54,22 @@ helpers in
 The registry file is the source of truth for fixture metadata. Test code should
 reference fixture constants there instead of hard-coding backup paths.
 
+Registry status note:
+
+- `Active` fixtures are expected to exist on disk and are validated by
+  `cargo xtask verify-backup-dbs`.
+- `Planned` fixtures record a source-pinned, reproducible fixture contract
+  before the dated DB backup is committed. They may be recreated explicitly with
+  `cargo xtask recreate-backup-db --fixture <id>`, but they are not part of the
+  default verification set until promoted to `Active`.
+- `TypedTypeGraph` fixtures are current-schema typed type graph backups. They
+  are intentionally excluded from default backup verification because the
+  default import path still exercises the legacy type-resolution schema. Verify
+  them with `cargo run -p xtask --features typed_type_graph --
+  verify-backup-dbs --fixture <id>`.
+- `Legacy` and `Orphaned` fixtures remain outside the default active validation
+  set unless explicitly selected.
+
 One exception currently remains for `ploke-db` lib-unit tests: because
 `ploke-test-utils` depends on `ploke-db`, those unit-test modules cannot consume
 `shared_backup_fixture_db(...)` directly without hitting a duplicate-crate type
@@ -79,6 +95,10 @@ Test isolation note:
 | `ploke_db_primary_2026-03-21.sqlite` | `crates/ploke-db` | current-schema `ploke-db` graph backup | 2026-03-21 |
 | `ws_fixture_01_canonical_2026-03-21.sqlite` | `tests/fixture_workspace/ws_fixture_01` | canonical plain backup of committed multi-member workspace fixture | 2026-03-21 |
 | `ws_fixture_01_member_single_2026-04-03.sqlite` | `tests/fixture_workspace/ws_fixture_01/member_root` | single-member slice of workspace fixture | 2026-04-03 |
+| `corpus_semver_type_graph_2026-05-06.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | typed graphRAG type traversal corpus backup | 2026-05-06 |
+| `corpus_memchr_type_graph_2026-05-06.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | typed graphRAG type traversal corpus backup | 2026-05-06 |
+| `corpus_generic_array_type_graph_2026-05-06.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | typed graphRAG type traversal corpus backup | 2026-05-06 |
+| `corpus_chrono_type_graph_2026-05-06.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | typed graphRAG type traversal corpus backup | 2026-05-06 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
 ## `fixture_nodes_canonical_2026-04-01.sqlite`
@@ -198,6 +218,81 @@ Test isolation note:
   - used for testing focused-crate operations within a multi-member workspace context
   - the filename is dated `2026-04-03` because `cargo xtask recreate-backup-db`
     stamps outputs with UTC date
+
+## Corpus Type Graph Fixtures
+
+These fixtures are source-pinned targets for DB-backed graphRAG type traversal
+contracts. The checkout identity, backup stem, and test intent live in one
+registry-backed place instead of in local symlinks under
+`tests/fixture_github_clones/corpus`.
+
+Run `cargo run -p xtask --features typed_type_graph -- recreate-backup-db
+--fixture <id>` to clone or reuse the pinned checkout, check out the recorded
+commit, parse and transform the crate with typed type graph relations enabled,
+write the dated backup under `tests/backup_dbs/`, and verify that the generated
+backup imports with the current schema.
+
+### `corpus_semver_type_graph_2026-05-06.sqlite`
+
+- Status: typed type graph
+- File: `tests/backup_dbs/corpus_semver_type_graph_2026-05-06.sqlite`
+- Parsed target: `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90`
+- Checkout slug: `tests/fixture_github_clones/corpus/dtolnay__semver`
+- Expected DB config:
+  - plain backup import
+  - no embedding model contract
+  - no primary vector index required by the type graph query contracts
+- Tests using this fixture:
+  - [crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs](../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
+  - graphRAG traversal from `matches_req` to `VersionReq` and `Version`
+  - traversal from `VersionReq.comparators: Vec<Comparator>` to `Comparator`
+
+### `corpus_memchr_type_graph_2026-05-06.sqlite`
+
+- Status: typed type graph
+- File: `tests/backup_dbs/corpus_memchr_type_graph_2026-05-06.sqlite`
+- Parsed target: `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905`
+- Checkout slug: `tests/fixture_github_clones/corpus/BurntSushi__memchr`
+- Expected DB config:
+  - plain backup import
+  - no embedding model contract
+  - no primary vector index required by the type graph query contracts
+- Tests using this fixture:
+  - [crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs](../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
+  - traversal from `memchr_iter` return types to iterator structs such as
+    `Memchr`
+  - later traversal from iterator self types to `Iterator` and
+    `DoubleEndedIterator` impl surfaces
+
+### `corpus_generic_array_type_graph_2026-05-06.sqlite`
+
+- Status: typed type graph
+- File: `tests/backup_dbs/corpus_generic_array_type_graph_2026-05-06.sqlite`
+- Parsed target: `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23`
+- Checkout slug: `tests/fixture_github_clones/corpus/fizyk20__generic-array`
+- Expected DB config:
+  - plain backup import
+  - no embedding model contract
+  - no primary vector index required by the type graph query contracts
+- Tests using this fixture:
+  - [crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs](../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
+  - traversal from const-generic aliases to `GenericArray`
+  - later traversal through const-generic bounds and associated impls
+
+### `corpus_chrono_type_graph_2026-05-06.sqlite`
+
+- Status: typed type graph
+- File: `tests/backup_dbs/corpus_chrono_type_graph_2026-05-06.sqlite`
+- Parsed target: `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be`
+- Checkout slug: `tests/fixture_github_clones/corpus/chronotope__chrono`
+- Expected DB config:
+  - plain backup import
+  - no embedding model contract
+  - no primary vector index required by the type graph query contracts
+- Tests using this fixture:
+  - [crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs](../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
+  - traversal from `MappedLocalTime<T>` aliases to `LocalResult<T>`
+  - later traversal from timezone API owners into their generic result model
 
 ## `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45`
 

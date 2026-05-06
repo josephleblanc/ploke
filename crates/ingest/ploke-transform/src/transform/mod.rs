@@ -43,6 +43,8 @@ use structs::transform_structs;
 use tracing::instrument;
 use traits::transform_traits;
 use type_alias::transform_type_aliases;
+#[cfg(feature = "typed_type_graph")]
+use type_graph::transform_type_graph_edges;
 use type_node::transform_types;
 use unions::transform_unions;
 
@@ -71,6 +73,8 @@ mod type_alias;
 mod unions;
 
 // -- types --
+#[cfg(feature = "typed_type_graph")]
+mod type_graph;
 mod type_node;
 
 // -- primary node transforms
@@ -147,6 +151,8 @@ pub fn transform_parsed_graph(
         .crate_context
         .expect("Invariant: All Code Graphs must have a Crate Context");
 
+    tracing::trace!("{}: Starting", "type_graph_edges".log_step());
+    transform_type_graph_edges(db, &code_graph)?;
     tracing::trace!("{}: Starting", "types".log_step());
     transform_types(db, code_graph.type_graph)?;
     tracing::trace!("{}: Starting", "functions".log_step());

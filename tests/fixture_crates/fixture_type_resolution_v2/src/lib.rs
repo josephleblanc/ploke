@@ -1,8 +1,14 @@
 #![allow(dead_code, unused_variables)]
 
 pub struct T;
+pub struct U;
 
 pub fn concrete(value: T) {}
+pub fn also_concrete(value: T) {}
+pub fn takes_vec_of_t(value: Vec<T>) {}
+pub fn returns_pair() -> (T, U) {
+    (T, U)
+}
 
 pub fn generic_shadow<T>(value: T) {}
 

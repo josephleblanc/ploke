@@ -9,12 +9,13 @@ pub mod fixture_dbs;
 pub mod nodes;
 
 pub use fixture_dbs::{
-    BACKUP_DB_FIXTURES, FIXTURE_NODES_CANONICAL, FIXTURE_NODES_LOCAL_EMBEDDINGS,
-    FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
-    FixtureEmbeddingExpectation, FixtureImportMode, FixtureManualRecreation, FixtureStatus,
-    PLOKE_DB_ORPHANED, PLOKE_DB_PRIMARY, WS_FIXTURE_01_CANONICAL, WS_FIXTURE_01_MEMBER_SINGLE,
-    backup_db_fixture, fresh_backup_fixture_db, shared_backup_fixture_db,
-    validate_backup_fixture_contract,
+    BACKUP_DB_FIXTURES, CORPUS_CHRONO_TYPE_GRAPH, CORPUS_GENERIC_ARRAY_TYPE_GRAPH,
+    CORPUS_MEMCHR_TYPE_GRAPH, CORPUS_SEMVER_TYPE_GRAPH, FIXTURE_NODES_CANONICAL,
+    FIXTURE_NODES_LOCAL_EMBEDDINGS, FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1, FixtureAutomation,
+    FixtureCreationStrategy, FixtureDb, FixtureEmbeddingExpectation, FixtureImportMode,
+    FixtureManualRecreation, FixtureStatus, PLOKE_DB_ORPHANED, PLOKE_DB_PRIMARY,
+    WS_FIXTURE_01_CANONICAL, WS_FIXTURE_01_MEMBER_SINGLE, backup_db_fixture,
+    fresh_backup_fixture_db, shared_backup_fixture_db, validate_backup_fixture_contract,
 };
 
 use std::path::{Path, PathBuf};
