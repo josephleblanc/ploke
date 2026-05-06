@@ -9,10 +9,10 @@ use super::CandidateRef;
 /// Generation-local evidence bundle available to the current successor selector.
 ///
 /// This is a narrow projection from persisted child/evaluation records. It is
-/// not the final authority object and not the full archive view. Future
-/// selectors should receive a bounded History-backed candidate projection that
-/// records scope, sampling policy, validator/admission evidence, and evidence
-/// refs before a `SelectionDecision` is admitted through the Crown/History path.
+/// not the final authority object. Future selectors should receive a bounded
+/// `History::candidates(...)` projection that records scope, sampling policy,
+/// validator/admission evidence, and evidence refs before a `SelectionDecision`
+/// is admitted through the Crown/History path.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SelectionInput {
     pub(crate) candidate: CandidateRef,

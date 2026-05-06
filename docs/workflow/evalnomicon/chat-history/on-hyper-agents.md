@@ -32,25 +32,28 @@ That says parent value is not the same as current task score. A node can be valu
 For us, the important architectural consequence is:
 
 ```text
-successor selection != archive traversal
+successor selection != direct-child selection
 ```
 
-Prototype 1 currently has a Crown-style successor path. HyperAgents has an external archive traversal loop. To get the same power inside Ploke, we need an explicit traversal decision space:
+Prototype 1 currently has a Crown-style successor path. HyperAgents has an
+external archive traversal loop. To get the same power inside Ploke, we need an
+explicit traversal decision space over History candidates:
 
 ```text
 continue from accepted child
 explore from rejected child
 backtrack to prior admitted runtime
 branch from sibling/ancestor
-sample from archive
+sample from History candidates
 stop
 ```
 
-Backtracking is not an exceptional recovery feature in this frame. It is normal archive traversal. The system should be able to say:
+Backtracking is not an exceptional recovery feature in this frame. It is normal
+candidate traversal. The system should be able to say:
 
 ```text
 the current lineage did not improve,
-but archive node X has high growth potential,
+but candidate X has high growth potential,
 so install/hydrate X as the next Parent coordinate
 ```
 
@@ -68,13 +71,13 @@ Treat backtracking as ordinary parent selection.
 Keep traversal policy stable until evaluation evidence is mature.
 ```
 
-For Ploke, that means the durable design wants a traversal layer above successor choice. The Crown path can still install exactly one next Parent, but the candidate for that next Parent should eventually come from archive traversal, not only from direct children of the current parent.
+For Ploke, that means the durable design wants a traversal layer above successor choice. The Crown path can still install exactly one next Parent, but the candidate for that next Parent should eventually come from History-backed candidate traversal, not only from direct children of the current parent.
 
-Update recorded 2026-05-06: in Ploke, that archive should be an
-`ArchiveView`/`CandidateArchive` projection over History-admitted candidate,
-evaluation, judgment, validator, import, and selection records, not a separate
-off-chain truth source. The traversal policy may sample from the broad archive,
-but the sampled candidate set, evidence refs, validator score distributions,
-known exclusions, and policy identity must be recorded as the basis for the
-next `SelectionDecision`. Another Parent's report is only a claim until the
-current Parent's policy verifies, resamples, imports, or otherwise admits it.
+Update recorded 2026-05-06: in Ploke, this should just read from `History`,
+e.g. through `History::candidates(...)`, over History-admitted candidate,
+evaluation, judgment, validator, import, and selection records. The traversal
+policy may sample broadly, but the sampled candidate set, evidence refs,
+validator score distributions, known exclusions, and policy identity must be
+recorded as the basis for the next `SelectionDecision`. Another Parent's report
+is only a claim until the current Parent's policy verifies, resamples, imports,
+or otherwise admits it.

@@ -13,15 +13,13 @@ Selecting a child currently feeds two nearby but distinct paths:
 
 The main risk is not that telemetry directly becomes selection authority. The main risk is that operational metrics copied into branch evaluation JSON can be treated downstream as if they prove oracle/adjudication/protocol correctness, or as if a selected branch in mutable projections is equivalent to a sealed History admission.
 
-Update recorded 2026-05-06: the longer-term selector should operate over an
-`ArchiveView`/`CandidateArchive` derived from History-admitted candidate,
-evaluation, judgment, validator, import, and selection records, plus
-content-addressed evidence refs. This does not make Archive a parallel
-authority source. It makes Archive the query/index surface over History-backed
-data. Official child evaluations by `Parent<Ruling>` should be admitted as
-History-shaped procedure/evidence records when they are part of the ruling
-epoch; the lineage-advancing event remains the admitted selection and Crown
-handoff.
+Update recorded 2026-05-06: the longer-term selector should read candidates
+from `History`, for example through `History::candidates(...)`, over
+History-admitted candidate, evaluation, judgment, validator, import, and
+selection records plus content-addressed evidence refs. Official child
+evaluations by `Parent<Ruling>` should be admitted as History-shaped
+procedure/evidence records when they are part of the ruling epoch; the
+lineage-advancing event remains the admitted selection and Crown handoff.
 
 ## Causal Evidence Map
 
@@ -195,11 +193,10 @@ Prototype 1 already has several structural carriers, but selection evidence stil
 Missing structure for this audit:
 
 - A persisted `SelectionEvidence` or admitted History entry that records the selected child, compared run record refs, metric derivation identity, domain set actually evaluated, explicit non-use of oracle/adjudication/protocol evidence, and the selected decision hash.
-- A durable `ArchiveView`/`CandidateArchive` projection that can include
-  immediate children, previous rejected candidates, ancestors, siblings,
-  cross-lineage imports, and validator samples while preserving the selection
-  scope, sampling policy, known exclusions, and evidence-set hash used by the
-  Parent.
+- A durable `History::candidates(...)` projection that can include immediate
+  children, previous rejected candidates, ancestors, siblings, cross-lineage
+  imports, and validator samples while preserving the selection scope, sampling
+  policy, known exclusions, and evidence-set hash used by the Parent.
 - A policy distinction between `ContinueWithRisk` and `Select` in downstream continuation. Today both can set `selected_branch_id`; scheduler policy only sees branch id/disposition.
 - Validator/admission-policy records that distinguish `ClaimedBy`,
   `VerifiedBy`, `AdmittedBy`, and `ReliedOnBy` so one Parent can use another
@@ -223,9 +220,9 @@ Missing structure for this audit:
 5. **Sealed History does not yet carry full selection evidence.**
    Handoff seals artifact/surface/head authority before successor spawn, but stochastic evaluation evidence and rejected/failed candidate evidence are only listed as intended block content when policy uses them.
 
-6. **Archive traversal can hide sampling limits.**
+6. **Candidate traversal can hide sampling limits.**
    A HyperAgents-style selector will eventually range over more than immediate
-   children. Its decision must record the Archive view, sampling policy,
+   children. Its decision must record the History candidate query, sampling policy,
    validator evidence, and known exclusions; otherwise a bounded local sample
    may be mistaken for a globally exhaustive comparison.
 

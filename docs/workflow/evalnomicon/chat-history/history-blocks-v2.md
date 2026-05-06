@@ -17,15 +17,16 @@ History records authority and evidence. Evaluation estimates performance.
 Consensus/reputation weighs evidence. Policy admits successors under bounded
 risk. None of these alone proves permanent improvement.
 
-Update recorded 2026-05-06: the long-term Archive should not be modeled as a
-separate off-chain authority source. The Archive is a query/index/projection
-over History-admitted candidate, evaluation, judgment, validator, import, and
-selection records, plus content-addressed evidence committed by those records.
-Official child evaluation performed by `Parent<Ruling>` is therefore
-History-shaped: it belongs to that Parent's authority epoch as a procedure run
-or observation. The lineage-advancing event remains the admitted selection and
-Crown lock/handoff. A later Parent may read another Parent's evaluated
-candidate through an Archive view, but it only becomes usable for the later
+Update recorded 2026-05-06: the long-term design should not add a separate
+off-chain Archive authority. `History` remains the substrate, and a ruling
+parent can query it directly, e.g. `History::candidates(...)`, for a bounded
+projection over History-admitted candidate, evaluation, judgment, validator,
+import, and selection records, plus content-addressed evidence committed by
+those records. Official child evaluation performed by `Parent<Ruling>` is
+therefore History-shaped: it belongs to that Parent's authority epoch as a
+procedure run or observation. The lineage-advancing event remains the admitted
+selection and Crown lock/handoff. A later Parent may read another Parent's
+evaluated candidate from History, but it only becomes usable for the later
 Parent's selection after that Parent's policy admits the evidence, possibly
 after hash checks, replay, resampling, validator attestations, or reputation
 weighting.
@@ -83,7 +84,7 @@ and have not changed since sealing.
 Evaluation and validation evidence can support claims about improvement, but
 those claims remain probabilistic unless backed by stronger external proof.
 History can make those claims durable, attributable, and available for later
-Archive traversal; it does not make the reporting Parent honest by definition.
+candidate traversal; it does not make the reporting Parent honest by definition.
 Cross-parent reuse must preserve the distinction between `ClaimedBy`,
 `VerifiedBy`, `AdmittedBy`, and `ReliedOnBy`.
 
@@ -286,11 +287,11 @@ into giant report structs.
 - evidence/sample roots or refs where used for admission;
 - uncertainty/risk roots or refs where used for admission;
 - candidate-set roots or refs when a selection policy ranges over children,
-  prior candidates, archive members, or cross-lineage imports;
+  prior candidates, or cross-lineage imports;
 - evaluation/judgment/validator refs, including score distributions and sample
   budgets when the policy depends on them;
 - selection scope, sampling policy, and known exclusions when a Parent selects
-  from a bounded Archive view rather than a complete candidate universe;
+  from bounded History candidates rather than a complete candidate universe;
 - rejected/failure evidence refs where needed to avoid selection bias;
 - head-state concerns: rollback, fork/conflict, admission, and finality status;
 - block hash.
@@ -310,8 +311,8 @@ content-addressed evidence surface, with the block committing to a digest/ref:
 This keeps the block from becoming a payload bag while preserving the ability to
 audit and replay the authority/evidence path.
 
-The Archive layer should be derived from these committed block bodies, entries,
-and evidence refs. Archive nodes or indexes may retain old bodies, transcripts,
+Candidate queries should be derived from these committed block bodies, entries,
+and evidence refs. External indexes may retain old bodies, transcripts,
 patches, validator samples, and summaries for retrieval, but their query output
 does not become authority until a `Parent<Ruling>` admits a selection or import
 under the History/Crown transition path.
