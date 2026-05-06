@@ -953,7 +953,7 @@ impl StoredSealedBlock {
         path: PathBuf,
         line_index: u64,
     ) -> Result<Block<block::Sealed>, BlockStoreError> {
-        if !self.entries.is_empty() || self.state.header.entry_count != 0 {
+        if self.entries.len() != self.state.header.entry_count {
             return Err(BlockStoreError::UnsupportedStoredEntries {
                 path,
                 line_index,
@@ -961,12 +961,19 @@ impl StoredSealedBlock {
             });
         }
 
+        let mut entries = Vec::with_capacity(self.entries.len());
+        for value in self.entries {
+            let entry: Entry<Admitted> =
+                serde_json::from_value(value).map_err(BlockStoreError::Deserialize)?;
+            entries.push(entry);
+        }
+
         let block = Block {
             state: block::Sealed {
                 header: self.state.header,
                 _private: Private,
             },
-            entries: Vec::new(),
+            entries,
         };
         block.verify_hash()?;
         Ok(block)
@@ -2206,10 +2213,11 @@ pub(crate) enum EntryKind {
 }
 
 /// Entry-local payload committed by the entry hash.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum EntryPayload {
     Direct,
+    SelectionDecision(SelectionDecisionEntry),
     IngressImport(IngressImportPayload),
 }
 
@@ -2222,8 +2230,211 @@ pub(crate) enum ImportDisposition {
     AcceptedAsDiagnosticOnly,
 }
 
+/// Inline-first per-candidate evaluation payload suitable for sealing in History.
+///
+/// This first slice carries the exact `SelectionInput` when available, plus
+/// conservative diagnostics for missing/failed projections. Richer child
+/// evidence can be added later without changing the surrounding History entry
+/// algebra.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct EvaluationPayload {
+    pub(crate) schema_version: u32,
+    pub(crate) candidate: SubjectRef,
+    pub(crate) procedure: ProcedureRef,
+
+    /// Exact selection input used (or considered) for this candidate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) selection_input: Option<crate::successor_selection::SelectionInput>,
+
+    /// Domain-separated hash of `selection_input` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) selection_input_hash: Option<HistoryHash>,
+
+    /// Conservative diagnostics when we could not project a selection input.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) projection_failures: Vec<String>,
+
+    /// Provenance pointers/hashes for later audit (first slice is minimal).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) source_refs: Vec<EvidenceRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) source_hashes: Vec<HistoryHash>,
+}
+
+impl EvaluationPayload {
+    pub(crate) fn builder(candidate: SubjectRef, procedure: ProcedureRef) -> EvaluationPayloadBuilder {
+        EvaluationPayloadBuilder {
+            schema_version: 1,
+            candidate,
+            procedure,
+            selection_input: None,
+            selection_input_hash: None,
+            projection_failures: Vec::new(),
+            source_refs: Vec::new(),
+            source_hashes: Vec::new(),
+        }
+    }
+
+    pub(crate) fn payload_hash(&self) -> Result<HistoryHash, HistoryError> {
+        HistoryHash::of_domain_json("prototype1.history.evaluation_payload.v1", self)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EvaluationPayloadBuilder {
+    schema_version: u32,
+    candidate: SubjectRef,
+    procedure: ProcedureRef,
+    selection_input: Option<crate::successor_selection::SelectionInput>,
+    selection_input_hash: Option<HistoryHash>,
+    projection_failures: Vec<String>,
+    source_refs: Vec<EvidenceRef>,
+    source_hashes: Vec<HistoryHash>,
+}
+
+impl EvaluationPayloadBuilder {
+    pub(crate) fn selection_input(mut self, input: crate::successor_selection::SelectionInput) -> Result<Self, HistoryError> {
+        let hash = HistoryHash::of_domain_json("prototype1.history.selection_input.v1", &input)?;
+        self.selection_input = Some(input);
+        self.selection_input_hash = Some(hash);
+        Ok(self)
+    }
+
+    pub(crate) fn source_ref(mut self, reference: EvidenceRef) -> Self {
+        self.source_refs.push(reference);
+        self
+    }
+
+    pub(crate) fn source_hash(mut self, hash: HistoryHash) -> Self {
+        self.source_hashes.push(hash);
+        self
+    }
+
+    pub(crate) fn build(self) -> EvaluationPayload {
+        EvaluationPayload {
+            schema_version: self.schema_version,
+            candidate: self.candidate,
+            procedure: self.procedure,
+            selection_input: self.selection_input,
+            selection_input_hash: self.selection_input_hash,
+            projection_failures: self.projection_failures,
+            source_refs: self.source_refs,
+            source_hashes: self.source_hashes,
+        }
+    }
+}
+
+/// Block-sealable selection decision payload.
+///
+/// This is intended to be committed into an `EntryKind::Decision` entry, using
+/// the existing `Entry` observation/proposal/admission chain-of-custody.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SelectionDecisionEntry {
+    pub(crate) schema_version: u32,
+
+    /// Procedure/policy identity for the selection rule (e.g. successor-selection v1).
+    pub(crate) procedure_or_policy: ProcedureRef,
+
+    /// Explicit candidate universe description. This is a first increment:
+    /// it is carried as an opaque string so selection replay does not depend
+    /// on interpreting filesystem layout.
+    pub(crate) scope: SelectionScope,
+
+    /// Selected candidate coordinate, or `None` when no admissible candidate exists.
+    pub(crate) selected_candidate: Option<SubjectRef>,
+
+    /// The ordered evaluation payloads the decision considered.
+    ///
+    /// Inline-first behavior can include *all* candidates considered under the scope.
+    pub(crate) considered: Vec<EvaluationPayload>,
+
+    /// Domain-separated commitment to the ordered considered list.
+    pub(crate) considered_order_hash: HistoryHash,
+
+    /// Projection failures encountered while attempting to form a considered set.
+    ///
+    /// These are diagnostics and must not be treated as members of the ordered
+    /// considered list used by the selector.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
+
+    /// Decision result under `procedure_or_policy`.
+    pub(crate) decision: crate::successor_selection::SuccessorDecision,
+}
+
+impl SelectionDecisionEntry {
+    pub(crate) fn new(
+        procedure_or_policy: ProcedureRef,
+        scope: SelectionScope,
+        selected_candidate: Option<SubjectRef>,
+        considered: Vec<EvaluationPayload>,
+        projection_failures: Vec<SelectionProjectionFailure>,
+        decision: crate::successor_selection::SuccessorDecision,
+    ) -> Result<Self, HistoryError> {
+        let considered_order_hash =
+            HistoryHash::of_domain_json(
+                "prototype1.history.selection_considered_order.v1",
+                &Self::considered_order_preimage(&considered)?,
+            )?;
+        Ok(Self {
+            schema_version: 1,
+            procedure_or_policy,
+            scope,
+            selected_candidate,
+            considered,
+            considered_order_hash,
+            projection_failures,
+            decision,
+        })
+    }
+
+    fn considered_order_preimage(considered: &[EvaluationPayload]) -> Result<Vec<HistoryHash>, HistoryError> {
+        considered.iter().map(|payload| payload.payload_hash()).collect()
+    }
+
+    pub(crate) fn decision_hash(&self) -> Result<HistoryHash, HistoryError> {
+        HistoryHash::of_domain_json("prototype1.history.selection_decision_entry.v1", self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct SelectionProjectionFailureId(pub(crate) HistoryHash);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SelectionProjectionFailureKind {
+    MissingSelectionInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SelectionProjectionFailure {
+    pub(crate) id: SelectionProjectionFailureId,
+    pub(crate) candidate: SubjectRef,
+    pub(crate) kind: SelectionProjectionFailureKind,
+}
+
+/// Candidate-universe description for a selection decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct SelectionScope {
+    value: String,
+}
+
+impl SelectionScope {
+    pub(crate) fn new(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+        }
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.value
+    }
+}
+
 /// Ingress chain-of-custody payload that must be sealed with the entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct IngressImportPayload {
     ingress_id: Uuid,
     prior_block_hash: BlockHash,
@@ -2272,7 +2483,7 @@ pub(crate) struct Proposal {
     pub(crate) procedure_or_policy: ProcedureRef,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct EntryCore {
     entry_id: EntryId,
     entry_kind: EntryKind,
@@ -2291,7 +2502,7 @@ pub(crate) struct Draft {
 }
 
 /// Observed entry state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Observed {
     observer: ActorRef,
     recorder: ActorRef,
@@ -2303,7 +2514,7 @@ pub(crate) struct Observed {
 }
 
 /// Proposed entry state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Proposed {
     observed: Observed,
     proposer: ActorRef,
@@ -2311,7 +2522,7 @@ pub(crate) struct Proposed {
 }
 
 /// Admitted entry state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Admitted {
     observed: Observed,
     proposer: ActorRef,
@@ -2324,7 +2535,7 @@ pub(crate) struct Admitted {
 }
 
 /// A provenance-bearing fact in one typed History state.
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Entry<S> {
     core: EntryCore,
     state: S,
@@ -2332,6 +2543,14 @@ pub(crate) struct Entry<S> {
 
 impl Entry<Draft> {
     pub(crate) fn draft(fields: DraftEntry) -> Self {
+        Self::draft_with_payload(fields, EntryPayload::Direct)
+    }
+
+    pub(crate) fn draft_selection_decision(fields: DraftEntry, payload: SelectionDecisionEntry) -> Self {
+        Self::draft_with_payload(fields, EntryPayload::SelectionDecision(payload))
+    }
+
+    fn draft_with_payload(fields: DraftEntry, payload: EntryPayload) -> Self {
         Self {
             core: EntryCore {
                 entry_id: EntryId::new(),
@@ -2341,7 +2560,7 @@ impl Entry<Draft> {
                 input_refs: fields.input_refs,
                 output_refs: fields.output_refs,
                 occurred_at: fields.occurred_at,
-                payload: EntryPayload::Direct,
+                payload,
             },
             state: Draft { _private: Private },
         }
@@ -4196,6 +4415,76 @@ mod tests {
         assert_ne!(first.block_hash(), second.block_hash());
         first.verify_hash().expect("first verifies");
         second.verify_hash().expect("second verifies");
+    }
+
+    #[test]
+    fn selection_decision_entry_commits_to_considered_order() {
+        let decision = crate::successor_selection::SuccessorDecision {
+            procedure_id: crate::successor_selection::PROCEDURE_ID.to_string(),
+            candidate_node_id: "child-a".to_string(),
+            selected_branch_id: Some("branch-a".to_string()),
+            branch_disposition: "keep".to_string(),
+            outcome: crate::successor_selection::decision::SuccessorOutcome::Accepted,
+            findings: Vec::new(),
+            rationale: Vec::new(),
+        };
+        let a = EvaluationPayload {
+            schema_version: 1,
+            candidate: SubjectRef::new("candidate:child-a:branch-a"),
+            procedure: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            selection_input: None,
+            selection_input_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.selection_input.v1",
+                    &serde_json::json!({"node":"child-a"}),
+                )
+                .expect("hash"),
+            ),
+            projection_failures: Vec::new(),
+            source_refs: Vec::new(),
+            source_hashes: Vec::new(),
+        };
+        let b = EvaluationPayload {
+            schema_version: 1,
+            candidate: SubjectRef::new("candidate:child-b:branch-b"),
+            procedure: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            selection_input: None,
+            selection_input_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.selection_input.v1",
+                    &serde_json::json!({"node":"child-b"}),
+                )
+                .expect("hash"),
+            ),
+            projection_failures: Vec::new(),
+            source_refs: Vec::new(),
+            source_hashes: Vec::new(),
+        };
+
+        let first = SelectionDecisionEntry::new(
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            SelectionScope::new("generation_local:test"),
+            Some(SubjectRef::new("candidate:child-a:branch-a")),
+            vec![a.clone(), b.clone()],
+            Vec::new(),
+            decision.clone(),
+        )
+        .expect("selection entry");
+        let second = SelectionDecisionEntry::new(
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            SelectionScope::new("generation_local:test"),
+            Some(SubjectRef::new("candidate:child-a:branch-a")),
+            vec![b, a],
+            Vec::new(),
+            decision,
+        )
+        .expect("selection entry");
+
+        assert_ne!(first.considered_order_hash, second.considered_order_hash);
+        assert_ne!(
+            first.decision_hash().expect("hash"),
+            second.decision_hash().expect("hash")
+        );
     }
 
     #[test]

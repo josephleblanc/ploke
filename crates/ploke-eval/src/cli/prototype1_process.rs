@@ -135,10 +135,11 @@ use crate::cli::prototype1_state::cli_facing::{
 };
 use crate::cli::prototype1_state::event::{Paths, RecordedAt, Refs};
 use crate::cli::prototype1_state::history::{
-    ActorRef, ArtifactLocator, ArtifactRef, BlockStore, EvidenceRef, FsBlockStore,
-    GenesisAuthority, LineageId, LineageState, OpenBlock, OpeningAuthority, OperationalEnvironment,
-    ParentIdentityRef, PredecessorAuthority, ProcedureRef, Regime, SealBlock, StoreHead,
-    SuccessorRef, SurfaceCommitment, TreeKeyCommitment, TreeKeyHash,
+    ActorRef, ArtifactLocator, ArtifactRef, BlockStore, DraftEntry, Entry, EntryKind, EvidenceRef,
+    FsBlockStore, GenesisAuthority, LineageId, LineageState, Observation, OpenBlock,
+    OpeningAuthority, OperationalEnvironment, ParentIdentityRef, PredecessorAuthority, ProcedureRef,
+    Proposal, Regime, SealBlock, StoreHead, SubjectRef, SuccessorRef, SurfaceCommitment,
+    TreeKeyCommitment, TreeKeyHash,
 };
 use crate::cli::prototype1_state::identity::{
     ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -1156,6 +1157,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     node_id: &str,
     active_parent_root: &Path,
     parent: Parent<Selectable>,
+    selection_entry: crate::cli::prototype1_state::history::SelectionDecisionEntry,
     mode: SuccessorHandoffMode,
 ) -> Result<(Parent<Retired>, Option<Prototype1SuccessorHandoff>), PrepareError> {
     let manifest_path = campaign_manifest_path(campaign_id)?;
@@ -1198,7 +1200,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         predecessor_block_hash = ?predecessor_block_hash,
     ));
     let (retired_parent, sealed_block) =
-        match parent.seal_block_with_artifact(open, seal, |crown| {
+        match parent.seal_block_with_artifact(open, seal, |crown, block| {
             let environment = OperationalEnvironment::new()
                 .artifact(successor_artifact.clone())
                 .binary(EvidenceRef::new(format!(
@@ -1217,6 +1219,44 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
                     RecordedAt::now(),
                 )
                 .map_err(|source| source.into_history_error())?;
+
+            let selection_payload_hash = selection_entry.decision_hash()?;
+            let selection_environment = OperationalEnvironment::new()
+                .artifact(successor_artifact.clone())
+                .procedure_version(ProcedureRef::new("prototype1:successor-selection:v1"))
+                .recorder(EvidenceRef::new("prototype1:history-entry"));
+            let selection_observation = Observation {
+                observer: parent_actor.clone(),
+                recorder: parent_actor.clone(),
+                operational_environment: selection_environment,
+                payload_ref: EvidenceRef::new("inline:selection-decision"),
+                payload_hash: selection_payload_hash,
+                observed_at: RecordedAt::now(),
+                recorded_at: RecordedAt::now(),
+            };
+            let selection_entry = Entry::draft_selection_decision(
+                DraftEntry {
+                    entry_kind: EntryKind::Decision,
+                    subject: SubjectRef::new(format!(
+                        "successor-selection:generation:{}",
+                        node.generation
+                    )),
+                    executor: parent_actor.clone(),
+                    input_refs: Vec::new(),
+                    output_refs: vec![EvidenceRef::new(format!(
+                        "successor:selected:{}",
+                        node.node_id
+                    ))],
+                    occurred_at: RecordedAt::now(),
+                },
+                selection_entry,
+            )
+            .observe(selection_observation)
+            .propose(Proposal {
+                proposer: parent_actor.clone(),
+                procedure_or_policy: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            });
+            let _ = crown.admit_entry(block, selection_entry, parent_actor.clone())?;
             Ok(artifact_claim)
         }) {
             Ok(result) => {

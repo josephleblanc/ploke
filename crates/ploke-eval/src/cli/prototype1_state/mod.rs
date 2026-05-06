@@ -764,6 +764,7 @@ pub(crate) mod child;
 pub(crate) mod cli_facing;
 pub(crate) mod event;
 pub(crate) mod evidence;
+pub(crate) mod evidence_inventory;
 pub(crate) mod history;
 pub(crate) mod history_preview;
 pub(crate) mod identity;

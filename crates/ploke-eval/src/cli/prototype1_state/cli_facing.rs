@@ -52,6 +52,11 @@ use crate::{
             c3::SpawnChild,
             c4::{ObserveChild, ObservedChild},
             event::RecordedAt,
+            history::{
+                EvaluationPayload, HistoryHash, ProcedureRef, SelectionDecisionEntry,
+                SelectionProjectionFailure, SelectionProjectionFailureId,
+                SelectionProjectionFailureKind, SelectionScope, SubjectRef,
+            },
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
                 parent_identity_relpath, write_parent_identity,
@@ -6083,11 +6088,76 @@ impl Prototype1StateCommand {
                 selection_decision.outcome, selection_decision.candidate_node_id
             ));
             if decision.disposition.allows_successor() {
+                let mut projection_failures = Vec::new();
+                let mut considered = Vec::new();
+                for outcome in &child_outcomes {
+                    let Some(input) = outcome.selection_input.as_ref() else {
+                        let candidate = SubjectRef::new(format!(
+                            "candidate:{}:plan_index={}",
+                            outcome.node_id, outcome.plan_index
+                        ));
+                        let failure_id = HistoryHash::of_domain_json(
+                            "prototype1.history.selection_projection_failure.v1",
+                            &(&candidate, &outcome.outcome),
+                        )
+                        .map_err(|err| PrepareError::InvalidBatchSelection {
+                            detail: format!(
+                                "failed to hash selection projection failure id for node_id={}: {err}",
+                                outcome.node_id
+                            ),
+                        })?;
+                        projection_failures.push(SelectionProjectionFailure {
+                            id: SelectionProjectionFailureId(failure_id),
+                            candidate,
+                            kind: SelectionProjectionFailureKind::MissingSelectionInput,
+                        });
+                        continue;
+                    };
+                    let payload = EvaluationPayload::builder(
+                        SubjectRef::new(format!(
+                            "candidate:{}:plan_index={}",
+                            outcome.node_id, outcome.plan_index
+                        )),
+                        ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+                    )
+                    .selection_input(input.clone())
+                    .map_err(|err| PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "failed to build selection input payload for node_id={}: {err}",
+                            outcome.node_id
+                        ),
+                    })?
+                    .build();
+                    considered.push(payload);
+                }
+                let selected_candidate = Some(SubjectRef::new(format!(
+                    "candidate:{}:{}",
+                    selection_decision.candidate_node_id,
+                    selection_decision
+                        .selected_branch_id
+                        .clone()
+                        .unwrap_or_else(|| "-".to_string())
+                )));
+                let selection_entry = SelectionDecisionEntry::new(
+                    ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+                    SelectionScope::new(format!(
+                        "generation_local:parent_node_id={};generation={}",
+                        parent_identity.node_id, node.generation
+                    )),
+                    selected_candidate,
+                    considered,
+                    projection_failures,
+                    selection_decision.clone(),
+                )
+                .map_err(|err| PrepareError::InvalidBatchSelection {
+                    detail: format!("failed to construct selection decision entry: {err}"),
+                })?;
                 match spawn_and_handoff_prototype1_successor(
                     &campaign_id,
                     &selection_decision.candidate_node_id,
                     &repo_root,
                     parent,
+                    selection_entry,
                     self.successor_handoff_mode(),
                 )? {
                     (_retired, Some(successor)) => {

@@ -176,6 +176,7 @@ pub(crate) trait LockCrown {
     where
         F: FnOnce(
             &Crown<crown::Ruling>,
+            &mut Block<block::Open>,
         ) -> Result<
             claim::Admitted<
                 Admission,
@@ -203,6 +204,7 @@ impl LockCrown for super::parent::Parent<super::parent::Selectable> {
     where
         F: FnOnce(
             &Crown<crown::Ruling>,
+            &mut Block<block::Open>,
         ) -> Result<
             claim::Admitted<
                 Admission,
@@ -213,8 +215,8 @@ impl LockCrown for super::parent::Parent<super::parent::Selectable> {
     {
         let (retired, lineage) = self.into_retired_and_lineage();
         let ruling = Crown::for_lineage(lineage);
-        let block = ruling.open_block(open)?;
-        seal.claims = seal.claims.with_artifact(admit(&ruling)?);
+        let mut block = ruling.open_block(open)?;
+        seal.claims = seal.claims.with_artifact(admit(&ruling, &mut block)?);
         let locked = ruling.lock(seal);
         let sealed = locked.seal(block)?;
         Ok((retired, sealed))
