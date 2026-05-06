@@ -1565,7 +1565,7 @@ impl Prototype1MonitorCommand {
                 run_metric_slice(&campaign_id, &manifest_path, &command)
             }
             Prototype1MonitorSubcommand::HistoryScores(command) => {
-                run_score_slice(&campaign_id, &manifest_path, &command)
+                run_score_report(&campaign_id, &manifest_path, &command)
             }
             Prototype1MonitorSubcommand::ScoreSelectionReview(command) => {
                 run_score_selection_review(&campaign_id, &manifest_path, &command)
@@ -1609,7 +1609,7 @@ impl HistoryCommand {
                 run_metric_slice(&campaign_id, &manifest_path, &command)
             }
             HistorySubcommand::Scores(command) => {
-                run_score_slice(&campaign_id, &manifest_path, &command)
+                run_score_report(&campaign_id, &manifest_path, &command)
             }
             HistorySubcommand::ScoreSelectionReview(command) => {
                 run_score_selection_review(&campaign_id, &manifest_path, &command)
@@ -1650,7 +1650,7 @@ fn run_child_evidence(
     )
 }
 
-fn run_score_slice(
+fn run_score_report(
     campaign_id: &str,
     manifest_path: &Path,
     command: &Prototype1ScoreCommand,
