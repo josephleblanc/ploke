@@ -16,6 +16,7 @@ use serde_json::Value;
 use crate::cli::{InspectOutputFormat, MetricSlice};
 use crate::spec::PrepareError;
 
+use super::evidence::{ChildEvidenceSet, EvidenceSource};
 use super::history_preview::{EvidenceClass, EvidenceStore, FsEvidenceStore};
 use super::journal::JournalEntry;
 
@@ -72,12 +73,16 @@ pub(crate) fn run(
 
 pub(crate) fn build(campaign_id: &str, manifest_path: &Path) -> Result<Dashboard, String> {
     let store = FsEvidenceStore::new(manifest_path);
+    let child_evidence = store
+        .child_evidence()
+        .map_err(|source| source.to_string())?;
     let documents = store.documents().map_err(|source| source.to_string())?;
     let journal = store
         .transition_journal()
         .map_err(|source| source.to_string())?;
 
     let mut state = Assembly::default();
+    state.apply_child_evidence(&child_evidence);
     for stored in &journal {
         state.apply_journal(
             stored.item(),
@@ -121,6 +126,7 @@ pub(crate) struct Dashboard {
     cohorts: Vec<Cohort>,
     trajectory: Trajectory,
     selected_by_generation: Vec<Step>,
+    child_evidence: EvidenceProjection,
     diagnostics: Vec<String>,
 }
 
@@ -164,6 +170,7 @@ impl Dashboard {
             cohorts,
             trajectory,
             selected_by_generation,
+            child_evidence: self.child_evidence.clone(),
         }
     }
 
@@ -178,6 +185,12 @@ impl Dashboard {
         println!("derivation: {}", slice.derivation);
         println!("rows: {}", slice.row_count);
         println!("generations: {}", slice.generation_count);
+        println!(
+            "child_evidence: {} children, {} unplaced sources, {} diagnostics",
+            slice.child_evidence.children,
+            slice.child_evidence.unplaced_sources,
+            slice.child_evidence.diagnostics
+        );
         if let Some(generation) = request.generation {
             println!("generation_filter: {generation}");
         }
@@ -223,6 +236,98 @@ struct Slice {
     cohorts: Vec<Cohort>,
     trajectory: Trajectory,
     selected_by_generation: Vec<Step>,
+    child_evidence: EvidenceProjection,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvidenceProjection {
+    join: &'static str,
+    children: usize,
+    unplaced_sources: usize,
+    diagnostics: usize,
+    document_sources: usize,
+    journal_sources: usize,
+    evaluation_sources: usize,
+    source_treatments: Vec<SourceTreatment>,
+}
+
+impl EvidenceProjection {
+    fn from_set(evidence: &ChildEvidenceSet) -> Self {
+        let mut document_sources = 0;
+        let mut journal_sources = 0;
+        let mut evaluation_sources = 0;
+        let mut treatments = BTreeMap::<(String, String), usize>::new();
+        let mut counted_sources = BTreeSet::<String>::new();
+        for child in &evidence.children {
+            document_sources += child.documents.len();
+            journal_sources += child.journal.len();
+            evaluation_sources += child.evaluations.len();
+            for source in child.documents.iter().chain(child.journal.iter()).chain(
+                child
+                    .evaluations
+                    .iter()
+                    .map(|evaluation| &evaluation.source),
+            ) {
+                record_treatment(source, &mut counted_sources, &mut treatments);
+            }
+        }
+        for source in &evidence.unplaced {
+            record_treatment(source, &mut counted_sources, &mut treatments);
+        }
+        Self {
+            join: "history_preview.child_evidence",
+            children: evidence.children.len(),
+            unplaced_sources: evidence.unplaced.len(),
+            diagnostics: evidence.diagnostics.len()
+                + evidence
+                    .children
+                    .iter()
+                    .map(|child| child.diagnostics.len())
+                    .sum::<usize>(),
+            document_sources,
+            journal_sources,
+            evaluation_sources,
+            source_treatments: treatments
+                .into_iter()
+                .map(|((class, treatment), sources)| SourceTreatment {
+                    class,
+                    treatment,
+                    sources,
+                })
+                .collect(),
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            join: "history_preview.child_evidence",
+            children: 0,
+            unplaced_sources: 0,
+            diagnostics: 0,
+            document_sources: 0,
+            journal_sources: 0,
+            evaluation_sources: 0,
+            source_treatments: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SourceTreatment {
+    class: String,
+    treatment: String,
+    sources: usize,
+}
+
+fn record_treatment(
+    source: &EvidenceSource,
+    counted_sources: &mut BTreeSet<String>,
+    treatments: &mut BTreeMap<(String, String), usize>,
+) {
+    if counted_sources.insert(source.pointer.ref_id().to_string()) {
+        let key = (source.class.as_str().to_string(), source.treatment.clone());
+        *treatments.entry(key).or_default() += 1;
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -973,6 +1078,31 @@ impl SourceRef {
             hash: document.pointer().hash().as_str().to_string(),
         }
     }
+
+    fn from_evidence(source: &EvidenceSource) -> Self {
+        Self {
+            class: source.class.as_str(),
+            ref_id: source.pointer.ref_id().to_string(),
+            path: source.pointer.path().to_path_buf(),
+            hash: source.pointer.hash().as_str().to_string(),
+        }
+    }
+}
+
+fn format_evidence_diagnostic(
+    scope: &str,
+    node_id: Option<&str>,
+    severity: &str,
+    source_ref: Option<&str>,
+    message: &str,
+) -> String {
+    let node = node_id
+        .map(|node_id| format!(" for {node_id}"))
+        .unwrap_or_default();
+    let source = source_ref
+        .map(|source_ref| format!(" at {source_ref}"))
+        .unwrap_or_default();
+    format!("{scope} {severity}{node}{source}: {message}")
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1001,12 +1131,108 @@ struct Totals {
 struct Assembly {
     rows: BTreeMap<String, Row>,
     branch_to_node: BTreeMap<String, String>,
+    ambiguous_branches: BTreeSet<String>,
     evaluations: BTreeMap<String, (Totals, String, SourceRef, Option<String>)>,
     selected_branches: BTreeMap<String, Vec<SelectionSource>>,
+    child_evidence: Option<EvidenceProjection>,
     diagnostics: Vec<String>,
 }
 
 impl Assembly {
+    fn apply_child_evidence(&mut self, evidence: &ChildEvidenceSet) {
+        self.child_evidence = Some(EvidenceProjection::from_set(evidence));
+        let branch_placement = evidence.branch_placement();
+        for branch_id in &branch_placement.ambiguous {
+            if self.ambiguous_branches.insert(branch_id.clone()) {
+                self.branch_to_node.remove(branch_id);
+                self.diagnostics.push(format!(
+                    "child_evidence warning: branch '{branch_id}' appears under multiple child nodes; branch-scoped evidence will not be attached"
+                ));
+            }
+        }
+        for (branch_id, node_id) in branch_placement.nodes {
+            self.insert_branch_node(&branch_id, &node_id, "child_evidence");
+        }
+        for diagnostic in &evidence.diagnostics {
+            self.diagnostics.push(format_evidence_diagnostic(
+                "child_evidence",
+                None,
+                &diagnostic.severity,
+                diagnostic.source_ref.as_deref(),
+                &diagnostic.message,
+            ));
+        }
+
+        for child in &evidence.children {
+            let mut diagnostics = Vec::new();
+            {
+                let row = self.row(&child.node_id);
+                row.generation = row.generation.or(child.generation);
+                row.parent_node_id = row
+                    .parent_node_id
+                    .clone()
+                    .or_else(|| child.parent_node_id.clone());
+                row.branch_id = row.branch_id.clone().or_else(|| child.branch_id.clone());
+                for source in child.documents.iter().chain(child.journal.iter()) {
+                    row.source(SourceRef::from_evidence(source));
+                }
+                for runtime in &child.runtimes {
+                    if row.runtime_id.is_none() {
+                        row.runtime_id = Some(runtime.runtime_id.clone());
+                    } else if row.runtime_id.as_deref() != Some(runtime.runtime_id.as_str()) {
+                        diagnostics.push(format!(
+                            "child_evidence warning: node {} has multiple runtime ids; keeping {} and citing {}",
+                            child.node_id,
+                            row.runtime_id.as_deref().unwrap_or("-"),
+                            runtime.runtime_id
+                        ));
+                    }
+                    for source in runtime.documents.iter().chain(runtime.journal.iter()) {
+                        row.source(SourceRef::from_evidence(source));
+                    }
+                }
+                for branch in &child.branches {
+                    if row.branch_id.is_none() {
+                        row.branch_id = Some(branch.branch_id.clone());
+                    }
+                    for source in &branch.sources {
+                        row.source(SourceRef::from_evidence(source));
+                    }
+                }
+                for evaluation in &child.evaluations {
+                    row.evaluation_ref = row
+                        .evaluation_ref
+                        .clone()
+                        .or_else(|| Some(evaluation.source.pointer.ref_id().to_string()));
+                    row.disposition = row
+                        .disposition
+                        .clone()
+                        .or_else(|| evaluation.overall_disposition.clone());
+                    row.compared_instances = row.compared_instances.max(evaluation.compared.len());
+                    row.source(SourceRef::from_evidence(&evaluation.source));
+                }
+            }
+
+            self.index_branch(&child.node_id);
+            self.diagnostics.extend(diagnostics);
+            for diagnostic in &child.diagnostics {
+                self.diagnostics.push(format_evidence_diagnostic(
+                    "child_evidence",
+                    Some(&child.node_id),
+                    &diagnostic.severity,
+                    diagnostic.source_ref.as_deref(),
+                    &diagnostic.message,
+                ));
+            }
+        }
+        if !evidence.unplaced.is_empty() {
+            self.diagnostics.push(format!(
+                "child_evidence info: {} sources were not joined to child rows",
+                evidence.unplaced.len()
+            ));
+        }
+    }
+
     fn apply_journal(&mut self, entry: &JournalEntry, source: SourceRef) {
         if let JournalEntry::Successor(record) = entry {
             if let super::successor::State::Selected { decision, .. } = &record.state {
@@ -1121,6 +1347,13 @@ impl Assembly {
                 disposition.clone(),
             ),
         );
+        if self.ambiguous_branches.contains(&branch_id) {
+            self.diagnostics.push(format!(
+                "evaluation source {} kept unattached: branch '{branch_id}' is ambiguous across child nodes",
+                source.ref_id
+            ));
+            return;
+        }
         if let Some(node_id) = self.branch_to_node.get(&branch_id).cloned() {
             self.apply_evaluation_to_node(&node_id, &branch_id);
         }
@@ -1137,6 +1370,13 @@ impl Assembly {
                     source: source.clone(),
                 },
             );
+            if self.ambiguous_branches.contains(&branch_id) {
+                self.diagnostics.push(format!(
+                    "selection source {} kept unattached: branch '{branch_id}' is ambiguous across child nodes",
+                    source.ref_id
+                ));
+                continue;
+            }
             if let Some(node_id) = self.branch_to_node.get(&branch_id).cloned() {
                 self.row(&node_id).source(source.clone());
             }
@@ -1190,6 +1430,9 @@ impl Assembly {
             cohorts,
             trajectory,
             selected_by_generation,
+            child_evidence: self
+                .child_evidence
+                .unwrap_or_else(EvidenceProjection::empty),
             diagnostics: self.diagnostics,
         }
     }
@@ -1219,7 +1462,26 @@ impl Assembly {
         let Some(branch_id) = self.rows.get(node_id).and_then(|row| row.branch_id.clone()) else {
             return;
         };
-        self.branch_to_node.insert(branch_id, node_id.to_string());
+        self.insert_branch_node(&branch_id, node_id, "metrics row");
+    }
+
+    fn insert_branch_node(&mut self, branch_id: &str, node_id: &str, source: &str) {
+        if self.ambiguous_branches.contains(branch_id) {
+            return;
+        }
+        if let Some(existing) = self.branch_to_node.get(branch_id) {
+            if existing != node_id {
+                let existing = existing.clone();
+                self.branch_to_node.remove(branch_id);
+                self.ambiguous_branches.insert(branch_id.to_string());
+                self.diagnostics.push(format!(
+                    "{source} warning: branch '{branch_id}' maps to both '{existing}' and '{node_id}'; branch-scoped evidence will not be attached"
+                ));
+            }
+        } else {
+            self.branch_to_node
+                .insert(branch_id.to_string(), node_id.to_string());
+        }
     }
 
     fn record_selection(&mut self, branch_id: &str, selection: SelectionSource) {
@@ -2072,6 +2334,127 @@ mod tests {
             selected.dashboard_score,
             selected.dashboard_score_derivation.total
         );
+    }
+
+    #[test]
+    fn dashboard_exposes_child_evidence_projection_summary() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let manifest = tmp.path().join("campaign.json");
+        fs::write(&manifest, "{}").expect("manifest");
+        let prototype = tmp.path().join("prototype1");
+        let node = prototype.join("nodes/node-a");
+        fs::create_dir_all(&node).expect("node dir");
+        fs::create_dir_all(prototype.join("evaluations")).expect("evals");
+        fs::write(
+            node.join("node.json"),
+            serde_json::json!({
+                "node_id": "node-a",
+                "parent_node_id": "parent-a",
+                "generation": 2,
+                "branch_id": "branch-a",
+                "status": "succeeded"
+            })
+            .to_string(),
+        )
+        .expect("node record");
+        fs::write(
+            prototype.join("evaluations/branch-a.json"),
+            serde_json::json!({
+                "overall_disposition": "keep",
+                "compared_instances": [{
+                    "instance_id": "instance-a",
+                    "status": "complete"
+                }]
+            })
+            .to_string(),
+        )
+        .expect("evaluation");
+
+        let dashboard = build("campaign-a", &manifest).expect("dashboard");
+        let row = dashboard
+            .rows
+            .iter()
+            .find(|row| row.node_id == "node-a")
+            .expect("node row");
+
+        assert_eq!(
+            dashboard.child_evidence.join,
+            "history_preview.child_evidence"
+        );
+        assert_eq!(dashboard.child_evidence.children, 1);
+        assert_eq!(dashboard.child_evidence.evaluation_sources, 1);
+        assert!(dashboard.child_evidence.diagnostics >= 1);
+        assert!(
+            dashboard
+                .diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.contains("evaluation document has no branch_id") })
+        );
+        assert!(
+            dashboard
+                .child_evidence
+                .source_treatments
+                .iter()
+                .any(|treatment| treatment.class == "evaluation"
+                    && treatment.treatment == "admitted_preview_raw"
+                    && treatment.sources == 1)
+        );
+        assert!(row.source_refs.iter().any(|source| {
+            source.class == "evaluation" && source.ref_id.ends_with("evaluations/branch-a.json")
+        }));
+    }
+
+    #[test]
+    fn branch_only_evaluation_is_not_attached_to_ambiguous_child_branch() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let manifest = tmp.path().join("campaign.json");
+        fs::write(&manifest, "{}").expect("manifest");
+        let prototype = tmp.path().join("prototype1");
+        fs::create_dir_all(prototype.join("evaluations")).expect("evals");
+        for node_id in ["node-a", "node-b"] {
+            let node = prototype.join(format!("nodes/{node_id}"));
+            fs::create_dir_all(&node).expect("node dir");
+            fs::write(
+                node.join("node.json"),
+                serde_json::json!({
+                    "node_id": node_id,
+                    "generation": 1,
+                    "branch_id": "branch-shared",
+                    "status": "succeeded"
+                })
+                .to_string(),
+            )
+            .expect("node record");
+        }
+        fs::write(
+            prototype.join("evaluations/branch-shared.json"),
+            evaluation("branch-shared", "keep", 1, 1, 3, 0),
+        )
+        .expect("evaluation");
+
+        let dashboard = build("campaign-a", &manifest).expect("dashboard");
+        let node_a = dashboard
+            .rows
+            .iter()
+            .find(|row| row.node_id == "node-a")
+            .expect("node-a row");
+        let node_b = dashboard
+            .rows
+            .iter()
+            .find(|row| row.node_id == "node-b")
+            .expect("node-b row");
+
+        assert_eq!(node_a.evaluation_ref, None);
+        assert_eq!(node_b.evaluation_ref, None);
+        assert_eq!(node_a.compared_instances, 0);
+        assert_eq!(node_b.compared_instances, 0);
+        assert!(dashboard.diagnostics.iter().any(|diagnostic| {
+            diagnostic.contains("branch 'branch-shared' appears under multiple child nodes")
+        }));
+        assert!(dashboard.diagnostics.iter().any(|diagnostic| {
+            diagnostic.contains("kept unattached")
+                && diagnostic.contains("branch 'branch-shared' is ambiguous")
+        }));
     }
 
     #[test]

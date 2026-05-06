@@ -11,7 +11,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -26,6 +26,8 @@ use crate::cli::InspectOutputFormat;
 use crate::intervention::{prototype1_branch_registry_path, prototype1_scheduler_path};
 use crate::spec::PrepareError;
 
+use super::evidence::ChildEvidenceSet;
+
 const SCHEMA_VERSION: &str = "prototype1-history-preview.v1";
 
 /// Importer-facing access to persisted evidence.
@@ -39,6 +41,9 @@ pub(crate) trait EvidenceStore {
     fn transition_journal(&self) -> Result<Vec<Stored<JournalEntry>>, Self::Error>;
 
     fn documents(&self) -> Result<Vec<Document>, Self::Error>;
+
+    #[allow(dead_code)]
+    fn child_evidence(&self) -> Result<ChildEvidenceSet, Self::Error>;
 }
 
 /// Filesystem-backed evidence store for the current campaign layout.
@@ -56,6 +61,11 @@ impl FsEvidenceStore {
             manifest_path,
             prototype_root,
         }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn child_evidence(&self) -> Result<ChildEvidenceSet, PreviewError> {
+        <Self as EvidenceStore>::child_evidence(self)
     }
 }
 
@@ -129,6 +139,12 @@ impl EvidenceStore for FsEvidenceStore {
                 .then_with(|| left.path.cmp(&right.path))
         });
         Ok(documents)
+    }
+
+    fn child_evidence(&self) -> Result<ChildEvidenceSet, Self::Error> {
+        let journal = self.transition_journal()?;
+        let documents = self.documents()?;
+        Ok(ChildEvidenceSet::from_sources(&journal, &documents))
     }
 }
 
@@ -431,7 +447,7 @@ struct PreviewDiagnostic {
     message: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct EvidencePointer {
     class: EvidenceClass,
     ref_id: String,
@@ -570,7 +586,7 @@ impl EvidenceIndex {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EvidenceClass {
     TransitionJournal,
@@ -603,7 +619,7 @@ impl EvidenceClass {
         }
     }
 
-    fn treatment(self) -> &'static str {
+    pub(crate) fn treatment(self) -> &'static str {
         match self {
             Self::TransitionJournal => "admitted_preview",
             Self::Evaluation => "admitted_preview_raw",
