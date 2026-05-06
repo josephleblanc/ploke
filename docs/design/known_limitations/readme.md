@@ -74,7 +74,14 @@ is visible without reading the full note.
 - deferred: **N/A**
 - resolved: **N/A**
 
-**KL-007+** — *placeholder* — assign the next free id when adding a new limitation;
+**KL-007** — [`KL-007-macro-wrapped-module-declarations.md`](KL-007-macro-wrapped-module-declarations.md)
+
+- discovered: **2026-05-06** (typed type graph corpus contract over `hyperium/hyper`)
+- reproduced: **2026-05-06** (observed in live corpus parse: `src/client/dispatch.rs::channel` absent; `src/common/watch.rs::channel` reachable)
+- deferred: **N/A**
+- resolved: **N/A**
+
+**KL-008+** — *placeholder* — assign the next free id when adding a new limitation;
 update this readme in the same PR.
 
 ---

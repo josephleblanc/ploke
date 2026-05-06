@@ -15,6 +15,7 @@
 
 mod common;
 mod containment;
+mod context_expansion_wishlist;
 mod corpus_contracts;
 mod direct_roots;
 mod reachability;
