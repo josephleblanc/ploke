@@ -6102,6 +6102,35 @@ impl Prototype1StateCommand {
             ));
             if decision.disposition.allows_successor() {
                 let mut projection_failures = Vec::new();
+                let child_evidence_store = crate::cli::prototype1_state::history_preview::FsEvidenceStore::new(
+                    manifest_path.clone(),
+                );
+                let child_evidence_set = match child_evidence_store.child_evidence() {
+                    Ok(set) => set,
+                    Err(err) => {
+                        let detail = err.to_string();
+                        let failure_id = HistoryHash::of_domain_json(
+                            "prototype1.history.selection_projection_failure.v1",
+                            &serde_json::json!({
+                                "kind": "child_evidence_store_load_failed",
+                                "detail": detail,
+                            }),
+                        )
+                        .map_err(|e| PrepareError::InvalidBatchSelection {
+                            detail: format!(
+                                "failed to hash child evidence load projection failure id: {e}"
+                            ),
+                        })?;
+                        projection_failures.push(SelectionProjectionFailure {
+                            id: SelectionProjectionFailureId(failure_id),
+                            candidate: SubjectRef::new(
+                                "selection_projection:global_child_evidence_store",
+                            ),
+                            kind: SelectionProjectionFailureKind::ChildEvidenceStoreLoadFailed,
+                        });
+                        crate::cli::prototype1_state::evidence::ChildEvidenceSet::empty_projection_fallback()
+                    }
+                };
                 let mut considered = Vec::new();
                 for outcome in &child_outcomes {
                     let candidate = SubjectRef::new(format!(
@@ -6109,7 +6138,20 @@ impl Prototype1StateCommand {
                         outcome.node_id, outcome.plan_index
                     ));
                     let procedure = ProcedureRef::new(crate::successor_selection::PROCEDURE_ID);
-                    let mut builder = EvaluationPayload::builder(candidate.clone(), procedure);
+                    let child_ev = child_evidence_set
+                        .children
+                        .iter()
+                        .find(|child| child.node_id == outcome.node_id);
+                    let sealed_body =
+                        crate::cli::prototype1_state::evidence::seal_candidate_evidence_for_history(
+                            &outcome.node_id,
+                            outcome.plan_index,
+                            &outcome.outcome,
+                            &format!("{:?}", outcome.node_status),
+                            child_ev,
+                        );
+                    let mut builder = EvaluationPayload::builder(candidate.clone(), procedure)
+                        .sealed_candidate_evidence(sealed_body);
 
                     if let Some(input) = outcome.selection_input.as_ref() {
                         builder = builder
@@ -6142,13 +6184,27 @@ impl Prototype1StateCommand {
 
                     considered.push(builder.build());
                 }
+                let selected_outcome =
+                    child_outcomes
+                        .iter()
+                        .find(|outcome| outcome.node_id == selection_decision.candidate_node_id);
+                let Some(selected_outcome) = selected_outcome else {
+                    let considered_nodes = child_outcomes
+                        .iter()
+                        .map(|o| format!("{}:plan_index={}", o.node_id, o.plan_index))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "selection decision selected candidate_node_id={} which is absent from sealed considered outcomes [{}]",
+                            selection_decision.candidate_node_id,
+                            considered_nodes
+                        ),
+                    });
+                };
                 let selected_candidate = Some(SubjectRef::new(format!(
-                    "candidate:{}:{}",
-                    selection_decision.candidate_node_id,
-                    selection_decision
-                        .selected_branch_id
-                        .clone()
-                        .unwrap_or_else(|| "-".to_string())
+                    "candidate:{}:plan_index={}",
+                    selected_outcome.node_id, selected_outcome.plan_index
                 )));
                 let selection_entry = SelectionDecisionEntry::new(
                     ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),

@@ -553,6 +553,12 @@ pub(crate) struct SealedEvaluationCandidateRow {
     pub(crate) source_ref_count: usize,
     pub(crate) source_hash_count: usize,
     pub(crate) source_evidence_alignment_ok: bool,
+    /// Present when [`super::history::EvaluationPayload::sealed_evidence`] carries a sealed mirror.
+    pub(crate) sealed_evidence_schema_version: Option<u32>,
+    pub(crate) sealed_evaluation_row_count: usize,
+    pub(crate) sealed_branch_row_count: usize,
+    pub(crate) sealed_runtime_row_count: usize,
+    pub(crate) sealed_compared_run_row_count: usize,
 }
 
 /// Verify and surface selection-decision entries from the append-only sealed
@@ -616,6 +622,20 @@ fn collect_selection_decision_rows(
             let source_hash_count = evaluation.source_hashes.len();
             let source_evidence_alignment_ok = source_ref_count == source_hash_count;
             let recomputed_hex = payload_hash.as_str().to_string();
+            let sealed_summary = evaluation.sealed_evidence.as_ref();
+            let sealed_evaluation_row_count =
+                sealed_summary.map(|s| s.evaluations.len()).unwrap_or(0);
+            let sealed_branch_row_count = sealed_summary.map(|s| s.branches.len()).unwrap_or(0);
+            let sealed_runtime_row_count =
+                sealed_summary.map(|s| s.runtimes.len()).unwrap_or(0);
+            let sealed_compared_run_row_count = sealed_summary
+                .map(|s| {
+                    s.evaluations
+                        .iter()
+                        .map(|e| e.compared_runs.len())
+                        .sum::<usize>()
+                })
+                .unwrap_or(0);
             candidates.push(SealedEvaluationCandidateRow {
                 candidate_subject: evaluation.candidate.as_str().to_string(),
                 recomputed_payload_hash: recomputed_hex,
@@ -624,6 +644,11 @@ fn collect_selection_decision_rows(
                 source_ref_count,
                 source_hash_count,
                 source_evidence_alignment_ok,
+                sealed_evidence_schema_version: sealed_summary.map(|s| s.schema_version),
+                sealed_evaluation_row_count,
+                sealed_branch_row_count,
+                sealed_runtime_row_count,
+                sealed_compared_run_row_count,
             });
         }
 
@@ -1028,6 +1053,18 @@ impl HistoryPreview {
                         cand.source_ref_count,
                         cand.source_hash_count,
                         cand.source_evidence_alignment_ok
+                    );
+                    let sealed_ver = cand
+                        .sealed_evidence_schema_version
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    println!(
+                        "    sealed_evidence: schema_ver={} eval_rows={} branch_rows={} runtime_rows={} compared_run_rows={}",
+                        sealed_ver,
+                        cand.sealed_evaluation_row_count,
+                        cand.sealed_branch_row_count,
+                        cand.sealed_runtime_row_count,
+                        cand.sealed_compared_run_row_count,
                     );
                 }
             }

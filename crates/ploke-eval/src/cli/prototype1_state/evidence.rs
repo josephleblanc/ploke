@@ -64,6 +64,11 @@ use serde::{Deserialize, Serialize};
 use super::cli_facing::{
     Prototype1BranchEvaluationReport, Prototype1EvalSetIdentity, Prototype1EvaluatorIdentity,
 };
+use super::history::{
+    CandidateCoordinate, CandidateLifecycle, SealedBranchEvidence, SealedCandidateEvidence,
+    SealedComparedRunEvidence, SealedEvaluationEvidence, SealedEvidenceCitation,
+    SealedRuntimeEvidence,
+};
 use super::history_preview::{EvidenceClass, EvidencePointer, EvidenceRecord, Stored};
 use super::invocation::{Invocation, SuccessorCompletionRecord, SuccessorReadyRecord};
 use super::journal::{JournalEntry, SpawnPhase};
@@ -96,6 +101,16 @@ impl ChildEvidenceSet {
         assembly.attach_records(&typed);
         assembly.attach_journal(&records.journal);
         assembly.finish()
+    }
+
+    /// Empty projection used when the store cannot be assembled; callers record a decision-level projection failure.
+    pub(crate) fn empty_projection_fallback() -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION.to_string(),
+            children: Vec::new(),
+            unplaced: Vec::new(),
+            diagnostics: Vec::new(),
+        }
     }
 
     pub(crate) fn selection_inputs(&self) -> SelectionProjectionSet {
@@ -323,6 +338,220 @@ impl ChildEvidence {
             })
         }
     }
+}
+
+pub(crate) fn seal_candidate_evidence_for_history(
+    node_id: &str,
+    plan_index: usize,
+    planner_outcome: &str,
+    node_status_label: &str,
+    child: Option<&ChildEvidence>,
+) -> SealedCandidateEvidence {
+    let coordinate = if let Some(child) = child {
+        CandidateCoordinate {
+            node_id: node_id.to_string(),
+            parent_node_id: child.parent_node_id.clone(),
+            branch_id: child.branch_id.clone(),
+            generation: child.generation,
+            plan_index: Some(plan_index as u32),
+            primary_runtime_id: child.runtimes.first().map(|runtime| runtime.runtime_id.clone()),
+        }
+    } else {
+        CandidateCoordinate {
+            node_id: node_id.to_string(),
+            parent_node_id: None,
+            branch_id: None,
+            generation: None,
+            plan_index: Some(plan_index as u32),
+            primary_runtime_id: None,
+        }
+    };
+
+    let lifecycle = CandidateLifecycle {
+        planner_outcome: planner_outcome.to_string(),
+        node_status: node_status_label.to_string(),
+    };
+
+    let evaluations: Vec<SealedEvaluationEvidence> = child
+        .map(|child| {
+            child
+                .evaluations
+                .iter()
+                .map(|evaluation| SealedEvaluationEvidence {
+                    branch_id: evaluation.branch_id.clone(),
+                    evaluation_procedure_id: evaluation.evaluation_procedure_id.clone(),
+                    evaluator_identity: evaluation
+                        .evaluator_identity
+                        .as_ref()
+                        .and_then(|identity| serde_json::to_value(identity).ok()),
+                    eval_set_identity: evaluation
+                        .eval_set_identity
+                        .as_ref()
+                        .and_then(|identity| serde_json::to_value(identity).ok()),
+                    evaluation_artifact_citation: evaluation
+                        .evaluation_artifact_path
+                        .as_ref()
+                        .map(|path| SealedEvidenceCitation {
+                            ref_id: format!("opaque_evaluation_artifact:{}", path.display()),
+                            content_hash: None,
+                            record_name: None,
+                        }),
+                    overall_disposition: evaluation.overall_disposition.clone(),
+                    primary_report_citation: citation_from_evidence_source(&evaluation.source),
+                    compared_runs: evaluation
+                        .compared
+                        .iter()
+                        .map(seal_compared_run_evidence)
+                        .collect(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let runtimes: Vec<SealedRuntimeEvidence> = child
+        .map(|child| {
+            child
+                .runtimes
+                .iter()
+                .map(|runtime| SealedRuntimeEvidence {
+                    runtime_id: runtime.runtime_id.clone(),
+                    document_citations: runtime
+                        .documents
+                        .iter()
+                        .map(citation_from_evidence_source)
+                        .collect(),
+                    journal_citations: runtime
+                        .journal
+                        .iter()
+                        .map(citation_from_evidence_source)
+                        .collect(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let branches: Vec<SealedBranchEvidence> = child
+        .map(|child| {
+            child
+                .branches
+                .iter()
+                .map(|branch| SealedBranchEvidence {
+                    branch_id: branch.branch_id.clone(),
+                    candidate_id: branch.candidate_id.clone(),
+                    source_state_id: branch.source_state_id.clone(),
+                    branch_evidence_citations: branch
+                        .sources
+                        .iter()
+                        .map(citation_from_evidence_source)
+                        .collect(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let extra_document_citations = child
+        .map(|child| {
+            child
+                .documents
+                .iter()
+                .map(citation_from_evidence_source)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let extra_journal_citations = child
+        .map(|child| {
+            child
+                .journal
+                .iter()
+                .map(citation_from_evidence_source)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let child_diagnostics = child
+        .map(|child| {
+            child
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    SealedCandidateEvidence {
+        schema_version: 1,
+        coordinate,
+        lifecycle,
+        evaluations,
+        runtimes,
+        branches,
+        extra_document_citations,
+        extra_journal_citations,
+        child_diagnostics,
+    }
+}
+
+fn citation_from_evidence_source(source: &EvidenceSource) -> SealedEvidenceCitation {
+    SealedEvidenceCitation {
+        ref_id: source.pointer.ref_id().to_string(),
+        content_hash: Some(source.pointer.hash().clone()),
+        record_name: source
+            .record
+            .as_ref()
+            .map(|record| record.name.clone()),
+    }
+}
+
+fn seal_compared_run_evidence(row: &ComparedRunEvidence) -> SealedComparedRunEvidence {
+    let baseline_citation = compared_run_registration_citation(
+        &row.baseline_run,
+        &row.baseline_registration_path,
+    );
+    let treatment_citation = compared_run_registration_citation(
+        &row.treatment_run,
+        &row.treatment_registration_path,
+    );
+    SealedComparedRunEvidence {
+        instance_id: row.instance_id.clone(),
+        status: row.status.clone(),
+        baseline_citation,
+        treatment_citation,
+        baseline_metrics: row.baseline_metrics.clone(),
+        treatment_metrics: row.treatment_metrics.clone(),
+        diagnostics: row
+            .diagnostics
+            .iter()
+            .map(|diagnostic| {
+                format!(
+                    "{}:{}:{}",
+                    diagnostic.severity, diagnostic.field, diagnostic.message
+                )
+            })
+            .collect(),
+        baseline_run: row
+            .baseline_run
+            .as_ref()
+            .and_then(|run| serde_json::to_value(run).ok()),
+        treatment_run: row
+            .treatment_run
+            .as_ref()
+            .and_then(|run| serde_json::to_value(run).ok()),
+    }
+}
+
+fn compared_run_registration_citation(
+    run: &Option<RunEvidence>,
+    fallback: &Option<PathBuf>,
+) -> Option<SealedEvidenceCitation> {
+    run.as_ref()
+        .and_then(|value| value.registration_path.as_ref())
+        .or(fallback.as_ref())
+        .map(|path| SealedEvidenceCitation {
+            ref_id: format!("opaque_registration:{}", path.display()),
+            content_hash: None,
+            record_name: Some("run_registration".to_string()),
+        })
 }
 
 /// Evidence associated with one runtime id inside a child node.

@@ -418,6 +418,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::event::{RecordedAt, RuntimeId};
+use crate::OperationalRunMetrics;
 
 const SCHEMA_VERSION: u32 = 1;
 
@@ -2401,12 +2402,127 @@ pub(crate) enum ImportDisposition {
     AcceptedAsDiagnosticOnly,
 }
 
+/// Explicit candidate coordinate for sealed selection replay (no path recovery).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CandidateCoordinate {
+    pub(crate) node_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) branch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) generation: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) plan_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) primary_runtime_id: Option<String>,
+}
+
+/// Lifecycle outcome labels from the planner and persisted node status.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CandidateLifecycle {
+    pub(crate) planner_outcome: String,
+    pub(crate) node_status: String,
+}
+
+/// Citation to a typed evidence source (`ref_id` + optional content hash).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SealedEvidenceCitation {
+    pub(crate) ref_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) content_hash: Option<HistoryHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) record_name: Option<String>,
+}
+
+/// Compared-run slice carried from child evaluation evidence (metrics + citations).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SealedComparedRunEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) instance_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) baseline_citation: Option<SealedEvidenceCitation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) treatment_citation: Option<SealedEvidenceCitation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) baseline_metrics: Option<OperationalRunMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) treatment_metrics: Option<OperationalRunMetrics>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) diagnostics: Vec<String>,
+    /// JSON snapshot of typed child run evidence when available (identity, spec, artifacts, protocol); same shape as `RunEvidence` in `evidence.rs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) baseline_run: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) treatment_run: Option<serde_json::Value>,
+}
+
+/// One branch evaluation report worth of sealed material.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SealedEvaluationEvidence {
+    pub(crate) branch_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) evaluation_procedure_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) evaluator_identity: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) eval_set_identity: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) evaluation_artifact_citation: Option<SealedEvidenceCitation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) overall_disposition: Option<String>,
+    pub(crate) primary_report_citation: SealedEvidenceCitation,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) compared_runs: Vec<SealedComparedRunEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SealedRuntimeEvidence {
+    pub(crate) runtime_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) document_citations: Vec<SealedEvidenceCitation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) journal_citations: Vec<SealedEvidenceCitation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SealedBranchEvidence {
+    pub(crate) branch_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) candidate_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_state_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) branch_evidence_citations: Vec<SealedEvidenceCitation>,
+}
+
+/// Snapshot mirroring [`super::evidence::ChildEvidence`] categories for sealed History.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SealedCandidateEvidence {
+    pub(crate) schema_version: u32,
+    pub(crate) coordinate: CandidateCoordinate,
+    pub(crate) lifecycle: CandidateLifecycle,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) evaluations: Vec<SealedEvaluationEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) runtimes: Vec<SealedRuntimeEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) branches: Vec<SealedBranchEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) extra_document_citations: Vec<SealedEvidenceCitation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) extra_journal_citations: Vec<SealedEvidenceCitation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) child_diagnostics: Vec<String>,
+}
+
 /// Inline-first per-candidate evaluation payload suitable for sealing in History.
 ///
-/// This first slice carries the exact `SelectionInput` when available, plus
-/// conservative diagnostics for missing/failed projections. Richer child
-/// evidence can be added later without changing the surrounding History entry
-/// algebra.
+/// Carries the projected [`crate::successor_selection::SelectionInput`] when present, and
+/// optionally a [`SealedCandidateEvidence`] snapshot so a future ruler can justify the
+/// candidate without re-reading scheduler or mutable filesystem projections.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct EvaluationPayload {
     pub(crate) schema_version: u32,
@@ -2430,6 +2546,10 @@ pub(crate) struct EvaluationPayload {
     pub(crate) source_refs: Vec<EvidenceRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) source_hashes: Vec<HistoryHash>,
+
+    /// Rich sealed mirror of grouped child/evaluation evidence (schema ≥ 2 when present).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sealed_evidence: Option<SealedCandidateEvidence>,
 }
 
 impl EvaluationPayload {
@@ -2443,6 +2563,7 @@ impl EvaluationPayload {
             projection_failures: Vec::new(),
             source_refs: Vec::new(),
             source_hashes: Vec::new(),
+            sealed_evidence: None,
         }
     }
 
@@ -2475,6 +2596,7 @@ pub(crate) struct EvaluationPayloadBuilder {
     projection_failures: Vec<SelectionProjectionFailure>,
     source_refs: Vec<EvidenceRef>,
     source_hashes: Vec<HistoryHash>,
+    sealed_evidence: Option<SealedCandidateEvidence>,
 }
 
 impl EvaluationPayloadBuilder {
@@ -2500,9 +2622,24 @@ impl EvaluationPayloadBuilder {
         self
     }
 
-    pub(crate) fn build(self) -> EvaluationPayload {
+    pub(crate) fn sealed_candidate_evidence(mut self, body: SealedCandidateEvidence) -> Self {
+        self.sealed_evidence = Some(body);
+        self
+    }
+
+    pub(crate) fn build(mut self) -> EvaluationPayload {
+        let schema_version = if self.sealed_evidence.is_some() {
+            2
+        } else {
+            self.schema_version
+        };
+
+        if let Some(ref sealed) = self.sealed_evidence {
+            append_sealed_evidence_citation_pairs(&mut self.source_refs, &mut self.source_hashes, sealed);
+        }
+
         EvaluationPayload {
-            schema_version: self.schema_version,
+            schema_version,
             candidate: self.candidate,
             procedure: self.procedure,
             selection_input: self.selection_input,
@@ -2510,7 +2647,55 @@ impl EvaluationPayloadBuilder {
             projection_failures: self.projection_failures,
             source_refs: self.source_refs,
             source_hashes: self.source_hashes,
+            sealed_evidence: self.sealed_evidence,
         }
+    }
+}
+
+fn append_sealed_evidence_citation_pairs(
+    refs: &mut Vec<EvidenceRef>,
+    hashes: &mut Vec<HistoryHash>,
+    sealed: &SealedCandidateEvidence,
+) {
+    fn push(refs: &mut Vec<EvidenceRef>, hashes: &mut Vec<HistoryHash>, c: &SealedEvidenceCitation) {
+        if let Some(hash) = c.content_hash.clone() {
+            refs.push(EvidenceRef::new(c.ref_id.clone()));
+            hashes.push(hash);
+        }
+    }
+
+    for ev in &sealed.evaluations {
+        push(refs, hashes, &ev.primary_report_citation);
+        if let Some(ref ac) = ev.evaluation_artifact_citation {
+            push(refs, hashes, ac);
+        }
+        for row in &ev.compared_runs {
+            if let Some(ref b) = row.baseline_citation {
+                push(refs, hashes, b);
+            }
+            if let Some(ref t) = row.treatment_citation {
+                push(refs, hashes, t);
+            }
+        }
+    }
+    for rt in &sealed.runtimes {
+        for c in &rt.document_citations {
+            push(refs, hashes, c);
+        }
+        for c in &rt.journal_citations {
+            push(refs, hashes, c);
+        }
+    }
+    for br in &sealed.branches {
+        for c in &br.branch_evidence_citations {
+            push(refs, hashes, c);
+        }
+    }
+    for c in &sealed.extra_document_citations {
+        push(refs, hashes, c);
+    }
+    for c in &sealed.extra_journal_citations {
+        push(refs, hashes, c);
     }
 }
 
@@ -2604,6 +2789,7 @@ pub(crate) struct SelectionProjectionFailureId(pub(crate) HistoryHash);
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SelectionProjectionFailureKind {
     MissingSelectionInput,
+    ChildEvidenceStoreLoadFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -4679,6 +4865,7 @@ mod tests {
             projection_failures: Vec::new(),
             source_refs: Vec::new(),
             source_hashes: Vec::new(),
+            sealed_evidence: None,
         };
         let b = EvaluationPayload {
             schema_version: 1,
@@ -4695,6 +4882,7 @@ mod tests {
             projection_failures: Vec::new(),
             source_refs: Vec::new(),
             source_hashes: Vec::new(),
+            sealed_evidence: None,
         };
 
         let first = SelectionDecisionEntry::new(
