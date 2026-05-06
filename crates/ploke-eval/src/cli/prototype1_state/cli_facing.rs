@@ -53,9 +53,9 @@ use crate::{
             c4::{ObserveChild, ObservedChild},
             event::RecordedAt,
             history::{
-                EvaluationPayload, History, ProcedureRef, SelectionDecisionEntry,
-                SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope,
-                SelectionTraversalEvidence, SubjectRef,
+                EvaluationPayload, Generation, History, ProcedureRef, Scope, ScopeFor,
+                SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
+                SelectionScope, SelectionTraversalEvidence, SubjectRef,
             },
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -5634,151 +5634,207 @@ fn generation_selection(outcomes: &[PlannedChildOutcome]) -> Option<SuccessorDec
     })
 }
 
-fn generation_selection_material(
-    manifest_path: &Path,
-    parent_identity: &ParentIdentity,
-    selected_generation: u32,
-    child_outcomes: &[PlannedChildOutcome],
-    selection_decision: &SuccessorDecision,
-) -> Result<SelectionSealMaterial, PrepareError> {
-    let mut projection_failures = Vec::new();
-    let child_evidence_store = crate::cli::prototype1_state::history_preview::FsEvidenceStore::new(
-        manifest_path.to_path_buf(),
-    );
-    let child_evidence_set = match child_evidence_store.child_evidence() {
-        Ok(set) => set,
-        Err(err) => {
-            let detail = err.to_string();
-            let failure = SelectionProjectionFailure::committed(
-                SelectionProjectionFailureKind::ChildEvidenceStoreLoadFailed,
-                None,
-                Some(detail),
-            )
-            .map_err(|e| PrepareError::InvalidBatchSelection {
-                detail: format!("failed to commit child evidence store failure id: {e}"),
-            })?;
-            projection_failures.push(failure);
-            crate::cli::prototype1_state::evidence::ChildEvidenceSet::empty_after_unreadable_store()
-        }
-    };
-    let mut considered = Vec::new();
-    for outcome in child_outcomes {
-        let candidate = SubjectRef::new(format!(
-            "candidate:{}:plan_index={}",
-            outcome.node_id, outcome.plan_index
-        ));
-        let procedure = ProcedureRef::new(crate::successor_selection::PROCEDURE_ID);
-        let child_ev = child_evidence_set
-            .children
-            .iter()
-            .find(|child| child.node_id == outcome.node_id);
-        let sealed_body =
-            crate::cli::prototype1_state::evidence::seal_candidate_evidence_for_history(
-                &outcome.node_id,
-                outcome.plan_index,
-                &outcome.outcome,
-                &format!("{:?}", outcome.node_status),
-                child_ev,
-            );
-        let mut builder = EvaluationPayload::builder(candidate.clone(), procedure)
-            .sealed_candidate_evidence(sealed_body);
-
-        if let Some(input) = outcome.selection_input.as_ref() {
-            builder = builder.selection_input(input.clone()).map_err(|err| {
-                PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "failed to build selection input payload for node_id={}: {err}",
-                        outcome.node_id
-                    ),
-                }
-            })?;
-        } else {
-            let failure = SelectionProjectionFailure::committed(
-                SelectionProjectionFailureKind::MissingSelectionInput,
-                Some(candidate.clone()),
-                Some(format!(
-                    "missing_selection_input: child_fanout_outcome={:?}",
-                    outcome.outcome
-                )),
-            )
-            .map_err(|err| PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "failed to commit selection projection failure id for node_id={}: {err}",
-                    outcome.node_id
-                ),
-            })?;
-            projection_failures.push(failure.clone());
-            builder = builder.projection_failure(failure);
-        }
-
-        considered.push(builder.build());
-    }
-    let selected_outcome = child_outcomes
-        .iter()
-        .find(|outcome| outcome.node_id == selection_decision.candidate_node_id)
-        .ok_or_else(|| PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "selected candidate validated against child outcomes before journaling: missing node_id={}",
-                selection_decision.candidate_node_id
-            ),
-        })?;
-    let selected_candidate = SubjectRef::new(format!(
-        "candidate:{}:plan_index={}",
-        selected_outcome.node_id, selected_outcome.plan_index
-    ));
-    ensure_decision_grade_payloads(&considered, &selected_candidate)?;
-    Ok(SelectionSealMaterial {
-        procedure: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
-        scope: SelectionScope::new(format!(
-            "generation_local:parent_node_id={};generation={}",
-            parent_identity.node_id, selected_generation
-        )),
-        selected_candidate,
-        considered,
-        projection_failures,
-        traversal: None,
-        selected_from_generation_outcomes: true,
-    })
+struct GenerationCandidateProjection {
+    considered: Vec<EvaluationPayload>,
+    projection_failures: Vec<SelectionProjectionFailure>,
 }
 
-fn history_traversal_selection(
-    manifest_path: &Path,
-    seed: u64,
-) -> Result<Option<(SuccessorDecision, SelectionSealMaterial)>, PrepareError> {
-    let scope = SelectionScope::all_admitted_candidates();
-    let history = History::for_campaign_manifest(manifest_path);
-    let candidates =
-        history
-            .candidates(&scope)
-            .map_err(|err| PrepareError::InvalidBatchSelection {
-                detail: format!("failed to load History traversal candidates: {err}"),
+struct ParentSelection<'a> {
+    manifest_path: &'a Path,
+    parent_identity: &'a ParentIdentity,
+    child_outcomes: &'a [PlannedChildOutcome],
+}
+
+impl<'a> ParentSelection<'a> {
+    fn new(
+        manifest_path: &'a Path,
+        parent_identity: &'a ParentIdentity,
+        child_outcomes: &'a [PlannedChildOutcome],
+    ) -> Self {
+        Self {
+            manifest_path,
+            parent_identity,
+            child_outcomes,
+        }
+    }
+
+    fn current_generation_candidates(&self) -> Result<GenerationCandidateProjection, PrepareError> {
+        let mut projection_failures = Vec::new();
+        let child_evidence_store =
+            crate::cli::prototype1_state::history_preview::FsEvidenceStore::new(
+                self.manifest_path.to_path_buf(),
+            );
+        let child_evidence_set = match child_evidence_store.child_evidence() {
+            Ok(set) => set,
+            Err(err) => {
+                let detail = err.to_string();
+                let failure = SelectionProjectionFailure::committed(
+                    SelectionProjectionFailureKind::ChildEvidenceStoreLoadFailed,
+                    None,
+                    Some(detail),
+                )
+                .map_err(|e| PrepareError::InvalidBatchSelection {
+                    detail: format!("failed to commit child evidence store failure id: {e}"),
+                })?;
+                projection_failures.push(failure);
+                crate::cli::prototype1_state::evidence::ChildEvidenceSet::empty_after_unreadable_store()
+            }
+        };
+        let mut considered = Vec::new();
+        for outcome in self.child_outcomes {
+            let candidate = SubjectRef::new(format!(
+                "candidate:{}:plan_index={}",
+                outcome.node_id, outcome.plan_index
+            ));
+            let procedure = ProcedureRef::new(crate::successor_selection::PROCEDURE_ID);
+            let child_ev = child_evidence_set
+                .children
+                .iter()
+                .find(|child| child.node_id == outcome.node_id);
+            let sealed_body =
+                crate::cli::prototype1_state::evidence::seal_candidate_evidence_for_history(
+                    &outcome.node_id,
+                    outcome.plan_index,
+                    &outcome.outcome,
+                    &format!("{:?}", outcome.node_status),
+                    child_ev,
+                );
+            let mut builder = EvaluationPayload::builder(candidate.clone(), procedure)
+                .sealed_candidate_evidence(sealed_body);
+
+            if let Some(input) = outcome.selection_input.as_ref() {
+                builder = builder.selection_input(input.clone()).map_err(|err| {
+                    PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "failed to build selection input payload for node_id={}: {err}",
+                            outcome.node_id
+                        ),
+                    }
+                })?;
+            } else {
+                let failure = SelectionProjectionFailure::committed(
+                    SelectionProjectionFailureKind::MissingSelectionInput,
+                    Some(candidate.clone()),
+                    Some(format!(
+                        "missing_selection_input: child_fanout_outcome={:?}",
+                        outcome.outcome
+                    )),
+                )
+                .map_err(|err| PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "failed to commit selection projection failure id for node_id={}: {err}",
+                        outcome.node_id
+                    ),
+                })?;
+                projection_failures.push(failure.clone());
+                builder = builder.projection_failure(failure);
+            }
+
+            considered.push(builder.build());
+        }
+
+        Ok(GenerationCandidateProjection {
+            considered,
+            projection_failures,
+        })
+    }
+
+    fn generation_material(
+        &self,
+        selected_generation: u32,
+        selection_decision: &SuccessorDecision,
+    ) -> Result<SelectionSealMaterial, PrepareError> {
+        let GenerationCandidateProjection {
+            considered,
+            projection_failures,
+        } = self.current_generation_candidates()?;
+        let selected_outcome = self
+            .child_outcomes
+            .iter()
+            .find(|outcome| outcome.node_id == selection_decision.candidate_node_id)
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "selected candidate validated against child outcomes before journaling: missing node_id={}",
+                    selection_decision.candidate_node_id
+                ),
             })?;
-    let config = HistoryTraversalConfig {
-        seed,
-        normalize_frontier: true,
-    };
-    let Some(selection) = successor_selection::traversal::decide_history_traversal(
-        candidates, config,
-    )
-    .map_err(|err| PrepareError::InvalidBatchSelection {
-        detail: format!("failed to decide History traversal successor: {err}"),
-    })?
-    else {
-        return Ok(None);
-    };
-    let material = SelectionSealMaterial {
-        procedure: ProcedureRef::new(crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID),
-        scope,
-        selected_candidate: selection.selected_payload.candidate.clone(),
-        considered: selection.considered,
-        projection_failures: selection.projection_failures,
-        traversal: Some(SelectionTraversalEvidence {
+        let selected_candidate = SubjectRef::new(format!(
+            "candidate:{}:plan_index={}",
+            selected_outcome.node_id, selected_outcome.plan_index
+        ));
+        ensure_decision_grade_payloads(&considered, &selected_candidate)?;
+        Ok(SelectionSealMaterial {
+            procedure: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            scope: <Self as ScopeFor<Generation>>::scope_for(self, selected_generation)
+                .into_selection_scope(),
+            selected_candidate,
+            considered,
+            projection_failures,
+            traversal: None,
+            selected_from_generation_outcomes: true,
+        })
+    }
+
+    fn history_traversal(
+        &self,
+        seed: u64,
+    ) -> Result<Option<(SuccessorDecision, SelectionSealMaterial)>, PrepareError> {
+        let scope = SelectionScope::all_admitted_candidates();
+        let current_scope =
+            <Self as ScopeFor<Generation>>::scope_for(self, self.parent_identity.generation + 1)
+                .into_selection_scope();
+        let history = History::for_campaign_manifest(self.manifest_path);
+        let candidates =
+            history
+                .candidates(&scope)
+                .map_err(|err| PrepareError::InvalidBatchSelection {
+                    detail: format!("failed to load History traversal candidates: {err}"),
+                })?;
+        let current = self.current_generation_candidates()?;
+        let traversal_candidates =
+            successor_selection::traversal::TraversalCandidates::from_history(candidates)
+                .with_current_generation(current_scope, current.considered)
+                .map_err(|err| PrepareError::InvalidBatchSelection {
+                    detail: format!("failed to add current generation traversal candidates: {err}"),
+                })?;
+        let config = HistoryTraversalConfig {
             seed,
             normalize_frontier: true,
-        }),
-        selected_from_generation_outcomes: false,
-    };
-    Ok(Some((selection.decision, material)))
+        };
+        let Some(selection) =
+            successor_selection::traversal::decide_traversal(traversal_candidates, config)
+                .map_err(|err| PrepareError::InvalidBatchSelection {
+                    detail: format!("failed to decide History traversal successor: {err}"),
+                })?
+        else {
+            return Ok(None);
+        };
+        let mut projection_failures = current.projection_failures;
+        projection_failures.extend(selection.projection_failures);
+        let material = SelectionSealMaterial {
+            procedure: ProcedureRef::new(
+                crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            scope,
+            selected_candidate: selection.selected_payload.candidate.clone(),
+            considered: selection.considered,
+            projection_failures,
+            traversal: Some(SelectionTraversalEvidence {
+                seed,
+                normalize_frontier: true,
+            }),
+            selected_from_generation_outcomes: selection.selected_from_current_generation,
+        };
+        Ok(Some((selection.decision, material)))
+    }
+}
+
+impl ScopeFor<Generation> for ParentSelection<'_> {
+    type Coordinate = u32;
+
+    fn scope_for(&self, generation: Self::Coordinate) -> Scope<Generation> {
+        Scope::<Generation>::local(&self.parent_identity.node_id, generation)
+    }
 }
 
 fn ensure_decision_grade_payloads(
@@ -6299,15 +6355,16 @@ impl Prototype1StateCommand {
             nodes,
         )
         .await?;
+        let parent_selection =
+            ParentSelection::new(&manifest_path, &parent_identity, &child_outcomes);
         let selection = if self.stop_after == Prototype1StateStopAfter::Complete {
             match self.successor_selection {
                 Prototype1SuccessorSelection::GenerationLocal => {
                     generation_selection(&child_outcomes).map(|decision| (decision, None))
                 }
-                Prototype1SuccessorSelection::HistoryTraversal => {
-                    history_traversal_selection(&manifest_path, self.successor_selection_seed)?
-                        .map(|(decision, material)| (decision, Some(material)))
-                }
+                Prototype1SuccessorSelection::HistoryTraversal => parent_selection
+                    .history_traversal(self.successor_selection_seed)?
+                    .map(|(decision, material)| (decision, Some(material))),
             }
         } else {
             None
@@ -6395,13 +6452,8 @@ impl Prototype1StateCommand {
             if decision.disposition.allows_successor() {
                 let material = match selection_material {
                     Some(material) => material,
-                    None => generation_selection_material(
-                        &manifest_path,
-                        &parent_identity,
-                        node.generation,
-                        &child_outcomes,
-                        &selection_decision,
-                    )?,
+                    None => parent_selection
+                        .generation_material(node.generation, &selection_decision)?,
                 };
                 validate_selection_handoff_candidate(&node, &selection_decision, &material)?;
                 let selection_entry = SelectionDecisionEntry::new_with_traversal(

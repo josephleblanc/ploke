@@ -13,6 +13,8 @@ Restart-oriented table of contents for `docs/active/agents/` and nearby restart-
 
 ## Current Planning Surfaces
 
+- [2026-05-06_history-traversal-invariant-review.md](./2026-05-06_history-traversal-invariant-review.md)
+  History traversal invariant review covering current-generation bridge, candidate provenance, and historical handoff gaps.
 - [2026-04-17_eval-failure-and-protocol-audit/README.md](./2026-04-17_eval-failure-and-protocol-audit/README.md)
   Control-plane docs for failed-run audit, known-limitations reconciliation, blind trace review, and protocol-output comparison.
 - [2026-04-16_eval-closure-formal-sketch.md](./2026-04-16_eval-closure-formal-sketch.md)

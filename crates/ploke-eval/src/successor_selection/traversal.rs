@@ -10,8 +10,9 @@ use super::{
 use crate::{
     BranchDisposition, OperationalRunMetrics,
     cli::prototype1_state::history::{
-        EvaluationPayload, HistoryCandidate, HistoryCandidates, HistoryError,
-        SelectionProjectionFailure, SelectionProjectionFailureKind,
+        CandidateSetCommitment, CandidateSetMembership, CandidateSetRoot, EvaluationPayload,
+        HistoryCandidate, HistoryCandidateSource, HistoryCandidates, HistoryError,
+        SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope,
     },
     intervention::Prototype1SelectionPolicyOutcome,
 };
@@ -37,18 +38,32 @@ pub(crate) struct HistoryTraversalSelection {
     pub(crate) selected_payload: EvaluationPayload,
     pub(crate) considered: Vec<EvaluationPayload>,
     pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
+    pub(crate) selected_from_current_generation: bool,
 }
 
+#[cfg(test)]
 pub(crate) fn decide_history_traversal(
     history: HistoryCandidates,
     config: HistoryTraversalConfig,
 ) -> Result<Option<HistoryTraversalSelection>, HistoryError> {
+    decide_traversal(TraversalCandidates::from_history(history), config)
+}
+
+pub(crate) fn decide_traversal(
+    candidates: TraversalCandidates,
+    config: HistoryTraversalConfig,
+) -> Result<Option<HistoryTraversalSelection>, HistoryError> {
     let mut considered = Vec::new();
     let mut failures = Vec::new();
+    let mut sources = Vec::new();
 
-    for candidate in history.candidates {
+    for candidate in candidates.candidates {
+        let source = candidate.source.clone();
         match decision_grade(candidate)? {
-            CandidateGrade::Eligible(payload) => considered.push(payload),
+            CandidateGrade::Eligible(payload) => {
+                considered.push(payload);
+                sources.push(source);
+            }
             CandidateGrade::Excluded(failure) => failures.push(failure),
         }
     }
@@ -83,6 +98,7 @@ pub(crate) fn decide_history_traversal(
             score,
             tie,
             decision: selected,
+            source: sources[index].clone(),
         };
         if best
             .as_ref()
@@ -115,7 +131,91 @@ pub(crate) fn decide_history_traversal(
         selected_payload: best.payload,
         considered,
         projection_failures: failures,
+        selected_from_current_generation: best.source.is_current_generation(),
     }))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TraversalCandidates {
+    pub(crate) scope: SelectionScope,
+    pub(crate) candidates: Vec<TraversalCandidate>,
+}
+
+impl TraversalCandidates {
+    pub(crate) fn from_history(history: HistoryCandidates) -> Self {
+        Self {
+            scope: history.scope,
+            candidates: history
+                .candidates
+                .into_iter()
+                .map(TraversalCandidate::from)
+                .collect(),
+        }
+    }
+
+    pub(crate) fn with_current_generation(
+        mut self,
+        scope: SelectionScope,
+        payloads: Vec<EvaluationPayload>,
+    ) -> Result<Self, HistoryError> {
+        let candidate_set = CandidateSetCommitment::from_payloads(&payloads)?;
+        let root = candidate_set.root.clone();
+        for payload in payloads {
+            let payload_hash = payload.payload_hash()?;
+            let membership = candidate_set.membership(&payload.candidate).cloned();
+            self.candidates.push(TraversalCandidate {
+                source: TraversalCandidateSource::CurrentGeneration {
+                    scope: scope.clone(),
+                },
+                decision_scope: scope.clone(),
+                selected_by_decision: false,
+                payload,
+                payload_hash,
+                candidate_set_root: Some(root.clone()),
+                candidate_set_membership: membership,
+            });
+        }
+        Ok(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TraversalCandidate {
+    pub(crate) source: TraversalCandidateSource,
+    pub(crate) decision_scope: SelectionScope,
+    pub(crate) selected_by_decision: bool,
+    pub(crate) payload: EvaluationPayload,
+    pub(crate) payload_hash: crate::cli::prototype1_state::history::HistoryHash,
+    pub(crate) candidate_set_root: Option<CandidateSetRoot>,
+    pub(crate) candidate_set_membership: Option<CandidateSetMembership>,
+}
+
+impl From<HistoryCandidate> for TraversalCandidate {
+    fn from(candidate: HistoryCandidate) -> Self {
+        Self {
+            source: TraversalCandidateSource::History {
+                source: candidate.source,
+            },
+            decision_scope: candidate.decision_scope,
+            selected_by_decision: candidate.selected_by_decision,
+            payload: candidate.payload,
+            payload_hash: candidate.payload_hash,
+            candidate_set_root: candidate.candidate_set_root,
+            candidate_set_membership: candidate.candidate_set_membership,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TraversalCandidateSource {
+    History { source: HistoryCandidateSource },
+    CurrentGeneration { scope: SelectionScope },
+}
+
+impl TraversalCandidateSource {
+    fn is_current_generation(&self) -> bool {
+        matches!(self, Self::CurrentGeneration { .. })
+    }
 }
 
 enum CandidateGrade {
@@ -123,7 +223,7 @@ enum CandidateGrade {
     Excluded(SelectionProjectionFailure),
 }
 
-fn decision_grade(candidate: HistoryCandidate) -> Result<CandidateGrade, HistoryError> {
+fn decision_grade(candidate: TraversalCandidate) -> Result<CandidateGrade, HistoryError> {
     let subject = candidate.payload.candidate.clone();
     let exclude = |kind, detail: String| {
         SelectionProjectionFailure::committed(kind, Some(subject.clone()), Some(detail))
@@ -303,6 +403,7 @@ struct ScoredPayload {
     score: TraversalScore,
     tie: [u8; 32],
     decision: SuccessorDecision,
+    source: TraversalCandidateSource,
 }
 
 impl ScoredPayload {
@@ -456,6 +557,42 @@ mod tests {
             selection.decision.procedure_id,
             HISTORY_TRAVERSAL_PROCEDURE_ID
         );
+    }
+
+    #[test]
+    fn traversal_scores_current_generation_candidates_with_history_candidates() {
+        let history = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(decision_grade_payload(
+                "history-weak",
+                "branch-history-weak",
+                None,
+                0,
+                BranchDisposition::Reject,
+                metrics(false, false, 5),
+            ))],
+        };
+        let current = decision_grade_payload(
+            "current-strong",
+            "branch-current-strong",
+            None,
+            1,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+
+        let candidates = TraversalCandidates::from_history(history)
+            .with_current_generation(
+                SelectionScope::new("generation_local:current"),
+                vec![current],
+            )
+            .expect("current generation candidates");
+        let selection = decide_traversal(candidates, HistoryTraversalConfig::default())
+            .expect("traversal")
+            .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "current-strong");
+        assert!(selection.selected_from_current_generation);
     }
 
     #[test]

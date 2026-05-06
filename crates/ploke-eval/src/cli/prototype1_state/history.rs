@@ -896,6 +896,9 @@ impl History {
                 let Some(selection) = entry.selection_decision() else {
                     continue;
                 };
+                if !selection.contributes_candidates_to_history_projection() {
+                    continue;
+                }
                 if !scope.includes(&selection.scope) {
                     continue;
                 }
@@ -2937,7 +2940,7 @@ pub(crate) struct CandidateSetCommitment {
 }
 
 impl CandidateSetCommitment {
-    fn from_payloads(considered: &[EvaluationPayload]) -> Result<Self, HistoryError> {
+    pub(crate) fn from_payloads(considered: &[EvaluationPayload]) -> Result<Self, HistoryError> {
         candidate_set::commit(considered)
     }
 
@@ -3335,6 +3338,10 @@ impl SelectionDecisionEntry {
         })
     }
 
+    fn contributes_candidates_to_history_projection(&self) -> bool {
+        self.procedure_or_policy.as_str() == crate::successor_selection::PROCEDURE_ID
+    }
+
     fn validate_decision(
         procedure_or_policy: &ProcedureRef,
         selected_candidate: Option<&SubjectRef>,
@@ -3581,6 +3588,46 @@ impl SelectionProjectionFailure {
 #[serde(transparent)]
 pub(crate) struct SelectionScope {
     value: String,
+}
+
+/// Typed source for a [`SelectionScope`] projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Scope<K> {
+    value: SelectionScope,
+    _kind: PhantomData<fn() -> K>,
+}
+
+/// Marker for a generation-local selection universe under one parent node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Generation {}
+
+pub(crate) trait ScopeFor<K> {
+    type Coordinate;
+
+    fn scope_for(&self, coordinate: Self::Coordinate) -> Scope<K>;
+}
+
+impl<K> Scope<K> {
+    fn new(value: SelectionScope) -> Self {
+        Self {
+            value,
+            _kind: PhantomData,
+        }
+    }
+
+    pub(crate) fn into_selection_scope(self) -> SelectionScope {
+        self.value
+    }
+}
+
+impl Scope<Generation> {
+    pub(crate) fn local(parent_node_id: impl AsRef<str>, generation: u32) -> Self {
+        Self::new(SelectionScope::new(format!(
+            "generation_local:parent_node_id={};generation={}",
+            parent_node_id.as_ref(),
+            generation
+        )))
+    }
 }
 
 impl SelectionScope {
@@ -5600,6 +5647,117 @@ mod tests {
                 .candidate_set_membership(entry.selected_candidate.as_ref().expect("selected"))
                 .is_some()
         );
+    }
+
+    #[test]
+    fn history_candidates_do_not_reingest_prior_traversal_considered_set() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+
+        let state0 = store.lineage_state(&lineage).expect("read empty state");
+        let mut block0 = open_block_from_state(&state0, 0, Vec::new());
+        let gen0 = selection_entry_for_scope(
+            SelectionScope::new("generation_local:parent_node_id=root;generation=1"),
+            "child-a",
+            "branch-a",
+            vec![evaluation_payload("child-a", "branch-a", 0)],
+        );
+        block0
+            .admit(proposed_selection_entry(gen0), actor("admitter"))
+            .expect("admit gen0 selection");
+        let sealed0 = seal(block0);
+        let sealed0_hash = *sealed0.block_hash();
+        store.append(&state0, &sealed0).expect("append gen0");
+
+        let state1 = store.lineage_state(&lineage).expect("read gen0 state");
+        let mut block1 = open_block_from_state(&state1, 1, vec![sealed0_hash]);
+        let gen1 = selection_entry_for_scope(
+            SelectionScope::new("generation_local:parent_node_id=child-a;generation=2"),
+            "child-b",
+            "branch-b",
+            vec![evaluation_payload("child-b", "branch-b", 0)],
+        );
+        block1
+            .admit(proposed_selection_entry(gen1), actor("admitter"))
+            .expect("admit gen1 selection");
+        let sealed1 = seal(block1);
+        let sealed1_hash = *sealed1.block_hash();
+        store.append(&state1, &sealed1).expect("append gen1");
+
+        let scope = SelectionScope::all_admitted_candidates();
+        let first_traversal = crate::successor_selection::traversal::decide_history_traversal(
+            History::new(store.clone())
+                .candidates(&scope)
+                .expect("initial history candidates"),
+            crate::successor_selection::HistoryTraversalConfig {
+                seed: 7,
+                normalize_frontier: true,
+            },
+        )
+        .expect("first traversal decision")
+        .expect("first selected candidate");
+        assert_eq!(first_traversal.considered.len(), 2);
+
+        let traversal_entry = SelectionDecisionEntry::new_with_traversal(
+            ProcedureRef::new(crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID),
+            scope.clone(),
+            Some(first_traversal.selected_payload.candidate.clone()),
+            first_traversal.considered.clone(),
+            first_traversal.projection_failures.clone(),
+            Some(SelectionTraversalEvidence {
+                seed: 7,
+                normalize_frontier: true,
+            }),
+            first_traversal.decision.clone(),
+        )
+        .expect("first traversal entry");
+
+        let state2 = store
+            .lineage_state(&lineage)
+            .expect("read state before traversal");
+        let mut block2 = open_block_from_state(&state2, 2, vec![sealed1_hash]);
+        block2
+            .admit(proposed_selection_entry(traversal_entry), actor("admitter"))
+            .expect("admit traversal selection");
+        let sealed2 = seal(block2);
+        store
+            .append(&state2, &sealed2)
+            .expect("append traversal selection");
+
+        let candidates_after_traversal = History::new(store)
+            .candidates(&scope)
+            .expect("candidates after traversal");
+        assert_eq!(
+            candidates_after_traversal.candidates.len(),
+            2,
+            "traversal decisions must not replay their considered set as new candidates"
+        );
+
+        let second_traversal = crate::successor_selection::traversal::decide_history_traversal(
+            candidates_after_traversal,
+            crate::successor_selection::HistoryTraversalConfig {
+                seed: 7,
+                normalize_frontier: true,
+            },
+        )
+        .expect("second traversal decision")
+        .expect("second selected candidate");
+
+        let second_entry = SelectionDecisionEntry::new_with_traversal(
+            ProcedureRef::new(crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID),
+            scope,
+            Some(second_traversal.selected_payload.candidate.clone()),
+            second_traversal.considered,
+            second_traversal.projection_failures,
+            Some(SelectionTraversalEvidence {
+                seed: 7,
+                normalize_frontier: true,
+            }),
+            second_traversal.decision,
+        )
+        .expect("second traversal entry should not see duplicate candidate-set keys");
+        assert_eq!(second_entry.considered.len(), 2);
     }
 
     #[test]
