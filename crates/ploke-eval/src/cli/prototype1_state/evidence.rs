@@ -84,6 +84,8 @@ use crate::successor_selection::{CandidateRef, RunComparison, SelectionInput};
 use crate::{BranchDisposition, OperationalRunMetrics};
 
 const SCHEMA_VERSION: &str = "prototype1-child-evidence.v1";
+pub(crate) const PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID: &str =
+    "prototype1.branch_evaluation.operational_metrics.v1";
 
 /// Read-only child evidence grouped from classified preview sources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -483,7 +485,7 @@ pub(crate) fn seal_candidate_evidence_for_history(
         .unwrap_or_default();
 
     SealedCandidateEvidence {
-        schema_version: 1,
+        schema_version: 2,
         coordinate,
         lifecycle,
         evaluations,
@@ -2136,7 +2138,7 @@ mod tests {
 
     use super::{
         ChildEvidence, EvidenceDiagnostic, EvidenceFactOrigin, EvidenceSource,
-        SelectionProjectionError, SelectionProjectionField,
+        SelectionProjectionError, SelectionProjectionField, seal_candidate_evidence_for_history,
     };
     use crate::cli::prototype1_state::evidence_class::EvidenceClass;
     use crate::cli::prototype1_state::history_preview::FsEvidenceStore;
@@ -2177,6 +2179,13 @@ mod tests {
         assert!(child.documents.iter().all(|source| {
             !source.pointer.ref_id().is_empty() && !source.pointer.hash().as_str().is_empty()
         }));
+    }
+
+    #[test]
+    fn sealed_candidate_evidence_uses_current_schema_version() {
+        let sealed = seal_candidate_evidence_for_history("node-a", 0, "done", "completed", None);
+
+        assert_eq!(sealed.schema_version, 2);
     }
 
     #[test]

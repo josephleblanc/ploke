@@ -6208,6 +6208,33 @@ impl Prototype1StateCommand {
                     "candidate:{}:plan_index={}",
                     selected_outcome.node_id, selected_outcome.plan_index
                 )));
+                let selected_subject = selected_candidate
+                    .as_ref()
+                    .expect("successor handoff always has selected candidate");
+                let ineligible = considered
+                    .iter()
+                    .filter(|payload| {
+                        payload.selection_input.is_some() || &payload.candidate == selected_subject
+                    })
+                    .filter_map(|payload| {
+                        let grade = payload.decision_grade_eligibility();
+                        (!grade.eligible).then(|| {
+                            format!(
+                                "{}:[{}]",
+                                payload.candidate.as_str(),
+                                grade.identity_gaps.join(",")
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if !ineligible.is_empty() {
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "selection decision cannot be sealed with ineligible decision-grade payloads: {}",
+                            ineligible.join("; ")
+                        ),
+                    });
+                }
                 let selection_entry = SelectionDecisionEntry::new(
                     ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
                     SelectionScope::new(format!(
@@ -6491,8 +6518,6 @@ pub(crate) fn prototype1_branch_evaluation_path(
         .join(format!("{branch_id}.json"))
 }
 
-const PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID: &str =
-    "prototype1.branch_evaluation.operational_metrics.v1";
 const PROTOTYPE1_BRANCH_EVALUATOR_ID: &str = "prototype1.branch_evaluation.mechanized";
 const PROTOTYPE1_BRANCH_EVALUATOR_VERSION: &str = "v1";
 const PROTOTYPE1_CLOSURE_EVAL_SET_KIND: &str = "closure_instance_slice";
@@ -6607,7 +6632,10 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
         baseline_campaign_id: baseline_campaign_id.to_string(),
         branch_id: branch_id.to_string(),
         treatment_campaign_id: treatment_campaign.campaign_id.clone(),
-        evaluation_procedure_id: Some(PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID.to_string()),
+        evaluation_procedure_id: Some(
+            crate::cli::prototype1_state::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID
+                .to_string(),
+        ),
         evaluator_identity: Some(Prototype1EvaluatorIdentity {
             id: PROTOTYPE1_BRANCH_EVALUATOR_ID.to_string(),
             version: PROTOTYPE1_BRANCH_EVALUATOR_VERSION.to_string(),

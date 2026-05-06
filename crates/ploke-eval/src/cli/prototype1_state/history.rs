@@ -2648,18 +2648,22 @@ impl EvaluationPayload {
         if sealed.evaluations.is_empty() {
             gaps.push("sealed_evaluations_empty".into());
         }
+        let expected_evaluation_procedure =
+            super::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID;
         for (index, ev) in sealed.evaluations.iter().enumerate() {
             let prefix = format!("sealed_evaluations[{index}]");
             if ev.branch_id.is_empty() {
                 gaps.push(format!("{prefix}.branch_id_empty"));
             }
-            if ev
-                .evaluation_procedure_id
-                .as_deref()
-                .unwrap_or("")
-                .is_empty()
-            {
-                gaps.push(format!("{prefix}.evaluation_procedure_id_missing"));
+            match ev.evaluation_procedure_id.as_deref() {
+                Some(id) if id == expected_evaluation_procedure => {}
+                Some(id) if id.is_empty() => {
+                    gaps.push(format!("{prefix}.evaluation_procedure_id_missing"));
+                }
+                Some(id) => gaps.push(format!(
+                    "{prefix}.evaluation_procedure_id_mismatch:want={expected_evaluation_procedure},got={id}"
+                )),
+                None => gaps.push(format!("{prefix}.evaluation_procedure_id_missing")),
             }
             if ev.evaluator_identity.is_none() {
                 gaps.push(format!("{prefix}.evaluator_identity_missing"));
@@ -2713,6 +2717,28 @@ impl EvaluationPayload {
             eligible: gaps.is_empty(),
             identity_gaps: gaps,
         }
+    }
+
+    fn candidate_node_id(&self) -> Option<&str> {
+        self.selection_input
+            .as_ref()
+            .map(|input| input.candidate.node_id.as_str())
+            .or_else(|| {
+                self.sealed_evidence
+                    .as_ref()
+                    .map(|sealed| sealed.coordinate.node_id.as_str())
+            })
+    }
+
+    fn candidate_branch_id(&self) -> Option<&str> {
+        self.selection_input
+            .as_ref()
+            .map(|input| input.candidate.branch_id.as_str())
+            .or_else(|| {
+                self.sealed_evidence
+                    .as_ref()
+                    .and_then(|sealed| sealed.coordinate.branch_id.as_deref())
+            })
     }
 }
 
@@ -2894,6 +2920,12 @@ impl SelectionDecisionEntry {
         projection_failures: Vec<SelectionProjectionFailure>,
         decision: crate::successor_selection::SuccessorDecision,
     ) -> Result<Self, HistoryError> {
+        Self::validate_decision(
+            &procedure_or_policy,
+            selected_candidate.as_ref(),
+            &considered,
+            &decision,
+        )?;
         let considered_order_hash = HistoryHash::of_domain_json(
             "prototype1.history.selection_considered_order.v1",
             &Self::considered_order_preimage(&considered)?,
@@ -2908,6 +2940,111 @@ impl SelectionDecisionEntry {
             projection_failures,
             decision,
         })
+    }
+
+    fn validate_decision(
+        procedure_or_policy: &ProcedureRef,
+        selected_candidate: Option<&SubjectRef>,
+        considered: &[EvaluationPayload],
+        decision: &crate::successor_selection::SuccessorDecision,
+    ) -> Result<(), HistoryError> {
+        fn invalid(detail: impl Into<String>) -> HistoryError {
+            HistoryError::InvalidSelectionDecision {
+                detail: detail.into(),
+            }
+        }
+
+        if procedure_or_policy.as_str() != decision.procedure_id {
+            return Err(invalid(format!(
+                "procedure mismatch: entry={}, decision={}",
+                procedure_or_policy.as_str(),
+                decision.procedure_id
+            )));
+        }
+
+        for payload in considered {
+            if payload.procedure.as_str() != procedure_or_policy.as_str() {
+                return Err(invalid(format!(
+                    "considered payload procedure mismatch: candidate={}, entry={}, payload={}",
+                    payload.candidate.as_str(),
+                    procedure_or_policy.as_str(),
+                    payload.procedure.as_str()
+                )));
+            }
+        }
+
+        let Some(selected_candidate) = selected_candidate else {
+            if matches!(
+                decision.outcome,
+                crate::successor_selection::decision::SuccessorOutcome::Accepted
+                    | crate::successor_selection::decision::SuccessorOutcome::ExploreFrom
+            ) {
+                return Err(invalid(format!(
+                    "decision outcome {:?} requires selected_candidate",
+                    decision.outcome
+                )));
+            }
+            return Ok(());
+        };
+
+        let selected_payloads = considered
+            .iter()
+            .filter(|payload| &payload.candidate == selected_candidate)
+            .collect::<Vec<_>>();
+        let selected_payload = match selected_payloads.as_slice() {
+            [payload] => *payload,
+            [] => {
+                return Err(invalid(format!(
+                    "selected_candidate {} is absent from considered payloads",
+                    selected_candidate.as_str()
+                )));
+            }
+            many => {
+                return Err(invalid(format!(
+                    "selected_candidate {} is ambiguous in considered payloads: count={}",
+                    selected_candidate.as_str(),
+                    many.len()
+                )));
+            }
+        };
+
+        match selected_payload.candidate_node_id() {
+            Some(node_id) if node_id == decision.candidate_node_id => {}
+            Some(node_id) => {
+                return Err(invalid(format!(
+                    "selected candidate node mismatch: selected={}, decision={}",
+                    node_id, decision.candidate_node_id
+                )));
+            }
+            None => {
+                return Err(invalid("selected_candidate requires payload node identity"));
+            }
+        }
+
+        match (
+            &decision.selected_branch_id,
+            selected_payload.candidate_branch_id(),
+        ) {
+            (Some(decision_branch), Some(payload_branch)) if decision_branch == payload_branch => {}
+            (Some(decision_branch), Some(payload_branch)) => {
+                return Err(invalid(format!(
+                    "selected candidate branch mismatch: selected={}, decision={}",
+                    payload_branch, decision_branch
+                )));
+            }
+            (Some(_), None) => {
+                return Err(invalid(
+                    "selected_candidate requires payload branch identity",
+                ));
+            }
+            (None, _) => {
+                return Err(invalid(
+                    "selected_candidate requires decision.selected_branch_id",
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     fn considered_order_preimage(
@@ -4192,6 +4329,9 @@ pub(crate) enum HistoryError {
     #[error("sealed block claim digest does not match the expected artifact/tree value")]
     ClaimDigestMismatch,
 
+    #[error("invalid selection decision entry: {detail}")]
+    InvalidSelectionDecision { detail: String },
+
     #[error("sealed block is missing the required admitted Artifact claim")]
     MissingArtifactClaim,
 
@@ -5058,7 +5198,7 @@ mod tests {
             rationale: Vec::new(),
         };
         let a = EvaluationPayload {
-            schema_version: 1,
+            schema_version: 2,
             candidate: SubjectRef::new("candidate:child-a:branch-a"),
             procedure: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
             selection_input: None,
@@ -5072,10 +5212,30 @@ mod tests {
             projection_failures: Vec::new(),
             source_refs: Vec::new(),
             source_hashes: Vec::new(),
-            sealed_evidence: None,
+            sealed_evidence: Some(SealedCandidateEvidence {
+                schema_version: 2,
+                coordinate: CandidateCoordinate {
+                    node_id: "child-a".to_string(),
+                    parent_node_id: None,
+                    branch_id: Some("branch-a".to_string()),
+                    generation: Some(2),
+                    plan_index: Some(0),
+                    primary_runtime_id: None,
+                },
+                lifecycle: CandidateLifecycle {
+                    planner_outcome: "done".to_string(),
+                    node_status: "completed".to_string(),
+                },
+                evaluations: Vec::new(),
+                runtimes: Vec::new(),
+                branches: Vec::new(),
+                extra_document_citations: Vec::new(),
+                extra_journal_citations: Vec::new(),
+                child_diagnostics: Vec::new(),
+            }),
         };
         let b = EvaluationPayload {
-            schema_version: 1,
+            schema_version: 2,
             candidate: SubjectRef::new("candidate:child-b:branch-b"),
             procedure: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
             selection_input: None,
@@ -5089,7 +5249,27 @@ mod tests {
             projection_failures: Vec::new(),
             source_refs: Vec::new(),
             source_hashes: Vec::new(),
-            sealed_evidence: None,
+            sealed_evidence: Some(SealedCandidateEvidence {
+                schema_version: 2,
+                coordinate: CandidateCoordinate {
+                    node_id: "child-b".to_string(),
+                    parent_node_id: None,
+                    branch_id: Some("branch-b".to_string()),
+                    generation: Some(2),
+                    plan_index: Some(1),
+                    primary_runtime_id: None,
+                },
+                lifecycle: CandidateLifecycle {
+                    planner_outcome: "done".to_string(),
+                    node_status: "completed".to_string(),
+                },
+                evaluations: Vec::new(),
+                runtimes: Vec::new(),
+                branches: Vec::new(),
+                extra_document_citations: Vec::new(),
+                extra_journal_citations: Vec::new(),
+                child_diagnostics: Vec::new(),
+            }),
         };
 
         let first = SelectionDecisionEntry::new(
@@ -5116,6 +5296,99 @@ mod tests {
             first.decision_hash().expect("hash"),
             second.decision_hash().expect("hash")
         );
+    }
+
+    #[test]
+    fn selection_decision_entry_rejects_selected_candidate_outside_considered() {
+        let decision = crate::successor_selection::SuccessorDecision {
+            procedure_id: crate::successor_selection::PROCEDURE_ID.to_string(),
+            candidate_node_id: "child-a".to_string(),
+            selected_branch_id: Some("branch-a".to_string()),
+            branch_disposition: "keep".to_string(),
+            outcome: crate::successor_selection::decision::SuccessorOutcome::Accepted,
+            findings: Vec::new(),
+            rationale: Vec::new(),
+        };
+        let considered = vec![EvaluationPayload {
+            schema_version: 1,
+            candidate: SubjectRef::new("candidate:child-b:plan_index=1"),
+            procedure: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            selection_input: None,
+            selection_input_hash: None,
+            projection_failures: Vec::new(),
+            source_refs: Vec::new(),
+            source_hashes: Vec::new(),
+            sealed_evidence: None,
+        }];
+
+        let err = SelectionDecisionEntry::new(
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            SelectionScope::new("generation_local:test"),
+            Some(SubjectRef::new("candidate:child-a:plan_index=0")),
+            considered,
+            Vec::new(),
+            decision,
+        )
+        .expect_err("selection entry should reject unconsidered candidate");
+
+        assert!(matches!(err, HistoryError::InvalidSelectionDecision { .. }));
+    }
+
+    #[test]
+    fn selection_decision_entry_rejects_selected_candidate_node_mismatch() {
+        let decision = crate::successor_selection::SuccessorDecision {
+            procedure_id: crate::successor_selection::PROCEDURE_ID.to_string(),
+            candidate_node_id: "child-a".to_string(),
+            selected_branch_id: Some("branch-a".to_string()),
+            branch_disposition: "keep".to_string(),
+            outcome: crate::successor_selection::decision::SuccessorOutcome::Accepted,
+            findings: Vec::new(),
+            rationale: Vec::new(),
+        };
+        let selected = SubjectRef::new("candidate:selected");
+        let considered = vec![EvaluationPayload {
+            schema_version: 2,
+            candidate: selected.clone(),
+            procedure: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            selection_input: None,
+            selection_input_hash: None,
+            projection_failures: Vec::new(),
+            source_refs: Vec::new(),
+            source_hashes: Vec::new(),
+            sealed_evidence: Some(SealedCandidateEvidence {
+                schema_version: 2,
+                coordinate: CandidateCoordinate {
+                    node_id: "child-b".to_string(),
+                    parent_node_id: None,
+                    branch_id: Some("branch-a".to_string()),
+                    generation: Some(2),
+                    plan_index: Some(0),
+                    primary_runtime_id: None,
+                },
+                lifecycle: CandidateLifecycle {
+                    planner_outcome: "done".to_string(),
+                    node_status: "completed".to_string(),
+                },
+                evaluations: Vec::new(),
+                runtimes: Vec::new(),
+                branches: Vec::new(),
+                extra_document_citations: Vec::new(),
+                extra_journal_citations: Vec::new(),
+                child_diagnostics: Vec::new(),
+            }),
+        }];
+
+        let err = SelectionDecisionEntry::new(
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            SelectionScope::new("generation_local:test"),
+            Some(selected),
+            considered,
+            Vec::new(),
+            decision,
+        )
+        .expect_err("selection entry should reject selected node mismatch");
+
+        assert!(matches!(err, HistoryError::InvalidSelectionDecision { .. }));
     }
 
     #[test]
@@ -5175,7 +5448,10 @@ mod tests {
             },
             evaluations: vec![SealedEvaluationEvidence {
                 branch_id: "b1".to_string(),
-                evaluation_procedure_id: Some("eval-proc".to_string()),
+                evaluation_procedure_id: Some(
+                    crate::cli::prototype1_state::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID
+                        .to_string(),
+                ),
                 evaluator_identity: Some(serde_json::json!({ "id": "ev-1" })),
                 eval_set_identity: Some(serde_json::json!({ "set": "s1" })),
                 evaluation_artifact_citation: None,
@@ -5204,6 +5480,77 @@ mod tests {
 
         let grade = payload.decision_grade_eligibility();
         assert!(grade.eligible, "unexpected gaps: {:?}", grade.identity_gaps);
+    }
+
+    #[test]
+    fn evaluation_payload_rejects_decision_grade_when_evaluation_procedure_mismatches() {
+        use std::path::PathBuf;
+
+        use crate::BranchDisposition;
+        use crate::successor_selection::{CandidateRef, SelectionInput};
+
+        let input = SelectionInput::new(
+            CandidateRef {
+                node_id: "n1".to_string(),
+                branch_id: "b1".to_string(),
+                generation: 2,
+            },
+            BranchDisposition::Keep,
+            PathBuf::from("evaluations/b1.json"),
+            Vec::new(),
+        );
+        let sealed = SealedCandidateEvidence {
+            schema_version: 2,
+            coordinate: CandidateCoordinate {
+                node_id: "n1".to_string(),
+                parent_node_id: None,
+                branch_id: Some("b1".to_string()),
+                generation: Some(2),
+                plan_index: Some(0),
+                primary_runtime_id: Some("rt-a".to_string()),
+            },
+            lifecycle: CandidateLifecycle {
+                planner_outcome: "done".to_string(),
+                node_status: "completed".to_string(),
+            },
+            evaluations: vec![SealedEvaluationEvidence {
+                branch_id: "b1".to_string(),
+                evaluation_procedure_id: Some("other-procedure".to_string()),
+                evaluator_identity: Some(serde_json::json!({ "id": "ev-1" })),
+                eval_set_identity: Some(serde_json::json!({ "set": "s1" })),
+                evaluation_artifact_citation: None,
+                overall_disposition: Some("keep".to_string()),
+                primary_report_citation: SealedEvidenceCitation {
+                    ref_id: "file:eval.json".to_string(),
+                    content_hash: None,
+                    record_name: Some("eval".to_string()),
+                },
+                compared_runs: Vec::new(),
+            }],
+            runtimes: Vec::new(),
+            branches: Vec::new(),
+            extra_document_citations: Vec::new(),
+            extra_journal_citations: Vec::new(),
+            child_diagnostics: Vec::new(),
+        };
+        let payload = EvaluationPayload::builder(
+            SubjectRef::new("candidate:n1:plan_index=0"),
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+        )
+        .selection_input(input)
+        .expect("selection input hash")
+        .sealed_candidate_evidence(sealed)
+        .build();
+
+        let grade = payload.decision_grade_eligibility();
+        assert!(!grade.eligible);
+        assert!(
+            grade.identity_gaps.iter().any(
+                |gap| gap.starts_with("sealed_evaluations[0].evaluation_procedure_id_mismatch")
+            ),
+            "unexpected gaps: {:?}",
+            grade.identity_gaps
+        );
     }
 
     #[test]
@@ -5239,7 +5586,10 @@ mod tests {
             },
             evaluations: vec![SealedEvaluationEvidence {
                 branch_id: "b2".to_string(),
-                evaluation_procedure_id: Some("eval-proc".to_string()),
+                evaluation_procedure_id: Some(
+                    crate::cli::prototype1_state::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID
+                        .to_string(),
+                ),
                 evaluator_identity: Some(serde_json::json!({ "id": "ev-1" })),
                 eval_set_identity: Some(serde_json::json!({ "set": "s1" })),
                 evaluation_artifact_citation: None,
