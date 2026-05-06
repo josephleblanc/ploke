@@ -6,6 +6,8 @@ mod tests {
     use itertools::Itertools;
     use lazy_static::lazy_static;
     use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
+    #[cfg(feature = "typed_type_graph")]
+    use ploke_db::to_uuid;
     use ploke_db::{
         Database, create_index_primary_with_index,
         multi_embedding::{db_ext::EmbeddingExt, debug::DebugAll, hnsw_ext::HnswExt},
@@ -17,6 +19,8 @@ mod tests {
     };
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
+    #[cfg(feature = "typed_type_graph")]
+    use ploke_test_utils::setup_db_full_multi_embedding;
     use ploke_test_utils::{
         FIXTURE_NODES_LOCAL_EMBEDDINGS, WS_FIXTURE_01_CANONICAL, fresh_backup_fixture_db,
         shared_backup_fixture_db,
@@ -95,6 +99,45 @@ mod tests {
         ));
         RagService::new_with_io(db, embedding_runtime, IoManagerHandle::new())
             .expect("valid db and RagService constructor args")
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn unique_id_by_name(db: &Database, relation: &str, name: &str) -> Result<Uuid, Error> {
+        let script = format!(
+            r#"?[id] :=
+                *{relation} {{ id, name: "{name}" @ 'NOW' }}"#
+        );
+        let rows = db.raw_query(&script).map_err(Error::from)?;
+        assert_eq!(
+            rows.rows.len(),
+            1,
+            "expected exactly one {relation} named {name}; rows: {:#?}",
+            rows.rows
+        );
+        to_uuid(&rows.rows[0][0]).map_err(Error::from)
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn impl_self_target_for_method_name(db: &Database, method_name: &str) -> Result<Uuid, Error> {
+        let script = format!(
+            r#"?[target_id] :=
+                *method {{ name: "{method_name}", owner_id: impl_id @ 'NOW' }},
+                *impl {{ id: impl_id, self_type: source_id @ 'NOW' }},
+                *type_relation {{
+                    source_id,
+                    target_id,
+                    relation_kind: "Ordinary",
+                    target_kind: "Struct" @ 'NOW'
+                }}"#
+        );
+        let rows = db.raw_query(&script).map_err(Error::from)?;
+        assert_eq!(
+            rows.rows.len(),
+            1,
+            "expected exactly one struct target for impl method {method_name}; rows: {:#?}",
+            rows.rows
+        );
+        to_uuid(&rows.rows[0][0]).map_err(Error::from)
     }
 
     #[tokio::test]
@@ -741,6 +784,40 @@ mod tests {
             "context assembly must not materialize the out-of-scope root_value node"
         );
 
+        Ok(())
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    #[tokio::test]
+    async fn type_context_expansion_adds_materializable_type_neighbors() -> Result<(), Error> {
+        init_tracing_once();
+        let db_raw = setup_db_full_multi_embedding("fixture_nodes")?;
+        let db = Arc::new(Database::new(db_raw));
+
+        let seed = unique_id_by_name(&db, "method", "new")?;
+        let struct_neighbor = impl_self_target_for_method_name(&db, "new")?;
+        let embedding_set = db.with_active_set(|set| set.clone())?;
+        db.ensure_embedding_relation(&embedding_set)?;
+        let dims = embedding_set.dims() as usize;
+        db.update_embeddings_batch(vec![
+            (seed, vec![0.91; dims]),
+            (struct_neighbor, vec![0.73; dims]),
+        ])?;
+        db.create_embedding_index(&embedding_set)?;
+
+        let rag = init_test_rag(Arc::clone(&db));
+
+        let expanded = rag.expand_hits_with_type_context(&[(seed, 1.0)])?;
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+
+        assert!(
+            expanded_ids.contains(&seed),
+            "expanded hit list must preserve the original retrieval hit; expanded: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&struct_neighbor),
+            "a method returning Self should pull the impl self type into candidate context; expanded: {expanded:#?}"
+        );
         Ok(())
     }
 

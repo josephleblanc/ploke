@@ -607,20 +607,25 @@ impl Database {
         }
 
         for target in self.type_targets_reachable_from_owner(owner_id)? {
-            if self.is_type_alias(owner_id)? {
+            let relation = if self.is_type_alias(owner_id)? {
                 let relation = if self.is_const_generic_alias(owner_id)? {
                     TypeContextRelation::ConstGenericAlias
                 } else {
                     TypeContextRelation::AliasExpansion
                 };
-                self.insert_type_context_candidate(
-                    candidates,
-                    target.target_id,
-                    relation,
-                    target.depth + 1,
-                    options,
-                );
-            }
+                relation
+            } else if target.depth == 0 {
+                TypeContextRelation::TypeDefinitionImpact
+            } else {
+                TypeContextRelation::UsesTypeNested
+            };
+            self.insert_type_context_candidate(
+                candidates,
+                target.target_id,
+                relation,
+                target.depth + 1,
+                options,
+            );
         }
 
         Ok(())

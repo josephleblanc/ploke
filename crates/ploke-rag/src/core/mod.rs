@@ -14,6 +14,8 @@ use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
+#[cfg(feature = "typed_type_graph")]
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -68,6 +70,31 @@ pub struct RagConfig {
     pub assembly_policy: AssemblyPolicy,
     pub token_counter: Arc<dyn TokenCounter>,
     pub reranker: Option<Arc<dyn Reranker>>,
+    pub type_context: TypeContextConfig,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TypeContextConfig {
+    pub enabled: bool,
+    pub max_seed_hits: usize,
+    pub max_expanded_hits: usize,
+    pub score_factor: f32,
+    pub options: TypeContextOptions,
+}
+
+impl Default for TypeContextConfig {
+    fn default() -> Self {
+        Self {
+            enabled: cfg!(feature = "typed_type_graph"),
+            max_seed_hits: 12,
+            max_expanded_hits: 48,
+            score_factor: 0.6,
+            options: TypeContextOptions {
+                max_distance: 4,
+                ..TypeContextOptions::default()
+            },
+        }
+    }
 }
 
 impl Default for RagConfig {
@@ -83,6 +110,7 @@ impl Default for RagConfig {
             assembly_policy: AssemblyPolicy::default(),
             token_counter: Arc::new(crate::context::ApproxCharTokenizer),
             reranker: None,
+            type_context: TypeContextConfig::default(),
         }
     }
 }
@@ -550,6 +578,88 @@ impl RagService {
         Ok(all_results)
     }
 
+    #[cfg(feature = "typed_type_graph")]
+    fn expand_hits_with_type_context(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<Vec<(Uuid, f32)>, RagError> {
+        let cfg = self.cfg.type_context;
+        if !cfg.enabled || cfg.max_seed_hits == 0 || cfg.max_expanded_hits == 0 || hits.is_empty() {
+            return Ok(hits.to_vec());
+        }
+
+        let mut scores: HashMap<Uuid, f32> = HashMap::with_capacity(
+            hits.len()
+                + cfg
+                    .max_seed_hits
+                    .saturating_mul(cfg.max_expanded_hits.min(8)),
+        );
+        for &(id, score) in hits {
+            scores.entry(id).or_insert(score);
+        }
+
+        let mut expanded_scores: HashMap<Uuid, f32> = HashMap::new();
+        for &(seed_id, seed_score) in hits.iter().take(cfg.max_seed_hits) {
+            for candidate in self
+                .db
+                .expand_type_context(TypeContextSeed::Owner(seed_id), cfg.options)?
+            {
+                if candidate.node_id == seed_id || scores.contains_key(&candidate.node_id) {
+                    continue;
+                }
+
+                let distance = candidate.distance.max(1) as f32;
+                let derived_score = seed_score * cfg.score_factor / distance;
+                expanded_scores
+                    .entry(candidate.node_id)
+                    .and_modify(|score| *score = score.max(derived_score))
+                    .or_insert(derived_score);
+            }
+        }
+
+        if expanded_scores.is_empty() {
+            return Ok(hits.to_vec());
+        }
+
+        let mut expanded: Vec<(Uuid, f32)> = expanded_scores.into_iter().collect();
+        expanded.sort_by(|(left_id, left_score), (right_id, right_score)| {
+            match right_score
+                .partial_cmp(left_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+            {
+                std::cmp::Ordering::Equal => left_id.as_bytes().cmp(right_id.as_bytes()),
+                other => other,
+            }
+        });
+        expanded.truncate(cfg.max_expanded_hits);
+
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let materialized_ids = self
+            .db
+            .get_nodes_ordered(expanded_ids)
+            .map_err(|e| RagError::Embed(e.to_string()))?
+            .into_iter()
+            .map(|node| node.id)
+            .collect::<HashSet<_>>();
+
+        let mut merged = Vec::with_capacity(hits.len() + materialized_ids.len());
+        merged.extend_from_slice(hits);
+        merged.extend(
+            expanded
+                .into_iter()
+                .filter(|(id, _)| materialized_ids.contains(id)),
+        );
+        Ok(merged)
+    }
+
+    #[cfg(not(feature = "typed_type_graph"))]
+    fn expand_hits_with_type_context(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<Vec<(Uuid, f32)>, RagError> {
+        Ok(hits.to_vec())
+    }
+
     /// High-level API: retrieve and assemble a context using the chosen strategy and budget.
     /// Uses configured defaults (policy, tokenizer, strict bm25) unless overridden by the strategy.
     #[instrument(skip(self, query, budget, strategy), fields(query_len = %query.len(), top_k = top_k))]
@@ -594,6 +704,8 @@ impl RagService {
                 }
             }
         };
+
+        let hits = self.expand_hits_with_type_context(&hits)?;
 
         // Optional reranker: requires IoManager to fetch texts
         let final_hits: Vec<(Uuid, f32)> = if let Some(rr) = &self.cfg.reranker {

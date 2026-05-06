@@ -127,7 +127,12 @@ ploke-llm-refactor = []
 llm_refactor = []
 live_api_tests = []
 test_harness = []
-typed_type_graph = ["syn_parser/typed_type_graph", "ploke-transform/typed_type_graph"]
+typed_type_graph = [
+    "syn_parser/typed_type_graph",
+    "ploke-transform/typed_type_graph",
+    "ploke-db/typed_type_graph",
+    "ploke-rag/typed_type_graph",
+]
 json_visitor = []
 xxx = []
 loom = []

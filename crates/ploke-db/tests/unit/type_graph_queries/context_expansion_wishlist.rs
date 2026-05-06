@@ -31,6 +31,7 @@ fn owner_seed_returns_ranked_related_code_with_explanatory_reasons() -> Result<(
     let seed_owner = function_id_by_name(&db, "concrete")?;
     let exact_peer = function_id_by_name(&db, "also_concrete")?;
     let nested_peer = function_id_by_name(&db, "takes_vec_of_t")?;
+    let direct_target = struct_id_by_name(&db, "T")?;
 
     let candidates = db.expand_type_context(
         TypeContextSeed::Owner(seed_owner),
@@ -48,6 +49,12 @@ fn owner_seed_returns_ranked_related_code_with_explanatory_reasons() -> Result<(
         nested_peer,
         TypeContextRelation::UsesTypeNested,
         "concrete(T) should expand to takes_vec_of_t(Vec<T>) as a nested type peer",
+    );
+    assert_candidate(
+        &candidates,
+        direct_target,
+        TypeContextRelation::TypeDefinitionImpact,
+        "concrete(T) should expand to the resolved T definition as direct type context",
     );
     assert_ranked_before(
         &candidates,

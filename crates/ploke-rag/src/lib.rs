@@ -122,7 +122,7 @@ fn ensure_tracer_initialized() {
 
 use ploke_core::{EmbeddingData, RetrievalScope};
 use ploke_db::{
-    Database, DbError, NodeType, SimilarArgs, TypedEmbedData,
+    Database, DbError, NodeType, SimilarArgs, TypeContextOptions, TypeContextSeed, TypedEmbedData,
     bm25_index::bm25_service::{self, Bm25Cmd},
     search_similar_args,
 };
@@ -144,7 +144,9 @@ pub use context::{
     ApproxCharTokenizer, AssemblyPolicy, Ordering, TokenBudget, TokenCounter, assemble_context,
 };
 pub mod core;
-pub use core::{NoopReranker, RagConfig, RagService, Reranker, RetrievalStrategy};
+pub use core::{
+    NoopReranker, RagConfig, RagService, Reranker, RetrievalStrategy, TypeContextConfig,
+};
 pub use ploke_db::bm25_index::bm25_service::Bm25Status;
 
 const BM25_TIMEOUT_MS: u64 = 250;
