@@ -5,6 +5,8 @@ mod tests {
     use crate::{RetrievalStrategy, TokenBudget};
     use itertools::Itertools;
     use lazy_static::lazy_static;
+    #[cfg(feature = "typed_type_graph")]
+    use ploke_core::rag_types::TypeContextKind;
     use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
     #[cfg(feature = "typed_type_graph")]
     use ploke_db::to_uuid;
@@ -807,7 +809,7 @@ mod tests {
 
         let rag = init_test_rag(Arc::clone(&db));
 
-        let expanded = rag.expand_hits_with_type_context(&[(seed, 1.0)])?;
+        let (expanded, type_context) = rag.expand_hits_with_type_context(&[(seed, 1.0)])?;
         let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
 
         assert!(
@@ -818,6 +820,11 @@ mod tests {
             expanded_ids.contains(&struct_neighbor),
             "a method returning Self should pull the impl self type into candidate context; expanded: {expanded:#?}"
         );
+        let provenance = type_context
+            .get(&struct_neighbor)
+            .expect("expanded type neighbor should carry type-context provenance");
+        assert_eq!(provenance.seed_id, seed);
+        assert_eq!(provenance.relation, TypeContextKind::TypeDefinitionImpact);
         Ok(())
     }
 

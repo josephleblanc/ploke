@@ -20,6 +20,7 @@ fn serde_roundtrip_request_code_context() {
         file_path: NodeFilepath("id://dummy".to_string()),
         canon_path: CanonPath("some::module::dummy".to_string()),
         snippet: "fn foo() {}".to_string(),
+        type_context: None,
     };
     let result = RequestCodeContextResult {
         ok: true,

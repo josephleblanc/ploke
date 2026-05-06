@@ -181,7 +181,7 @@ impl FixtureEmbeddingExpectation {
 
 pub const FIXTURE_NODES_CANONICAL: FixtureDb = FixtureDb {
     id: "fixture_nodes_canonical",
-    rel_path: "tests/backup_dbs/fixture_nodes_canonical_2026-04-01.sqlite",
+    rel_path: "tests/backup_dbs/fixture_nodes_canonical_2026-05-06.sqlite",
     parsed_targets: &["tests/fixture_crates/fixture_nodes"],
     status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureCrateMultiEmbedding {
@@ -193,13 +193,13 @@ pub const FIXTURE_NODES_CANONICAL: FixtureDb = FixtureDb {
     requires_primary_index: true,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-04-01",
+    last_updated: "2026-05-06",
     notes: "Canonical current-schema fixture_nodes backup. It is imported as a plain backup, but regeneration intentionally uses setup_db_full_multi_embedding so the saved snapshot includes the current multi-embedding schema relations expected by downstream tests without seeding local vectors.",
 };
 
 pub const FIXTURE_NODES_LOCAL_EMBEDDINGS: FixtureDb = FixtureDb {
     id: "fixture_nodes_local_embeddings",
-    rel_path: "tests/backup_dbs/fixture_nodes_local_embeddings_2026-04-01.sqlite",
+    rel_path: "tests/backup_dbs/fixture_nodes_local_embeddings_2026-05-06.sqlite",
     parsed_targets: &["tests/fixture_crates/fixture_nodes"],
     status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureCrateLocalEmbeddings {
@@ -218,7 +218,7 @@ pub const FIXTURE_NODES_LOCAL_EMBEDDINGS: FixtureDb = FixtureDb {
         vectors_present: true,
         active_set_expected: true,
     }),
-    last_updated: "2026-03-20",
+    last_updated: "2026-05-06",
     notes: "Local-embedding fixture_nodes backup used by ploke-rag and the headless TUI harness. Regeneration seeds the multi-embedding schema from repo fixture code, forces CPU local indexing, and rejects outputs that leave nodes unembedded before backing up the DB.",
 };
 
@@ -246,7 +246,7 @@ pub const FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1: FixtureDb = FixtureDb {
 
 pub const PLOKE_DB_PRIMARY: FixtureDb = FixtureDb {
     id: "ploke_db_primary",
-    rel_path: "tests/backup_dbs/ploke_db_primary_2026-03-22.sqlite",
+    rel_path: "tests/backup_dbs/ploke_db_primary_2026-05-06.sqlite",
     parsed_targets: &["crates/ploke-db"],
     status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceCrate {
@@ -258,13 +258,13 @@ pub const PLOKE_DB_PRIMARY: FixtureDb = FixtureDb {
     requires_primary_index: true,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-03-22",
+    last_updated: "2026-05-06",
     notes: "Current-schema `crates/ploke-db` graph backup recreated from source via setup_db_full_crate(\"ploke-db\") and used by get_code_edges regression tests.",
 };
 
 pub const WS_FIXTURE_01_CANONICAL: FixtureDb = FixtureDb {
     id: "ws_fixture_01_canonical",
-    rel_path: "tests/backup_dbs/ws_fixture_01_canonical_2026-03-21.sqlite",
+    rel_path: "tests/backup_dbs/ws_fixture_01_canonical_2026-05-06.sqlite",
     parsed_targets: &["tests/fixture_workspace/ws_fixture_01"],
     status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceFixture {
@@ -276,7 +276,7 @@ pub const WS_FIXTURE_01_CANONICAL: FixtureDb = FixtureDb {
     requires_primary_index: true,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-03-21",
+    last_updated: "2026-05-06",
     notes: "Canonical plain backup for the committed multi-member workspace fixture `tests/fixture_workspace/ws_fixture_01`. Regeneration parses the on-disk workspace fixture, transforms `workspace_metadata` plus crate graphs into a fresh DB, and writes a strict plain-backup snapshot without assuming any embedding model contract.",
 };
 
@@ -285,7 +285,7 @@ pub const WS_FIXTURE_01_CANONICAL: FixtureDb = FixtureDb {
 /// where only one crate has been indexed/loaded.
 pub const WS_FIXTURE_01_MEMBER_SINGLE: FixtureDb = FixtureDb {
     id: "ws_fixture_01_member_single",
-    rel_path: "tests/backup_dbs/ws_fixture_01_member_single_2026-04-03.sqlite",
+    rel_path: "tests/backup_dbs/ws_fixture_01_member_single_2026-05-06.sqlite",
     parsed_targets: &["tests/fixture_workspace/ws_fixture_01/member_root"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureWorkspaceMember {
@@ -298,7 +298,7 @@ pub const WS_FIXTURE_01_MEMBER_SINGLE: FixtureDb = FixtureDb {
     requires_primary_index: true,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-04-03",
+    last_updated: "2026-05-06",
     notes: "Single-member slice of ws_fixture_01 containing only `member_root`. Used for testing scenarios where a workspace is loaded but only one member crate is indexed/focused. Regeneration extracts only the member crate's graph plus workspace metadata (without other members).",
 };
 
@@ -543,7 +543,7 @@ mod tests {
 
         assert_eq!(
             fixture.filename(),
-            "fixture_nodes_canonical_2026-04-01.sqlite"
+            "fixture_nodes_canonical_2026-05-06.sqlite"
         );
         assert_eq!(fixture.status, FixtureStatus::Active);
     }
@@ -555,7 +555,7 @@ mod tests {
 
         assert_eq!(
             fixture.filename(),
-            "ws_fixture_01_canonical_2026-03-21.sqlite"
+            "ws_fixture_01_canonical_2026-05-06.sqlite"
         );
         assert_eq!(
             fixture.parsed_targets,

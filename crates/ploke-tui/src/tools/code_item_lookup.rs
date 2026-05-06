@@ -254,6 +254,7 @@ for a more fuzzy search."#
             file_path: NodeFilepath::new(rel_path.display().to_string()),
             canon_path: CanonPath::new(params.module_path.to_string()),
             snippet,
+            type_context: None,
         };
 
         let summary = format!("Resolved item in {}", concise_context.file_path.as_ref());

@@ -278,12 +278,24 @@ fn construct_context_from_rag(
 
 fn reformat_context_to_system(ctx_part: ContextPart) -> String {
     let snippet = truncate_context_text(&ctx_part.text, DEFAULT_CONTEXT_PART_MAX_LINES);
+    let type_context = ctx_part
+        .type_context
+        .map(|ctx| {
+            format!(
+                "\ntype_context: {} from {} at distance {}",
+                ctx.relation.to_static_str(),
+                ctx.seed_id,
+                ctx.distance
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}\ncode_snippet:\n{}",
+        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}\ncode_snippet:\n{}",
         ctx_part.file_path.as_ref(),
         ctx_part.canon_path.as_ref(),
         ctx_part.kind.to_static_str(),
         ctx_part.score,
+        type_context,
         snippet
     )
 }
@@ -337,6 +349,7 @@ fn build_context_plan(
                 kind: part.kind,
                 estimated_tokens,
                 score: part.score,
+                type_context: part.type_context,
             });
         }
     }
@@ -360,7 +373,10 @@ mod tests {
         ChatHistory, ContextStatus, MessageKind, MessageStatus, RetentionClass, TurnsToLive,
     };
     use crate::tools::{ToolName, ToolUiPayload};
-    use ploke_core::rag_types::{CanonPath, ContextPartKind, ContextStats, Modality, NodeFilepath};
+    use ploke_core::rag_types::{
+        CanonPath, ContextPartKind, ContextStats, Modality, NodeFilepath, TypeContextInfo,
+        TypeContextKind,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -389,6 +405,7 @@ mod tests {
                 text: "fn foo() {}".to_string(),
                 score: 0.5,
                 modality: Modality::Dense,
+                type_context: None,
             }],
             stats: ContextStats {
                 total_tokens: 10,
@@ -430,12 +447,18 @@ mod tests {
             text,
             score: 0.42,
             modality: Modality::Dense,
+            type_context: Some(TypeContextInfo {
+                seed_id: Uuid::from_u128(7),
+                relation: TypeContextKind::TypeDefinitionImpact,
+                distance: 1,
+            }),
         };
 
         let rendered = reformat_context_to_system(part);
 
         assert!(rendered.contains("kind: Doc"));
         assert!(rendered.contains("score: 0.420"));
+        assert!(rendered.contains("type_context: TypeDefinitionImpact"));
         assert!(rendered.contains("line 0"));
         assert!(rendered.contains(&format!("line {}", DEFAULT_CONTEXT_PART_MAX_LINES - 1)));
         assert!(!rendered.contains(&format!("line {}", DEFAULT_CONTEXT_PART_MAX_LINES)));
@@ -499,13 +522,25 @@ mod tests {
         }
         out.push_str("included_rag_parts:\n");
         for part in &plan.included_rag_parts {
+            let type_context = part
+                .type_context
+                .map(|ctx| {
+                    format!(
+                        " type_context: {}:{}:{}",
+                        ctx.relation.to_static_str(),
+                        label_part_id(ctx.seed_id, part_labels),
+                        ctx.distance
+                    )
+                })
+                .unwrap_or_default();
             out.push_str(&format!(
-                "- id: {} path: {} kind: {:?} tokens: {} score: {:.3}\n",
+                "- id: {} path: {} kind: {:?} tokens: {} score: {:.3}{}\n",
                 label_part_id(part.part_id, part_labels),
                 part.file_path,
                 part.kind,
                 part.estimated_tokens,
-                part.score
+                part.score,
+                type_context
             ));
         }
         out.push_str("rag_stats:\n");
@@ -594,6 +629,11 @@ mod tests {
                     text: "fn a() {}".to_string(),
                     score: 0.2,
                     modality: Modality::Dense,
+                    type_context: Some(TypeContextInfo {
+                        seed_id: Uuid::from_u128(101),
+                        relation: TypeContextKind::UsesTypeNested,
+                        distance: 2,
+                    }),
                 },
                 ContextPart {
                     id: Uuid::from_u128(101),
@@ -604,6 +644,7 @@ mod tests {
                     text: "struct B;".to_string(),
                     score: 0.8,
                     modality: Modality::Dense,
+                    type_context: None,
                 },
             ],
             stats: ContextStats {
@@ -645,7 +686,7 @@ excluded_messages:
 - id: assistant kind: Assistant tokens: 4 reason: TtlExpired
 - id: tool kind: Tool tokens: 7 reason: Budget
 included_rag_parts:
-- id: part_a path: src/lib.rs kind: Code tokens: 3 score: 0.200
+- id: part_a path: src/lib.rs kind: Code tokens: 3 score: 0.200 type_context: UsesTypeNested:part_b:2
 - id: part_b path: src/main.rs kind: Doc tokens: 3 score: 0.800
 rag_stats:
 - tokens: 12 files: 2 parts: 2 truncated: 0 dedup: 0
