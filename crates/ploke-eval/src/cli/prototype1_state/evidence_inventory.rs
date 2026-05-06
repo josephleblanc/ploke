@@ -410,10 +410,12 @@ pub(crate) fn prototype1_evidence_inventory_rows() -> Vec<InventoryRow> {
                 "procedure_or_policy",
                 "scope",
                 "considered_order_hash",
+                "candidate_set.root",
+                "candidate_set.memberships[].proof",
                 "decision_hash",
             ],
             notes: vec![
-                "Inline-first EvaluationPayload list for all considered candidates when Parent seals",
+                "Inline-first EvaluationPayload list plus authenticated candidate-set root/proofs for all considered candidates when Parent seals",
                 "Not a separate filesystem row; committed inside sealed block JSON",
             ],
         },

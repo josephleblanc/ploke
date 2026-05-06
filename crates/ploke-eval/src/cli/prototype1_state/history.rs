@@ -401,7 +401,7 @@
 //! generation number, branch name, or scheduler frontier.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt,
     fs::{self, OpenOptions},
     io::{self, Write},
@@ -860,6 +860,131 @@ impl FsBlockStore {
         }
         Ok(out)
     }
+}
+
+/// Read-only History projection over verified sealed blocks.
+///
+/// This is the narrow `History::candidates(scope)` surface for traversal
+/// policies. It reads admitted selection entries from History and returns
+/// candidate payloads with their block/entry provenance and candidate-set
+/// membership proofs where the sealed decision carried them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct History {
+    store: FsBlockStore,
+}
+
+impl History {
+    pub(crate) fn new(store: FsBlockStore) -> Self {
+        Self { store }
+    }
+
+    pub(crate) fn for_campaign_manifest(manifest_path: &Path) -> Self {
+        Self::new(FsBlockStore::for_campaign_manifest(manifest_path))
+    }
+
+    pub(crate) fn candidates(
+        &self,
+        scope: &SelectionScope,
+    ) -> Result<HistoryCandidates, BlockStoreError> {
+        let mut candidates = Vec::new();
+        for (_line_index, block) in self.store.load_segment_verified_blocks()? {
+            let block_hash = *block.block_hash();
+            let block_height = block.block_height();
+            let lineage_id = block.lineage_id().clone();
+
+            for entry in block.entries() {
+                let Some(selection) = entry.selection_decision() else {
+                    continue;
+                };
+                if !scope.includes(&selection.scope) {
+                    continue;
+                }
+                if entry.verify_selection_decision_observation()? != Some(true) {
+                    return Err(HistoryError::InvalidSelectionDecision {
+                        detail: format!(
+                            "selection entry {} payload hash does not match decision payload",
+                            entry.entry_id()
+                        ),
+                    }
+                    .into());
+                }
+                if !selection.verify_considered_order_hash()? {
+                    return Err(HistoryError::InvalidSelectionDecision {
+                        detail: format!(
+                            "selection entry {} considered_order_hash mismatch",
+                            entry.entry_id()
+                        ),
+                    }
+                    .into());
+                }
+                if selection.verify_candidate_set_commitment()? == Some(false) {
+                    return Err(HistoryError::InvalidSelectionDecision {
+                        detail: format!(
+                            "selection entry {} candidate_set commitment mismatch",
+                            entry.entry_id()
+                        ),
+                    }
+                    .into());
+                }
+
+                for payload in &selection.considered {
+                    let payload_hash = payload.payload_hash()?;
+                    candidates.push(HistoryCandidate {
+                        source: HistoryCandidateSource {
+                            block_hash,
+                            block_height,
+                            lineage_id: lineage_id.clone(),
+                            entry_id: entry.entry_id(),
+                        },
+                        decision_scope: selection.scope.clone(),
+                        selected_by_decision: selection.selected_candidate.as_ref()
+                            == Some(&payload.candidate),
+                        candidate_set_root: selection
+                            .candidate_set
+                            .as_ref()
+                            .map(|commitment| commitment.root.clone()),
+                        candidate_set_membership: selection
+                            .candidate_set_membership(&payload.candidate)
+                            .cloned(),
+                        payload_hash,
+                        payload: payload.clone(),
+                    });
+                }
+            }
+        }
+
+        Ok(HistoryCandidates {
+            scope: scope.clone(),
+            candidates,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct HistoryCandidates {
+    pub(crate) scope: SelectionScope,
+    pub(crate) candidates: Vec<HistoryCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct HistoryCandidate {
+    pub(crate) source: HistoryCandidateSource,
+    pub(crate) decision_scope: SelectionScope,
+    pub(crate) selected_by_decision: bool,
+    pub(crate) payload: EvaluationPayload,
+    pub(crate) payload_hash: HistoryHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) candidate_set_root: Option<CandidateSetRoot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) candidate_set_membership: Option<CandidateSetMembership>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct HistoryCandidateSource {
+    pub(crate) block_hash: BlockHash,
+    pub(crate) block_height: u64,
+    pub(crate) lineage_id: LineageId,
+    pub(crate) entry_id: EntryId,
 }
 
 impl BlockStore for FsBlockStore {
@@ -2749,6 +2874,235 @@ pub(crate) struct DecisionGradeEligibility {
     pub(crate) identity_gaps: Vec<String>,
 }
 
+/// Root of the authenticated candidate map committed by a selection decision.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct CandidateSetRoot(HistoryHash);
+
+impl CandidateSetRoot {
+    pub(crate) fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    fn to_h256(&self) -> Result<H256, HistoryError> {
+        self.0.to_digest_bytes().map(H256::from).map_err(|detail| {
+            HistoryError::InvalidSelectionDecision {
+                detail: format!("candidate_set_root is not a 32-byte digest: {detail}"),
+            }
+        })
+    }
+}
+
+/// Sparse-Merkle membership proof for one candidate payload under a candidate-set root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CandidateSetProof {
+    key: [u8; 32],
+    value: [u8; 32],
+    program: Vec<u8>,
+}
+
+impl CandidateSetProof {
+    pub(crate) fn verify(&self, root: &CandidateSetRoot) -> Result<bool, HistoryError> {
+        let root = root.to_h256()?;
+        let key = H256::from(self.key);
+        let value = H256::from(self.value);
+        CompiledMerkleProof(self.program.clone())
+            .verify::<CandidateSetHasher>(&root, vec![(key, value)])
+            .map_err(|source| HistoryError::InvalidSelectionDecision {
+                detail: format!("candidate-set proof verification failed: {source}"),
+            })
+    }
+}
+
+/// One committed candidate payload and its proof under [`CandidateSetCommitment::root`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CandidateSetMembership {
+    pub(crate) candidate: SubjectRef,
+    pub(crate) payload_hash: HistoryHash,
+    pub(crate) proof: CandidateSetProof,
+}
+
+/// Authenticated candidate map for the universe considered by one selection decision.
+///
+/// The map key is a domain-separated candidate coordinate. The value is the
+/// domain-separated digest of the full [`EvaluationPayload`]. This keeps the
+/// selector's universe set-addressable for cross-generation traversal while
+/// preserving the ordered-list commitment used to replay the exact local
+/// selector input order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CandidateSetCommitment {
+    pub(crate) root: CandidateSetRoot,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) memberships: Vec<CandidateSetMembership>,
+}
+
+impl CandidateSetCommitment {
+    fn from_payloads(considered: &[EvaluationPayload]) -> Result<Self, HistoryError> {
+        candidate_set::commit(considered)
+    }
+
+    pub(crate) fn verify(&self) -> Result<bool, HistoryError> {
+        for membership in &self.memberships {
+            if !membership.proof.verify(&self.root)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn membership(&self, candidate: &SubjectRef) -> Option<&CandidateSetMembership> {
+        self.memberships
+            .iter()
+            .find(|membership| &membership.candidate == candidate)
+    }
+}
+
+#[derive(Default)]
+struct CandidateSetHasher {
+    bytes: Vec<u8>,
+}
+
+impl Hasher for CandidateSetHasher {
+    fn write_h256(&mut self, h: &H256) {
+        self.bytes.extend_from_slice(h.as_slice());
+    }
+
+    fn write_byte(&mut self, b: u8) {
+        self.bytes.push(b);
+    }
+
+    fn finish(self) -> H256 {
+        let digest = Sha256::digest(&self.bytes);
+        let mut bytes = [0_u8; 32];
+        bytes.copy_from_slice(&digest);
+        H256::from(bytes)
+    }
+}
+
+mod candidate_set {
+    use super::*;
+
+    type Tree = SparseMerkleTree<CandidateSetHasher, H256, DefaultStore<H256>>;
+
+    #[derive(Serialize)]
+    struct KeyPreimage<'a> {
+        candidate: &'a SubjectRef,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        node_id: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        branch_id: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        generation: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        plan_index: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        primary_runtime_id: Option<&'a str>,
+    }
+
+    struct MemberInput {
+        candidate: SubjectRef,
+        key: H256,
+        key_bytes: [u8; 32],
+        value: H256,
+        value_hash: HistoryHash,
+    }
+
+    pub(super) fn commit(
+        considered: &[EvaluationPayload],
+    ) -> Result<CandidateSetCommitment, HistoryError> {
+        let mut tree = Tree::default();
+        let mut seen_keys = BTreeSet::<[u8; 32]>::new();
+        let mut inputs = Vec::with_capacity(considered.len());
+
+        for payload in considered {
+            let key_hash = key_hash(payload)?;
+            let key_bytes = key_hash.to_digest_bytes().map_err(|detail| {
+                HistoryError::InvalidSelectionDecision {
+                    detail: format!("candidate-set key is not a 32-byte digest: {detail}"),
+                }
+            })?;
+            if !seen_keys.insert(key_bytes) {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "duplicate candidate-set key for candidate {}",
+                        payload.candidate.as_str()
+                    ),
+                });
+            }
+            let value_hash = payload.payload_hash()?;
+            let value = value_hash
+                .to_digest_bytes()
+                .map(H256::from)
+                .map_err(|detail| HistoryError::InvalidSelectionDecision {
+                    detail: format!("candidate-set value is not a 32-byte digest: {detail}"),
+                })?;
+            if value.is_zero() {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "candidate-set value for {} is sparse-tree empty value",
+                        payload.candidate.as_str()
+                    ),
+                });
+            }
+            inputs.push(MemberInput {
+                candidate: payload.candidate.clone(),
+                key: H256::from(key_bytes),
+                key_bytes,
+                value,
+                value_hash,
+            });
+        }
+
+        tree.update_all(
+            inputs
+                .iter()
+                .map(|input| (input.key, input.value))
+                .collect(),
+        )
+        .map_err(|source| HistoryError::InvalidSelectionDecision {
+            detail: format!("candidate-set map update failed: {source}"),
+        })?;
+        let root = CandidateSetRoot(HistoryHash::from_digest_bytes((*tree.root()).into()));
+
+        let mut memberships = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let proof = tree
+                .merkle_proof(vec![input.key])
+                .and_then(|proof| proof.compile(vec![input.key]))
+                .map_err(|source| HistoryError::InvalidSelectionDecision {
+                    detail: format!("candidate-set proof construction failed: {source}"),
+                })?;
+            memberships.push(CandidateSetMembership {
+                candidate: input.candidate,
+                payload_hash: input.value_hash,
+                proof: CandidateSetProof {
+                    key: input.key_bytes,
+                    value: input.value.into(),
+                    program: proof.into(),
+                },
+            });
+        }
+
+        Ok(CandidateSetCommitment { root, memberships })
+    }
+
+    fn key_hash(payload: &EvaluationPayload) -> Result<HistoryHash, HistoryError> {
+        let coordinate = payload
+            .sealed_evidence
+            .as_ref()
+            .map(|sealed| &sealed.coordinate);
+        let preimage = KeyPreimage {
+            candidate: &payload.candidate,
+            node_id: coordinate.map(|coord| coord.node_id.as_str()),
+            branch_id: coordinate.and_then(|coord| coord.branch_id.as_deref()),
+            generation: coordinate.and_then(|coord| coord.generation),
+            plan_index: coordinate.and_then(|coord| coord.plan_index),
+            primary_runtime_id: coordinate.and_then(|coord| coord.primary_runtime_id.as_deref()),
+        };
+        HistoryHash::of_domain_json("prototype1.history.candidate_set.key.v1", &preimage)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct EvaluationPayloadBuilder {
     schema_version: u32,
@@ -2900,6 +3254,12 @@ pub(crate) struct SelectionDecisionEntry {
     /// Domain-separated commitment to the ordered considered list.
     pub(crate) considered_order_hash: HistoryHash,
 
+    /// Authenticated map commitment for membership proofs over the considered candidate universe.
+    ///
+    /// Missing only for older stored entries sealed before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) candidate_set: Option<CandidateSetCommitment>,
+
     /// Gaps or load errors while assembling seal-time selection material (stored in the sealed entry).
     ///
     /// Must not be treated as members of the ordered considered list used by the selector.
@@ -2930,13 +3290,15 @@ impl SelectionDecisionEntry {
             "prototype1.history.selection_considered_order.v1",
             &Self::considered_order_preimage(&considered)?,
         )?;
+        let candidate_set = Some(CandidateSetCommitment::from_payloads(&considered)?);
         Ok(Self {
-            schema_version: 1,
+            schema_version: 2,
             procedure_or_policy,
             scope,
             selected_candidate,
             considered,
             considered_order_hash,
+            candidate_set,
             projection_failures,
             decision,
         })
@@ -3068,6 +3430,37 @@ impl SelectionDecisionEntry {
         )?;
         Ok(h == self.considered_order_hash)
     }
+
+    pub(crate) fn verify_candidate_set_commitment(&self) -> Result<Option<bool>, HistoryError> {
+        let Some(candidate_set) = &self.candidate_set else {
+            return Ok(None);
+        };
+        let expected = CandidateSetCommitment::from_payloads(&self.considered)?;
+        if expected.root != candidate_set.root
+            || expected.memberships.len() != candidate_set.memberships.len()
+        {
+            return Ok(Some(false));
+        }
+        for expected_member in expected.memberships {
+            let Some(member) = candidate_set.membership(&expected_member.candidate) else {
+                return Ok(Some(false));
+            };
+            if member.payload_hash != expected_member.payload_hash {
+                return Ok(Some(false));
+            }
+            if !member.proof.verify(&candidate_set.root)? {
+                return Ok(Some(false));
+            }
+        }
+        Ok(Some(true))
+    }
+
+    pub(crate) fn candidate_set_membership(
+        &self,
+        candidate: &SubjectRef,
+    ) -> Option<&CandidateSetMembership> {
+        self.candidate_set.as_ref()?.membership(candidate)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -3146,14 +3539,24 @@ pub(crate) struct SelectionScope {
 }
 
 impl SelectionScope {
+    const ALL_ADMITTED_CANDIDATES: &'static str = "history:all_admitted_candidates";
+
     pub(crate) fn new(value: impl Into<String>) -> Self {
         Self {
             value: value.into(),
         }
     }
 
+    pub(crate) fn all_admitted_candidates() -> Self {
+        Self::new(Self::ALL_ADMITTED_CANDIDATES)
+    }
+
     pub(crate) fn as_str(&self) -> &str {
         &self.value
+    }
+
+    pub(crate) fn includes(&self, decision_scope: &SelectionScope) -> bool {
+        self.value == Self::ALL_ADMITTED_CANDIDATES || self == decision_scope
     }
 }
 
@@ -4657,6 +5060,109 @@ mod tests {
         })
     }
 
+    fn proposed_selection_entry(selection: SelectionDecisionEntry) -> Entry<Proposed> {
+        let payload_hash = selection.decision_hash().expect("selection decision hash");
+        Entry::draft_selection_decision(
+            DraftEntry {
+                entry_kind: EntryKind::Decision,
+                subject: selection
+                    .selected_candidate
+                    .clone()
+                    .unwrap_or_else(|| SubjectRef::new("candidate:none")),
+                executor: actor("selector"),
+                input_refs: Vec::new(),
+                output_refs: Vec::new(),
+                occurred_at: at(20),
+            },
+            selection,
+        )
+        .observe(Observation {
+            observer: actor("parent"),
+            recorder: actor("history"),
+            operational_environment: env(),
+            payload_ref: EvidenceRef::new("payload:selection-decision"),
+            payload_hash,
+            observed_at: at(21),
+            recorded_at: at(22),
+        })
+        .propose(Proposal {
+            proposer: actor("parent"),
+            procedure_or_policy: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+        })
+    }
+
+    fn selection_decision(
+        node_id: &str,
+        branch_id: &str,
+    ) -> crate::successor_selection::SuccessorDecision {
+        crate::successor_selection::SuccessorDecision {
+            procedure_id: crate::successor_selection::PROCEDURE_ID.to_string(),
+            candidate_node_id: node_id.to_string(),
+            selected_branch_id: Some(branch_id.to_string()),
+            branch_disposition: "keep".to_string(),
+            outcome: crate::successor_selection::decision::SuccessorOutcome::Accepted,
+            findings: Vec::new(),
+            rationale: Vec::new(),
+        }
+    }
+
+    fn evaluation_payload(node_id: &str, branch_id: &str, plan_index: u32) -> EvaluationPayload {
+        EvaluationPayload {
+            schema_version: 2,
+            candidate: SubjectRef::new(format!("candidate:{node_id}:plan_index={plan_index}")),
+            procedure: ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            selection_input: None,
+            selection_input_hash: None,
+            projection_failures: Vec::new(),
+            source_refs: Vec::new(),
+            source_hashes: Vec::new(),
+            sealed_evidence: Some(SealedCandidateEvidence {
+                schema_version: 2,
+                coordinate: CandidateCoordinate {
+                    node_id: node_id.to_string(),
+                    parent_node_id: None,
+                    branch_id: Some(branch_id.to_string()),
+                    generation: Some(2),
+                    plan_index: Some(plan_index),
+                    primary_runtime_id: Some(format!("runtime:{node_id}")),
+                },
+                lifecycle: CandidateLifecycle {
+                    planner_outcome: "done".to_string(),
+                    node_status: "completed".to_string(),
+                },
+                evaluations: Vec::new(),
+                runtimes: Vec::new(),
+                branches: Vec::new(),
+                extra_document_citations: Vec::new(),
+                extra_journal_citations: Vec::new(),
+                child_diagnostics: Vec::new(),
+            }),
+        }
+    }
+
+    fn selection_entry_for_scope(
+        scope: SelectionScope,
+        selected_node: &str,
+        selected_branch: &str,
+        considered: Vec<EvaluationPayload>,
+    ) -> SelectionDecisionEntry {
+        let selected = considered
+            .iter()
+            .find(|payload| payload.candidate_node_id() == Some(selected_node))
+            .expect("selected payload")
+            .candidate
+            .clone();
+        SelectionDecisionEntry::new(
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            scope,
+            Some(selected),
+            considered,
+            Vec::new(),
+            selection_decision(selected_node, selected_branch),
+        )
+        .expect("selection entry")
+    }
+
     fn seal(block: Block<block::Open>) -> Block<block::Sealed> {
         seal_with_transition(block, "transition:crown-lock")
     }
@@ -4843,6 +5349,68 @@ mod tests {
         )
         .expect("by lineage index");
         assert!(by_lineage.contains("\"block_height\":0"));
+    }
+
+    #[test]
+    fn history_candidates_reads_cross_generation_selection_payloads_with_proofs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+
+        let state0 = store.lineage_state(&lineage).expect("read empty state");
+        let mut block0 = open_block_from_state(&state0, 0, Vec::new());
+        let gen0 = selection_entry_for_scope(
+            SelectionScope::new("generation_local:parent_node_id=root;generation=1"),
+            "child-a",
+            "branch-a",
+            vec![
+                evaluation_payload("child-a", "branch-a", 0),
+                evaluation_payload("child-b", "branch-b", 1),
+            ],
+        );
+        block0
+            .admit(proposed_selection_entry(gen0), actor("admitter"))
+            .expect("admit gen0 selection");
+        let sealed0 = seal(block0);
+        let sealed0_hash = *sealed0.block_hash();
+        store.append(&state0, &sealed0).expect("append gen0");
+
+        let state1 = store.lineage_state(&lineage).expect("read gen0 state");
+        let mut block1 = open_block_from_state(&state1, 1, vec![sealed0_hash]);
+        let gen1 = selection_entry_for_scope(
+            SelectionScope::new("generation_local:parent_node_id=child-a;generation=2"),
+            "child-c",
+            "branch-c",
+            vec![evaluation_payload("child-c", "branch-c", 0)],
+        );
+        block1
+            .admit(proposed_selection_entry(gen1), actor("admitter"))
+            .expect("admit gen1 selection");
+        let sealed1 = seal(block1);
+        store.append(&state1, &sealed1).expect("append gen1");
+
+        let history = History::new(store);
+        let all = history
+            .candidates(&SelectionScope::all_admitted_candidates())
+            .expect("history candidates");
+        assert_eq!(all.candidates.len(), 3);
+        assert!(
+            all.candidates
+                .iter()
+                .all(|candidate| candidate.candidate_set_root.is_some()
+                    && candidate.candidate_set_membership.is_some())
+        );
+
+        let exact = history
+            .candidates(&SelectionScope::new(
+                "generation_local:parent_node_id=child-a;generation=2",
+            ))
+            .expect("exact-scope candidates");
+        assert_eq!(exact.candidates.len(), 1);
+        assert_eq!(
+            exact.candidates[0].payload.candidate.as_str(),
+            "candidate:child-c:plan_index=0"
+        );
     }
 
     #[test]
@@ -5292,10 +5860,50 @@ mod tests {
         .expect("selection entry");
 
         assert_ne!(first.considered_order_hash, second.considered_order_hash);
+        assert_eq!(
+            first.candidate_set.as_ref().expect("candidate set").root,
+            second.candidate_set.as_ref().expect("candidate set").root
+        );
+        assert_eq!(
+            first
+                .verify_candidate_set_commitment()
+                .expect("candidate set verifies"),
+            Some(true)
+        );
         assert_ne!(
             first.decision_hash().expect("hash"),
             second.decision_hash().expect("hash")
         );
+    }
+
+    #[test]
+    fn selection_decision_entry_commits_candidate_set_membership_proofs() {
+        let entry = selection_entry_for_scope(
+            SelectionScope::new("generation_local:test"),
+            "child-a",
+            "branch-a",
+            vec![
+                evaluation_payload("child-a", "branch-a", 0),
+                evaluation_payload("child-b", "branch-b", 1),
+            ],
+        );
+
+        let candidate_set = entry.candidate_set.as_ref().expect("candidate set");
+        assert_eq!(candidate_set.memberships.len(), 2);
+        assert_eq!(
+            entry
+                .verify_candidate_set_commitment()
+                .expect("candidate set verifies"),
+            Some(true)
+        );
+        for membership in &candidate_set.memberships {
+            assert!(
+                membership
+                    .proof
+                    .verify(&candidate_set.root)
+                    .expect("membership proof verifies")
+            );
+        }
     }
 
     #[test]

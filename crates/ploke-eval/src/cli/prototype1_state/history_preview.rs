@@ -544,6 +544,8 @@ pub(crate) struct SealedSelectionDecisionRow {
     pub(crate) recomputed_decision_hash: String,
     pub(crate) decision_observation_ok: bool,
     pub(crate) considered_order_ok: bool,
+    pub(crate) candidate_set_ok: Option<bool>,
+    pub(crate) candidate_set_root: Option<String>,
     pub(crate) procedure_or_policy: String,
     pub(crate) scope: String,
     pub(crate) selected_candidate: Option<String>,
@@ -632,6 +634,11 @@ fn collect_selection_decision_rows(
             .verify_selection_decision_observation()?
             .unwrap_or(false);
         let considered_order_ok = selection.verify_considered_order_hash()?;
+        let candidate_set_ok = selection.verify_candidate_set_commitment()?;
+        let candidate_set_root = selection
+            .candidate_set
+            .as_ref()
+            .map(|commitment| commitment.root.as_str().to_string());
 
         let mut candidates = Vec::new();
         for evaluation in &selection.considered {
@@ -679,6 +686,7 @@ fn collect_selection_decision_rows(
 
         let row_ok = decision_observation_ok
             && considered_order_ok
+            && candidate_set_ok != Some(false)
             && candidates.iter().all(|c| {
                 c.cross_checked_eval_payload_digest != Some(false)
                     && c.selection_input_binding_ok
@@ -714,6 +722,8 @@ fn collect_selection_decision_rows(
             recomputed_decision_hash: recomputed_decision_hex,
             decision_observation_ok,
             considered_order_ok,
+            candidate_set_ok,
+            candidate_set_root,
             procedure_or_policy: selection.procedure_or_policy.as_str().to_string(),
             scope: selection.scope.as_str().to_string(),
             selected_candidate: selection
@@ -1099,7 +1109,7 @@ impl HistoryPreview {
         } else {
             for row in &self.sealed_selection_commitments.decision_entries {
                 println!(
-                    "line={} block_height={} block={} row_ok={} decision_grade_all={} decision_hash_ok={} order_ok={} procedure={} scope={} selected={}",
+                    "line={} block_height={} block={} row_ok={} decision_grade_all={} decision_hash_ok={} order_ok={} candidate_set_ok={} procedure={} scope={} selected={}",
                     row.segment_line_index,
                     row.block_height,
                     &row.block_hash[..16.min(row.block_hash.len())],
@@ -1107,10 +1117,16 @@ impl HistoryPreview {
                     row.decision_grade_all_candidates_eligible,
                     row.decision_observation_ok,
                     row.considered_order_ok,
+                    row.candidate_set_ok
+                        .map(|ok| if ok { "ok" } else { "mismatch" })
+                        .unwrap_or("missing"),
                     row.procedure_or_policy,
                     row.scope,
                     row.selected_candidate.as_deref().unwrap_or("-")
                 );
+                if let Some(root) = &row.candidate_set_root {
+                    println!("    candidate_set_root={root}");
+                }
                 for note in &row.decision_projection_failure_notes {
                     println!("    seal_gap: {note}");
                 }
