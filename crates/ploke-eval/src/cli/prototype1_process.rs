@@ -152,6 +152,7 @@ use crate::cli::prototype1_state::journal::{
 };
 use crate::cli::prototype1_state::observe;
 use crate::cli::prototype1_state::parent::{Parent, Retired, Selectable};
+use crate::cli::prototype1_state::selection;
 use crate::cli::prototype1_state::successor::Record as SuccessorRecord;
 use crate::cli::prototype1_state::telemetry::RuntimeTelemetry;
 use crate::intervention::{
@@ -428,7 +429,13 @@ pub(crate) fn validate_prototype1_successor_continuation(
     invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
     manifest_path: &Path,
 ) -> Result<(), PrepareError> {
-    validate_prototype1_successor_node_continuation(manifest_path, invocation.node_id())
+    let node = load_node_record(manifest_path, invocation.node_id())?;
+    validate_prototype1_successor_continuation_coordinate(
+        manifest_path,
+        &node.node_id,
+        &node.branch_id,
+        node.generation,
+    )
 }
 
 pub(crate) fn validate_child_surface(
@@ -444,12 +451,27 @@ pub(crate) fn validate_child_surface(
         })
 }
 
-fn validate_prototype1_successor_node_continuation(
+fn validate_prototype1_selected_successor_continuation(
+    manifest_path: &Path,
+    selected: &selection::Selection<selection::Artifact>,
+) -> Result<(), PrepareError> {
+    let artifact = selected.selected();
+    let node = artifact.node();
+    validate_prototype1_successor_continuation_coordinate(
+        manifest_path,
+        &node.node_id,
+        artifact.branch_id(),
+        node.generation,
+    )
+}
+
+fn validate_prototype1_successor_continuation_coordinate(
     manifest_path: &Path,
     node_id: &str,
+    branch_id: &str,
+    generation: u32,
 ) -> Result<(), PrepareError> {
     let scheduler = load_scheduler_state(manifest_path)?;
-    let node = load_node_record(manifest_path, node_id)?;
     let decision = scheduler
         .last_continuation_decision
         .as_ref()
@@ -460,20 +482,23 @@ fn validate_prototype1_successor_node_continuation(
             ),
         })?;
 
+    let expected_next_generation = generation.saturating_add(1);
     if decision.disposition.allows_successor()
-        && decision.selected_next_branch_id.as_deref() == Some(node.branch_id.as_str())
+        && decision.selected_next_branch_id.as_deref() == Some(branch_id)
+        && decision.next_generation == expected_next_generation
     {
         return Ok(());
     }
 
     Err(PrepareError::InvalidBatchSelection {
         detail: format!(
-            "successor continuation rejected for node '{}' with disposition {:?} selected_next_branch_id={:?} node_branch_id={} (next_generation={}, total_nodes_after_continue={})",
+            "successor continuation rejected for node '{}' with disposition {:?} selected_next_branch_id={:?} selected_branch_id={} (next_generation={}, expected_next_generation={}, total_nodes_after_continue={})",
             node_id,
             decision.disposition,
             decision.selected_next_branch_id,
-            node.branch_id,
+            branch_id,
             decision.next_generation,
+            expected_next_generation,
             decision.total_nodes_after_continue
         ),
     })
@@ -524,14 +549,27 @@ fn build_prototype1_active_successor_binary(repo_root: &Path) -> Result<PathBuf,
 fn prepare_prototype1_active_successor_runtime(
     campaign_id: &str,
     manifest_path: &Path,
-    node: &crate::intervention::Prototype1NodeRecord,
+    selected: &selection::Selection<selection::Artifact>,
     active_parent_root: &Path,
 ) -> Result<(PathBuf, SurfaceCommitment), PrepareError> {
-    validate_prototype1_successor_node_continuation(manifest_path, &node.node_id)?;
-    let _ = select_treatment_branch(campaign_id, manifest_path, &node.branch_id)?;
-    let resolved = resolve_treatment_branch(campaign_id, manifest_path, &node.branch_id)?;
-    let surface =
-        install_prototype1_successor_artifact(campaign_id, active_parent_root, node, &resolved)?;
+    let artifact = selected.selected();
+    validate_prototype1_selected_successor_continuation(manifest_path, selected)?;
+    let registry = select_treatment_branch(campaign_id, manifest_path, artifact.branch_id())?;
+    let active_branch_id = registry
+        .active_targets
+        .iter()
+        .find(|target| target.target_relpath == artifact.resolved().target_relpath)
+        .and_then(|target| target.active_branch_id.as_deref());
+    if active_branch_id != Some(artifact.branch_id()) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "selected Artifact active branch mismatch before checkout: branch_registry={}, selection={}",
+                active_branch_id.unwrap_or("(none)"),
+                artifact.branch_id()
+            ),
+        });
+    }
+    let surface = install_prototype1_successor_artifact(campaign_id, active_parent_root, selected)?;
     let binary = build_prototype1_active_successor_binary(active_parent_root)?;
     Ok((binary, surface))
 }
@@ -539,10 +577,12 @@ fn prepare_prototype1_active_successor_runtime(
 fn install_prototype1_successor_artifact(
     campaign_id: &str,
     active_parent_root: &Path,
-    node: &crate::intervention::Prototype1NodeRecord,
-    resolved: &crate::intervention::ResolvedTreatmentBranch,
+    selected: &selection::Selection<selection::Artifact>,
 ) -> Result<SurfaceCommitment, PrepareError> {
     let backend = GitWorktreeBackend;
+    let artifact = selected.selected();
+    let node = artifact.node();
+    let resolved = artifact.resolved();
     let workspace = backend
         .workspace_for_node(&node.node_id, &node.node_dir, &node.workspace_root)
         .map_err(|source| PrepareError::DatabaseSetup {
@@ -593,8 +633,7 @@ fn install_prototype1_successor_artifact(
         install_committed_successor_artifact(
             campaign_id,
             active_parent_root,
-            node,
-            resolved,
+            selected,
             workspace,
             surface,
             previous_parent,
@@ -609,8 +648,7 @@ fn install_prototype1_successor_artifact(
         install_committed_successor_artifact(
             campaign_id,
             active_parent_root,
-            node,
-            resolved,
+            selected,
             workspace,
             surface,
             previous_parent,
@@ -621,14 +659,16 @@ fn install_prototype1_successor_artifact(
 fn install_committed_successor_artifact(
     campaign_id: &str,
     active_parent_root: &Path,
-    node: &crate::intervention::Prototype1NodeRecord,
-    resolved: &crate::intervention::ResolvedTreatmentBranch,
+    selected: &selection::Selection<selection::Artifact>,
     workspace: crate::cli::prototype1_state::backend::Workspace,
     surface: SurfaceCommitment,
     previous_parent: Option<ParentIdentity>,
 ) -> Result<SurfaceCommitment, PrepareError> {
     let backend = GitWorktreeBackend;
     let manifest_path = campaign_manifest_path(campaign_id)?;
+    let artifact = selected.selected();
+    let node = artifact.node();
+    let resolved = artifact.resolved();
     backend
         .verify_artifact_target(
             active_parent_root,
@@ -1154,22 +1194,23 @@ fn wait_for_prototype1_successor_ready(
 
 pub(crate) fn spawn_and_handoff_prototype1_successor(
     campaign_id: &str,
-    node_id: &str,
+    selected: selection::Selection<selection::Artifact>,
     active_parent_root: &Path,
     parent: Parent<Selectable>,
     selection_entry: crate::cli::prototype1_state::history::SelectionDecisionEntry,
     mode: SuccessorHandoffMode,
 ) -> Result<(Parent<Retired>, Option<Prototype1SuccessorHandoff>), PrepareError> {
     let manifest_path = campaign_manifest_path(campaign_id)?;
-    let node = load_node_record(&manifest_path, node_id)?;
+    let artifact = selected.selected();
+    let node = artifact.node();
     let (active_successor_binary_path, surface) = prepare_prototype1_active_successor_runtime(
         campaign_id,
         &manifest_path,
-        &node,
+        &selected,
         active_parent_root,
     )?;
     let runtime_id = crate::cli::prototype1_state::event::RuntimeId::new();
-    let successor_artifact = successor_artifact_ref(&node);
+    let successor_artifact = artifact.artifact_ref().clone();
     let parent_actor = parent_actor_ref(parent.identity());
     let handoff_block = handoff_block_fields(
         campaign_id,
@@ -1292,7 +1333,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     debug!(
         target: EXECUTION_DEBUG_TARGET,
         campaign = %campaign_id,
-        node_id = %node_id,
+        node_id = %node.node_id,
         block_height = stored_block.block_height(),
         block_hash = %stored_block.block_hash(),
         "prototype1 History block sealed before successor runtime spawn"
@@ -1321,8 +1362,11 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     debug!(
         target: EXECUTION_DEBUG_TARGET,
         campaign = %campaign_id,
-        node_id = %node_id,
+        node_id = %node.node_id,
         runtime_id = %runtime_id,
+        selected_candidate = %artifact.candidate().as_str(),
+        selection_source = ?artifact.source(),
+        selected_primary_runtime_id = ?artifact.primary_runtime_id(),
         active_successor_binary_path = %active_successor_binary_path.display(),
         active_parent_root = %active_parent_root.display(),
         invocation_path = %invocation_path.display(),
@@ -1385,7 +1429,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         debug!(
             target: EXECUTION_DEBUG_TARGET,
             campaign = %campaign_id,
-            node_id = %node_id,
+            node_id = %node.node_id,
             runtime_id = %runtime_id,
             pid,
             "demo exec handoff replacing parent process with successor"
@@ -1496,16 +1540,6 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
             })
         }
     }
-}
-
-fn successor_artifact_ref(node: &crate::intervention::Prototype1NodeRecord) -> ArtifactRef {
-    if let Some(artifact_id) = node.derived_artifact_id.as_ref() {
-        return ArtifactRef::new(format!("artifact:{}", artifact_id.as_str()));
-    }
-    if let Some(artifact_id) = node.base_artifact_id.as_ref() {
-        return ArtifactRef::new(format!("artifact:{}", artifact_id.as_str()));
-    }
-    ArtifactRef::new(format!("branch:{}", node.branch_id))
 }
 
 struct HandoffBlock {

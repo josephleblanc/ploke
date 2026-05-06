@@ -74,6 +74,7 @@ use crate::{
                 Check, Checked, ChildPlan, ChildPlanFile, ChildPlanFiles, Genesis, Parent, Planned,
                 Predecessor, Ready, Selectable, Startup, Unchecked,
             },
+            selection as state_selection,
             successor::Record as SuccessorRecord,
             telemetry::RuntimeTelemetry,
         },
@@ -353,6 +354,26 @@ struct SelectionSealMaterial {
     projection_failures: Vec<SelectionProjectionFailure>,
     traversal: Option<SelectionTraversalEvidence>,
     selected_from_generation_outcomes: bool,
+}
+
+impl SelectionSealMaterial {
+    fn into_entry(
+        self,
+        decision: SuccessorDecision,
+    ) -> Result<SelectionDecisionEntry, PrepareError> {
+        SelectionDecisionEntry::new_with_traversal(
+            self.procedure,
+            self.scope,
+            Some(self.selected_candidate),
+            self.considered,
+            self.projection_failures,
+            self.traversal,
+            decision,
+        )
+        .map_err(|err| PrepareError::InvalidBatchSelection {
+            detail: format!("failed to construct selection decision entry: {err}"),
+        })
+    }
 }
 
 async fn run_parent_target_selection(
@@ -5868,11 +5889,13 @@ fn ensure_decision_grade_payloads(
     Ok(())
 }
 
-fn validate_selection_handoff_candidate(
-    node: &Prototype1NodeRecord,
+fn select_artifact_for_handoff(
+    campaign_id: &str,
+    manifest_path: &Path,
+    node: Prototype1NodeRecord,
     decision: &SuccessorDecision,
     material: &SelectionSealMaterial,
-) -> Result<(), PrepareError> {
+) -> Result<state_selection::Selection<state_selection::Artifact>, PrepareError> {
     if node.node_id != decision.candidate_node_id {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -5913,6 +5936,16 @@ fn validate_selection_handoff_candidate(
             ),
         });
     };
+    if let Some(generation) = sealed.coordinate.generation
+        && generation != node.generation
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "selected sealed payload generation mismatch before handoff: payload={}, node_record={}",
+                generation, node.generation
+            ),
+        });
+    }
     if sealed.coordinate.node_id != node.node_id {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -5938,7 +5971,24 @@ fn validate_selection_handoff_candidate(
             ),
         });
     }
-    Ok(())
+    let primary_runtime_id = sealed.coordinate.primary_runtime_id.clone();
+    let resolved = resolve_treatment_branch(campaign_id, manifest_path, selected_branch_id)?;
+
+    let source = if material.selected_from_generation_outcomes {
+        state_selection::Source::CurrentGeneration
+    } else {
+        state_selection::Source::History
+    };
+    state_selection::Selection::artifact(
+        node,
+        material.selected_candidate.clone(),
+        resolved,
+        source,
+        primary_runtime_id,
+    )
+    .map_err(|err| PrepareError::InvalidBatchSelection {
+        detail: err.to_string(),
+    })
 }
 
 fn outcome_for_report<'a>(
@@ -6398,24 +6448,24 @@ impl Prototype1StateCommand {
                 selection_decision.selected_branch_disposition(),
                 selection_decision.selection_policy_outcome(),
             );
-            if decision.disposition.allows_successor() && selection_material.is_none() {
-                let in_considered = child_outcomes
-                    .iter()
-                    .any(|outcome| outcome.node_id == selection_decision.candidate_node_id);
-                if !in_considered {
-                    let considered_nodes = child_outcomes
-                        .iter()
-                        .map(|o| format!("{}:plan_index={}", o.node_id, o.plan_index))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: format!(
-                            "selection decision selected candidate_node_id={} which is absent from sealed considered outcomes [{}]",
-                            selection_decision.candidate_node_id, considered_nodes
-                        ),
-                    });
-                }
-            }
+            let handoff = if decision.disposition.allows_successor() {
+                let material = match selection_material {
+                    Some(material) => material,
+                    None => parent_selection
+                        .generation_material(node.generation, &selection_decision)?,
+                };
+                let selected_artifact = select_artifact_for_handoff(
+                    &campaign_id,
+                    &manifest_path,
+                    node.clone(),
+                    &selection_decision,
+                    &material,
+                )?;
+                let selection_entry = material.into_entry(selection_decision.clone())?;
+                Some((selected_artifact, selection_entry))
+            } else {
+                None
+            };
             observe::Step::start(observe::span!(
                 "prototype1.parent.select_successor",
                 campaign_id = %campaign_id,
@@ -6449,28 +6499,10 @@ impl Prototype1StateCommand {
                 ";selection={:?};successor={}",
                 selection_decision.outcome, selection_decision.candidate_node_id
             ));
-            if decision.disposition.allows_successor() {
-                let material = match selection_material {
-                    Some(material) => material,
-                    None => parent_selection
-                        .generation_material(node.generation, &selection_decision)?,
-                };
-                validate_selection_handoff_candidate(&node, &selection_decision, &material)?;
-                let selection_entry = SelectionDecisionEntry::new_with_traversal(
-                    material.procedure,
-                    material.scope,
-                    Some(material.selected_candidate),
-                    material.considered,
-                    material.projection_failures,
-                    material.traversal,
-                    selection_decision.clone(),
-                )
-                .map_err(|err| PrepareError::InvalidBatchSelection {
-                    detail: format!("failed to construct selection decision entry: {err}"),
-                })?;
+            if let Some((selected_artifact, selection_entry)) = handoff {
                 match spawn_and_handoff_prototype1_successor(
                     &campaign_id,
-                    &selection_decision.candidate_node_id,
+                    selected_artifact,
                     &repo_root,
                     parent,
                     selection_entry,
@@ -8173,6 +8205,7 @@ mod tests {
     use crate::intervention::{
         InterventionSourceNode, PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION,
         PROTOTYPE1_SCHEDULER_SCHEMA_VERSION, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+        TreatmentBranchNode, TreatmentBranchStatus,
     };
 
     fn state_command_without_ids() -> Prototype1StateCommand {
@@ -8285,11 +8318,136 @@ mod tests {
             rationale: Vec::new(),
         };
 
-        let err = validate_selection_handoff_candidate(&node, &decision, &material)
-            .expect_err("historical candidate without runtime identity must not hand off");
+        let err = select_artifact_for_handoff(
+            "campaign",
+            &tmp.path().join("campaign.json"),
+            node,
+            &decision,
+            &material,
+        )
+        .expect_err("historical candidate without runtime identity must not hand off");
 
         assert!(matches!(err, PrepareError::InvalidBatchSelection { .. }));
         assert!(err.to_string().contains("lacks sealed runtime identity"));
+    }
+
+    #[test]
+    fn history_handoff_selection_carries_resolved_artifact() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        fs::create_dir_all(manifest_path.parent().unwrap().join("prototype1"))
+            .expect("prototype dir");
+        let node = test_node(
+            tmp.path(),
+            "node-historical",
+            "branch-historical",
+            "candidate-1",
+        );
+        let registry = Prototype1BranchRegistry {
+            schema_version: PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION.to_string(),
+            campaign_id: "campaign".to_string(),
+            updated_at: "2026-04-26T00:00:00Z".to_string(),
+            source_nodes: vec![InterventionSourceNode {
+                source_state_id: node.source_state_id.clone(),
+                parent_branch_id: None,
+                source_artifact_id: None,
+                operation_target: None,
+                instance_id: node.instance_id.clone(),
+                target_relpath: node.target_relpath.clone(),
+                source_content: "old".to_string(),
+                source_content_hash: "old-hash".to_string(),
+                selected_branch_id: Some(node.branch_id.clone()),
+                branches: vec![TreatmentBranchNode {
+                    branch_id: node.branch_id.clone(),
+                    candidate_id: node.candidate_id.clone(),
+                    patch_id: None,
+                    branch_label: "candidate 1".to_string(),
+                    synthesized_spec_id: "spec-1".to_string(),
+                    proposed_content: "new".to_string(),
+                    proposed_content_hash: "new-hash".to_string(),
+                    generation_target: None,
+                    generation_coordinate: None,
+                    status: TreatmentBranchStatus::Selected,
+                    apply_id: None,
+                    applied_content_hash: None,
+                    derived_artifact_id: None,
+                    latest_evaluation: None,
+                }],
+            }],
+            active_targets: Vec::new(),
+        };
+        fs::write(
+            prototype1_branch_registry_path(&manifest_path),
+            serde_json::to_vec_pretty(&registry).expect("registry json"),
+        )
+        .expect("write registry");
+        let selected = SubjectRef::new("candidate:node-historical:plan_index=0");
+        let payload = EvaluationPayload::builder(
+            selected.clone(),
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+        )
+        .sealed_candidate_evidence(
+            crate::cli::prototype1_state::history::SealedCandidateEvidence {
+                schema_version: 2,
+                coordinate: crate::cli::prototype1_state::history::CandidateCoordinate {
+                    node_id: "node-historical".to_string(),
+                    parent_node_id: Some("node-parent".to_string()),
+                    branch_id: Some("branch-historical".to_string()),
+                    generation: Some(1),
+                    plan_index: Some(0),
+                    primary_runtime_id: Some("runtime:node-historical".to_string()),
+                },
+                lifecycle: crate::cli::prototype1_state::history::CandidateLifecycle {
+                    planner_outcome: "completed".to_string(),
+                    node_status: "completed".to_string(),
+                },
+                evaluations: Vec::new(),
+                runtimes: Vec::new(),
+                branches: Vec::new(),
+                extra_document_citations: Vec::new(),
+                extra_journal_citations: Vec::new(),
+                child_diagnostics: Vec::new(),
+            },
+        )
+        .build();
+        let material = SelectionSealMaterial {
+            procedure: ProcedureRef::new(
+                crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            scope: SelectionScope::all_admitted_candidates(),
+            selected_candidate: selected,
+            considered: vec![payload],
+            projection_failures: Vec::new(),
+            traversal: Some(SelectionTraversalEvidence {
+                seed: 1,
+                normalize_frontier: true,
+            }),
+            selected_from_generation_outcomes: false,
+        };
+        let decision = SuccessorDecision {
+            procedure_id: crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+            candidate_node_id: "node-historical".to_string(),
+            selected_branch_id: Some("branch-historical".to_string()),
+            branch_disposition: "keep".to_string(),
+            outcome: successor_selection::decision::SuccessorOutcome::Accepted,
+            findings: Vec::new(),
+            rationale: Vec::new(),
+        };
+
+        let selection =
+            select_artifact_for_handoff("campaign", &manifest_path, node, &decision, &material)
+                .expect("historical selection admits an Artifact carrier");
+
+        assert_eq!(selection.selected().node().node_id, "node-historical");
+        assert_eq!(selection.selected().branch_id(), "branch-historical");
+        assert_eq!(
+            selection.selected().source(),
+            state_selection::Source::History
+        );
+        assert_eq!(
+            selection.selected().primary_runtime_id(),
+            Some("runtime:node-historical")
+        );
     }
 
     #[test]
