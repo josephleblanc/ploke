@@ -66,4 +66,16 @@ impl RuntimeTelemetry {
             runtime_id = self.runtime_id.as_deref().unwrap_or("")
         )
     }
+
+    pub(crate) fn install_for_chat_requests(&self) {
+        ploke_tui::llm::set_prototype1_trace_context(ploke_tui::llm::Prototype1TraceContext {
+            role: self.role.to_string(),
+            runtime_phase: self.runtime_phase.to_string(),
+            campaign_id: self.campaign_id.clone(),
+            node_id: self.node_id.clone(),
+            branch_id: self.branch_id.clone(),
+            generation: self.generation,
+            runtime_id: self.runtime_id.clone(),
+        });
+    }
 }

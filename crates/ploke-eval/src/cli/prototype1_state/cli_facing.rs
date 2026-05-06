@@ -375,6 +375,7 @@ async fn run_parent_target_selection(
         Prototype1NodeStatus::Running,
     )?;
     let telemetry = RuntimeTelemetry::parent(&parent_identity, "target_selection");
+    telemetry.install_for_chat_requests();
     let report = match run_prototype1_loop_controller(input)
         .instrument(telemetry.span())
         .await

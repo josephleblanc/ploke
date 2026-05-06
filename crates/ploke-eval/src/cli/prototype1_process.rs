@@ -2042,6 +2042,7 @@ pub(super) async fn execute_prototype1_runner_node(
     record_prototype1_child_ready_if_configured(campaign_id, &manifest_path, &node, &request)?;
 
     let telemetry = RuntimeTelemetry::child(campaign_id, &node, runtime_id, "child_evaluation");
+    telemetry.install_for_chat_requests();
     let outcome = run_prototype1_branch_evaluation(
         campaign_id,
         &node.branch_id,
@@ -2164,6 +2165,7 @@ pub(super) async fn execute_prototype1_runner_invocation(
         invocation.runtime_id(),
         "child_evaluation",
     );
+    telemetry.install_for_chat_requests();
     let outcome = run_prototype1_branch_evaluation(
         invocation.campaign_id(),
         &request.branch_id,

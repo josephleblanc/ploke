@@ -33,7 +33,12 @@ use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{env, fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    env, fs,
+    path::PathBuf,
+    sync::{Arc, OnceLock, RwLock},
+    time::Duration,
+};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::{Instrument, instrument};
 use uuid::Uuid;
@@ -57,11 +62,31 @@ use crate::{
 
 const TOKENS_LOG_ENV: &str = "PLOKE_LOG_TOKENS";
 const TOKENS_LOG_MAX_CHARS: usize = 4_000;
-const PROTOTYPE1_CAMPAIGN_ID_ENV: &str = "PLOKE_PROTOTYPE1_CAMPAIGN_ID";
-const PROTOTYPE1_NODE_ID_ENV: &str = "PLOKE_PROTOTYPE1_NODE_ID";
-const PROTOTYPE1_BRANCH_ID_ENV: &str = "PLOKE_PROTOTYPE1_BRANCH_ID";
-const PROTOTYPE1_GENERATION_ENV: &str = "PLOKE_PROTOTYPE1_GENERATION";
-const PROTOTYPE1_RUNTIME_ID_ENV: &str = "PLOKE_PROTOTYPE1_RUNTIME_ID";
+static PROTOTYPE1_TRACE_CONTEXT: OnceLock<RwLock<Option<Prototype1TraceContext>>> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+pub struct Prototype1TraceContext {
+    pub role: String,
+    pub runtime_phase: String,
+    pub campaign_id: String,
+    pub node_id: String,
+    pub branch_id: String,
+    pub generation: u32,
+    pub runtime_id: Option<String>,
+}
+
+pub fn set_prototype1_trace_context(context: Prototype1TraceContext) {
+    let lock = PROTOTYPE1_TRACE_CONTEXT.get_or_init(|| RwLock::new(None));
+    if let Ok(mut guard) = lock.write() {
+        *guard = Some(context);
+    }
+}
+
+fn prototype1_trace_context() -> Option<Prototype1TraceContext> {
+    PROTOTYPE1_TRACE_CONTEXT
+        .get()
+        .and_then(|lock| lock.read().ok().and_then(|guard| guard.clone()))
+}
 
 /// Opt-in toggle for token diagnostics (avoid logging sensitive content by default).
 pub(super) fn tokens_logging_enabled() -> bool {
@@ -84,22 +109,23 @@ pub(super) fn truncate_for_tokens_log(input: &str) -> String {
 }
 
 fn prototype1_chat_request_span() -> tracing::Span {
-    let campaign_id = env::var(PROTOTYPE1_CAMPAIGN_ID_ENV).ok();
-    let node_id = env::var(PROTOTYPE1_NODE_ID_ENV).ok();
-    let branch_id = env::var(PROTOTYPE1_BRANCH_ID_ENV).ok();
-    let generation = env::var(PROTOTYPE1_GENERATION_ENV).ok();
-    let runtime_id = env::var(PROTOTYPE1_RUNTIME_ID_ENV).ok();
-    let prototype1 = campaign_id.is_some() || node_id.is_some() || runtime_id.is_some();
+    let context = prototype1_trace_context();
+    let generation = context
+        .as_ref()
+        .map(|context| context.generation.to_string())
+        .unwrap_or_default();
 
     tracing::info_span!(
         target: "chat-loop",
         "prototype1.chat_request",
-        prototype1,
-        campaign_id = campaign_id.as_deref().unwrap_or(""),
-        node_id = node_id.as_deref().unwrap_or(""),
-        branch_id = branch_id.as_deref().unwrap_or(""),
-        generation = generation.as_deref().unwrap_or(""),
-        runtime_id = runtime_id.as_deref().unwrap_or(""),
+        prototype1 = context.is_some(),
+        role = context.as_ref().map(|context| context.role.as_str()).unwrap_or(""),
+        runtime_phase = context.as_ref().map(|context| context.runtime_phase.as_str()).unwrap_or(""),
+        campaign_id = context.as_ref().map(|context| context.campaign_id.as_str()).unwrap_or(""),
+        node_id = context.as_ref().map(|context| context.node_id.as_str()).unwrap_or(""),
+        branch_id = context.as_ref().map(|context| context.branch_id.as_str()).unwrap_or(""),
+        generation = generation.as_str(),
+        runtime_id = context.as_ref().and_then(|context| context.runtime_id.as_deref()).unwrap_or(""),
     )
 }
 

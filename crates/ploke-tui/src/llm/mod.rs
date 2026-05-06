@@ -4,7 +4,9 @@ pub(crate) use manager::ChatHistoryTarget;
 pub use manager::events::{
     ContextPlan, ContextPlanExcludedMessage, ContextPlanMessage, ContextPlanRagPart,
 };
-pub use manager::{ChatEvt, LlmEvent, RequestMessage};
+pub use manager::{
+    ChatEvt, LlmEvent, Prototype1TraceContext, RequestMessage, set_prototype1_trace_context,
+};
 
 pub(crate) use ploke_llm::error;
 pub(crate) use ploke_llm::registry;

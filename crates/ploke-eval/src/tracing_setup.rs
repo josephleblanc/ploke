@@ -139,7 +139,8 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
                     .with_filter(
                         filter::Targets::new()
                             .with_target(EXECUTION_DEBUG_TARGET, Level::TRACE)
-                            .with_target(CHAT_HTTP_TARGET, Level::TRACE),
+                            .with_target(CHAT_HTTP_TARGET, Level::TRACE)
+                            .with_target("chat-loop", Level::TRACE),
                     ),
             )
             .try_init()
