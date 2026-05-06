@@ -1742,6 +1742,7 @@ impl PreviewSlice {
         copy_json_field(&value, &mut out, "sources");
         copy_json_field(&value, &mut out, "blocks");
         copy_json_field(&value, &mut out, "deferred");
+        copy_json_field(&value, &mut out, "sealed_selection_commitments");
         out.insert("entry_count".to_string(), serde_json::json!(entries.len()));
         out.insert(
             "diagnostic_count".to_string(),
@@ -1816,6 +1817,18 @@ fn print_preview_slice(slice: &PreviewSlice) {
     print_json_scalar(value, "prototype_root");
     print_json_scalar(value, "entry_count");
     print_json_scalar(value, "diagnostic_count");
+
+    if let Some(sealed) = value.get("sealed_selection_commitments") {
+        println!();
+        println!("sealed selection (committed)");
+        println!("{}", "-".repeat(40));
+        print_json_scalar(sealed, "blocks_scanned");
+        print_json_scalar(sealed, "all_checks_pass");
+        if let Some(rows) = sealed.get("decision_entries").and_then(serde_json::Value::as_array)
+        {
+            println!("decision_entry_rows: {}", rows.len());
+        }
+    }
 
     if let Some(entry) = value.get("entry") {
         println!();
@@ -6091,11 +6104,23 @@ impl Prototype1StateCommand {
                 let mut projection_failures = Vec::new();
                 let mut considered = Vec::new();
                 for outcome in &child_outcomes {
-                    let Some(input) = outcome.selection_input.as_ref() else {
-                        let candidate = SubjectRef::new(format!(
-                            "candidate:{}:plan_index={}",
-                            outcome.node_id, outcome.plan_index
-                        ));
+                    let candidate = SubjectRef::new(format!(
+                        "candidate:{}:plan_index={}",
+                        outcome.node_id, outcome.plan_index
+                    ));
+                    let procedure = ProcedureRef::new(crate::successor_selection::PROCEDURE_ID);
+                    let mut builder = EvaluationPayload::builder(candidate.clone(), procedure);
+
+                    if let Some(input) = outcome.selection_input.as_ref() {
+                        builder = builder
+                            .selection_input(input.clone())
+                            .map_err(|err| PrepareError::InvalidBatchSelection {
+                                detail: format!(
+                                    "failed to build selection input payload for node_id={}: {err}",
+                                    outcome.node_id
+                                ),
+                            })?;
+                    } else {
                         let failure_id = HistoryHash::of_domain_json(
                             "prototype1.history.selection_projection_failure.v1",
                             &(&candidate, &outcome.outcome),
@@ -6106,29 +6131,16 @@ impl Prototype1StateCommand {
                                 outcome.node_id
                             ),
                         })?;
-                        projection_failures.push(SelectionProjectionFailure {
+                        let failure = SelectionProjectionFailure {
                             id: SelectionProjectionFailureId(failure_id),
-                            candidate,
+                            candidate: candidate.clone(),
                             kind: SelectionProjectionFailureKind::MissingSelectionInput,
-                        });
-                        continue;
-                    };
-                    let payload = EvaluationPayload::builder(
-                        SubjectRef::new(format!(
-                            "candidate:{}:plan_index={}",
-                            outcome.node_id, outcome.plan_index
-                        )),
-                        ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
-                    )
-                    .selection_input(input.clone())
-                    .map_err(|err| PrepareError::InvalidBatchSelection {
-                        detail: format!(
-                            "failed to build selection input payload for node_id={}: {err}",
-                            outcome.node_id
-                        ),
-                    })?
-                    .build();
-                    considered.push(payload);
+                        };
+                        projection_failures.push(failure.clone());
+                        builder = builder.projection_failure(failure);
+                    }
+
+                    considered.push(builder.build());
                 }
                 let selected_candidate = Some(SubjectRef::new(format!(
                     "candidate:{}:{}",

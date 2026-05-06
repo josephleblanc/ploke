@@ -16,7 +16,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::event::RecordedAt;
-use super::history::{EntryKind, HistoryHash};
+use super::history::{Block, EntryKind, FsBlockStore, HistoryHash, block};
 use super::invocation::{Invocation, SuccessorCompletionRecord, SuccessorReadyRecord};
 use super::journal::{
     ActiveCheckoutAdvancedEntry, BuildEntry, ChildArtifactCommittedEntry, CompletionEntry, Entry,
@@ -39,6 +39,7 @@ use crate::intervention::{
 };
 
 const SCHEMA_VERSION: &str = "prototype1-history-preview.v1";
+const SEALED_SELECTION_SCHEMA_VERSION: &str = "prototype1-history-preview.sealed_selection.v1";
 const CHILD_EVIDENCE_TABLE_LIMIT: usize = 20;
 const CHILD_EVIDENCE_COMPARED_LIMIT: usize = 3;
 
@@ -509,6 +510,157 @@ pub(crate) fn run_child_evidence(
     Ok(())
 }
 
+/// Sealed-block scan + digest verification for committed successor selection
+/// (`EntryPayload::SelectionDecision`).
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SealedSelectionCommitmentsProjection {
+    pub(crate) schema_version: &'static str,
+    pub(crate) history_segment_path: PathBuf,
+    /// Number of sealed block records loaded from the segment file.
+    pub(crate) blocks_scanned: usize,
+    pub(crate) decision_entries: Vec<SealedSelectionDecisionRow>,
+    /// True when every surfaced row passed structural digest checks.
+    pub(crate) all_checks_pass: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SealedSelectionDecisionRow {
+    pub(crate) segment_line_index: u64,
+    pub(crate) block_hash: String,
+    pub(crate) block_height: u64,
+    pub(crate) lineage_id: String,
+    pub(crate) entry_id: String,
+    pub(crate) entry_subject: String,
+    pub(crate) observed_payload_ref: String,
+    pub(crate) sealed_payload_hash: String,
+    pub(crate) recomputed_decision_hash: String,
+    pub(crate) decision_observation_ok: bool,
+    pub(crate) considered_order_ok: bool,
+    pub(crate) procedure_or_policy: String,
+    pub(crate) scope: String,
+    pub(crate) selected_candidate: Option<String>,
+    pub(crate) candidates: Vec<SealedEvaluationCandidateRow>,
+    pub(crate) decision_projection_failure_count: usize,
+    pub(crate) row_ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SealedEvaluationCandidateRow {
+    pub(crate) candidate_subject: String,
+    pub(crate) recomputed_payload_hash: String,
+    pub(crate) payload_digest_ok: bool,
+    pub(crate) selection_input_binding_ok: bool,
+    pub(crate) source_ref_count: usize,
+    pub(crate) source_hash_count: usize,
+    pub(crate) source_evidence_alignment_ok: bool,
+}
+
+/// Verify and surface selection-decision entries from the append-only sealed
+/// block segment (digest checks on the committed decision payload, considered
+/// order, per-candidate evaluation payloads, and selection-input bindings).
+pub(crate) fn project_sealed_selection_commitments(
+    manifest_path: &Path,
+) -> Result<SealedSelectionCommitmentsProjection, PreviewError> {
+    let store = FsBlockStore::for_campaign_manifest(manifest_path);
+    let segment_path = prototype_root(manifest_path).join("history/blocks/segment-000000.jsonl");
+    let blocks = store.load_segment_verified_blocks()?;
+    let blocks_scanned = blocks.len();
+    let mut decision_entries = Vec::new();
+
+    for (line_index, block) in blocks {
+        collect_selection_decision_rows(line_index, &block, &mut decision_entries)?;
+    }
+
+    let all_checks_pass = decision_entries.iter().all(|row| row.row_ok);
+
+    Ok(SealedSelectionCommitmentsProjection {
+        schema_version: SEALED_SELECTION_SCHEMA_VERSION,
+        history_segment_path: segment_path,
+        blocks_scanned,
+        decision_entries,
+        all_checks_pass,
+    })
+}
+
+fn collect_selection_decision_rows(
+    line_index: u64,
+    block: &Block<block::Sealed>,
+    out: &mut Vec<SealedSelectionDecisionRow>,
+) -> Result<(), PreviewError> {
+    let block_hash = block.block_hash().to_string();
+    let block_height = block.block_height();
+    let lineage_id = block.lineage_id().as_str().to_string();
+
+    for entry in block.entries() {
+        if entry.entry_kind() != EntryKind::Decision {
+            continue;
+        }
+        let Some(selection) = entry.selection_decision() else {
+            continue;
+        };
+
+        let recomputed_decision = selection.decision_hash()?;
+        let recomputed_decision_hex = recomputed_decision.as_str().to_string();
+        let sealed_hash = entry.payload_hash().as_str().to_string();
+        let decision_observation_ok = entry
+            .verify_selection_decision_observation()?
+            .unwrap_or(false);
+        let considered_order_ok = selection.verify_considered_order_hash()?;
+
+        let mut candidates = Vec::new();
+        for evaluation in &selection.considered {
+            let payload_hash = evaluation.payload_hash()?;
+            let payload_digest_ok = true;
+            let selection_input_binding_ok = evaluation.verify_selection_input_binding()?;
+            let source_ref_count = evaluation.source_refs.len();
+            let source_hash_count = evaluation.source_hashes.len();
+            let source_evidence_alignment_ok = source_ref_count == source_hash_count;
+            let recomputed_hex = payload_hash.as_str().to_string();
+            candidates.push(SealedEvaluationCandidateRow {
+                candidate_subject: evaluation.candidate.as_str().to_string(),
+                recomputed_payload_hash: recomputed_hex,
+                payload_digest_ok,
+                selection_input_binding_ok,
+                source_ref_count,
+                source_hash_count,
+                source_evidence_alignment_ok,
+            });
+        }
+
+        let row_ok = decision_observation_ok
+            && considered_order_ok
+            && candidates.iter().all(|c| {
+                c.payload_digest_ok
+                    && c.selection_input_binding_ok
+                    && c.source_evidence_alignment_ok
+            });
+
+        out.push(SealedSelectionDecisionRow {
+            segment_line_index: line_index,
+            block_hash: block_hash.clone(),
+            block_height,
+            lineage_id: lineage_id.clone(),
+            entry_id: format!("{}", entry.entry_id()),
+            entry_subject: entry.subject().as_str().to_string(),
+            observed_payload_ref: entry.observed_payload_ref().as_str().to_string(),
+            sealed_payload_hash: sealed_hash,
+            recomputed_decision_hash: recomputed_decision_hex,
+            decision_observation_ok,
+            considered_order_ok,
+            procedure_or_policy: selection.procedure_or_policy.as_str().to_string(),
+            scope: selection.scope.as_str().to_string(),
+            selected_candidate: selection
+                .selected_candidate
+                .as_ref()
+                .map(|subject| subject.as_str().to_string()),
+            candidates,
+            decision_projection_failure_count: selection.projection_failures.len(),
+            row_ok,
+        });
+    }
+    Ok(())
+}
+
 fn build_from_store<S>(
     campaign_id: &str,
     manifest_path: &Path,
@@ -539,6 +691,9 @@ where
     let sources = source_summary(&journal, &documents);
     let deferred = deferred_documents(&documents);
 
+    let sealed_selection_commitments =
+        project_sealed_selection_commitments(manifest_path)?;
+
     Ok(HistoryPreview {
         schema_version: SCHEMA_VERSION,
         generated_at: Utc::now().to_rfc3339(),
@@ -550,6 +705,7 @@ where
         entries,
         deferred,
         diagnostics,
+        sealed_selection_commitments,
     })
 }
 
@@ -565,6 +721,7 @@ pub(crate) struct HistoryPreview {
     entries: Vec<PreviewEntry>,
     deferred: Vec<DeferredEvidence>,
     diagnostics: Vec<PreviewDiagnostic>,
+    sealed_selection_commitments: SealedSelectionCommitmentsProjection,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -824,6 +981,57 @@ impl HistoryPreview {
         println!("entries: {}", self.entries.len());
         println!("deferred: {}", self.deferred.len());
         println!("diagnostics: {}", self.diagnostics.len());
+        println!(
+            "sealed selection decision rows: {}",
+            self.sealed_selection_commitments.decision_entries.len()
+        );
+        println!(
+            "sealed selection digests ok: {}",
+            self.sealed_selection_commitments.all_checks_pass
+        );
+        println!();
+
+        println!("sealed selection decisions (block segment)");
+        println!("{}", "-".repeat(40));
+        println!(
+            "segment: {}",
+            self.sealed_selection_commitments
+                .history_segment_path
+                .display()
+        );
+        println!(
+            "blocks scanned: {}",
+            self.sealed_selection_commitments.blocks_scanned
+        );
+        if self.sealed_selection_commitments.decision_entries.is_empty() {
+            println!("(no sealed selection entries in segment)");
+        } else {
+            for row in &self.sealed_selection_commitments.decision_entries {
+                println!(
+                    "line={} block_height={} block={} row_ok={} decision_hash_ok={} order_ok={} procedure={} scope={} selected={}",
+                    row.segment_line_index,
+                    row.block_height,
+                    &row.block_hash[..16.min(row.block_hash.len())],
+                    row.row_ok,
+                    row.decision_observation_ok,
+                    row.considered_order_ok,
+                    row.procedure_or_policy,
+                    row.scope,
+                    row.selected_candidate.as_deref().unwrap_or("-")
+                );
+                for cand in &row.candidates {
+                    println!(
+                        "  candidate={} payload_ok={} sel_input_ok={} refs={} hashes={} ref_alignment_ok={}",
+                        cand.candidate_subject,
+                        cand.payload_digest_ok,
+                        cand.selection_input_binding_ok,
+                        cand.source_ref_count,
+                        cand.source_hash_count,
+                        cand.source_evidence_alignment_ok
+                    );
+                }
+            }
+        }
         println!();
 
         println!("sources");
@@ -2371,6 +2579,9 @@ pub(crate) enum PreviewError {
 
     #[error("failed to hash History preview value")]
     Hash(#[from] super::history::HistoryError),
+
+    #[error(transparent)]
+    BlockStore(#[from] super::history::BlockStoreError),
 }
 
 #[cfg(test)]
@@ -2503,5 +2714,21 @@ mod tests {
         assert_eq!(invocation.generation, Some(2));
         assert_eq!(invocation.block_height, 2);
         assert_eq!(invocation.executor, "runtime:runtime-a");
+    }
+
+    #[test]
+    fn sealed_selection_commitments_empty_when_no_history_segment() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let manifest = tmp.path().join("campaign.json");
+        fs::write(&manifest, "{}").expect("manifest");
+
+        let proj = project_sealed_selection_commitments(&manifest).expect("projection");
+        assert_eq!(proj.blocks_scanned, 0);
+        assert!(proj.decision_entries.is_empty());
+        assert!(proj.all_checks_pass);
+
+        let preview = build("campaign-a", &manifest).expect("preview");
+        assert_eq!(preview.sealed_selection_commitments.blocks_scanned, 0);
+        assert!(preview.sealed_selection_commitments.all_checks_pass);
     }
 }

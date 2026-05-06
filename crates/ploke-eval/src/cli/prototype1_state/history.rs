@@ -569,6 +569,12 @@ impl EntryId {
     }
 }
 
+impl fmt::Display for EntryId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, formatter)
+    }
+}
+
 /// Durable identity for a lineage.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -823,6 +829,37 @@ impl FsBlockStore {
         block.verify_expected_hash(&head.block_hash)?;
         Ok(block)
     }
+
+    /// Load and verify every sealed block line from the primary segment file, in
+    /// append order. Missing segment file yields an empty list.
+    pub(crate) fn load_segment_verified_blocks(
+        &self,
+    ) -> Result<Vec<(u64, Block<block::Sealed>)>, BlockStoreError> {
+        let path = self.segment_path();
+        let text = match fs::read_to_string(&path) {
+            Ok(value) => value,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(source) => {
+                return Err(BlockStoreError::Read {
+                    path: path.clone(),
+                    source,
+                })
+            }
+        };
+        let mut out = Vec::new();
+        for (line_index, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let stored_block: StoredSealedBlock =
+                serde_json::from_str(line).map_err(BlockStoreError::Deserialize)?;
+            let block =
+                stored_block.into_verified_block(path.clone(), line_index as u64)?;
+            out.push((line_index as u64, block));
+        }
+        Ok(out)
+    }
 }
 
 impl BlockStore for FsBlockStore {
@@ -963,9 +1000,9 @@ impl StoredSealedBlock {
 
         let mut entries = Vec::with_capacity(self.entries.len());
         for value in self.entries {
-            let entry: Entry<Admitted> =
+            let stored: stored::StoredEntryAdmitted =
                 serde_json::from_value(value).map_err(BlockStoreError::Deserialize)?;
-            entries.push(entry);
+            entries.push(stored.into_entry());
         }
 
         let block = Block {
@@ -977,6 +1014,128 @@ impl StoredSealedBlock {
         };
         block.verify_hash()?;
         Ok(block)
+    }
+}
+
+/// Stored DTOs for verified disk loading.
+///
+/// Authoritative typestate carriers intentionally do not derive `Deserialize`.
+/// Disk loading is routed through these DTOs plus `Block::verify_hash()`.
+mod stored {
+    use serde::Deserialize;
+
+    use super::*;
+
+    #[derive(Debug, Clone, Deserialize)]
+    pub(super) struct StoredEntryAdmitted {
+        core: StoredEntryCore,
+        state: StoredAdmitted,
+    }
+
+    impl StoredEntryAdmitted {
+        pub(super) fn into_entry(self) -> Entry<Admitted> {
+            Entry {
+                core: self.core.into_core(),
+                state: self.state.into_state(),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct StoredEntryCore {
+        entry_id: EntryId,
+        entry_kind: EntryKind,
+        subject: SubjectRef,
+        executor: ActorRef,
+        input_refs: Vec<EvidenceRef>,
+        output_refs: Vec<EvidenceRef>,
+        occurred_at: RecordedAt,
+        payload: StoredEntryPayload,
+    }
+
+    impl StoredEntryCore {
+        fn into_core(self) -> EntryCore {
+            EntryCore {
+                entry_id: self.entry_id,
+                entry_kind: self.entry_kind,
+                subject: self.subject,
+                executor: self.executor,
+                input_refs: self.input_refs,
+                output_refs: self.output_refs,
+                occurred_at: self.occurred_at,
+                payload: self.payload.into_payload(),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    #[serde(rename_all = "snake_case", tag = "kind")]
+    enum StoredEntryPayload {
+        Direct,
+        SelectionDecision(SelectionDecisionEntry),
+        IngressImport(IngressImportPayload),
+    }
+
+    impl StoredEntryPayload {
+        fn into_payload(self) -> EntryPayload {
+            match self {
+                StoredEntryPayload::Direct => EntryPayload::Direct,
+                StoredEntryPayload::SelectionDecision(value) => EntryPayload::SelectionDecision(value),
+                StoredEntryPayload::IngressImport(value) => EntryPayload::IngressImport(value),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct StoredAdmitted {
+        observed: StoredObserved,
+        proposer: ActorRef,
+        procedure_or_policy: ProcedureRef,
+        admitting_authority: ActorRef,
+        ruling_authority: ActorRef,
+        lineage_id: LineageId,
+        block_id: BlockId,
+        block_height: u64,
+    }
+
+    impl StoredAdmitted {
+        fn into_state(self) -> Admitted {
+            Admitted {
+                observed: self.observed.into_state(),
+                proposer: self.proposer,
+                procedure_or_policy: self.procedure_or_policy,
+                admitting_authority: self.admitting_authority,
+                ruling_authority: self.ruling_authority,
+                lineage_id: self.lineage_id,
+                block_id: self.block_id,
+                block_height: self.block_height,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct StoredObserved {
+        observer: ActorRef,
+        recorder: ActorRef,
+        operational_environment: OperationalEnvironment,
+        payload_ref: EvidenceRef,
+        payload_hash: HistoryHash,
+        observed_at: RecordedAt,
+        recorded_at: RecordedAt,
+    }
+
+    impl StoredObserved {
+        fn into_state(self) -> Observed {
+            Observed {
+                observer: self.observer,
+                recorder: self.recorder,
+                operational_environment: self.operational_environment,
+                payload_ref: self.payload_ref,
+                payload_hash: self.payload_hash,
+                observed_at: self.observed_at,
+                recorded_at: self.recorded_at,
+            }
+        }
     }
 }
 
@@ -1331,6 +1490,10 @@ impl SubjectRef {
             value: value.into(),
         }
     }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.value
+    }
 }
 
 /// Procedure, transition, or policy identity.
@@ -1345,6 +1508,10 @@ impl ProcedureRef {
             value: value.into(),
         }
     }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.value
+    }
 }
 
 /// Content-addressed or stable evidence reference.
@@ -1358,6 +1525,10 @@ impl EvidenceRef {
         Self {
             value: value.into(),
         }
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.value
     }
 }
 
@@ -2252,7 +2423,7 @@ pub(crate) struct EvaluationPayload {
 
     /// Conservative diagnostics when we could not project a selection input.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) projection_failures: Vec<String>,
+    pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
 
     /// Provenance pointers/hashes for later audit (first slice is minimal).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -2278,6 +2449,20 @@ impl EvaluationPayload {
     pub(crate) fn payload_hash(&self) -> Result<HistoryHash, HistoryError> {
         HistoryHash::of_domain_json("prototype1.history.evaluation_payload.v1", self)
     }
+
+    /// Confirms `selection_input_hash` matches a recomputed digest of
+    /// `selection_input` when both are present.
+    pub(crate) fn verify_selection_input_binding(&self) -> Result<bool, HistoryError> {
+        match (&self.selection_input, &self.selection_input_hash) {
+            (Some(input), Some(stored)) => {
+                let h =
+                    HistoryHash::of_domain_json("prototype1.history.selection_input.v1", input)?;
+                Ok(h == *stored)
+            }
+            (None, None) => Ok(true),
+            _ => Ok(false),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2287,7 +2472,7 @@ pub(crate) struct EvaluationPayloadBuilder {
     procedure: ProcedureRef,
     selection_input: Option<crate::successor_selection::SelectionInput>,
     selection_input_hash: Option<HistoryHash>,
-    projection_failures: Vec<String>,
+    projection_failures: Vec<SelectionProjectionFailure>,
     source_refs: Vec<EvidenceRef>,
     source_hashes: Vec<HistoryHash>,
 }
@@ -2298,6 +2483,11 @@ impl EvaluationPayloadBuilder {
         self.selection_input = Some(input);
         self.selection_input_hash = Some(hash);
         Ok(self)
+    }
+
+    pub(crate) fn projection_failure(mut self, failure: SelectionProjectionFailure) -> Self {
+        self.projection_failures.push(failure);
+        self
     }
 
     pub(crate) fn source_ref(mut self, reference: EvidenceRef) -> Self {
@@ -2395,6 +2585,15 @@ impl SelectionDecisionEntry {
     pub(crate) fn decision_hash(&self) -> Result<HistoryHash, HistoryError> {
         HistoryHash::of_domain_json("prototype1.history.selection_decision_entry.v1", self)
     }
+
+    pub(crate) fn verify_considered_order_hash(&self) -> Result<bool, HistoryError> {
+        let preimage = Self::considered_order_preimage(&self.considered)?;
+        let h = HistoryHash::of_domain_json(
+            "prototype1.history.selection_considered_order.v1",
+            &preimage,
+        )?;
+        Ok(h == self.considered_order_hash)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2483,7 +2682,7 @@ pub(crate) struct Proposal {
     pub(crate) procedure_or_policy: ProcedureRef,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct EntryCore {
     entry_id: EntryId,
     entry_kind: EntryKind,
@@ -2502,7 +2701,7 @@ pub(crate) struct Draft {
 }
 
 /// Observed entry state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct Observed {
     observer: ActorRef,
     recorder: ActorRef,
@@ -2514,7 +2713,7 @@ pub(crate) struct Observed {
 }
 
 /// Proposed entry state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct Proposed {
     observed: Observed,
     proposer: ActorRef,
@@ -2522,7 +2721,7 @@ pub(crate) struct Proposed {
 }
 
 /// Admitted entry state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct Admitted {
     observed: Observed,
     proposer: ActorRef,
@@ -2535,7 +2734,7 @@ pub(crate) struct Admitted {
 }
 
 /// A provenance-bearing fact in one typed History state.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct Entry<S> {
     core: EntryCore,
     state: S,
@@ -2618,6 +2817,35 @@ impl Entry<Admitted> {
 
     pub(crate) fn block_id(&self) -> BlockId {
         self.state.block_id
+    }
+
+    pub(crate) fn entry_kind(&self) -> EntryKind {
+        self.core.entry_kind.clone()
+    }
+
+    pub(crate) fn subject(&self) -> &SubjectRef {
+        &self.core.subject
+    }
+
+    pub(crate) fn selection_decision(&self) -> Option<&SelectionDecisionEntry> {
+        match &self.core.payload {
+            EntryPayload::SelectionDecision(payload) => Some(payload),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn observed_payload_ref(&self) -> &EvidenceRef {
+        &self.state.observed.payload_ref
+    }
+
+    /// When this entry carries a selection decision payload, checks that
+    /// [`Self::payload_hash`] matches [`SelectionDecisionEntry::decision_hash`].
+    pub(crate) fn verify_selection_decision_observation(&self) -> Result<Option<bool>, HistoryError> {
+        let Some(selection) = self.selection_decision() else {
+            return Ok(None);
+        };
+        let expected = selection.decision_hash()?;
+        Ok(Some(*self.payload_hash() == expected))
     }
 }
 
@@ -3107,6 +3335,14 @@ impl Block<block::Sealed> {
 
     pub(crate) fn block_hash(&self) -> &BlockHash {
         &self.header().block_hash
+    }
+
+    pub(crate) fn block_height(&self) -> u64 {
+        self.header().common.block_height
+    }
+
+    pub(crate) fn lineage_id(&self) -> &LineageId {
+        &self.header().common.lineage_id
     }
 
     pub(crate) fn regime(&self) -> &Regime {
@@ -4803,6 +5039,9 @@ mod tests {
                 assert_eq!(payload.imported_into_height, 1);
             }
             EntryPayload::Direct => panic!("ingress import must be committed in entry payload"),
+            EntryPayload::SelectionDecision(_) => {
+                panic!("ingress import must be committed in entry payload");
+            }
         }
         assert_eq!(imported.imported().imported_into_height, 1);
         assert_eq!(
