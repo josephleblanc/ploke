@@ -775,6 +775,7 @@ pub(crate) mod observe;
 pub(crate) mod parent;
 pub(crate) mod record;
 pub(crate) mod report;
+pub(crate) mod score;
 pub(crate) mod successor;
 pub(crate) mod telemetry;
 pub(crate) mod workspace;

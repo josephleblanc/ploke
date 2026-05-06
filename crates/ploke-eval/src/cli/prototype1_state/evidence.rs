@@ -56,15 +56,24 @@
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::cli_facing::Prototype1BranchEvaluationReport;
+use super::cli_facing::{
+    Prototype1BranchEvaluationReport, Prototype1EvalSetIdentity, Prototype1EvaluatorIdentity,
+};
 use super::history_preview::{EvidenceClass, EvidencePointer, EvidenceRecord, Stored};
 use super::invocation::{Invocation, SuccessorCompletionRecord, SuccessorReadyRecord};
 use super::journal::{JournalEntry, SpawnPhase};
+use crate::inner::core::RegisteredRunRole;
+use crate::inner::registry::{RunArtifactRefs, RunRegistration, RunRegistrationError};
 use crate::intervention::{Prototype1NodeRecord, Prototype1RunnerRequest, Prototype1RunnerResult};
+use crate::protocol_artifacts::{
+    PROTOCOL_ARTIFACT_SCHEMA_VERSION, StoredProtocolArtifactFile, load_protocol_artifact,
+};
+use crate::run_registry::load_registration_for_record_path;
 use crate::successor_selection::{CandidateRef, RunComparison, SelectionInput};
 use crate::{BranchDisposition, OperationalRunMetrics};
 
@@ -338,6 +347,9 @@ pub(crate) struct BranchEvidence {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct EvaluationEvidence {
     pub(crate) branch_id: String,
+    pub(crate) evaluation_procedure_id: Option<String>,
+    pub(crate) evaluator_identity: Option<Prototype1EvaluatorIdentity>,
+    pub(crate) eval_set_identity: Option<Prototype1EvalSetIdentity>,
     pub(crate) evaluation_artifact_path: Option<PathBuf>,
     pub(crate) overall_disposition: Option<String>,
     pub(crate) compared: Vec<ComparedRunEvidence>,
@@ -371,11 +383,283 @@ impl BranchPlacement {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ComparedRunEvidence {
     pub(crate) instance_id: Option<String>,
+    pub(crate) baseline_registration_path: Option<PathBuf>,
+    pub(crate) treatment_registration_path: Option<PathBuf>,
     pub(crate) baseline_record_path: Option<PathBuf>,
     pub(crate) treatment_record_path: Option<PathBuf>,
+    pub(crate) baseline_run: Option<RunEvidence>,
+    pub(crate) treatment_run: Option<RunEvidence>,
     pub(crate) baseline_metrics: Option<OperationalRunMetrics>,
     pub(crate) treatment_metrics: Option<OperationalRunMetrics>,
     pub(crate) status: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) diagnostics: Vec<ComparedRunDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RunEvidence {
+    pub(crate) registration_path: Option<PathBuf>,
+    pub(crate) run_id: String,
+    pub(crate) task_id: String,
+    pub(crate) run_role: RegisteredRunRole,
+    pub(crate) spec_fingerprint: String,
+    pub(crate) model_id: Option<String>,
+    pub(crate) provider_slug: Option<String>,
+    pub(crate) artifacts: RunArtifactRefs,
+    #[serde(default)]
+    pub(crate) protocol: ProtocolEvidence,
+}
+
+impl RunEvidence {
+    fn from_registration(
+        registration: RunRegistration,
+        registration_path: Option<PathBuf>,
+    ) -> Self {
+        let protocol = ProtocolEvidence::from_run(
+            &registration.run_id,
+            &registration.frozen_spec.task_id,
+            &registration.artifacts,
+        );
+        Self {
+            registration_path,
+            run_id: registration.run_id,
+            task_id: registration.frozen_spec.task_id,
+            run_role: registration.frozen_spec.run_role,
+            spec_fingerprint: registration.spec_fingerprint,
+            model_id: registration.frozen_spec.model_id,
+            provider_slug: registration.frozen_spec.provider_slug,
+            artifacts: registration.artifacts,
+            protocol,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct ProtocolEvidence {
+    pub(crate) artifacts_dir: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) anchor_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) artifacts: Vec<ProtocolArtifactEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) diagnostics: Vec<ProtocolEvidenceDiagnostic>,
+}
+
+impl ProtocolEvidence {
+    fn from_run(run_id: &str, subject_id: &str, artifacts: &RunArtifactRefs) -> Self {
+        let mut evidence = Self {
+            artifacts_dir: artifacts.protocol_artifacts_dir.clone(),
+            anchor_path: artifacts.protocol_anchor.clone(),
+            artifacts: Vec::new(),
+            diagnostics: Vec::new(),
+        };
+
+        if !artifacts.protocol_artifacts_dir.exists() {
+            if artifacts.protocol_anchor.is_some() {
+                evidence.diagnostics.push(ProtocolEvidenceDiagnostic::warning(
+                    "protocol_artifacts_dir",
+                    format!(
+                        "registered protocol anchor exists but protocol artifacts dir '{}' is missing",
+                        artifacts.protocol_artifacts_dir.display()
+                    ),
+                ));
+            }
+            return evidence;
+        }
+
+        let entries = match fs::read_dir(&artifacts.protocol_artifacts_dir) {
+            Ok(entries) => entries,
+            Err(error) => {
+                evidence
+                    .diagnostics
+                    .push(ProtocolEvidenceDiagnostic::warning(
+                        "protocol_artifacts_dir",
+                        format!(
+                            "could not read registered protocol artifacts dir '{}': {error}",
+                            artifacts.protocol_artifacts_dir.display()
+                        ),
+                    ));
+                return evidence;
+            }
+        };
+
+        for entry in entries {
+            let path =
+                match entry {
+                    Ok(entry) => entry.path(),
+                    Err(error) => {
+                        evidence.diagnostics.push(ProtocolEvidenceDiagnostic::warning(
+                        "protocol_artifacts_dir",
+                        format!(
+                            "could not read an entry from protocol artifacts dir '{}': {error}",
+                            artifacts.protocol_artifacts_dir.display()
+                        ),
+                    ));
+                        continue;
+                    }
+                };
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+
+            let loaded = match load_protocol_artifact(&path) {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    evidence
+                        .diagnostics
+                        .push(ProtocolEvidenceDiagnostic::warning(
+                            "protocol_artifact",
+                            format!(
+                                "could not load protocol artifact envelope '{}': {error}",
+                                path.display()
+                            ),
+                        ));
+                    continue;
+                }
+            };
+
+            if loaded.stored.schema_version != PROTOCOL_ARTIFACT_SCHEMA_VERSION {
+                evidence
+                    .diagnostics
+                    .push(ProtocolEvidenceDiagnostic::warning(
+                        "protocol_artifact.schema_version",
+                        format!(
+                            "protocol artifact '{}' has schema_version '{}' but expected '{}'",
+                            loaded.path.display(),
+                            loaded.stored.schema_version,
+                            PROTOCOL_ARTIFACT_SCHEMA_VERSION
+                        ),
+                    ));
+                continue;
+            }
+            if loaded.stored.run_id != run_id {
+                evidence
+                    .diagnostics
+                    .push(ProtocolEvidenceDiagnostic::warning(
+                        "protocol_artifact.run_id",
+                        format!(
+                            "protocol artifact '{}' has run_id '{}' but typed run id is '{}'",
+                            loaded.path.display(),
+                            loaded.stored.run_id,
+                            run_id
+                        ),
+                    ));
+                continue;
+            }
+            if loaded.stored.subject_id != subject_id {
+                evidence.diagnostics.push(ProtocolEvidenceDiagnostic::warning(
+                    "protocol_artifact.subject_id",
+                    format!(
+                        "protocol artifact '{}' has subject_id '{}' but typed run task id is '{}'",
+                        loaded.path.display(),
+                        loaded.stored.subject_id,
+                        subject_id
+                    ),
+                ));
+                continue;
+            }
+
+            evidence
+                .artifacts
+                .push(ProtocolArtifactEvidence::from_file(loaded));
+        }
+
+        evidence.artifacts.sort_by(|left, right| {
+            right
+                .created_at_ms
+                .cmp(&left.created_at_ms)
+                .then_with(|| right.path.cmp(&left.path))
+        });
+
+        if let Some(anchor_path) = artifacts.protocol_anchor.as_ref() {
+            let anchor_loaded = evidence
+                .artifacts
+                .iter()
+                .any(|artifact| same_protocol_path(&artifact.path, anchor_path));
+            if !anchor_loaded {
+                evidence.diagnostics.push(ProtocolEvidenceDiagnostic::warning(
+                    "protocol_anchor",
+                    format!(
+                        "registered protocol anchor '{}' was not loaded as typed protocol artifact evidence",
+                        anchor_path.display()
+                    ),
+                ));
+            }
+        }
+
+        evidence
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ProtocolArtifactEvidence {
+    pub(crate) path: PathBuf,
+    pub(crate) schema_version: String,
+    pub(crate) procedure_name: String,
+    pub(crate) subject_id: String,
+    pub(crate) run_id: String,
+    pub(crate) created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provider_slug: Option<String>,
+}
+
+impl ProtocolArtifactEvidence {
+    fn from_file(file: StoredProtocolArtifactFile) -> Self {
+        Self {
+            path: file.path,
+            schema_version: file.stored.schema_version,
+            procedure_name: file.stored.procedure_name,
+            subject_id: file.stored.subject_id,
+            run_id: file.stored.run_id,
+            created_at_ms: file.stored.created_at_ms,
+            model_id: file.stored.model_id,
+            provider_slug: file.stored.provider_slug,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ProtocolEvidenceDiagnostic {
+    pub(crate) severity: String,
+    pub(crate) field: String,
+    pub(crate) message: String,
+}
+
+impl ProtocolEvidenceDiagnostic {
+    fn warning(field: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            severity: "warning".to_string(),
+            field: field.into(),
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ComparedRunDiagnostic {
+    pub(crate) severity: String,
+    pub(crate) field: String,
+    pub(crate) message: String,
+}
+
+impl ComparedRunDiagnostic {
+    fn missing(field: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            severity: "missing".to_string(),
+            field: field.into(),
+            message: message.into(),
+        }
+    }
+
+    fn invalid(field: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            severity: "invalid".to_string(),
+            field: field.into(),
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -519,6 +803,9 @@ struct PreparedRecord {
 
 struct EvaluationEvidenceParts {
     branch_id: String,
+    evaluation_procedure_id: Option<String>,
+    evaluator_identity: Option<Prototype1EvaluatorIdentity>,
+    eval_set_identity: Option<Prototype1EvalSetIdentity>,
     evaluation_artifact_path: Option<PathBuf>,
     overall_disposition: Option<String>,
     compared: Vec<ComparedRunEvidence>,
@@ -646,6 +933,9 @@ impl Assembly {
                 if let Some(evaluation) = prepared.evaluation.as_ref() {
                     child.evaluations.push(EvaluationEvidence {
                         branch_id: evaluation.branch_id.clone(),
+                        evaluation_procedure_id: evaluation.evaluation_procedure_id.clone(),
+                        evaluator_identity: evaluation.evaluator_identity.clone(),
+                        eval_set_identity: evaluation.eval_set_identity.clone(),
                         evaluation_artifact_path: evaluation.evaluation_artifact_path.clone(),
                         overall_disposition: evaluation.overall_disposition.clone(),
                         compared: evaluation.compared.clone(),
@@ -1246,8 +1536,32 @@ fn typed_evaluation_parts(
         "evaluation.compared_instances",
         EvidenceFactOrigin::Typed,
     );
+    if report.evaluation_procedure_id.is_some() {
+        push_fact(
+            facts,
+            "evaluation.evaluation_procedure_id",
+            EvidenceFactOrigin::Typed,
+        );
+    }
+    if report.evaluator_identity.is_some() {
+        push_fact(
+            facts,
+            "evaluation.evaluator_identity",
+            EvidenceFactOrigin::Typed,
+        );
+    }
+    if report.eval_set_identity.is_some() {
+        push_fact(
+            facts,
+            "evaluation.eval_set_identity",
+            EvidenceFactOrigin::Typed,
+        );
+    }
     EvaluationEvidenceParts {
         branch_id: report.branch_id.clone(),
+        evaluation_procedure_id: report.evaluation_procedure_id.clone(),
+        evaluator_identity: report.evaluator_identity.clone(),
+        eval_set_identity: report.eval_set_identity.clone(),
         evaluation_artifact_path: nonempty_path(&report.evaluation_artifact_path),
         overall_disposition: Some(disposition_text(&report.overall_disposition).to_string()),
         compared: report
@@ -1271,10 +1585,24 @@ fn typed_evaluation_parts(
                         EvidenceFactOrigin::Typed,
                     );
                 }
+                if instance.baseline_registration_path.is_some() {
+                    push_fact(
+                        facts,
+                        "evaluation.compared_instances[].baseline_registration_path",
+                        EvidenceFactOrigin::Typed,
+                    );
+                }
                 if instance.treatment_record_path.is_some() {
                     push_fact(
                         facts,
                         "evaluation.compared_instances[].treatment_record_path",
+                        EvidenceFactOrigin::Typed,
+                    );
+                }
+                if instance.treatment_registration_path.is_some() {
+                    push_fact(
+                        facts,
+                        "evaluation.compared_instances[].treatment_registration_path",
                         EvidenceFactOrigin::Typed,
                     );
                 }
@@ -1292,16 +1620,86 @@ fn typed_evaluation_parts(
                         EvidenceFactOrigin::Typed,
                     );
                 }
+                let mut diagnostics = Vec::new();
+                let baseline_run = load_run_evidence(
+                    "baseline",
+                    instance.baseline_registration_path.as_deref(),
+                    instance.baseline_record_path.as_deref(),
+                    &mut diagnostics,
+                );
+                let treatment_run = load_run_evidence(
+                    "treatment",
+                    instance.treatment_registration_path.as_deref(),
+                    instance.treatment_record_path.as_deref(),
+                    &mut diagnostics,
+                );
                 ComparedRunEvidence {
                     instance_id: nonempty(instance.instance_id.as_str()).map(ToOwned::to_owned),
+                    baseline_registration_path: instance.baseline_registration_path.clone(),
+                    treatment_registration_path: instance.treatment_registration_path.clone(),
                     baseline_record_path: instance.baseline_record_path.clone(),
                     treatment_record_path: instance.treatment_record_path.clone(),
+                    baseline_run,
+                    treatment_run,
                     baseline_metrics: instance.baseline_metrics.clone(),
                     treatment_metrics: instance.treatment_metrics.clone(),
                     status: nonempty(instance.status.as_str()).map(ToOwned::to_owned),
+                    diagnostics,
                 }
             })
             .collect(),
+    }
+}
+
+fn load_run_evidence(
+    arm: &'static str,
+    registration_path: Option<&Path>,
+    record_path: Option<&Path>,
+    diagnostics: &mut Vec<ComparedRunDiagnostic>,
+) -> Option<RunEvidence> {
+    if let Some(path) = registration_path {
+        return match RunRegistration::load(path) {
+            Ok(registration) => Some(RunEvidence::from_registration(
+                registration,
+                Some(path.to_path_buf()),
+            )),
+            Err(RunRegistrationError::Read { .. }) => {
+                diagnostics.push(ComparedRunDiagnostic::missing(
+                    format!("{arm}_run_registration"),
+                    format!(
+                        "declared {arm} run registration is missing at '{}'",
+                        path.display()
+                    ),
+                ));
+                None
+            }
+            Err(error) => {
+                diagnostics.push(ComparedRunDiagnostic::invalid(
+                    format!("{arm}_run_registration"),
+                    format!(
+                        "declared {arm} run registration could not be loaded as RunRegistration: {error}"
+                    ),
+                ));
+                None
+            }
+        };
+    }
+
+    let Some(path) = record_path else {
+        return None;
+    };
+    match load_registration_for_record_path(path) {
+        Ok(Some(registration)) => Some(RunEvidence::from_registration(registration, None)),
+        Ok(None) => None,
+        Err(error) => {
+            diagnostics.push(ComparedRunDiagnostic::invalid(
+                format!("{arm}_run_registration"),
+                format!(
+                    "could not use {arm} record path as a RunRegistration locator bridge: {error}"
+                ),
+            ));
+            None
+        }
     }
 }
 
@@ -1328,6 +1726,15 @@ fn nonempty_path(path: &Path) -> Option<PathBuf> {
     } else {
         Some(path.to_path_buf())
     }
+}
+
+fn same_protocol_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    let normalize =
+        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    normalize(left) == normalize(right)
 }
 
 fn disposition_text(disposition: &BranchDisposition) -> &'static str {

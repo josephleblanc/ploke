@@ -70,3 +70,59 @@
   Worker F cleanup moving metrics off loose Document child/evaluation projections and documenting remaining preview compatibility.
 - [`36-remaining-document-compat-review.md`](36-remaining-document-compat-review.md)
   Reviewer G assessment of remaining Document compatibility cleanup, typed metrics inputs, and verification results.
+- [`37-score-projection-field-census.md`](37-score-projection-field-census.md)
+  Census of typed child-evidence fields available for durable score projection without raw artifact fallback.
+- [`38-score-projection-protocol-census.md`](38-score-projection-protocol-census.md)
+  Census of typed protocol, operational, and adjudicated fields available for score projection.
+- [`38-score-protocol-checkpoint-review.md`](38-score-protocol-checkpoint-review.md)
+  Checkpoint review of score comparability, typed evaluation/run identity, and protocol provenance boundaries.
+- [`39-score-projection-implementation.md`](39-score-projection-implementation.md)
+  Implementation of the first typed operational score projection over child evidence.
+- [`40-score-projection-review.md`](40-score-projection-review.md)
+  Review of score projection state handling, typed-boundary preservation, provenance, and traversal gaps.
+- [`41-score-projection-cli-exposure.md`](41-score-projection-cli-exposure.md)
+  Read-only `history scores` and monitor-alias CLI exposure for bounded typed score inspection.
+- [`42-score-selection-archive-substrate.md`](42-score-selection-archive-substrate.md)
+  Design for using `ScoreSet` as the generation-local selection substrate and later archive traversal input.
+- [`43-score-projection-boundary-review.md`](43-score-projection-boundary-review.md)
+  Review of score projection typed boundaries, read-only authority limits, and malformed-record regression gap.
+- [`44-score-state-semantics-review.md`](44-score-state-semantics-review.md)
+  Review of score state completeness, invalid-score suppression, and risks around diagnostic numeric scores.
+- [`45-score-selection-adapter-review.md`](45-score-selection-adapter-review.md)
+  Review plan for a read-only score/selection adapter without changing live generation-local selection.
+- [`46-score-identity-gap-census.md`](46-score-identity-gap-census.md)
+  Census of typed records carrying or missing score-comparability identity.
+- [`47-score-comparable-gate-and-regression.md`](47-score-comparable-gate-and-regression.md)
+  Implementation of `ChildScore::comparable_score` and fail-closed malformed typed-record regression coverage.
+- [`48-score-comparable-gate-review.md`](48-score-comparable-gate-review.md)
+  Review of the comparable score gate, typed-record abort coverage, and remaining API-boundary risk.
+- [`49-score-selection-review-projection.md`](49-score-selection-review-projection.md)
+  Implementation of read-only score/selection review projection and gated local alpha candidate display.
+- [`50-score-selection-review-projection-review.md`](50-score-selection-review-projection-review.md)
+  Review of score-selection projection boundaries, alpha gating, selector replay, and read-only CLI exposure.
+- [`51-score-selection-review-cleanup.md`](51-score-selection-review-cleanup.md)
+  Cleanup for score-selection review docs and suppression of alpha candidates on score-only rows.
+- [`52-score-evaluation-identity-implementation.md`](52-score-evaluation-identity-implementation.md)
+  Implementation of typed branch evaluation identity fields and score completeness from report-carried procedure, evaluator, and eval-set identity.
+- [`53-run-protocol-identity-attachment-map.md`](53-run-protocol-identity-attachment-map.md)
+  Map for attaching typed run registrations, artifact refs, and protocol evidence under compared score runs.
+- [`54-score-evaluation-identity-review.md`](54-score-evaluation-identity-review.md)
+  Reviewer N assessment of typed evaluation identity flow into score completeness and remaining eval-set validation gap.
+- [`55-score-eval-set-identity-validation.md`](55-score-eval-set-identity-validation.md)
+  Worker O fix for malformed typed eval-set identity validation before score completeness and comparability.
+- [`56-score-eval-set-validation-review.md`](56-score-eval-set-validation-review.md)
+  Reviewer P assessment of eval-set identity validation, comparable-score gating, and focused regression coverage.
+- [`57-run-registration-identity-implementation.md`](57-run-registration-identity-implementation.md)
+  Implementation of typed compared-run registration attachment and score comparability gating.
+- [`58-run-registration-identity-review.md`](58-run-registration-identity-review.md)
+  Reviewer R assessment of typed run registration evidence loading, score completeness gating, and read-only boundary preservation.
+- [`59-score-run-identity-wording-cleanup.md`](59-score-run-identity-wording-cleanup.md)
+  Worker S cleanup aligning score diagnostics and docs with typed run registration as a comparability blocker.
+- [`60-protocol-artifact-identity-implementation.md`](60-protocol-artifact-identity-implementation.md)
+  Worker T implementation attaching protocol artifact envelope provenance under compared run evidence without changing score completeness.
+- [`61-protocol-artifact-identity-review.md`](61-protocol-artifact-identity-review.md)
+  Reviewer U assessment of protocol artifact envelope provenance, score completeness preservation, and remaining negative-test gaps.
+- [`62-protocol-envelope-regression-tests.md`](62-protocol-envelope-regression-tests.md)
+  Worker V regression coverage for protocol envelope identity rejection and payload-ignore attachment semantics.
+- [`63-protocol-payload-scoring-extension-points.md`](63-protocol-payload-scoring-extension-points.md)
+  Extension-point report for optional protocol-payload-derived scoring as a named/profiled score component.

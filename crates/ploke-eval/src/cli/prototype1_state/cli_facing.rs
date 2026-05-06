@@ -13,13 +13,14 @@ use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_llm::{HttpBodyFailure, ModelId, ProviderAttempt, ProviderAttemptOutcome, ProviderKey};
 use ploke_tui::tools::ToolName;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::{Instrument, debug, error, info, instrument, warn};
 
 use crate::{
-    BranchDisposition, BranchEvaluationInput, BranchEvaluationResult, CampaignManifest,
-    CampaignOverrides, ClosureClass, EvalBudget, EvalCampaignPolicy, OperationalRunMetrics,
-    OutputMode, PrepareMsbBatchRequest, PrepareWrite, PreparedMsbBatch, ProtocolCampaignPolicy,
-    RegistryDatasetSource, ResolvedCampaignConfig, batches_dir,
+    BenchmarkFamily, BranchDisposition, BranchEvaluationInput, BranchEvaluationResult,
+    CampaignManifest, CampaignOverrides, ClosureClass, EvalBudget, EvalCampaignPolicy,
+    OperationalRunMetrics, OutputMode, PrepareMsbBatchRequest, PrepareWrite, PreparedMsbBatch,
+    ProtocolCampaignPolicy, RegistryDatasetSource, ResolvedCampaignConfig, batches_dir,
     campaign::campaign_closure_state_path,
     campaign_manifest_path,
     cli::{
@@ -31,10 +32,11 @@ use crate::{
         Prototype1MetricsCommand, Prototype1MonitorCommand, Prototype1MonitorPeekCommand,
         Prototype1MonitorReportCommand, Prototype1MonitorSubcommand,
         Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand, Prototype1RunnerCommand,
-        Prototype1StateCommand, Prototype1StateStopAfter, TimingTrace, advance_eval_closure,
-        advance_protocol_closure, default_batch_id, pending_prototype1_stages,
-        persist_intervention_apply_for_record, persist_intervention_synthesis_for_record,
-        persist_issue_detection_for_record, print_issue_case_block,
+        Prototype1ScoreCommand, Prototype1StateCommand, Prototype1StateStopAfter, TimingTrace,
+        advance_eval_closure, advance_protocol_closure, default_batch_id,
+        pending_prototype1_stages, persist_intervention_apply_for_record,
+        persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
+        print_issue_case_block,
         prototype1_process::{
             Prototype1NodeExecutionOutcome, SuccessorHandoffMode,
             execute_prototype1_runner_invocation, execute_prototype1_runner_node,
@@ -1562,6 +1564,12 @@ impl Prototype1MonitorCommand {
             Prototype1MonitorSubcommand::HistoryMetrics(command) => {
                 run_metric_slice(&campaign_id, &manifest_path, &command)
             }
+            Prototype1MonitorSubcommand::HistoryScores(command) => {
+                run_score_slice(&campaign_id, &manifest_path, &command)
+            }
+            Prototype1MonitorSubcommand::ScoreSelectionReview(command) => {
+                run_score_selection_review(&campaign_id, &manifest_path, &command)
+            }
             Prototype1MonitorSubcommand::ChildEvidence(command) => {
                 run_child_evidence(&campaign_id, &manifest_path, &command)
             }
@@ -1600,6 +1608,12 @@ impl HistoryCommand {
             HistorySubcommand::Metrics(command) => {
                 run_metric_slice(&campaign_id, &manifest_path, &command)
             }
+            HistorySubcommand::Scores(command) => {
+                run_score_slice(&campaign_id, &manifest_path, &command)
+            }
+            HistorySubcommand::ScoreSelectionReview(command) => {
+                run_score_selection_review(&campaign_id, &manifest_path, &command)
+            }
             HistorySubcommand::Preview(command) => {
                 run_history_preview(&campaign_id, &manifest_path, &command)
             }
@@ -1633,6 +1647,38 @@ fn run_child_evidence(
         campaign_id,
         manifest_path,
         command.format,
+    )
+}
+
+fn run_score_slice(
+    campaign_id: &str,
+    manifest_path: &Path,
+    command: &Prototype1ScoreCommand,
+) -> Result<(), PrepareError> {
+    crate::cli::prototype1_state::score::run(
+        campaign_id,
+        manifest_path,
+        crate::cli::prototype1_state::score::ScoreRequest {
+            rows: command.rows,
+            generation: command.generation,
+            format: command.format,
+        },
+    )
+}
+
+fn run_score_selection_review(
+    campaign_id: &str,
+    manifest_path: &Path,
+    command: &Prototype1ScoreCommand,
+) -> Result<(), PrepareError> {
+    crate::cli::prototype1_state::score::run_selection_review(
+        campaign_id,
+        manifest_path,
+        crate::cli::prototype1_state::score::ScoreSelectionReviewRequest {
+            rows: command.rows,
+            generation: command.generation,
+            format: command.format,
+        },
     )
 }
 
@@ -6305,6 +6351,13 @@ pub(crate) fn prototype1_branch_evaluation_path(
         .join(format!("{branch_id}.json"))
 }
 
+const PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID: &str =
+    "prototype1.branch_evaluation.operational_metrics.v1";
+const PROTOTYPE1_BRANCH_EVALUATOR_ID: &str = "prototype1.branch_evaluation.mechanized";
+const PROTOTYPE1_BRANCH_EVALUATOR_VERSION: &str = "v1";
+const PROTOTYPE1_CLOSURE_EVAL_SET_KIND: &str = "closure_instance_slice";
+const PROTOTYPE1_CLOSURE_EVAL_SET_AUTHORITY: &str = "typed_closure_context";
+
 pub(crate) fn build_prototype1_branch_evaluation_report(
     baseline_campaign_id: &str,
     branch_id: &str,
@@ -6324,6 +6377,9 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
 
     for row in &baseline_state.instances {
         let treatment_row = treatment_by_instance.get(&row.instance_id).copied();
+        let baseline_registration_path = row.artifacts.registration_path.clone();
+        let treatment_registration_path =
+            treatment_row.and_then(|row| row.artifacts.registration_path.clone());
         let baseline_record_path = row.artifacts.record_path.clone();
         let treatment_record_path = treatment_row.and_then(|row| row.artifacts.record_path.clone());
 
@@ -6390,6 +6446,8 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
 
         compared_instances.push(Prototype1ComparedInstanceReport {
             instance_id: row.instance_id.clone(),
+            baseline_registration_path,
+            treatment_registration_path,
             baseline_record_path,
             treatment_record_path,
             baseline_metrics,
@@ -6409,6 +6467,19 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
         baseline_campaign_id: baseline_campaign_id.to_string(),
         branch_id: branch_id.to_string(),
         treatment_campaign_id: treatment_campaign.campaign_id.clone(),
+        evaluation_procedure_id: Some(PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID.to_string()),
+        evaluator_identity: Some(Prototype1EvaluatorIdentity {
+            id: PROTOTYPE1_BRANCH_EVALUATOR_ID.to_string(),
+            version: PROTOTYPE1_BRANCH_EVALUATOR_VERSION.to_string(),
+        }),
+        eval_set_identity: Some(build_prototype1_eval_set_identity(
+            baseline_campaign_id,
+            &treatment_campaign.campaign_id,
+            &treatment_campaign.resolved.eval,
+            baseline_state,
+            treatment_state,
+            &compared_instances,
+        )),
         branch_registry_path: branch_registry_path.to_path_buf(),
         evaluation_artifact_path: evaluation_artifact_path.to_path_buf(),
         treatment_campaign_manifest: treatment_campaign.manifest_path.clone(),
@@ -6417,6 +6488,137 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
         reasons,
         compared_instances,
     })
+}
+
+fn build_prototype1_eval_set_identity(
+    baseline_campaign_id: &str,
+    treatment_campaign_id: &str,
+    eval_policy: &EvalCampaignPolicy,
+    baseline_state: &crate::closure::ClosureState,
+    treatment_state: &crate::closure::ClosureState,
+    compared_instances: &[Prototype1ComparedInstanceReport],
+) -> Prototype1EvalSetIdentity {
+    let instance_ids = compared_instances
+        .iter()
+        .map(|instance| instance.instance_id.clone())
+        .collect::<Vec<_>>();
+    let treatment_instances = treatment_state
+        .instances
+        .iter()
+        .map(|row| row.instance_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let missing_treatment_instance_ids = instance_ids
+        .iter()
+        .filter(|instance_id| !treatment_instances.contains(instance_id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let dataset_sources = baseline_state.config.dataset_sources.clone();
+    let id = prototype1_eval_set_id(
+        baseline_campaign_id,
+        treatment_campaign_id,
+        baseline_state.config.benchmark_family,
+        &dataset_sources,
+        eval_policy,
+        &instance_ids,
+    );
+
+    Prototype1EvalSetIdentity {
+        id,
+        kind: PROTOTYPE1_CLOSURE_EVAL_SET_KIND.to_string(),
+        authority: PROTOTYPE1_CLOSURE_EVAL_SET_AUTHORITY.to_string(),
+        explicit: true,
+        benchmark_family: baseline_state.config.benchmark_family,
+        dataset_sources,
+        eval_policy: eval_policy.clone(),
+        instance_ids,
+        missing_treatment_instance_ids,
+        note: Some(
+            "eval set identity is derived from typed closure/campaign context and the compared baseline closure slice".to_string(),
+        ),
+    }
+}
+
+fn prototype1_eval_set_id(
+    baseline_campaign_id: &str,
+    treatment_campaign_id: &str,
+    benchmark_family: BenchmarkFamily,
+    dataset_sources: &[RegistryDatasetSource],
+    eval_policy: &EvalCampaignPolicy,
+    instance_ids: &[String],
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(PROTOTYPE1_CLOSURE_EVAL_SET_KIND.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(baseline_campaign_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(treatment_campaign_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(prototype1_benchmark_family_id(benchmark_family).as_bytes());
+    hasher.update(b"\0");
+    for source in dataset_sources {
+        if let Some(key) = source.key.as_deref() {
+            hasher.update(key.as_bytes());
+        }
+        hasher.update(b"\0");
+        hasher.update(source.label.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(source.path.display().to_string().as_bytes());
+        hasher.update(b"\0");
+        if let Some(url) = source.url.as_deref() {
+            hasher.update(url.as_bytes());
+        }
+        hasher.update(b"\0");
+    }
+    hasher.update(if eval_policy.include_partial {
+        b"1"
+    } else {
+        b"0"
+    });
+    hasher.update(b"\0");
+    hasher.update(if eval_policy.stop_on_error {
+        b"1"
+    } else {
+        b"0"
+    });
+    hasher.update(b"\0");
+    if let Some(limit) = eval_policy.limit {
+        hasher.update(limit.to_string().as_bytes());
+    }
+    hasher.update(b"\0");
+    for label in &eval_policy.include_dataset_labels {
+        hasher.update(label.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher.update(b"\0");
+    for label in &eval_policy.exclude_dataset_labels {
+        hasher.update(label.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher.update(b"\0");
+    hasher.update(eval_policy.budget.max_turns.to_string().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(eval_policy.budget.max_tool_calls.to_string().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(eval_policy.budget.wall_clock_secs.to_string().as_bytes());
+    hasher.update(b"\0");
+    if let Some(batch_prefix) = eval_policy.batch_prefix.as_deref() {
+        hasher.update(batch_prefix.as_bytes());
+    }
+    hasher.update(b"\0");
+    for instance_id in instance_ids {
+        hasher.update(instance_id.as_bytes());
+        hasher.update(b"\0");
+    }
+    format!(
+        "prototype1.eval_set.closure_instance_slice.v1:{:x}",
+        hasher.finalize()
+    )
+}
+
+fn prototype1_benchmark_family_id(benchmark_family: BenchmarkFamily) -> &'static str {
+    match benchmark_family {
+        BenchmarkFamily::MultiSweBenchRust => "multi_swe_bench_rust",
+    }
 }
 
 fn summarize_prototype1_branch_evaluation(
@@ -7016,6 +7218,12 @@ pub(crate) struct Prototype1BranchEvaluationReport {
     pub(crate) baseline_campaign_id: String,
     pub(crate) branch_id: String,
     pub(crate) treatment_campaign_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) evaluation_procedure_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) evaluator_identity: Option<Prototype1EvaluatorIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) eval_set_identity: Option<Prototype1EvalSetIdentity>,
     pub(crate) branch_registry_path: PathBuf,
     pub(crate) evaluation_artifact_path: PathBuf,
     pub(crate) treatment_campaign_manifest: PathBuf,
@@ -7026,8 +7234,34 @@ pub(crate) struct Prototype1BranchEvaluationReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Prototype1EvaluatorIdentity {
+    pub(crate) id: String,
+    pub(crate) version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Prototype1EvalSetIdentity {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) authority: String,
+    pub(crate) explicit: bool,
+    pub(crate) benchmark_family: BenchmarkFamily,
+    pub(crate) dataset_sources: Vec<RegistryDatasetSource>,
+    pub(crate) eval_policy: EvalCampaignPolicy,
+    pub(crate) instance_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) missing_treatment_instance_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Prototype1ComparedInstanceReport {
     pub(crate) instance_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) baseline_registration_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) treatment_registration_path: Option<PathBuf>,
     pub(crate) baseline_record_path: Option<PathBuf>,
     pub(crate) treatment_record_path: Option<PathBuf>,
     pub(crate) baseline_metrics: Option<OperationalRunMetrics>,
