@@ -47,6 +47,7 @@ pub use result::typed_rows;
 
 pub use result::{CodeSnippet, QueryResult, ResultFormatter};
 pub use type_graph::{
-    TypeContainmentEdge, TypeContainmentKind, TypeRelationKind, TypeTargetPath, TypeUseRole,
+    TypeContainmentEdge, TypeContainmentKind, TypeContextCandidate, TypeContextOptions,
+    TypeContextRelation, TypeContextSeed, TypeRelationKind, TypeTargetPath, TypeUseRole,
     TypeUseRoot,
 };

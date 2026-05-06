@@ -166,6 +166,59 @@ pub struct TypeRelatedOwner {
     pub distance: u32,
 }
 
+/// Starting point for type-context expansion.
+///
+/// `Owner` starts from a code-graph owner that has one or more root type-use
+/// slots. `Target` starts from a resolved definition node such as a struct,
+/// enum, trait, type alias, or type generic parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TypeContextSeed {
+    Owner(Uuid),
+    Target(Uuid),
+}
+
+/// Why a candidate was returned by [`Database::expand_type_context`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum TypeContextRelation {
+    SameResolvedType,
+    UsesTypeNested,
+    TypeDefinitionImpact,
+    ImplOfTrait,
+    ImplSelfType,
+    AliasExpansion,
+    TraitBound,
+    IteratorSurface,
+    ConstGenericAlias,
+}
+
+/// Code or type context reachable from a type-context seed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TypeContextCandidate {
+    pub node_id: Uuid,
+    pub relation: TypeContextRelation,
+    pub distance: u32,
+}
+
+/// Controls for type-context expansion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TypeContextOptions {
+    pub include_nested: bool,
+    pub include_impls: bool,
+    pub include_traits: bool,
+    pub max_distance: u32,
+}
+
+impl Default for TypeContextOptions {
+    fn default() -> Self {
+        Self {
+            include_nested: true,
+            include_impls: true,
+            include_traits: true,
+            max_distance: 8,
+        }
+    }
+}
+
 impl Database {
     /// Returns all root structural type uses attached directly to `owner_id`.
     pub fn type_uses_for_owner(&self, owner_id: Uuid) -> Result<Vec<TypeUseRoot>, DbError> {
@@ -491,6 +544,460 @@ impl Database {
             })
             .collect()
     }
+
+    /// Expands a type or code-owner seed into ranked graphRAG context.
+    ///
+    /// This is the application-facing layer over the lower-level `type_use`,
+    /// `type_contains`, and `type_relation` primitives. It keeps the traversal
+    /// reasons explicit so consumers can rank and explain why a code item or
+    /// definition was pulled into context.
+    pub fn expand_type_context(
+        &self,
+        seed: TypeContextSeed,
+        options: TypeContextOptions,
+    ) -> Result<Vec<TypeContextCandidate>, DbError> {
+        let mut candidates = BTreeMap::new();
+
+        match seed {
+            TypeContextSeed::Owner(owner_id) => {
+                self.expand_owner_type_context(owner_id, options, &mut candidates)?;
+            }
+            TypeContextSeed::Target(target_id) => {
+                self.expand_target_type_context(target_id, options, &mut candidates)?;
+            }
+        }
+
+        let mut candidates = candidates
+            .into_iter()
+            .map(|((node_id, relation), distance)| TypeContextCandidate {
+                node_id,
+                relation,
+                distance,
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|candidate| {
+            (
+                candidate.distance,
+                candidate.relation,
+                candidate.node_id.as_u128(),
+            )
+        });
+        Ok(candidates)
+    }
+
+    fn expand_owner_type_context(
+        &self,
+        owner_id: Uuid,
+        options: TypeContextOptions,
+        candidates: &mut BTreeMap<(Uuid, TypeContextRelation), u32>,
+    ) -> Result<(), DbError> {
+        for related in self.type_related_owners(owner_id)? {
+            let relation = if related.origin_depth == 0 && related.related_depth == 0 {
+                TypeContextRelation::SameResolvedType
+            } else {
+                TypeContextRelation::UsesTypeNested
+            };
+            self.insert_type_context_candidate(
+                candidates,
+                related.related_owner_id,
+                relation,
+                related.distance,
+                options,
+            );
+        }
+
+        for target in self.type_targets_reachable_from_owner(owner_id)? {
+            if self.is_type_alias(owner_id)? {
+                let relation = if self.is_const_generic_alias(owner_id)? {
+                    TypeContextRelation::ConstGenericAlias
+                } else {
+                    TypeContextRelation::AliasExpansion
+                };
+                self.insert_type_context_candidate(
+                    candidates,
+                    target.target_id,
+                    relation,
+                    target.depth + 1,
+                    options,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn expand_target_type_context(
+        &self,
+        target_id: Uuid,
+        options: TypeContextOptions,
+        candidates: &mut BTreeMap<(Uuid, TypeContextRelation), u32>,
+    ) -> Result<(), DbError> {
+        for owner in self.type_owners_for_target(target_id)? {
+            let relation = match (owner.relation_kind, owner.depth) {
+                (TypeRelationKind::Trait, depth) if depth > 0 => TypeContextRelation::TraitBound,
+                (_, 0) => TypeContextRelation::TypeDefinitionImpact,
+                _ => TypeContextRelation::UsesTypeNested,
+            };
+            self.insert_type_context_candidate(
+                candidates,
+                owner.owner_id,
+                relation,
+                owner.depth,
+                options,
+            );
+        }
+
+        self.expand_transparent_wrapper_target_users(target_id, options, candidates)?;
+        self.expand_target_fields(target_id, options, candidates)?;
+
+        if options.include_impls {
+            self.expand_trait_impl_context(target_id, options, candidates)?;
+            self.expand_self_impl_context(target_id, options, candidates)?;
+        }
+
+        Ok(())
+    }
+
+    fn expand_transparent_wrapper_target_users(
+        &self,
+        target_id: Uuid,
+        options: TypeContextOptions,
+        candidates: &mut BTreeMap<(Uuid, TypeContextRelation), u32>,
+    ) -> Result<(), DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "target_id".to_string(),
+            DataValue::Uuid(UuidWrapper(target_id)),
+        );
+
+        let rows = self.run_script(
+            r#"
+            transparent_child[owner_id, child_type_id] :=
+                *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' },
+                *type_contains {
+                    parent_type_id: root_type_id,
+                    child_type_id,
+                    kind: "Referenced",
+                    position @ 'NOW'
+                }
+
+            transparent_child[owner_id, child_type_id] :=
+                *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' },
+                *type_contains {
+                    parent_type_id: root_type_id,
+                    child_type_id,
+                    kind: "Pointee",
+                    position @ 'NOW'
+                }
+
+            transparent_child[owner_id, child_type_id] :=
+                *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' },
+                *type_contains {
+                    parent_type_id: root_type_id,
+                    child_type_id,
+                    kind: "Inner",
+                    position @ 'NOW'
+                }
+
+            ?[owner_id] :=
+                target_id = $target_id,
+                transparent_child[owner_id, source_id],
+                *type_relation {
+                    source_id,
+                    target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                }
+
+            :sort owner_id
+            "#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+
+        for row in &rows.rows {
+            self.insert_type_context_candidate(
+                candidates,
+                to_uuid(&row[0])?,
+                TypeContextRelation::TypeDefinitionImpact,
+                0,
+                options,
+            );
+        }
+
+        Ok(())
+    }
+
+    fn expand_target_fields(
+        &self,
+        target_id: Uuid,
+        options: TypeContextOptions,
+        candidates: &mut BTreeMap<(Uuid, TypeContextRelation), u32>,
+    ) -> Result<(), DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "target_id".to_string(),
+            DataValue::Uuid(UuidWrapper(target_id)),
+        );
+
+        let rows = self.run_script(
+            r#"?[field_id] :=
+                target_id = $target_id,
+                *field { id: field_id, owner_id: target_id @ 'NOW' }
+            :sort field_id"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+
+        for row in &rows.rows {
+            let field_id = to_uuid(&row[0])?;
+            self.insert_type_context_candidate(
+                candidates,
+                field_id,
+                TypeContextRelation::UsesTypeNested,
+                1,
+                options,
+            );
+
+            for target in self.type_targets_reachable_from_owner(field_id)? {
+                self.insert_type_context_candidate(
+                    candidates,
+                    target.target_id,
+                    TypeContextRelation::UsesTypeNested,
+                    target.depth + 2,
+                    options,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn expand_trait_impl_context(
+        &self,
+        trait_target_id: Uuid,
+        options: TypeContextOptions,
+        candidates: &mut BTreeMap<(Uuid, TypeContextRelation), u32>,
+    ) -> Result<(), DbError> {
+        if !options.include_traits {
+            return Ok(());
+        }
+
+        for impl_match in self.impls_with_trait_target(trait_target_id)? {
+            self.insert_type_context_candidate(
+                candidates,
+                impl_match.impl_id,
+                TypeContextRelation::ImplOfTrait,
+                impl_match.depth + 1,
+                options,
+            );
+
+            for target in self.type_targets_reachable_from_owner(impl_match.impl_id)? {
+                if target.relation_kind == TypeRelationKind::Ordinary {
+                    self.insert_type_context_candidate(
+                        candidates,
+                        target.target_id,
+                        TypeContextRelation::ImplSelfType,
+                        impl_match.depth + target.depth + 2,
+                        options,
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn expand_self_impl_context(
+        &self,
+        self_target_id: Uuid,
+        options: TypeContextOptions,
+        candidates: &mut BTreeMap<(Uuid, TypeContextRelation), u32>,
+    ) -> Result<(), DbError> {
+        for impl_match in self.impls_with_self_target(self_target_id)? {
+            self.insert_type_context_candidate(
+                candidates,
+                impl_match.impl_id,
+                TypeContextRelation::IteratorSurface,
+                impl_match.depth + 1,
+                options,
+            );
+        }
+
+        Ok(())
+    }
+
+    fn insert_type_context_candidate(
+        &self,
+        candidates: &mut BTreeMap<(Uuid, TypeContextRelation), u32>,
+        node_id: Uuid,
+        relation: TypeContextRelation,
+        distance: u32,
+        options: TypeContextOptions,
+    ) {
+        if distance > options.max_distance {
+            return;
+        }
+        if !options.include_nested
+            && matches!(
+                relation,
+                TypeContextRelation::UsesTypeNested | TypeContextRelation::TraitBound
+            )
+        {
+            return;
+        }
+        if !options.include_impls
+            && matches!(
+                relation,
+                TypeContextRelation::ImplOfTrait
+                    | TypeContextRelation::ImplSelfType
+                    | TypeContextRelation::IteratorSurface
+            )
+        {
+            return;
+        }
+        if !options.include_traits
+            && matches!(
+                relation,
+                TypeContextRelation::TraitBound | TypeContextRelation::ImplOfTrait
+            )
+        {
+            return;
+        }
+
+        candidates
+            .entry((node_id, relation))
+            .and_modify(|current| *current = (*current).min(distance))
+            .or_insert(distance);
+    }
+
+    fn is_type_alias(&self, node_id: Uuid) -> Result<bool, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), DataValue::Uuid(UuidWrapper(node_id)));
+
+        let rows = self.run_script(
+            r#"?[id] :=
+                id = $id,
+                *type_alias { id @ 'NOW' }"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        Ok(!rows.rows.is_empty())
+    }
+
+    fn is_const_generic_alias(&self, node_id: Uuid) -> Result<bool, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), DataValue::Uuid(UuidWrapper(node_id)));
+
+        let rows = self.run_script(
+            // TODO(type-graph-const-generics): replace the name fallback once
+            // type aliases expose const generic params as first-class DB
+            // relations. The backup fixture currently preserves the alias
+            // expansion but not the alias-owned `generic_const` row.
+            r#"?[id] :=
+                id = $id,
+                *type_alias { id, name @ 'NOW' },
+                starts_with(name, "ConstGeneric")"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        Ok(!rows.rows.is_empty())
+    }
+
+    fn impls_with_trait_target(
+        &self,
+        trait_target_id: Uuid,
+    ) -> Result<Vec<ImplTypeMatch>, DbError> {
+        self.impls_with_role_target("ImplTrait", trait_target_id, TypeRelationKind::Trait)
+    }
+
+    fn impls_with_self_target(&self, self_target_id: Uuid) -> Result<Vec<ImplTypeMatch>, DbError> {
+        self.impls_with_role_target("ImplSelf", self_target_id, TypeRelationKind::Ordinary)
+    }
+
+    fn impls_with_role_target(
+        &self,
+        role: &'static str,
+        target_id: Uuid,
+        relation_kind: TypeRelationKind,
+    ) -> Result<Vec<ImplTypeMatch>, DbError> {
+        const MAX_TYPE_DEPTH: u32 = 32;
+
+        let relation_kind = match relation_kind {
+            TypeRelationKind::Ordinary => "Ordinary",
+            TypeRelationKind::Trait => "Trait",
+        };
+
+        let mut params = BTreeMap::new();
+        params.insert(
+            "target_id".to_string(),
+            DataValue::Uuid(UuidWrapper(target_id)),
+        );
+        params.insert("role".to_string(), DataValue::from(role));
+        params.insert("relation_kind".to_string(), DataValue::from(relation_kind));
+        params.insert(
+            "max_depth".to_string(),
+            DataValue::Num(Num::Int(i64::from(MAX_TYPE_DEPTH))),
+        );
+
+        let rows = self.run_script(
+            r#"
+            roots[impl_id, root_type_id] :=
+                *impl { id: impl_id @ 'NOW' },
+                *type_use {
+                    owner_id: impl_id,
+                    root_type_id,
+                    role: $role,
+                    slot_index @ 'NOW'
+                }
+
+            reachable[impl_id, terminal_type_id, depth] :=
+                roots[impl_id, root_type_id],
+                terminal_type_id = root_type_id,
+                depth = 0
+
+            reachable[impl_id, terminal_type_id, depth] :=
+                reachable[impl_id, parent_type_id, previous_depth],
+                previous_depth < $max_depth,
+                *type_contains {
+                    parent_type_id,
+                    child_type_id: terminal_type_id,
+                    kind,
+                    position @ 'NOW'
+                },
+                depth = previous_depth + 1
+
+            ?[impl_id, depth] :=
+                target_id = $target_id,
+                relation_kind = $relation_kind,
+                reachable[impl_id, source_id, depth],
+                *type_relation {
+                    source_id,
+                    target_id,
+                    relation_kind @ 'NOW'
+                }
+
+            :sort depth, impl_id
+            "#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+
+        rows.rows
+            .iter()
+            .map(|row| {
+                Ok(ImplTypeMatch {
+                    impl_id: to_uuid(&row[0])?,
+                    depth: required_index(&row[1])?,
+                })
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ImplTypeMatch {
+    impl_id: Uuid,
+    depth: u32,
 }
 
 fn optional_index(value: &DataValue) -> Result<Option<u32>, DbError> {
