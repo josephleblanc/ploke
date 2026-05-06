@@ -4,6 +4,10 @@
 //! not sealed History entries and do not strengthen the authority of mutable
 //! scheduler, registry, or node-local files. Each row keeps source refs so the
 //! derived numbers can be traced back to the evidence used to compute them.
+//!
+//! Child/runtime/result/evaluation facts consumed here come from typed
+//! `Stored<T>` records through `history_preview::FsEvidenceStore`, not loose
+//! `Document` JSON, degraded value parsing, or path/filename recovery.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,13 +15,22 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::cli::{InspectOutputFormat, MetricSlice};
+use crate::intervention::{
+    Prototype1BranchRegistry, Prototype1NodeStatus, Prototype1RunnerDisposition,
+    TreatmentBranchStatus,
+};
+use crate::record::SubmissionArtifactState;
 use crate::spec::PrepareError;
+use crate::{OperationalRunMetrics, PatchApplyState};
 
-use super::evidence::{ChildEvidenceSet, EvidenceSource};
-use super::history_preview::{EvidenceClass, EvidenceStore, FsEvidenceStore};
+use super::evidence::{
+    ChildEvidenceRecords, ChildEvidenceSet, ComparedRunEvidence, EvidenceSource,
+};
+use super::history_preview::{
+    EvidenceClass, EvidenceStore, FsEvidenceStore, SelectionPreviewRecords,
+};
 use super::journal::JournalEntry;
 
 const SCHEMA_VERSION: &str = "prototype1-metrics-projection.v1";
@@ -73,43 +86,22 @@ pub(crate) fn run(
 
 pub(crate) fn build(campaign_id: &str, manifest_path: &Path) -> Result<Dashboard, String> {
     let store = FsEvidenceStore::new(manifest_path);
-    let child_evidence = store
-        .child_evidence()
-        .map_err(|source| source.to_string())?;
-    let documents = store.documents().map_err(|source| source.to_string())?;
-    let journal = store
-        .transition_journal()
+    let child_records = store.child_records().map_err(|source| source.to_string())?;
+    let child_evidence = ChildEvidenceSet::from_records(&child_records);
+    let selection_records = store
+        .preview_selection_records()
         .map_err(|source| source.to_string())?;
 
     let mut state = Assembly::default();
     state.apply_child_evidence(&child_evidence);
-    for stored in &journal {
+    state.apply_child_records(&child_records);
+    for stored in &child_records.journal {
         state.apply_journal(
             stored.item(),
             SourceRef::from_pointer(EvidenceClass::TransitionJournal.as_str(), stored.pointer()),
         );
     }
-    for document in &documents {
-        let Some(value) = document.value().filter(|value| value.is_object()) else {
-            continue;
-        };
-        let source = SourceRef::from_document(document);
-        match document.class() {
-            EvidenceClass::NodeRecord => state.apply_node(value, source),
-            EvidenceClass::RunnerRequest => state.apply_request(value, source),
-            EvidenceClass::Invocation => state.apply_invocation(value, document.path(), source),
-            EvidenceClass::AttemptResult | EvidenceClass::RunnerResult => {
-                state.apply_result(value, document.path(), document.class(), source)
-            }
-            EvidenceClass::Evaluation => state.apply_evaluation(value, source),
-            EvidenceClass::Scheduler | EvidenceClass::BranchRegistry => {
-                state.apply_selection_projection(value, source)
-            }
-            EvidenceClass::SuccessorReady
-            | EvidenceClass::SuccessorCompletion
-            | EvidenceClass::TransitionJournal => {}
-        }
-    }
+    state.apply_preview_selection_records(&selection_records);
 
     Ok(state.finish(campaign_id, manifest_path))
 }
@@ -1070,15 +1062,6 @@ impl SourceRef {
         }
     }
 
-    fn from_document(document: &super::history_preview::Document) -> Self {
-        Self {
-            class: document.class().as_str(),
-            ref_id: document.pointer().ref_id().to_string(),
-            path: document.pointer().path().to_path_buf(),
-            hash: document.pointer().hash().as_str().to_string(),
-        }
-    }
-
     fn from_evidence(source: &EvidenceSource) -> Self {
         Self {
             class: source.class.as_str(),
@@ -1132,7 +1115,6 @@ struct Assembly {
     rows: BTreeMap<String, Row>,
     branch_to_node: BTreeMap<String, String>,
     ambiguous_branches: BTreeSet<String>,
-    evaluations: BTreeMap<String, (Totals, String, SourceRef, Option<String>)>,
     selected_branches: BTreeMap<String, Vec<SelectionSource>>,
     child_evidence: Option<EvidenceProjection>,
     diagnostics: Vec<String>,
@@ -1200,6 +1182,8 @@ impl Assembly {
                     }
                 }
                 for evaluation in &child.evaluations {
+                    let totals = totals_from_compared(&evaluation.compared);
+                    row.apply_metrics(&totals);
                     row.evaluation_ref = row
                         .evaluation_ref
                         .clone()
@@ -1233,6 +1217,115 @@ impl Assembly {
         }
     }
 
+    fn apply_child_records(&mut self, records: &ChildEvidenceRecords) {
+        for stored in &records.nodes {
+            let record = stored.item();
+            let source =
+                SourceRef::from_pointer(EvidenceClass::NodeRecord.as_str(), stored.pointer());
+            {
+                let row = self.row(&record.node_id);
+                row.generation = row.generation.or(Some(record.generation));
+                row.parent_node_id = row
+                    .parent_node_id
+                    .clone()
+                    .or_else(|| record.parent_node_id.clone());
+                row.branch_id = row
+                    .branch_id
+                    .clone()
+                    .or_else(|| Some(record.branch_id.clone()));
+                row.status = row
+                    .status
+                    .clone()
+                    .or_else(|| Some(status_text(record.status).to_string()));
+                row.source(source);
+            }
+            self.index_branch(&record.node_id);
+        }
+
+        for stored in &records.runner_requests {
+            let record = stored.item();
+            let source =
+                SourceRef::from_pointer(EvidenceClass::RunnerRequest.as_str(), stored.pointer());
+            {
+                let row = self.row(&record.node_id);
+                row.generation = row.generation.or(Some(record.generation));
+                row.branch_id = row
+                    .branch_id
+                    .clone()
+                    .or_else(|| Some(record.branch_id.clone()));
+                row.role = "child".to_string();
+                row.source(source);
+            }
+            self.index_branch(&record.node_id);
+        }
+
+        for stored in &records.runner_results {
+            let record = stored.item();
+            let source =
+                SourceRef::from_pointer(EvidenceClass::RunnerResult.as_str(), stored.pointer());
+            {
+                let row = self.row(&record.node_id);
+                row.generation = row.generation.or(Some(record.generation));
+                row.branch_id = row
+                    .branch_id
+                    .clone()
+                    .or_else(|| Some(record.branch_id.clone()));
+                row.status = row
+                    .status
+                    .clone()
+                    .or_else(|| Some(status_text(record.status).to_string()));
+                row.disposition = row
+                    .disposition
+                    .clone()
+                    .or_else(|| Some(disposition_text(record.disposition).to_string()));
+                row.evaluation_ref = row.evaluation_ref.clone().or_else(|| {
+                    record
+                        .evaluation_artifact_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                });
+                row.role = "child".to_string();
+                row.source(source);
+            }
+            self.index_branch(&record.node_id);
+        }
+
+        for stored in &records.attempt_results {
+            let record = stored.item();
+            let source =
+                SourceRef::from_pointer(EvidenceClass::AttemptResult.as_str(), stored.pointer());
+            {
+                let row = self.row(&record.node_id);
+                row.generation = row.generation.or(Some(record.generation));
+                row.branch_id = row
+                    .branch_id
+                    .clone()
+                    .or_else(|| Some(record.branch_id.clone()));
+                row.status = row
+                    .status
+                    .clone()
+                    .or_else(|| Some(status_text(record.status).to_string()));
+                row.disposition = row
+                    .disposition
+                    .clone()
+                    .or_else(|| Some(disposition_text(record.disposition).to_string()));
+                row.evaluation_ref = row.evaluation_ref.clone().or_else(|| {
+                    record
+                        .evaluation_artifact_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                });
+                row.result_ref = row
+                    .result_ref
+                    .clone()
+                    .or_else(|| Some(source.ref_id.clone()));
+                row.role = "child".to_string();
+                row.source(source);
+            }
+            self.index_branch(&record.node_id);
+        }
+    }
+
     fn apply_journal(&mut self, entry: &JournalEntry, source: SourceRef) {
         if let JournalEntry::Successor(record) = entry {
             if let super::successor::State::Selected { decision, .. } = &record.state {
@@ -1253,143 +1346,49 @@ impl Assembly {
         }
     }
 
-    fn apply_node(&mut self, value: &Value, source: SourceRef) {
-        let node_id = node_id(value).unwrap_or_else(|| fallback_node_id(&source.path));
-        let row = self.row(&node_id);
-        row.generation = row.generation.or_else(|| u32_field(value, "generation"));
-        row.parent_node_id = row
-            .parent_node_id
-            .clone()
-            .or_else(|| string_field(value, "parent_node_id"));
-        row.branch_id = row
-            .branch_id
-            .clone()
-            .or_else(|| string_field(value, "branch_id"));
-        row.status = row.status.clone().or_else(|| string_field(value, "status"));
-        row.source(source);
-        self.index_branch(&node_id);
-    }
-
-    fn apply_request(&mut self, value: &Value, source: SourceRef) {
-        let node_id = node_id(value).unwrap_or_else(|| fallback_node_id(&source.path));
-        let row = self.row(&node_id);
-        row.generation = row.generation.or_else(|| u32_field(value, "generation"));
-        row.branch_id = row
-            .branch_id
-            .clone()
-            .or_else(|| string_field(value, "branch_id"));
-        row.role = "child".to_string();
-        row.source(source);
-        self.index_branch(&node_id);
-    }
-
-    fn apply_invocation(&mut self, value: &Value, path: &Path, source: SourceRef) {
-        let node_id = node_id(value).unwrap_or_else(|| fallback_node_id(path));
-        let row = self.row(&node_id);
-        row.runtime_id = row
-            .runtime_id
-            .clone()
-            .or_else(|| string_field(value, "runtime_id"))
-            .or_else(|| file_stem(path));
-        row.role = string_field(value, "role").unwrap_or_else(|| row.role.clone());
-        row.source(source);
-    }
-
-    fn apply_result(
-        &mut self,
-        value: &Value,
-        path: &Path,
-        class: EvidenceClass,
-        source: SourceRef,
-    ) {
-        let node_id = node_id(value).unwrap_or_else(|| fallback_node_id(path));
-        let row = self.row(&node_id);
-        row.generation = row.generation.or_else(|| u32_field(value, "generation"));
-        row.branch_id = row
-            .branch_id
-            .clone()
-            .or_else(|| string_field(value, "branch_id"));
-        row.runtime_id = row.runtime_id.clone().or_else(|| file_stem(path));
-        row.status = row.status.clone().or_else(|| string_field(value, "status"));
-        row.disposition = row
-            .disposition
-            .clone()
-            .or_else(|| string_field(value, "disposition"));
-        row.evaluation_ref = row
-            .evaluation_ref
-            .clone()
-            .or_else(|| string_field(value, "evaluation_artifact_path"));
-        if class == EvidenceClass::AttemptResult {
-            row.result_ref = Some(source.ref_id.clone());
+    fn apply_preview_selection_records(&mut self, records: &SelectionPreviewRecords) {
+        if let Some(stored) = records.scheduler.as_ref() {
+            let source =
+                SourceRef::from_pointer(EvidenceClass::Scheduler.as_str(), stored.pointer());
+            if let Some(branch_id) = stored
+                .item()
+                .last_continuation_decision
+                .as_ref()
+                .and_then(|decision| decision.selected_next_branch_id.as_deref())
+                .filter(|branch_id| !branch_id.is_empty())
+            {
+                self.apply_preview_selection(branch_id, source);
+            }
         }
-        row.role = "child".to_string();
-        row.source(source);
-        self.index_branch(&node_id);
+
+        if let Some(stored) = records.branch_registry.as_ref() {
+            let source =
+                SourceRef::from_pointer(EvidenceClass::BranchRegistry.as_str(), stored.pointer());
+            for branch_id in selected_registry_branches(stored.item()) {
+                self.apply_preview_selection(&branch_id, source.clone());
+            }
+        }
     }
 
-    fn apply_evaluation(&mut self, value: &Value, source: SourceRef) {
-        let branch_id = string_field(value, "branch_id").unwrap_or_else(|| {
-            source
-                .path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or("unknown")
-                .to_string()
-        });
-        let disposition = string_field(value, "overall_disposition");
-        let totals = totals(value);
-        self.evaluations.insert(
-            branch_id.clone(),
-            (
-                totals,
-                source.ref_id.clone(),
-                source.clone(),
-                disposition.clone(),
-            ),
+    fn apply_preview_selection(&mut self, branch_id: &str, source: SourceRef) {
+        self.record_selection(
+            branch_id,
+            SelectionSource {
+                authority: "mutable_projection",
+                source: source.clone(),
+            },
         );
-        if self.ambiguous_branches.contains(&branch_id) {
+        if self.ambiguous_branches.contains(branch_id) {
             self.diagnostics.push(format!(
-                "evaluation source {} kept unattached: branch '{branch_id}' is ambiguous across child nodes",
-                source.ref_id
-            ));
-            return;
-        }
-        if let Some(node_id) = self.branch_to_node.get(&branch_id).cloned() {
-            self.apply_evaluation_to_node(&node_id, &branch_id);
-        }
-    }
-
-    fn apply_selection_projection(&mut self, value: &Value, source: SourceRef) {
-        let mut selected = BTreeSet::new();
-        collect_selected_branches(value, &mut selected);
-        for branch_id in selected {
-            self.record_selection(
-                &branch_id,
-                SelectionSource {
-                    authority: "mutable_projection",
-                    source: source.clone(),
-                },
-            );
-            if self.ambiguous_branches.contains(&branch_id) {
-                self.diagnostics.push(format!(
-                    "selection source {} kept unattached: branch '{branch_id}' is ambiguous across child nodes",
+                    "preview selection source {} kept unattached: branch '{branch_id}' is ambiguous across child nodes",
                     source.ref_id
                 ));
-                continue;
-            }
-            if let Some(node_id) = self.branch_to_node.get(&branch_id).cloned() {
-                self.row(&node_id).source(source.clone());
-            }
+        } else if let Some(node_id) = self.branch_to_node.get(branch_id).cloned() {
+            self.row(&node_id).source(source.clone());
         }
     }
 
     fn finish(mut self, campaign_id: &str, manifest_path: &Path) -> Dashboard {
-        let branch_ids = self.branch_to_node.keys().cloned().collect::<Vec<_>>();
-        for branch_id in branch_ids {
-            if let Some(node_id) = self.branch_to_node.get(&branch_id).cloned() {
-                self.apply_evaluation_to_node(&node_id, &branch_id);
-            }
-        }
         for (branch_id, selections) in self.selected_branches.clone() {
             if let Some(node_id) = self.branch_to_node.get(&branch_id).cloned() {
                 let row = self.row(&node_id);
@@ -1435,21 +1434,6 @@ impl Assembly {
                 .unwrap_or_else(EvidenceProjection::empty),
             diagnostics: self.diagnostics,
         }
-    }
-
-    fn apply_evaluation_to_node(&mut self, node_id: &str, branch_id: &str) {
-        let Some((totals, eval_ref, source, disposition)) =
-            self.evaluations.get(branch_id).cloned()
-        else {
-            return;
-        };
-        let row = self.row(node_id);
-        row.apply_metrics(&totals);
-        row.evaluation_ref = Some(eval_ref);
-        if let Some(disposition) = disposition {
-            row.disposition = Some(disposition);
-        }
-        row.source(source);
     }
 
     fn row(&mut self, node_id: &str) -> &mut Row {
@@ -1984,107 +1968,87 @@ fn print_rows(rows: &[Row]) {
     }
 }
 
-fn totals(value: &Value) -> Totals {
+fn totals_from_compared(compared: &[ComparedRunEvidence]) -> Totals {
     let mut totals = Totals::default();
-    let Some(instances) = value.get("compared_instances").and_then(Value::as_array) else {
-        return totals;
-    };
-    totals.compared_instances = instances.len();
-    for instance in instances {
-        let Some(metrics) = instance.get("treatment_metrics") else {
+    totals.compared_instances = compared.len();
+    for instance in compared {
+        let Some(metrics) = instance.treatment_metrics.as_ref() else {
             continue;
         };
-        if bool_field(metrics, "oracle_eligible") {
-            totals.oracle_eligible_instances += 1;
-        }
-        if bool_field(metrics, "convergence") {
-            totals.converged_instances += 1;
-        }
-        if matches_text(
-            string_field(metrics, "submission_artifact_state").as_deref(),
-            "nonempty",
-        ) {
-            totals.nonempty_submission_instances += 1;
-        }
-        if matches_text(
-            string_field(metrics, "patch_apply_state").as_deref(),
-            "applied",
-        ) {
-            totals.applied_patch_instances += 1;
-        }
-        if matches_text(
-            string_field(metrics, "patch_apply_state").as_deref(),
-            "partial",
-        ) {
-            totals.partial_patch_instances += 1;
-        }
-        if matches_text(string_field(metrics, "patch_apply_state").as_deref(), "no") {
-            totals.no_patch_instances += 1;
-        }
-        if bool_field(metrics, "patch_attempted") {
-            totals.patch_attempted_instances += 1;
-        }
-        if bool_field(metrics, "nonempty_valid_patch") {
-            totals.nonempty_valid_patch_instances += 1;
-        }
-        if matches_text(
-            string_field(metrics, "submission_artifact_state").as_deref(),
-            "missing",
-        ) {
-            totals.missing_submission_instances += 1;
-        }
-        if matches_text(
-            string_field(metrics, "submission_artifact_state").as_deref(),
-            "empty",
-        ) {
-            totals.empty_submission_instances += 1;
-        }
-        totals.partial_patch_failures +=
-            usize_field(metrics, "partial_patch_failures").unwrap_or_default();
-        totals.same_file_patch_retries +=
-            usize_field(metrics, "same_file_patch_retry_count").unwrap_or_default();
-        totals.same_file_patch_max_streak = totals
-            .same_file_patch_max_streak
-            .max(usize_field(metrics, "same_file_patch_max_streak").unwrap_or_default());
-        if bool_field(metrics, "aborted") {
-            totals.aborted_instances += 1;
-        }
-        if bool_field(metrics, "aborted_repair_loop") {
-            totals.aborted_repair_loop_instances += 1;
-        }
-        totals.total_tool_calls += usize_field(metrics, "tool_calls_total").unwrap_or_default();
-        totals.failed_tool_calls += usize_field(metrics, "tool_calls_failed").unwrap_or_default();
+        add_metrics(metrics, &mut totals);
     }
     totals
 }
 
-fn collect_selected_branches(value: &Value, selected: &mut BTreeSet<String>) {
-    match value {
-        Value::Object(map) => {
-            if let Some(branch_id) = map.get("selected_next_branch_id").and_then(Value::as_str) {
-                selected.insert(branch_id.to_string());
-            }
-            if map
-                .get("status")
-                .and_then(Value::as_str)
-                .map(|status| matches_text(Some(status), "selected"))
-                .unwrap_or(false)
-            {
-                if let Some(branch_id) = map.get("branch_id").and_then(Value::as_str) {
-                    selected.insert(branch_id.to_string());
-                }
-            }
-            for value in map.values() {
-                collect_selected_branches(value, selected);
-            }
-        }
-        Value::Array(values) => {
-            for value in values {
-                collect_selected_branches(value, selected);
-            }
-        }
-        _ => {}
+fn add_metrics(metrics: &OperationalRunMetrics, totals: &mut Totals) {
+    if metrics.oracle_eligible {
+        totals.oracle_eligible_instances += 1;
     }
+    if metrics.convergence {
+        totals.converged_instances += 1;
+    }
+    if metrics.submission_artifact_state == SubmissionArtifactState::Nonempty {
+        totals.nonempty_submission_instances += 1;
+    }
+    match metrics.patch_apply_state {
+        PatchApplyState::Applied => totals.applied_patch_instances += 1,
+        PatchApplyState::Partial => totals.partial_patch_instances += 1,
+        PatchApplyState::No => totals.no_patch_instances += 1,
+    }
+    if metrics.patch_attempted {
+        totals.patch_attempted_instances += 1;
+    }
+    if metrics.nonempty_valid_patch {
+        totals.nonempty_valid_patch_instances += 1;
+    }
+    match metrics.submission_artifact_state {
+        SubmissionArtifactState::Missing => totals.missing_submission_instances += 1,
+        SubmissionArtifactState::Empty => totals.empty_submission_instances += 1,
+        SubmissionArtifactState::NotRecorded
+        | SubmissionArtifactState::NotApplicable
+        | SubmissionArtifactState::Nonempty => {}
+    }
+    totals.partial_patch_failures += metrics.partial_patch_failures;
+    totals.same_file_patch_retries += metrics.same_file_patch_retry_count;
+    totals.same_file_patch_max_streak = totals
+        .same_file_patch_max_streak
+        .max(metrics.same_file_patch_max_streak);
+    if metrics.aborted {
+        totals.aborted_instances += 1;
+    }
+    if metrics.aborted_repair_loop {
+        totals.aborted_repair_loop_instances += 1;
+    }
+    totals.total_tool_calls += metrics.tool_calls_total;
+    totals.failed_tool_calls += metrics.tool_calls_failed;
+}
+
+fn selected_registry_branches(registry: &Prototype1BranchRegistry) -> BTreeSet<String> {
+    let mut selected = BTreeSet::new();
+    for source in &registry.source_nodes {
+        if let Some(branch_id) = source
+            .selected_branch_id
+            .as_deref()
+            .filter(|branch_id| !branch_id.is_empty())
+        {
+            selected.insert(branch_id.to_string());
+        }
+        for branch in &source.branches {
+            if branch.status == TreatmentBranchStatus::Selected && !branch.branch_id.is_empty() {
+                selected.insert(branch.branch_id.clone());
+            }
+        }
+    }
+    for target in &registry.active_targets {
+        if let Some(branch_id) = target
+            .active_branch_id
+            .as_deref()
+            .filter(|branch_id| !branch_id.is_empty())
+        {
+            selected.insert(branch_id.to_string());
+        }
+    }
+    selected
 }
 
 fn strongest_selection_authority(sources: &[SelectionSource]) -> Option<&'static str> {
@@ -2128,61 +2092,29 @@ fn generation_matches(row_generation: Option<u32>, filter: Option<u32>) -> bool 
         .unwrap_or(true)
 }
 
-fn node_id(value: &Value) -> Option<String> {
-    string_field(value, "node_id")
-}
-
-fn string_field(value: &Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn bool_field(value: &Value, key: &str) -> bool {
-    value.get(key).and_then(Value::as_bool).unwrap_or(false)
-}
-
-fn u32_field(value: &Value, key: &str) -> Option<u32> {
-    value
-        .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-}
-
-fn usize_field(value: &Value, key: &str) -> Option<usize> {
-    value
-        .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-}
-
 fn matches_text(value: Option<&str>, expected: &str) -> bool {
     value
         .map(|value| value.eq_ignore_ascii_case(expected))
         .unwrap_or(false)
 }
 
-fn fallback_node_id(path: &Path) -> String {
-    let mut previous_was_nodes = false;
-    for component in path.components() {
-        let Some(text) = component.as_os_str().to_str() else {
-            continue;
-        };
-        if previous_was_nodes {
-            return text.to_string();
-        }
-        previous_was_nodes = text == "nodes";
+fn status_text(status: Prototype1NodeStatus) -> &'static str {
+    match status {
+        Prototype1NodeStatus::Planned => "planned",
+        Prototype1NodeStatus::WorkspaceStaged => "workspace_staged",
+        Prototype1NodeStatus::BinaryBuilt => "binary_built",
+        Prototype1NodeStatus::Running => "running",
+        Prototype1NodeStatus::Succeeded => "succeeded",
+        Prototype1NodeStatus::Failed => "failed",
     }
-    file_stem(path).unwrap_or_else(|| "unknown".to_string())
 }
 
-fn file_stem(path: &Path) -> Option<String> {
-    path.file_stem()
-        .and_then(|stem| stem.to_str())
-        .filter(|stem| !stem.is_empty())
-        .map(ToOwned::to_owned)
+fn disposition_text(disposition: Prototype1RunnerDisposition) -> &'static str {
+    match disposition {
+        Prototype1RunnerDisposition::Succeeded => "succeeded",
+        Prototype1RunnerDisposition::CompileFailed => "compile_failed",
+        Prototype1RunnerDisposition::TreatmentFailed => "treatment_failed",
+    }
 }
 
 fn display_opt<T: std::fmt::Display>(value: Option<T>) -> String {
@@ -2203,10 +2135,12 @@ fn yes_no(value: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::Path};
 
     use crate::intervention::{
-        Prototype1ContinuationDecision, Prototype1ContinuationDisposition, RecordStore,
+        PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION, PROTOTYPE1_SCHEDULER_SCHEMA_VERSION,
+        PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1ContinuationDecision,
+        Prototype1ContinuationDisposition, RecordStore,
     };
 
     use super::*;
@@ -2228,50 +2162,22 @@ mod tests {
         fs::create_dir_all(prototype.join("evaluations")).expect("evals");
         fs::write(
             node_a.join("node.json"),
-            serde_json::json!({
-                "node_id": "node-a",
-                "generation": 1,
-                "branch_id": "branch-a",
-                "status": "succeeded"
-            })
-            .to_string(),
+            node_record(&prototype, "node-a", None, 1, "branch-a"),
         )
         .expect("node a record");
         fs::write(
             node_b.join("node.json"),
-            serde_json::json!({
-                "node_id": "node-b",
-                "generation": 1,
-                "branch_id": "branch-b",
-                "status": "succeeded"
-            })
-            .to_string(),
+            node_record(&prototype, "node-b", None, 1, "branch-b"),
         )
         .expect("node b record");
         fs::write(
             node_a.join("results/runtime-a.json"),
-            serde_json::json!({
-                "node_id": "node-a",
-                "generation": 1,
-                "runtime_id": "runtime-a",
-                "branch_id": "branch-a",
-                "status": "succeeded",
-                "evaluation_artifact_path": prototype.join("evaluations/branch-a.json")
-            })
-            .to_string(),
+            runner_result(&prototype, "node-a", 1, "branch-a"),
         )
         .expect("result a");
         fs::write(
             node_b.join("results/runtime-b.json"),
-            serde_json::json!({
-                "node_id": "node-b",
-                "generation": 1,
-                "runtime_id": "runtime-b",
-                "branch_id": "branch-b",
-                "status": "succeeded",
-                "evaluation_artifact_path": prototype.join("evaluations/branch-b.json")
-            })
-            .to_string(),
+            runner_result(&prototype, "node-b", 1, "branch-b"),
         )
         .expect("result b");
         fs::write(
@@ -2286,12 +2192,7 @@ mod tests {
         .expect("eval b");
         fs::write(
             prototype.join("scheduler.json"),
-            serde_json::json!({
-                "last_continuation_decision": {
-                    "selected_next_branch_id": "branch-b"
-                }
-            })
-            .to_string(),
+            scheduler_with_selection(Some("branch-b")),
         )
         .expect("scheduler");
 
@@ -2347,26 +2248,12 @@ mod tests {
         fs::create_dir_all(prototype.join("evaluations")).expect("evals");
         fs::write(
             node.join("node.json"),
-            serde_json::json!({
-                "node_id": "node-a",
-                "parent_node_id": "parent-a",
-                "generation": 2,
-                "branch_id": "branch-a",
-                "status": "succeeded"
-            })
-            .to_string(),
+            node_record(&prototype, "node-a", Some("parent-a"), 2, "branch-a"),
         )
         .expect("node record");
         fs::write(
             prototype.join("evaluations/branch-a.json"),
-            serde_json::json!({
-                "overall_disposition": "keep",
-                "compared_instances": [{
-                    "instance_id": "instance-a",
-                    "status": "complete"
-                }]
-            })
-            .to_string(),
+            evaluation("branch-a", "keep", 1, 0, 0, 0),
         )
         .expect("evaluation");
 
@@ -2383,13 +2270,7 @@ mod tests {
         );
         assert_eq!(dashboard.child_evidence.children, 1);
         assert_eq!(dashboard.child_evidence.evaluation_sources, 1);
-        assert!(dashboard.child_evidence.diagnostics >= 1);
-        assert!(
-            dashboard
-                .diagnostics
-                .iter()
-                .any(|diagnostic| { diagnostic.contains("evaluation document has no branch_id") })
-        );
+        assert_eq!(dashboard.child_evidence.diagnostics, 0);
         assert!(
             dashboard
                 .child_evidence
@@ -2416,13 +2297,7 @@ mod tests {
             fs::create_dir_all(&node).expect("node dir");
             fs::write(
                 node.join("node.json"),
-                serde_json::json!({
-                    "node_id": node_id,
-                    "generation": 1,
-                    "branch_id": "branch-shared",
-                    "status": "succeeded"
-                })
-                .to_string(),
+                node_record(&prototype, node_id, None, 1, "branch-shared"),
             )
             .expect("node record");
         }
@@ -2451,10 +2326,13 @@ mod tests {
         assert!(dashboard.diagnostics.iter().any(|diagnostic| {
             diagnostic.contains("branch 'branch-shared' appears under multiple child nodes")
         }));
-        assert!(dashboard.diagnostics.iter().any(|diagnostic| {
-            diagnostic.contains("kept unattached")
-                && diagnostic.contains("branch 'branch-shared' is ambiguous")
-        }));
+        assert!(
+            !node_a
+                .source_refs
+                .iter()
+                .chain(node_b.source_refs.iter())
+                .any(|source| source.class == "evaluation")
+        );
     }
 
     #[test]
@@ -2506,13 +2384,7 @@ mod tests {
         fs::create_dir_all(&node).expect("node dir");
         fs::write(
             node.join("node.json"),
-            serde_json::json!({
-                "node_id": "node-b",
-                "generation": 1,
-                "branch_id": "branch-b",
-                "status": "succeeded"
-            })
-            .to_string(),
+            node_record(&prototype, "node-b", None, 1, "branch-b"),
         )
         .expect("node record");
 
@@ -2568,27 +2440,12 @@ mod tests {
             fs::create_dir_all(node.join("results")).expect("node dir");
             fs::write(
                 node.join("node.json"),
-                serde_json::json!({
-                    "node_id": node_id,
-                    "parent_node_id": parent_node_id,
-                    "generation": 2,
-                    "branch_id": branch_id,
-                    "status": "succeeded"
-                })
-                .to_string(),
+                node_record(&prototype, node_id, Some(parent_node_id), 2, branch_id),
             )
             .expect("node record");
             fs::write(
                 node.join("results/runtime.json"),
-                serde_json::json!({
-                    "node_id": node_id,
-                    "generation": 2,
-                    "runtime_id": format!("runtime-{node_id}"),
-                    "branch_id": branch_id,
-                    "status": "succeeded",
-                    "evaluation_artifact_path": prototype.join(format!("evaluations/{branch_id}.json"))
-                })
-                .to_string(),
+                runner_result(&prototype, node_id, 2, branch_id),
             )
             .expect("result");
             fs::write(
@@ -2598,18 +2455,10 @@ mod tests {
             .expect("evaluation");
         }
         fs::write(
-            prototype.join("scheduler.json"),
-            serde_json::json!({
-                "selection_a": {
-                    "selected_next_branch_id": "branch-a"
-                },
-                "selection_c": {
-                    "selected_next_branch_id": "branch-c"
-                }
-            })
-            .to_string(),
+            prototype.join("branches.json"),
+            branch_registry_with_selections(&["branch-a", "branch-c"]),
         )
-        .expect("scheduler");
+        .expect("branch registry");
 
         let dashboard = build("campaign-a", &manifest).expect("dashboard");
         let cohorts = dashboard
@@ -2989,34 +2838,21 @@ mod tests {
         fs::create_dir_all(prototype.join("evaluations")).expect("evals");
         fs::write(
             node.join("node.json"),
-            serde_json::json!({
-                "node_id": "node-a",
-                "generation": 1,
-                "branch_id": "branch-a",
-                "status": "succeeded"
-            })
-            .to_string(),
+            node_record(&prototype, "node-a", None, 1, "branch-a"),
         )
         .expect("node record");
         fs::write(
             node.join("results/runtime-a.json"),
-            serde_json::json!({
-                "node_id": "node-a",
-                "generation": 1,
-                "runtime_id": "runtime-a",
-                "branch_id": "branch-a",
-                "status": "succeeded",
-                "evaluation_artifact_path": prototype.join("evaluations/branch-a.json")
-            })
-            .to_string(),
+            runner_result(&prototype, "node-a", 1, "branch-a"),
         )
         .expect("result");
         fs::write(
             prototype.join("evaluations/branch-a.json"),
-            serde_json::json!({
-                "branch_id": "branch-a",
-                "overall_disposition": "reject",
-                "compared_instances": [{
+            evaluation_with_instances(
+                &prototype,
+                "branch-a",
+                "reject",
+                vec![serde_json::json!({
                     "instance_id": "instance-a",
                     "status": "complete",
                     "treatment_metrics": {
@@ -3034,9 +2870,8 @@ mod tests {
                         "tool_calls_total": 9,
                         "tool_calls_failed": 4
                     }
-                }]
-            })
-            .to_string(),
+                })],
+            ),
         )
         .expect("evaluation");
 
@@ -3144,17 +2979,151 @@ mod tests {
                         "oracle_eligible": index < oracle,
                         "convergence": true,
                         "submission_artifact_state": if index < oracle { "nonempty" } else { "empty" },
+                        "patch_attempted": false,
                         "patch_apply_state": "applied",
+                        "partial_patch_failures": 0,
+                        "same_file_patch_retry_count": 0,
+                        "same_file_patch_max_streak": 0,
+                        "aborted": false,
+                        "aborted_repair_loop": false,
+                        "nonempty_valid_patch": false,
                         "tool_calls_total": tool_calls,
                         "tool_calls_failed": failed
                     }
                 })
             })
             .collect::<Vec<_>>();
+        evaluation_with_instances(
+            Path::new("/tmp/prototype1"),
+            branch_id,
+            disposition,
+            instances,
+        )
+    }
+
+    fn evaluation_with_instances(
+        prototype: &Path,
+        branch_id: &str,
+        disposition: &str,
+        instances: Vec<serde_json::Value>,
+    ) -> String {
         serde_json::json!({
+            "baseline_campaign_id": "baseline-campaign",
             "branch_id": branch_id,
+            "treatment_campaign_id": "campaign-a",
+            "branch_registry_path": prototype.join("branches.json"),
+            "evaluation_artifact_path": prototype.join(format!("evaluations/{branch_id}.json")),
+            "treatment_campaign_manifest": prototype.parent().unwrap_or_else(|| Path::new(".")).join("campaign.json"),
+            "treatment_closure_state_path": prototype.join("closure-state.json"),
             "overall_disposition": disposition,
+            "reasons": ["test"],
             "compared_instances": instances
+        })
+        .to_string()
+    }
+
+    fn node_record(
+        prototype: &Path,
+        node_id: &str,
+        parent_node_id: Option<&str>,
+        generation: u32,
+        branch_id: &str,
+    ) -> String {
+        let node_dir = prototype.join("nodes").join(node_id);
+        let mut record = serde_json::json!({
+            "schema_version": PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+            "node_id": node_id,
+            "generation": generation,
+            "instance_id": "instance-a",
+            "source_state_id": "baseline-run",
+            "branch_id": branch_id,
+            "candidate_id": format!("candidate-{node_id}"),
+            "target_relpath": "crates/ploke-core/tool_text/non_semantic_patch.md",
+            "node_dir": node_dir,
+            "workspace_root": prototype.join(format!("workspaces/{node_id}")),
+            "binary_path": prototype.join(format!("nodes/{node_id}/bin/ploke-eval")),
+            "runner_request_path": prototype.join(format!("nodes/{node_id}/runner-request.json")),
+            "runner_result_path": prototype.join(format!("nodes/{node_id}/runner-result.json")),
+            "status": "succeeded",
+            "created_at": "2026-04-28T00:00:00Z",
+            "updated_at": "2026-04-28T00:00:00Z"
+        });
+        if let Some(parent_node_id) = parent_node_id {
+            record["parent_node_id"] = serde_json::json!(parent_node_id);
+        }
+        record.to_string()
+    }
+
+    fn runner_result(prototype: &Path, node_id: &str, generation: u32, branch_id: &str) -> String {
+        serde_json::json!({
+            "schema_version": PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+            "campaign_id": "campaign-a",
+            "node_id": node_id,
+            "generation": generation,
+            "branch_id": branch_id,
+            "status": "succeeded",
+            "disposition": "succeeded",
+            "treatment_campaign_id": "campaign-a",
+            "evaluation_artifact_path": prototype.join(format!("evaluations/{branch_id}.json")),
+            "recorded_at": "2026-04-28T00:00:00Z"
+        })
+        .to_string()
+    }
+
+    fn scheduler_with_selection(selected_branch_id: Option<&str>) -> String {
+        let last_continuation_decision = selected_branch_id.map(|branch_id| {
+            serde_json::json!({
+                "disposition": "continue_ready",
+                "selected_next_branch_id": branch_id,
+                "selected_branch_disposition": "keep",
+                "selection_policy_outcome": null,
+                "next_generation": 2,
+                "total_nodes_after_continue": 1
+            })
+        });
+        serde_json::json!({
+            "schema_version": PROTOTYPE1_SCHEDULER_SCHEMA_VERSION,
+            "campaign_id": "campaign-a",
+            "updated_at": "2026-04-28T00:00:00Z",
+            "frontier_node_ids": [],
+            "completed_node_ids": [],
+            "failed_node_ids": [],
+            "last_continuation_decision": last_continuation_decision,
+            "nodes": []
+        })
+        .to_string()
+    }
+
+    fn branch_registry_with_selections(branch_ids: &[&str]) -> String {
+        let source_nodes = branch_ids
+            .iter()
+            .enumerate()
+            .map(|(index, branch_id)| {
+                serde_json::json!({
+                    "source_state_id": format!("source-{index}"),
+                    "instance_id": format!("instance-{index}"),
+                    "target_relpath": "crates/ploke-core/tool_text/non_semantic_patch.md",
+                    "source_content": "before",
+                    "source_content_hash": format!("hash-{index}"),
+                    "selected_branch_id": branch_id,
+                    "branches": [{
+                        "branch_id": branch_id,
+                        "candidate_id": format!("candidate-{index}"),
+                        "branch_label": format!("branch-label-{index}"),
+                        "synthesized_spec_id": format!("spec-{index}"),
+                        "proposed_content": "after",
+                        "proposed_content_hash": format!("proposed-hash-{index}"),
+                        "status": "selected"
+                    }]
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "schema_version": PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION,
+            "campaign_id": "campaign-a",
+            "updated_at": "2026-04-28T00:00:00Z",
+            "source_nodes": source_nodes,
+            "active_targets": []
         })
         .to_string()
     }
@@ -3168,28 +3137,25 @@ mod tests {
         for node_case in cases {
             let node = prototype.join(format!("nodes/{}", node_case.node_id));
             fs::create_dir_all(node.join("results")).expect("node dir");
-            let mut record = serde_json::json!({
-                "node_id": node_case.node_id,
-                "generation": node_case.generation,
-                "branch_id": node_case.branch_id,
-                "status": "succeeded"
-            });
-            if let Some(parent_node_id) = node_case.parent_node_id {
-                record["parent_node_id"] = serde_json::json!(parent_node_id);
-            }
-            fs::write(node.join("node.json"), record.to_string()).expect("node record");
+            fs::write(
+                node.join("node.json"),
+                node_record(
+                    &prototype,
+                    node_case.node_id,
+                    node_case.parent_node_id,
+                    node_case.generation,
+                    node_case.branch_id,
+                ),
+            )
+            .expect("node record");
             fs::write(
                 node.join("results/runtime.json"),
-                serde_json::json!({
-                    "node_id": node_case.node_id,
-                    "generation": node_case.generation,
-                    "runtime_id": format!("runtime-{}", node_case.node_id),
-                    "branch_id": node_case.branch_id,
-                    "status": "succeeded",
-                    "evaluation_artifact_path": prototype
-                        .join(format!("evaluations/{}.json", node_case.branch_id))
-                })
-                .to_string(),
+                runner_result(
+                    &prototype,
+                    node_case.node_id,
+                    node_case.generation,
+                    node_case.branch_id,
+                ),
             )
             .expect("result");
             fs::write(
@@ -3205,19 +3171,11 @@ mod tests {
             )
             .expect("evaluation");
         }
-        let selections = selected_branches
-            .iter()
-            .map(|branch_id| {
-                serde_json::json!({
-                    "selected_next_branch_id": branch_id
-                })
-            })
-            .collect::<Vec<_>>();
         fs::write(
-            prototype.join("scheduler.json"),
-            serde_json::json!({ "selections": selections }).to_string(),
+            prototype.join("branches.json"),
+            branch_registry_with_selections(selected_branches),
         )
-        .expect("scheduler");
+        .expect("branch registry");
 
         build("campaign-a", &manifest).expect("dashboard")
     }
@@ -3233,30 +3191,17 @@ mod tests {
         for (node_id, parent_node_id, generation, branch_id) in nodes {
             let node = prototype.join(format!("nodes/{node_id}"));
             fs::create_dir_all(&node).expect("node dir");
-            let mut record = serde_json::json!({
-                "node_id": node_id,
-                "generation": generation,
-                "branch_id": branch_id,
-                "status": "succeeded"
-            });
-            if let Some(parent_node_id) = parent_node_id {
-                record["parent_node_id"] = serde_json::json!(parent_node_id);
-            }
-            fs::write(node.join("node.json"), record.to_string()).expect("node record");
+            fs::write(
+                node.join("node.json"),
+                node_record(&prototype, node_id, *parent_node_id, *generation, branch_id),
+            )
+            .expect("node record");
         }
-        let selections = selected_branches
-            .iter()
-            .map(|branch_id| {
-                serde_json::json!({
-                    "selected_next_branch_id": branch_id
-                })
-            })
-            .collect::<Vec<_>>();
         fs::write(
-            prototype.join("scheduler.json"),
-            serde_json::json!({ "selections": selections }).to_string(),
+            prototype.join("branches.json"),
+            branch_registry_with_selections(selected_branches),
         )
-        .expect("scheduler");
+        .expect("branch registry");
 
         build("campaign-a", &manifest).expect("dashboard")
     }

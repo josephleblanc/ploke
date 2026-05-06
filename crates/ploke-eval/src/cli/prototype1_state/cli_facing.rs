@@ -26,9 +26,10 @@ use crate::{
         Depth, HistoryCommand, HistorySubcommand, InspectOutputFormat,
         Prototype1BranchApplyCommand, Prototype1BranchEvaluateCommand,
         Prototype1BranchRestoreCommand, Prototype1BranchSelectCommand, Prototype1BranchShowCommand,
-        Prototype1BranchStatusCommand, Prototype1HistoryPreviewCommand, Prototype1LoopCommand,
-        Prototype1LoopStopAfter, Prototype1MetricsCommand, Prototype1MonitorCommand,
-        Prototype1MonitorPeekCommand, Prototype1MonitorReportCommand, Prototype1MonitorSubcommand,
+        Prototype1BranchStatusCommand, Prototype1ChildEvidenceCommand,
+        Prototype1HistoryPreviewCommand, Prototype1LoopCommand, Prototype1LoopStopAfter,
+        Prototype1MetricsCommand, Prototype1MonitorCommand, Prototype1MonitorPeekCommand,
+        Prototype1MonitorReportCommand, Prototype1MonitorSubcommand,
         Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand, Prototype1RunnerCommand,
         Prototype1StateCommand, Prototype1StateStopAfter, TimingTrace, advance_eval_closure,
         advance_protocol_closure, default_batch_id, pending_prototype1_stages,
@@ -1561,6 +1562,9 @@ impl Prototype1MonitorCommand {
             Prototype1MonitorSubcommand::HistoryMetrics(command) => {
                 run_metric_slice(&campaign_id, &manifest_path, &command)
             }
+            Prototype1MonitorSubcommand::ChildEvidence(command) => {
+                run_child_evidence(&campaign_id, &manifest_path, &command)
+            }
             Prototype1MonitorSubcommand::Peek(command) => {
                 peek_prototype1_monitor_locations(&manifest_path, Some(&repo_root), &command)
             }
@@ -1590,6 +1594,9 @@ impl HistoryCommand {
         let manifest_path = campaign_manifest_path(&campaign_id)?;
 
         match self.command {
+            HistorySubcommand::ChildEvidence(command) => {
+                run_child_evidence(&campaign_id, &manifest_path, &command)
+            }
             HistorySubcommand::Metrics(command) => {
                 run_metric_slice(&campaign_id, &manifest_path, &command)
             }
@@ -1614,6 +1621,18 @@ fn run_metric_slice(
             view: command.view,
             format: command.format,
         },
+    )
+}
+
+fn run_child_evidence(
+    campaign_id: &str,
+    manifest_path: &Path,
+    command: &Prototype1ChildEvidenceCommand,
+) -> Result<(), PrepareError> {
+    crate::cli::prototype1_state::history_preview::run_child_evidence(
+        campaign_id,
+        manifest_path,
+        command.format,
     )
 }
 

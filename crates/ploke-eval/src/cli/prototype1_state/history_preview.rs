@@ -11,12 +11,13 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
 
 use super::event::RecordedAt;
 use super::history::{EntryKind, HistoryHash};
+use super::invocation::{Invocation, SuccessorCompletionRecord, SuccessorReadyRecord};
 use super::journal::{
     ActiveCheckoutAdvancedEntry, BuildEntry, ChildArtifactCommittedEntry, CompletionEntry, Entry,
     JournalEntry, ParentStartedEntry, ReadyEntry, SpawnEntry, SuccessorHandoffEntry,
@@ -26,9 +27,20 @@ use crate::cli::InspectOutputFormat;
 use crate::intervention::{prototype1_branch_registry_path, prototype1_scheduler_path};
 use crate::spec::PrepareError;
 
-use super::evidence::ChildEvidenceSet;
+use super::evidence::{
+    ChildEvidenceRecords, ChildEvidenceSet, ComparedRunEvidence, EvaluationEvidence,
+    EvidenceDiagnostic, EvidenceSource,
+};
+use crate::cli::prototype1_state::cli_facing::Prototype1BranchEvaluationReport;
+use crate::intervention::{
+    PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION, PROTOTYPE1_SCHEDULER_SCHEMA_VERSION,
+    PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1BranchRegistry, Prototype1NodeRecord,
+    Prototype1RunnerRequest, Prototype1RunnerResult, Prototype1SchedulerState,
+};
 
 const SCHEMA_VERSION: &str = "prototype1-history-preview.v1";
+const CHILD_EVIDENCE_TABLE_LIMIT: usize = 20;
+const CHILD_EVIDENCE_COMPARED_LIMIT: usize = 3;
 
 /// Importer-facing access to persisted evidence.
 ///
@@ -40,7 +52,21 @@ pub(crate) trait EvidenceStore {
 
     fn transition_journal(&self) -> Result<Vec<Stored<JournalEntry>>, Self::Error>;
 
+    /// Load generic JSON document projections for the `history preview` catalog.
+    ///
+    /// This is preview catalog/projection compatibility only. Consumers that
+    /// derive typed child evidence, metrics, successor selection, future
+    /// scoring, or authority facts must use typed `Stored<T>` reads where
+    /// `T: EvidenceRecord`, not `Document`, `serde_json::Value`, or path/name
+    /// recovery.
     fn documents(&self) -> Result<Vec<Document>, Self::Error>;
+
+    /// Load declared child/runtime/result/evaluation records through the typed
+    /// evidence boundary.
+    ///
+    /// Malformed declared records are store-boundary errors. They must not be
+    /// downgraded into generic `Document` compatibility records.
+    fn child_records(&self) -> Result<ChildEvidenceRecords, Self::Error>;
 
     #[allow(dead_code)]
     fn child_evidence(&self) -> Result<ChildEvidenceSet, Self::Error>;
@@ -66,6 +92,28 @@ impl FsEvidenceStore {
     #[allow(dead_code)]
     pub(crate) fn child_evidence(&self) -> Result<ChildEvidenceSet, PreviewError> {
         <Self as EvidenceStore>::child_evidence(self)
+    }
+
+    /// Load typed mutable preview records that expose operator-facing selection
+    /// markers for `history metrics` display.
+    ///
+    /// These scheduler/registry records are typed `Stored<T>` inputs for a
+    /// dashboard projection. They are not loose `Document` compatibility, typed
+    /// child evidence, selector input, future scoring input, or History/Crown
+    /// authority.
+    pub(crate) fn preview_selection_records(
+        &self,
+    ) -> Result<SelectionPreviewRecords, PreviewError> {
+        Ok(SelectionPreviewRecords {
+            scheduler: self.preview_selection_record::<Prototype1SchedulerState>(
+                EvidenceClass::Scheduler,
+                prototype1_scheduler_path(&self.manifest_path),
+            )?,
+            branch_registry: self.preview_selection_record::<Prototype1BranchRegistry>(
+                EvidenceClass::BranchRegistry,
+                prototype1_branch_registry_path(&self.manifest_path),
+            )?,
+        })
     }
 }
 
@@ -141,14 +189,83 @@ impl EvidenceStore for FsEvidenceStore {
         Ok(documents)
     }
 
+    fn child_records(&self) -> Result<ChildEvidenceRecords, Self::Error> {
+        let mut records = ChildEvidenceRecords {
+            journal: self.transition_journal()?,
+            ..ChildEvidenceRecords::default()
+        };
+
+        self.push_typed_dir::<Prototype1BranchEvaluationReport>(
+            &mut records.evaluations,
+            EvidenceClass::Evaluation,
+            self.prototype_root.join("evaluations"),
+        )?;
+        self.push_nested_typed_dir::<Invocation>(
+            &mut records.invocations,
+            EvidenceClass::Invocation,
+            self.prototype_root.join("nodes"),
+            "invocations",
+        )?;
+        self.push_nested_typed_dir::<Prototype1RunnerResult>(
+            &mut records.attempt_results,
+            EvidenceClass::AttemptResult,
+            self.prototype_root.join("nodes"),
+            "results",
+        )?;
+        self.push_nested_typed_dir::<SuccessorReadyRecord>(
+            &mut records.successor_ready,
+            EvidenceClass::SuccessorReady,
+            self.prototype_root.join("nodes"),
+            "successor-ready",
+        )?;
+        self.push_nested_typed_dir::<SuccessorCompletionRecord>(
+            &mut records.successor_completion,
+            EvidenceClass::SuccessorCompletion,
+            self.prototype_root.join("nodes"),
+            "successor-completion",
+        )?;
+        self.push_node_typed_records::<Prototype1NodeRecord>(
+            &mut records.nodes,
+            EvidenceClass::NodeRecord,
+            "node.json",
+        )?;
+        self.push_node_typed_records::<Prototype1RunnerRequest>(
+            &mut records.runner_requests,
+            EvidenceClass::RunnerRequest,
+            "runner-request.json",
+        )?;
+        self.push_node_typed_records::<Prototype1RunnerResult>(
+            &mut records.runner_results,
+            EvidenceClass::RunnerResult,
+            "runner-result.json",
+        )?;
+
+        records.sort();
+        Ok(records)
+    }
+
     fn child_evidence(&self) -> Result<ChildEvidenceSet, Self::Error> {
-        let journal = self.transition_journal()?;
-        let documents = self.documents()?;
-        Ok(ChildEvidenceSet::from_sources(&journal, &documents))
+        let records = self.child_records()?;
+        Ok(ChildEvidenceSet::from_records(&records))
     }
 }
 
 impl FsEvidenceStore {
+    fn preview_selection_record<T>(
+        &self,
+        class: EvidenceClass,
+        path: PathBuf,
+    ) -> Result<Option<Stored<T>>, PreviewError>
+    where
+        T: EvidenceRecord,
+    {
+        if path.exists() {
+            load_typed_record::<T>(class, path).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
     fn push_document(
         &self,
         documents: &mut Vec<Document>,
@@ -233,6 +350,90 @@ impl FsEvidenceStore {
         }
         Ok(())
     }
+
+    fn push_typed_dir<T>(
+        &self,
+        records: &mut Vec<Stored<T>>,
+        class: EvidenceClass,
+        dir: PathBuf,
+    ) -> Result<(), PreviewError>
+    where
+        T: EvidenceRecord,
+    {
+        if !dir.exists() {
+            return Ok(());
+        }
+        for entry in fs::read_dir(&dir).map_err(|source| PreviewError::ReadDir {
+            path: dir.clone(),
+            source,
+        })? {
+            let entry = entry.map_err(|source| PreviewError::ReadDir {
+                path: dir.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
+                records.push(load_typed_record::<T>(class, path)?);
+            }
+        }
+        Ok(())
+    }
+
+    fn push_nested_typed_dir<T>(
+        &self,
+        records: &mut Vec<Stored<T>>,
+        class: EvidenceClass,
+        root: PathBuf,
+        dirname: &str,
+    ) -> Result<(), PreviewError>
+    where
+        T: EvidenceRecord,
+    {
+        if !root.exists() {
+            return Ok(());
+        }
+        for node in fs::read_dir(&root).map_err(|source| PreviewError::ReadDir {
+            path: root.clone(),
+            source,
+        })? {
+            let node = node.map_err(|source| PreviewError::ReadDir {
+                path: root.clone(),
+                source,
+            })?;
+            let dir = node.path().join(dirname);
+            self.push_typed_dir(records, class, dir)?;
+        }
+        Ok(())
+    }
+
+    fn push_node_typed_records<T>(
+        &self,
+        records: &mut Vec<Stored<T>>,
+        class: EvidenceClass,
+        filename: &str,
+    ) -> Result<(), PreviewError>
+    where
+        T: EvidenceRecord,
+    {
+        let nodes = self.prototype_root.join("nodes");
+        if !nodes.exists() {
+            return Ok(());
+        }
+        for node in fs::read_dir(&nodes).map_err(|source| PreviewError::ReadDir {
+            path: nodes.clone(),
+            source,
+        })? {
+            let node = node.map_err(|source| PreviewError::ReadDir {
+                path: nodes.clone(),
+                source,
+            })?;
+            let path = node.path().join(filename);
+            if path.exists() {
+                records.push(load_typed_record::<T>(class, path)?);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Build a preview from the current filesystem-backed campaign records.
@@ -263,6 +464,48 @@ pub(crate) fn run(
             );
         }
     }
+    Ok(())
+}
+
+/// Build a read-only operator projection over grouped child evidence.
+pub(crate) fn build_child_evidence(
+    campaign_id: &str,
+    manifest_path: &Path,
+) -> Result<ChildEvidenceProjection, PreviewError> {
+    let store = FsEvidenceStore::new(manifest_path);
+    let evidence = store.child_evidence()?;
+    Ok(ChildEvidenceProjection {
+        schema_version: evidence.schema_version.clone(),
+        generated_at: Utc::now().to_rfc3339(),
+        campaign_id: campaign_id.to_string(),
+        manifest_path: manifest_path.to_path_buf(),
+        prototype_root: prototype_root(manifest_path),
+        evidence,
+    })
+}
+
+pub(crate) fn run_child_evidence(
+    campaign_id: &str,
+    manifest_path: &Path,
+    format: InspectOutputFormat,
+) -> Result<(), PrepareError> {
+    let projection = build_child_evidence(campaign_id, manifest_path).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "build prototype1 child evidence",
+            detail: source.to_string(),
+        }
+    })?;
+
+    match format {
+        InspectOutputFormat::Table => projection.print(),
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&projection).map_err(PrepareError::Serialize)?
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -322,6 +565,250 @@ pub(crate) struct HistoryPreview {
     entries: Vec<PreviewEntry>,
     deferred: Vec<DeferredEvidence>,
     diagnostics: Vec<PreviewDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ChildEvidenceProjection {
+    schema_version: String,
+    generated_at: String,
+    campaign_id: String,
+    manifest_path: PathBuf,
+    prototype_root: PathBuf,
+    evidence: ChildEvidenceSet,
+}
+
+impl ChildEvidenceProjection {
+    fn print(&self) {
+        let global_diagnostics = self.evidence.diagnostics.len();
+        let child_diagnostics: usize = self
+            .evidence
+            .children
+            .iter()
+            .map(|child| child.diagnostics.len())
+            .sum();
+
+        println!("prototype1 child evidence");
+        println!("{}", "-".repeat(40));
+        println!("schema_version: {}", self.schema_version);
+        println!("generated_at: {}", self.generated_at);
+        println!("campaign_id: {}", self.campaign_id);
+        println!("manifest: {}", self.manifest_path.display());
+        println!("prototype_root: {}", self.prototype_root.display());
+        println!("children: {}", self.evidence.children.len());
+        println!("unplaced: {}", self.evidence.unplaced.len());
+        println!(
+            "diagnostics: {} (global={} child={})",
+            global_diagnostics + child_diagnostics,
+            global_diagnostics,
+            child_diagnostics
+        );
+        println!("treatment_note: source treatment labels are not sealed authority");
+        println!();
+
+        println!("children");
+        println!("{}", "-".repeat(40));
+        if self.evidence.children.is_empty() {
+            println!("(none)");
+        } else {
+            for child in self
+                .evidence
+                .children
+                .iter()
+                .take(CHILD_EVIDENCE_TABLE_LIMIT)
+            {
+                println!(
+                    "node={} parent={} gen={} branch={} runtimes={} branches={} evaluations={} documents={} journal={} diagnostics={}",
+                    child.node_id,
+                    opt_text(child.parent_node_id.as_deref()),
+                    opt_u32(child.generation),
+                    opt_text(child.branch_id.as_deref()),
+                    child.runtimes.len(),
+                    child.branches.len(),
+                    child.evaluations.len(),
+                    child.documents.len(),
+                    child.journal.len(),
+                    child.diagnostics.len()
+                );
+            }
+            print_omitted(
+                self.evidence.children.len(),
+                CHILD_EVIDENCE_TABLE_LIMIT,
+                "children",
+            );
+        }
+        println!();
+
+        self.print_evaluations();
+        println!();
+        self.print_unplaced();
+        println!();
+        self.print_diagnostics();
+    }
+
+    fn print_evaluations(&self) {
+        let total: usize = self
+            .evidence
+            .children
+            .iter()
+            .map(|child| child.evaluations.len())
+            .sum();
+
+        println!("evaluations");
+        println!("{}", "-".repeat(40));
+        if total == 0 {
+            println!("(none)");
+            return;
+        }
+
+        let mut printed = 0;
+        for child in &self.evidence.children {
+            for evaluation in &child.evaluations {
+                if printed >= CHILD_EVIDENCE_TABLE_LIMIT {
+                    print_omitted(total, CHILD_EVIDENCE_TABLE_LIMIT, "evaluations");
+                    return;
+                }
+                print_evaluation(&child.node_id, evaluation);
+                printed += 1;
+            }
+        }
+    }
+
+    fn print_unplaced(&self) {
+        println!("unplaced evidence");
+        println!("{}", "-".repeat(40));
+        if self.evidence.unplaced.is_empty() {
+            println!("(none)");
+        } else {
+            for source in self
+                .evidence
+                .unplaced
+                .iter()
+                .take(CHILD_EVIDENCE_TABLE_LIMIT)
+            {
+                print_source(source);
+            }
+            print_omitted(
+                self.evidence.unplaced.len(),
+                CHILD_EVIDENCE_TABLE_LIMIT,
+                "unplaced sources",
+            );
+        }
+    }
+
+    fn print_diagnostics(&self) {
+        let total = self.evidence.diagnostics.len()
+            + self
+                .evidence
+                .children
+                .iter()
+                .map(|child| child.diagnostics.len())
+                .sum::<usize>();
+
+        println!("diagnostics");
+        println!("{}", "-".repeat(40));
+        if total == 0 {
+            println!("(none)");
+            return;
+        }
+
+        let mut printed = 0;
+        for diagnostic in &self.evidence.diagnostics {
+            if printed >= CHILD_EVIDENCE_TABLE_LIMIT {
+                print_omitted(total, CHILD_EVIDENCE_TABLE_LIMIT, "diagnostics");
+                return;
+            }
+            print_diagnostic(None, diagnostic);
+            printed += 1;
+        }
+
+        for child in &self.evidence.children {
+            for diagnostic in &child.diagnostics {
+                if printed >= CHILD_EVIDENCE_TABLE_LIMIT {
+                    print_omitted(total, CHILD_EVIDENCE_TABLE_LIMIT, "diagnostics");
+                    return;
+                }
+                print_diagnostic(Some(&child.node_id), diagnostic);
+                printed += 1;
+            }
+        }
+    }
+}
+
+fn print_evaluation(node_id: &str, evaluation: &EvaluationEvidence) {
+    println!(
+        "node={} branch={} disposition={} compared={} artifact={} source={}",
+        node_id,
+        evaluation.branch_id,
+        opt_text(evaluation.overall_disposition.as_deref()),
+        evaluation.compared.len(),
+        opt_path(evaluation.evaluation_artifact_path.as_deref()),
+        evaluation.source.pointer.ref_id()
+    );
+
+    for compared in evaluation
+        .compared
+        .iter()
+        .take(CHILD_EVIDENCE_COMPARED_LIMIT)
+    {
+        print_compared(compared);
+    }
+    print_omitted(
+        evaluation.compared.len(),
+        CHILD_EVIDENCE_COMPARED_LIMIT,
+        "compared runs",
+    );
+}
+
+fn print_compared(compared: &ComparedRunEvidence) {
+    println!(
+        "  compared instance={} status={} baseline={} treatment={}",
+        opt_text(compared.instance_id.as_deref()),
+        opt_text(compared.status.as_deref()),
+        opt_path(compared.baseline_record_path.as_deref()),
+        opt_path(compared.treatment_record_path.as_deref())
+    );
+}
+
+fn print_source(source: &EvidenceSource) {
+    println!(
+        "class={} kind={} treatment={} ref={}",
+        source.class.as_str(),
+        source.kind,
+        source.treatment,
+        source.pointer.ref_id()
+    );
+}
+
+fn print_diagnostic(node_id: Option<&str>, diagnostic: &EvidenceDiagnostic) {
+    println!(
+        "node={} {} [{}]: {}",
+        opt_text(node_id),
+        diagnostic.severity,
+        opt_text(diagnostic.source_ref.as_deref()),
+        diagnostic.message
+    );
+}
+
+fn print_omitted(total: usize, limit: usize, label: &str) {
+    if total > limit {
+        println!("... {} more {} omitted", total - limit, label);
+    }
+}
+
+fn opt_text(value: Option<&str>) -> &str {
+    value.unwrap_or("-")
+}
+
+fn opt_u32(value: Option<u32>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn opt_path(value: Option<&Path>) -> String {
+    value
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "-".to_string())
 }
 
 impl HistoryPreview {
@@ -457,6 +944,10 @@ pub(crate) struct EvidencePointer {
 }
 
 impl EvidencePointer {
+    pub(crate) fn class(&self) -> EvidenceClass {
+        self.class
+    }
+
     pub(crate) fn ref_id(&self) -> &str {
         &self.ref_id
     }
@@ -470,13 +961,26 @@ impl EvidencePointer {
     }
 }
 
+pub(crate) trait EvidenceRecord: Serialize + DeserializeOwned {
+    const RECORD_NAME: &'static str;
+    const SCHEMA: &'static str;
+
+    fn accepts_class(class: EvidenceClass) -> bool;
+}
+
 #[derive(Debug, Clone)]
-pub(crate) struct Stored<T> {
+pub(crate) struct Stored<T>
+where
+    T: EvidenceRecord,
+{
     pointer: EvidencePointer,
     item: T,
 }
 
-impl<T> Stored<T> {
+impl<T> Stored<T>
+where
+    T: EvidenceRecord,
+{
     pub(crate) fn pointer(&self) -> &EvidencePointer {
         &self.pointer
     }
@@ -486,6 +990,117 @@ impl<T> Stored<T> {
     }
 }
 
+impl EvidenceRecord for JournalEntry {
+    const RECORD_NAME: &'static str = "JournalEntry";
+    const SCHEMA: &'static str = "prototype1-transition-journal.jsonl";
+
+    fn accepts_class(class: EvidenceClass) -> bool {
+        class == EvidenceClass::TransitionJournal
+    }
+}
+
+impl EvidenceRecord for Prototype1NodeRecord {
+    const RECORD_NAME: &'static str = "Prototype1NodeRecord";
+    const SCHEMA: &'static str = PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION;
+
+    fn accepts_class(class: EvidenceClass) -> bool {
+        class == EvidenceClass::NodeRecord
+    }
+}
+
+impl EvidenceRecord for Prototype1RunnerRequest {
+    const RECORD_NAME: &'static str = "Prototype1RunnerRequest";
+    const SCHEMA: &'static str = PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION;
+
+    fn accepts_class(class: EvidenceClass) -> bool {
+        class == EvidenceClass::RunnerRequest
+    }
+}
+
+impl EvidenceRecord for Prototype1RunnerResult {
+    const RECORD_NAME: &'static str = "Prototype1RunnerResult";
+    const SCHEMA: &'static str = PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION;
+
+    fn accepts_class(class: EvidenceClass) -> bool {
+        matches!(
+            class,
+            EvidenceClass::RunnerResult | EvidenceClass::AttemptResult
+        )
+    }
+}
+
+impl EvidenceRecord for Prototype1BranchEvaluationReport {
+    const RECORD_NAME: &'static str = "Prototype1BranchEvaluationReport";
+    const SCHEMA: &'static str = "prototype1-branch-evaluation-report.v1";
+
+    fn accepts_class(class: EvidenceClass) -> bool {
+        class == EvidenceClass::Evaluation
+    }
+}
+
+impl EvidenceRecord for Invocation {
+    const RECORD_NAME: &'static str = "Invocation";
+    const SCHEMA: &'static str = super::invocation::SCHEMA_VERSION;
+
+    fn accepts_class(class: EvidenceClass) -> bool {
+        class == EvidenceClass::Invocation
+    }
+}
+
+impl EvidenceRecord for SuccessorReadyRecord {
+    const RECORD_NAME: &'static str = "SuccessorReadyRecord";
+    const SCHEMA: &'static str = super::invocation::SUCCESSOR_READY_SCHEMA_VERSION;
+
+    fn accepts_class(class: EvidenceClass) -> bool {
+        class == EvidenceClass::SuccessorReady
+    }
+}
+
+impl EvidenceRecord for SuccessorCompletionRecord {
+    const RECORD_NAME: &'static str = "SuccessorCompletionRecord";
+    const SCHEMA: &'static str = super::invocation::SUCCESSOR_COMPLETION_SCHEMA_VERSION;
+
+    fn accepts_class(class: EvidenceClass) -> bool {
+        class == EvidenceClass::SuccessorCompletion
+    }
+}
+
+impl EvidenceRecord for Prototype1SchedulerState {
+    const RECORD_NAME: &'static str = "Prototype1SchedulerState";
+    const SCHEMA: &'static str = PROTOTYPE1_SCHEDULER_SCHEMA_VERSION;
+
+    fn accepts_class(class: EvidenceClass) -> bool {
+        class == EvidenceClass::Scheduler
+    }
+}
+
+impl EvidenceRecord for Prototype1BranchRegistry {
+    const RECORD_NAME: &'static str = "Prototype1BranchRegistry";
+    const SCHEMA: &'static str = PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION;
+
+    fn accepts_class(class: EvidenceClass) -> bool {
+        class == EvidenceClass::BranchRegistry
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct SelectionPreviewRecords {
+    pub(crate) scheduler: Option<Stored<Prototype1SchedulerState>>,
+    pub(crate) branch_registry: Option<Stored<Prototype1BranchRegistry>>,
+}
+
+/// Generic JSON preview catalog/projection compatibility document.
+///
+/// `Document` exists only so `history preview` can catalog adjacent Prototype 1
+/// JSON files, preserve payload refs, and render degraded/projection preview
+/// entries before those files have sealed History records.
+///
+/// It must not be used for typed child evidence, metrics, successor selection,
+/// future scoring, or History/Crown authority. Declared Prototype 1 records
+/// used by those paths cross the store boundary only as `Stored<T>` where
+/// `T: Serialize + DeserializeOwned + EvidenceRecord`; deserialization failure
+/// is corruption or a boundary error, not an invitation to recover semantics
+/// from `serde_json::Value`, filenames, or paths.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Document {
     class: EvidenceClass,
@@ -638,8 +1253,9 @@ impl EvidenceClass {
 
 fn load_jsonl<T>(path: &Path, class: EvidenceClass) -> Result<Vec<Stored<T>>, PreviewError>
 where
-    T: serde::de::DeserializeOwned,
+    T: EvidenceRecord,
 {
+    debug_assert!(T::accepts_class(class));
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -679,6 +1295,33 @@ where
     }
 
     Ok(stored)
+}
+
+fn load_typed_record<T>(class: EvidenceClass, path: PathBuf) -> Result<Stored<T>, PreviewError>
+where
+    T: EvidenceRecord,
+{
+    debug_assert!(T::accepts_class(class));
+    let bytes = fs::read(&path).map_err(|source| PreviewError::Read {
+        path: path.clone(),
+        source,
+    })?;
+    let item = serde_json::from_slice(&bytes).map_err(|source| PreviewError::ParseRecord {
+        path: path.clone(),
+        class,
+        record: T::RECORD_NAME,
+        source,
+    })?;
+    Ok(Stored {
+        pointer: EvidencePointer {
+            class,
+            ref_id: format!("file:{}", path.display()),
+            path,
+            line: None,
+            hash: HistoryHash::of_bytes(&bytes),
+        },
+        item,
+    })
 }
 
 fn preview_entry(
@@ -1708,6 +2351,17 @@ pub(crate) enum PreviewError {
     ParseLine {
         path: PathBuf,
         line_number: usize,
+        #[source]
+        source: serde_json::Error,
+    },
+
+    #[error(
+        "typed evidence boundary error: failed to parse {record} for class {class:?} at '{path}'"
+    )]
+    ParseRecord {
+        path: PathBuf,
+        class: EvidenceClass,
+        record: &'static str,
         #[source]
         source: serde_json::Error,
     },

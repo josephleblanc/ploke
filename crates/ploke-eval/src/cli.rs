@@ -474,6 +474,8 @@ pub struct Prototype1MonitorCommand {
 pub enum Prototype1MonitorSubcommand {
     /// Print expected output locations and volatility notes.
     List,
+    /// Print read-only child evidence grouped from current campaign records.
+    ChildEvidence(Prototype1ChildEvidenceCommand),
     /// Print read-only Prototype 1 metric projections from current evidence.
     HistoryMetrics(Prototype1MetricsCommand),
     /// Print a read-only History-shaped preview from current campaign records.
@@ -503,6 +505,8 @@ pub struct HistoryCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum HistorySubcommand {
+    /// Print read-only child evidence grouped from current campaign records.
+    ChildEvidence(Prototype1ChildEvidenceCommand),
     /// Print read-only metric projections from current evidence.
     Metrics(Prototype1MetricsCommand),
     /// Print a read-only History-shaped preview from current campaign records.
@@ -544,6 +548,12 @@ fn parse_metric_rows(raw: &str) -> Result<usize, String> {
     } else {
         Err(format!("rows must be between 1 and 500, got {rows}"))
     }
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1ChildEvidenceCommand {
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
 }
 
 #[derive(Debug, Parser)]
@@ -12501,6 +12511,32 @@ mod tests {
     }
 
     #[test]
+    fn history_child_evidence_should_parse() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "history",
+            "--campaign",
+            "prototype1-campaign",
+            "child-evidence",
+            "--format",
+            "json",
+        ])
+        .expect("history child-evidence should parse");
+
+        match parsed.command {
+            Command::History(HistoryCommand {
+                campaign,
+                command: HistorySubcommand::ChildEvidence(command),
+                ..
+            }) => {
+                assert_eq!(campaign.as_deref(), Some("prototype1-campaign"));
+                assert_eq!(command.format, InspectOutputFormat::Json);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
     fn history_preview_command_parses() {
         let parsed = Cli::try_parse_from([
             "ploke-eval",
@@ -12531,6 +12567,33 @@ mod tests {
                 assert_eq!(preview.diagnostics, Some(2));
                 assert_eq!(preview.entry, Some(1));
             }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn prototype1_monitor_child_evidence_should_parse() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-monitor",
+            "--campaign",
+            "prototype1-campaign",
+            "child-evidence",
+            "--format",
+            "json",
+        ])
+        .expect("loop prototype1-monitor child-evidence should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Monitor(cmd),
+            }) => match cmd.command {
+                Some(Prototype1MonitorSubcommand::ChildEvidence(command)) => {
+                    assert_eq!(command.format, InspectOutputFormat::Json);
+                }
+                other => panic!("unexpected monitor subcommand: {:?}", other),
+            },
             other => panic!("unexpected command shape: {:?}", other),
         }
     }
