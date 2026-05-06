@@ -13,7 +13,7 @@ use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_llm::{HttpBodyFailure, ModelId, ProviderAttempt, ProviderAttemptOutcome, ProviderKey};
 use ploke_tui::tools::ToolName;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{Instrument, debug, error, info, instrument, warn};
 
 use crate::{
     BranchDisposition, BranchEvaluationInput, BranchEvaluationResult, CampaignManifest,
@@ -67,6 +67,7 @@ use crate::{
                 Predecessor, Ready, Selectable, Startup, Unchecked,
             },
             successor::Record as SuccessorRecord,
+            telemetry::RuntimeTelemetry,
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
         sanitize_batch_component, serde_name, write_json_file_pretty, yes_no,
@@ -373,7 +374,11 @@ async fn run_parent_target_selection(
         &parent_identity.node_id,
         Prototype1NodeStatus::Running,
     )?;
-    let report = match run_prototype1_loop_controller(input).await {
+    let telemetry = RuntimeTelemetry::parent(&parent_identity, "target_selection");
+    let report = match run_prototype1_loop_controller(input)
+        .instrument(telemetry.span())
+        .await
+    {
         Ok(report) => report,
         Err(error) => {
             let _ = update_node_status(
@@ -2045,6 +2050,9 @@ struct ProviderHttpEvent {
     node_id: Option<String>,
     branch_id: Option<String>,
     generation: Option<u64>,
+    runtime_id: Option<String>,
+    role: Option<String>,
+    runtime_phase: Option<String>,
     request_id: u64,
     attempt: u32,
     max_attempts: Option<u32>,
@@ -3947,6 +3955,9 @@ fn provider_http_event(
         node_id: trace_string_field(value, "node_id"),
         branch_id: trace_string_field(value, "branch_id"),
         generation: trace_u64_field(value, "generation"),
+        runtime_id: trace_string_field(value, "runtime_id"),
+        role: trace_string_field(value, "role"),
+        runtime_phase: trace_string_field(value, "runtime_phase"),
         request_id: u64_field(value, "request_id")
             .or_else(|| provider_attempt.as_ref().map(|attempt| attempt.request_id))?,
         attempt: u64_field(value, "attempt")
@@ -4019,6 +4030,10 @@ fn string_field(value: Option<&serde_json::Value>, field: &str) -> Option<String
         .map(ToString::to_string)
 }
 
+fn non_empty_string_field(value: Option<&serde_json::Value>, field: &str) -> Option<String> {
+    string_field(value, field).filter(|value| !value.is_empty())
+}
+
 fn u64_field(value: &serde_json::Value, field: &str) -> Option<u64> {
     value.get(field).and_then(|value| {
         value
@@ -4028,8 +4043,8 @@ fn u64_field(value: &serde_json::Value, field: &str) -> Option<u64> {
 }
 
 fn trace_string_field(value: &serde_json::Value, field: &str) -> Option<String> {
-    string_field(Some(value), field)
-        .or_else(|| string_field(value.get("span"), field))
+    non_empty_string_field(Some(value), field)
+        .or_else(|| non_empty_string_field(value.get("span"), field))
         .or_else(|| string_field_from_spans(value, field))
 }
 
@@ -4046,7 +4061,7 @@ fn string_field_from_spans(value: &serde_json::Value, field: &str) -> Option<Str
         .into_iter()
         .flatten()
         .rev()
-        .find_map(|span| string_field(Some(span), field))
+        .find_map(|span| non_empty_string_field(Some(span), field))
 }
 
 fn u64_field_from_spans(value: &serde_json::Value, field: &str) -> Option<u64> {
@@ -7737,6 +7752,34 @@ mod tests {
             "request_id": 9,
             "attempt": 2,
             "max_attempts": 2,
+            "span": {
+                "name": "prototype1.chat_request",
+                "campaign_id": "",
+                "node_id": "",
+                "branch_id": "",
+                "generation": "",
+                "runtime_id": ""
+            },
+            "spans": [
+                {
+                    "name": "prototype1.runtime",
+                    "campaign_id": "campaign-a",
+                    "node_id": "node-a",
+                    "branch_id": "branch-a",
+                    "generation": 2,
+                    "runtime_id": "runtime-a",
+                    "role": "child",
+                    "runtime_phase": "child_evaluation"
+                },
+                {
+                    "name": "prototype1.chat_request",
+                    "campaign_id": "",
+                    "node_id": "",
+                    "branch_id": "",
+                    "generation": "",
+                    "runtime_id": ""
+                }
+            ],
             "provider_attempt": serde_json::to_string(&provider_attempt).expect("provider attempt json"),
         });
         let scoped_line = serde_json::json!({
@@ -7762,7 +7805,21 @@ mod tests {
             evidence.provider_http[0].campaign_id.as_deref(),
             Some("campaign-a")
         );
-        assert_eq!(evidence.provider_http[0].branch_id.as_deref(), None);
+        assert_eq!(evidence.provider_http[0].node_id.as_deref(), Some("node-a"));
+        assert_eq!(
+            evidence.provider_http[0].branch_id.as_deref(),
+            Some("branch-a")
+        );
+        assert_eq!(evidence.provider_http[0].generation, Some(2));
+        assert_eq!(
+            evidence.provider_http[0].runtime_id.as_deref(),
+            Some("runtime-a")
+        );
+        assert_eq!(evidence.provider_http[0].role.as_deref(), Some("child"));
+        assert_eq!(
+            evidence.provider_http[0].runtime_phase.as_deref(),
+            Some("child_evaluation")
+        );
         let requests = provider_http_requests(&evidence.provider_http);
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].timeout_count(), 1);
@@ -7797,6 +7854,9 @@ mod tests {
             node_id: Some("node-abcdef1234567890".to_string()),
             branch_id: Some("branch-abcdef1234567890".to_string()),
             generation: Some(2),
+            runtime_id: Some("runtime-a".to_string()),
+            role: Some("child".to_string()),
+            runtime_phase: Some("child_evaluation".to_string()),
             request_id: 9,
             attempt: 2,
             max_attempts: Some(2),
@@ -7854,6 +7914,9 @@ mod tests {
             node_id: Some("node-abcdef1234567890".to_string()),
             branch_id: None,
             generation: Some(2),
+            runtime_id: Some("runtime-a".to_string()),
+            role: Some("child".to_string()),
+            runtime_phase: Some("child_evaluation".to_string()),
             request_id: 15,
             attempt: 1,
             max_attempts: Some(1),

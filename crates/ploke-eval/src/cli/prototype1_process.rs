@@ -121,7 +121,7 @@
 //! Keeping this path local makes it easier to audit for runaway-process risks.
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use std::process::Command as ProcessCommand;
-use tracing::{debug, instrument, warn};
+use tracing::{Instrument, debug, instrument, warn};
 
 use super::*;
 use crate::BranchDisposition;
@@ -152,6 +152,7 @@ use crate::cli::prototype1_state::journal::{
 use crate::cli::prototype1_state::observe;
 use crate::cli::prototype1_state::parent::{Parent, Retired, Selectable};
 use crate::cli::prototype1_state::successor::Record as SuccessorRecord;
+use crate::cli::prototype1_state::telemetry::RuntimeTelemetry;
 use crate::intervention::{
     CommitPhase, Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerResult,
     RecordStore, TreatmentBranchEvaluationSummary, clear_runner_result, load_node_record,
@@ -2040,12 +2041,14 @@ pub(super) async fn execute_prototype1_runner_node(
     )?;
     record_prototype1_child_ready_if_configured(campaign_id, &manifest_path, &node, &request)?;
 
+    let telemetry = RuntimeTelemetry::child(campaign_id, &node, runtime_id, "child_evaluation");
     let outcome = run_prototype1_branch_evaluation(
         campaign_id,
         &node.branch_id,
         &request.workspace_root,
         stop_on_error,
     )
+    .instrument(telemetry.span())
     .await;
 
     let result = match outcome {
@@ -2155,12 +2158,19 @@ pub(super) async fn execute_prototype1_runner_invocation(
             detail: err.to_string(),
         })?;
 
+    let telemetry = RuntimeTelemetry::child(
+        invocation.campaign_id(),
+        &node,
+        invocation.runtime_id(),
+        "child_evaluation",
+    );
     let outcome = run_prototype1_branch_evaluation(
         invocation.campaign_id(),
         &request.branch_id,
         &request.workspace_root,
         request.stop_on_error,
     )
+    .instrument(telemetry.span())
     .await;
 
     let result = match outcome {

@@ -3,6 +3,18 @@
 //! This module keeps the communication shape structural: a child runtime is a
 //! `Child<State>`, and journal records are durable projections of allowed
 //! state transitions.
+//!
+//! A child is not a thread and not a recursive parent. It is a separately
+//! spawned OS process running a candidate runtime for one node-owned worktree.
+//! Its authority is intentionally narrower than parent authority: it may
+//! acknowledge startup, run its bounded evaluation, write its own attempt
+//! result, and send child-shaped protocol messages. It must not stage further
+//! children, select successors, mutate parent identity, or make continuation
+//! decisions.
+//!
+//! The durable records emitted here are therefore not generic progress events.
+//! They are projections of the small set of state transitions a child runtime is
+//! allowed to cross after it has been admitted as a child.
 
 use std::marker::PhantomData;
 use std::path::PathBuf;

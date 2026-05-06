@@ -1,5 +1,8 @@
 # Runtime Drafts
 
+- [`authority.md`](authority.md)
+  Authority invariants for role-indexed runtime surfaces, child write
+  isolation, and transport-independent parent/child communication.
 - [`child.md`](child.md)
   Walkthrough of Prototype 1 parent-to-child runtime execution, child
   observation, and timeout behavior.

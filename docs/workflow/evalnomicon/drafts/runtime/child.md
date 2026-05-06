@@ -17,6 +17,76 @@ not caused by one single long timeout. They emerge from a parent wait loop
 around a child runtime, an agent loop inside the child, and an HTTP retry loop
 inside each chat step.
 
+## Child Authority Boundary
+
+A Prototype 1 child is not a child thread. It is a separate OS process running a
+separately built `ploke-eval` binary from a node-owned worktree. The parent and
+child do not share stack, heap, local variables, or tracing span context unless
+that context is explicitly carried across the process boundary.
+
+The child role is deliberately smaller than the parent role. A child may:
+
+- read the campaign/node context needed to evaluate its assigned node
+- read its assigned runner request or equivalent child surface
+- acknowledge startup to the parent
+- enter one bounded evaluation for its assigned candidate artifact
+- write its own runner result and attempt-scoped artifacts
+- write child-to-parent protocol messages through its scoped channel
+- emit telemetry for its own evaluation work
+
+A child must not:
+
+- stage additional child nodes
+- select the successor parent
+- mutate parent identity
+- write parent continuation decisions
+- treat its temporary candidate worktree as the active parent checkout
+- recurse into `prototype1-state` as a new parent
+
+This is an authority distinction, not only a naming distinction. The intended
+shape is that ordinary code receives a typed value such as `Child<Starting>`,
+`Child<Ready>`, or `Child<Evaluating>`, and only the methods available for that
+role/state can write durable child records.
+
+### Consts, Records, and Surfaces
+
+Both parent and child binaries can share compiled protocol conventions, such as
+the repo-relative parent identity path:
+
+```text
+.ploke/prototype1/parent_identity.json
+```
+
+A const like that only says how to interpret a filesystem location once a
+runtime already has the necessary anchor, such as a repo root. It does not carry
+runtime-specific facts across an OS process boundary.
+
+Runtime-specific facts come from durable records or process startup data. Today,
+the child runner starts from an invocation path:
+
+```text
+loop prototype1-runner --invocation <path> --execute
+```
+
+That invocation is a transitional serialized child-admission surface. It gives
+the child enough authority context to locate its campaign, node, runtime id,
+journal, and channel endpoints without granting parent authority.
+
+The longer-term shape is better described as a role-indexed external surface:
+
+```text
+Surface<Child>
+  read campaign/node context
+  read parent broadcast
+  write child-to-parent messages
+  write own runner result
+```
+
+The backing transport can be files for now and sockets or another backend later.
+The important invariant is that `Surface<Child>` exposes child-shaped
+capabilities only. It should not expose scheduler mutation, successor selection,
+or parent identity writes.
+
 ## Execution Path
 
 ### 1. Parent Runtime Enters `prototype1-state`
