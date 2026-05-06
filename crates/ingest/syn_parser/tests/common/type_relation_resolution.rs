@@ -288,22 +288,6 @@ pub fn trait_relation<'a>(
     ExpectedTypeRelation::Trait { source, target }
 }
 
-pub fn assert_type_relation_once(
-    graph: &ParsedCodeGraph,
-    report: &TypeRelationReport,
-    expected: &ExpectedTypeRelation<'_>,
-) -> Result<(), SynParserError> {
-    TypeRelationView::new(graph, report).assert_once(*expected)
-}
-
-pub fn assert_type_relations_present(
-    graph: &ParsedCodeGraph,
-    report: &TypeRelationReport,
-    expected: &[ExpectedTypeRelation<'_>],
-) -> Result<(), SynParserError> {
-    TypeRelationView::new(graph, report).assert_present(expected)
-}
-
 impl<'a> TypeRelationView<'a> {
     pub fn new(graph: &'a ParsedCodeGraph, report: &'a TypeRelationReport) -> Self {
         Self {

@@ -68,6 +68,14 @@ anyhow = "1.0"
 name = "parse_pipeline"
 harness = false
 
+[[bench]]
+name = "type_resolution"
+harness = false
+
+[[bench]]
+name = "type_resolution_corpus"
+harness = false
+
 # Feature flags
 [features]
 default = [

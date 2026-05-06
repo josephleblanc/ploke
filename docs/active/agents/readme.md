@@ -39,3 +39,4 @@ be immediately addressed. To be reviewed by user periodically.
 - [`2026-04-01_ux-polish`](2026-04-01_ux-polish) - UX polish planning and notes.
 - [`2026-04-08_eval-postmortems`](2026-04-08_eval-postmortems) - Evaluation postmortem notes.
 - [`2026-05-02_tt-expr-core_type-resolution-test-review`](2026-05-02_tt-expr-core_type-resolution-test-review) - Independent reviews of type-use resolution tests.
+- [`2026-05-05_tt-expr-core_type-resolution-perf`](2026-05-05_tt-expr-core_type-resolution-perf) - Legacy and typed v2 type-resolution performance notes.

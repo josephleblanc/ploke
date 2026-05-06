@@ -82,12 +82,16 @@ use cozo::{Db, MemStorage};
 use syn_parser::parser::relations::SyntacticRelation;
 #[cfg(not(feature = "typed_type_graph"))]
 use syn_parser::resolve::type_resolution::TypeResolutionReport;
+#[cfg(feature = "typed_type_graph")]
+use syn_parser::resolve::type_resolution_v2::TypeRelationReport;
 use tracing::instrument;
 
 use super::*;
 #[cfg(not(feature = "typed_type_graph"))]
 use crate::schema::edges::ResolvedTypeUseSchema;
 use crate::schema::edges::SyntacticRelationSchema;
+#[cfg(feature = "typed_type_graph")]
+use crate::schema::edges::TypeRelationSchema;
 
 #[instrument(skip_all)]
 pub(super) fn transform_relations(
@@ -114,6 +118,19 @@ pub(super) fn transform_resolved_type_uses(
     let schema = &ResolvedTypeUseSchema::SCHEMA;
     for resolution in report.item_backed_resolutions() {
         schema.insert_resolution(db, resolution)?;
+    }
+    Ok(())
+}
+
+#[instrument(skip_all)]
+#[cfg(feature = "typed_type_graph")]
+pub(super) fn transform_type_relations(
+    db: &Db<MemStorage>,
+    report: &TypeRelationReport,
+) -> Result<(), TransformError> {
+    let schema = &TypeRelationSchema::SCHEMA;
+    for relation in &report.relations {
+        schema.insert_relation(db, relation)?;
     }
     Ok(())
 }

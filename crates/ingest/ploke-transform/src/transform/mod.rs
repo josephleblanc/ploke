@@ -3,7 +3,6 @@
 // -- external
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
 
-#[cfg(not(feature = "typed_type_graph"))]
 use crate_context::transform_crate_context;
 pub use workspace::transform_parsed_workspace;
 // -- from workspace
@@ -31,6 +30,8 @@ use consts::transform_consts;
 use edges::transform_relations;
 #[cfg(not(feature = "typed_type_graph"))]
 use edges::transform_resolved_type_uses;
+#[cfg(feature = "typed_type_graph")]
+use edges::transform_type_relations;
 use enums::transform_enums;
 use impls::transform_impls;
 use imports::transform_imports;
@@ -132,7 +133,7 @@ pub fn transform_code_graph(
 #[cfg(feature = "typed_type_graph")]
 #[instrument(skip_all)]
 pub fn transform_parsed_graph(
-    _db: &Db<MemStorage>,
+    db: &Db<MemStorage>,
     parsed_graph: ParsedCodeGraph,
     tree: &ModuleTree,
 ) -> Result<(), TransformError> {
@@ -140,10 +141,43 @@ pub fn transform_parsed_graph(
         resolve_type_relations_after_tree(&parsed_graph, tree).map_err(|err| {
             TransformError::Transformation(format!("typed type relation resolution failed: {err}"))
         })?;
-    Err(TransformError::Transformation(format!(
-        "typed_type_graph Cozo transform is not implemented for {} typed type relations",
-        type_relation_report.summary.resolved
-    )))
+
+    let code_graph = parsed_graph.graph;
+    let crate_context = parsed_graph
+        .crate_context
+        .expect("Invariant: All Code Graphs must have a Crate Context");
+
+    tracing::trace!("{}: Starting", "types".log_step());
+    transform_types(db, code_graph.type_graph)?;
+    tracing::trace!("{}: Starting", "functions".log_step());
+    transform_functions(db, code_graph.functions, tree)?;
+
+    tracing::trace!("{}: Starting", "defined_types".log_step());
+    transform_defined_types(db, code_graph.defined_types)?;
+
+    tracing::trace!("{}: Starting", "traits".log_step());
+    transform_traits(db, code_graph.traits)?;
+    tracing::trace!("{}: Starting", "impls".log_step());
+    transform_impls(db, code_graph.impls)?;
+    tracing::trace!("{}: Starting", "modules".log_step());
+    transform_modules(db, code_graph.modules, crate_context.namespace)?;
+    tracing::trace!("{}: Starting", "consts".log_step());
+    transform_consts(db, code_graph.consts)?;
+    tracing::trace!("{}: Starting", "statics".log_step());
+    transform_statics(db, code_graph.statics)?;
+    tracing::trace!("{}: Starting", "macros".log_step());
+    transform_macros(db, code_graph.macros)?;
+    tracing::trace!("{}: Starting", "imports".log_step());
+    transform_imports(db, code_graph.use_statements)?;
+    tracing::trace!("{}: Starting", "relations".log_step());
+    transform_relations(db, code_graph.relations)?;
+    tracing::trace!("{}: Starting", "type_relations".log_step());
+    transform_type_relations(db, &type_relation_report)?;
+
+    tracing::trace!("{}: Starting", "crate_context".log_step());
+    transform_crate_context(db, crate_context)?;
+
+    Ok(())
 }
 
 /// Transforms a CodeGraph into CozoDB relations, inserts into the cozo database
@@ -266,7 +300,8 @@ mod tests {
 
         transform_parsed_graph(&db, merged, &tree)?;
 
-        let resolved_returns = db.run_script(
+        #[cfg(not(feature = "typed_type_graph"))]
+        let resolved_type_rows = db.run_script(
             r#"?[owner_id, type_id, target_id] :=
                 *resolved_type_use {
                     owner_id,
@@ -277,9 +312,20 @@ mod tests {
             BTreeMap::new(),
             ScriptMutability::Immutable,
         )?;
+        #[cfg(feature = "typed_type_graph")]
+        let resolved_type_rows = db.run_script(
+            r#"?[source_id, target_id] :=
+                *type_relation {
+                    source_id,
+                    target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                }"#,
+            BTreeMap::new(),
+            ScriptMutability::Immutable,
+        )?;
         assert!(
-            !resolved_returns.rows.is_empty(),
-            "expected resolved method return type edges"
+            !resolved_type_rows.rows.is_empty(),
+            "expected resolved type relation edges"
         );
 
         Ok(())

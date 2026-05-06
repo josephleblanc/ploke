@@ -56,6 +56,8 @@ use crate_node::{CrateContextSchema, WorkspaceMetadataSchema};
 #[cfg(not(feature = "typed_type_graph"))]
 use edges::ResolvedTypeUseSchema;
 use edges::SyntacticRelationSchema;
+#[cfg(feature = "typed_type_graph")]
+use edges::TypeRelationSchema;
 use itertools::Itertools;
 use meta::Bm25MetaSchema;
 use secondary_nodes::*;
@@ -123,6 +125,8 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
     SyntacticRelationSchema::create_and_insert_schema(db)?;
     #[cfg(not(feature = "typed_type_graph"))]
     ResolvedTypeUseSchema::create_and_insert_schema(db)?;
+    #[cfg(feature = "typed_type_graph")]
+    TypeRelationSchema::create_and_insert_schema(db)?;
 
     // -- crate_context --
     CrateContextSchema::create_and_insert_schema(db)?;

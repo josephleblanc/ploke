@@ -214,7 +214,7 @@ mod test {
     use cozo::{Db, MemStorage};
     use ploke_test_utils::test_run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
-    use syn_parser::parser::nodes::AsAnyNodeId;
+    use syn_parser::parser::nodes::{AsAnyNodeId, ToCozoUuid};
     use syn_parser::utils::{LogStyle, LogStyleDebug};
     // use tracing::Level;
 

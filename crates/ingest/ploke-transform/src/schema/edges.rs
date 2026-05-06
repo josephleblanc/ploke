@@ -11,7 +11,7 @@ use cozo::{Db, MemStorage};
 use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::ToCozoUuid;
-use syn_parser::parser::relations::SyntacticRelation;
+use syn_parser::parser::relations::{SyntacticRelation, TypeRelation};
 use syn_parser::resolve::Colorize;
 #[cfg(not(feature = "typed_type_graph"))]
 use syn_parser::resolve::type_resolution::TypeUseResolution;
@@ -34,6 +34,16 @@ define_schema!(ResolvedTypeUseSchema {
     target_id: "Uuid",
     resolved_type_id: "Uuid?",
     role: "String",
+    target_kind: "String"
+});
+
+#[cfg(feature = "typed_type_graph")]
+define_schema!(TypeRelationSchema {
+    "type_relation",
+    source_id: "Uuid",
+    target_id: "Uuid",
+    relation_kind: "String",
+    source_kind: "String",
     target_kind: "String"
 });
 
@@ -107,6 +117,62 @@ impl SyntacticRelationSchema {
                     format!("{:#?}", relation).log_orange()
                 );
             })?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "typed_type_graph")]
+impl TypeRelationSchema {
+    pub fn insert_relation(
+        &self,
+        db: &Db<MemStorage>,
+        relation: &TypeRelation,
+    ) -> Result<(), TransformError> {
+        let schema = &TypeRelationSchema::SCHEMA;
+        let params = match relation {
+            TypeRelation::Ordinary { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (
+                    schema.target_id().to_string(),
+                    syn_parser::parser::nodes::AnyNodeId::from(*target).to_cozo_uuid(),
+                ),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from(source.kind_name()),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from(format!("{:?}", target.kind())),
+                ),
+            ]),
+            TypeRelation::Trait { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (
+                    schema.target_id().to_string(),
+                    syn_parser::parser::nodes::AnyNodeId::from(*target).to_cozo_uuid(),
+                ),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from(source.kind_name()),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from(format!("{:?}", target.kind())),
+                ),
+            ]),
+        };
+
+        let script = schema.script_put(&params);
+        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
+
         Ok(())
     }
 }

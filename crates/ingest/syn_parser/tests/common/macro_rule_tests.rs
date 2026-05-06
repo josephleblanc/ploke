@@ -829,9 +829,8 @@ macro_rules! type_relation_case {
                 .format_timestamp(None)
                 .try_init();
 
-            $crate::common::type_relation_resolution::assert_type_relation_once(
-                $graph, $report, &$expected,
-            )?;
+            $crate::common::type_relation_resolution::TypeRelationView::new($graph, $report)
+                .assert_once($expected)?;
 
             Ok(())
         }
@@ -875,11 +874,8 @@ macro_rules! type_relations_present_case {
                 .format_timestamp(None)
                 .try_init();
 
-            $crate::common::type_relation_resolution::assert_type_relations_present(
-                $graph,
-                $report,
-                &[$($expected),*],
-            )?;
+            $crate::common::type_relation_resolution::TypeRelationView::new($graph, $report)
+                .assert_present(&[$($expected),*])?;
 
             Ok(())
         }
