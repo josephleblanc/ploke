@@ -57,6 +57,7 @@ use crate::branch_evaluation::BranchDisposition;
 use crate::intervention::{
     CommitPhase, Prototype1RunnerDisposition, RecordStore, load_runner_result_at,
 };
+use crate::projection::OperatorProjectionRead;
 use crate::spec::PrepareError;
 
 /// Append-only machine-readable journal entry for `C1 -> C2`
@@ -904,12 +905,13 @@ fn classify_pending_build(binary_path: &Path) -> (bool, PendingBuild) {
 fn classify_pending_completion(
     runner_result_path: &Path,
 ) -> Result<ObservedChildTerminal, PrototypeJournalError> {
-    let runner_result = load_runner_result_at(runner_result_path).map_err(|source| {
-        PrototypeJournalError::LoadRunnerResult {
-            path: runner_result_path.to_path_buf(),
-            source,
-        }
-    })?;
+    let runner_result =
+        load_runner_result_at(runner_result_path, OperatorProjectionRead::cli_operator()).map_err(
+            |source| PrototypeJournalError::LoadRunnerResult {
+                path: runner_result_path.to_path_buf(),
+                source,
+            },
+        )?;
     let terminal = match runner_result.disposition {
         Prototype1RunnerDisposition::Succeeded => ObservedChildTerminal::Succeeded,
         Prototype1RunnerDisposition::CompileFailed

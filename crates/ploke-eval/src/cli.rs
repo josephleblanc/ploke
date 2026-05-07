@@ -68,6 +68,7 @@ use crate::model_registry::{
     registry_has_model, save_active_model,
 };
 use crate::msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
+use crate::projection::OperatorProjectionRead;
 use crate::protocol::protocol_aggregate::{
     ProtocolAggregate, ProtocolAggregateError, ProtocolCallReviewRow, load_protocol_aggregate,
     load_protocol_aggregate_from_artifacts,
@@ -452,6 +453,10 @@ pub struct Prototype1StateCommand {
     /// Branch to create or switch to before writing initial parent identity.
     #[arg(long, value_name = "BRANCH", requires = "init_parent_identity")]
     pub identity_branch: Option<String>,
+
+    /// Prepared instance id for the generation-0 parent identity.
+    #[arg(long, value_name = "INSTANCE", requires = "init_parent_identity")]
+    pub identity_instance: Option<String>,
 
     /// Successor handoff token written by the previous parent runtime.
     #[arg(long, value_name = "PATH")]
@@ -1240,7 +1245,8 @@ impl JustCommand {
             JustSubcommand::Batch(cmd) => cmd.run().await,
             JustSubcommand::ReplayBatch(cmd) => cmd.run().await,
             JustSubcommand::Watch(cmd) => {
-                let target = load_active_prototype1_monitor_target()?;
+                let target =
+                    load_active_prototype1_monitor_target(OperatorProjectionRead::cli_operator())?;
                 Prototype1MonitorCommand {
                     campaign: cmd
                         .campaign
@@ -3731,7 +3737,7 @@ impl TranscriptCommand {
 
 impl RunListCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let selection = load_active_selection()?;
+        let selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
         let instance = self
             .instance
             .clone()
@@ -3960,7 +3966,7 @@ impl ClosureAdvanceCommand {
 
 impl SelectStatusCommand {
     pub fn run(self) -> Result<(), PrepareError> {
-        let selection = load_active_selection()?;
+        let selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
         let warnings = render_selection_warnings(&selection);
         match self.format {
             InspectOutputFormat::Table => {
@@ -4003,7 +4009,7 @@ impl SelectStatusCommand {
 
 impl SelectCampaignCommand {
     pub fn run(self) -> Result<(), PrepareError> {
-        let mut selection = load_active_selection()?;
+        let mut selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
         selection.campaign = Some(self.campaign);
         save_active_selection(&selection)?;
         print_selection_update(&selection);
@@ -4013,7 +4019,7 @@ impl SelectCampaignCommand {
 
 impl SelectBatchCommand {
     pub fn run(self) -> Result<(), PrepareError> {
-        let mut selection = load_active_selection()?;
+        let mut selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
         selection.batch = Some(self.batch);
         save_active_selection(&selection)?;
         print_selection_update(&selection);
@@ -4023,7 +4029,7 @@ impl SelectBatchCommand {
 
 impl SelectInstanceCommand {
     pub fn run(self) -> Result<(), PrepareError> {
-        let mut selection = load_active_selection()?;
+        let mut selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
         selection.instance = Some(self.instance);
         selection.attempt = None;
         save_active_selection(&selection)?;
@@ -4040,7 +4046,7 @@ impl SelectAttemptCommand {
                 detail: "attempt numbers are 1-based".to_string(),
             });
         }
-        let mut selection = load_active_selection()?;
+        let mut selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
         if let Some(instance) = self.instance {
             selection.instance = Some(instance);
         }
@@ -4062,7 +4068,7 @@ impl SelectAttemptCommand {
 impl SelectUnsetCommand {
     pub fn run(self) -> Result<(), PrepareError> {
         unset_active_selection_slot(self.scope)?;
-        let selection = load_active_selection()?;
+        let selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
         print_selection_update(&selection);
         Ok(())
     }
@@ -4071,7 +4077,7 @@ impl SelectUnsetCommand {
 impl SelectClearCommand {
     pub fn run(self) -> Result<(), PrepareError> {
         clear_active_selection()?;
-        let selection = load_active_selection()?;
+        let selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
         print_selection_update(&selection);
         Ok(())
     }
@@ -10781,7 +10787,7 @@ fn resolve_record_path_from_eval_home(
     eval_home: PathBuf,
 ) -> Result<RecordResolution, PrepareError> {
     let instances_root = crate::layout::instances_dir()?;
-    let selection = load_active_selection_at(&eval_home)?;
+    let selection = load_active_selection_at(&eval_home, OperatorProjectionRead::cli_operator())?;
     match (record, instance) {
         (Some(path), None) => Ok(RecordResolution {
             record_path: path,
@@ -12296,12 +12302,14 @@ mod tests {
             "--campaign",
             "prototype1-campaign",
             "--node-id",
-            "node-gen0",
+            "node-639a992e45ac3533",
             "--repo-root",
             "/tmp/repo",
             "--init-parent-identity",
             "--identity-branch",
             "prototype1-parent-gen0",
+            "--identity-instance",
+            "clap-rs__clap-3670",
         ])
         .expect("loop prototype1-state identity init should parse");
 
@@ -12310,12 +12318,13 @@ mod tests {
                 command: LoopSubcommand::Prototype1State(cmd),
             }) => {
                 assert_eq!(cmd.campaign.as_deref(), Some("prototype1-campaign"));
-                assert_eq!(cmd.node_id.as_deref(), Some("node-gen0"));
+                assert_eq!(cmd.node_id.as_deref(), Some("node-639a992e45ac3533"));
                 assert!(cmd.init_parent_identity);
                 assert_eq!(
                     cmd.identity_branch.as_deref(),
                     Some("prototype1-parent-gen0")
                 );
+                assert_eq!(cmd.identity_instance.as_deref(), Some("clap-rs__clap-3670"));
                 assert_eq!(
                     cmd.repo_root.as_deref(),
                     Some(std::path::Path::new("/tmp/repo"))

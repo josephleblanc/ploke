@@ -6,6 +6,7 @@ use crate::run_registry::{list_registrations_for_instance, load_registration_for
 use crate::selection::{
     ActiveSelection, load_active_selection_at, render_selection_warnings,
 };
+use crate::projection::OperatorProjectionRead;
 use crate::spec::PrepareError;
 
 #[derive(Debug, Clone)]
@@ -55,7 +56,7 @@ pub(super) fn resolve_record_path_from_eval_home(
     eval_home: PathBuf,
 ) -> Result<RecordResolution, PrepareError> {
     let instances_root = eval_home.join("instances");
-    let selection = load_active_selection_at(&eval_home)?;
+    let selection = load_active_selection_at(&eval_home, OperatorProjectionRead::cli_operator())?;
     match (record, instance) {
         (Some(path), None) => Ok(RecordResolution {
             record_path: path,
@@ -483,4 +484,3 @@ mod tests {
         assert_eq!(resolution.record_path, run_dir.join("record.json.gz"));
     }
 }
-

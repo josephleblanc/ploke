@@ -12,6 +12,7 @@ pub(crate) mod loop_graph;
 pub mod model_registry;
 pub mod msb;
 pub mod operational_metrics;
+pub mod projection;
 pub mod protocol;
 mod protocol_artifacts;
 mod protocol_report;

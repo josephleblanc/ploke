@@ -40,6 +40,30 @@ pub(crate) struct ParentIdentity {
 }
 
 impl ParentIdentity {
+    /// Construct the first parent identity from explicit bootstrap facts.
+    pub(crate) fn root_bootstrap(
+        campaign_id: impl Into<String>,
+        node_id: impl Into<String>,
+        instance_id: impl Into<String>,
+        branch_id: impl Into<String>,
+        artifact_branch: Option<String>,
+    ) -> Self {
+        let node_id = node_id.into();
+        Self {
+            schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
+            campaign_id: campaign_id.into(),
+            parent_id: node_id.clone(),
+            node_id,
+            generation: 0,
+            instance_id: Some(instance_id.into()),
+            previous_parent_id: None,
+            parent_node_id: None,
+            branch_id: branch_id.into(),
+            artifact_branch,
+            created_at: Utc::now().to_rfc3339(),
+        }
+    }
+
     /// Construct identity from the scheduler node mirror.
     pub(crate) fn from_node(
         campaign_id: impl Into<String>,

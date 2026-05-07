@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 
 use super::ResolvedTreatmentBranch;
 use crate::loop_graph::{ArtifactId, OperationTarget, PatchId};
+use crate::projection::OperatorProjectionRead;
 use crate::spec::PrepareError;
 
 pub const PROTOTYPE1_SCHEDULER_SCHEMA_VERSION: &str = "prototype1-scheduler.v1";
@@ -382,7 +383,7 @@ fn default_scheduler_state(campaign_id: &str) -> Prototype1SchedulerState {
     }
 }
 
-pub fn load_or_default_scheduler_state(
+fn load_or_default_scheduler_state(
     campaign_id: &str,
     campaign_manifest_path: &Path,
 ) -> Result<Prototype1SchedulerState, PrepareError> {
@@ -401,6 +402,7 @@ pub fn load_or_default_scheduler_state(
 
 pub fn load_scheduler_state(
     campaign_manifest_path: &Path,
+    _projection: OperatorProjectionRead,
 ) -> Result<Prototype1SchedulerState, PrepareError> {
     let path = prototype1_scheduler_path(campaign_manifest_path);
     let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
@@ -561,6 +563,7 @@ pub fn write_runner_result_at(
 pub fn load_node_record(
     campaign_manifest_path: &Path,
     node_id: &str,
+    _projection: OperatorProjectionRead,
 ) -> Result<Prototype1NodeRecord, PrepareError> {
     let path = prototype1_node_record_path(campaign_manifest_path, node_id);
     let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
@@ -573,6 +576,7 @@ pub fn load_node_record(
 pub fn load_runner_request(
     campaign_manifest_path: &Path,
     node_id: &str,
+    _projection: OperatorProjectionRead,
 ) -> Result<Prototype1RunnerRequest, PrepareError> {
     let path = prototype1_runner_request_path(campaign_manifest_path, node_id);
     let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
@@ -585,12 +589,16 @@ pub fn load_runner_request(
 pub fn load_runner_result(
     campaign_manifest_path: &Path,
     node_id: &str,
+    projection: OperatorProjectionRead,
 ) -> Result<Prototype1RunnerResult, PrepareError> {
     let path = prototype1_runner_result_path(campaign_manifest_path, node_id);
-    load_runner_result_at(&path)
+    load_runner_result_at(&path, projection)
 }
 
-pub fn load_runner_result_at(path: &Path) -> Result<Prototype1RunnerResult, PrepareError> {
+pub fn load_runner_result_at(
+    path: &Path,
+    _projection: OperatorProjectionRead,
+) -> Result<Prototype1RunnerResult, PrepareError> {
     let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
         path: path.to_path_buf(),
         source,
@@ -697,7 +705,11 @@ pub fn update_node_workspace_root(
     let record = node.clone();
     save_node_record(&record)?;
 
-    let mut request = load_runner_request(campaign_manifest_path, node_id)?;
+    let mut request = load_runner_request(
+        campaign_manifest_path,
+        node_id,
+        OperatorProjectionRead::projection_module(),
+    )?;
     request.workspace_root = workspace_root;
     save_runner_request(&request, &record.runner_request_path)?;
 
@@ -1062,7 +1074,8 @@ pub fn load_or_register_treatment_evaluation_node(
     let node_id = prototype1_node_id(&branch.branch.branch_id, generation);
     let mut scheduler = load_or_default_scheduler_state(campaign_id, campaign_manifest_path)?;
 
-    let node = match load_node_record(campaign_manifest_path, &node_id) {
+    let projection = OperatorProjectionRead::projection_module();
+    let node = match load_node_record(campaign_manifest_path, &node_id, projection) {
         Ok(node) => node,
         Err(err) if is_not_found(&err) => {
             return register_treatment_evaluation_node(
@@ -1077,7 +1090,7 @@ pub fn load_or_register_treatment_evaluation_node(
         }
         Err(err) => return Err(err),
     };
-    let request = match load_runner_request(campaign_manifest_path, &node_id) {
+    let request = match load_runner_request(campaign_manifest_path, &node_id, projection) {
         Ok(request) => request,
         Err(err) if is_not_found(&err) => {
             return register_treatment_evaluation_node(
@@ -1225,9 +1238,11 @@ mod tests {
 
         let loaded_scheduler =
             load_or_default_scheduler_state("test-campaign", &manifest).expect("load scheduler");
-        let loaded_node = load_node_record(&manifest, &node.node_id).expect("load node");
+        let projection = OperatorProjectionRead::projection_module();
+        let loaded_node =
+            load_node_record(&manifest, &node.node_id, projection).expect("load node");
         let loaded_request =
-            load_runner_request(&manifest, &node.node_id).expect("load runner request");
+            load_runner_request(&manifest, &node.node_id, projection).expect("load runner request");
 
         assert_eq!(loaded_scheduler.nodes[0].node_id, node.node_id);
         assert_eq!(loaded_node.branch_id, "branch-123");

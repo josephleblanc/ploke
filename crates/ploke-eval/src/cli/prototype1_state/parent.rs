@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use tracing::{info, instrument};
 
 use crate::{
     cli::prototype1_state::{
@@ -362,7 +363,6 @@ pub(crate) enum ChildPlanReceiverError {
 pub(crate) struct Check<'a> {
     pub campaign_id: &'a str,
     pub active_root: &'a Path,
-    pub selected_instance: Option<&'a str>,
 }
 
 fn parent_node_projection(manifest_path: &Path, identity: &ParentIdentity) -> Prototype1NodeRecord {
@@ -404,11 +404,39 @@ fn parent_node_projection(manifest_path: &Path, identity: &ParentIdentity) -> Pr
 }
 
 impl Parent<Unchecked> {
+    #[instrument(
+        target = "ploke_exec",
+        level = "info",
+        skip(manifest_path),
+        fields(
+            role = "parent",
+            authority = "artifact_identity",
+            transition = "ParentIdentity->Parent<Unchecked>",
+            campaign_id = %identity.campaign_id,
+            parent_id = %identity.parent_id,
+            node_id = %identity.node_id,
+            generation = identity.generation,
+            branch_id = %identity.branch_id,
+            artifact_branch = ?identity.artifact_branch,
+        )
+    )]
     pub(crate) fn load(
         manifest_path: &Path,
         identity: ParentIdentity,
     ) -> Result<Self, PrepareError> {
         let node = parent_node_projection(manifest_path, &identity);
+        info!(
+            target: "ploke_exec",
+            role = "parent",
+            authority = "artifact_identity",
+            transition = "ParentIdentity->Parent<Unchecked>",
+            campaign_id = %identity.campaign_id,
+            parent_id = %identity.parent_id,
+            node_id = %identity.node_id,
+            generation = identity.generation,
+            branch_id = %identity.branch_id,
+            "loaded parent runtime identity from active Artifact"
+        );
         Ok(Self {
             identity,
             node,
@@ -416,13 +444,29 @@ impl Parent<Unchecked> {
         })
     }
 
+    #[instrument(
+        target = "ploke_exec",
+        level = "info",
+        skip(self, backend, manifest_path, check),
+        fields(
+            role = "parent",
+            authority = "artifact_backend",
+            transition = "Parent<Unchecked>->Parent<Checked>",
+            campaign_id = %self.identity.campaign_id,
+            parent_id = %self.identity.parent_id,
+            node_id = %self.identity.node_id,
+            generation = self.identity.generation,
+            branch_id = %self.identity.branch_id,
+            active_root = %check.active_root.display(),
+        )
+    )]
     pub(crate) fn check<B: WorkspaceBackend>(
         self,
         backend: &B,
         manifest_path: &Path,
         check: Check<'_>,
     ) -> Result<Parent<Checked>, PrepareError> {
-        let _ = (manifest_path, check.campaign_id, check.selected_instance);
+        let _ = (manifest_path, check.campaign_id);
         backend
             .validate_parent_checkout(check.active_root, &self.identity)
             .map_err(|source| PrepareError::DatabaseSetup {
@@ -430,6 +474,18 @@ impl Parent<Unchecked> {
                 detail: source.to_string(),
             })?;
 
+        info!(
+            target: "ploke_exec",
+            role = "parent",
+            authority = "artifact_backend",
+            transition = "Parent<Unchecked>->Parent<Checked>",
+            campaign_id = %self.identity.campaign_id,
+            parent_id = %self.identity.parent_id,
+            node_id = %self.identity.node_id,
+            generation = self.identity.generation,
+            branch_id = %self.identity.branch_id,
+            "validated parent checkout against artifact-carried identity"
+        );
         Ok(Parent {
             identity: self.identity,
             node: self.node,
@@ -443,8 +499,35 @@ impl Parent<Checked> {
         &self.identity
     }
 
+    #[instrument(
+        target = "ploke_exec",
+        level = "info",
+        skip(self, startup),
+        fields(
+            role = "parent",
+            authority = "history_startup",
+            transition = "Parent<Checked>->Parent<Ready>",
+            campaign_id = %self.identity.campaign_id,
+            parent_id = %self.identity.parent_id,
+            node_id = %self.identity.node_id,
+            generation = self.identity.generation,
+            branch_id = %self.identity.branch_id,
+        )
+    )]
     pub(crate) fn ready(self, startup: Startup<Validated>) -> Result<Parent<Ready>, PrepareError> {
         startup.validate_parent(&self.identity)?;
+        info!(
+            target: "ploke_exec",
+            role = "parent",
+            authority = "history_startup",
+            transition = "Parent<Checked>->Parent<Ready>",
+            campaign_id = %self.identity.campaign_id,
+            parent_id = %self.identity.parent_id,
+            node_id = %self.identity.node_id,
+            generation = self.identity.generation,
+            branch_id = %self.identity.branch_id,
+            "admitted checked parent after startup authority validation"
+        );
         Ok(Parent {
             identity: self.identity,
             node: self.node,
@@ -748,7 +831,34 @@ impl Parent<Ready> {
         &self.identity
     }
 
+    #[instrument(
+        target = "ploke_exec",
+        level = "info",
+        skip(self),
+        fields(
+            role = "parent",
+            authority = "parent_broadcast_channel",
+            transition = "Parent<Ready>->Parent<Planned>",
+            campaign_id = %self.identity.campaign_id,
+            parent_id = %self.identity.parent_id,
+            node_id = %self.identity.node_id,
+            generation = self.identity.generation,
+            branch_id = %self.identity.branch_id,
+        )
+    )]
     pub(crate) fn planned_from_locked_child_plan(self) -> Parent<Planned> {
+        info!(
+            target: "ploke_exec",
+            role = "parent",
+            authority = "parent_broadcast_channel",
+            transition = "Parent<Ready>->Parent<Planned>",
+            campaign_id = %self.identity.campaign_id,
+            parent_id = %self.identity.parent_id,
+            node_id = %self.identity.node_id,
+            generation = self.identity.generation,
+            branch_id = %self.identity.branch_id,
+            "locked parent child-plan broadcast"
+        );
         self.cast()
     }
 }
@@ -764,7 +874,34 @@ impl Parent<Selectable> {
         &self.identity
     }
 
+    #[instrument(
+        target = "ploke_exec",
+        level = "info",
+        skip(self),
+        fields(
+            role = "parent",
+            authority = "crown_lineage_lock",
+            transition = "Parent<Selectable>->Parent<Retired>",
+            campaign_id = %self.identity.campaign_id,
+            parent_id = %self.identity.parent_id,
+            node_id = %self.identity.node_id,
+            generation = self.identity.generation,
+            branch_id = %self.identity.branch_id,
+        )
+    )]
     pub(super) fn into_retired_and_lineage(self) -> (Parent<Retired>, LineageKey) {
+        info!(
+            target: "ploke_exec",
+            role = "parent",
+            authority = "crown_lineage_lock",
+            transition = "Parent<Selectable>->Parent<Retired>",
+            campaign_id = %self.identity.campaign_id,
+            parent_id = %self.identity.parent_id,
+            node_id = %self.identity.node_id,
+            generation = self.identity.generation,
+            branch_id = %self.identity.branch_id,
+            "parent locked lineage authority for successor handoff"
+        );
         let lineage = LineageKey::from_debug_value(self.identity.campaign_id.clone());
         (self.cast(), lineage)
     }

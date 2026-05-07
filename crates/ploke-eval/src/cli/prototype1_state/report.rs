@@ -23,12 +23,11 @@ use crate::{
         },
     },
     intervention::{
-        Prototype1BranchRegistry, Prototype1ContinuationDecision, Prototype1NodeRecord,
-        Prototype1NodeStatus, Prototype1SchedulerState, load_or_default_branch_registry,
-        load_or_default_scheduler_state, prototype1_branch_registry_path,
+        Prototype1BranchRegistry, load_or_default_branch_registry, prototype1_branch_registry_path,
         prototype1_scheduler_path,
     },
     operational_metrics::PatchApplyState,
+    projection::OperatorProjectionRead,
     record::SubmissionArtifactState,
     spec::PrepareError,
 };
@@ -64,7 +63,6 @@ struct Report {
     branch_registry_path: PathBuf,
     transition_journal_path: PathBuf,
     evaluation_dir: PathBuf,
-    scheduler: SchedulerView,
     branch_registry: RegistryView,
     journal: JournalView,
     evaluations: EvaluationView,
@@ -80,8 +78,11 @@ impl Report {
         let transition_journal_path = prototype1_transition_journal_path(manifest_path);
         let evaluation_dir = prototype_root.join("evaluations");
 
-        let scheduler = load_or_default_scheduler_state(campaign_id, manifest_path)?;
-        let branch_registry = load_or_default_branch_registry(campaign_id, manifest_path)?;
+        let branch_registry = load_or_default_branch_registry(
+            campaign_id,
+            manifest_path,
+            OperatorProjectionRead::cli_operator(),
+        )?;
         let journal_entries = load_journal(&transition_journal_path)?;
         let evaluations = load_evaluations(&evaluation_dir)?;
 
@@ -95,15 +96,10 @@ impl Report {
             branch_registry_path,
             transition_journal_path,
             evaluation_dir,
-            scheduler: SchedulerView::from_state(&scheduler),
             branch_registry: RegistryView::from_registry(&branch_registry),
             journal: JournalView::from_entries(journal_entries.clone()),
             evaluations: EvaluationView::from_reports(evaluations),
-            deduped_fields: DedupedFields::from_sources(
-                &scheduler,
-                &branch_registry,
-                &journal_entries,
-            ),
+            deduped_fields: DedupedFields::from_sources(&branch_registry, &journal_entries),
             missing_or_weak_fields: vec![
                 "sealed_by / real Crown<Locked> authority is not present in current records",
                 "predecessor block verification is not a typed carrier in current records",
@@ -131,7 +127,6 @@ impl Report {
         println!("evaluations: {}", self.evaluation_dir.display());
         println!();
 
-        self.scheduler.print();
         self.branch_registry.print();
         self.journal.print();
         self.evaluations.print();
@@ -143,109 +138,6 @@ impl Report {
             println!("- {field}");
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct SchedulerView {
-    schema_version: String,
-    updated_at: String,
-    max_generation: Option<u32>,
-    nodes_total: usize,
-    frontier_nodes: usize,
-    completed_nodes: usize,
-    failed_nodes: usize,
-    node_status_counts: BTreeMap<String, usize>,
-    selected_trajectory: Vec<NodeStep>,
-    last_continuation_decision: Option<Prototype1ContinuationDecision>,
-}
-
-impl SchedulerView {
-    fn from_state(scheduler: &Prototype1SchedulerState) -> Self {
-        let mut node_status_counts = BTreeMap::new();
-        for node in &scheduler.nodes {
-            *node_status_counts
-                .entry(status_name(node.status).to_string())
-                .or_insert(0) += 1;
-        }
-
-        Self {
-            schema_version: scheduler.schema_version.clone(),
-            updated_at: scheduler.updated_at.clone(),
-            max_generation: scheduler.nodes.iter().map(|node| node.generation).max(),
-            nodes_total: scheduler.nodes.len(),
-            frontier_nodes: scheduler.frontier_node_ids.len(),
-            completed_nodes: scheduler.completed_node_ids.len(),
-            failed_nodes: scheduler.failed_node_ids.len(),
-            node_status_counts,
-            selected_trajectory: selected_trajectory(scheduler),
-            last_continuation_decision: scheduler.last_continuation_decision.clone(),
-        }
-    }
-
-    fn print(&self) {
-        println!("scheduler");
-        println!("{}", "-".repeat(40));
-        println!("schema_version: {}", self.schema_version);
-        println!("updated_at: {}", self.updated_at);
-        println!(
-            "nodes/frontier/completed/failed: {}/{}/{}/{}",
-            self.nodes_total, self.frontier_nodes, self.completed_nodes, self.failed_nodes
-        );
-        println!(
-            "max_generation: {}",
-            self.max_generation
-                .map(|generation| generation.to_string())
-                .unwrap_or_else(|| "(none)".to_string())
-        );
-        println!("node_status_counts:");
-        for (status, count) in &self.node_status_counts {
-            println!("  {status}: {count}");
-        }
-        if let Some(decision) = self.last_continuation_decision.as_ref() {
-            println!(
-                "continuation: {} next_generation={} selected_next_branch_id={} total_nodes_after_continue={} selection_policy_outcome={}",
-                serde_name(&decision.disposition),
-                decision.next_generation,
-                decision
-                    .selected_next_branch_id
-                    .as_deref()
-                    .unwrap_or("(none)"),
-                decision.total_nodes_after_continue,
-                decision
-                    .selection_policy_outcome
-                    .as_ref()
-                    .map_or_else(|| "(none)".to_string(), serde_name)
-            );
-        } else {
-            println!("continuation: (none)");
-        }
-        println!("selected_trajectory:");
-        if self.selected_trajectory.is_empty() {
-            println!("  (none)");
-        } else {
-            for step in &self.selected_trajectory {
-                println!(
-                    "  gen={} node={} parent={} branch={} status={}",
-                    step.generation,
-                    step.node_id,
-                    step.parent_node_id.as_deref().unwrap_or("(none)"),
-                    step.branch_id,
-                    step.status
-                );
-            }
-        }
-        println!();
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct NodeStep {
-    generation: u32,
-    node_id: String,
-    parent_node_id: Option<String>,
-    branch_id: String,
-    candidate_id: String,
-    status: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -511,30 +403,17 @@ struct DedupedFields {
 }
 
 impl DedupedFields {
-    fn from_sources(
-        scheduler: &Prototype1SchedulerState,
-        registry: &Prototype1BranchRegistry,
-        journal_entries: &[JournalEntry],
-    ) -> Self {
+    fn from_sources(registry: &Prototype1BranchRegistry, journal_entries: &[JournalEntry]) -> Self {
         let mut campaign_ids = BTreeSet::new();
-        let mut node_ids = BTreeSet::new();
-        let mut generations = BTreeSet::new();
+        let node_ids = BTreeSet::new();
+        let generations = BTreeSet::new();
         let mut runtime_ids = BTreeSet::new();
         let mut branch_ids = BTreeSet::new();
         let mut candidate_ids = BTreeSet::new();
         let mut source_state_ids = BTreeSet::new();
         let mut target_relpaths = BTreeSet::new();
 
-        campaign_ids.insert(scheduler.campaign_id.clone());
         campaign_ids.insert(registry.campaign_id.clone());
-        for node in &scheduler.nodes {
-            node_ids.insert(node.node_id.clone());
-            generations.insert(node.generation);
-            branch_ids.insert(node.branch_id.clone());
-            candidate_ids.insert(node.candidate_id.clone());
-            source_state_ids.insert(node.source_state_id.clone());
-            target_relpaths.insert(node.target_relpath.clone());
-        }
         for source in &registry.source_nodes {
             source_state_ids.insert(source.source_state_id.clone());
             target_relpaths.insert(source.target_relpath.clone());
@@ -658,44 +537,6 @@ fn load_evaluations(dir: &Path) -> Result<Vec<Prototype1BranchEvaluationReport>,
     Ok(reports)
 }
 
-fn selected_trajectory(scheduler: &Prototype1SchedulerState) -> Vec<NodeStep> {
-    let nodes_by_id: BTreeMap<&str, &Prototype1NodeRecord> = scheduler
-        .nodes
-        .iter()
-        .map(|node| (node.node_id.as_str(), node))
-        .collect();
-    let mut selected = Vec::new();
-    let mut current = scheduler
-        .last_continuation_decision
-        .as_ref()
-        .and_then(|decision| decision.selected_next_branch_id.as_deref())
-        .and_then(|branch_id| {
-            scheduler
-                .nodes
-                .iter()
-                .find(|node| node.branch_id == branch_id)
-        })
-        .or_else(|| scheduler.nodes.iter().max_by_key(|node| node.generation));
-
-    while let Some(node) = current {
-        selected.push(NodeStep {
-            generation: node.generation,
-            node_id: node.node_id.clone(),
-            parent_node_id: node.parent_node_id.clone(),
-            branch_id: node.branch_id.clone(),
-            candidate_id: node.candidate_id.clone(),
-            status: status_name(node.status).to_string(),
-        });
-        current = node
-            .parent_node_id
-            .as_deref()
-            .and_then(|parent_node_id| nodes_by_id.get(parent_node_id).copied());
-    }
-
-    selected.reverse();
-    selected
-}
-
 fn summarize_compared_instances(report: &Prototype1BranchEvaluationReport) -> EvaluationMetrics {
     let mut metrics = EvaluationMetrics::default();
     for compared in &report.compared_instances {
@@ -746,17 +587,6 @@ fn journal_kind(entry: &JournalEntry) -> &'static str {
             crate::intervention::CommitPhase::Before => "observe:before",
             crate::intervention::CommitPhase::After => "observe:after",
         },
-    }
-}
-
-fn status_name(status: Prototype1NodeStatus) -> &'static str {
-    match status {
-        Prototype1NodeStatus::Planned => "planned",
-        Prototype1NodeStatus::WorkspaceStaged => "workspace_staged",
-        Prototype1NodeStatus::BinaryBuilt => "binary_built",
-        Prototype1NodeStatus::Running => "running",
-        Prototype1NodeStatus::Succeeded => "succeeded",
-        Prototype1NodeStatus::Failed => "failed",
     }
 }
 

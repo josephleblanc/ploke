@@ -11,6 +11,7 @@ use super::spec::{
 };
 use crate::branch_evaluation::BranchDisposition;
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, PatchId};
+use crate::projection::OperatorProjectionRead;
 use crate::spec::PrepareError;
 
 pub const PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION: &str = "prototype1-branch-registry.v1";
@@ -268,6 +269,7 @@ fn default_registry(campaign_id: &str) -> Prototype1BranchRegistry {
 pub fn load_or_default_branch_registry(
     campaign_id: &str,
     campaign_manifest_path: &Path,
+    _projection: OperatorProjectionRead,
 ) -> Result<Prototype1BranchRegistry, PrepareError> {
     let path = prototype1_branch_registry_path(campaign_manifest_path);
     match fs::read_to_string(&path) {
@@ -304,7 +306,11 @@ pub fn record_synthesized_branches(
     selected_candidate_id: Option<&str>,
     parent_branch_id: Option<&str>,
 ) -> Result<Prototype1BranchRegistry, PrepareError> {
-    let mut registry = load_or_default_branch_registry(campaign_id, campaign_manifest_path)?;
+    let mut registry = load_or_default_branch_registry(
+        campaign_id,
+        campaign_manifest_path,
+        OperatorProjectionRead::projection_module(),
+    )?;
     let source_content_hash = sha256_hex(&synthesis.candidate_set.source_content);
     // Preserve any real target provenance already supplied by synthesis.
     // Otherwise fall back to the current text-file surface identity. That
@@ -438,7 +444,11 @@ pub fn mark_treatment_branch_applied(
     target_relpath: &Path,
     apply: &InterventionApplyOutput,
 ) -> Result<Prototype1BranchRegistry, PrepareError> {
-    let mut registry = load_or_default_branch_registry(campaign_id, campaign_manifest_path)?;
+    let mut registry = load_or_default_branch_registry(
+        campaign_id,
+        campaign_manifest_path,
+        OperatorProjectionRead::projection_module(),
+    )?;
     let source_state_id = &apply.treatment_state.source_state_id;
 
     let source_node = registry
@@ -537,7 +547,11 @@ pub fn select_treatment_branch(
     campaign_manifest_path: &Path,
     branch_id: &str,
 ) -> Result<Prototype1BranchRegistry, PrepareError> {
-    let mut registry = load_or_default_branch_registry(campaign_id, campaign_manifest_path)?;
+    let mut registry = load_or_default_branch_registry(
+        campaign_id,
+        campaign_manifest_path,
+        OperatorProjectionRead::projection_module(),
+    )?;
     let mut selected = None;
 
     for source_node in &mut registry.source_nodes {
@@ -632,7 +646,11 @@ pub fn active_branch_selection_for_target(
     campaign_manifest_path: &Path,
     target_relpath: &Path,
 ) -> Result<Option<ActiveBranchSelection>, PrepareError> {
-    let registry = load_or_default_branch_registry(campaign_id, campaign_manifest_path)?;
+    let registry = load_or_default_branch_registry(
+        campaign_id,
+        campaign_manifest_path,
+        OperatorProjectionRead::projection_module(),
+    )?;
     let Some(active) = registry
         .active_targets
         .iter()
@@ -667,8 +685,10 @@ pub fn resolve_treatment_branch(
     campaign_id: &str,
     campaign_manifest_path: &Path,
     branch_id: &str,
+    projection: OperatorProjectionRead,
 ) -> Result<ResolvedTreatmentBranch, PrepareError> {
-    let registry = load_or_default_branch_registry(campaign_id, campaign_manifest_path)?;
+    let registry =
+        load_or_default_branch_registry(campaign_id, campaign_manifest_path, projection)?;
     for source_node in registry.source_nodes {
         if let Some(branch) = source_node
             .branches
@@ -699,7 +719,11 @@ pub fn restore_treatment_branch(
     branch_id: &str,
     repo_root: &Path,
 ) -> Result<InterventionRestoreOutput, PrepareError> {
-    let mut registry = load_or_default_branch_registry(campaign_id, campaign_manifest_path)?;
+    let mut registry = load_or_default_branch_registry(
+        campaign_id,
+        campaign_manifest_path,
+        OperatorProjectionRead::projection_module(),
+    )?;
     let mut restored = None;
 
     for source_node in &mut registry.source_nodes {
@@ -768,7 +792,11 @@ pub fn record_treatment_branch_evaluation(
     branch_id: &str,
     summary: TreatmentBranchEvaluationSummary,
 ) -> Result<Prototype1BranchRegistry, PrepareError> {
-    let mut registry = load_or_default_branch_registry(campaign_id, campaign_manifest_path)?;
+    let mut registry = load_or_default_branch_registry(
+        campaign_id,
+        campaign_manifest_path,
+        OperatorProjectionRead::projection_module(),
+    )?;
     let mut found = false;
 
     for source_node in &mut registry.source_nodes {
@@ -1081,8 +1109,12 @@ mod tests {
             fs::read_to_string(&absolute_target).expect("restored target"),
             "old text\n"
         );
-        let registry =
-            load_or_default_branch_registry("test-campaign", &manifest).expect("reload registry");
+        let registry = load_or_default_branch_registry(
+            "test-campaign",
+            &manifest,
+            OperatorProjectionRead::projection_module(),
+        )
+        .expect("reload registry");
         assert_eq!(registry.active_targets[0].active_branch_id, None);
         let restored_branch = registry.source_nodes[0]
             .branches
@@ -1141,8 +1173,13 @@ mod tests {
         .expect("record synthesis");
         let branch_id = registry.source_nodes[0].branches[1].branch_id.clone();
 
-        let resolved =
-            resolve_treatment_branch("test-campaign", &manifest, &branch_id).expect("resolve");
+        let resolved = resolve_treatment_branch(
+            "test-campaign",
+            &manifest,
+            &branch_id,
+            OperatorProjectionRead::projection_module(),
+        )
+        .expect("resolve");
         assert_eq!(resolved.instance_id, "clap-rs__clap-3670");
         assert_eq!(resolved.parent_branch_id.as_deref(), Some("branch-parent"));
         assert_eq!(resolved.source_content, "old text\n");

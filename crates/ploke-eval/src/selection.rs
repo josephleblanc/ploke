@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::campaign::load_campaign_manifest;
 use crate::layout::{active_selection_file, batches_dir, prototype1_monitor_target_file};
+use crate::projection::OperatorProjectionRead;
 use crate::spec::{PrepareError, PreparedMsbBatch};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -43,13 +44,16 @@ impl ActiveSelection {
     }
 }
 
-pub fn load_active_selection() -> Result<ActiveSelection, PrepareError> {
+pub fn load_active_selection(
+    _projection: OperatorProjectionRead,
+) -> Result<ActiveSelection, PrepareError> {
     let path = active_selection_file()?;
     load_active_selection_from_path(&path)
 }
 
-pub fn load_active_prototype1_monitor_target()
--> Result<Option<ActivePrototype1MonitorTarget>, PrepareError> {
+pub fn load_active_prototype1_monitor_target(
+    _projection: OperatorProjectionRead,
+) -> Result<Option<ActivePrototype1MonitorTarget>, PrepareError> {
     let path = prototype1_monitor_target_file()?;
     load_active_prototype1_monitor_target_from_path(&path)
 }
@@ -98,7 +102,10 @@ fn save_active_prototype1_monitor_target_to_path(
     })
 }
 
-pub(crate) fn load_active_selection_at(eval_home: &Path) -> Result<ActiveSelection, PrepareError> {
+pub(crate) fn load_active_selection_at(
+    eval_home: &Path,
+    _projection: OperatorProjectionRead,
+) -> Result<ActiveSelection, PrepareError> {
     let path = eval_home.join("selection.json");
     load_active_selection_from_path(&path)
 }
@@ -136,7 +143,7 @@ pub fn clear_active_selection() -> Result<(), PrepareError> {
 }
 
 pub fn unset_active_selection_slot(slot: ActiveSelectionSlot) -> Result<(), PrepareError> {
-    let mut selection = load_active_selection()?;
+    let mut selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
     match slot {
         ActiveSelectionSlot::Campaign => selection.campaign = None,
         ActiveSelectionSlot::Batch => selection.batch = None,

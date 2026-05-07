@@ -1,5 +1,6 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use ploke_db::{Database, helpers::graph_resolve_exact};
+use std::hint::black_box;
 use std::path::{Path, PathBuf};
 
 fn bench_resolve_strict(c: &mut Criterion) {

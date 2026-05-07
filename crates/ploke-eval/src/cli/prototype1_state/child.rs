@@ -21,6 +21,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::{info, instrument};
 
 use crate::intervention::RecordStore;
 
@@ -153,27 +154,122 @@ impl Child<Starting> {
         }
     }
 
+    #[instrument(
+        target = "ploke_exec",
+        level = "info",
+        skip(self),
+        fields(
+            role = "child",
+            authority = "child_runtime_channel",
+            transition = "Child<Starting>->Child<Ready>",
+            campaign_id = %self.refs.campaign_id,
+            node_id = %self.refs.node_id,
+            generation = self.generation,
+            branch_id = %self.refs.branch_id,
+            candidate_id = %self.refs.candidate_id,
+            runtime_id = %self.runtime_id,
+            pid = self.pid,
+        )
+    )]
     /// Record `Child<Ready>` and return the typed ready state.
     pub(crate) fn ready(self) -> Result<Child<Ready>, Error> {
+        info!(
+            target: "ploke_exec",
+            role = "child",
+            authority = "child_runtime_channel",
+            transition = "Child<Starting>->Child<Ready>",
+            campaign_id = %self.refs.campaign_id,
+            node_id = %self.refs.node_id,
+            generation = self.generation,
+            branch_id = %self.refs.branch_id,
+            candidate_id = %self.refs.candidate_id,
+            runtime_id = %self.runtime_id,
+            pid = self.pid,
+            "child runtime acknowledged parent bootstrap"
+        );
         self.record(State::Ready)?;
         Ok(self.cast())
     }
 }
 
 impl Child<Ready> {
+    #[instrument(
+        target = "ploke_exec",
+        level = "info",
+        skip(self),
+        fields(
+            role = "child",
+            authority = "child_runtime_channel",
+            transition = "Child<Ready>->Child<Evaluating>",
+            campaign_id = %self.refs.campaign_id,
+            node_id = %self.refs.node_id,
+            generation = self.generation,
+            branch_id = %self.refs.branch_id,
+            candidate_id = %self.refs.candidate_id,
+            runtime_id = %self.runtime_id,
+            pid = self.pid,
+        )
+    )]
     /// Record `Child<Evaluating>` and return the typed evaluating state.
     pub(crate) fn evaluating(self) -> Result<Child<Evaluating>, Error> {
+        info!(
+            target: "ploke_exec",
+            role = "child",
+            authority = "child_runtime_channel",
+            transition = "Child<Ready>->Child<Evaluating>",
+            campaign_id = %self.refs.campaign_id,
+            node_id = %self.refs.node_id,
+            generation = self.generation,
+            branch_id = %self.refs.branch_id,
+            candidate_id = %self.refs.candidate_id,
+            runtime_id = %self.runtime_id,
+            pid = self.pid,
+            "child runtime entered bounded evaluation"
+        );
         self.record(State::Evaluating)?;
         Ok(self.cast())
     }
 }
 
 impl Child<Evaluating> {
+    #[instrument(
+        target = "ploke_exec",
+        level = "info",
+        skip(self, runner_result_path),
+        fields(
+            role = "child",
+            authority = "child_runtime_channel",
+            transition = "Child<Evaluating>->Child<ResultWritten>",
+            campaign_id = %self.refs.campaign_id,
+            node_id = %self.refs.node_id,
+            generation = self.generation,
+            branch_id = %self.refs.branch_id,
+            candidate_id = %self.refs.candidate_id,
+            runtime_id = %self.runtime_id,
+            pid = self.pid,
+            runner_result_path = %runner_result_path.display(),
+        )
+    )]
     /// Record `Child<ResultWritten>` and return the typed result-written state.
     pub(crate) fn result_written(
         self,
         runner_result_path: PathBuf,
     ) -> Result<Child<ResultWritten>, Error> {
+        info!(
+            target: "ploke_exec",
+            role = "child",
+            authority = "child_runtime_channel",
+            transition = "Child<Evaluating>->Child<ResultWritten>",
+            campaign_id = %self.refs.campaign_id,
+            node_id = %self.refs.node_id,
+            generation = self.generation,
+            branch_id = %self.refs.branch_id,
+            candidate_id = %self.refs.candidate_id,
+            runtime_id = %self.runtime_id,
+            pid = self.pid,
+            runner_result_path = %runner_result_path.display(),
+            "child runtime persisted attempt result"
+        );
         self.record(State::ResultWritten { runner_result_path })?;
         Ok(self.cast())
     }
