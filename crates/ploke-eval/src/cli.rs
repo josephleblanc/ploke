@@ -473,8 +473,8 @@ pub struct Prototype1StateCommand {
     #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Complete)]
     pub stop_after: Prototype1StateStopAfter,
 
-    /// Successor-selection policy. History traversal is opt-in and only uses sealed History candidates.
-    #[arg(long, value_enum, default_value_t = Prototype1SuccessorSelection::GenerationLocal)]
+    /// Successor-selection strategy. Active selection defaults to History traversal with current-generation candidates appended before scoring.
+    #[arg(long, value_enum, default_value_t = Prototype1SuccessorSelection::HistoryScoreChildProp)]
     pub successor_selection: Prototype1SuccessorSelection,
 
     /// Replay seed committed by History-backed traversal selection.
@@ -514,6 +514,8 @@ pub enum Prototype1MonitorSubcommand {
     HistoryScores(Prototype1ScoreCommand),
     /// Print read-only score/selection review projections from current evidence.
     ScoreSelectionReview(Prototype1ScoreCommand),
+    /// Print one sealed successor-selection decision and optional traversal replay.
+    SelectionShow(Prototype1SelectionShowCommand),
     /// Print a read-only History-shaped preview from current campaign records.
     HistoryPreview(Prototype1HistoryPreviewCommand),
     /// Print short excerpts from existing expected output files.
@@ -550,6 +552,8 @@ pub enum HistorySubcommand {
     Scores(Prototype1ScoreCommand),
     /// Print read-only score/selection review projections from current evidence.
     ScoreSelectionReview(Prototype1ScoreCommand),
+    /// Print one sealed successor-selection decision and optional traversal replay.
+    SelectionShow(Prototype1SelectionShowCommand),
     /// Print a read-only History-shaped preview from current campaign records.
     Preview(Prototype1HistoryPreviewCommand),
 }
@@ -609,6 +613,20 @@ pub struct Prototype1ScoreCommand {
     /// Restrict child scores to one generation.
     #[arg(long)]
     pub generation: Option<u32>,
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1SelectionShowCommand {
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Zero-based sealed selection decision row to inspect.
+    #[arg(long, default_value_t = 0, value_name = "INDEX")]
+    pub row: usize,
+
+    /// Include deterministic HistoryScoreChildProp replay weights when available.
+    #[arg(long)]
+    pub replay: bool,
 }
 
 #[derive(Debug, Parser)]

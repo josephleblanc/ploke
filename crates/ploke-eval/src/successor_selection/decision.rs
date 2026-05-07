@@ -65,6 +65,7 @@ impl SuccessorDecision {
             .map(|_| self.branch_disposition.as_str())
     }
 
+    #[cfg(test)]
     pub(crate) fn selects_successor(&self) -> bool {
         self.selected_branch_id.is_some()
             && matches!(
@@ -73,6 +74,7 @@ impl SuccessorDecision {
             )
     }
 
+    #[cfg(test)]
     pub(crate) fn selects_keep_successor(&self) -> bool {
         self.selects_successor() && self.branch_disposition == "keep"
     }

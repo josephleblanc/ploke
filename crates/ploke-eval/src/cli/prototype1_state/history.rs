@@ -931,7 +931,15 @@ impl History {
                     .into());
                 }
 
-                for payload in &selection.considered {
+                for (index, payload) in selection.considered.iter().enumerate() {
+                    if selection.procedure_or_policy.as_str()
+                        == crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID
+                    {
+                        match selection.considered_sources.get(index) {
+                            Some(TraversalCandidateSource::CurrentGeneration) => {}
+                            _ => continue,
+                        }
+                    }
                     let payload_hash = payload.payload_hash()?;
                     candidates.push(HistoryCandidate {
                         source: HistoryCandidateSource {
@@ -3390,6 +3398,15 @@ pub(crate) struct SelectionDecisionEntry {
     /// Inline-first behavior can include *all* candidates considered under the scope.
     pub(crate) considered: Vec<EvaluationPayload>,
 
+    /// Source of each considered payload in the traversal candidate universe.
+    ///
+    /// For History traversal entries, only `CurrentGeneration` payloads are
+    /// projected back out as newly admitted History candidates. Previously
+    /// admitted History payloads remain sealed for replay but must not be
+    /// re-ingested as fresh candidates on every generation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) considered_sources: Vec<TraversalCandidateSource>,
+
     /// Domain-separated commitment to the ordered considered list.
     pub(crate) considered_order_hash: HistoryHash,
 
@@ -3419,6 +3436,15 @@ pub(crate) struct TraversalEvidence {
     pub(crate) seed: u64,
     #[serde(default)]
     pub(crate) strategy: crate::successor_selection::traversal::StrategyKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_source: Option<TraversalCandidateSource>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TraversalCandidateSource {
+    History,
+    CurrentGeneration,
 }
 
 impl SelectionDecisionEntry {
@@ -3467,6 +3493,7 @@ impl SelectionDecisionEntry {
             scope,
             selected_candidate,
             considered,
+            considered_sources: Vec::new(),
             considered_order_hash,
             candidate_set,
             projection_failures,
@@ -3476,7 +3503,11 @@ impl SelectionDecisionEntry {
     }
 
     fn contributes_candidates_to_history_projection(&self) -> bool {
-        self.procedure_or_policy.as_str() == crate::successor_selection::PROCEDURE_ID
+        matches!(
+            self.procedure_or_policy.as_str(),
+            crate::successor_selection::PROCEDURE_ID
+                | crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID
+        )
     }
 
     fn validate_decision(
@@ -5826,6 +5857,7 @@ mod tests {
             Some(TraversalEvidence {
                 seed: 7,
                 strategy: StrategyKind::default(),
+                selected_source: None,
             }),
             traversal.decision,
         )
@@ -5910,6 +5942,7 @@ mod tests {
             Some(TraversalEvidence {
                 seed: 7,
                 strategy: StrategyKind::default(),
+                selected_source: None,
             }),
             first_traversal.decision.clone(),
         )
@@ -5953,6 +5986,7 @@ mod tests {
             Some(TraversalEvidence {
                 seed: 7,
                 strategy: StrategyKind::default(),
+                selected_source: None,
             }),
             second_traversal.decision,
         )

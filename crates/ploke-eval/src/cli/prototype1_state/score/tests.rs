@@ -813,8 +813,9 @@ fn score_selection_review_keeps_incomplete_score_out_of_local_alpha() {
         .expect("child evidence");
     let selection = evidence.selection_inputs();
     let expected_individual = crate::successor_selection::decide(selection.inputs[0].clone());
-    let expected_generation =
-        crate::successor_selection::decide_generation(selection.inputs.clone());
+    let expected_generation = crate::successor_selection::operator_projection::generation_summary(
+        selection.inputs.clone(),
+    );
     let review = ScoreSelectionReview::from_evidence(&evidence);
 
     let row = review

@@ -12,15 +12,16 @@ use sha2::{Digest, Sha256};
 
 use super::{
     HISTORY_TRAVERSAL_PROCEDURE_ID, PROCEDURE_ID, SelectionInput, SuccessorDecision,
-    decide as decide_candidate, decision::SuccessorOutcome,
+    decide as decide_candidate, decision::SuccessorOutcome, disposition_as_str,
 };
 use crate::{
     BranchDisposition,
     cli::prototype1_state::history::{
         CandidateArtifact, CandidateSetCommitment, CandidateSetMembership, CandidateSetRoot,
         EvaluationPayload, HistoryCandidate, HistoryCandidateSource, HistoryCandidates,
-        HistoryError, SealedCandidateEvidence, SealedComparedRunEvidence,
+        HistoryError, SealedCandidateEvidence, SealedComparedRunEvidence, SelectionDecisionEntry,
         SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope, SubjectRef,
+        TraversalCandidateSource,
     },
     metric::{self, Summary},
 };
@@ -191,6 +192,7 @@ pub(crate) struct Selection {
     pub(crate) decision: SuccessorDecision,
     pub(crate) selected_payload: EvaluationPayload,
     pub(crate) considered: Vec<EvaluationPayload>,
+    pub(crate) considered_sources: Vec<TraversalCandidateSource>,
     pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
     pub(crate) selected_from_current_generation: bool,
 }
@@ -235,6 +237,108 @@ pub(crate) fn select(
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ScoreChildPropReplay {
+    pub(crate) seed: u64,
+    pub(crate) top_m: usize,
+    pub(crate) lambda: f64,
+    pub(crate) metric_inputs: &'static str,
+    pub(crate) total_weight: f64,
+    pub(crate) sample: f64,
+    pub(crate) selected_index: Option<usize>,
+    pub(crate) selected_candidate: Option<String>,
+    pub(crate) rows: Vec<ScoreChildPropReplayRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ScoreChildPropReplayRow {
+    pub(crate) index: usize,
+    pub(crate) candidate: String,
+    pub(crate) node_id: Option<String>,
+    pub(crate) branch_id: Option<String>,
+    pub(crate) branch_disposition: Option<String>,
+    pub(crate) base_outcome: SuccessorOutcome,
+    pub(crate) performance: i64,
+    pub(crate) child_count: usize,
+    pub(crate) alpha: f64,
+    pub(crate) exploitation: f64,
+    pub(crate) exploration: f64,
+    pub(crate) weight: f64,
+    pub(crate) selected: bool,
+}
+
+pub(crate) fn replay_score_child_prop(
+    entry: &SelectionDecisionEntry,
+) -> Result<Option<ScoreChildPropReplay>, HistoryError> {
+    let Some(traversal) = entry.traversal.as_ref() else {
+        return Ok(None);
+    };
+    let StrategyKind::ScoreChildProp {
+        top_m,
+        lambda_millis,
+        metrics,
+    } = traversal.strategy
+    else {
+        return Ok(None);
+    };
+    let items = entry
+        .considered
+        .iter()
+        .cloned()
+        .map(|payload| Item {
+            payload,
+            source: Source::SealedDecisionReplay,
+        })
+        .collect::<Vec<_>>();
+    let child_counts = successful_child_counts(&entry.considered);
+    let weights = score_child_prop_weights(&items, &child_counts, top_m, lambda_millis, metrics);
+    let total_weight = weights.iter().map(|weight| weight.weight).sum::<f64>();
+    let sample = sample_unit(traversal.seed, &items)?;
+    let selected_index = if weights.is_empty() {
+        None
+    } else {
+        sample_weighted_index(&weights, total_weight, sample)
+    };
+    let selected_candidate = selected_index
+        .and_then(|index| items.get(index))
+        .map(|item| item.payload.candidate.as_str().to_string());
+    let rows = weights
+        .into_iter()
+        .filter_map(|weight| {
+            let item = items.get(weight.index)?;
+            let case = CandidateCase::from_payload(&item.payload);
+            let input = case.selection_input();
+            Some(ScoreChildPropReplayRow {
+                index: weight.index,
+                candidate: item.payload.candidate.as_str().to_string(),
+                node_id: input.map(|value| value.candidate.node_id.clone()),
+                branch_id: input.map(|value| value.candidate.branch_id.clone()),
+                branch_disposition: input
+                    .map(|value| disposition_as_str(value.branch_disposition.clone()).to_string()),
+                base_outcome: weight.decision.outcome,
+                performance: weight.performance.0,
+                child_count: weight.child_count,
+                alpha: weight.alpha,
+                exploitation: weight.exploitation,
+                exploration: weight.exploration,
+                weight: weight.weight,
+                selected: selected_index == Some(weight.index),
+            })
+        })
+        .collect();
+    Ok(Some(ScoreChildPropReplay {
+        seed: traversal.seed,
+        top_m,
+        lambda: lambda_millis as f64 / 1_000.0,
+        metric_inputs: metric_inputs_name(metrics),
+        total_weight,
+        sample,
+        selected_index,
+        selected_candidate,
+        rows,
+    }))
+}
+
 impl<S> Traversal<S> for Candidates
 where
     S: Strategy<Item = Item>,
@@ -261,6 +365,10 @@ where
             .iter()
             .map(|item| item.payload.clone())
             .collect::<Vec<_>>();
+        let considered_sources = items
+            .iter()
+            .map(|item| item.source.traversal_candidate_source())
+            .collect::<Vec<_>>();
         let child_counts = successful_child_counts(&considered);
         let evidence_summary = CandidateCaseEvidenceSummary::from_considered(&considered);
         let Some(selection) = strategy.select(&items, &child_counts, seed)? else {
@@ -281,6 +389,7 @@ where
             decision,
             selected_payload: selection.chosen.payload,
             considered,
+            considered_sources,
             projection_failures: failures,
             selected_from_current_generation: selection.chosen.source.is_current_generation(),
         }))
@@ -368,11 +477,19 @@ impl From<HistoryCandidate> for Candidate {
 pub(crate) enum Source {
     History { source: HistoryCandidateSource },
     CurrentGeneration { scope: SelectionScope },
+    SealedDecisionReplay,
 }
 
 impl Source {
     fn is_current_generation(&self) -> bool {
         matches!(self, Self::CurrentGeneration { .. })
+    }
+
+    fn traversal_candidate_source(&self) -> TraversalCandidateSource {
+        match self {
+            Self::CurrentGeneration { .. } => TraversalCandidateSource::CurrentGeneration,
+            Self::History { .. } | Self::SealedDecisionReplay => TraversalCandidateSource::History,
+        }
     }
 }
 
@@ -646,17 +763,15 @@ fn decision_grade(candidate: Candidate) -> Result<CandidateGrade, HistoryError> 
     Ok(CandidateGrade::Eligible(candidate.payload))
 }
 
-fn selectable_decision(case: &CandidateCase<'_>) -> Option<SuccessorDecision> {
+fn traversal_decision(case: &CandidateCase<'_>) -> Option<SuccessorDecision> {
     let input = case.selection_input()?;
     let mut decision = decide_candidate(input.clone());
-    if decision.outcome == SuccessorOutcome::Stop
-        && input.branch_disposition == BranchDisposition::Reject
-    {
-        decision.outcome = SuccessorOutcome::ExploreFrom;
+    if decision.selected_branch_id.is_none() {
         decision.selected_branch_id = Some(input.candidate.branch_id.clone());
         decision.rationale.push(format!(
-            "history traversal selected rejected branch as exploration coordinate from generation {}",
-            input.candidate.generation
+            "history traversal selected candidate as successor coordinate from generation {} with base_outcome={:?}",
+            input.candidate.generation,
+            decision.outcome
         ));
     }
     Some(decision)
@@ -697,7 +812,7 @@ fn successful_child_counts(considered: &[EvaluationPayload]) -> BTreeMap<String,
     let mut counts = BTreeMap::<String, usize>::new();
     for payload in considered {
         let case = CandidateCase::from_payload(payload);
-        if !selectable_decision(&case).is_some_and(|decision| decision.selects_successor()) {
+        if traversal_decision(&case).is_none() {
             continue;
         }
         let Some(parent_node_id) = case.parent_node_id() else {
@@ -778,12 +893,9 @@ fn select_frontier_max(
     for (index, item) in items.iter().enumerate() {
         let payload = item.payload.clone();
         let case = CandidateCase::from_payload(&payload);
-        let Some(selected) = selectable_decision(&case) else {
+        let Some(selected) = traversal_decision(&case) else {
             continue;
         };
-        if !selected.selects_successor() {
-            continue;
-        }
         let Some(score) = TraversalScore::for_case(&case, child_counts, max_performance, metrics)
         else {
             continue;
@@ -898,12 +1010,9 @@ fn score_child_prop_weights(
     let mut selectable = Vec::new();
     for (index, item) in items.iter().enumerate() {
         let case = CandidateCase::from_payload(&item.payload);
-        let Some(decision) = selectable_decision(&case) else {
+        let Some(decision) = traversal_decision(&case) else {
             continue;
         };
-        if !decision.selects_successor() {
-            continue;
-        }
         let Some(performance) = performance_score(case, metrics) else {
             continue;
         };

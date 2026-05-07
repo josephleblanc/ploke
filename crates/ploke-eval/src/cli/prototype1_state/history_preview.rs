@@ -16,7 +16,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::event::RecordedAt;
-use super::history::{Block, EntryKind, FsBlockStore, HistoryHash, block};
+use super::history::{Block, EntryKind, FsBlockStore, HistoryHash, SelectionDecisionEntry, block};
 use super::invocation::{Invocation, SuccessorCompletionRecord, SuccessorReadyRecord};
 use super::journal::{
     ActiveCheckoutAdvancedEntry, BuildEntry, ChildArtifactCommittedEntry, CompletionEntry, Entry,
@@ -46,6 +46,7 @@ const SCHEMA_VERSION: &str = "prototype1-history-preview.v2";
 const SEALED_SELECTION_SCHEMA_VERSION: &str = "prototype1-history-preview.sealed_selection.v2";
 const CHILD_EVIDENCE_TABLE_LIMIT: usize = 20;
 const CHILD_EVIDENCE_COMPARED_LIMIT: usize = 3;
+const SELECTION_SHOW_CANDIDATE_LIMIT: usize = 30;
 
 /// Importer-facing access to persisted evidence.
 ///
@@ -608,6 +609,289 @@ pub(crate) fn project_sealed_selection_commitments(
         all_checks_pass,
         all_decision_grade_eligible,
     })
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SelectionShowRequest {
+    pub(crate) row: usize,
+    pub(crate) replay: bool,
+    pub(crate) format: InspectOutputFormat,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SelectionShow {
+    schema_version: &'static str,
+    campaign_id: String,
+    manifest_path: PathBuf,
+    row: usize,
+    segment_line_index: u64,
+    block_height: u64,
+    block_hash: String,
+    entry_id: String,
+    procedure_or_policy: String,
+    scope: String,
+    selected_candidate: Option<String>,
+    traversal: Option<super::history::TraversalEvidence>,
+    decision: crate::successor_selection::SuccessorDecision,
+    considered_total: usize,
+    considered_shown: usize,
+    considered: Vec<SelectionCandidateShow>,
+    projection_failure_notes: Vec<String>,
+    replay: Option<crate::successor_selection::traversal::ScoreChildPropReplay>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SelectionCandidateShow {
+    index: usize,
+    candidate: String,
+    selected: bool,
+    node_id: Option<String>,
+    branch_id: Option<String>,
+    generation: Option<u32>,
+    branch_disposition: Option<String>,
+    selection_input_ok: bool,
+    sealed_evidence: bool,
+    artifact: bool,
+    primary_runtime_id: Option<String>,
+    decision_grade_eligible: bool,
+    identity_gaps: Vec<String>,
+}
+
+pub(crate) fn run_selection_show(
+    campaign_id: &str,
+    manifest_path: &Path,
+    request: SelectionShowRequest,
+) -> Result<(), PrepareError> {
+    let show = build_selection_show(campaign_id, manifest_path, &request).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "build prototype1 selection show",
+            detail: source.to_string(),
+        }
+    })?;
+    match request.format {
+        InspectOutputFormat::Table => print_selection_show(&show),
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&show).map_err(PrepareError::Serialize)?
+            );
+        }
+    }
+    Ok(())
+}
+
+fn build_selection_show(
+    campaign_id: &str,
+    manifest_path: &Path,
+    request: &SelectionShowRequest,
+) -> Result<SelectionShow, PreviewError> {
+    let mut seen = 0_usize;
+    let store = FsBlockStore::for_campaign_manifest(manifest_path);
+    for (line_index, block) in store.load_segment_verified_blocks()? {
+        for entry in block.entries() {
+            if entry.entry_kind() != EntryKind::Decision {
+                continue;
+            }
+            let Some(selection) = entry.selection_decision() else {
+                continue;
+            };
+            if seen != request.row {
+                seen += 1;
+                continue;
+            }
+            let replay = if request.replay {
+                crate::successor_selection::traversal::replay_score_child_prop(selection)?
+            } else {
+                None
+            };
+            return Ok(selection_show_from_entry(
+                campaign_id,
+                manifest_path,
+                request.row,
+                line_index,
+                &block,
+                entry.entry_id().to_string(),
+                selection,
+                replay,
+            ));
+        }
+    }
+    Err(PreviewError::SelectionRowMissing { row: request.row })
+}
+
+fn selection_show_from_entry(
+    campaign_id: &str,
+    manifest_path: &Path,
+    row: usize,
+    segment_line_index: u64,
+    block: &Block<block::Sealed>,
+    entry_id: String,
+    selection: &SelectionDecisionEntry,
+    replay: Option<crate::successor_selection::traversal::ScoreChildPropReplay>,
+) -> SelectionShow {
+    let considered = selection
+        .considered
+        .iter()
+        .take(SELECTION_SHOW_CANDIDATE_LIMIT)
+        .enumerate()
+        .map(|(index, payload)| {
+            let input = payload.selection_input.as_ref();
+            let sealed = payload.sealed_evidence.as_ref();
+            let grade = payload.decision_grade_eligibility();
+            SelectionCandidateShow {
+                index,
+                candidate: payload.candidate.as_str().to_string(),
+                selected: selection.selected_candidate.as_ref() == Some(&payload.candidate),
+                node_id: input.map(|value| value.candidate.node_id.clone()),
+                branch_id: input.map(|value| value.candidate.branch_id.clone()),
+                generation: input.map(|value| value.candidate.generation),
+                branch_disposition: input.map(|value| match value.branch_disposition {
+                    crate::BranchDisposition::Keep => "keep".to_string(),
+                    crate::BranchDisposition::Reject => "reject".to_string(),
+                }),
+                selection_input_ok: payload.verify_selection_input_binding().unwrap_or(false),
+                sealed_evidence: sealed.is_some(),
+                artifact: payload.artifact.is_some(),
+                primary_runtime_id: sealed
+                    .and_then(|value| value.coordinate.primary_runtime_id.clone()),
+                decision_grade_eligible: grade.eligible,
+                identity_gaps: grade.identity_gaps,
+            }
+        })
+        .collect::<Vec<_>>();
+    let projection_failure_notes = selection
+        .projection_failures
+        .iter()
+        .map(|failure| {
+            let subject = failure
+                .candidate
+                .as_ref()
+                .map(|candidate| candidate.as_str())
+                .unwrap_or("whole_considered_set");
+            let message = failure
+                .committed_message
+                .as_deref()
+                .unwrap_or("(no committed message)");
+            format!("{:?} subject={subject}: {message}", failure.kind)
+        })
+        .collect();
+    SelectionShow {
+        schema_version: "prototype1-history-selection-show.v1",
+        campaign_id: campaign_id.to_string(),
+        manifest_path: manifest_path.to_path_buf(),
+        row,
+        segment_line_index,
+        block_height: block.block_height(),
+        block_hash: block.block_hash().to_string(),
+        entry_id,
+        procedure_or_policy: selection.procedure_or_policy.as_str().to_string(),
+        scope: selection.scope.as_str().to_string(),
+        selected_candidate: selection
+            .selected_candidate
+            .as_ref()
+            .map(|value| value.as_str().to_string()),
+        traversal: selection.traversal.clone(),
+        decision: selection.decision.clone(),
+        considered_total: selection.considered.len(),
+        considered_shown: considered.len(),
+        considered,
+        projection_failure_notes,
+        replay,
+    }
+}
+
+fn print_selection_show(show: &SelectionShow) {
+    println!("prototype1 sealed selection");
+    println!("{}", "-".repeat(40));
+    println!(
+        "row={} line={} block_height={} block={} entry={}",
+        show.row,
+        show.segment_line_index,
+        show.block_height,
+        &show.block_hash[..16.min(show.block_hash.len())],
+        show.entry_id
+    );
+    println!("procedure: {}", show.procedure_or_policy);
+    println!("scope: {}", show.scope);
+    println!(
+        "selected: {}",
+        show.selected_candidate.as_deref().unwrap_or("-")
+    );
+    if let Some(traversal) = &show.traversal {
+        println!(
+            "traversal: seed={} strategy={:?} selected_source={:?}",
+            traversal.seed, traversal.strategy, traversal.selected_source
+        );
+    }
+    println!(
+        "decision: outcome={:?} candidate={} branch={:?} disposition={}",
+        show.decision.outcome,
+        show.decision.candidate_node_id,
+        show.decision.selected_branch_id,
+        show.decision.branch_disposition
+    );
+    for line in &show.decision.rationale {
+        println!("  rationale: {line}");
+    }
+    for note in &show.projection_failure_notes {
+        println!("  seal_gap: {note}");
+    }
+    println!(
+        "considered: showing {} of {}",
+        show.considered_shown, show.considered_total
+    );
+    for candidate in &show.considered {
+        println!(
+            "  [{}] selected={} candidate={} node={} branch={} gen={} disp={} decision_grade={} input_ok={} sealed={} artifact={} runtime={}",
+            candidate.index,
+            candidate.selected,
+            candidate.candidate,
+            candidate.node_id.as_deref().unwrap_or("-"),
+            candidate.branch_id.as_deref().unwrap_or("-"),
+            candidate
+                .generation
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            candidate.branch_disposition.as_deref().unwrap_or("-"),
+            candidate.decision_grade_eligible,
+            candidate.selection_input_ok,
+            candidate.sealed_evidence,
+            candidate.artifact,
+            candidate.primary_runtime_id.as_deref().unwrap_or("-")
+        );
+        if !candidate.identity_gaps.is_empty() {
+            println!("      gaps: {}", candidate.identity_gaps.join("; "));
+        }
+    }
+    if let Some(replay) = &show.replay {
+        println!("score_child_prop replay");
+        println!(
+            "  seed={} top_m={} lambda={:.3} metrics={} total_weight={:.9} sample={:.9} selected_index={:?} selected={}",
+            replay.seed,
+            replay.top_m,
+            replay.lambda,
+            replay.metric_inputs,
+            replay.total_weight,
+            replay.sample,
+            replay.selected_index,
+            replay.selected_candidate.as_deref().unwrap_or("-")
+        );
+        for row in &replay.rows {
+            println!(
+                "  [{}] selected={} candidate={} perf={} children={} alpha={:.6} exploit={:.6} explore={:.6} weight={:.9} base_outcome={:?}",
+                row.index,
+                row.selected,
+                row.candidate,
+                row.performance,
+                row.child_count,
+                row.alpha,
+                row.exploitation,
+                row.exploration,
+                row.weight,
+                row.base_outcome
+            );
+        }
+    }
 }
 
 fn collect_selection_decision_rows(
@@ -2674,6 +2958,9 @@ pub(crate) enum PreviewError {
 
     #[error(transparent)]
     BlockStore(#[from] super::history::BlockStoreError),
+
+    #[error("sealed selection decision row {row} was not found")]
+    SelectionRowMissing { row: usize },
 }
 
 #[cfg(test)]

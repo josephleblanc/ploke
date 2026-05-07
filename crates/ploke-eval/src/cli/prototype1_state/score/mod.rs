@@ -467,7 +467,9 @@ fn generation_decisions(inputs: &[SelectionInput]) -> BTreeMap<ScoreCoordinate, 
 
     let mut decisions = BTreeMap::new();
     for inputs in by_generation.into_values() {
-        if let Some(decision) = successor_selection::decide_generation(inputs.clone()) {
+        if let Some(decision) =
+            successor_selection::operator_projection::generation_summary(inputs.clone())
+        {
             if let Some(input) = inputs.iter().find(|input| {
                 input.candidate.node_id == decision.candidate_node_id
                     && decision
