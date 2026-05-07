@@ -33,9 +33,10 @@ use thiserror::Error;
 use tracing::{debug, instrument};
 
 use crate::intervention::{
-    CommitError, CommitPhase, Configuration, Intervention, Outcome, Prototype1NodeRecord,
-    Prototype1NodeStatus, RecordStore, ResolvedTreatmentBranch, Surface, load_node_record,
-    resolve_treatment_branch, update_node_status, update_node_workspace_root,
+    CommitError, CommitPhase, Configuration, Intervention, Outcome,
+    PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeRecord, Prototype1NodeStatus,
+    Prototype1RunnerRequest, RecordStore, ResolvedTreatmentBranch, Surface, project_node_status,
+    project_node_workspace_root, write_node_projection, write_runner_request_projection,
 };
 use crate::spec::PrepareError;
 
@@ -168,6 +169,7 @@ pub(crate) struct Prototype<
     pub(in crate::cli::prototype1_state) campaign_id: String,
     pub(in crate::cli::prototype1_state) campaign_manifest_path: PathBuf,
     pub(in crate::cli::prototype1_state) node: Prototype1NodeRecord,
+    pub(in crate::cli::prototype1_state) request: Prototype1RunnerRequest,
     pub(in crate::cli::prototype1_state) resolved: ResolvedTreatmentBranch,
     pub(crate) artifact: Artifact<ArtifactWorld>,
     pub(crate) binary: Binary<Running, ChildState, AckState>,
@@ -215,6 +217,10 @@ impl<
 
     pub(crate) fn node(&self) -> &Prototype1NodeRecord {
         &self.node
+    }
+
+    pub(crate) fn request(&self) -> &Prototype1RunnerRequest {
+        &self.request
     }
 
     pub(crate) fn resolved(&self) -> &ResolvedTreatmentBranch {
@@ -336,6 +342,8 @@ pub(crate) enum MaterializeBranchError {
         #[source]
         source: PrepareError,
     },
+    #[error("child plan request does not match node '{node_id}'")]
+    InvalidChildPlanRequest { node_id: String },
     #[error("failed to resolve treatment branch '{branch_id}' for node '{node_id}'")]
     ResolveBranch {
         node_id: String,
@@ -376,30 +384,39 @@ pub(crate) enum MaterializeBranchError {
 }
 
 impl Prototype<Parent, Parent, Absent, Unacknowledged> {
-    /// Load and validate an aligned `C1` state for one planned node.
-    pub(crate) fn load(
+    /// Validate an aligned `C1` state from a received child-plan payload.
+    pub(crate) fn from_child_plan(
         campaign_id: impl Into<String>,
         campaign_manifest_path: impl Into<PathBuf>,
-        node_id: &str,
+        node: Prototype1NodeRecord,
+        request: Prototype1RunnerRequest,
+        resolved: ResolvedTreatmentBranch,
         repo_root: impl Into<PathBuf>,
     ) -> Result<Self, MaterializeBranchError> {
         let campaign_id = campaign_id.into();
         let campaign_manifest_path = campaign_manifest_path.into();
         let repo_root = repo_root.into();
-
-        let node = load_node_record(&campaign_manifest_path, node_id).map_err(|source| {
-            MaterializeBranchError::LoadNode {
-                node_id: node_id.to_string(),
-                source,
-            }
-        })?;
-        let resolved =
-            resolve_treatment_branch(&campaign_id, &campaign_manifest_path, &node.branch_id)
-                .map_err(|source| MaterializeBranchError::ResolveBranch {
-                    node_id: node_id.to_string(),
-                    branch_id: node.branch_id.clone(),
-                    source,
-                })?;
+        if request.node_id != node.node_id
+            || request.campaign_id != campaign_id
+            || request.schema_version != PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+            || node.schema_version != PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+            || request.branch_id != node.branch_id
+            || request.generation != node.generation
+            || request.instance_id != node.instance_id
+            || request.source_state_id != node.source_state_id
+            || request.target_relpath != node.target_relpath
+            || request.binary_path != node.binary_path
+            || resolved.instance_id != node.instance_id
+            || resolved.source_state_id != node.source_state_id
+            || resolved.parent_branch_id != node.parent_branch_id
+            || resolved.target_relpath != node.target_relpath
+            || resolved.branch.branch_id != node.branch_id
+            || resolved.branch.candidate_id != node.candidate_id
+        {
+            return Err(MaterializeBranchError::InvalidChildPlanRequest {
+                node_id: node.node_id,
+            });
+        }
 
         let absolute_path = repo_root.join(&resolved.target_relpath);
         let child_path = node.binary_path.clone();
@@ -423,6 +440,7 @@ impl Prototype<Parent, Parent, Absent, Unacknowledged> {
             campaign_id,
             campaign_manifest_path,
             node,
+            request,
             resolved: resolved.clone(),
             artifact: Artifact {
                 repo_root,
@@ -575,30 +593,25 @@ where
                 })
             })?;
         }
-        let _ = update_node_status(
-            &from.campaign_id,
-            &from.campaign_manifest_path,
-            &from.node.node_id,
-            Prototype1NodeStatus::WorkspaceStaged,
-        )
-        .map_err(|source| {
-            CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
-                node_id: from.node.node_id.clone(),
-                source,
-            })
-        })?;
-        let (_, updated_node, _) = update_node_workspace_root(
-            &from.campaign_id,
-            &from.campaign_manifest_path,
-            &from.node.node_id,
+        let updated_node = project_node_workspace_root(
+            &project_node_status(&from.node, Prototype1NodeStatus::WorkspaceStaged),
             realized.root.clone(),
-        )
-        .map_err(|source| {
+        );
+        let mut updated_request = from.request.clone();
+        updated_request.workspace_root = realized.root.clone();
+        write_node_projection(&updated_node).map_err(|source| {
             CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
                 node_id: from.node.node_id.clone(),
                 source,
             })
         })?;
+        write_runner_request_projection(&updated_request, &updated_node.runner_request_path)
+            .map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
+                    node_id: from.node.node_id.clone(),
+                    source,
+                })
+            })?;
         debug!(
             target: ploke_core::EXECUTION_DEBUG_TARGET,
             node_id = %from.node.node_id,
@@ -611,6 +624,7 @@ where
             campaign_id: from.campaign_id,
             campaign_manifest_path: from.campaign_manifest_path,
             node: updated_node,
+            request: updated_request,
             resolved: from.resolved.clone(),
             artifact: Artifact {
                 repo_root: realized.root,

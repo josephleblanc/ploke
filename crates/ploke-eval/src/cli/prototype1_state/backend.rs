@@ -1523,6 +1523,7 @@ mod tests {
             parent_id: parent_id.to_string(),
             node_id: parent_id.to_string(),
             generation,
+            instance_id: Some("instance-1".to_string()),
             previous_parent_id: None,
             parent_node_id: None,
             branch_id: format!("branch-{parent_id}"),

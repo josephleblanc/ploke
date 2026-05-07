@@ -1674,6 +1674,10 @@ impl ArtifactRef {
             value: value.into(),
         }
     }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.value
+    }
 }
 
 /// Marker states for the partitioned Artifact surface committed by a block.
@@ -2424,6 +2428,14 @@ impl SuccessorRef {
     pub(crate) fn new(runtime: ActorRef, artifact: ArtifactRef) -> Self {
         Self { runtime, artifact }
     }
+
+    pub(crate) fn runtime(&self) -> &ActorRef {
+        &self.runtime
+    }
+
+    pub(crate) fn artifact(&self) -> &ArtifactRef {
+        &self.artifact
+    }
 }
 
 /// Operational environment in which an entry occurred or was observed.
@@ -2647,6 +2659,40 @@ pub(crate) struct SealedCandidateEvidence {
     pub(crate) child_diagnostics: Vec<String>,
 }
 
+/// Candidate-local Artifact payload sealed with selection evidence.
+///
+/// This is the handoff material needed to reconstruct a typed
+/// `Selection<Artifact>` from History without reading mutable node or branch
+/// projections. The Artifact backend still verifies the material against the
+/// git worktree/branch before install.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CandidateArtifact {
+    pub(crate) schema_version: u32,
+    pub(crate) node: crate::intervention::Prototype1NodeRecord,
+    pub(crate) resolved: crate::intervention::ResolvedTreatmentBranch,
+}
+
+impl CandidateArtifact {
+    pub(crate) fn new(
+        node: crate::intervention::Prototype1NodeRecord,
+        resolved: crate::intervention::ResolvedTreatmentBranch,
+    ) -> Self {
+        Self {
+            schema_version: 1,
+            node,
+            resolved,
+        }
+    }
+
+    pub(crate) fn node(&self) -> &crate::intervention::Prototype1NodeRecord {
+        &self.node
+    }
+
+    pub(crate) fn resolved(&self) -> &crate::intervention::ResolvedTreatmentBranch {
+        &self.resolved
+    }
+}
+
 /// Inline-first per-candidate evaluation payload suitable for sealing in History.
 ///
 /// Carries the projected [`crate::successor_selection::SelectionInput`] when present, and
@@ -2679,6 +2725,10 @@ pub(crate) struct EvaluationPayload {
     /// Rich sealed mirror of grouped child/evaluation evidence (schema ≥ 2 when present).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) sealed_evidence: Option<SealedCandidateEvidence>,
+
+    /// Sealed material required to hydrate a successor Artifact selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) artifact: Option<CandidateArtifact>,
 }
 
 impl EvaluationPayload {
@@ -2696,6 +2746,7 @@ impl EvaluationPayload {
             source_refs: Vec::new(),
             source_hashes: Vec::new(),
             sealed_evidence: None,
+            artifact: None,
         }
     }
 
@@ -2838,6 +2889,77 @@ impl EvaluationPayload {
                 Some(g) if g == input.candidate.generation => {}
                 Some(_) => gaps.push("selection_input_generation_mismatch".into()),
                 None => {}
+            }
+        }
+
+        let Some(ref artifact) = self.artifact else {
+            gaps.push("missing_candidate_artifact".into());
+            return DecisionGradeEligibility {
+                eligible: false,
+                identity_gaps: gaps,
+            };
+        };
+
+        {
+            if artifact.node.node_id != sealed.coordinate.node_id {
+                gaps.push(format!(
+                    "artifact_node_id_mismatch:artifact={}:sealed={}",
+                    artifact.node.node_id, sealed.coordinate.node_id
+                ));
+            }
+            match sealed.coordinate.branch_id.as_deref() {
+                Some(branch_id) if branch_id == artifact.node.branch_id => {}
+                _ => gaps.push("artifact_branch_id_mismatch".into()),
+            }
+            if let Some(generation) = sealed.coordinate.generation
+                && generation != artifact.node.generation
+            {
+                gaps.push("artifact_generation_mismatch".into());
+            }
+            if let Some(ref input) = self.selection_input {
+                if artifact.node.node_id != input.candidate.node_id {
+                    gaps.push(format!(
+                        "artifact_selection_input_node_id_mismatch:artifact={},selection={}",
+                        artifact.node.node_id, input.candidate.node_id
+                    ));
+                }
+                if artifact.node.branch_id != input.candidate.branch_id {
+                    gaps.push(format!(
+                        "artifact_selection_input_branch_id_mismatch:artifact={},selection={}",
+                        artifact.node.branch_id, input.candidate.branch_id
+                    ));
+                }
+                if artifact.node.generation != input.candidate.generation {
+                    gaps.push(format!(
+                        "artifact_selection_input_generation_mismatch:artifact={},selection={}",
+                        artifact.node.generation, input.candidate.generation
+                    ));
+                }
+            }
+            if artifact.node.branch_id != artifact.resolved.branch.branch_id {
+                gaps.push(format!(
+                    "artifact_resolved_branch_mismatch:node={},resolved={}",
+                    artifact.node.branch_id, artifact.resolved.branch.branch_id
+                ));
+            }
+            if artifact.node.candidate_id != artifact.resolved.branch.candidate_id {
+                gaps.push(format!(
+                    "artifact_resolved_candidate_mismatch:node={},resolved={}",
+                    artifact.node.candidate_id, artifact.resolved.branch.candidate_id
+                ));
+            }
+            if artifact.node.source_state_id != artifact.resolved.source_state_id {
+                gaps.push(format!(
+                    "artifact_resolved_source_state_mismatch:node={},resolved={}",
+                    artifact.node.source_state_id, artifact.resolved.source_state_id
+                ));
+            }
+            if artifact.node.target_relpath != artifact.resolved.target_relpath {
+                gaps.push(format!(
+                    "artifact_resolved_target_mismatch:node={},resolved={}",
+                    artifact.node.target_relpath.display(),
+                    artifact.resolved.target_relpath.display()
+                ));
             }
         }
 
@@ -3117,6 +3239,7 @@ pub(crate) struct EvaluationPayloadBuilder {
     source_refs: Vec<EvidenceRef>,
     source_hashes: Vec<HistoryHash>,
     sealed_evidence: Option<SealedCandidateEvidence>,
+    artifact: Option<CandidateArtifact>,
 }
 
 impl EvaluationPayloadBuilder {
@@ -3150,12 +3273,19 @@ impl EvaluationPayloadBuilder {
         self
     }
 
+    pub(crate) fn candidate_artifact(mut self, artifact: CandidateArtifact) -> Self {
+        self.artifact = Some(artifact);
+        self
+    }
+
     pub(crate) fn build(mut self) -> EvaluationPayload {
-        let schema_version = if self.sealed_evidence.is_some() {
-            2
-        } else {
-            self.schema_version
-        };
+        let mut schema_version = self.schema_version;
+        if self.sealed_evidence.is_some() {
+            schema_version = schema_version.max(2);
+        }
+        if self.artifact.is_some() {
+            schema_version = schema_version.max(3);
+        }
 
         if let Some(ref sealed) = self.sealed_evidence {
             append_sealed_evidence_citation_pairs(
@@ -3175,6 +3305,7 @@ impl EvaluationPayloadBuilder {
             source_refs: self.source_refs,
             source_hashes: self.source_hashes,
             sealed_evidence: self.sealed_evidence,
+            artifact: self.artifact,
         }
     }
 }
@@ -4378,6 +4509,14 @@ impl Block<block::Sealed> {
         &self.entries
     }
 
+    pub(crate) fn selected_successor(&self) -> &SuccessorRef {
+        &self.header().selected_successor
+    }
+
+    pub(crate) fn active_artifact(&self) -> &ArtifactRef {
+        &self.header().active_artifact
+    }
+
     pub(crate) fn verify_hash(&self) -> Result<(), HistoryError> {
         let header = self.header();
         if header.entry_count != self.entries.len() {
@@ -5241,6 +5380,7 @@ mod tests {
             extra_journal_citations: Vec::new(),
             child_diagnostics: Vec::new(),
         })
+        .candidate_artifact(test_candidate_artifact(node_id, branch_id, 2))
         .build()
     }
 
@@ -5291,6 +5431,65 @@ mod tests {
             convergence,
             oracle_eligible,
         }
+    }
+
+    fn test_candidate_artifact(
+        node_id: &str,
+        branch_id: &str,
+        generation: u32,
+    ) -> CandidateArtifact {
+        let candidate_id = format!("candidate-{node_id}");
+        let target_relpath = PathBuf::from("crates/ploke-core/tool_text/read_file.md");
+        let node = crate::intervention::Prototype1NodeRecord {
+            schema_version: "test-node.v1".to_string(),
+            node_id: node_id.to_string(),
+            parent_node_id: None,
+            generation,
+            instance_id: "instance-a".to_string(),
+            source_state_id: "source-a".to_string(),
+            operation_target: None,
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            parent_branch_id: None,
+            branch_id: branch_id.to_string(),
+            candidate_id: candidate_id.clone(),
+            target_relpath: target_relpath.clone(),
+            node_dir: PathBuf::from(format!("/tmp/{node_id}")),
+            workspace_root: PathBuf::from(format!("/tmp/{node_id}/worktree")),
+            binary_path: PathBuf::from(format!("/tmp/{node_id}/target/debug/ploke-eval")),
+            runner_request_path: PathBuf::from(format!("/tmp/{node_id}/runner-request.json")),
+            runner_result_path: PathBuf::from(format!("/tmp/{node_id}/runner-result.json")),
+            status: crate::intervention::Prototype1NodeStatus::Succeeded,
+            created_at: "2026-05-06T00:00:00Z".to_string(),
+            updated_at: "2026-05-06T00:00:00Z".to_string(),
+        };
+        let resolved = crate::intervention::ResolvedTreatmentBranch {
+            instance_id: node.instance_id.clone(),
+            source_state_id: node.source_state_id.clone(),
+            parent_branch_id: node.parent_branch_id.clone(),
+            target_relpath,
+            source_content: "old".to_string(),
+            source_content_hash: "old-hash".to_string(),
+            selected_branch_id: Some(branch_id.to_string()),
+            branch: crate::intervention::TreatmentBranchNode {
+                branch_id: branch_id.to_string(),
+                candidate_id,
+                patch_id: None,
+                branch_label: "test".to_string(),
+                synthesized_spec_id: "spec".to_string(),
+                proposed_content: "new".to_string(),
+                proposed_content_hash: "new-hash".to_string(),
+                generation_target: None,
+                generation_coordinate: None,
+                status: crate::intervention::TreatmentBranchStatus::Selected,
+                apply_id: None,
+                applied_content_hash: None,
+                derived_artifact_id: None,
+                latest_evaluation: None,
+            },
+        };
+        CandidateArtifact::new(node, resolved)
     }
 
     fn selection_entry_for_scope(
@@ -6148,6 +6347,7 @@ mod tests {
                 extra_journal_citations: Vec::new(),
                 child_diagnostics: Vec::new(),
             }),
+            artifact: None,
         };
         let b = EvaluationPayload {
             schema_version: 2,
@@ -6185,6 +6385,7 @@ mod tests {
                 extra_journal_citations: Vec::new(),
                 child_diagnostics: Vec::new(),
             }),
+            artifact: None,
         };
 
         let first = SelectionDecisionEntry::new(
@@ -6274,6 +6475,7 @@ mod tests {
             source_refs: Vec::new(),
             source_hashes: Vec::new(),
             sealed_evidence: None,
+            artifact: None,
         }];
 
         let err = SelectionDecisionEntry::new(
@@ -6331,6 +6533,7 @@ mod tests {
                 extra_journal_citations: Vec::new(),
                 child_diagnostics: Vec::new(),
             }),
+            artifact: None,
         }];
 
         let err = SelectionDecisionEntry::new(
@@ -6358,6 +6561,7 @@ mod tests {
             source_refs: Vec::new(),
             source_hashes: Vec::new(),
             sealed_evidence: None,
+            artifact: None,
         };
         let grade = payload.decision_grade_eligibility();
         assert!(!grade.eligible);
@@ -6431,6 +6635,7 @@ mod tests {
         .selection_input(input)
         .expect("selection input hash")
         .sealed_candidate_evidence(sealed)
+        .candidate_artifact(test_candidate_artifact("n1", "b1", 2))
         .build();
 
         let grade = payload.decision_grade_eligibility();
@@ -6495,6 +6700,7 @@ mod tests {
         .selection_input(input)
         .expect("selection input hash")
         .sealed_candidate_evidence(sealed)
+        .candidate_artifact(test_candidate_artifact("n1", "b1", 2))
         .build();
 
         let grade = payload.decision_grade_eligibility();
@@ -6569,6 +6775,7 @@ mod tests {
         .selection_input(input)
         .expect("selection input hash")
         .sealed_candidate_evidence(sealed)
+        .candidate_artifact(test_candidate_artifact("n1", "b1", 2))
         .build();
 
         let grade = payload.decision_grade_eligibility();

@@ -172,6 +172,89 @@ pub fn treatment_branch_id(
     format!("branch-{}", &digest[..16])
 }
 
+pub fn resolved_treatment_branches_from_synthesis(
+    instance_id: &str,
+    synthesis: &InterventionSynthesisOutput,
+    selected_candidate_id: Option<&str>,
+    parent_branch_id: Option<&str>,
+) -> Vec<ResolvedTreatmentBranch> {
+    let source_content_hash = sha256_hex(&synthesis.candidate_set.source_content);
+    let source_artifact_id = synthesis
+        .candidate_set
+        .operation_target
+        .as_ref()
+        .and_then(operation_target_artifact_id)
+        .cloned()
+        .unwrap_or_else(|| {
+            text_file_artifact_id(
+                &synthesis.candidate_set.target_relpath,
+                &synthesis.candidate_set.source_content,
+            )
+        });
+    let operation_target = synthesis
+        .candidate_set
+        .operation_target
+        .clone()
+        .unwrap_or_else(|| operation_target_for_artifact(&source_artifact_id));
+    let selected_branch_id = selected_candidate_id.map(|candidate_id| {
+        treatment_branch_id(
+            &synthesis.candidate_set.source_state_id,
+            &synthesis.candidate_set.target_relpath,
+            candidate_id,
+        )
+    });
+
+    synthesis
+        .candidate_set
+        .candidates
+        .iter()
+        .map(|candidate| {
+            let branch_id = treatment_branch_id(
+                &synthesis.candidate_set.source_state_id,
+                &synthesis.candidate_set.target_relpath,
+                &candidate.candidate_id,
+            );
+            let proposed_content_hash = sha256_hex(&candidate.proposed_content);
+            let patch_id = candidate.patch_id.clone().unwrap_or_else(|| {
+                text_replacement_patch_id(
+                    &synthesis.candidate_set.target_relpath,
+                    &synthesis.candidate_set.source_content,
+                    &candidate.proposed_content,
+                )
+            });
+            ResolvedTreatmentBranch {
+                instance_id: instance_id.to_string(),
+                source_state_id: synthesis.candidate_set.source_state_id.clone(),
+                parent_branch_id: parent_branch_id.map(ToOwned::to_owned),
+                target_relpath: synthesis.candidate_set.target_relpath.clone(),
+                source_content: synthesis.candidate_set.source_content.clone(),
+                source_content_hash: source_content_hash.clone(),
+                selected_branch_id: selected_branch_id.clone(),
+                branch: TreatmentBranchNode {
+                    branch_id,
+                    candidate_id: candidate.candidate_id.clone(),
+                    patch_id: Some(patch_id),
+                    branch_label: candidate.branch_label.clone(),
+                    synthesized_spec_id: candidate.spec.spec_id().to_string(),
+                    proposed_content: candidate.proposed_content.clone(),
+                    proposed_content_hash,
+                    generation_target: Some(operation_target.clone()),
+                    generation_coordinate: None,
+                    status: if selected_candidate_id == Some(candidate.candidate_id.as_str()) {
+                        TreatmentBranchStatus::Selected
+                    } else {
+                        TreatmentBranchStatus::Synthesized
+                    },
+                    apply_id: None,
+                    applied_content_hash: None,
+                    derived_artifact_id: None,
+                    latest_evaluation: None,
+                },
+            }
+        })
+        .collect()
+}
+
 fn default_registry(campaign_id: &str) -> Prototype1BranchRegistry {
     Prototype1BranchRegistry {
         schema_version: PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION.to_string(),

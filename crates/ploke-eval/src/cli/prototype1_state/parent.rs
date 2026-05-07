@@ -17,13 +17,12 @@ use crate::{
         observe,
     },
     intervention::{
-        Prototype1NodeRecord, load_node_record, prototype1_branch_registry_path,
+        PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeRecord, Prototype1NodeStatus,
+        Prototype1RunnerRequest, ResolvedTreatmentBranch, prototype1_branch_registry_path,
         prototype1_node_record_path, prototype1_runner_request_path, prototype1_scheduler_path,
+        runner_request_from_node,
     },
-    spec::{
-        PrepareError, Prototype1ParentError, Prototype1ParentIdentityContext,
-        Prototype1ParentNodeContext,
-    },
+    spec::{PrepareError, Prototype1ParentIdentityContext, Prototype1ParentNodeContext},
 };
 
 /// Parent role before its artifact, identity, and scheduler facts agree.
@@ -101,8 +100,6 @@ pub(crate) struct ChildPlan;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ChildPlanFiles {
     message: At<ChildPlanFile>,
-    scheduler: At<SchedulerFile>,
-    branches: At<BranchesFile>,
     parent_node_id: String,
     child_generation: u32,
     children: Vec<ChildFiles>,
@@ -112,27 +109,15 @@ impl ChildPlanFiles {
     pub(crate) fn for_parent(
         manifest_path: &Path,
         parent: &ParentIdentity,
-        nodes: &[Prototype1NodeRecord],
+        children: Vec<ChildFiles>,
     ) -> Self {
         Self {
             message: At::resolve((manifest_path.to_path_buf(), parent.node_id.clone())),
-            scheduler: At::resolve(manifest_path.to_path_buf()),
-            branches: At::resolve(manifest_path.to_path_buf()),
             parent_node_id: parent.node_id.clone(),
             // Prototype 1 direct-child policy: candidates produced by Parent k
             // are generation k + 1.
             child_generation: parent.generation + 1,
-            children: nodes
-                .iter()
-                .map(|node| ChildFiles {
-                    node_id: node.node_id.clone(),
-                    node: At::resolve((manifest_path.to_path_buf(), node.node_id.clone())),
-                    runner_request: At::resolve((
-                        manifest_path.to_path_buf(),
-                        node.node_id.clone(),
-                    )),
-                })
-                .collect(),
+            children,
         }
     }
 
@@ -142,14 +127,6 @@ impl ChildPlanFiles {
 
     pub(crate) fn message_at(&self) -> At<ChildPlanFile> {
         self.message.clone()
-    }
-
-    pub(crate) fn scheduler(&self) -> &Path {
-        self.scheduler.path()
-    }
-
-    pub(crate) fn branches(&self) -> &Path {
-        self.branches.path()
     }
 
     pub(crate) fn parent_node_id(&self) -> &str {
@@ -165,7 +142,7 @@ impl ChildPlanFiles {
     }
 
     pub(crate) fn contains_child(&self, node_id: &str) -> bool {
-        self.children.iter().any(|child| child.node_id == node_id)
+        self.children.iter().any(|child| child.node_id() == node_id)
     }
 
     fn validate_receiver(&self, identity: &ParentIdentity) -> Result<(), ChildPlanReceiverError> {
@@ -192,9 +169,9 @@ impl ChildPlanFiles {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ChildFiles {
-    node_id: String,
-    node: At<NodeFile>,
-    runner_request: At<RunnerRequestFile>,
+    node: Prototype1NodeRecord,
+    request: Prototype1RunnerRequest,
+    resolved: ResolvedTreatmentBranch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,16 +213,33 @@ impl MessageBox for ChildPlanFile {
 }
 
 impl ChildFiles {
+    pub(crate) fn from_resolved(
+        campaign_id: &str,
+        node: Prototype1NodeRecord,
+        resolved: ResolvedTreatmentBranch,
+        stop_on_error: bool,
+    ) -> Self {
+        Self {
+            request: runner_request_from_node(campaign_id, &node, stop_on_error),
+            node,
+            resolved,
+        }
+    }
+
     pub(crate) fn node_id(&self) -> &str {
-        &self.node_id
+        &self.node.node_id
     }
 
-    pub(crate) fn node(&self) -> &Path {
-        self.node.path()
+    pub(crate) fn node_record(&self) -> &Prototype1NodeRecord {
+        &self.node
     }
 
-    pub(crate) fn runner_request(&self) -> &Path {
-        self.runner_request.path()
+    pub(crate) fn runner_request(&self) -> &Prototype1RunnerRequest {
+        &self.request
+    }
+
+    pub(crate) fn resolved(&self) -> &ResolvedTreatmentBranch {
+        &self.resolved
     }
 }
 
@@ -371,12 +365,50 @@ pub(crate) struct Check<'a> {
     pub selected_instance: Option<&'a str>,
 }
 
+fn parent_node_projection(manifest_path: &Path, identity: &ParentIdentity) -> Prototype1NodeRecord {
+    let prototype_root = manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1");
+    let node_dir = prototype_root.join("nodes").join(&identity.node_id);
+    let binary_path = node_dir
+        .join("bin")
+        .join(format!("ploke-eval{}", std::env::consts::EXE_SUFFIX));
+    Prototype1NodeRecord {
+        schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+        node_id: identity.node_id.clone(),
+        parent_node_id: identity.parent_node_id.clone(),
+        generation: identity.generation,
+        instance_id: identity
+            .instance_id
+            .clone()
+            .unwrap_or_else(|| identity.node_id.clone()),
+        source_state_id: identity.branch_id.clone(),
+        operation_target: None,
+        base_artifact_id: None,
+        patch_id: None,
+        derived_artifact_id: None,
+        parent_branch_id: None,
+        branch_id: identity.branch_id.clone(),
+        candidate_id: identity.node_id.clone(),
+        target_relpath: super::identity::parent_identity_relpath(),
+        node_dir: node_dir.clone(),
+        workspace_root: PathBuf::new(),
+        binary_path,
+        runner_request_path: prototype1_runner_request_path(manifest_path, &identity.node_id),
+        runner_result_path: node_dir.join("runner-result.json"),
+        status: Prototype1NodeStatus::Running,
+        created_at: identity.created_at.clone(),
+        updated_at: identity.created_at.clone(),
+    }
+}
+
 impl Parent<Unchecked> {
     pub(crate) fn load(
         manifest_path: &Path,
         identity: ParentIdentity,
     ) -> Result<Self, PrepareError> {
-        let node = load_node_record(manifest_path, &identity.node_id)?;
+        let node = parent_node_projection(manifest_path, &identity);
         Ok(Self {
             identity,
             node,
@@ -390,32 +422,13 @@ impl Parent<Unchecked> {
         manifest_path: &Path,
         check: Check<'_>,
     ) -> Result<Parent<Checked>, PrepareError> {
+        let _ = (manifest_path, check.campaign_id, check.selected_instance);
         backend
             .validate_parent_checkout(check.active_root, &self.identity)
             .map_err(|source| PrepareError::DatabaseSetup {
                 phase: "prototype1_parent_checkout",
                 detail: source.to_string(),
             })?;
-
-        let identity = identity_context(check.active_root, &self.identity);
-        let node = node_context(manifest_path, &self.node);
-
-        if identity.generation != node.generation {
-            return Err(Prototype1ParentError::GenerationMismatch { identity, node }.into());
-        }
-        if identity.branch_id != node.branch_id {
-            return Err(Prototype1ParentError::BranchMismatch { identity, node }.into());
-        }
-        if let Some(selected_instance) = check.selected_instance {
-            if selected_instance != node.instance_id {
-                return Err(Prototype1ParentError::SelectionMismatch {
-                    campaign_id: check.campaign_id.to_string(),
-                    selected_instance: selected_instance.to_string(),
-                    parent: node,
-                }
-                .into());
-            }
-        }
 
         Ok(Parent {
             identity: self.identity,
@@ -758,6 +771,10 @@ impl Parent<Selectable> {
 }
 
 impl<S> Parent<S> {
+    pub(crate) fn node(&self) -> &Prototype1NodeRecord {
+        &self.node
+    }
+
     fn cast<T>(self) -> Parent<T> {
         Parent {
             identity: self.identity,
@@ -807,6 +824,7 @@ mod tests {
             parent_id: node_id.to_string(),
             node_id: node_id.to_string(),
             generation,
+            instance_id: Some("instance".to_string()),
             previous_parent_id: None,
             parent_node_id: None,
             branch_id: format!("branch-{node_id}"),
@@ -865,12 +883,49 @@ mod tests {
         }
     }
 
+    fn resolved_for(node: &Prototype1NodeRecord) -> ResolvedTreatmentBranch {
+        ResolvedTreatmentBranch {
+            instance_id: node.instance_id.clone(),
+            source_state_id: node.source_state_id.clone(),
+            parent_branch_id: node.parent_branch_id.clone(),
+            target_relpath: node.target_relpath.clone(),
+            source_content: "old".to_string(),
+            source_content_hash: "old-hash".to_string(),
+            selected_branch_id: None,
+            branch: crate::intervention::TreatmentBranchNode {
+                branch_id: node.branch_id.clone(),
+                candidate_id: node.candidate_id.clone(),
+                patch_id: None,
+                branch_label: "test".to_string(),
+                synthesized_spec_id: "spec".to_string(),
+                proposed_content: "new".to_string(),
+                proposed_content_hash: "new-hash".to_string(),
+                generation_target: None,
+                generation_coordinate: None,
+                status: crate::intervention::TreatmentBranchStatus::Synthesized,
+                apply_id: None,
+                applied_content_hash: None,
+                derived_artifact_id: None,
+                latest_evaluation: None,
+            },
+        }
+    }
+
+    fn child_files(parent: &ParentIdentity, child: Prototype1NodeRecord) -> ChildFiles {
+        let resolved = resolved_for(&child);
+        ChildFiles::from_resolved(&parent.campaign_id, child, resolved, false)
+    }
+
     #[test]
     fn child_plan_receive_returns_received_capability_for_ready_parent() {
         let manifest_path = Path::new("/tmp/campaign.json");
         let sender = parent("parent-a", 0);
         let child = node_record("child-1", 1, Some("parent-a"));
-        let files = ChildPlanFiles::for_parent(manifest_path, sender.identity(), &[child]);
+        let files = ChildPlanFiles::for_parent(
+            manifest_path,
+            sender.identity(),
+            vec![child_files(sender.identity(), child)],
+        );
 
         let at = files.message_at();
         let (planned, locked) = Open::<ChildPlan>::from_sender(sender, files)
@@ -887,7 +942,11 @@ mod tests {
         let manifest_path = Path::new("/tmp/campaign.json");
         let sender = parent("parent-a", 0);
         let child = node_record("child-1", 1, Some("parent-a"));
-        let files = ChildPlanFiles::for_parent(manifest_path, sender.identity(), &[child]);
+        let files = ChildPlanFiles::for_parent(
+            manifest_path,
+            sender.identity(),
+            vec![child_files(sender.identity(), child)],
+        );
 
         let at = files.message_at();
         let (planned, locked_plan) = Open::<ChildPlan>::from_sender(sender, files)
@@ -939,7 +998,11 @@ mod tests {
         let sender = parent("parent-a", 0);
         let receiver = parent("parent-b", 0);
         let child = node_record("child-1", 1, Some("parent-a"));
-        let files = ChildPlanFiles::for_parent(manifest_path, sender.identity(), &[child]);
+        let files = ChildPlanFiles::for_parent(
+            manifest_path,
+            sender.identity(),
+            vec![child_files(sender.identity(), child)],
+        );
 
         let at = files.message_at();
         let (_planned, locked) = Open::<ChildPlan>::from_sender(sender, files)

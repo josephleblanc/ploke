@@ -27,13 +27,12 @@ use tracing::{debug, instrument};
 
 use crate::intervention::{
     CommitError, CommitPhase, Intervention, Outcome, Prototype1NodeStatus, RecordStore, Surface,
-    load_node_record, resolve_treatment_branch, update_node_status,
+    project_node_status, write_node_projection,
 };
 use crate::spec::PrepareError;
 
 use super::c1::{
-    Artifact, Binary, C2, Child, ChildAckState, ChildBinaryState, Parent, Present, Prototype,
-    Unacknowledged,
+    Binary, C2, Child, ChildAckState, ChildBinaryState, Parent, Present, Prototype, Unacknowledged,
 };
 use super::event::{ContentHash, Hashes, Paths, RecordedAt, Refs, TransitionId, World};
 use super::journal::{BuildEntry, BuildResult, FailureInfo, JournalEntry, PrototypeJournal};
@@ -235,86 +234,6 @@ impl Surface<C2> for RepoSurface {
     }
 }
 
-impl C2 {
-    /// Load and validate a staged `C2` state for one node.
-    pub(crate) fn load(
-        campaign_id: impl Into<String>,
-        campaign_manifest_path: impl Into<PathBuf>,
-        node_id: &str,
-        repo_root: impl Into<PathBuf>,
-    ) -> Result<Self, BuildChildError> {
-        let campaign_id = campaign_id.into();
-        let campaign_manifest_path = campaign_manifest_path.into();
-        let repo_root = repo_root.into();
-
-        let node = load_node_record(&campaign_manifest_path, node_id).map_err(|source| {
-            BuildChildError::LoadNode {
-                node_id: node_id.to_string(),
-                source,
-            }
-        })?;
-        if node.status != Prototype1NodeStatus::WorkspaceStaged {
-            return Err(BuildChildError::UnexpectedNodeStatus {
-                node_id: node_id.to_string(),
-                observed: node.status,
-            });
-        }
-        let resolved =
-            resolve_treatment_branch(&campaign_id, &campaign_manifest_path, &node.branch_id)
-                .map_err(|source| BuildChildError::ResolveBranch {
-                    node_id: node_id.to_string(),
-                    branch_id: node.branch_id.clone(),
-                    source,
-                })?;
-
-        let absolute_path = repo_root.join(&resolved.target_relpath);
-        let child_path = node.binary_path.clone();
-        let current =
-            fs::read_to_string(&absolute_path).map_err(|source| BuildChildError::ReadTarget {
-                path: absolute_path.clone(),
-                source,
-            })?;
-        let observed_hash = ContentHash::of(&current);
-        if current != resolved.branch.proposed_content {
-            return Err(BuildChildError::ArtifactNotMaterialized {
-                path: absolute_path,
-                expected_proposed_hash: ContentHash(resolved.branch.proposed_content_hash.clone()),
-                observed_hash,
-            });
-        }
-        if child_path.exists() {
-            return Err(BuildChildError::ChildBinaryAlreadyPresent { path: child_path });
-        }
-
-        let target_relpath = resolved.target_relpath.clone();
-        let source_content_hash = ContentHash(resolved.source_content_hash.clone());
-        let proposed_content_hash = ContentHash(resolved.branch.proposed_content_hash.clone());
-
-        Ok(Self {
-            campaign_id,
-            campaign_manifest_path,
-            node,
-            resolved,
-            artifact: Artifact {
-                repo_root,
-                target_relpath,
-                source_content_hash,
-                current_content_hash: proposed_content_hash.clone(),
-                proposed_content_hash,
-                _lineage: std::marker::PhantomData,
-            },
-            binary: Binary {
-                parent_running: true,
-                child_path,
-                child_runtime: None,
-                _lineage: std::marker::PhantomData,
-                _child: std::marker::PhantomData,
-                _ack: std::marker::PhantomData,
-            },
-        })
-    }
-}
-
 /// Concrete intervention mediating `C2 -> C3`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BuildChild {
@@ -432,13 +351,8 @@ impl Intervention<C2, C3> for BuildChild {
                 rejected = ?rejected,
                 "cargo check rejected child build"
             );
-            let (_, node) = update_node_status(
-                &from.campaign_id,
-                &from.campaign_manifest_path,
-                &from.node.node_id,
-                Prototype1NodeStatus::Failed,
-            )
-            .map_err(|source| {
+            let node = project_node_status(&from.node, Prototype1NodeStatus::Failed);
+            write_node_projection(&node).map_err(|source| {
                 CommitError::Transition(BuildChildError::UpdateNodeStatus {
                     node_id: from.node.node_id.clone(),
                     source,
@@ -448,6 +362,7 @@ impl Intervention<C2, C3> for BuildChild {
                 campaign_id: from.campaign_id,
                 campaign_manifest_path: from.campaign_manifest_path,
                 node,
+                request: from.request,
                 resolved: from.resolved,
                 artifact: from.artifact,
                 binary: from.binary,
@@ -500,13 +415,8 @@ impl Intervention<C2, C3> for BuildChild {
                 rejected = ?rejected,
                 "cargo build rejected child build"
             );
-            let (_, node) = update_node_status(
-                &from.campaign_id,
-                &from.campaign_manifest_path,
-                &from.node.node_id,
-                Prototype1NodeStatus::Failed,
-            )
-            .map_err(|source| {
+            let node = project_node_status(&from.node, Prototype1NodeStatus::Failed);
+            write_node_projection(&node).map_err(|source| {
                 CommitError::Transition(BuildChildError::UpdateNodeStatus {
                     node_id: from.node.node_id.clone(),
                     source,
@@ -516,6 +426,7 @@ impl Intervention<C2, C3> for BuildChild {
                 campaign_id: from.campaign_id,
                 campaign_manifest_path: from.campaign_manifest_path,
                 node,
+                request: from.request,
                 resolved: from.resolved,
                 artifact: from.artifact,
                 binary: from.binary,
@@ -559,13 +470,8 @@ impl Intervention<C2, C3> for BuildChild {
                 source,
             })
         })?;
-        let (_, node) = update_node_status(
-            &from.campaign_id,
-            &from.campaign_manifest_path,
-            &from.node.node_id,
-            Prototype1NodeStatus::BinaryBuilt,
-        )
-        .map_err(|source| {
+        let node = project_node_status(&from.node, Prototype1NodeStatus::BinaryBuilt);
+        write_node_projection(&node).map_err(|source| {
             CommitError::Transition(BuildChildError::UpdateNodeStatus {
                 node_id: from.node.node_id.clone(),
                 source,
@@ -576,6 +482,7 @@ impl Intervention<C2, C3> for BuildChild {
             campaign_id: from.campaign_id,
             campaign_manifest_path: from.campaign_manifest_path,
             node,
+            request: from.request,
             resolved: from.resolved,
             artifact: from.artifact,
             binary: Binary {

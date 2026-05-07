@@ -13,6 +13,24 @@ Restart-oriented table of contents for `docs/active/agents/` and nearby restart-
 
 ## Current Planning Surfaces
 
+- [2026-05-06-prototype1-execution-surface-model.md](./2026-05-06-prototype1-execution-surface-model.md)
+  Clean-sweep target model for Prototype 1 execution file surfaces: History, channel, Artifact backend, and quarantined write-only telemetry/projections.
+- [2026-05-06-prototype1-execution-surface-clean-sweep-handoff.md](./2026-05-06-prototype1-execution-surface-clean-sweep-handoff.md)
+  Restart handoff for the active Prototype 1 clean-sweep implementation, including current diff state, verified commands, remaining projection-reader work, and next audit steps.
+- [2026-05-06-history-handoff-hydration-review.md](./2026-05-06-history-handoff-hydration-review.md)
+  Reviewer audit for History-backed traversal handoff hydration, sealed Artifact payloads, and clean-sweep invariant risks.
+- [2026-05-06-prototype1-file-io-index.md](./2026-05-06-prototype1-file-io-index.md)
+  Consolidated file I/O index for Prototype 1 parent, child, successor, scheduler, runner, evidence, and projection surfaces.
+- [2026-05-06-prototype1-file-surface-cleanhouse-map.md](./2026-05-06-prototype1-file-surface-cleanhouse-map.md)
+  Reconciliation map for the five Prototype 1 file-surface inventory reports and the clean sweep directive.
+- [2026-05-06-prototype1-file-surfaces-invocation-channel.md](./2026-05-06-prototype1-file-surfaces-invocation-channel.md)
+  Inventory of invocation, runtime channel, and parent/child communication file surfaces.
+- [2026-05-06-prototype1-file-surfaces-projections-evidence.md](./2026-05-06-prototype1-file-surfaces-projections-evidence.md)
+  Inventory of projection and evidence-preview file surfaces that must not drive loop execution.
+- [2026-05-06-prototype1-file-surfaces-scheduler-runner.md](./2026-05-06-prototype1-file-surfaces-scheduler-runner.md)
+  Inventory of scheduler, runner, node, branch, and journal file reads/writes in Prototype 1 execution paths.
+- [2026-05-06-prototype1-file-surfaces-successor-history.md](./2026-05-06-prototype1-file-surfaces-successor-history.md)
+  Inventory of successor handoff, startup, and History/Crown file surfaces.
 - [2026-05-06_history-traversal-invariant-review.md](./2026-05-06_history-traversal-invariant-review.md)
   History traversal invariant review covering current-generation bridge, candidate provenance, and historical handoff gaps.
 - [2026-04-17_eval-failure-and-protocol-audit/README.md](./2026-04-17_eval-failure-and-protocol-audit/README.md)

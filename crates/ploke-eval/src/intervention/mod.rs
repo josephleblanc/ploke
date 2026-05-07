@@ -26,8 +26,9 @@ pub use branch_registry::{
     ResolvedTreatmentBranch, TreatmentBranchEvaluationSummary, TreatmentBranchNode,
     TreatmentBranchStatus, active_branch_selection_for_target, load_or_default_branch_registry,
     mark_treatment_branch_applied, prototype1_branch_registry_path, record_synthesized_branches,
-    record_treatment_branch_evaluation, resolve_treatment_branch, restore_treatment_branch,
-    select_treatment_branch, treatment_branch_id,
+    record_treatment_branch_evaluation, resolve_treatment_branch,
+    resolved_treatment_branches_from_synthesis, restore_treatment_branch, select_treatment_branch,
+    treatment_branch_id,
 };
 pub use execute::execute_tool_text_intervention;
 pub use issue::{
@@ -44,11 +45,12 @@ pub use scheduler::{
     decide_continuation, decide_continuation_with_selection, decide_node_successor_continuation,
     load_node_record, load_or_default_scheduler_state, load_or_register_treatment_evaluation_node,
     load_runner_request, load_runner_result, load_runner_result_at, load_scheduler_state,
-    prototype1_node_dir, prototype1_node_id, prototype1_node_record_path,
-    prototype1_runner_request_path, prototype1_runner_result_path, prototype1_scheduler_path,
-    record_continuation_decision, record_runner_result, register_root_parent_node,
-    register_treatment_evaluation_node, update_node_status, update_node_workspace_root,
-    update_scheduler_policy, write_runner_result_at,
+    project_node_status, project_node_workspace_root, prototype1_node_dir, prototype1_node_id,
+    prototype1_node_record_path, prototype1_runner_request_path, prototype1_runner_result_path,
+    prototype1_scheduler_path, record_continuation_decision, record_runner_result,
+    register_root_parent_node, register_treatment_evaluation_node, runner_request_from_node,
+    update_node_status, update_node_workspace_root, update_scheduler_policy, write_node_projection,
+    write_runner_request_projection, write_runner_result_at, write_treatment_evaluation_projection,
 };
 pub(crate) use spec::operation_target_artifact_id;
 pub use spec::{

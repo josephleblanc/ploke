@@ -28,6 +28,8 @@ pub(crate) struct ParentIdentity {
     pub node_id: String,
     pub generation: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_parent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_node_id: Option<String>,
@@ -51,6 +53,7 @@ impl ParentIdentity {
             parent_id: node.node_id.clone(),
             node_id: node.node_id.clone(),
             generation: node.generation,
+            instance_id: Some(node.instance_id.clone()),
             previous_parent_id: previous_parent.map(|identity| identity.parent_id.clone()),
             parent_node_id: node.parent_node_id.clone(),
             branch_id: node.branch_id.clone(),
@@ -168,6 +171,7 @@ mod tests {
             parent_id: "node-1".to_string(),
             node_id: "node-1".to_string(),
             generation: 0,
+            instance_id: Some("instance-1".to_string()),
             previous_parent_id: None,
             parent_node_id: None,
             branch_id: "branch-1".to_string(),

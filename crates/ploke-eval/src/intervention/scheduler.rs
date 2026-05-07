@@ -469,6 +469,74 @@ fn save_runner_request(request: &Prototype1RunnerRequest, path: &Path) -> Result
     })
 }
 
+pub fn write_node_projection(record: &Prototype1NodeRecord) -> Result<(), PrepareError> {
+    save_node_record(record)
+}
+
+pub fn write_runner_request_projection(
+    request: &Prototype1RunnerRequest,
+    path: &Path,
+) -> Result<(), PrepareError> {
+    save_runner_request(request, path)
+}
+
+pub fn project_node_status(
+    node: &Prototype1NodeRecord,
+    status: Prototype1NodeStatus,
+) -> Prototype1NodeRecord {
+    let mut projected = node.clone();
+    projected.status = status;
+    projected.updated_at = Utc::now().to_rfc3339();
+    projected
+}
+
+pub fn project_node_workspace_root(
+    node: &Prototype1NodeRecord,
+    workspace_root: PathBuf,
+) -> Prototype1NodeRecord {
+    let mut projected = node.clone();
+    projected.workspace_root = workspace_root;
+    projected.updated_at = Utc::now().to_rfc3339();
+    projected
+}
+
+pub fn runner_request_from_node(
+    campaign_id: &str,
+    node: &Prototype1NodeRecord,
+    stop_on_error: bool,
+) -> Prototype1RunnerRequest {
+    Prototype1RunnerRequest {
+        schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+        campaign_id: campaign_id.to_string(),
+        node_id: node.node_id.clone(),
+        generation: node.generation,
+        instance_id: node.instance_id.clone(),
+        source_state_id: node.source_state_id.clone(),
+        operation_target: node.operation_target.clone(),
+        base_artifact_id: node.base_artifact_id.clone(),
+        patch_id: node.patch_id.clone(),
+        derived_artifact_id: node.derived_artifact_id.clone(),
+        branch_id: node.branch_id.clone(),
+        target_relpath: node.target_relpath.clone(),
+        workspace_root: node.workspace_root.clone(),
+        binary_path: node.binary_path.clone(),
+        stop_on_error,
+        runner_args: vec![
+            "loop".to_string(),
+            "prototype1-runner".to_string(),
+            "--campaign".to_string(),
+            campaign_id.to_string(),
+            "--node-id".to_string(),
+            node.node_id.clone(),
+            "--execute".to_string(),
+            "--stop-on-error".to_string(),
+            stop_on_error.to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ],
+    }
+}
+
 fn save_runner_result(result: &Prototype1RunnerResult, path: &Path) -> Result<(), PrepareError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
@@ -895,6 +963,84 @@ pub fn register_treatment_evaluation_node(
     save_scheduler_state(campaign_manifest_path, &scheduler)?;
 
     Ok((scheduler, record, request))
+}
+
+pub fn write_treatment_evaluation_projection(
+    campaign_id: &str,
+    campaign_manifest_path: &Path,
+    branch: &ResolvedTreatmentBranch,
+    generation: u32,
+    parent_node_id: Option<&str>,
+    repo_root: &Path,
+    stop_on_error: bool,
+) -> Result<(Prototype1NodeRecord, Prototype1RunnerRequest), PrepareError> {
+    let node_id = prototype1_node_id(&branch.branch.branch_id, generation);
+    let node_dir = prototype1_node_dir(campaign_manifest_path, &node_id);
+    let workspace_root = repo_root.to_path_buf();
+    let binary_path = node_dir.join("bin/ploke-eval");
+    let runner_request_path = prototype1_runner_request_path(campaign_manifest_path, &node_id);
+    let runner_result_path = prototype1_runner_result_path(campaign_manifest_path, &node_id);
+    let parent_node_id = parent_node_id.map(ToOwned::to_owned).or_else(|| {
+        branch
+            .parent_branch_id
+            .as_deref()
+            .and_then(|parent_branch_id| {
+                generation
+                    .checked_sub(1)
+                    .map(|g| prototype1_node_id(parent_branch_id, g))
+            })
+    });
+    let now = Utc::now().to_rfc3339();
+
+    let operation_target = branch.branch.generation_target.clone().or_else(|| {
+        branch
+            .branch
+            .generation_coordinate
+            .as_ref()
+            .map(|coordinate| coordinate.target.clone())
+    });
+    let base_artifact_id = operation_target
+        .as_ref()
+        .and_then(operation_target_base_artifact_id)
+        .cloned();
+    let patch_id = branch.branch.patch_id.clone();
+    let derived_artifact_id = branch.branch.derived_artifact_id.clone();
+
+    let record = Prototype1NodeRecord {
+        schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+        node_id: node_id.clone(),
+        parent_node_id,
+        generation,
+        instance_id: branch.instance_id.clone(),
+        source_state_id: branch.source_state_id.clone(),
+        operation_target: operation_target.clone(),
+        base_artifact_id: base_artifact_id.clone(),
+        patch_id: patch_id.clone(),
+        derived_artifact_id: derived_artifact_id.clone(),
+        parent_branch_id: branch.parent_branch_id.clone(),
+        branch_id: branch.branch.branch_id.clone(),
+        candidate_id: branch.branch.candidate_id.clone(),
+        target_relpath: branch.target_relpath.clone(),
+        node_dir: node_dir.clone(),
+        workspace_root: workspace_root.clone(),
+        binary_path: binary_path.clone(),
+        runner_request_path: runner_request_path.clone(),
+        runner_result_path,
+        status: Prototype1NodeStatus::Planned,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    let request = runner_request_from_node(campaign_id, &record, stop_on_error);
+
+    fs::create_dir_all(node_dir.join("bin")).map_err(|source| PrepareError::WriteManifest {
+        path: node_dir.join("bin"),
+        source,
+    })?;
+    write_node_projection(&record)?;
+    write_runner_request_projection(&request, &runner_request_path)?;
+
+    Ok((record, request))
 }
 
 pub fn load_or_register_treatment_evaluation_node(

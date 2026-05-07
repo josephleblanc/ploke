@@ -449,11 +449,15 @@ mod tests {
         cli::prototype1_state::{
             evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID,
             history::{
-                CandidateCoordinate, CandidateLifecycle, HistoryCandidate, HistoryCandidateSource,
-                HistoryCandidates, HistoryHash, LineageId, ProcedureRef, SealedCandidateEvidence,
-                SealedEvaluationEvidence, SealedEvidenceCitation, SelectionDecisionEntry,
-                SelectionScope, SubjectRef,
+                CandidateArtifact, CandidateCoordinate, CandidateLifecycle, HistoryCandidate,
+                HistoryCandidateSource, HistoryCandidates, HistoryHash, LineageId, ProcedureRef,
+                SealedCandidateEvidence, SealedEvaluationEvidence, SealedEvidenceCitation,
+                SelectionDecisionEntry, SelectionScope, SubjectRef,
             },
+        },
+        intervention::{
+            Prototype1NodeRecord, Prototype1NodeStatus, ResolvedTreatmentBranch,
+            TreatmentBranchNode, TreatmentBranchStatus,
         },
         successor_selection::{CandidateRef, RunComparison},
     };
@@ -499,6 +503,42 @@ mod tests {
         .expect("traversal");
 
         assert!(selection.is_none());
+    }
+
+    #[test]
+    fn history_traversal_excludes_missing_candidate_artifact_before_selection() {
+        let mut payload = decision_grade_payload(
+            "node-a",
+            "branch-a",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        payload.artifact = None;
+        let candidate = TraversalCandidate::from(candidate_from_payload(payload));
+
+        let grade = decision_grade(candidate).expect("candidate grade");
+
+        match grade {
+            CandidateGrade::Excluded(failure) => {
+                assert_eq!(
+                    failure.kind,
+                    SelectionProjectionFailureKind::DecisionGradeIneligible
+                );
+                assert!(
+                    failure
+                        .committed_message
+                        .as_deref()
+                        .is_some_and(|message| message.contains("missing_candidate_artifact")),
+                    "unexpected failure message: {:?}",
+                    failure.committed_message
+                );
+            }
+            CandidateGrade::Eligible(_) => {
+                panic!("candidate without Artifact payload must not be decision-grade")
+            }
+        }
     }
 
     #[test]
@@ -775,6 +815,7 @@ mod tests {
             plan_index,
             true,
         ))
+        .candidate_artifact(candidate_artifact(node_id, branch_id))
         .build()
     }
 
@@ -788,6 +829,7 @@ mod tests {
             ProcedureRef::new(PROCEDURE_ID),
         )
         .sealed_candidate_evidence(sealed_evidence(node_id, branch_id, None, plan_index, true))
+        .candidate_artifact(candidate_artifact(node_id, branch_id))
         .build()
     }
 
@@ -820,6 +862,7 @@ mod tests {
         .selection_input(input)
         .expect("selection input")
         .sealed_candidate_evidence(sealed_evidence(node_id, branch_id, None, plan_index, false))
+        .candidate_artifact(candidate_artifact(node_id, branch_id))
         .build()
     }
 
@@ -869,6 +912,61 @@ mod tests {
             extra_journal_citations: Vec::new(),
             child_diagnostics: Vec::new(),
         }
+    }
+
+    fn candidate_artifact(node_id: &str, branch_id: &str) -> CandidateArtifact {
+        let candidate_id = format!("candidate-{node_id}");
+        let target_relpath = PathBuf::from("crates/ploke-core/tool_text/read_file.md");
+        let node = Prototype1NodeRecord {
+            schema_version: "test-node.v1".to_string(),
+            node_id: node_id.to_string(),
+            parent_node_id: None,
+            generation: 1,
+            instance_id: "instance-a".to_string(),
+            source_state_id: "source-a".to_string(),
+            operation_target: None,
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            parent_branch_id: None,
+            branch_id: branch_id.to_string(),
+            candidate_id: candidate_id.clone(),
+            target_relpath: target_relpath.clone(),
+            node_dir: PathBuf::from(format!("/tmp/{node_id}")),
+            workspace_root: PathBuf::from(format!("/tmp/{node_id}/worktree")),
+            binary_path: PathBuf::from(format!("/tmp/{node_id}/target/debug/ploke-eval")),
+            runner_request_path: PathBuf::from(format!("/tmp/{node_id}/runner-request.json")),
+            runner_result_path: PathBuf::from(format!("/tmp/{node_id}/runner-result.json")),
+            status: Prototype1NodeStatus::Succeeded,
+            created_at: "2026-05-06T00:00:00Z".to_string(),
+            updated_at: "2026-05-06T00:00:00Z".to_string(),
+        };
+        let resolved = ResolvedTreatmentBranch {
+            instance_id: node.instance_id.clone(),
+            source_state_id: node.source_state_id.clone(),
+            parent_branch_id: node.parent_branch_id.clone(),
+            target_relpath,
+            source_content: "old".to_string(),
+            source_content_hash: "old-hash".to_string(),
+            selected_branch_id: Some(branch_id.to_string()),
+            branch: TreatmentBranchNode {
+                branch_id: branch_id.to_string(),
+                candidate_id,
+                patch_id: None,
+                branch_label: "test".to_string(),
+                synthesized_spec_id: "spec".to_string(),
+                proposed_content: "new".to_string(),
+                proposed_content_hash: "new-hash".to_string(),
+                generation_target: None,
+                generation_coordinate: None,
+                status: TreatmentBranchStatus::Selected,
+                apply_id: None,
+                applied_content_hash: None,
+                derived_artifact_id: None,
+                latest_evaluation: None,
+            },
+        };
+        CandidateArtifact::new(node, resolved)
     }
 
     fn metrics(

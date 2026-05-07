@@ -2690,6 +2690,7 @@ mod tests {
             parent_id: "parent-0".to_string(),
             node_id: "node-0".to_string(),
             generation: 0,
+            instance_id: Some("instance-a".to_string()),
             previous_parent_id: None,
             parent_node_id: None,
             branch_id: "branch-0".to_string(),

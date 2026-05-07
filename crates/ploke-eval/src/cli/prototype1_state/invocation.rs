@@ -1,14 +1,14 @@
 //! Persisted bootstrap contract for prototype1 runtime attempts.
 //!
-//! This record is intentionally smaller than a node record or runner request.
-//! It is the attempt-scoped overlay a runtime needs in order to:
+//! This record is the attempt-scoped bootstrap a runtime needs in order to:
 //! - identify which durable node it belongs to
 //! - know which authority contract it carries
 //! - participate in the current handoff attempt
 //!
-//! The invocation should not duplicate stable execution context that already
-//! belongs to durable node/request state. Doing so would turn this type into a
-//! second runner request instead of a true bootstrap contract.
+//! Runtime bootstrap facts that used to be read from separate node and runner
+//! request files are carried here for child executions. Those files may still
+//! be written as projections, but this invocation is the executable boundary
+//! for the process that is about to start.
 //!
 //! The important seam is that Prototype 1 currently has two narrow runtime
 //! authority roles. These roles describe authority and bounded behavior, not a
@@ -30,6 +30,10 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
+use crate::intervention::{
+    PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeRecord, Prototype1RunnerRequest,
+    ResolvedTreatmentBranch,
+};
 use crate::spec::PrepareError;
 
 use super::{
@@ -103,6 +107,12 @@ pub(crate) struct Invocation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_root: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<Prototype1NodeRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<Prototype1RunnerRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<ResolvedTreatmentBranch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_parent_root: Option<PathBuf>,
     pub created_at: String,
 }
@@ -136,6 +146,9 @@ impl Invocation {
         runtime_id: RuntimeId,
         journal_path: PathBuf,
         channel_root: PathBuf,
+        node: Option<Prototype1NodeRecord>,
+        request: Option<Prototype1RunnerRequest>,
+        resolved: Option<ResolvedTreatmentBranch>,
     ) -> Self {
         Self {
             schema_version: SCHEMA_VERSION.to_string(),
@@ -145,6 +158,9 @@ impl Invocation {
             runtime_id,
             journal_path,
             channel_root: Some(channel_root),
+            node,
+            request,
+            resolved,
             active_parent_root: None,
             created_at: Utc::now().to_rfc3339(),
         }
@@ -156,6 +172,7 @@ impl Invocation {
         node_id: String,
         runtime_id: RuntimeId,
         journal_path: PathBuf,
+        channel_root: PathBuf,
         active_parent_root: PathBuf,
     ) -> Self {
         Self {
@@ -165,7 +182,10 @@ impl Invocation {
             node_id,
             runtime_id,
             journal_path,
-            channel_root: None,
+            channel_root: Some(channel_root),
+            node: None,
+            request: None,
+            resolved: None,
             active_parent_root: Some(active_parent_root),
             created_at: Utc::now().to_rfc3339(),
         }
@@ -190,8 +210,67 @@ impl ChildInvocation {
         channel_root: PathBuf,
     ) -> Self {
         Self {
-            inner: Invocation::child(campaign_id, node_id, runtime_id, journal_path, channel_root),
+            inner: Invocation::child(
+                campaign_id,
+                node_id,
+                runtime_id,
+                journal_path,
+                channel_root,
+                None,
+                None,
+                None,
+            ),
         }
+    }
+
+    /// Create the executable leaf-child invocation with the typed runtime
+    /// payload needed to evaluate without reading node/request projection files.
+    pub(crate) fn with_bootstrap(
+        campaign_id: String,
+        node: Prototype1NodeRecord,
+        request: Prototype1RunnerRequest,
+        resolved: ResolvedTreatmentBranch,
+        runtime_id: RuntimeId,
+        journal_path: PathBuf,
+        channel_root: PathBuf,
+    ) -> Result<Self, PrepareError> {
+        if request.node_id != node.node_id
+            || request.campaign_id != campaign_id
+            || request.schema_version != PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+            || node.schema_version != PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+            || request.branch_id != node.branch_id
+            || request.generation != node.generation
+            || request.instance_id != node.instance_id
+            || request.source_state_id != node.source_state_id
+            || request.target_relpath != node.target_relpath
+            || request.binary_path != node.binary_path
+            || resolved.instance_id != node.instance_id
+            || resolved.source_state_id != node.source_state_id
+            || resolved.parent_branch_id != node.parent_branch_id
+            || resolved.target_relpath != node.target_relpath
+            || resolved.branch.branch_id != node.branch_id
+            || resolved.branch.candidate_id != node.candidate_id
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "child invocation bootstrap request does not match node '{}'",
+                    node.node_id
+                ),
+            });
+        }
+        let node_id = node.node_id.clone();
+        Ok(Self {
+            inner: Invocation::child(
+                campaign_id,
+                node_id,
+                runtime_id,
+                journal_path,
+                channel_root,
+                Some(node),
+                Some(request),
+                Some(resolved),
+            ),
+        })
     }
 
     /// Access the persisted wire record.
@@ -212,6 +291,45 @@ impl ChildInvocation {
     /// Runtime identity for this concrete child attempt.
     pub(crate) fn runtime_id(&self) -> RuntimeId {
         self.inner.runtime_id
+    }
+
+    /// Node payload carried by this executable child bootstrap.
+    pub(crate) fn node_record(&self) -> Result<&Prototype1NodeRecord, PrepareError> {
+        self.inner
+            .node
+            .as_ref()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "child invocation for node '{}' is missing node bootstrap payload",
+                    self.inner.node_id
+                ),
+            })
+    }
+
+    /// Runner request payload carried by this executable child bootstrap.
+    pub(crate) fn runner_request(&self) -> Result<&Prototype1RunnerRequest, PrepareError> {
+        self.inner
+            .request
+            .as_ref()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "child invocation for node '{}' is missing runner request bootstrap payload",
+                    self.inner.node_id
+                ),
+            })
+    }
+
+    /// Resolved branch payload carried by this executable child bootstrap.
+    pub(crate) fn resolved(&self) -> Result<&ResolvedTreatmentBranch, PrepareError> {
+        self.inner
+            .resolved
+            .as_ref()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "child invocation for node '{}' is missing resolved branch bootstrap payload",
+                    self.inner.node_id
+                ),
+            })
     }
 
     /// Shared journal path used for child acknowledgement.
@@ -245,6 +363,7 @@ impl SuccessorInvocation {
         node_id: String,
         runtime_id: RuntimeId,
         journal_path: PathBuf,
+        channel_root: PathBuf,
         active_parent_root: PathBuf,
     ) -> Self {
         Self {
@@ -253,9 +372,30 @@ impl SuccessorInvocation {
                 node_id,
                 runtime_id,
                 journal_path,
+                channel_root,
                 active_parent_root,
             ),
         }
+    }
+
+    /// Create the executable successor invocation with an explicit channel root.
+    pub(crate) fn from_retired_parent_with_channel_root(
+        _parent: &Parent<Retired>,
+        campaign_id: String,
+        node_id: String,
+        runtime_id: RuntimeId,
+        journal_path: PathBuf,
+        channel_root: PathBuf,
+        active_parent_root: PathBuf,
+    ) -> Self {
+        Self::new(
+            campaign_id,
+            node_id,
+            runtime_id,
+            journal_path,
+            channel_root,
+            active_parent_root,
+        )
     }
 
     /// Create the successor launch descriptor after the predecessor has crossed
@@ -273,11 +413,14 @@ impl SuccessorInvocation {
         journal_path: PathBuf,
         active_parent_root: PathBuf,
     ) -> Self {
-        Self::new(
+        let channel_root = successor_channel_root_from_journal(&journal_path, &node_id, runtime_id);
+        Self::from_retired_parent_with_channel_root(
+            _parent,
             campaign_id,
             node_id,
             runtime_id,
             journal_path,
+            channel_root,
             active_parent_root,
         )
     }
@@ -310,6 +453,18 @@ impl SuccessorInvocation {
     /// Shared journal path used for successor acknowledgement and completion.
     pub(crate) fn journal_path(&self) -> &Path {
         &self.inner.journal_path
+    }
+
+    /// Per-runtime parent/successor channel endpoints for this bootstrap.
+    pub(crate) fn channel_endpoints(&self) -> Option<Endpoints> {
+        self.inner.channel_root.as_ref().map(|root| {
+            Endpoints::new(
+                root.clone(),
+                self.inner.campaign_id.clone(),
+                self.inner.node_id.clone(),
+                self.inner.runtime_id,
+            )
+        })
     }
 
     /// CLI argv for launching the successor as the next typed parent.
@@ -345,6 +500,16 @@ pub(crate) fn invocation_path(node_dir: &Path, runtime_id: RuntimeId) -> PathBuf
 /// Per-runtime parent/child channel root.
 pub(crate) fn channel_root(node_dir: &Path, runtime_id: RuntimeId) -> PathBuf {
     node_dir.join("channels").join(runtime_id.to_string())
+}
+
+/// Infer the conventional successor channel root from the shared transition journal.
+fn successor_channel_root_from_journal(
+    journal_path: &Path,
+    node_id: &str,
+    runtime_id: RuntimeId,
+) -> PathBuf {
+    let prototype1_root = journal_path.parent().unwrap_or_else(|| Path::new("."));
+    channel_root(&prototype1_root.join("nodes").join(node_id), runtime_id)
 }
 
 /// Directory containing attempt-scoped result artifacts for one node.
@@ -547,6 +712,7 @@ mod tests {
             "node-2".to_string(),
             runtime_id,
             PathBuf::from("/tmp/prototype1/journal.jsonl"),
+            PathBuf::from("/tmp/prototype1/nodes/node-2/channels/runtime-2"),
             PathBuf::from("/repo/stable-parent"),
         );
         let invocation_path =
@@ -573,5 +739,26 @@ mod tests {
                 "json",
             ]
         );
+    }
+
+    #[test]
+    fn successor_invocation_projects_channel_endpoints() {
+        let runtime_id = RuntimeId::new();
+        let channel_root = PathBuf::from("/tmp/prototype1/nodes/node-2/channels/runtime-2");
+        let invocation = SuccessorInvocation::new(
+            "campaign-1".to_string(),
+            "node-2".to_string(),
+            runtime_id,
+            PathBuf::from("/tmp/prototype1/journal.jsonl"),
+            channel_root.clone(),
+            PathBuf::from("/repo/stable-parent"),
+        );
+
+        let endpoints = invocation
+            .channel_endpoints()
+            .expect("successor channel endpoints");
+
+        assert_eq!(endpoints.root(), channel_root.as_path());
+        assert_eq!(endpoints.child_to_parent().runtime_id(), runtime_id);
     }
 }

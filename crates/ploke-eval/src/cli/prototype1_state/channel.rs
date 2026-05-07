@@ -21,9 +21,12 @@ use uuid::Uuid;
 
 use super::{
     child::{self, Child},
+    cli_facing::Prototype1BranchEvaluationReport,
     event::{RecordedAt, RuntimeId},
+    invocation::{SuccessorCompletionRecord, SuccessorReadyRecord},
     parent::{self, Parent},
 };
+use crate::intervention::Prototype1RunnerResult;
 
 const SCHEMA_VERSION: &str = "prototype1-runtime-channel.v1";
 
@@ -40,6 +43,10 @@ pub(crate) mod message {
     /// Child may send `ToParent::ResultWritten`.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum ResultWritten {}
+
+    /// Child may send `ToParent::Result`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Result {}
 
     /// Child may send `ToParent::Failed`.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +84,7 @@ pub(crate) trait ChildCanTerminate {}
 impl CanSend<message::Ready> for child::Starting {}
 impl CanSend<message::Evaluating> for child::Ready {}
 impl CanSend<message::ResultWritten> for child::Evaluating {}
+impl CanSend<message::Result> for child::Evaluating {}
 impl ChildCanTerminate for child::Starting {}
 impl ChildCanTerminate for child::Ready {}
 impl ChildCanTerminate for child::Evaluating {}
@@ -93,6 +101,7 @@ impl CanRecv<stream::FromParent> for child::Evaluating {}
 
 impl CanSend<message::Cancel> for parent::Selectable {}
 impl CanRecv<stream::FromChild> for parent::Selectable {}
+impl CanRecv<stream::FromChild> for parent::Retired {}
 impl CanRecv<stream::FromChild> for super::c3::C3 {}
 impl CanRecv<stream::FromChild> for super::c3::C4 {}
 
@@ -371,15 +380,30 @@ pub(crate) enum ToChild {
 }
 
 /// Child-to-parent protocol messages.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ToParent {
     /// Child runtime has started and can be observed.
     Ready,
     /// Child runtime entered evaluation.
     Evaluating,
+    /// Child completed execution and returned its terminal payload.
+    Result {
+        /// Attempt-scoped runner result produced by the child runtime.
+        runner_result: Prototype1RunnerResult,
+        /// Branch evaluation report when the child completed evaluation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        evaluation: Option<Prototype1BranchEvaluationReport>,
+    },
     /// Child persisted its attempt-scoped runner result.
+    ///
+    /// Compatibility projection for callers that still exchange result paths.
+    /// New execution handoff should prefer `Result`.
     ResultWritten { runner_result_path: PathBuf },
+    /// Successor runtime acknowledged bootstrap.
+    SuccessorReady { record: SuccessorReadyRecord },
+    /// Successor runtime completed its bounded controller turn.
+    SuccessorCompletion { record: SuccessorCompletionRecord },
     /// Child failed before writing a normal terminal result.
     Failed { detail: String },
     /// Child process exited.
@@ -516,10 +540,35 @@ where
 
 impl<S, T> Channel<Child<S>, T>
 where
+    S: CanSend<message::Result>,
+    T: Transport,
+{
+    /// Send direct terminal child execution payload and advance the channel state.
+    pub(crate) fn send_terminal_result(
+        self,
+        runner_result: Prototype1RunnerResult,
+        evaluation: Option<Prototype1BranchEvaluationReport>,
+    ) -> Result<(Channel<Child<child::ResultWritten>, T>, Receipt), ChannelError<T::Error>> {
+        let receipt = self.write(
+            &self.endpoints.child_to_parent(),
+            ToParent::Result {
+                runner_result,
+                evaluation,
+            },
+        )?;
+        Ok((self.cast(), receipt))
+    }
+}
+
+impl<S, T> Channel<Child<S>, T>
+where
     S: CanSend<message::ResultWritten>,
     T: Transport,
 {
-    /// Send `Child<ResultWritten>` evidence and advance the channel state.
+    /// Send path-based `Child<ResultWritten>` evidence and advance the channel state.
+    ///
+    /// This is retained for compatibility with the artifact-backed handoff.
+    /// New execution handoff should prefer `send_terminal_result`.
     pub(crate) fn send_result_written(
         self,
         runner_result_path: PathBuf,
@@ -572,6 +621,28 @@ impl<R, T> Channel<R, T>
 where
     T: Transport,
 {
+    /// Send successor bootstrap acknowledgement through the runtime channel.
+    pub(crate) fn send_successor_ready(
+        &self,
+        record: SuccessorReadyRecord,
+    ) -> Result<Receipt, ChannelError<T::Error>> {
+        self.write(
+            &self.endpoints.child_to_parent(),
+            ToParent::SuccessorReady { record },
+        )
+    }
+
+    /// Send successor bounded-turn completion through the runtime channel.
+    pub(crate) fn send_successor_completion(
+        &self,
+        record: SuccessorCompletionRecord,
+    ) -> Result<Receipt, ChannelError<T::Error>> {
+        self.write(
+            &self.endpoints.child_to_parent(),
+            ToParent::SuccessorCompletion { record },
+        )
+    }
+
     fn write<M>(&self, endpoint: &Endpoint, message: M) -> Result<Receipt, ChannelError<T::Error>>
     where
         M: Serialize,
@@ -846,7 +917,7 @@ mod tests {
         );
         assert_eq!(parent_messages.len(), 1);
         assert_eq!(parent_messages[0].direction(), Direction::ChildToParent);
-        assert_eq!(parent_messages[0].body(), &ToParent::Ready);
+        assert!(matches!(parent_messages[0].body(), ToParent::Ready));
     }
 
     #[test]
@@ -865,7 +936,7 @@ mod tests {
 
         assert_eq!(all_messages.len(), 2);
         assert_eq!(new_messages.len(), 1);
-        assert_eq!(new_messages[0].body(), &ToParent::Evaluating);
+        assert!(matches!(new_messages[0].body(), ToParent::Evaluating));
     }
 
     #[test]

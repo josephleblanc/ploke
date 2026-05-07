@@ -125,13 +125,13 @@ use tracing::{Instrument, debug, instrument, warn};
 
 use super::*;
 use crate::BranchDisposition;
-use crate::cli::prototype1_state::backend::{GitWorktreeBackend, RealizeRequest, WorkspaceBackend};
-use crate::cli::prototype1_state::channel::{Channel, Endpoints, FileTransport};
-use crate::cli::prototype1_state::child::{Child, Ready, Starting};
+use crate::cli::prototype1_state::backend::{GitWorktreeBackend, WorkspaceBackend};
+use crate::cli::prototype1_state::channel::{Channel, Cursor, Endpoints, FileTransport, ToParent};
+use crate::cli::prototype1_state::child::{Child, Starting};
 use crate::cli::prototype1_state::cli_facing::{
     Prototype1BranchEvaluationReport, build_prototype1_branch_evaluation_report,
     ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
-    prototype1_branch_evaluation_path, prototype1_source_generation,
+    prototype1_branch_evaluation_path,
 };
 use crate::cli::prototype1_state::event::{Paths, RecordedAt, Refs};
 use crate::cli::prototype1_state::history::{
@@ -157,12 +157,9 @@ use crate::cli::prototype1_state::successor::Record as SuccessorRecord;
 use crate::cli::prototype1_state::telemetry::RuntimeTelemetry;
 use crate::intervention::{
     CommitPhase, Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerResult,
-    RecordStore, TreatmentBranchEvaluationSummary, clear_runner_result, load_node_record,
-    load_or_default_branch_registry, load_or_register_treatment_evaluation_node,
-    load_runner_request, load_runner_result_at, load_scheduler_state,
-    prototype1_branch_registry_path, record_runner_result, record_treatment_branch_evaluation,
-    resolve_treatment_branch, select_treatment_branch, update_node_status,
-    update_node_workspace_root, write_runner_result_at,
+    RecordStore, ResolvedTreatmentBranch, TreatmentBranchEvaluationSummary, project_node_status,
+    prototype1_branch_registry_path, record_treatment_branch_evaluation, resolve_treatment_branch,
+    write_node_projection, write_runner_result_at,
 };
 
 const SUCCESSOR_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -196,17 +193,6 @@ fn append_successor_record(
         })
 }
 
-/// Outcome of one parent-side node execution attempt.
-///
-/// A node either yields a fully materialized branch-evaluation report or a
-/// persisted runner failure result that the controller can summarize as a
-/// rejected branch outcome.
-#[must_use = "node execution outcomes must be handled so failed child runs are not silently ignored"]
-pub(super) enum Prototype1NodeExecutionOutcome {
-    Evaluated(Prototype1BranchEvaluationReport),
-    Failed(Prototype1RunnerResult),
-}
-
 /// Parent-observed result of one successor bootstrap attempt.
 pub(crate) struct Prototype1SuccessorHandoff {
     pub runtime_id: crate::cli::prototype1_state::event::RuntimeId,
@@ -222,12 +208,6 @@ pub(crate) enum SuccessorHandoffMode {
     /// Demo-only: replace the current parent process with the successor.
     #[cfg(feature = "demo")]
     Exec,
-}
-
-#[must_use = "node build outcomes must be checked before attempting to spawn a child binary"]
-enum Prototype1NodeBuildOutcome {
-    Built,
-    CompileFailed(Prototype1RunnerResult),
 }
 
 fn process_output_excerpt(bytes: &[u8]) -> Option<String> {
@@ -252,38 +232,14 @@ fn process_output_excerpt(bytes: &[u8]) -> Option<String> {
     Some(excerpt)
 }
 
-fn record_prototype1_child_ready(
-    campaign_id: &str,
-    manifest_path: &Path,
-    node: &crate::intervention::Prototype1NodeRecord,
-    workspace_root: &Path,
-    runtime_id: crate::cli::prototype1_state::event::RuntimeId,
-    journal_path: &Path,
-) -> Result<Child<Ready>, PrepareError> {
-    prototype1_child_starting(
-        campaign_id,
-        manifest_path,
-        node,
-        workspace_root,
-        runtime_id,
-        journal_path,
-    )?
-    .ready()
-    .map_err(|err| PrepareError::DatabaseSetup {
-        phase: "prototype1_child_ready",
-        detail: err.to_string(),
-    })
-}
-
 fn prototype1_child_starting(
     campaign_id: &str,
-    manifest_path: &Path,
     node: &crate::intervention::Prototype1NodeRecord,
+    resolved: &ResolvedTreatmentBranch,
     workspace_root: &Path,
     runtime_id: crate::cli::prototype1_state::event::RuntimeId,
     journal_path: &Path,
 ) -> Result<Child<Starting>, PrepareError> {
-    let resolved = resolve_treatment_branch(campaign_id, manifest_path, &node.branch_id)?;
     let refs = Refs {
         campaign_id: campaign_id.to_string(),
         node_id: node.node_id.clone(),
@@ -333,44 +289,11 @@ fn channel_error_phase(
     }
 }
 
-fn record_prototype1_child_ready_if_configured(
-    campaign_id: &str,
-    manifest_path: &Path,
-    node: &crate::intervention::Prototype1NodeRecord,
-    request: &crate::intervention::Prototype1RunnerRequest,
-) -> Result<(), PrepareError> {
-    let Some(runtime_id) = std::env::var(crate::cli::prototype1_state::c3::RUNTIME_ID_ENV)
-        .ok()
-        .and_then(|value| uuid::Uuid::parse_str(&value).ok())
-        .map(crate::cli::prototype1_state::event::RuntimeId)
-    else {
-        return Ok(());
-    };
-    let Some(journal_path) =
-        std::env::var_os(crate::cli::prototype1_state::c3::JOURNAL_PATH_ENV).map(PathBuf::from)
-    else {
-        return Ok(());
-    };
-    record_prototype1_child_ready(
-        campaign_id,
-        manifest_path,
-        node,
-        &request.workspace_root,
-        runtime_id,
-        &journal_path,
-    )
-    .map(|_| ())
-}
-
 pub(crate) fn record_prototype1_successor_ready(
     invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
     manifest_path: &Path,
 ) -> Result<crate::cli::prototype1_state::invocation::SuccessorReadyRecord, PrepareError> {
-    let node = load_node_record(manifest_path, invocation.node_id())?;
-    let ready_path = crate::cli::prototype1_state::invocation::successor_ready_path(
-        &node.node_dir,
-        invocation.runtime_id(),
-    );
+    let _ = manifest_path;
     let record = crate::cli::prototype1_state::invocation::SuccessorReadyRecord {
         schema_version: crate::cli::prototype1_state::invocation::SUCCESSOR_READY_SCHEMA_VERSION
             .to_string(),
@@ -380,10 +303,21 @@ pub(crate) fn record_prototype1_successor_ready(
         pid: std::process::id(),
         recorded_at: Utc::now().to_rfc3339(),
     };
-    crate::cli::prototype1_state::invocation::write_successor_ready_record(&ready_path, &record)?;
+    let ready_projection = invocation
+        .channel_endpoints()
+        .map(|endpoints| {
+            let projection = endpoints.child_to_parent().path().to_path_buf();
+            let channel = Channel::for_role(invocation, endpoints, FileTransport);
+            channel
+                .send_successor_ready(record.clone())
+                .map_err(|err| channel_error_phase("prototype1_successor_channel_ready", err))?;
+            Ok::<PathBuf, PrepareError>(projection)
+        })
+        .transpose()?
+        .unwrap_or_else(|| invocation.journal_path().to_path_buf());
     append_successor_record(
         invocation.journal_path(),
-        SuccessorRecord::ready(invocation, record.pid, ready_path),
+        SuccessorRecord::ready(invocation, record.pid, ready_projection),
         "prototype1_successor_ready_journal",
     )?;
     Ok(record)
@@ -396,11 +330,7 @@ pub(crate) fn record_prototype1_successor_completion(
     trace_path: Option<PathBuf>,
     detail: Option<String>,
 ) -> Result<crate::cli::prototype1_state::invocation::SuccessorCompletionRecord, PrepareError> {
-    let node = load_node_record(manifest_path, invocation.node_id())?;
-    let completion_path = crate::cli::prototype1_state::invocation::successor_completion_path(
-        &node.node_dir,
-        invocation.runtime_id(),
-    );
+    let _ = manifest_path;
     let record = crate::cli::prototype1_state::invocation::SuccessorCompletionRecord {
         schema_version:
             crate::cli::prototype1_state::invocation::SUCCESSOR_COMPLETION_SCHEMA_VERSION
@@ -413,13 +343,29 @@ pub(crate) fn record_prototype1_successor_completion(
         detail: detail.clone(),
         recorded_at: Utc::now().to_rfc3339(),
     };
-    crate::cli::prototype1_state::invocation::write_successor_completion_record(
-        &completion_path,
-        &record,
-    )?;
+    let completion_projection = invocation
+        .channel_endpoints()
+        .map(|endpoints| {
+            let projection = endpoints.child_to_parent().path().to_path_buf();
+            let channel = Channel::for_role(invocation, endpoints, FileTransport);
+            channel
+                .send_successor_completion(record.clone())
+                .map_err(|err| {
+                    channel_error_phase("prototype1_successor_channel_completion", err)
+                })?;
+            Ok::<PathBuf, PrepareError>(projection)
+        })
+        .transpose()?
+        .unwrap_or_else(|| invocation.journal_path().to_path_buf());
     append_successor_record(
         invocation.journal_path(),
-        SuccessorRecord::completed(invocation, status, completion_path, trace_path, detail),
+        SuccessorRecord::completed(
+            invocation,
+            status,
+            completion_projection,
+            trace_path,
+            detail,
+        ),
         "prototype1_successor_completion_journal",
     )?;
     Ok(record)
@@ -429,13 +375,45 @@ pub(crate) fn validate_prototype1_successor_continuation(
     invocation: &crate::cli::prototype1_state::invocation::SuccessorInvocation,
     manifest_path: &Path,
 ) -> Result<(), PrepareError> {
-    let node = load_node_record(manifest_path, invocation.node_id())?;
-    validate_prototype1_successor_continuation_coordinate(
-        manifest_path,
-        &node.node_id,
-        &node.branch_id,
-        node.generation,
-    )
+    let store = FsBlockStore::for_campaign_manifest(manifest_path);
+    let lineage_id = LineageId::new(invocation.campaign_id().to_string());
+    let state = store
+        .lineage_state(&lineage_id)
+        .map_err(block_store_prepare_error)?;
+    let head = match state.head() {
+        StoreHead::Present(head) => head.clone(),
+        StoreHead::Absent { .. } => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor continuation for node '{}' has no sealed History head",
+                    invocation.node_id()
+                ),
+            });
+        }
+    };
+    let sealed = store
+        .sealed_head_block(&head)
+        .map_err(block_store_prepare_error)?;
+    let expected_runtime = ActorRef::Runtime(invocation.runtime_id());
+    if sealed.selected_successor().runtime() != &expected_runtime {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor continuation runtime mismatch: invocation={} sealed={:?}",
+                invocation.runtime_id(),
+                sealed.selected_successor().runtime()
+            ),
+        });
+    }
+    if sealed.selected_successor().artifact() != sealed.active_artifact() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor continuation selected Artifact '{}' does not match sealed active Artifact '{}'",
+                sealed.selected_successor().artifact().as_str(),
+                sealed.active_artifact().as_str()
+            ),
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_child_surface(
@@ -449,59 +427,6 @@ pub(crate) fn validate_child_surface(
             phase,
             detail: source.to_string(),
         })
-}
-
-fn validate_prototype1_selected_successor_continuation(
-    manifest_path: &Path,
-    selected: &selection::Selection<selection::Artifact>,
-) -> Result<(), PrepareError> {
-    let artifact = selected.selected();
-    let node = artifact.node();
-    validate_prototype1_successor_continuation_coordinate(
-        manifest_path,
-        &node.node_id,
-        artifact.branch_id(),
-        node.generation,
-    )
-}
-
-fn validate_prototype1_successor_continuation_coordinate(
-    manifest_path: &Path,
-    node_id: &str,
-    branch_id: &str,
-    generation: u32,
-) -> Result<(), PrepareError> {
-    let scheduler = load_scheduler_state(manifest_path)?;
-    let decision = scheduler
-        .last_continuation_decision
-        .as_ref()
-        .ok_or_else(|| PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "successor continuation for node '{}' has no recorded continuation decision",
-                node_id
-            ),
-        })?;
-
-    let expected_next_generation = generation.saturating_add(1);
-    if decision.disposition.allows_successor()
-        && decision.selected_next_branch_id.as_deref() == Some(branch_id)
-        && decision.next_generation == expected_next_generation
-    {
-        return Ok(());
-    }
-
-    Err(PrepareError::InvalidBatchSelection {
-        detail: format!(
-            "successor continuation rejected for node '{}' with disposition {:?} selected_next_branch_id={:?} selected_branch_id={} (next_generation={}, expected_next_generation={}, total_nodes_after_continue={})",
-            node_id,
-            decision.disposition,
-            decision.selected_next_branch_id,
-            branch_id,
-            decision.next_generation,
-            expected_next_generation,
-            decision.total_nodes_after_continue
-        ),
-    })
 }
 
 fn build_prototype1_active_successor_binary(repo_root: &Path) -> Result<PathBuf, PrepareError> {
@@ -548,27 +473,10 @@ fn build_prototype1_active_successor_binary(repo_root: &Path) -> Result<PathBuf,
 
 fn prepare_prototype1_active_successor_runtime(
     campaign_id: &str,
-    manifest_path: &Path,
+    _manifest_path: &Path,
     selected: &selection::Selection<selection::Artifact>,
     active_parent_root: &Path,
 ) -> Result<(PathBuf, SurfaceCommitment), PrepareError> {
-    let artifact = selected.selected();
-    validate_prototype1_selected_successor_continuation(manifest_path, selected)?;
-    let registry = select_treatment_branch(campaign_id, manifest_path, artifact.branch_id())?;
-    let active_branch_id = registry
-        .active_targets
-        .iter()
-        .find(|target| target.target_relpath == artifact.resolved().target_relpath)
-        .and_then(|target| target.active_branch_id.as_deref());
-    if active_branch_id != Some(artifact.branch_id()) {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "selected Artifact active branch mismatch before checkout: branch_registry={}, selection={}",
-                active_branch_id.unwrap_or("(none)"),
-                artifact.branch_id()
-            ),
-        });
-    }
     let surface = install_prototype1_successor_artifact(campaign_id, active_parent_root, selected)?;
     let binary = build_prototype1_active_successor_binary(active_parent_root)?;
     Ok((binary, surface))
@@ -872,53 +780,12 @@ fn remove_node_target(
     Ok(())
 }
 
-fn cleanup_prototype1_child_workspace(
-    active_parent_root: &Path,
-    manifest_path: &Path,
-    campaign_id: &str,
-    node: &crate::intervention::Prototype1NodeRecord,
-) -> Result<(), PrepareError> {
-    let backend = GitWorktreeBackend;
-    let workspace = backend
-        .workspace_for_node(&node.node_id, &node.node_dir, &node.workspace_root)
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_child_cleanup_prepare",
-            detail: source.to_string(),
-        })?;
-    match backend.remove(active_parent_root, &workspace) {
-        Ok(()) => observe::Step::start(observe::span!(
-            "prototype1.cleanup.workspace",
-            campaign_id = %campaign_id,
-            node_id = %node.node_id,
-            generation = node.generation,
-            manifest_path = %manifest_path.display(),
-            path = %node.workspace_root.display(),
-        ))
-        .removed(),
-        Err(source) => {
-            observe::Step::start(observe::span!(
-                "prototype1.cleanup.workspace",
-                campaign_id = %campaign_id,
-                node_id = %node.node_id,
-                generation = node.generation,
-                manifest_path = %manifest_path.display(),
-                path = %node.workspace_root.display(),
-            ))
-            .fail("child_worktree_remove", &source);
-            return Err(PrepareError::DatabaseSetup {
-                phase: "prototype1_child_worktree_cleanup",
-                detail: source.to_string(),
-            });
-        }
-    }
-    cleanup_prototype1_child_build_products(manifest_path, campaign_id, node)
-}
-
 pub(crate) fn persist_prototype1_buildable_child_artifact(
     campaign_id: &str,
     campaign_manifest_path: &Path,
     active_parent_root: &Path,
     node: &crate::intervention::Prototype1NodeRecord,
+    resolved: &ResolvedTreatmentBranch,
 ) -> Result<SurfaceCommitment, PrepareError> {
     let backend = GitWorktreeBackend;
     let workspace = backend
@@ -957,7 +824,6 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
         &workspace.root,
         "prototype1_child_surface_commitment_after_persist",
     )?;
-    let resolved = resolve_treatment_branch(campaign_id, campaign_manifest_path, &node.branch_id)?;
     backend
         .verify_artifact_target(
             active_parent_root,
@@ -986,62 +852,6 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
         "prototype1_child_artifact_journal",
     )?;
     Ok(surface)
-}
-
-fn load_prototype1_branch_evaluation_report(
-    path: &Path,
-) -> Result<Prototype1BranchEvaluationReport, PrepareError> {
-    let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-fn spawn_prototype1_child_runner(
-    binary_path: &Path,
-    repo_root: &Path,
-    invocation_path: &Path,
-    invocation: &crate::cli::prototype1_state::invocation::ChildInvocation,
-    node: &crate::intervention::Prototype1NodeRecord,
-) -> Result<std::process::Output, PrepareError> {
-    crate::cli::prototype1_state::invocation::write_child_invocation(invocation_path, invocation)?;
-    let child_argv = invocation.launch_args(invocation_path);
-    ProcessCommand::new(binary_path)
-        .args(&child_argv)
-        .current_dir(repo_root)
-        .env(
-            crate::cli::prototype1_state::c3::CAMPAIGN_ID_ENV,
-            invocation.campaign_id(),
-        )
-        .env(
-            crate::cli::prototype1_state::c3::NODE_ID_ENV,
-            invocation.node_id(),
-        )
-        .env(
-            crate::cli::prototype1_state::c3::RUNTIME_ID_ENV,
-            invocation.runtime_id().to_string(),
-        )
-        .env(
-            crate::cli::prototype1_state::c3::JOURNAL_PATH_ENV,
-            invocation.journal_path(),
-        )
-        .env(
-            crate::cli::prototype1_state::c3::BRANCH_ID_ENV,
-            &node.branch_id,
-        )
-        .env(
-            crate::cli::prototype1_state::c3::GENERATION_ENV,
-            node.generation.to_string(),
-        )
-        .output()
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_runner_spawn",
-            detail: source.to_string(),
-        })
 }
 
 fn spawn_prototype1_successor(
@@ -1161,15 +971,26 @@ enum SuccessorWait {
 
 fn wait_for_prototype1_successor_ready(
     child: &mut std::process::Child,
-    ready_path: &Path,
+    channel: Option<&Channel<Parent<Retired>, FileTransport>>,
 ) -> Result<SuccessorWait, PrepareError> {
     let start = std::time::Instant::now();
+    let mut cursor = Cursor::start();
     loop {
-        if ready_path.exists() {
-            let ready =
-                crate::cli::prototype1_state::invocation::load_successor_ready_record(ready_path)?;
-            let _ = ready;
-            return Ok(SuccessorWait::Ready);
+        if let Some(channel) = channel {
+            let (next_cursor, messages) =
+                channel
+                    .recv_from_child(cursor)
+                    .map_err(|err| PrepareError::DatabaseSetup {
+                        phase: "prototype1_successor_channel_ready",
+                        detail: format!("{err:?}"),
+                    })?;
+            cursor = next_cursor;
+            if messages
+                .iter()
+                .any(|message| matches!(message.body(), ToParent::SuccessorReady { .. }))
+            {
+                return Ok(SuccessorWait::Ready);
+            }
         }
         if let Some(status) = child
             .try_wait()
@@ -1349,15 +1170,15 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
             prototype1_transition_journal_path(&manifest_path),
             active_parent_root.to_path_buf(),
         );
-    let ready_path =
-        crate::cli::prototype1_state::invocation::successor_ready_path(&node.node_dir, runtime_id);
+    let successor_channel_endpoints = invocation.channel_endpoints();
+    let ready_path = successor_channel_endpoints
+        .as_ref()
+        .map(|endpoints| endpoints.child_to_parent().path().to_path_buf())
+        .unwrap_or_else(|| invocation.journal_path().to_path_buf());
+    let successor_channel = successor_channel_endpoints
+        .clone()
+        .map(|endpoints| Channel::for_parent(&retired_parent, endpoints, FileTransport));
     let streams = runtime_streams(&node.node_dir, runtime_id);
-    if ready_path.exists() {
-        fs::remove_file(&ready_path).map_err(|source| PrepareError::WriteManifest {
-            path: ready_path.clone(),
-            source,
-        })?;
-    }
 
     debug!(
         target: EXECUTION_DEBUG_TARGET,
@@ -1488,7 +1309,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         invocation_path = %invocation_path.display(),
         ready_path = %ready_path.display(),
     ));
-    match wait_for_prototype1_successor_ready(&mut child, &ready_path)? {
+    match wait_for_prototype1_successor_ready(&mut child, successor_channel.as_ref())? {
         SuccessorWait::Ready => {
             ready_step.success();
             append_prototype1_journal_entry(
@@ -1642,33 +1463,6 @@ fn backend_prepare_error(
     }
 }
 
-/// Construct a persisted runner result for child-binary build failure.
-///
-/// This keeps compile failure in the explicit node/result state machine instead
-/// of leaking out as an unstructured process error.
-fn build_compile_failed_runner_result(
-    campaign_id: &str,
-    node: &crate::intervention::Prototype1NodeRecord,
-    output: &std::process::Output,
-) -> Prototype1RunnerResult {
-    Prototype1RunnerResult {
-        schema_version: crate::intervention::PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
-        node_id: node.node_id.clone(),
-        generation: node.generation,
-        branch_id: node.branch_id.clone(),
-        status: Prototype1NodeStatus::Failed,
-        disposition: Prototype1RunnerDisposition::CompileFailed,
-        treatment_campaign_id: None,
-        evaluation_artifact_path: None,
-        detail: Some("child binary build failed".to_string()),
-        exit_code: output.status.code(),
-        stdout_excerpt: process_output_excerpt(&output.stdout),
-        stderr_excerpt: process_output_excerpt(&output.stderr),
-        recorded_at: Utc::now().to_rfc3339(),
-    }
-}
-
 /// Construct a persisted runner result for failure after the child binary
 /// exists but before a successful evaluation report is produced.
 fn build_treatment_failed_runner_result(
@@ -1723,8 +1517,8 @@ fn build_succeeded_runner_result(
 }
 
 fn record_attempt_runner_result(
-    campaign_id: &str,
-    campaign_manifest_path: &Path,
+    _campaign_id: &str,
+    _campaign_manifest_path: &Path,
     node: &crate::intervention::Prototype1NodeRecord,
     runtime_id: crate::cli::prototype1_state::event::RuntimeId,
     result: Prototype1RunnerResult,
@@ -1732,133 +1526,10 @@ fn record_attempt_runner_result(
     let attempt_path =
         crate::cli::prototype1_state::invocation::result_path(&node.node_dir, runtime_id);
     let _ = write_runner_result_at(&attempt_path, &result)?;
-    let _ = record_runner_result(campaign_id, campaign_manifest_path, result.clone())?;
+    let _ = write_runner_result_at(&node.runner_result_path, &result)?;
+    let node = project_node_status(node, result.status);
+    write_node_projection(&node)?;
     Ok(result)
-}
-
-/// Realize the selected branch into one node-owned workspace for a node.
-///
-/// Side effects:
-/// - realizes or reuses a backend-managed child workspace under the node dir
-/// - writes the branch's proposed content into the node workspace target file
-/// - persists the realized workspace root onto the node and runner request
-/// - updates node status to `workspace_staged`
-fn stage_prototype1_runner_node(
-    campaign_id: &str,
-    campaign_manifest_path: &Path,
-    node_id: &str,
-    repo_root: &Path,
-) -> Result<crate::intervention::Prototype1NodeRecord, PrepareError> {
-    let node = load_node_record(campaign_manifest_path, node_id)?;
-    let resolved = resolve_treatment_branch(campaign_id, campaign_manifest_path, &node.branch_id)?;
-    let realized = GitWorktreeBackend
-        .realize(&RealizeRequest {
-            repo_root: repo_root.to_path_buf(),
-            node_id: node.node_id.clone(),
-            node_dir: node.node_dir.clone(),
-            target_relpath: resolved.target_relpath.clone(),
-            source_content: resolved.source_content.clone(),
-            proposed_content: resolved.branch.proposed_content.clone(),
-        })
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_runner_realize",
-            detail: source.to_string(),
-        })?;
-    let _ = update_node_status(
-        campaign_id,
-        campaign_manifest_path,
-        node_id,
-        Prototype1NodeStatus::WorkspaceStaged,
-    )?;
-    let (_, updated, _) =
-        update_node_workspace_root(campaign_id, campaign_manifest_path, node_id, realized.root)?;
-    Ok(updated)
-}
-
-/// Build the child binary for one node from its realized workspace root.
-///
-/// Cargo scratch artifacts are isolated under `node/target/` so the build does
-/// not pollute the repo-level `target/`. The executable copied to `node/bin/`
-/// is a temporary child-evaluation launch artifact, not durable runtime
-/// identity; cleanup removes it once the evaluation result has been recorded.
-///
-/// Compile failure is normalized into a persisted runner result rather than
-/// leaving the node in an ambiguous partially-built state.
-fn build_prototype1_runner_binary(
-    campaign_id: &str,
-    campaign_manifest_path: &Path,
-    node_id: &str,
-) -> Result<Prototype1NodeBuildOutcome, PrepareError> {
-    let node = load_node_record(campaign_manifest_path, node_id)?;
-    // Keep Cargo's full build scratch (deps, fingerprints, incremental state, and the raw
-    // binary) inside a node-local target dir rather than polluting the repo's shared target/.
-    let target_dir = node.node_dir.join("target");
-    fs::create_dir_all(&target_dir).map_err(|source| PrepareError::CreateOutputDir {
-        path: target_dir.clone(),
-        source,
-    })?;
-    if let Some(parent) = node.binary_path.parent() {
-        fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-
-    let output = ProcessCommand::new("cargo")
-        .arg("build")
-        .arg("-p")
-        .arg("ploke-eval")
-        .arg("--bin")
-        .arg("ploke-eval")
-        .env("CARGO_TARGET_DIR", &target_dir)
-        .current_dir(&node.workspace_root)
-        .output()
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_runner_build",
-            detail: source.to_string(),
-        })?;
-
-    if !output.status.success() {
-        let result = build_compile_failed_runner_result(campaign_id, &node, &output);
-        let _ = record_runner_result(campaign_id, campaign_manifest_path, result.clone())?;
-        return Ok(Prototype1NodeBuildOutcome::CompileFailed(result));
-    }
-
-    let built_binary = target_dir
-        .join("debug")
-        .join(format!("ploke-eval{}", std::env::consts::EXE_SUFFIX));
-    if !built_binary.exists() {
-        return Err(PrepareError::DatabaseSetup {
-            phase: "prototype1_runner_build",
-            detail: format!(
-                "build succeeded but child binary '{}' was not found",
-                built_binary.display()
-            ),
-        });
-    }
-
-    // Copy the promoted child executable out of Cargo's scratch tree so later cleanup can drop
-    // node/target without deleting the runnable artifact we want to keep for lineage/debugging.
-    fs::copy(&built_binary, &node.binary_path).map_err(|source| PrepareError::WriteManifest {
-        path: node.binary_path.clone(),
-        source,
-    })?;
-    // The promoted executable is the child launch artifact. Cargo's build tree is
-    // scratch space and can exceed several GiB, so remove it before any later
-    // stage can fail and strand it under the node.
-    remove_node_target(
-        campaign_manifest_path,
-        campaign_id,
-        &node,
-        target_dir.as_path(),
-    )?;
-    let _ = update_node_status(
-        campaign_id,
-        campaign_manifest_path,
-        node_id,
-        Prototype1NodeStatus::BinaryBuilt,
-    )?;
-    Ok(Prototype1NodeBuildOutcome::Built)
 }
 
 /// Execute one branch evaluation in-process inside the child runner binary.
@@ -1876,6 +1547,27 @@ pub(super) async fn run_prototype1_branch_evaluation(
     repo_root: &Path,
     stop_on_error: bool,
 ) -> Result<Prototype1BranchEvaluationReport, PrepareError> {
+    let baseline_manifest_path = campaign_manifest_path(baseline_campaign_id)?;
+    let resolved_branch =
+        resolve_treatment_branch(baseline_campaign_id, &baseline_manifest_path, branch_id)?;
+    run_prototype1_resolved_branch_evaluation(
+        baseline_campaign_id,
+        &baseline_manifest_path,
+        &resolved_branch,
+        repo_root,
+        stop_on_error,
+    )
+    .await
+}
+
+pub(super) async fn run_prototype1_resolved_branch_evaluation(
+    baseline_campaign_id: &str,
+    baseline_manifest_path: &Path,
+    resolved_branch: &ResolvedTreatmentBranch,
+    repo_root: &Path,
+    stop_on_error: bool,
+) -> Result<Prototype1BranchEvaluationReport, PrepareError> {
+    let branch_id = resolved_branch.branch.branch_id.as_str();
     macro_rules! eval_span {
         ($name:literal, $phase:literal) => {
             observe::span!(
@@ -1925,26 +1617,13 @@ pub(super) async fn run_prototype1_branch_evaluation(
     ));
     let outcome = async {
         let _run_scope = TimingTrace::scope(format!("loop.prototype1_branch.evaluate.{branch_id}"));
-        let baseline_manifest_path = step!(
-            "prototype1.child.evaluate.resolve_manifest",
-            "ResolveManifest",
-            || campaign_manifest_path(baseline_campaign_id),
-        )?;
         let branch_registry_path = prototype1_branch_registry_path(&baseline_manifest_path);
-        let resolved_branch = step!(
-            "prototype1.child.evaluate.resolve_branch",
-            "ResolveBranch",
-            || resolve_treatment_branch(baseline_campaign_id, &baseline_manifest_path, branch_id),
-            baseline_manifest_path = %baseline_manifest_path.display(),
-        )?;
         step!(
             "prototype1.child.evaluate.materialize",
             "Materialize",
             || {
                 ensure_treatment_branch_materialized(
-                    baseline_campaign_id,
-                    &baseline_manifest_path,
-                    &resolved_branch,
+                    resolved_branch,
                     repo_root,
                 )
             },
@@ -2000,7 +1679,7 @@ pub(super) async fn run_prototype1_branch_evaluation(
             treatment_campaign_id = %treatment_campaign.campaign_id,
         )?;
         let evaluation_artifact_path =
-            prototype1_branch_evaluation_path(&baseline_manifest_path, branch_id);
+            prototype1_branch_evaluation_path(baseline_manifest_path, branch_id);
         let report = step!(
             "prototype1.child.evaluate.compare",
             "Compare",
@@ -2050,7 +1729,7 @@ pub(super) async fn run_prototype1_branch_evaluation(
             || {
                 record_treatment_branch_evaluation(
                     baseline_campaign_id,
-                    &baseline_manifest_path,
+                    baseline_manifest_path,
                     branch_id,
                     summary,
                 )
@@ -2072,82 +1751,6 @@ pub(super) async fn run_prototype1_branch_evaluation(
             Err(error)
         }
     }
-}
-
-/// Child-runner entrypoint for `loop prototype1-runner --execute`.
-///
-/// The child process resolves its node/request state, marks the node running,
-/// performs one treatment evaluation, records a terminal runner result, and
-/// returns that result to its caller.
-///
-/// This function does not recurse and does not choose any follow-on work.
-#[instrument(
-    target = "ploke_exec",
-    level = "debug",
-    skip(stop_on_error),
-    fields(campaign = %campaign_id, node_id = %node_id, stop_on_error)
-)]
-pub(super) async fn execute_prototype1_runner_node(
-    campaign_id: &str,
-    node_id: &str,
-    stop_on_error: bool,
-) -> Result<Prototype1RunnerResult, PrepareError> {
-    let runtime_id = std::env::var(crate::cli::prototype1_state::c3::RUNTIME_ID_ENV)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or_else(crate::cli::prototype1_state::event::RuntimeId::new);
-    let manifest_path = campaign_manifest_path(campaign_id)?;
-    let node = load_node_record(&manifest_path, node_id)?;
-    let request = load_runner_request(&manifest_path, node_id)?;
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %campaign_id,
-        node_id = %node_id,
-        workspace_root = %request.workspace_root.display(),
-        binary_path = %node.binary_path.display(),
-        "loaded prototype1 runner node"
-    );
-    let _ = update_node_status(
-        campaign_id,
-        &manifest_path,
-        node_id,
-        Prototype1NodeStatus::Running,
-    )?;
-    record_prototype1_child_ready_if_configured(campaign_id, &manifest_path, &node, &request)?;
-
-    let telemetry = RuntimeTelemetry::child(campaign_id, &node, runtime_id, "child_evaluation");
-    telemetry.install_for_chat_requests();
-    let outcome = run_prototype1_branch_evaluation(
-        campaign_id,
-        &node.branch_id,
-        &request.workspace_root,
-        stop_on_error,
-    )
-    .instrument(telemetry.span())
-    .await;
-
-    let result = match outcome {
-        Ok(report) => build_succeeded_runner_result(campaign_id, &node, &report),
-        Err(err) => build_treatment_failed_runner_result(
-            campaign_id,
-            &node,
-            err.to_string(),
-            None,
-            None,
-            None,
-        ),
-    };
-    let result =
-        record_attempt_runner_result(campaign_id, &manifest_path, &node, runtime_id, result)?;
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %campaign_id,
-        node_id = %node_id,
-        disposition = ?result.disposition,
-        status = ?result.status,
-        "prototype1 runner node completed"
-    );
-    Ok(result)
 }
 
 #[instrument(
@@ -2175,8 +1778,9 @@ pub(super) async fn execute_prototype1_runner_invocation(
         }
     };
     let manifest_path = campaign_manifest_path(invocation.campaign_id())?;
-    let node = load_node_record(&manifest_path, invocation.node_id())?;
-    let request = load_runner_request(&manifest_path, invocation.node_id())?;
+    let node = invocation.node_record()?.clone();
+    let request = invocation.runner_request()?.clone();
+    let resolved = invocation.resolved()?.clone();
 
     debug!(
         target: EXECUTION_DEBUG_TARGET,
@@ -2187,16 +1791,12 @@ pub(super) async fn execute_prototype1_runner_invocation(
         "loaded executable prototype1 child invocation"
     );
 
-    let _ = update_node_status(
-        invocation.campaign_id(),
-        &manifest_path,
-        invocation.node_id(),
-        Prototype1NodeStatus::Running,
-    )?;
+    let node = project_node_status(&node, Prototype1NodeStatus::Running);
+    write_node_projection(&node)?;
     let child = prototype1_child_starting(
         invocation.campaign_id(),
-        &manifest_path,
         &node,
+        &resolved,
         &request.workspace_root,
         invocation.runtime_id(),
         invocation.journal_path(),
@@ -2240,23 +1840,30 @@ pub(super) async fn execute_prototype1_runner_invocation(
         "child_evaluation",
     );
     telemetry.install_for_chat_requests();
-    let outcome = run_prototype1_branch_evaluation(
+    let outcome = run_prototype1_resolved_branch_evaluation(
         invocation.campaign_id(),
-        &request.branch_id,
+        &manifest_path,
+        &resolved,
         &request.workspace_root,
         request.stop_on_error,
     )
     .instrument(telemetry.span())
     .await;
 
-    let result = match outcome {
-        Ok(report) => build_succeeded_runner_result(invocation.campaign_id(), &node, &report),
-        Err(err) => build_treatment_failed_runner_result(
-            invocation.campaign_id(),
-            &node,
-            err.to_string(),
-            None,
-            None,
+    let (result, evaluation) = match outcome {
+        Ok(report) => (
+            build_succeeded_runner_result(invocation.campaign_id(), &node, &report),
+            Some(report),
+        ),
+        Err(err) => (
+            build_treatment_failed_runner_result(
+                invocation.campaign_id(),
+                &node,
+                err.to_string(),
+                None,
+                None,
+                None,
+            ),
             None,
         ),
     };
@@ -2278,14 +1885,14 @@ pub(super) async fn execute_prototype1_runner_invocation(
             detail: err.to_string(),
         })?;
     if let Some(channel) = channel {
-        if let Err(err) = channel.send_result_written(runner_result_path.clone()) {
+        if let Err(err) = channel.send_terminal_result(result.clone(), evaluation) {
             warn!(
                 target: EXECUTION_DEBUG_TARGET,
                 campaign = %invocation.campaign_id(),
                 node_id = %invocation.node_id(),
                 runtime_id = %invocation.runtime_id(),
                 error = ?err,
-                "failed to write child result channel projection after attempt result was persisted"
+                "failed to write child terminal result channel payload after attempt result was persisted"
             );
         }
     }
@@ -2298,206 +1905,4 @@ pub(super) async fn execute_prototype1_runner_invocation(
         "prototype1 child invocation completed"
     );
     Ok(result)
-}
-
-/// Parent-side staged execution path for one treatment branch.
-///
-/// This is the main controller-facing process helper. It:
-/// 1. registers or reloads the node
-/// 2. materializes the branch into a temporary node workspace
-/// 3. builds a fresh child runtime from that workspace
-/// 4. spawns exactly one child runner process and waits for it
-/// 5. reads back `runner-result.json`
-/// 6. loads the branch-evaluation artifact on success
-/// 7. removes the temporary child worktree and node-local build products
-///
-/// Failure behavior:
-/// - compile failures become `Prototype1NodeExecutionOutcome::Failed`
-/// - child treatment failures become `Prototype1NodeExecutionOutcome::Failed`
-/// - missing runner-result artifacts are converted into an explicit failure
-///   result instead of being silently ignored
-///
-/// This function is the single explicit child-process spawn site for the
-/// Prototype 1 treatment path.
-#[instrument(
-    target = "ploke_exec",
-    level = "debug",
-    skip(repo_root),
-    fields(campaign = %baseline_campaign_id, branch_id = %branch_id, repo_root = %repo_root.display(), stop_on_error)
-)]
-pub(super) async fn run_prototype1_branch_evaluation_via_child(
-    baseline_campaign_id: &str,
-    branch_id: &str,
-    repo_root: &Path,
-    stop_on_error: bool,
-) -> Result<Prototype1NodeExecutionOutcome, PrepareError> {
-    let baseline_manifest_path = campaign_manifest_path(baseline_campaign_id)?;
-    let registry = load_or_default_branch_registry(baseline_campaign_id, &baseline_manifest_path)?;
-    let source_node = registry
-        .source_nodes
-        .iter()
-        .find(|source| {
-            source
-                .branches
-                .iter()
-                .any(|branch| branch.branch_id == branch_id)
-        })
-        .ok_or_else(|| PrepareError::InvalidBatchSelection {
-            detail: format!("branch '{branch_id}' is not present in the branch registry"),
-        })?;
-    let generation = prototype1_source_generation(&registry, source_node) + 1;
-    let resolved =
-        resolve_treatment_branch(baseline_campaign_id, &baseline_manifest_path, branch_id)?;
-    let (_, node, _) = load_or_register_treatment_evaluation_node(
-        baseline_campaign_id,
-        &baseline_manifest_path,
-        &resolved,
-        generation,
-        None,
-        repo_root,
-        stop_on_error,
-    )?;
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %baseline_campaign_id,
-        branch_id = %branch_id,
-        node_id = %node.node_id,
-        "registered prototype1 child-eval node"
-    );
-
-    let node = stage_prototype1_runner_node(
-        baseline_campaign_id,
-        &baseline_manifest_path,
-        &node.node_id,
-        repo_root,
-    )?;
-    let _surface = validate_child_surface(
-        repo_root,
-        &node.workspace_root,
-        "prototype1_branch_child_surface_commitment_before_build",
-    )?;
-    match build_prototype1_runner_binary(
-        baseline_campaign_id,
-        &baseline_manifest_path,
-        &node.node_id,
-    )? {
-        Prototype1NodeBuildOutcome::CompileFailed(result) => {
-            cleanup_prototype1_child_workspace(
-                repo_root,
-                &baseline_manifest_path,
-                baseline_campaign_id,
-                &node,
-            )?;
-            return Ok(Prototype1NodeExecutionOutcome::Failed(result));
-        }
-        Prototype1NodeBuildOutcome::Built => {}
-    }
-    let _surface = persist_prototype1_buildable_child_artifact(
-        baseline_campaign_id,
-        &baseline_manifest_path,
-        repo_root,
-        &node,
-    )?;
-
-    let _ = clear_runner_result(&baseline_manifest_path, &node.node_id)?;
-    let runtime_id = crate::cli::prototype1_state::event::RuntimeId::new();
-    let journal_path = prototype1_transition_journal_path(&baseline_manifest_path);
-    let invocation_path =
-        crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
-    let channel_root =
-        crate::cli::prototype1_state::invocation::channel_root(&node.node_dir, runtime_id);
-    let invocation = crate::cli::prototype1_state::invocation::ChildInvocation::new(
-        baseline_campaign_id.to_string(),
-        node.node_id.clone(),
-        runtime_id,
-        journal_path.clone(),
-        channel_root,
-    );
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %baseline_campaign_id,
-        branch_id = %branch_id,
-        node_id = %node.node_id,
-        runtime_id = %runtime_id,
-        binary_path = %node.binary_path.display(),
-        workspace_root = %node.workspace_root.display(),
-        invocation_path = %invocation_path.display(),
-        "spawning prototype1 leaf child runner"
-    );
-    let output = spawn_prototype1_child_runner(
-        &node.binary_path,
-        &node.workspace_root,
-        &invocation_path,
-        &invocation,
-        &node,
-    )?;
-
-    let attempt_result_path =
-        crate::cli::prototype1_state::invocation::result_path(&node.node_dir, runtime_id);
-    let runner_result = if attempt_result_path.exists() {
-        Some(load_runner_result_at(&attempt_result_path)?)
-    } else {
-        None
-    };
-
-    let runner_result = match runner_result {
-        Some(result) => result,
-        None => {
-            let failure = build_treatment_failed_runner_result(
-                baseline_campaign_id,
-                &node,
-                "child runner exited without writing a runner result artifact",
-                output.status.code(),
-                process_output_excerpt(&output.stdout),
-                process_output_excerpt(&output.stderr),
-            );
-            let failure = record_attempt_runner_result(
-                baseline_campaign_id,
-                &baseline_manifest_path,
-                &node,
-                runtime_id,
-                failure.clone(),
-            )?;
-            failure
-        }
-    };
-
-    if runner_result.disposition != Prototype1RunnerDisposition::Succeeded {
-        cleanup_prototype1_child_workspace(
-            repo_root,
-            &baseline_manifest_path,
-            baseline_campaign_id,
-            &node,
-        )?;
-        return Ok(Prototype1NodeExecutionOutcome::Failed(runner_result));
-    }
-
-    let outcome = (|| {
-        let evaluation_artifact_path =
-            runner_result
-                .evaluation_artifact_path
-                .as_ref()
-                .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "runner result for node '{}' did not include an evaluation artifact path",
-                        node.node_id
-                    ),
-                })?;
-        let report = load_prototype1_branch_evaluation_report(evaluation_artifact_path)?;
-        Ok(Prototype1NodeExecutionOutcome::Evaluated(report))
-    })();
-    cleanup_prototype1_child_workspace(
-        repo_root,
-        &baseline_manifest_path,
-        baseline_campaign_id,
-        &node,
-    )?;
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %baseline_campaign_id,
-        branch_id = %branch_id,
-        node_id = %node.node_id,
-        "legacy prototype1 child runner succeeded"
-    );
-    outcome
 }

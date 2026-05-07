@@ -28,12 +28,11 @@ use tracing::{debug, instrument};
 
 use crate::intervention::{
     CommitError, Intervention, Outcome, Prototype1NodeStatus, RecordStore, Surface,
-    clear_runner_result, load_node_record, load_runner_request, resolve_treatment_branch,
-    update_node_status,
+    project_node_status, write_node_projection,
 };
 use crate::spec::PrepareError;
 
-use super::c1::{Acknowledged, Artifact, Binary, Child, ChildAckState, Parent, Present, Prototype};
+use super::c1::{Acknowledged, Binary, Child, ChildAckState, Parent, Present, Prototype};
 use super::channel::{Channel, Cursor, FileTransport, ToParent};
 use super::event::{ChildRuntimeLifecycle, ContentHash, Paths, RecordedAt, Refs, RuntimeId};
 use super::invocation::{ChildInvocation, channel_root, invocation_path, write_child_invocation};
@@ -191,32 +190,6 @@ impl Handoff {
         drop(txn);
         Ok(result)
     }
-
-    fn with_read<R>(
-        &self,
-        f: impl FnOnce(&[JournalEntry]) -> R,
-    ) -> Result<R, PrototypeJournalError> {
-        let journal = PrototypeJournal::new(self.path.clone());
-        let entries = journal.load_entries()?;
-        Ok(f(&entries))
-    }
-
-    fn find_ready(
-        &self,
-        runtime_id: RuntimeId,
-    ) -> Result<Option<ReadyEntry>, PrototypeJournalError> {
-        self.with_read(|entries| {
-            entries.iter().find_map(|entry| match entry {
-                JournalEntry::ChildReady(ready) if ready.runtime_id == runtime_id => {
-                    Some(ready.clone())
-                }
-                JournalEntry::Child(child) => child
-                    .ready_entry()
-                    .filter(|ready| ready.runtime_id == runtime_id),
-                _ => None,
-            })
-        })
-    }
 }
 
 struct HandoffTxn {
@@ -278,12 +251,6 @@ pub(crate) enum SpawnChildError {
         #[source]
         source: PrepareError,
     },
-    #[error("failed to clear prior runner result for node '{node_id}'")]
-    ClearRunnerResult {
-        node_id: String,
-        #[source]
-        source: PrepareError,
-    },
     #[error("failed to resolve treatment branch '{branch_id}' for node '{node_id}'")]
     ResolveBranch {
         node_id: String,
@@ -335,6 +302,12 @@ pub(crate) enum SpawnChildError {
     },
     #[error("failed to persist invocation for node '{node_id}'")]
     WriteInvocation {
+        node_id: String,
+        #[source]
+        source: PrepareError,
+    },
+    #[error("invalid invocation bootstrap for node '{node_id}'")]
+    InvalidInvocationBootstrap {
         node_id: String,
         #[source]
         source: PrepareError,
@@ -406,85 +379,6 @@ impl Surface<C3> for ChildBinarySurface {
     }
 }
 
-impl C3 {
-    /// Load and validate a built `C3` state for one node.
-    pub(crate) fn load(
-        campaign_id: impl Into<String>,
-        campaign_manifest_path: impl Into<PathBuf>,
-        node_id: &str,
-        repo_root: impl Into<PathBuf>,
-    ) -> Result<Self, SpawnChildError> {
-        let campaign_id = campaign_id.into();
-        let campaign_manifest_path = campaign_manifest_path.into();
-        let repo_root = repo_root.into();
-
-        let node = load_node_record(&campaign_manifest_path, node_id).map_err(|source| {
-            SpawnChildError::LoadNode {
-                node_id: node_id.to_string(),
-                source,
-            }
-        })?;
-        if node.status != Prototype1NodeStatus::BinaryBuilt {
-            return Err(SpawnChildError::UnexpectedNodeStatus {
-                node_id: node_id.to_string(),
-                observed: node.status,
-            });
-        }
-        let resolved =
-            resolve_treatment_branch(&campaign_id, &campaign_manifest_path, &node.branch_id)
-                .map_err(|source| SpawnChildError::ResolveBranch {
-                    node_id: node_id.to_string(),
-                    branch_id: node.branch_id.clone(),
-                    source,
-                })?;
-
-        let absolute_path = repo_root.join(&resolved.target_relpath);
-        let current =
-            fs::read_to_string(&absolute_path).map_err(|source| SpawnChildError::ReadTarget {
-                path: absolute_path.clone(),
-                source,
-            })?;
-        let observed_hash = ContentHash::of(&current);
-        if current != resolved.branch.proposed_content {
-            return Err(SpawnChildError::ArtifactNotBuilt {
-                path: absolute_path,
-                expected_proposed_hash: ContentHash(resolved.branch.proposed_content_hash.clone()),
-                observed_hash,
-            });
-        }
-        if !node.binary_path.exists() {
-            return Err(SpawnChildError::MissingChildBinary {
-                path: node.binary_path.clone(),
-            });
-        }
-
-        let child_path = node.binary_path.clone();
-
-        Ok(Self {
-            campaign_id,
-            campaign_manifest_path,
-            node,
-            resolved: resolved.clone(),
-            artifact: Artifact {
-                repo_root,
-                target_relpath: resolved.target_relpath.clone(),
-                source_content_hash: ContentHash(resolved.source_content_hash.clone()),
-                current_content_hash: ContentHash(resolved.branch.proposed_content_hash.clone()),
-                proposed_content_hash: ContentHash(resolved.branch.proposed_content_hash.clone()),
-                _lineage: std::marker::PhantomData,
-            },
-            binary: Binary {
-                parent_running: true,
-                child_path,
-                child_runtime: None,
-                _lineage: std::marker::PhantomData,
-                _child: std::marker::PhantomData,
-                _ack: std::marker::PhantomData,
-            },
-        })
-    }
-}
-
 /// Concrete intervention mediating `C3 -> C4`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SpawnChild {
@@ -522,38 +416,31 @@ impl Intervention<C3, C4> for SpawnChild {
         let binary_path = ChildBinarySurface
             .read_view(&from, &())
             .map_err(CommitError::Transition)?;
-        let request = load_runner_request(&from.campaign_manifest_path, &from.node.node_id)
-            .map_err(|source| {
-                CommitError::Transition(SpawnChildError::LoadRequest {
-                    node_id: from.node.node_id.clone(),
-                    source,
-                })
-            })?;
-        if request.binary_path != from.binary.child_path {
+        if from.request.binary_path != from.binary.child_path {
             return Err(CommitError::Transition(
                 SpawnChildError::BinaryPathMismatch {
-                    request: request.binary_path,
+                    request: from.request.binary_path.clone(),
                     config: from.binary.child_path.clone(),
                 },
             ));
         }
-        let _ = clear_runner_result(&from.campaign_manifest_path, &from.node.node_id).map_err(
-            |source| {
-                CommitError::Transition(SpawnChildError::ClearRunnerResult {
-                    node_id: from.node.node_id.clone(),
-                    source,
-                })
-            },
-        )?;
         let invocation_path = invocation_path(&from.node.node_dir, self.runtime_id);
         let channel_root = channel_root(&from.node.node_dir, self.runtime_id);
-        let invocation = ChildInvocation::new(
+        let invocation = ChildInvocation::with_bootstrap(
             from.campaign_id.clone(),
-            from.node.node_id.clone(),
+            from.node.clone(),
+            from.request.clone(),
+            from.resolved.clone(),
             self.runtime_id,
             records.path().to_path_buf(),
             channel_root,
-        );
+        )
+        .map_err(|source| {
+            CommitError::Transition(SpawnChildError::InvalidInvocationBootstrap {
+                node_id: from.node.node_id.clone(),
+                source,
+            })
+        })?;
         write_child_invocation(&invocation_path, &invocation).map_err(|source| {
             CommitError::Transition(SpawnChildError::WriteInvocation {
                 node_id: from.node.node_id.clone(),
@@ -634,23 +521,13 @@ impl Intervention<C3, C4> for SpawnChild {
         let parent_channel = invocation
             .channel_endpoints()
             .map(|endpoints| Channel::for_role(&from, endpoints, FileTransport));
-        let outcome = wait_for_ready(
-            &handoff,
-            parent_channel.as_ref(),
-            &mut child,
-            self.runtime_id,
-        )
-        .map_err(CommitError::Transition)?;
+        let outcome = wait_for_ready(parent_channel.as_ref(), &mut child, self.runtime_id)
+            .map_err(CommitError::Transition)?;
 
         match outcome {
-            WaitOutcome::Ready(_) | WaitOutcome::ReadyFromChannel => {
-                let (_, node) = update_node_status(
-                    &from.campaign_id,
-                    &from.campaign_manifest_path,
-                    &from.node.node_id,
-                    Prototype1NodeStatus::Running,
-                )
-                .map_err(|source| {
+            WaitOutcome::ReadyFromChannel => {
+                let node = project_node_status(&from.node, Prototype1NodeStatus::Running);
+                write_node_projection(&node).map_err(|source| {
                     CommitError::Transition(SpawnChildError::UpdateNodeStatus {
                         node_id: from.node.node_id.clone(),
                         source,
@@ -661,6 +538,7 @@ impl Intervention<C3, C4> for SpawnChild {
                     campaign_id: from.campaign_id,
                     campaign_manifest_path: from.campaign_manifest_path,
                     node,
+                    request: from.request,
                     resolved: from.resolved,
                     artifact: from.artifact,
                     binary: Binary {
@@ -710,13 +588,8 @@ impl Intervention<C3, C4> for SpawnChild {
                     rejected = ?rejected,
                     "spawn handshake rejected"
                 );
-                let (_, failed_node) = update_node_status(
-                    &from.campaign_id,
-                    &from.campaign_manifest_path,
-                    &from.node.node_id,
-                    Prototype1NodeStatus::Failed,
-                )
-                .map_err(|source| {
+                let failed_node = project_node_status(&from.node, Prototype1NodeStatus::Failed);
+                write_node_projection(&failed_node).map_err(|source| {
                     CommitError::Transition(SpawnChildError::UpdateNodeStatus {
                         node_id: from.node.node_id.clone(),
                         source,
@@ -726,6 +599,7 @@ impl Intervention<C3, C4> for SpawnChild {
                     campaign_id: from.campaign_id,
                     campaign_manifest_path: from.campaign_manifest_path,
                     node: failed_node,
+                    request: from.request,
                     resolved: from.resolved,
                     artifact: from.artifact,
                     binary: from.binary,
@@ -756,13 +630,11 @@ impl Intervention<C3, C4> for SpawnChild {
 }
 
 enum WaitOutcome {
-    Ready(Box<ReadyEntry>),
     ReadyFromChannel,
     Rejected(Rejected),
 }
 
 fn wait_for_ready(
-    handoff: &Handoff,
     channel: Option<&Channel<C3, FileTransport>>,
     child: &mut ProcessChild,
     runtime_id: RuntimeId,
@@ -790,19 +662,6 @@ fn wait_for_ready(
                 );
                 return Ok(WaitOutcome::ReadyFromChannel);
             }
-        }
-
-        if let Some(ready) = handoff
-            .find_ready(runtime_id)
-            .map_err(|source| SpawnChildError::ReadJournal { source })?
-        {
-            debug!(
-                target: ploke_core::EXECUTION_DEBUG_TARGET,
-                runtime_id = %runtime_id,
-                pid = ready.pid,
-                "observed child ready handshake"
-            );
-            return Ok(WaitOutcome::Ready(Box::new(ready)));
         }
 
         if let Some(status) = child

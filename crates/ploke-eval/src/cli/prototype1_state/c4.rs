@@ -2,8 +2,7 @@
 
 //! Explicit parent-side observation of child completion after `C4`.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
@@ -14,21 +13,16 @@ use crate::branch_evaluation::BranchDisposition;
 use crate::cli::prototype1_state::cli_facing::Prototype1BranchEvaluationReport;
 use crate::intervention::{
     CommitError, CommitPhase, Configuration, Intervention, Outcome, Prototype1NodeRecord,
-    Prototype1RunnerDisposition, Prototype1RunnerResult, RecordStore, Surface, load_node_record,
-    load_runner_result_at,
+    Prototype1RunnerDisposition, Prototype1RunnerResult, RecordStore, Surface,
 };
-use crate::spec::PrepareError;
 
 use super::c3::C4;
 use super::channel::{Channel, Cursor, FileTransport, ToParent};
 use super::event::{
-    ChildRuntimeLifecycle, ObservedChildTerminal, Paths, RecordedAt, Refs, RuntimeId, TransitionId,
-    World,
+    ChildRuntimeLifecycle, ObservedChildTerminal, Paths, RecordedAt, Refs, TransitionId, World,
 };
 use super::invocation::{channel_root, result_path};
-use super::journal::{
-    CompletionEntry, JournalEntry, ObservedChildResult, PrototypeJournal, PrototypeJournalError,
-};
+use super::journal::{CompletionEntry, JournalEntry, ObservedChildResult, PrototypeJournal};
 use super::observe;
 
 const RESULT_POLL: Duration = Duration::from_millis(100);
@@ -130,61 +124,24 @@ fn completion_entry(
     }
 }
 
-fn load_report(path: &Path) -> Result<Prototype1BranchEvaluationReport, ObserveChildError> {
-    let text =
-        fs::read_to_string(path).map_err(|source| ObserveChildError::ReadEvaluationReport {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    serde_json::from_str(&text).map_err(|source| ObserveChildError::ParseEvaluationReport {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
 /// Typed failure for the `C4 -> C5` child-completion observation transition.
 #[derive(Debug, Error)]
 pub(crate) enum ObserveChildError {
     #[error("C4 is missing a concrete child runtime id")]
     MissingRuntimeId,
-    #[error("failed to read runner result for node '{node_id}'")]
-    LoadRunnerResult {
-        node_id: String,
-        #[source]
-        source: PrepareError,
-    },
-    #[error("failed to reload node record '{node_id}'")]
-    LoadNode {
-        node_id: String,
-        #[source]
-        source: PrepareError,
-    },
-    #[error("runner result for node '{node_id}' did not include an evaluation artifact path")]
-    MissingEvaluationArtifactPath { node_id: String },
-    #[error("failed to read evaluation report '{path}': {source}")]
-    ReadEvaluationReport {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    #[error("failed to parse evaluation report '{path}': {source}")]
-    ParseEvaluationReport {
-        path: PathBuf,
-        source: serde_json::Error,
-    },
-    #[error("failed to read child state journal")]
-    ReadJournal {
-        #[source]
-        source: PrototypeJournalError,
-    },
+    #[error(
+        "succeeded runner result for node '{node_id}' did not include an evaluation report payload"
+    )]
+    MissingEvaluationReport { node_id: String },
     #[error("failed to read child channel: {detail}")]
     ReadChannel { detail: String },
 }
 
-/// Surface over the runner result path used by child-completion observation.
+/// Surface over the child-to-parent channel used by child-completion observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct RunnerResultSurface;
+pub(crate) struct ChildChannelSurface;
 
-impl Surface<C4> for RunnerResultSurface {
+impl Surface<C4> for ChildChannelSurface {
     type Target = ();
     type ReadView = PathBuf;
     type Error = ObserveChildError;
@@ -194,7 +151,7 @@ impl Surface<C4> for RunnerResultSurface {
             .binary
             .child_runtime
             .ok_or(ObserveChildError::MissingRuntimeId)?;
-        Ok(result_path(&config.node.node_dir, runtime_id))
+        Ok(channel_root(&config.node.node_dir, runtime_id))
     }
 }
 
@@ -227,69 +184,47 @@ fn terminal_from_result(result: &ObservedChildResult) -> ObservedChildTerminal {
     }
 }
 
-fn child_result_path(
-    records: &PrototypeJournal,
-    runtime_id: RuntimeId,
-) -> Result<Option<PathBuf>, ObserveChildError> {
-    records
-        .load_entries()
-        .map_err(|source| ObserveChildError::ReadJournal { source })
-        .map(|entries| {
-            entries.into_iter().rev().find_map(|entry| {
-                let JournalEntry::Child(child) = entry else {
-                    return None;
-                };
-                child.result_path(runtime_id)
-            })
-        })
+fn base_with_result_status(mut base: C4, runner_result: &Prototype1RunnerResult) -> C4 {
+    base.node.status = runner_result.status;
+    base
 }
 
-fn child_result_path_from_channel(
+#[derive(Debug)]
+struct ChildResultPayload {
+    runner_result: Prototype1RunnerResult,
+    evaluation: Option<Prototype1BranchEvaluationReport>,
+}
+
+fn child_result_from_channel(
     channel: &Channel<C4, FileTransport>,
     cursor: Cursor,
-) -> Result<(Cursor, Option<PathBuf>), ObserveChildError> {
+) -> Result<(Cursor, Option<ChildResultPayload>), ObserveChildError> {
     let (cursor, messages) =
         channel
             .recv_from_child(cursor)
             .map_err(|source| ObserveChildError::ReadChannel {
                 detail: format!("{source:?}"),
             })?;
-    let result_path = messages
+    let result = messages
         .into_iter()
         .find_map(|message| match message.body() {
-            ToParent::ResultWritten { runner_result_path } => Some(runner_result_path.clone()),
-            ToParent::Ready
-            | ToParent::Evaluating
-            | ToParent::Failed { .. }
-            | ToParent::Exited { .. } => None,
+            ToParent::Result {
+                runner_result,
+                evaluation,
+            } => Some(ChildResultPayload {
+                runner_result: runner_result.clone(),
+                evaluation: evaluation.clone(),
+            }),
+            _ => None,
         });
-    Ok((cursor, result_path))
-}
-
-fn observed_result_path(
-    expected_result_path: &Path,
-    channel: &Channel<C4, FileTransport>,
-    cursor: Cursor,
-    records: &PrototypeJournal,
-    runtime_id: RuntimeId,
-) -> Result<(Cursor, Option<PathBuf>), ObserveChildError> {
-    if expected_result_path.exists() {
-        return Ok((cursor, Some(expected_result_path.to_path_buf())));
-    }
-
-    let (cursor, channel_path) = child_result_path_from_channel(channel, cursor)?;
-    if channel_path.is_some() {
-        return Ok((cursor, channel_path));
-    }
-
-    Ok((cursor, child_result_path(records, runtime_id)?))
+    Ok((cursor, result))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Rejected {}
 
 impl Intervention<C4, C5> for ObserveChild {
-    type Surface = RunnerResultSurface;
+    type Surface = ChildChannelSurface;
     type Journal = PrototypeJournal;
     type Error = ObserveChildError;
     type Rejected = Rejected;
@@ -312,7 +247,7 @@ impl Intervention<C4, C5> for ObserveChild {
             .binary
             .child_runtime
             .ok_or(CommitError::Transition(ObserveChildError::MissingRuntimeId))?;
-        let runner_result_path = RunnerResultSurface
+        let channel_dir = ChildChannelSurface
             .read_view(&from, &())
             .map_err(CommitError::Transition)?;
         let mut wait = Some(observe::Step::start(observe::span!(
@@ -322,7 +257,7 @@ impl Intervention<C4, C5> for ObserveChild {
             node_id = %from.node.node_id,
             generation = from.node.generation,
             runtime_id = %runtime_id,
-            expected_runner_result_path = %runner_result_path.display(),
+            channel_dir = %channel_dir.display(),
         )));
 
         records
@@ -341,14 +276,14 @@ impl Intervention<C4, C5> for ObserveChild {
             target: ploke_core::EXECUTION_DEBUG_TARGET,
             node_id = %from.node.node_id,
             runtime_id = %runtime_id,
-            runner_result_path = %runner_result_path.display(),
+            channel_dir = %channel_dir.display(),
             "recorded completion before entry"
         );
 
         let parent_channel = Channel::for_role(
             &from,
             super::channel::Endpoints::new(
-                channel_root(&from.node.node_dir, runtime_id),
+                channel_dir,
                 from.campaign_id.clone(),
                 from.node.node_id.clone(),
                 runtime_id,
@@ -357,48 +292,32 @@ impl Intervention<C4, C5> for ObserveChild {
         );
         let mut channel_cursor = Cursor::start();
         loop {
-            let result_path = observed_result_path(
-                &runner_result_path,
-                &parent_channel,
-                channel_cursor,
-                records,
-                runtime_id,
-            )
-            .map_err(CommitError::Transition)?;
-            channel_cursor = result_path.0;
-            if let Some(runner_result_path) = result_path.1 {
+            let observed = child_result_from_channel(&parent_channel, channel_cursor)
+                .map_err(CommitError::Transition)?;
+            channel_cursor = observed.0;
+            if let Some(observed) = observed.1 {
                 if let Some(wait) = wait.take() {
                     wait.success();
                 }
-                let runner_result =
-                    load_runner_result_at(&runner_result_path).map_err(|source| {
-                        CommitError::Transition(ObserveChildError::LoadRunnerResult {
-                            node_id: from.node.node_id.clone(),
-                            source,
-                        })
-                    })?;
+                let ChildResultPayload {
+                    runner_result,
+                    evaluation,
+                } = observed;
                 let runner_outcome = observe::Step::start(observe::span!(
-                    "prototype1.child.observe.load_runner_result",
+                    "prototype1.child.observe.channel_result",
                     transition_id = ?self.transition_id,
                     campaign_id = %from.campaign_id,
                     node_id = %from.node.node_id,
                     generation = from.node.generation,
                     runtime_id = %runtime_id,
-                    runner_result_path = %runner_result_path.display(),
                     runner_disposition = ?runner_result.disposition,
+                    evaluation_included = evaluation.is_some(),
                 ));
                 if runner_result.disposition == Prototype1RunnerDisposition::Succeeded {
                     runner_outcome.success();
                 } else {
                     runner_outcome.rejected();
                 }
-                let node = load_node_record(&from.campaign_manifest_path, &from.node.node_id)
-                    .map_err(|source| {
-                        CommitError::Transition(ObserveChildError::LoadNode {
-                            node_id: from.node.node_id.clone(),
-                            source,
-                        })
-                    })?;
 
                 if runner_result.disposition != Prototype1RunnerDisposition::Succeeded {
                     let result = ObservedChildResult::Failed {
@@ -406,8 +325,9 @@ impl Intervention<C4, C5> for ObserveChild {
                         detail: runner_result.detail.clone(),
                         exit_code: runner_result.exit_code,
                     };
+                    let base = base_with_result_status(from, &runner_result);
                     let next = C5 {
-                        base: C4 { node, ..from },
+                        base,
                         report: Report::reject(),
                         observed: ObservedChild::Failed(FailedObservation { runner_result }),
                     };
@@ -433,28 +353,25 @@ impl Intervention<C4, C5> for ObserveChild {
                     return Ok(Outcome::Advanced(next));
                 }
 
-                let evaluation_artifact_path =
-                    runner_result.evaluation_artifact_path.clone().ok_or(
-                        CommitError::Transition(ObserveChildError::MissingEvaluationArtifactPath {
-                            node_id: from.node.node_id.clone(),
-                        }),
-                    )?;
-                let report =
-                    load_report(&evaluation_artifact_path).map_err(CommitError::Transition)?;
+                let report = evaluation.ok_or_else(|| {
+                    CommitError::Transition(ObserveChildError::MissingEvaluationReport {
+                        node_id: from.node.node_id.clone(),
+                    })
+                })?;
                 observe::Step::start(observe::span!(
-                    "prototype1.child.observe.load_evaluation_report",
+                    "prototype1.child.observe.evaluation_payload",
                     transition_id = ?self.transition_id,
                     campaign_id = %from.campaign_id,
                     node_id = %from.node.node_id,
                     generation = from.node.generation,
                     runtime_id = %runtime_id,
-                    runner_result_path = %runner_result_path.display(),
-                    evaluation_artifact_path = %evaluation_artifact_path.display(),
+                    evaluation_artifact_path = %report.evaluation_artifact_path.display(),
                     branch_disposition = ?report.overall_disposition,
                 ))
                 .success();
+                let base = base_with_result_status(from, &runner_result);
                 let next = C5 {
-                    base: C4 { node, ..from },
+                    base,
                     report: Report {
                         overall_disposition: report.overall_disposition.clone(),
                     },
@@ -464,7 +381,7 @@ impl Intervention<C4, C5> for ObserveChild {
                     }),
                 };
                 let result = ObservedChildResult::Succeeded {
-                    evaluation_artifact_path,
+                    evaluation_artifact_path: report.evaluation_artifact_path.clone(),
                     overall_disposition: report.overall_disposition.clone(),
                 };
 
