@@ -22,7 +22,6 @@ use crate::{
         HistoryError, SealedCandidateEvidence, SealedComparedRunEvidence,
         SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope, SubjectRef,
     },
-    intervention::Prototype1SelectionPolicyOutcome,
     metric::{self, Summary},
 };
 
@@ -698,10 +697,7 @@ fn successful_child_counts(considered: &[EvaluationPayload]) -> BTreeMap<String,
     let mut counts = BTreeMap::<String, usize>::new();
     for payload in considered {
         let case = CandidateCase::from_payload(payload);
-        if selectable_decision(&case)
-            .and_then(|decision| decision.selection_policy_outcome())
-            .is_none_or(|outcome| !outcome.allows_successor())
-        {
+        if !selectable_decision(&case).is_some_and(|decision| decision.selects_successor()) {
             continue;
         }
         let Some(parent_node_id) = case.parent_node_id() else {
@@ -785,10 +781,7 @@ fn select_frontier_max(
         let Some(selected) = selectable_decision(&case) else {
             continue;
         };
-        if selected
-            .selection_policy_outcome()
-            .is_none_or(|outcome| !outcome.allows_successor())
-        {
+        if !selected.selects_successor() {
             continue;
         }
         let Some(score) = TraversalScore::for_case(&case, child_counts, max_performance, metrics)
@@ -908,10 +901,7 @@ fn score_child_prop_weights(
         let Some(decision) = selectable_decision(&case) else {
             continue;
         };
-        if decision
-            .selection_policy_outcome()
-            .is_none_or(|outcome| !outcome.allows_successor())
-        {
+        if !decision.selects_successor() {
             continue;
         }
         let Some(performance) = performance_score(case, metrics) else {
@@ -1114,20 +1104,6 @@ fn tie_break_key(
     hasher.update(payload.payload_hash()?.as_str().as_bytes());
     hasher.update(payload.candidate.as_str().as_bytes());
     Ok(hasher.finalize().into())
-}
-
-trait SelectionOutcomeExt {
-    fn allows_successor(self) -> bool;
-}
-
-impl SelectionOutcomeExt for Prototype1SelectionPolicyOutcome {
-    fn allows_successor(self) -> bool {
-        matches!(
-            self,
-            Prototype1SelectionPolicyOutcome::Accepted
-                | Prototype1SelectionPolicyOutcome::ExploreFromRejected
-        )
-    }
 }
 
 #[cfg(test)]

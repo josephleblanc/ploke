@@ -2396,7 +2396,6 @@ mod tests {
             disposition: Prototype1ContinuationDisposition::ContinueReady,
             selected_next_branch_id: Some("branch-b".to_string()),
             selected_branch_disposition: Some("keep".to_string()),
-            selection_policy_outcome: None,
             next_generation: 2,
             total_nodes_after_continue: 1,
         };
@@ -3080,7 +3079,6 @@ mod tests {
                 "disposition": "continue_ready",
                 "selected_next_branch_id": branch_id,
                 "selected_branch_disposition": "keep",
-                "selection_policy_outcome": null,
                 "next_generation": 2,
                 "total_nodes_after_continue": 1
             })

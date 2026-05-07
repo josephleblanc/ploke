@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::domains::{DomainFinding, Verdict};
 use super::evidence::SelectionInput;
 use super::{PROCEDURE_ID, disposition_as_str};
-use crate::intervention::Prototype1SelectionPolicyOutcome;
+use crate::BranchDisposition;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SuccessorDecision {
@@ -24,10 +24,14 @@ impl SuccessorDecision {
             .iter()
             .find(|finding| finding.domain == super::domains::DomainName::Operational);
 
-        let outcome = match operational.map(|finding| finding.verdict) {
-            Some(Verdict::Better) => SuccessorOutcome::Accepted,
-            Some(Verdict::Mixed) => SuccessorOutcome::Stop,
-            Some(Verdict::Worse) => SuccessorOutcome::Stop,
+        let outcome = match (
+            input.branch_disposition.clone(),
+            operational.map(|finding| finding.verdict),
+        ) {
+            (_, Some(Verdict::Better)) => SuccessorOutcome::Accepted,
+            (BranchDisposition::Keep, Some(Verdict::Mixed)) => SuccessorOutcome::ExploreFrom,
+            (_, Some(Verdict::Mixed)) => SuccessorOutcome::Stop,
+            (_, Some(Verdict::Worse)) => SuccessorOutcome::Stop,
             _ => SuccessorOutcome::Stop,
         };
 
@@ -61,15 +65,16 @@ impl SuccessorDecision {
             .map(|_| self.branch_disposition.as_str())
     }
 
-    pub(crate) fn selection_policy_outcome(&self) -> Option<Prototype1SelectionPolicyOutcome> {
-        match self.outcome {
-            SuccessorOutcome::Accepted => Some(Prototype1SelectionPolicyOutcome::Accepted),
-            SuccessorOutcome::ExploreFrom if self.branch_disposition == "reject" => {
-                Some(Prototype1SelectionPolicyOutcome::ExploreFromRejected)
-            }
-            SuccessorOutcome::ExploreFrom => Some(Prototype1SelectionPolicyOutcome::Accepted),
-            SuccessorOutcome::Stop => None,
-        }
+    pub(crate) fn selects_successor(&self) -> bool {
+        self.selected_branch_id.is_some()
+            && matches!(
+                self.outcome,
+                SuccessorOutcome::Accepted | SuccessorOutcome::ExploreFrom
+            )
+    }
+
+    pub(crate) fn selects_keep_successor(&self) -> bool {
+        self.selects_successor() && self.branch_disposition == "keep"
     }
 }
 

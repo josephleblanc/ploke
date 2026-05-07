@@ -49,6 +49,7 @@ pub(crate) fn decide(input: SelectionInput) -> SuccessorDecision {
 /// to a recorded sampled view over prior candidates, with scope and exclusions
 /// preserved in the decision evidence.
 pub(crate) fn decide_generation(inputs: Vec<SelectionInput>) -> Option<SuccessorDecision> {
+    let mut keep_exploration = Vec::new();
     let mut rejected = Vec::new();
 
     for input in inputs {
@@ -56,9 +57,17 @@ pub(crate) fn decide_generation(inputs: Vec<SelectionInput>) -> Option<Successor
         if decision.outcome == decision::SuccessorOutcome::Accepted {
             return Some(decision);
         }
+        if decision.outcome == decision::SuccessorOutcome::ExploreFrom {
+            keep_exploration.push((exploration_score(&input), decision));
+            continue;
+        }
         if input.branch_disposition == BranchDisposition::Reject {
             rejected.push((exploration_score(&input), input, decision));
         }
+    }
+
+    if let Some((_, decision)) = keep_exploration.into_iter().max_by_key(|(score, _)| *score) {
+        return Some(decision);
     }
 
     rejected
@@ -133,7 +142,6 @@ mod tests {
 
     use super::decision::SuccessorOutcome;
     use super::{CandidateRef, RunComparison, SelectionInput, decide};
-    use crate::intervention::Prototype1SelectionPolicyOutcome;
 
     #[test]
     fn operational_selection_selects_child_with_keep_and_no_regression() {
@@ -144,6 +152,19 @@ mod tests {
         assert_eq!(decision.outcome, SuccessorOutcome::Accepted);
         assert_eq!(decision.selected_branch_id.as_deref(), Some("branch-child"));
         assert_eq!(decision.selected_branch_disposition(), Some("keep"));
+    }
+
+    #[test]
+    fn operational_selection_explores_keep_child_with_mixed_metrics() {
+        let parent = metrics(false, false, 0);
+        let child = metrics(true, true, 2);
+        let decision = decide(input(BranchDisposition::Keep, parent, child));
+
+        assert_eq!(decision.outcome, SuccessorOutcome::ExploreFrom);
+        assert_eq!(decision.selected_branch_id.as_deref(), Some("branch-child"));
+        assert_eq!(decision.selected_branch_disposition(), Some("keep"));
+        assert!(decision.selects_successor());
+        assert!(decision.selects_keep_successor());
     }
 
     #[test]
@@ -202,10 +223,7 @@ mod tests {
 
         assert_eq!(decision.outcome, SuccessorOutcome::Accepted);
         assert_eq!(decision.selected_branch_id.as_deref(), Some("branch-keep"));
-        assert_eq!(
-            decision.selection_policy_outcome(),
-            Some(Prototype1SelectionPolicyOutcome::Accepted)
-        );
+        assert!(decision.selects_keep_successor());
     }
 
     #[test]
@@ -233,11 +251,38 @@ mod tests {
             decision.selected_branch_id.as_deref(),
             Some("branch-stronger")
         );
-        assert_eq!(
-            decision.selection_policy_outcome(),
-            Some(Prototype1SelectionPolicyOutcome::ExploreFromRejected)
-        );
+        assert!(decision.selects_successor());
+        assert!(!decision.selects_keep_successor());
         assert_eq!(decision.selected_branch_disposition(), Some("reject"));
+    }
+
+    #[test]
+    fn generation_selection_prefers_mixed_keep_over_rejected_exploration() {
+        let rejected = input_for(
+            "node-reject",
+            "branch-reject",
+            BranchDisposition::Reject,
+            metrics(false, false, 1),
+            metrics(true, true, 1),
+        );
+        let mixed_keep = input_for(
+            "node-keep-mixed",
+            "branch-keep-mixed",
+            BranchDisposition::Keep,
+            metrics(false, false, 0),
+            metrics(true, true, 2),
+        );
+
+        let decision =
+            super::decide_generation(vec![rejected, mixed_keep]).expect("generation decision");
+
+        assert_eq!(decision.outcome, SuccessorOutcome::ExploreFrom);
+        assert_eq!(
+            decision.selected_branch_id.as_deref(),
+            Some("branch-keep-mixed")
+        );
+        assert!(decision.selects_keep_successor());
+        assert_eq!(decision.selected_branch_disposition(), Some("keep"));
     }
 
     fn input(

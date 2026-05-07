@@ -90,13 +90,13 @@ use crate::{
         InterventionSpec, IssueCase, Outcome, Prototype1ChildBudget,
         Prototype1ContinuationDecision, Prototype1ContinuationDisposition, Prototype1NodeRecord,
         Prototype1NodeStatus, Prototype1RunnerResult, Prototype1SchedulerState,
-        Prototype1SearchPolicy, Prototype1SelectionPolicyOutcome, RecordStore, ValidationPolicy,
-        execute_intervention_apply, load_or_default_branch_registry, load_scheduler_state,
-        mark_treatment_branch_applied, project_node_status, prototype1_branch_registry_path,
-        prototype1_node_id, prototype1_scheduler_path, register_root_parent_node,
-        resolve_treatment_branch, resolved_treatment_branches_from_synthesis,
-        restore_treatment_branch, select_primary_issue, select_treatment_branch,
-        treatment_branch_id, write_node_projection, write_treatment_evaluation_projection,
+        Prototype1SearchPolicy, RecordStore, ValidationPolicy, execute_intervention_apply,
+        load_or_default_branch_registry, load_scheduler_state, mark_treatment_branch_applied,
+        project_node_status, prototype1_branch_registry_path, prototype1_node_id,
+        prototype1_scheduler_path, register_root_parent_node, resolve_treatment_branch,
+        resolved_treatment_branches_from_synthesis, restore_treatment_branch, select_primary_issue,
+        select_treatment_branch, treatment_branch_id, write_node_projection,
+        write_treatment_evaluation_projection,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -5366,9 +5366,7 @@ fn accepted_selection(outcomes: &[PlannedChildOutcome]) -> Option<SuccessorDecis
         .iter()
         .filter_map(|outcome| outcome.selection_input.as_ref())
         .map(|input| successor_selection::decide(input.clone()))
-        .find(|decision| {
-            decision.selection_policy_outcome() == Some(Prototype1SelectionPolicyOutcome::Accepted)
-        })
+        .find(SuccessorDecision::selects_keep_successor)
 }
 
 fn generation_selection(outcomes: &[PlannedChildOutcome]) -> Option<SuccessorDecision> {
@@ -5380,6 +5378,21 @@ fn generation_selection(outcomes: &[PlannedChildOutcome]) -> Option<SuccessorDec
                 .collect(),
         )
     })
+}
+
+fn continuation_disposition_for_selection(
+    decision: &SuccessorDecision,
+) -> Prototype1ContinuationDisposition {
+    if decision.selected_branch_id.is_none() {
+        return Prototype1ContinuationDisposition::StopNoSelectedBranch;
+    }
+    if decision
+        .selected_branch_disposition()
+        .is_some_and(|value| value != "keep")
+    {
+        return Prototype1ContinuationDisposition::ContinueExploreFromRejected;
+    }
+    Prototype1ContinuationDisposition::ContinueReady
 }
 
 struct GenerationCandidateProjection {
@@ -6411,16 +6424,11 @@ impl Prototype1StateCommand {
             let artifact = material.selected_artifact()?;
             let node = artifact.node().clone();
             let decision = Prototype1ContinuationDecision {
-                disposition: if selection_decision.selected_branch_id.is_some() {
-                    Prototype1ContinuationDisposition::ContinueReady
-                } else {
-                    Prototype1ContinuationDisposition::StopNoSelectedBranch
-                },
+                disposition: continuation_disposition_for_selection(&selection_decision),
                 selected_next_branch_id: selection_decision.selected_branch_id.clone(),
                 selected_branch_disposition: selection_decision
                     .selected_branch_disposition()
                     .map(ToOwned::to_owned),
-                selection_policy_outcome: selection_decision.selection_policy_outcome(),
                 next_generation: node.generation.saturating_add(1),
                 total_nodes_after_continue: child_outcomes.len() as u32,
             };
@@ -7543,7 +7551,7 @@ fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
     );
     if let Some(decision) = report.continuation_decision.as_ref() {
         println!(
-            "continuation: {} next_generation={} total_nodes_after_continue={} selected_next_branch_id={} selected_branch_disposition={} selection_policy_outcome={}",
+            "continuation: {} next_generation={} total_nodes_after_continue={} selected_next_branch_id={} selected_branch_disposition={}",
             serde_name(&decision.disposition),
             decision.next_generation,
             decision.total_nodes_after_continue,
@@ -7554,11 +7562,7 @@ fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
             decision
                 .selected_branch_disposition
                 .as_deref()
-                .unwrap_or("(none)"),
-            decision
-                .selection_policy_outcome
-                .as_ref()
-                .map_or_else(|| "(none)".to_string(), serde_name)
+                .unwrap_or("(none)")
         );
     }
     println!(
@@ -7907,7 +7911,7 @@ fn print_prototype1_runner_report(report: &Prototype1RunnerReport) {
     );
     if let Some(decision) = scheduler.last_continuation_decision.as_ref() {
         println!(
-            "continuation: {} next_generation={} total_nodes_after_continue={} selected_next_branch_id={} selected_branch_disposition={} selection_policy_outcome={}",
+            "continuation: {} next_generation={} total_nodes_after_continue={} selected_next_branch_id={} selected_branch_disposition={}",
             serde_name(&decision.disposition),
             decision.next_generation,
             decision.total_nodes_after_continue,
@@ -7918,11 +7922,7 @@ fn print_prototype1_runner_report(report: &Prototype1RunnerReport) {
             decision
                 .selected_branch_disposition
                 .as_deref()
-                .unwrap_or("(none)"),
-            decision
-                .selection_policy_outcome
-                .as_ref()
-                .map_or_else(|| "(none)".to_string(), serde_name)
+                .unwrap_or("(none)")
         );
     }
     println!("frontier: {}", scheduler.frontier_node_ids.join(", "));
