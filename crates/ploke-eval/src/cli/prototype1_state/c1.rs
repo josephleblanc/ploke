@@ -528,8 +528,14 @@ where
     #[instrument(
         target = "ploke_exec",
         level = "debug",
-        skip(self, records),
-        fields(node_id = %from.node.node_id, branch_id = %from.resolved.branch.branch_id)
+        skip(self, from, records),
+        fields(
+            phase = "materialize_child_artifact",
+            transition = "C1->C2",
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            generation = from.node.generation,
+        )
     )]
     fn transition(
         &self,

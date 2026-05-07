@@ -257,8 +257,14 @@ impl Intervention<C2, C3> for BuildChild {
     #[instrument(
         target = "ploke_exec",
         level = "debug",
-        skip(self, records),
-        fields(node_id = %from.node.node_id, branch_id = %from.resolved.branch.branch_id)
+        skip(self, from, records),
+        fields(
+            phase = "build_child_runtime",
+            transition = "C2->C3",
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            generation = from.node.generation,
+        )
     )]
     fn transition(
         &self,

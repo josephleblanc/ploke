@@ -10,9 +10,10 @@ use super::{
 use crate::{
     BranchDisposition, OperationalRunMetrics,
     cli::prototype1_state::history::{
-        CandidateSetCommitment, CandidateSetMembership, CandidateSetRoot, EvaluationPayload,
-        HistoryCandidate, HistoryCandidateSource, HistoryCandidates, HistoryError,
-        SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope,
+        CandidateArtifact, CandidateSetCommitment, CandidateSetMembership, CandidateSetRoot,
+        EvaluationPayload, HistoryCandidate, HistoryCandidateSource, HistoryCandidates,
+        HistoryError, SealedCandidateEvidence, SealedComparedRunEvidence,
+        SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope, SubjectRef,
     },
     intervention::Prototype1SelectionPolicyOutcome,
 };
@@ -69,11 +70,12 @@ pub(crate) fn decide_traversal(
     }
 
     let child_counts = successful_child_counts(&considered);
+    let evidence_summary = CandidateCaseEvidenceSummary::from_considered(&considered);
     let max_performance = if config.normalize_frontier {
         considered
             .iter()
-            .filter_map(|payload| payload.selection_input.as_ref())
-            .map(performance_score)
+            .map(CandidateCase::from_payload)
+            .filter_map(performance_score)
             .max()
     } else {
         None
@@ -81,17 +83,19 @@ pub(crate) fn decide_traversal(
 
     let mut best = None::<ScoredPayload>;
     for (index, payload) in considered.iter().cloned().enumerate() {
-        let Some(input) = payload.selection_input.as_ref() else {
+        let case = CandidateCase::from_payload(&payload);
+        let Some(selected) = selectable_decision(&case) else {
             continue;
         };
-        let selected = selectable_decision(input);
         if selected
             .selection_policy_outcome()
             .is_none_or(|outcome| !outcome.allows_successor())
         {
             continue;
         }
-        let score = TraversalScore::for_input(input, &child_counts, max_performance);
+        let Some(score) = TraversalScore::for_case(&case, &child_counts, max_performance) else {
+            continue;
+        };
         let tie = tie_break_key(config.seed, index, &payload)?;
         let scored = ScoredPayload {
             payload,
@@ -119,6 +123,7 @@ pub(crate) fn decide_traversal(
         considered.len(),
         config.seed
     ));
+    decision.rationale.push(evidence_summary.rationale());
     if let Some(max_performance) = max_performance {
         decision.rationale.push(format!(
             "frontier_normalization=max_performance_score={}",
@@ -218,6 +223,107 @@ impl TraversalCandidateSource {
     }
 }
 
+/// Borrowed selection-time view over a sealed candidate payload.
+///
+/// This keeps the candidate universe richer than the current scorer. Policies
+/// can opt into optional sections by reading them from the case, while the
+/// sealed History payload remains the replayable source of facts.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CandidateCase<'a> {
+    candidate: &'a SubjectRef,
+    selection_input: Option<&'a SelectionInput>,
+    sealed_evidence: Option<&'a SealedCandidateEvidence>,
+    artifact: Option<&'a CandidateArtifact>,
+}
+
+impl<'a> CandidateCase<'a> {
+    pub(crate) fn builder(payload: &'a EvaluationPayload) -> CandidateCaseBuilder<'a> {
+        CandidateCaseBuilder {
+            payload,
+            selection_input: None,
+            sealed_evidence: None,
+            artifact: None,
+        }
+    }
+
+    pub(crate) fn from_payload(payload: &'a EvaluationPayload) -> Self {
+        Self::builder(payload)
+            .selection_input(payload.selection_input.as_ref())
+            .sealed_evidence(payload.sealed_evidence.as_ref())
+            .artifact(payload.artifact.as_ref())
+            .build()
+    }
+
+    pub(crate) fn candidate(&self) -> &'a SubjectRef {
+        self.candidate
+    }
+
+    pub(crate) fn selection_input(&self) -> Option<&'a SelectionInput> {
+        self.selection_input
+    }
+
+    pub(crate) fn sealed_evidence(&self) -> Option<&'a SealedCandidateEvidence> {
+        self.sealed_evidence
+    }
+
+    pub(crate) fn artifact(&self) -> Option<&'a CandidateArtifact> {
+        self.artifact
+    }
+
+    fn parent_node_id(&self) -> Option<&'a str> {
+        self.sealed_evidence
+            .and_then(|sealed| sealed.coordinate.parent_node_id.as_deref())
+    }
+
+    pub(crate) fn compared_runs(&self) -> impl Iterator<Item = &'a SealedComparedRunEvidence> + 'a {
+        self.sealed_evidence
+            .into_iter()
+            .flat_map(|sealed| sealed.evaluations.iter())
+            .flat_map(|evaluation| evaluation.compared_runs.iter())
+    }
+
+    pub(crate) fn protocol_run_snapshot_count(&self) -> usize {
+        self.compared_runs()
+            .flat_map(|run| [run.baseline_run.as_ref(), run.treatment_run.as_ref()])
+            .flatten()
+            .filter(|snapshot| run_snapshot_has_protocol(snapshot))
+            .count()
+    }
+}
+
+pub(crate) struct CandidateCaseBuilder<'a> {
+    payload: &'a EvaluationPayload,
+    selection_input: Option<&'a SelectionInput>,
+    sealed_evidence: Option<&'a SealedCandidateEvidence>,
+    artifact: Option<&'a CandidateArtifact>,
+}
+
+impl<'a> CandidateCaseBuilder<'a> {
+    pub(crate) fn selection_input(mut self, value: Option<&'a SelectionInput>) -> Self {
+        self.selection_input = value;
+        self
+    }
+
+    pub(crate) fn sealed_evidence(mut self, value: Option<&'a SealedCandidateEvidence>) -> Self {
+        self.sealed_evidence = value;
+        self
+    }
+
+    pub(crate) fn artifact(mut self, value: Option<&'a CandidateArtifact>) -> Self {
+        self.artifact = value;
+        self
+    }
+
+    pub(crate) fn build(self) -> CandidateCase<'a> {
+        CandidateCase {
+            candidate: &self.payload.candidate,
+            selection_input: self.selection_input,
+            sealed_evidence: self.sealed_evidence,
+            artifact: self.artifact,
+        }
+    }
+}
+
 enum CandidateGrade {
     Eligible(EvaluationPayload),
     Excluded(SelectionProjectionFailure),
@@ -292,7 +398,8 @@ fn decision_grade(candidate: TraversalCandidate) -> Result<CandidateGrade, Histo
     Ok(CandidateGrade::Eligible(candidate.payload))
 }
 
-fn selectable_decision(input: &SelectionInput) -> SuccessorDecision {
+fn selectable_decision(case: &CandidateCase<'_>) -> Option<SuccessorDecision> {
+    let input = case.selection_input()?;
     let mut decision = decide(input.clone());
     if decision.outcome == SuccessorOutcome::Stop
         && input.branch_disposition == BranchDisposition::Reject
@@ -304,13 +411,14 @@ fn selectable_decision(input: &SelectionInput) -> SuccessorDecision {
             input.candidate.generation
         ));
     }
-    decision
+    Some(decision)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct PerformanceScore(i64);
 
-fn performance_score(input: &SelectionInput) -> PerformanceScore {
+fn performance_score(case: CandidateCase<'_>) -> Option<PerformanceScore> {
+    let input = case.selection_input()?;
     let decision = decide(input.clone());
     let mut score = match decision.outcome {
         SuccessorOutcome::Accepted => 10_000,
@@ -327,7 +435,7 @@ fn performance_score(input: &SelectionInput) -> PerformanceScore {
         score += operational_points(metrics);
     }
 
-    PerformanceScore(score)
+    Some(PerformanceScore(score))
 }
 
 fn operational_points(metrics: &OperationalRunMetrics) -> i64 {
@@ -346,23 +454,17 @@ fn operational_points(metrics: &OperationalRunMetrics) -> i64 {
 fn successful_child_counts(considered: &[EvaluationPayload]) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::<String, usize>::new();
     for payload in considered {
-        let Some(input) = payload.selection_input.as_ref() else {
-            continue;
-        };
-        if selectable_decision(input)
-            .selection_policy_outcome()
+        let case = CandidateCase::from_payload(payload);
+        if selectable_decision(&case)
+            .and_then(|decision| decision.selection_policy_outcome())
             .is_none_or(|outcome| !outcome.allows_successor())
         {
             continue;
         }
-        let Some(parent_node_id) = payload
-            .sealed_evidence
-            .as_ref()
-            .and_then(|sealed| sealed.coordinate.parent_node_id.as_ref())
-        else {
+        let Some(parent_node_id) = case.parent_node_id() else {
             continue;
         };
-        *counts.entry(parent_node_id.clone()).or_default() += 1;
+        *counts.entry(parent_node_id.to_string()).or_default() += 1;
     }
     counts
 }
@@ -376,25 +478,85 @@ struct TraversalScore {
 }
 
 impl TraversalScore {
-    fn for_input(
-        input: &SelectionInput,
+    fn for_case(
+        case: &CandidateCase<'_>,
         child_counts: &BTreeMap<String, usize>,
         max_performance: Option<PerformanceScore>,
-    ) -> Self {
-        let performance = performance_score(input);
+    ) -> Option<Self> {
+        let input = case.selection_input()?;
+        let performance = performance_score(*case)?;
         let frontier_delta = max_performance
             .map(|max| performance.0 - max.0)
             .unwrap_or_default();
-        let child_count = child_counts
+        let own_child_count = child_counts
             .get(&input.candidate.node_id)
             .copied()
             .unwrap_or_default();
-        Self {
+        let parent_child_count = case
+            .parent_node_id()
+            .and_then(|parent_node_id| child_counts.get(parent_node_id).copied())
+            .unwrap_or_default();
+        let child_count = own_child_count.saturating_add(parent_child_count);
+        Some(Self {
             performance,
             frontier_delta,
             exploration_pressure: usize::MAX.saturating_sub(child_count),
             generation: input.candidate.generation,
+        })
+    }
+}
+
+fn run_snapshot_has_protocol(snapshot: &serde_json::Value) -> bool {
+    let Some(protocol) = snapshot.get("protocol") else {
+        return false;
+    };
+    protocol
+        .get("anchor_path")
+        .is_some_and(|anchor| !anchor.is_null())
+        || protocol
+            .get("artifacts")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|artifacts| !artifacts.is_empty())
+}
+
+#[derive(Debug, Default)]
+struct CandidateCaseEvidenceSummary {
+    candidates: usize,
+    sealed_candidates: usize,
+    artifacts: usize,
+    compared_runs: usize,
+    protocol_run_snapshots: usize,
+}
+
+impl CandidateCaseEvidenceSummary {
+    fn from_considered(considered: &[EvaluationPayload]) -> Self {
+        let mut summary = Self::default();
+        for payload in considered {
+            let case = CandidateCase::from_payload(payload);
+            if !case.candidate().as_str().is_empty() {
+                summary.candidates += 1;
+            }
+            if case.sealed_evidence().is_some() {
+                summary.sealed_candidates += 1;
+            }
+            if case.artifact().is_some() {
+                summary.artifacts += 1;
+            }
+            summary.compared_runs += case.compared_runs().count();
+            summary.protocol_run_snapshots += case.protocol_run_snapshot_count();
         }
+        summary
+    }
+
+    fn rationale(&self) -> String {
+        format!(
+            "candidate_case_evidence=candidates={},sealed_candidates={},artifacts={},compared_runs={},protocol_run_snapshots={}",
+            self.candidates,
+            self.sealed_candidates,
+            self.artifacts,
+            self.compared_runs,
+            self.protocol_run_snapshots
+        )
     }
 }
 
@@ -451,8 +613,8 @@ mod tests {
             history::{
                 CandidateArtifact, CandidateCoordinate, CandidateLifecycle, HistoryCandidate,
                 HistoryCandidateSource, HistoryCandidates, HistoryHash, LineageId, ProcedureRef,
-                SealedCandidateEvidence, SealedEvaluationEvidence, SealedEvidenceCitation,
-                SelectionDecisionEntry, SelectionScope, SubjectRef,
+                SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvaluationEvidence,
+                SealedEvidenceCitation, SelectionDecisionEntry, SelectionScope, SubjectRef,
             },
         },
         intervention::{
@@ -633,6 +795,60 @@ mod tests {
 
         assert_eq!(selection.decision.candidate_node_id, "current-strong");
         assert!(selection.selected_from_current_generation);
+    }
+
+    #[test]
+    fn candidate_case_exposes_optional_non_mechanized_sections() {
+        let mut payload = decision_grade_payload(
+            "node-rich",
+            "branch-rich",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        payload
+            .sealed_evidence
+            .as_mut()
+            .expect("sealed evidence")
+            .evaluations
+            .first_mut()
+            .expect("evaluation")
+            .compared_runs
+            .push(SealedComparedRunEvidence {
+                instance_id: Some("instance-a".to_string()),
+                status: Some("compared".to_string()),
+                baseline_citation: None,
+                treatment_citation: None,
+                baseline_metrics: None,
+                treatment_metrics: None,
+                diagnostics: Vec::new(),
+                baseline_run: Some(serde_json::json!({
+                    "run_id": "baseline",
+                    "protocol": {
+                        "anchor_path": null,
+                        "artifacts": []
+                    }
+                })),
+                treatment_run: Some(serde_json::json!({
+                    "run_id": "treatment",
+                    "protocol": {
+                        "anchor_path": "/tmp/protocol-anchor.json",
+                        "artifacts": [
+                            {"procedure_name": "tool-call-review"}
+                        ]
+                    }
+                })),
+            });
+
+        let case = CandidateCase::from_payload(&payload);
+
+        assert_eq!(payload.candidate, *case.candidate());
+        assert!(case.selection_input().is_some());
+        assert!(case.sealed_evidence().is_some());
+        assert!(case.artifact().is_some());
+        assert_eq!(case.compared_runs().count(), 1);
+        assert_eq!(case.protocol_run_snapshot_count(), 1);
     }
 
     #[test]

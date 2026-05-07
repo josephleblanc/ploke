@@ -220,7 +220,12 @@ impl HandoffTxn {
     target = "ploke_exec",
     level = "debug",
     skip(journal_path, entry),
-    fields(runtime_id = %entry.runtime_id)
+    fields(
+        phase = "record_child_ready",
+        transition = "Child<Starting>->Child<Ready>",
+        runtime_id = %entry.runtime_id,
+        node_id = %entry.refs.node_id,
+    )
 )]
 pub(crate) fn record_child_ready(
     journal_path: impl Into<PathBuf>,
@@ -402,8 +407,15 @@ impl Intervention<C3, C4> for SpawnChild {
     #[instrument(
         target = "ploke_exec",
         level = "debug",
-        skip(self, records),
-        fields(node_id = %from.node.node_id, branch_id = %from.resolved.branch.branch_id, runtime_id = %self.runtime_id)
+        skip(self, from, records),
+        fields(
+            phase = "spawn_child_runtime",
+            transition = "C3->C4",
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            generation = from.node.generation,
+            runtime_id = %self.runtime_id,
+        )
     )]
     fn transition(
         &self,

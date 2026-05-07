@@ -1,4 +1,5 @@
 use std::ffi::OsStr;
+use std::fmt as std_fmt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::{env, fs, str::FromStr};
@@ -6,11 +7,14 @@ use std::{env, fs, str::FromStr};
 use chrono::Local;
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_tui::tracing_setup::FULL_RESPONSE_TARGET;
-use tracing::Level;
+use tracing::{Event, Level, Subscriber};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::filter;
+use tracing_subscriber::fmt::FmtContext;
+use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
+use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_subscriber::{EnvFilter, fmt as tracing_fmt, prelude::*};
 
 use crate::layout::ploke_eval_home;
 
@@ -72,7 +76,7 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
         tracing_appender::non_blocking(full_response_appender);
     let prototype1_observation = prototype1_observation_jsonl(&log_dir, &run_id);
 
-    let file_layer = fmt::layer()
+    let file_layer = tracing_fmt::layer()
         .with_target(true)
         .with_level(true)
         .with_file(true)
@@ -82,7 +86,7 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
         .with_ansi(false)
         .with_writer(non_blocking_file);
 
-    let full_response_layer = fmt::layer()
+    let full_response_layer = tracing_fmt::layer()
         .with_writer(full_response_non_blocking)
         .with_ansi(false)
         .with_level(false)
@@ -94,12 +98,8 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
         .without_time();
     let only_full_response = filter::Targets::new().with_target(FULL_RESPONSE_TARGET, Level::TRACE);
 
-    let console_layer = fmt::layer()
-        .with_target(true)
-        .with_level(true)
-        .without_time()
-        .with_file(true)
-        .with_line_number(true)
+    let console_layer = tracing_fmt::layer()
+        .event_format(CompactConsoleFormat)
         .with_ansi(true)
         .with_writer(std::io::stderr);
     let console_filter = if cfg!(feature = "demo") {
@@ -126,7 +126,7 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
         prototype1_guard = Some(guard);
         registry
             .with(
-                fmt::layer()
+                tracing_fmt::layer()
                     .json()
                     .flatten_event(true)
                     .with_current_span(true)
@@ -174,6 +174,46 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
         })
     } else {
         None
+    }
+}
+
+struct CompactConsoleFormat;
+
+impl<S, N> FormatEvent<S, N> for CompactConsoleFormat
+where
+    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+    N: for<'writer> FormatFields<'writer> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> std_fmt::Result {
+        let metadata = event.metadata();
+        write!(writer, "{:<5}", metadata.level())?;
+        if let Some(scope) = ctx.event_scope() {
+            let mut first = true;
+            for span in scope.from_root() {
+                if first {
+                    write!(writer, " ")?;
+                    first = false;
+                } else {
+                    write!(writer, ">")?;
+                }
+                write!(writer, "{}", span.metadata().name())?;
+            }
+            if !first {
+                write!(writer, ":")?;
+            }
+        }
+        write!(writer, " {}:", metadata.target())?;
+        if let (Some(file), Some(line)) = (metadata.file(), metadata.line()) {
+            write!(writer, " {file}:{line}:")?;
+        }
+        write!(writer, " ")?;
+        ctx.format_fields(writer.by_ref(), event)?;
+        writeln!(writer)
     }
 }
 

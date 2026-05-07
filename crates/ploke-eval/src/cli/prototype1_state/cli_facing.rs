@@ -4898,11 +4898,8 @@ async fn resolve_child_plan(
         authority = "parent_broadcast_channel",
         transition = "Parent<Ready>->ChildPlan",
         campaign = %campaign_id,
-        parent_id = %parent_identity.parent_id,
         parent_node_id = %parent_identity.node_id,
         generation = parent_identity.generation,
-        branch_id = %parent_identity.branch_id,
-        repo_root = %repo_root.display(),
         "resolving parent child-plan authority"
     );
     // Prototype 1 currently enforces direct-child lineage: Parent k may only
@@ -5000,15 +4997,14 @@ fn run_planned_child(
         "prototype1.parent.child_path",
         role = "parent",
         authority = "artifact_backend+child_channel",
+        phase = "child_path",
         transition = "Parent<Selectable>->ChildRuntime",
         campaign = %campaign_id,
-        node_id = %node.node_id,
+        child_node_id = %node.node_id,
         generation = node.generation,
-        parent_node_id = ?node.parent_node_id,
         branch_id = %node.branch_id,
         candidate_id = %node.candidate_id,
         plan_index = plan_index,
-        workspace_root = %node.workspace_root.display(),
     );
     let _child_path_entered = child_path_span.enter();
     info!(
@@ -6184,7 +6180,7 @@ impl Prototype1StateCommand {
         target = "ploke_exec",
         level = "debug",
         skip(self),
-        fields(campaign = ?self.campaign, node_id = ?self.node_id, stop_after = ?self.stop_after)
+        fields(phase = "prototype1_state")
     )]
     pub async fn run(self) -> Result<(), PrepareError> {
         let handoff_invocation = self.handoff_invocation.clone();
@@ -6212,13 +6208,8 @@ impl Prototype1StateCommand {
             target: EXECUTION_DEBUG_TARGET,
             "prototype1.parent.turn",
             role = "parent",
-            authority = "artifact_identity+history+channel",
+            phase = "parent_turn",
             campaign = %campaign_id,
-            repo_root = %repo_root.display(),
-            manifest_path = %manifest_path.display(),
-            handoff_invocation = ?self.handoff_invocation,
-            stop_after = ?self.stop_after,
-            successor_selection = ?self.successor_selection,
         );
         let _turn_entered = turn_span.enter();
 

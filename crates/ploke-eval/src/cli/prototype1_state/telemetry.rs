@@ -58,12 +58,9 @@ impl RuntimeTelemetry {
             "prototype1.runtime",
             prototype1 = true,
             role = self.role,
-            runtime_phase = self.runtime_phase,
-            campaign_id = %self.campaign_id,
+            phase = self.runtime_phase,
+            campaign = %self.campaign_id,
             node_id = %self.node_id,
-            branch_id = %self.branch_id,
-            generation = self.generation,
-            runtime_id = self.runtime_id.as_deref().unwrap_or("")
         )
     }
 

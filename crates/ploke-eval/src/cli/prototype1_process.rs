@@ -160,8 +160,8 @@ use crate::cli::prototype1_state::telemetry::RuntimeTelemetry;
 use crate::intervention::{
     CommitPhase, Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerResult,
     RecordStore, ResolvedTreatmentBranch, TreatmentBranchEvaluationSummary, project_node_status,
-    prototype1_branch_registry_path, record_treatment_branch_evaluation, resolve_treatment_branch,
-    write_node_projection, write_runner_result_at,
+    project_resolved_treatment_branch_evaluation, prototype1_branch_registry_path,
+    resolve_treatment_branch, write_node_projection, write_runner_result_at,
 };
 use crate::projection::OperatorProjectionRead;
 
@@ -1728,10 +1728,10 @@ pub(super) async fn run_prototype1_resolved_branch_evaluation(
             "prototype1.child.evaluate.persist_summary",
             "PersistEvaluationSummary",
             || {
-                record_treatment_branch_evaluation(
+                project_resolved_treatment_branch_evaluation(
                     baseline_campaign_id,
                     baseline_manifest_path,
-                    branch_id,
+                    resolved_branch,
                     summary,
                 )
             },

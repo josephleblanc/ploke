@@ -407,7 +407,7 @@ impl Parent<Unchecked> {
     #[instrument(
         target = "ploke_exec",
         level = "info",
-        skip(manifest_path),
+        skip(manifest_path, identity),
         fields(
             role = "parent",
             authority = "artifact_identity",

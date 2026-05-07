@@ -822,6 +822,83 @@ pub fn record_treatment_branch_evaluation(
     Ok(registry)
 }
 
+pub fn project_resolved_treatment_branch_evaluation(
+    campaign_id: &str,
+    campaign_manifest_path: &Path,
+    resolved: &ResolvedTreatmentBranch,
+    summary: TreatmentBranchEvaluationSummary,
+) -> Result<Prototype1BranchRegistry, PrepareError> {
+    let mut registry = load_or_default_branch_registry(
+        campaign_id,
+        campaign_manifest_path,
+        OperatorProjectionRead::projection_module(),
+    )?;
+
+    registry.project_evaluation_for_resolved_branch(resolved, summary);
+    registry.updated_at = Utc::now().to_rfc3339();
+    save_branch_registry(campaign_manifest_path, &registry)?;
+    Ok(registry)
+}
+
+impl Prototype1BranchRegistry {
+    fn project_evaluation_for_resolved_branch(
+        &mut self,
+        resolved: &ResolvedTreatmentBranch,
+        summary: TreatmentBranchEvaluationSummary,
+    ) {
+        let source_node = match self.source_nodes.iter_mut().find(|source| {
+            source.source_state_id == resolved.source_state_id
+                && source.target_relpath == resolved.target_relpath
+        }) {
+            Some(source) => source,
+            None => {
+                self.source_nodes.push(InterventionSourceNode {
+                    source_state_id: resolved.source_state_id.clone(),
+                    parent_branch_id: resolved.parent_branch_id.clone(),
+                    source_artifact_id: None,
+                    operation_target: resolved.branch.generation_target.clone(),
+                    instance_id: resolved.instance_id.clone(),
+                    target_relpath: resolved.target_relpath.clone(),
+                    source_content: resolved.source_content.clone(),
+                    source_content_hash: resolved.source_content_hash.clone(),
+                    selected_branch_id: resolved.selected_branch_id.clone(),
+                    branches: Vec::new(),
+                });
+                self.source_nodes
+                    .last_mut()
+                    .expect("newly pushed source node")
+            }
+        };
+
+        source_node.instance_id = resolved.instance_id.clone();
+        if resolved.parent_branch_id.is_some() {
+            source_node.parent_branch_id = resolved.parent_branch_id.clone();
+        }
+        source_node.source_content = resolved.source_content.clone();
+        source_node.source_content_hash = resolved.source_content_hash.clone();
+        if let Some(target) = resolved.branch.generation_target.clone() {
+            source_node.source_artifact_id = operation_target_artifact_id(&target)
+                .cloned()
+                .or_else(|| source_node.source_artifact_id.clone());
+            source_node.operation_target = Some(target);
+        }
+        if resolved.selected_branch_id.is_some() {
+            source_node.selected_branch_id = resolved.selected_branch_id.clone();
+        }
+
+        let mut branch = resolved.branch.clone();
+        branch.latest_evaluation = Some(summary);
+        match source_node
+            .branches
+            .iter_mut()
+            .find(|existing| existing.branch_id == branch.branch_id)
+        {
+            Some(existing) => *existing = branch,
+            None => source_node.branches.push(branch),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::tempdir;
@@ -1026,6 +1103,47 @@ mod tests {
         );
         assert_eq!(branch.generation_coordinate, None);
         assert_eq!(branch.derived_artifact_id, None);
+    }
+
+    #[test]
+    fn project_resolved_evaluation_upserts_runtime_branch_projection() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let synthesis = synthesis_output();
+        let resolved = resolved_treatment_branches_from_synthesis(
+            "clap-rs__clap-3670",
+            &synthesis,
+            None,
+            Some("parent-branch"),
+        )
+        .into_iter()
+        .find(|branch| branch.branch.candidate_id == "candidate-1")
+        .expect("resolved branch");
+        let summary = TreatmentBranchEvaluationSummary {
+            baseline_campaign_id: "test-campaign".to_string(),
+            treatment_campaign_id: "test-campaign-treatment".to_string(),
+            compared_instances: 1,
+            rejected_instances: 0,
+            overall_disposition: BranchDisposition::Keep,
+            evaluated_at: "2026-05-07T00:00:00Z".to_string(),
+        };
+
+        let registry = project_resolved_treatment_branch_evaluation(
+            "test-campaign",
+            &manifest,
+            &resolved,
+            summary.clone(),
+        )
+        .expect("project evaluation");
+
+        assert_eq!(registry.source_nodes.len(), 1);
+        let source = &registry.source_nodes[0];
+        assert_eq!(source.source_state_id, resolved.source_state_id);
+        assert_eq!(source.target_relpath, resolved.target_relpath);
+        assert_eq!(source.branches.len(), 1);
+        let branch = &source.branches[0];
+        assert_eq!(branch.branch_id, resolved.branch.branch_id);
+        assert_eq!(branch.latest_evaluation.as_ref(), Some(&summary));
     }
 
     #[test]

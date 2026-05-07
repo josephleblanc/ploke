@@ -232,8 +232,15 @@ impl Intervention<C4, C5> for ObserveChild {
     #[instrument(
         target = "ploke_exec",
         level = "debug",
-        skip(self, records),
-        fields(node_id = %from.node.node_id, branch_id = %from.resolved.branch.branch_id, runtime_id = ?from.binary.child_runtime)
+        skip(self, from, records),
+        fields(
+            phase = "observe_child_result",
+            transition = "C4->C5",
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            generation = from.node.generation,
+            runtime_id = ?from.binary.child_runtime,
+        )
     )]
     fn transition(
         &self,
