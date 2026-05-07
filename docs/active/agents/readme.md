@@ -33,6 +33,10 @@ Restart-oriented table of contents for `docs/active/agents/` and nearby restart-
   Inventory of successor handoff, startup, and History/Crown file surfaces.
 - [2026-05-06_history-traversal-invariant-review.md](./2026-05-06_history-traversal-invariant-review.md)
   History traversal invariant review covering current-generation bridge, candidate provenance, and historical handoff gaps.
+- [2026-05-07-prototype1-edit-surface-model.md](./2026-05-07-prototype1-edit-surface-model.md)
+  Formal-procedure style model for connecting `ploke-tui` edit proposals to the Prototype 1 surface-bounded create transition without making UI proposal storage or raw patch text authoritative.
+- [2026-05-07-prototype1-edit-surface-handoff.md](./2026-05-07-prototype1-edit-surface-handoff.md)
+  Restart handoff for translating the edit-surface framework into `ploke-eval` trait adapters, including the `CodeGraphView` / `EditHarness` split and the open approve/apply boundary.
 - [2026-04-17_eval-failure-and-protocol-audit/README.md](./2026-04-17_eval-failure-and-protocol-audit/README.md)
   Control-plane docs for failed-run audit, known-limitations reconciliation, blind trace review, and protocol-output comparison.
 - [2026-04-16_eval-closure-formal-sketch.md](./2026-04-16_eval-closure-formal-sketch.md)
