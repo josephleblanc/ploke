@@ -5563,6 +5563,8 @@ fn current_generation_compared_run_evidence(
         }),
         baseline_metrics: row.baseline_metrics.clone(),
         treatment_metrics: row.treatment_metrics.clone(),
+        baseline_protocol: None,
+        treatment_protocol: None,
         diagnostics: Vec::new(),
         baseline_run: None,
         treatment_run: None,

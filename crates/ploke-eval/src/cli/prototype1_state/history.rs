@@ -419,6 +419,7 @@ use uuid::Uuid;
 
 use super::event::{RecordedAt, RuntimeId};
 use crate::OperationalRunMetrics;
+use crate::metric;
 
 const SCHEMA_VERSION: u32 = 1;
 
@@ -2591,6 +2592,10 @@ pub(crate) struct SealedComparedRunEvidence {
     pub(crate) baseline_metrics: Option<OperationalRunMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) treatment_metrics: Option<OperationalRunMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) baseline_protocol: Option<metric::Protocol>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) treatment_protocol: Option<metric::Protocol>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) diagnostics: Vec<String>,
     /// JSON snapshot of typed child run evidence when available (identity, spec, artifacts, protocol); same shape as `RunEvidence` in `evidence.rs`.

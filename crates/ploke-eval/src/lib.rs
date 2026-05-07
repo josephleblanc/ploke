@@ -9,6 +9,7 @@ pub mod intervention;
 pub mod intervention_issue_aggregate;
 pub mod layout;
 pub(crate) mod loop_graph;
+pub(crate) mod metric;
 pub mod model_registry;
 pub mod msb;
 pub mod operational_metrics;

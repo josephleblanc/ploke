@@ -8,7 +8,7 @@ use super::{
     decide as decide_candidate, decision::SuccessorOutcome,
 };
 use crate::{
-    BranchDisposition, OperationalRunMetrics,
+    BranchDisposition,
     cli::prototype1_state::history::{
         CandidateArtifact, CandidateSetCommitment, CandidateSetMembership, CandidateSetRoot,
         EvaluationPayload, HistoryCandidate, HistoryCandidateSource, HistoryCandidates,
@@ -16,6 +16,7 @@ use crate::{
         SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope, SubjectRef,
     },
     intervention::Prototype1SelectionPolicyOutcome,
+    metric::Summary,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -350,24 +351,37 @@ impl Source {
 /// `sealed_evidence.evaluations[*].compared_runs[*].instance_id`
 /// `sealed_evidence.evaluations[*].compared_runs[*].status`
 ///
-/// Operational metrics:
+/// Metric-bearing procedure states:
 /// `selection_input.comparisons[*].parent_metrics`
 /// `selection_input.comparisons[*].child_metrics`
 /// `sealed_evidence.evaluations[*].compared_runs[*].baseline_metrics`
 /// `sealed_evidence.evaluations[*].compared_runs[*].treatment_metrics`
-/// `OperationalRunMetrics.tool_calls_total`
-/// `OperationalRunMetrics.tool_calls_failed`
-/// `OperationalRunMetrics.patch_attempted`
-/// `OperationalRunMetrics.patch_apply_state`
-/// `OperationalRunMetrics.submission_artifact_state`
-/// `OperationalRunMetrics.partial_patch_failures`
-/// `OperationalRunMetrics.same_file_patch_retry_count`
-/// `OperationalRunMetrics.same_file_patch_max_streak`
-/// `OperationalRunMetrics.aborted`
-/// `OperationalRunMetrics.aborted_repair_loop`
-/// `OperationalRunMetrics.nonempty_valid_patch`
-/// `OperationalRunMetrics.convergence`
-/// `OperationalRunMetrics.oracle_eligible`
+/// `metric::Operational.tool_calls_total`
+/// `metric::Operational.tool_calls_failed`
+/// `metric::Operational.patch_attempted`
+/// `metric::Operational.patch_apply_state`
+/// `metric::Operational.submission_artifact_state`
+/// `metric::Operational.partial_patch_failures`
+/// `metric::Operational.same_file_patch_retry_count`
+/// `metric::Operational.same_file_patch_max_streak`
+/// `metric::Operational.aborted`
+/// `metric::Operational.aborted_repair_loop`
+/// `metric::Operational.nonempty_valid_patch`
+/// `metric::Operational.convergence`
+/// `metric::Operational.oracle_eligible`
+/// `sealed_evidence.evaluations[*].compared_runs[*].baseline_protocol`
+/// `sealed_evidence.evaluations[*].compared_runs[*].treatment_protocol`
+/// `metric::Protocol.reviewed_call_count`
+/// `metric::Protocol.reviewed_segment_count`
+/// `metric::Protocol.missing_call_count`
+/// `metric::Protocol.missing_segment_count`
+/// `metric::Protocol.skipped_segment_review_count`
+/// `metric::Protocol.segment_anchor_mismatch_count`
+/// `metric::Protocol.calls_with_segment_crosswalk`
+/// `metric::Protocol.calls_without_segment_crosswalk`
+/// `metric::Protocol.call_review_overall_counts`
+/// `metric::Protocol.segment_review_overall_counts`
+/// `metric::Protocol.review_signal_totals`
 ///
 /// Rich run snapshots:
 /// `sealed_evidence.evaluations[*].compared_runs[*].baseline_run`
@@ -602,7 +616,12 @@ fn performance_score(case: CandidateCase<'_>) -> Option<PerformanceScore> {
         .iter()
         .filter_map(|comparison| comparison.child_metrics.as_ref())
     {
-        score += metrics.selection_quality_points();
+        score += metrics.selection_points();
+    }
+    for run in case.compared_runs() {
+        if let Some(treatment) = run.treatment_protocol.as_ref() {
+            score += treatment.selection_delta_points(run.baseline_protocol.as_ref());
+        }
     }
 
     Some(PerformanceScore(score))
@@ -1036,7 +1055,7 @@ mod tests {
 
     use crate::record::SubmissionArtifactState;
     use crate::{
-        PatchApplyState,
+        OperationalRunMetrics, PatchApplyState,
         cli::prototype1_state::{
             evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID,
             history::{
@@ -1254,6 +1273,8 @@ mod tests {
                 treatment_citation: None,
                 baseline_metrics: None,
                 treatment_metrics: None,
+                baseline_protocol: None,
+                treatment_protocol: None,
                 diagnostics: Vec::new(),
                 baseline_run: Some(serde_json::json!({
                     "run_id": "baseline",

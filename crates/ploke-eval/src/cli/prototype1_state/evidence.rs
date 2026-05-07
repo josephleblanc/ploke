@@ -76,6 +76,8 @@ use super::journal::{JournalEntry, SpawnPhase};
 use crate::inner::core::RegisteredRunRole;
 use crate::inner::registry::{RunArtifactRefs, RunRegistration, RunRegistrationError};
 use crate::intervention::{Prototype1NodeRecord, Prototype1RunnerRequest, Prototype1RunnerResult};
+use crate::metric;
+use crate::protocol::protocol_aggregate::load_protocol_aggregate;
 use crate::protocol_artifacts::{
     PROTOCOL_ARTIFACT_SCHEMA_VERSION, StoredProtocolArtifactFile, load_protocol_artifact,
 };
@@ -540,6 +542,10 @@ fn seal_compared_run_evidence(row: &ComparedRunEvidence) -> SealedComparedRunEvi
         },
         None => None,
     };
+    let baseline_protocol =
+        seal_protocol_aggregate("baseline", row.baseline_run.as_ref(), &mut diagnostics);
+    let treatment_protocol =
+        seal_protocol_aggregate("treatment", row.treatment_run.as_ref(), &mut diagnostics);
     SealedComparedRunEvidence {
         instance_id: row.instance_id.clone(),
         status: row.status.clone(),
@@ -547,9 +553,26 @@ fn seal_compared_run_evidence(row: &ComparedRunEvidence) -> SealedComparedRunEvi
         treatment_citation,
         baseline_metrics: row.baseline_metrics.clone(),
         treatment_metrics: row.treatment_metrics.clone(),
+        baseline_protocol,
+        treatment_protocol,
         diagnostics,
         baseline_run,
         treatment_run,
+    }
+}
+
+fn seal_protocol_aggregate(
+    arm: &'static str,
+    run: Option<&RunEvidence>,
+    diagnostics: &mut Vec<String>,
+) -> Option<metric::Protocol> {
+    let run = run?;
+    match load_protocol_aggregate(&run.artifacts.record_path) {
+        Ok(aggregate) => Some(metric::Protocol::from(&aggregate)),
+        Err(error) => {
+            diagnostics.push(format!("{arm}_protocol:aggregate_unavailable:{error}"));
+            None
+        }
     }
 }
 
@@ -649,7 +672,7 @@ pub(crate) struct RunEvidence {
     pub(crate) provider_slug: Option<String>,
     pub(crate) artifacts: RunArtifactRefs,
     #[serde(default)]
-    pub(crate) protocol: ProtocolEvidence,
+    pub(crate) protocol: protocol::Artifacts,
 }
 
 impl RunEvidence {
@@ -657,7 +680,7 @@ impl RunEvidence {
         registration: RunRegistration,
         registration_path: Option<PathBuf>,
     ) -> Self {
-        let protocol = ProtocolEvidence::from_run(
+        let protocol = protocol::Artifacts::from_run(
             &registration.run_id,
             &registration.frozen_spec.task_id,
             &registration.artifacts,
@@ -676,94 +699,94 @@ impl RunEvidence {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(crate) struct ProtocolEvidence {
-    pub(crate) artifacts_dir: PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) anchor_path: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) artifacts: Vec<ProtocolArtifactEvidence>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) diagnostics: Vec<ProtocolEvidenceDiagnostic>,
-}
+mod protocol {
+    use super::*;
 
-impl ProtocolEvidence {
-    fn from_run(run_id: &str, subject_id: &str, artifacts: &RunArtifactRefs) -> Self {
-        let mut evidence = Self {
-            artifacts_dir: artifacts.protocol_artifacts_dir.clone(),
-            anchor_path: artifacts.protocol_anchor.clone(),
-            artifacts: Vec::new(),
-            diagnostics: Vec::new(),
-        };
+    #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+    pub(crate) struct Artifacts {
+        pub(crate) artifacts_dir: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub(crate) anchor_path: Option<PathBuf>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub(crate) artifacts: Vec<Artifact>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub(crate) diagnostics: Vec<Diagnostic>,
+    }
 
-        if !artifacts.protocol_artifacts_dir.exists() {
-            if artifacts.protocol_anchor.is_some() {
-                evidence.diagnostics.push(ProtocolEvidenceDiagnostic::warning(
-                    "protocol_artifacts_dir",
-                    format!(
+    impl Artifacts {
+        pub(crate) fn from_run(
+            run_id: &str,
+            subject_id: &str,
+            artifacts: &RunArtifactRefs,
+        ) -> Self {
+            let mut evidence = Self {
+                artifacts_dir: artifacts.protocol_artifacts_dir.clone(),
+                anchor_path: artifacts.protocol_anchor.clone(),
+                artifacts: Vec::new(),
+                diagnostics: Vec::new(),
+            };
+
+            if !artifacts.protocol_artifacts_dir.exists() {
+                if artifacts.protocol_anchor.is_some() {
+                    let message = format!(
                         "registered protocol anchor exists but protocol artifacts dir '{}' is missing",
                         artifacts.protocol_artifacts_dir.display()
-                    ),
-                ));
+                    );
+                    evidence
+                        .diagnostics
+                        .push(Diagnostic::warning("protocol_artifacts_dir", message));
+                }
+                return evidence;
             }
-            return evidence;
-        }
 
-        let entries = match fs::read_dir(&artifacts.protocol_artifacts_dir) {
-            Ok(entries) => entries,
-            Err(error) => {
-                evidence
-                    .diagnostics
-                    .push(ProtocolEvidenceDiagnostic::warning(
+            let entries = match fs::read_dir(&artifacts.protocol_artifacts_dir) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    evidence.diagnostics.push(Diagnostic::warning(
                         "protocol_artifacts_dir",
                         format!(
                             "could not read registered protocol artifacts dir '{}': {error}",
                             artifacts.protocol_artifacts_dir.display()
                         ),
                     ));
-                return evidence;
-            }
-        };
+                    return evidence;
+                }
+            };
 
-        for entry in entries {
-            let path =
-                match entry {
+            for entry in entries {
+                let path = match entry {
                     Ok(entry) => entry.path(),
                     Err(error) => {
-                        evidence.diagnostics.push(ProtocolEvidenceDiagnostic::warning(
-                        "protocol_artifacts_dir",
-                        format!(
-                            "could not read an entry from protocol artifacts dir '{}': {error}",
-                            artifacts.protocol_artifacts_dir.display()
-                        ),
-                    ));
+                        evidence.diagnostics.push(Diagnostic::warning(
+                            "protocol_artifacts_dir",
+                            format!(
+                                "could not read an entry from protocol artifacts dir '{}': {error}",
+                                artifacts.protocol_artifacts_dir.display()
+                            ),
+                        ));
                         continue;
                     }
                 };
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                continue;
-            }
+                if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                    continue;
+                }
 
-            let loaded = match load_protocol_artifact(&path) {
-                Ok(loaded) => loaded,
-                Err(error) => {
-                    evidence
-                        .diagnostics
-                        .push(ProtocolEvidenceDiagnostic::warning(
+                let loaded = match load_protocol_artifact(&path) {
+                    Ok(loaded) => loaded,
+                    Err(error) => {
+                        evidence.diagnostics.push(Diagnostic::warning(
                             "protocol_artifact",
                             format!(
                                 "could not load protocol artifact envelope '{}': {error}",
                                 path.display()
                             ),
                         ));
-                    continue;
-                }
-            };
+                        continue;
+                    }
+                };
 
-            if loaded.stored.schema_version != PROTOCOL_ARTIFACT_SCHEMA_VERSION {
-                evidence
-                    .diagnostics
-                    .push(ProtocolEvidenceDiagnostic::warning(
+                if loaded.stored.schema_version != PROTOCOL_ARTIFACT_SCHEMA_VERSION {
+                    evidence.diagnostics.push(Diagnostic::warning(
                         "protocol_artifact.schema_version",
                         format!(
                             "protocol artifact '{}' has schema_version '{}' but expected '{}'",
@@ -772,12 +795,10 @@ impl ProtocolEvidence {
                             PROTOCOL_ARTIFACT_SCHEMA_VERSION
                         ),
                     ));
-                continue;
-            }
-            if loaded.stored.run_id != run_id {
-                evidence
-                    .diagnostics
-                    .push(ProtocolEvidenceDiagnostic::warning(
+                    continue;
+                }
+                if loaded.stored.run_id != run_id {
+                    evidence.diagnostics.push(Diagnostic::warning(
                         "protocol_artifact.run_id",
                         format!(
                             "protocol artifact '{}' has run_id '{}' but typed run id is '{}'",
@@ -786,95 +807,94 @@ impl ProtocolEvidence {
                             run_id
                         ),
                     ));
-                continue;
-            }
-            if loaded.stored.subject_id != subject_id {
-                evidence.diagnostics.push(ProtocolEvidenceDiagnostic::warning(
-                    "protocol_artifact.subject_id",
-                    format!(
+                    continue;
+                }
+                if loaded.stored.subject_id != subject_id {
+                    let message = format!(
                         "protocol artifact '{}' has subject_id '{}' but typed run task id is '{}'",
                         loaded.path.display(),
                         loaded.stored.subject_id,
                         subject_id
-                    ),
-                ));
-                continue;
+                    );
+                    evidence
+                        .diagnostics
+                        .push(Diagnostic::warning("protocol_artifact.subject_id", message));
+                    continue;
+                }
+
+                evidence.artifacts.push(Artifact::from_file(loaded));
+            }
+
+            evidence.artifacts.sort_by(|left, right| {
+                right
+                    .created_at_ms
+                    .cmp(&left.created_at_ms)
+                    .then_with(|| right.path.cmp(&left.path))
+            });
+
+            if let Some(anchor_path) = artifacts.protocol_anchor.as_ref() {
+                let anchor_loaded = evidence
+                    .artifacts
+                    .iter()
+                    .any(|artifact| same_protocol_path(&artifact.path, anchor_path));
+                if !anchor_loaded {
+                    let message = format!(
+                        "registered protocol anchor '{}' was not loaded as typed protocol artifact evidence",
+                        anchor_path.display()
+                    );
+                    evidence
+                        .diagnostics
+                        .push(Diagnostic::warning("protocol_anchor", message));
+                }
             }
 
             evidence
-                .artifacts
-                .push(ProtocolArtifactEvidence::from_file(loaded));
         }
+    }
 
-        evidence.artifacts.sort_by(|left, right| {
-            right
-                .created_at_ms
-                .cmp(&left.created_at_ms)
-                .then_with(|| right.path.cmp(&left.path))
-        });
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub(crate) struct Artifact {
+        pub(crate) path: PathBuf,
+        pub(crate) schema_version: String,
+        pub(crate) procedure_name: String,
+        pub(crate) subject_id: String,
+        pub(crate) run_id: String,
+        pub(crate) created_at_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub(crate) model_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub(crate) provider_slug: Option<String>,
+    }
 
-        if let Some(anchor_path) = artifacts.protocol_anchor.as_ref() {
-            let anchor_loaded = evidence
-                .artifacts
-                .iter()
-                .any(|artifact| same_protocol_path(&artifact.path, anchor_path));
-            if !anchor_loaded {
-                evidence.diagnostics.push(ProtocolEvidenceDiagnostic::warning(
-                    "protocol_anchor",
-                    format!(
-                        "registered protocol anchor '{}' was not loaded as typed protocol artifact evidence",
-                        anchor_path.display()
-                    ),
-                ));
+    impl Artifact {
+        fn from_file(file: StoredProtocolArtifactFile) -> Self {
+            Self {
+                path: file.path,
+                schema_version: file.stored.schema_version,
+                procedure_name: file.stored.procedure_name,
+                subject_id: file.stored.subject_id,
+                run_id: file.stored.run_id,
+                created_at_ms: file.stored.created_at_ms,
+                model_id: file.stored.model_id,
+                provider_slug: file.stored.provider_slug,
             }
         }
-
-        evidence
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProtocolArtifactEvidence {
-    pub(crate) path: PathBuf,
-    pub(crate) schema_version: String,
-    pub(crate) procedure_name: String,
-    pub(crate) subject_id: String,
-    pub(crate) run_id: String,
-    pub(crate) created_at_ms: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) model_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) provider_slug: Option<String>,
-}
-
-impl ProtocolArtifactEvidence {
-    fn from_file(file: StoredProtocolArtifactFile) -> Self {
-        Self {
-            path: file.path,
-            schema_version: file.stored.schema_version,
-            procedure_name: file.stored.procedure_name,
-            subject_id: file.stored.subject_id,
-            run_id: file.stored.run_id,
-            created_at_ms: file.stored.created_at_ms,
-            model_id: file.stored.model_id,
-            provider_slug: file.stored.provider_slug,
-        }
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub(crate) struct Diagnostic {
+        pub(crate) severity: String,
+        pub(crate) field: String,
+        pub(crate) message: String,
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProtocolEvidenceDiagnostic {
-    pub(crate) severity: String,
-    pub(crate) field: String,
-    pub(crate) message: String,
-}
-
-impl ProtocolEvidenceDiagnostic {
-    fn warning(field: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            severity: "warning".to_string(),
-            field: field.into(),
-            message: message.into(),
+    impl Diagnostic {
+        fn warning(field: impl Into<String>, message: impl Into<String>) -> Self {
+            Self {
+                severity: "warning".to_string(),
+                field: field.into(),
+                message: message.into(),
+            }
         }
     }
 }
