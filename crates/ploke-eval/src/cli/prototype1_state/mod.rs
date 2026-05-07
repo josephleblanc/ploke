@@ -762,6 +762,7 @@ pub(crate) mod c4;
 pub(crate) mod channel;
 pub(crate) mod child;
 pub(crate) mod cli_facing;
+pub(crate) mod edit_surface;
 pub(crate) mod event;
 pub(crate) mod evidence;
 pub(crate) mod evidence_class;
