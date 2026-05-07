@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    HISTORY_TRAVERSAL_PROCEDURE_ID, PROCEDURE_ID, SelectionInput, SuccessorDecision, decide,
-    decision::SuccessorOutcome,
+    HISTORY_TRAVERSAL_PROCEDURE_ID, PROCEDURE_ID, SelectionInput, SuccessorDecision,
+    decide as decide_candidate, decision::SuccessorOutcome,
 };
 use crate::{
     BranchDisposition, OperationalRunMetrics,
@@ -19,22 +19,119 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct HistoryTraversalConfig {
-    pub(crate) seed: u64,
-    pub(crate) normalize_frontier: bool,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum StrategyKind {
+    FrontierMax { normalize_frontier: bool },
+    ScoreChildProp { top_m: usize, lambda_millis: u32 },
 }
 
-impl Default for HistoryTraversalConfig {
+impl StrategyKind {
+    pub(crate) fn score_child_prop() -> Self {
+        ScoreChildProp::default().evidence()
+    }
+}
+
+impl Default for StrategyKind {
     fn default() -> Self {
-        Self {
-            seed: 0,
+        Self::FrontierMax {
             normalize_frontier: true,
         }
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrontierMax {
+    normalize_frontier: bool,
+}
+
+impl Default for FrontierMax {
+    fn default() -> Self {
+        Self {
+            normalize_frontier: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScoreChildProp {
+    top_m: usize,
+    lambda_millis: u32,
+}
+
+impl Default for ScoreChildProp {
+    fn default() -> Self {
+        Self {
+            top_m: 3,
+            lambda_millis: 10_000,
+        }
+    }
+}
+
+pub(crate) trait Strategy: Copy {
+    type Item;
+
+    fn evidence(self) -> StrategyKind;
+
+    fn select(
+        self,
+        items: &[Self::Item],
+        child_counts: &BTreeMap<String, usize>,
+        seed: u64,
+    ) -> Result<Option<StrategySelection>, HistoryError>;
+}
+
+impl Strategy for FrontierMax {
+    type Item = Item;
+
+    fn evidence(self) -> StrategyKind {
+        StrategyKind::FrontierMax {
+            normalize_frontier: self.normalize_frontier,
+        }
+    }
+
+    fn select(
+        self,
+        items: &[Self::Item],
+        child_counts: &BTreeMap<String, usize>,
+        seed: u64,
+    ) -> Result<Option<StrategySelection>, HistoryError> {
+        select_frontier_max(items, child_counts, seed, self.normalize_frontier)
+    }
+}
+
+impl Strategy for ScoreChildProp {
+    type Item = Item;
+
+    fn evidence(self) -> StrategyKind {
+        StrategyKind::ScoreChildProp {
+            top_m: self.top_m,
+            lambda_millis: self.lambda_millis,
+        }
+    }
+
+    fn select(
+        self,
+        items: &[Self::Item],
+        child_counts: &BTreeMap<String, usize>,
+        seed: u64,
+    ) -> Result<Option<StrategySelection>, HistoryError> {
+        select_score_child_prop(items, child_counts, seed, self.top_m, self.lambda_millis)
+    }
+}
+
+pub(crate) trait Traversal<S>
+where
+    S: Strategy<Item = Self::Item>,
+{
+    type Candidate;
+    type Item;
+    type Selection;
+
+    fn traverse(self, seed: u64, strategy: S) -> Result<Option<Self::Selection>, HistoryError>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HistoryTraversalSelection {
+pub(crate) struct Selection {
     pub(crate) decision: SuccessorDecision,
     pub(crate) selected_payload: EvaluationPayload,
     pub(crate) considered: Vec<EvaluationPayload>,
@@ -43,117 +140,102 @@ pub(crate) struct HistoryTraversalSelection {
 }
 
 #[cfg(test)]
-pub(crate) fn decide_history_traversal(
+pub(crate) fn decide_history(
     history: HistoryCandidates,
-    config: HistoryTraversalConfig,
-) -> Result<Option<HistoryTraversalSelection>, HistoryError> {
-    decide_traversal(TraversalCandidates::from_history(history), config)
+    seed: u64,
+    strategy: StrategyKind,
+) -> Result<Option<Selection>, HistoryError> {
+    decide(Candidates::from_history(history), seed, strategy)
 }
 
-pub(crate) fn decide_traversal(
-    candidates: TraversalCandidates,
-    config: HistoryTraversalConfig,
-) -> Result<Option<HistoryTraversalSelection>, HistoryError> {
-    let mut considered = Vec::new();
-    let mut failures = Vec::new();
-    let mut sources = Vec::new();
+pub(crate) fn decide(
+    candidates: Candidates,
+    seed: u64,
+    strategy: StrategyKind,
+) -> Result<Option<Selection>, HistoryError> {
+    match strategy {
+        StrategyKind::FrontierMax { normalize_frontier } => {
+            candidates.traverse(seed, FrontierMax { normalize_frontier })
+        }
+        StrategyKind::ScoreChildProp {
+            top_m,
+            lambda_millis,
+        } => candidates.traverse(
+            seed,
+            ScoreChildProp {
+                top_m,
+                lambda_millis,
+            },
+        ),
+    }
+}
 
-    for candidate in candidates.candidates {
-        let source = candidate.source.clone();
-        match decision_grade(candidate)? {
-            CandidateGrade::Eligible(payload) => {
-                considered.push(payload);
-                sources.push(source);
+impl<S> Traversal<S> for Candidates
+where
+    S: Strategy<Item = Item>,
+{
+    type Candidate = Candidate;
+    type Item = Item;
+    type Selection = Selection;
+
+    fn traverse(self, seed: u64, strategy: S) -> Result<Option<Selection>, HistoryError> {
+        let mut items = Vec::new();
+        let mut failures = Vec::new();
+
+        for candidate in self.candidates {
+            let source = candidate.source.clone();
+            match decision_grade(candidate)? {
+                CandidateGrade::Eligible(payload) => {
+                    items.push(Item { payload, source });
+                }
+                CandidateGrade::Excluded(failure) => failures.push(failure),
             }
-            CandidateGrade::Excluded(failure) => failures.push(failure),
         }
-    }
 
-    let child_counts = successful_child_counts(&considered);
-    let evidence_summary = CandidateCaseEvidenceSummary::from_considered(&considered);
-    let max_performance = if config.normalize_frontier {
-        considered
+        let considered = items
             .iter()
-            .map(CandidateCase::from_payload)
-            .filter_map(performance_score)
-            .max()
-    } else {
-        None
-    };
-
-    let mut best = None::<ScoredPayload>;
-    for (index, payload) in considered.iter().cloned().enumerate() {
-        let case = CandidateCase::from_payload(&payload);
-        let Some(selected) = selectable_decision(&case) else {
-            continue;
+            .map(|item| item.payload.clone())
+            .collect::<Vec<_>>();
+        let child_counts = successful_child_counts(&considered);
+        let evidence_summary = CandidateCaseEvidenceSummary::from_considered(&considered);
+        let Some(selection) = strategy.select(&items, &child_counts, seed)? else {
+            return Ok(None);
         };
-        if selected
-            .selection_policy_outcome()
-            .is_none_or(|outcome| !outcome.allows_successor())
-        {
-            continue;
-        }
-        let Some(score) = TraversalScore::for_case(&case, &child_counts, max_performance) else {
-            continue;
-        };
-        let tie = tie_break_key(config.seed, index, &payload)?;
-        let scored = ScoredPayload {
-            payload,
-            score,
-            tie,
-            decision: selected,
-            source: sources[index].clone(),
-        };
-        if best
-            .as_ref()
-            .is_none_or(|current| scored.orders_after(current))
-        {
-            best = Some(scored);
-        }
-    }
 
-    let Some(best) = best else {
-        return Ok(None);
-    };
-
-    let mut decision = best.decision;
-    decision.procedure_id = HISTORY_TRAVERSAL_PROCEDURE_ID.to_string();
-    decision.rationale.push(format!(
-        "history traversal selected from {} decision-grade candidates with seed={}",
-        considered.len(),
-        config.seed
-    ));
-    decision.rationale.push(evidence_summary.rationale());
-    if let Some(max_performance) = max_performance {
+        let mut decision = selection.chosen.decision;
+        decision.procedure_id = HISTORY_TRAVERSAL_PROCEDURE_ID.to_string();
         decision.rationale.push(format!(
-            "frontier_normalization=max_performance_score={}",
-            max_performance.0
+            "history traversal selected from {} decision-grade candidates with seed={}",
+            considered.len(),
+            seed
         ));
-    }
+        decision.rationale.push(evidence_summary.rationale());
+        decision.rationale.extend(selection.rationale);
 
-    Ok(Some(HistoryTraversalSelection {
-        decision,
-        selected_payload: best.payload,
-        considered,
-        projection_failures: failures,
-        selected_from_current_generation: best.source.is_current_generation(),
-    }))
+        Ok(Some(Selection {
+            decision,
+            selected_payload: selection.chosen.payload,
+            considered,
+            projection_failures: failures,
+            selected_from_current_generation: selection.chosen.source.is_current_generation(),
+        }))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TraversalCandidates {
+pub(crate) struct Candidates {
     pub(crate) scope: SelectionScope,
-    pub(crate) candidates: Vec<TraversalCandidate>,
+    pub(crate) candidates: Vec<Candidate>,
 }
 
-impl TraversalCandidates {
+impl Candidates {
     pub(crate) fn from_history(history: HistoryCandidates) -> Self {
         Self {
             scope: history.scope,
             candidates: history
                 .candidates
                 .into_iter()
-                .map(TraversalCandidate::from)
+                .map(Candidate::from)
                 .collect(),
         }
     }
@@ -168,8 +250,8 @@ impl TraversalCandidates {
         for payload in payloads {
             let payload_hash = payload.payload_hash()?;
             let membership = candidate_set.membership(&payload.candidate).cloned();
-            self.candidates.push(TraversalCandidate {
-                source: TraversalCandidateSource::CurrentGeneration {
+            self.candidates.push(Candidate {
+                source: Source::CurrentGeneration {
                     scope: scope.clone(),
                 },
                 decision_scope: scope.clone(),
@@ -185,8 +267,8 @@ impl TraversalCandidates {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TraversalCandidate {
-    pub(crate) source: TraversalCandidateSource,
+pub(crate) struct Candidate {
+    pub(crate) source: Source,
     pub(crate) decision_scope: SelectionScope,
     pub(crate) selected_by_decision: bool,
     pub(crate) payload: EvaluationPayload,
@@ -195,10 +277,16 @@ pub(crate) struct TraversalCandidate {
     pub(crate) candidate_set_membership: Option<CandidateSetMembership>,
 }
 
-impl From<HistoryCandidate> for TraversalCandidate {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Item {
+    pub(crate) payload: EvaluationPayload,
+    pub(crate) source: Source,
+}
+
+impl From<HistoryCandidate> for Candidate {
     fn from(candidate: HistoryCandidate) -> Self {
         Self {
-            source: TraversalCandidateSource::History {
+            source: Source::History {
                 source: candidate.source,
             },
             decision_scope: candidate.decision_scope,
@@ -212,12 +300,12 @@ impl From<HistoryCandidate> for TraversalCandidate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TraversalCandidateSource {
+pub(crate) enum Source {
     History { source: HistoryCandidateSource },
     CurrentGeneration { scope: SelectionScope },
 }
 
-impl TraversalCandidateSource {
+impl Source {
     fn is_current_generation(&self) -> bool {
         matches!(self, Self::CurrentGeneration { .. })
     }
@@ -329,7 +417,7 @@ enum CandidateGrade {
     Excluded(SelectionProjectionFailure),
 }
 
-fn decision_grade(candidate: TraversalCandidate) -> Result<CandidateGrade, HistoryError> {
+fn decision_grade(candidate: Candidate) -> Result<CandidateGrade, HistoryError> {
     let subject = candidate.payload.candidate.clone();
     let exclude = |kind, detail: String| {
         SelectionProjectionFailure::committed(kind, Some(subject.clone()), Some(detail))
@@ -349,26 +437,26 @@ fn decision_grade(candidate: TraversalCandidate) -> Result<CandidateGrade, Histo
     if candidate.payload.selection_input.is_none() {
         return exclude(
             SelectionProjectionFailureKind::MissingSelectionInput,
-            "history_traversal: missing SelectionInput".to_string(),
+            "traversal: missing SelectionInput".to_string(),
         );
     }
     if !candidate.payload.verify_selection_input_binding()? {
         return exclude(
             SelectionProjectionFailureKind::SelectionInputBindingInvalid,
-            "history_traversal: SelectionInput hash binding invalid".to_string(),
+            "traversal: SelectionInput hash binding invalid".to_string(),
         );
     }
 
     let Some(root) = candidate.candidate_set_root.as_ref() else {
         return exclude(
             SelectionProjectionFailureKind::CandidateSetMembershipMissing,
-            "history_traversal: missing candidate-set root".to_string(),
+            "traversal: missing candidate-set root".to_string(),
         );
     };
     let Some(membership) = candidate.candidate_set_membership.as_ref() else {
         return exclude(
             SelectionProjectionFailureKind::CandidateSetMembershipMissing,
-            "history_traversal: missing candidate-set membership proof".to_string(),
+            "traversal: missing candidate-set membership proof".to_string(),
         );
     };
     if membership.candidate != candidate.payload.candidate
@@ -376,14 +464,13 @@ fn decision_grade(candidate: TraversalCandidate) -> Result<CandidateGrade, Histo
     {
         return exclude(
             SelectionProjectionFailureKind::CandidateSetPayloadHashMismatch,
-            "history_traversal: candidate-set membership does not bind this payload hash"
-                .to_string(),
+            "traversal: candidate-set membership does not bind this payload hash".to_string(),
         );
     }
     if !membership.proof.verify(root)? {
         return exclude(
             SelectionProjectionFailureKind::CandidateSetProofInvalid,
-            "history_traversal: candidate-set proof verification failed".to_string(),
+            "traversal: candidate-set proof verification failed".to_string(),
         );
     }
 
@@ -391,7 +478,7 @@ fn decision_grade(candidate: TraversalCandidate) -> Result<CandidateGrade, Histo
     if !grade.eligible {
         return exclude(
             SelectionProjectionFailureKind::DecisionGradeIneligible,
-            format!("history_traversal: {}", grade.identity_gaps.join(",")),
+            format!("traversal: {}", grade.identity_gaps.join(",")),
         );
     }
 
@@ -400,7 +487,7 @@ fn decision_grade(candidate: TraversalCandidate) -> Result<CandidateGrade, Histo
 
 fn selectable_decision(case: &CandidateCase<'_>) -> Option<SuccessorDecision> {
     let input = case.selection_input()?;
-    let mut decision = decide(input.clone());
+    let mut decision = decide_candidate(input.clone());
     if decision.outcome == SuccessorOutcome::Stop
         && input.branch_disposition == BranchDisposition::Reject
     {
@@ -419,7 +506,7 @@ struct PerformanceScore(i64);
 
 fn performance_score(case: CandidateCase<'_>) -> Option<PerformanceScore> {
     let input = case.selection_input()?;
-    let decision = decide(input.clone());
+    let decision = decide_candidate(input.clone());
     let mut score = match decision.outcome {
         SuccessorOutcome::Accepted => 10_000,
         SuccessorOutcome::ExploreFrom => 5_000,
@@ -506,6 +593,278 @@ impl TraversalScore {
     }
 }
 
+pub(crate) struct StrategySelection {
+    chosen: ChosenPayload,
+    rationale: Vec<String>,
+}
+
+struct ChosenPayload {
+    payload: EvaluationPayload,
+    decision: SuccessorDecision,
+    source: Source,
+}
+
+fn select_frontier_max(
+    items: &[Item],
+    child_counts: &BTreeMap<String, usize>,
+    seed: u64,
+    normalize_frontier: bool,
+) -> Result<Option<StrategySelection>, HistoryError> {
+    let max_performance = if normalize_frontier {
+        items
+            .iter()
+            .map(|item| CandidateCase::from_payload(&item.payload))
+            .filter_map(performance_score)
+            .max()
+    } else {
+        None
+    };
+
+    let mut best = None::<ScoredPayload>;
+    for (index, item) in items.iter().enumerate() {
+        let payload = item.payload.clone();
+        let case = CandidateCase::from_payload(&payload);
+        let Some(selected) = selectable_decision(&case) else {
+            continue;
+        };
+        if selected
+            .selection_policy_outcome()
+            .is_none_or(|outcome| !outcome.allows_successor())
+        {
+            continue;
+        }
+        let Some(score) = TraversalScore::for_case(&case, child_counts, max_performance) else {
+            continue;
+        };
+        let tie = tie_break_key(seed, index, &payload)?;
+        let scored = ScoredPayload {
+            payload,
+            score,
+            tie,
+            decision: selected,
+            source: item.source.clone(),
+        };
+        if best
+            .as_ref()
+            .is_none_or(|current| scored.orders_after(current))
+        {
+            best = Some(scored);
+        }
+    }
+
+    Ok(best.map(|best| {
+        let mut rationale = vec![
+            "traversal_strategy=frontier_max".to_string(),
+            format!("frontier_max_normalize_frontier={normalize_frontier}"),
+        ];
+        if let Some(max_performance) = max_performance {
+            rationale.push(format!(
+                "frontier_normalization=max_performance_score={}",
+                max_performance.0
+            ));
+        }
+        StrategySelection {
+            chosen: ChosenPayload {
+                payload: best.payload,
+                decision: best.decision,
+                source: best.source,
+            },
+            rationale,
+        }
+    }))
+}
+
+#[derive(Debug, Clone)]
+struct ScoreChildPropWeight {
+    index: usize,
+    performance: PerformanceScore,
+    child_count: usize,
+    alpha: f64,
+    exploitation: f64,
+    exploration: f64,
+    weight: f64,
+    decision: SuccessorDecision,
+}
+
+fn select_score_child_prop(
+    items: &[Item],
+    child_counts: &BTreeMap<String, usize>,
+    seed: u64,
+    top_m: usize,
+    lambda_millis: u32,
+) -> Result<Option<StrategySelection>, HistoryError> {
+    let weights = score_child_prop_weights(items, child_counts, top_m, lambda_millis);
+    if weights.is_empty() {
+        return Ok(None);
+    }
+
+    let total_weight: f64 = weights.iter().map(|weight| weight.weight).sum();
+    let sample = sample_unit(seed, items)?;
+    let selected = sample_weighted_index(&weights, total_weight, sample)
+        .unwrap_or_else(|| weights.last().expect("nonempty weights").index);
+    let weight = weights
+        .iter()
+        .find(|weight| weight.index == selected)
+        .expect("sampled weight");
+    let payload = items[selected].payload.clone();
+    let chosen = ChosenPayload {
+        payload,
+        decision: weight.decision.clone(),
+        source: items[selected].source.clone(),
+    };
+    let lambda = lambda_millis as f64 / 1_000.0;
+    let rationale = vec![
+        "traversal_strategy=score_child_prop".to_string(),
+        format!("score_child_prop_top_m={top_m}"),
+        format!("score_child_prop_lambda={lambda:.3}"),
+        format!("score_child_prop_total_weight={total_weight:.9}"),
+        format!("score_child_prop_sample={sample:.9}"),
+        format!("score_child_prop_selected_weight={:.9}", weight.weight),
+        format!(
+            "score_child_prop_selected_components=performance={},child_count={},alpha={:.9},exploitation={:.9},exploration={:.9}",
+            weight.performance.0,
+            weight.child_count,
+            weight.alpha,
+            weight.exploitation,
+            weight.exploration
+        ),
+    ];
+
+    Ok(Some(StrategySelection { chosen, rationale }))
+}
+
+fn score_child_prop_weights(
+    items: &[Item],
+    child_counts: &BTreeMap<String, usize>,
+    top_m: usize,
+    lambda_millis: u32,
+) -> Vec<ScoreChildPropWeight> {
+    let mut selectable = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let case = CandidateCase::from_payload(&item.payload);
+        let Some(decision) = selectable_decision(&case) else {
+            continue;
+        };
+        if decision
+            .selection_policy_outcome()
+            .is_none_or(|outcome| !outcome.allows_successor())
+        {
+            continue;
+        }
+        let Some(performance) = performance_score(case) else {
+            continue;
+        };
+        let Some(input) = case.selection_input() else {
+            continue;
+        };
+        let child_count = child_counts
+            .get(&input.candidate.node_id)
+            .copied()
+            .unwrap_or_default();
+        selectable.push((index, performance, child_count, decision));
+    }
+
+    if selectable.is_empty() {
+        return Vec::new();
+    }
+
+    let min = selectable
+        .iter()
+        .map(|(_, performance, _, _)| performance.0)
+        .min()
+        .expect("nonempty selectable");
+    let max = selectable
+        .iter()
+        .map(|(_, performance, _, _)| performance.0)
+        .max()
+        .expect("nonempty selectable");
+    let span = max.saturating_sub(min);
+    let alpha = |performance: PerformanceScore| {
+        if span == 0 {
+            0.5
+        } else {
+            (performance.0 - min) as f64 / span as f64
+        }
+    };
+
+    let mut ranked_alpha: Vec<f64> = selectable
+        .iter()
+        .map(|(_, performance, _, _)| alpha(*performance))
+        .collect();
+    ranked_alpha.sort_by(|a, b| b.total_cmp(a));
+    let frontier_count = top_m.max(1).min(ranked_alpha.len());
+    let alpha_mid = ranked_alpha
+        .iter()
+        .take(frontier_count)
+        .copied()
+        .sum::<f64>()
+        / frontier_count as f64;
+    let lambda = lambda_millis as f64 / 1_000.0;
+
+    selectable
+        .into_iter()
+        .map(|(index, performance, child_count, decision)| {
+            let alpha = alpha(performance);
+            let exploitation = sigmoid(lambda * (alpha - alpha_mid));
+            let exploration = 1.0 / (1.0 + child_count as f64);
+            let weight = exploitation * exploration;
+            ScoreChildPropWeight {
+                index,
+                performance,
+                child_count,
+                alpha,
+                exploitation,
+                exploration,
+                weight,
+                decision,
+            }
+        })
+        .collect()
+}
+
+fn sigmoid(x: f64) -> f64 {
+    1.0 / (1.0 + (-x).exp())
+}
+
+fn sample_unit(seed: u64, items: &[Item]) -> Result<f64, HistoryError> {
+    let mut hasher = Sha256::new();
+    hasher.update(seed.to_le_bytes());
+    hasher.update(b"successor-selection:history-traversal:score-child-prop:v1");
+    for item in items {
+        let payload = &item.payload;
+        hasher.update(payload.payload_hash()?.as_str().as_bytes());
+        hasher.update(payload.candidate.as_str().as_bytes());
+    }
+    let digest: [u8; 32] = hasher.finalize().into();
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    let value = u64::from_le_bytes(bytes);
+    Ok(value as f64 / (u64::MAX as f64 + 1.0))
+}
+
+fn sample_weighted_index(
+    weights: &[ScoreChildPropWeight],
+    total_weight: f64,
+    sample: f64,
+) -> Option<usize> {
+    if total_weight <= 0.0 || !total_weight.is_finite() {
+        let slot = (sample * weights.len() as f64).floor() as usize;
+        return weights
+            .get(slot.min(weights.len().saturating_sub(1)))
+            .map(|weight| weight.index);
+    }
+
+    let threshold = sample * total_weight;
+    let mut cumulative = 0.0;
+    for weight in weights {
+        cumulative += weight.weight;
+        if threshold <= cumulative {
+            return Some(weight.index);
+        }
+    }
+    weights.last().map(|weight| weight.index)
+}
+
 fn run_snapshot_has_protocol(snapshot: &serde_json::Value) -> bool {
     let Some(protocol) = snapshot.get("protocol") else {
         return false;
@@ -565,7 +924,7 @@ struct ScoredPayload {
     score: TraversalScore,
     tie: [u8; 32],
     decision: SuccessorDecision,
-    source: TraversalCandidateSource,
+    source: Source,
 }
 
 impl ScoredPayload {
@@ -627,7 +986,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn history_traversal_excludes_missing_selection_input() {
+    fn traversal_excludes_missing_selection_input() {
         let candidates = HistoryCandidates {
             scope: SelectionScope::all_admitted_candidates(),
             candidates: vec![candidate_from_payload(payload_without_selection_input(
@@ -637,14 +996,13 @@ mod tests {
             ))],
         };
 
-        let selection = decide_history_traversal(candidates, HistoryTraversalConfig::default())
-            .expect("traversal");
+        let selection = decide_history(candidates, 0, StrategyKind::default()).expect("traversal");
 
         assert!(selection.is_none());
     }
 
     #[test]
-    fn history_traversal_excludes_invalid_candidate_set_membership() {
+    fn traversal_excludes_invalid_candidate_set_membership() {
         let mut candidate = candidate_from_payload(decision_grade_payload(
             "node-a",
             "branch-a",
@@ -655,12 +1013,13 @@ mod tests {
         ));
         candidate.candidate_set_membership = None;
 
-        let selection = decide_history_traversal(
+        let selection = decide_history(
             HistoryCandidates {
                 scope: SelectionScope::all_admitted_candidates(),
                 candidates: vec![candidate],
             },
-            HistoryTraversalConfig::default(),
+            0,
+            StrategyKind::default(),
         )
         .expect("traversal");
 
@@ -668,7 +1027,7 @@ mod tests {
     }
 
     #[test]
-    fn history_traversal_excludes_missing_candidate_artifact_before_selection() {
+    fn traversal_excludes_missing_candidate_artifact_before_selection() {
         let mut payload = decision_grade_payload(
             "node-a",
             "branch-a",
@@ -678,7 +1037,7 @@ mod tests {
             metrics(true, true, 0),
         );
         payload.artifact = None;
-        let candidate = TraversalCandidate::from(candidate_from_payload(payload));
+        let candidate = Candidate::from(candidate_from_payload(payload));
 
         let grade = decision_grade(candidate).expect("candidate grade");
 
@@ -704,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn history_traversal_excludes_non_decision_grade_evidence() {
+    fn traversal_excludes_non_decision_grade_evidence() {
         let candidate = candidate_from_payload(payload_without_sealed_evaluation(
             "node-a",
             "branch-a",
@@ -713,12 +1072,13 @@ mod tests {
             metrics(true, true, 0),
         ));
 
-        let selection = decide_history_traversal(
+        let selection = decide_history(
             HistoryCandidates {
                 scope: SelectionScope::all_admitted_candidates(),
                 candidates: vec![candidate],
             },
-            HistoryTraversalConfig::default(),
+            0,
+            StrategyKind::default(),
         )
         .expect("traversal");
 
@@ -726,7 +1086,7 @@ mod tests {
     }
 
     #[test]
-    fn history_traversal_scores_high_performing_candidates_above_weak_candidates() {
+    fn traversal_scores_high_performing_candidates_above_weak_candidates() {
         let weak = candidate_from_payload(decision_grade_payload(
             "node-weak",
             "branch-weak",
@@ -744,12 +1104,13 @@ mod tests {
             metrics(true, true, 0),
         ));
 
-        let selection = decide_history_traversal(
+        let selection = decide_history(
             HistoryCandidates {
                 scope: SelectionScope::all_admitted_candidates(),
                 candidates: vec![weak, strong],
             },
-            HistoryTraversalConfig::default(),
+            0,
+            StrategyKind::default(),
         )
         .expect("traversal")
         .expect("selection");
@@ -783,13 +1144,13 @@ mod tests {
             metrics(true, true, 0),
         );
 
-        let candidates = TraversalCandidates::from_history(history)
+        let candidates = Candidates::from_history(history)
             .with_current_generation(
                 SelectionScope::new("generation_local:current"),
                 vec![current],
             )
             .expect("current generation candidates");
-        let selection = decide_traversal(candidates, HistoryTraversalConfig::default())
+        let selection = decide(candidates, 0, StrategyKind::default())
             .expect("traversal")
             .expect("selection");
 
@@ -852,7 +1213,7 @@ mod tests {
     }
 
     #[test]
-    fn history_traversal_downweights_over_expanded_candidates() {
+    fn traversal_downweights_over_expanded_candidates() {
         let expanded = candidate_from_payload(decision_grade_payload(
             "expanded",
             "branch-expanded",
@@ -878,12 +1239,13 @@ mod tests {
             metrics(true, true, 0),
         ));
 
-        let selection = decide_history_traversal(
+        let selection = decide_history(
             HistoryCandidates {
                 scope: SelectionScope::all_admitted_candidates(),
                 candidates: vec![expanded, child_of_expanded, frontier],
             },
-            HistoryTraversalConfig::default(),
+            0,
+            StrategyKind::default(),
         )
         .expect("traversal")
         .expect("selection");
@@ -892,7 +1254,7 @@ mod tests {
     }
 
     #[test]
-    fn history_traversal_seed_is_replayable_for_same_candidate_set() {
+    fn traversal_seed_is_replayable_for_same_candidate_set() {
         let candidates = HistoryCandidates {
             scope: SelectionScope::all_admitted_candidates(),
             candidates: vec![
@@ -915,29 +1277,115 @@ mod tests {
             ],
         };
 
-        let first = decide_history_traversal(
-            candidates.clone(),
-            HistoryTraversalConfig {
-                seed: 42,
-                normalize_frontier: true,
-            },
-        )
-        .expect("first")
-        .expect("first selection");
-        let second = decide_history_traversal(
-            candidates,
-            HistoryTraversalConfig {
-                seed: 42,
-                normalize_frontier: true,
-            },
-        )
-        .expect("second")
-        .expect("second selection");
+        let first = decide_history(candidates.clone(), 42, StrategyKind::default())
+            .expect("first")
+            .expect("first selection");
+        let second = decide_history(candidates, 42, StrategyKind::default())
+            .expect("second")
+            .expect("second selection");
 
         assert_eq!(
             first.decision.candidate_node_id,
             second.decision.candidate_node_id
         );
+    }
+
+    #[test]
+    fn score_child_prop_weights_follow_sigmoid_and_child_penalty() {
+        let expanded = decision_grade_payload(
+            "expanded",
+            "branch-expanded",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let frontier = decision_grade_payload(
+            "frontier",
+            "branch-frontier",
+            None,
+            1,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let items = vec![traversal_item(expanded), traversal_item(frontier)];
+        let mut child_counts = BTreeMap::new();
+        child_counts.insert("expanded".to_string(), 1);
+
+        let weights = score_child_prop_weights(&items, &child_counts, 3, 10_000);
+
+        assert_eq!(weights.len(), 2);
+        let expanded = weights.iter().find(|weight| weight.index == 0).unwrap();
+        let frontier = weights.iter().find(|weight| weight.index == 1).unwrap();
+        assert!((expanded.exploitation - frontier.exploitation).abs() < f64::EPSILON);
+        assert_eq!(expanded.exploration, 0.5);
+        assert_eq!(frontier.exploration, 1.0);
+        assert!(frontier.weight > expanded.weight);
+    }
+
+    #[test]
+    fn score_child_prop_sampling_is_replayable_for_same_candidate_set() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![
+                candidate_from_payload(decision_grade_payload(
+                    "node-a",
+                    "branch-a",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "node-b",
+                    "branch-b",
+                    None,
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(false, true, 0),
+                )),
+            ],
+        };
+        let first = decide_history(candidates.clone(), 99, StrategyKind::score_child_prop())
+            .expect("first")
+            .expect("first selection");
+        let second = decide_history(candidates, 99, StrategyKind::score_child_prop())
+            .expect("second")
+            .expect("second selection");
+
+        assert_eq!(
+            first.decision.candidate_node_id,
+            second.decision.candidate_node_id
+        );
+        assert!(
+            first
+                .decision
+                .rationale
+                .iter()
+                .any(|line| line == "traversal_strategy=score_child_prop")
+        );
+    }
+
+    #[test]
+    fn traversal_trait_accepts_concrete_strategy_carrier() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(decision_grade_payload(
+                "node-a",
+                "branch-a",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ))],
+        };
+
+        let selection = Candidates::from_history(candidates)
+            .traverse(7, ScoreChildProp::default())
+            .expect("traversal")
+            .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "node-a");
     }
 
     fn candidate_from_payload(payload: EvaluationPayload) -> HistoryCandidate {
@@ -992,6 +1440,15 @@ mod tests {
             candidate_set_membership: entry
                 .candidate_set_membership(&entry.considered[0].candidate)
                 .cloned(),
+        }
+    }
+
+    fn traversal_item(payload: EvaluationPayload) -> Item {
+        Item {
+            payload,
+            source: Source::CurrentGeneration {
+                scope: SelectionScope::new("generation_local:test"),
+            },
         }
     }
 

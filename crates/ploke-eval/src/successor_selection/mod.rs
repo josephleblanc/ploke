@@ -25,7 +25,6 @@ pub mod traversal;
 pub(crate) use decision::SuccessorDecision;
 pub(crate) use evidence::{RunComparison, SelectionInput};
 pub(crate) use registry::SelectionRegistry;
-pub(crate) use traversal::HistoryTraversalConfig;
 
 pub(crate) const PROCEDURE_ID: &str = "successor-selection:v1";
 pub(crate) const HISTORY_TRAVERSAL_PROCEDURE_ID: &str = "successor-selection:history-traversal:v1";

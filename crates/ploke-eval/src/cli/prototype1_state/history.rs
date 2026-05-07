@@ -3403,16 +3403,17 @@ pub(crate) struct SelectionDecisionEntry {
 
     /// Replay parameters for History-backed traversal policies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) traversal: Option<SelectionTraversalEvidence>,
+    pub(crate) traversal: Option<TraversalEvidence>,
 
     /// Decision result under `procedure_or_policy`.
     pub(crate) decision: crate::successor_selection::SuccessorDecision,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct SelectionTraversalEvidence {
+pub(crate) struct TraversalEvidence {
     pub(crate) seed: u64,
-    pub(crate) normalize_frontier: bool,
+    #[serde(default)]
+    pub(crate) strategy: crate::successor_selection::traversal::StrategyKind,
 }
 
 impl SelectionDecisionEntry {
@@ -3441,7 +3442,7 @@ impl SelectionDecisionEntry {
         selected_candidate: Option<SubjectRef>,
         considered: Vec<EvaluationPayload>,
         projection_failures: Vec<SelectionProjectionFailure>,
-        traversal: Option<SelectionTraversalEvidence>,
+        traversal: Option<TraversalEvidence>,
         decision: crate::successor_selection::SuccessorDecision,
     ) -> Result<Self, HistoryError> {
         Self::validate_decision(
@@ -5110,6 +5111,7 @@ struct Private;
 mod tests {
     use super::super::inner::{Crown, crown};
     use super::*;
+    use crate::successor_selection::traversal::StrategyKind;
 
     fn at(ms: i64) -> RecordedAt {
         RecordedAt(ms)
@@ -5766,7 +5768,7 @@ mod tests {
     }
 
     #[test]
-    fn history_traversal_selector_seals_cross_generation_considered_set() {
+    fn traversal_selector_seals_cross_generation_considered_set() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let store = FsBlockStore::new(tmp.path().join("history"));
         let lineage = LineageId::new("lineage:a");
@@ -5802,12 +5804,10 @@ mod tests {
 
         let history = History::new(store);
         let scope = SelectionScope::all_admitted_candidates();
-        let traversal = crate::successor_selection::traversal::decide_history_traversal(
+        let traversal = crate::successor_selection::traversal::decide_history(
             history.candidates(&scope).expect("history candidates"),
-            crate::successor_selection::HistoryTraversalConfig {
-                seed: 7,
-                normalize_frontier: true,
-            },
+            7,
+            StrategyKind::default(),
         )
         .expect("traversal decision")
         .expect("selected candidate");
@@ -5818,9 +5818,9 @@ mod tests {
             Some(traversal.selected_payload.candidate.clone()),
             traversal.considered,
             traversal.projection_failures,
-            Some(SelectionTraversalEvidence {
+            Some(TraversalEvidence {
                 seed: 7,
-                normalize_frontier: true,
+                strategy: StrategyKind::default(),
             }),
             traversal.decision,
         )
@@ -5885,14 +5885,12 @@ mod tests {
         store.append(&state1, &sealed1).expect("append gen1");
 
         let scope = SelectionScope::all_admitted_candidates();
-        let first_traversal = crate::successor_selection::traversal::decide_history_traversal(
+        let first_traversal = crate::successor_selection::traversal::decide_history(
             History::new(store.clone())
                 .candidates(&scope)
                 .expect("initial history candidates"),
-            crate::successor_selection::HistoryTraversalConfig {
-                seed: 7,
-                normalize_frontier: true,
-            },
+            7,
+            StrategyKind::default(),
         )
         .expect("first traversal decision")
         .expect("first selected candidate");
@@ -5904,9 +5902,9 @@ mod tests {
             Some(first_traversal.selected_payload.candidate.clone()),
             first_traversal.considered.clone(),
             first_traversal.projection_failures.clone(),
-            Some(SelectionTraversalEvidence {
+            Some(TraversalEvidence {
                 seed: 7,
-                normalize_frontier: true,
+                strategy: StrategyKind::default(),
             }),
             first_traversal.decision.clone(),
         )
@@ -5933,12 +5931,10 @@ mod tests {
             "traversal decisions must not replay their considered set as new candidates"
         );
 
-        let second_traversal = crate::successor_selection::traversal::decide_history_traversal(
+        let second_traversal = crate::successor_selection::traversal::decide_history(
             candidates_after_traversal,
-            crate::successor_selection::HistoryTraversalConfig {
-                seed: 7,
-                normalize_frontier: true,
-            },
+            7,
+            StrategyKind::default(),
         )
         .expect("second traversal decision")
         .expect("second selected candidate");
@@ -5949,9 +5945,9 @@ mod tests {
             Some(second_traversal.selected_payload.candidate.clone()),
             second_traversal.considered,
             second_traversal.projection_failures,
-            Some(SelectionTraversalEvidence {
+            Some(TraversalEvidence {
                 seed: 7,
-                normalize_frontier: true,
+                strategy: StrategyKind::default(),
             }),
             second_traversal.decision,
         )

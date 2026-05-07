@@ -57,7 +57,7 @@ use crate::{
                 SealedBranchEvidence, SealedCandidateEvidence, SealedComparedRunEvidence,
                 SealedEvaluationEvidence, SealedEvidenceCitation, SealedRuntimeEvidence,
                 SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
-                SelectionScope, SelectionTraversalEvidence, SubjectRef,
+                SelectionScope, SubjectRef, TraversalEvidence,
             },
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -109,8 +109,8 @@ use crate::{
     },
     spec::PrepareError,
     successor_selection::{
-        self, CandidateRef, HistoryTraversalConfig, RunComparison, SelectionInput,
-        SuccessorDecision,
+        self, CandidateRef, RunComparison, SelectionInput, SuccessorDecision,
+        traversal::{self as traversal_selection, StrategyKind},
     },
 };
 
@@ -357,7 +357,7 @@ struct SelectionSealMaterial {
     selected_candidate: SubjectRef,
     considered: Vec<EvaluationPayload>,
     projection_failures: Vec<SelectionProjectionFailure>,
-    traversal: Option<SelectionTraversalEvidence>,
+    traversal: Option<TraversalEvidence>,
     selected_from_generation_outcomes: bool,
 }
 
@@ -5691,9 +5691,10 @@ impl<'a> ParentSelection<'a> {
         })
     }
 
-    fn history_traversal(
+    fn select_from_history(
         &self,
         seed: u64,
+        strategy: StrategyKind,
     ) -> Result<Option<(SuccessorDecision, SelectionSealMaterial)>, PrepareError> {
         let scope = SelectionScope::all_admitted_candidates();
         let current_scope =
@@ -5707,21 +5708,15 @@ impl<'a> ParentSelection<'a> {
                     detail: format!("failed to load History traversal candidates: {err}"),
                 })?;
         let current = self.current_generation_candidates()?;
-        let traversal_candidates =
-            successor_selection::traversal::TraversalCandidates::from_history(candidates)
-                .with_current_generation(current_scope, current.considered)
-                .map_err(|err| PrepareError::InvalidBatchSelection {
-                    detail: format!("failed to add current generation traversal candidates: {err}"),
-                })?;
-        let config = HistoryTraversalConfig {
-            seed,
-            normalize_frontier: true,
-        };
-        let Some(selection) =
-            successor_selection::traversal::decide_traversal(traversal_candidates, config)
-                .map_err(|err| PrepareError::InvalidBatchSelection {
-                    detail: format!("failed to decide History traversal successor: {err}"),
-                })?
+        let traversal_candidates = traversal_selection::Candidates::from_history(candidates)
+            .with_current_generation(current_scope, current.considered)
+            .map_err(|err| PrepareError::InvalidBatchSelection {
+                detail: format!("failed to add current generation traversal candidates: {err}"),
+            })?;
+        let Some(selection) = traversal_selection::decide(traversal_candidates, seed, strategy)
+            .map_err(|err| PrepareError::InvalidBatchSelection {
+                detail: format!("failed to decide History traversal successor: {err}"),
+            })?
         else {
             return Ok(None);
         };
@@ -5735,10 +5730,7 @@ impl<'a> ParentSelection<'a> {
             selected_candidate: selection.selected_payload.candidate.clone(),
             considered: selection.considered,
             projection_failures,
-            traversal: Some(SelectionTraversalEvidence {
-                seed,
-                normalize_frontier: true,
-            }),
+            traversal: Some(TraversalEvidence { seed, strategy }),
             selected_from_generation_outcomes: selection.selected_from_current_generation,
         };
         Ok(Some((selection.decision, material)))
@@ -6355,8 +6347,14 @@ impl Prototype1StateCommand {
                 Prototype1SuccessorSelection::GenerationLocal => {
                     generation_selection(&child_outcomes).map(|decision| (decision, None))
                 }
-                Prototype1SuccessorSelection::HistoryTraversal => parent_selection
-                    .history_traversal(self.successor_selection_seed)?
+                Prototype1SuccessorSelection::HistoryFrontierMax => parent_selection
+                    .select_from_history(self.successor_selection_seed, StrategyKind::default())?
+                    .map(|(decision, material)| (decision, Some(material))),
+                Prototype1SuccessorSelection::HistoryScoreChildProp => parent_selection
+                    .select_from_history(
+                        self.successor_selection_seed,
+                        StrategyKind::score_child_prop(),
+                    )?
                     .map(|(decision, material)| (decision, Some(material))),
             }
         } else {
@@ -8423,9 +8421,9 @@ mod tests {
             selected_candidate: selected,
             considered: vec![payload],
             projection_failures: Vec::new(),
-            traversal: Some(SelectionTraversalEvidence {
+            traversal: Some(TraversalEvidence {
                 seed: 1,
-                normalize_frontier: true,
+                strategy: StrategyKind::default(),
             }),
             selected_from_generation_outcomes: false,
         };
@@ -8497,9 +8495,9 @@ mod tests {
             selected_candidate: selected,
             considered: vec![payload],
             projection_failures: Vec::new(),
-            traversal: Some(SelectionTraversalEvidence {
+            traversal: Some(TraversalEvidence {
                 seed: 1,
-                normalize_frontier: true,
+                strategy: StrategyKind::default(),
             }),
             selected_from_generation_outcomes: false,
         };
@@ -8567,9 +8565,9 @@ mod tests {
             selected_candidate: selected,
             considered: vec![payload],
             projection_failures: Vec::new(),
-            traversal: Some(SelectionTraversalEvidence {
+            traversal: Some(TraversalEvidence {
                 seed: 1,
-                normalize_frontier: true,
+                strategy: StrategyKind::default(),
             }),
             selected_from_generation_outcomes: false,
         };

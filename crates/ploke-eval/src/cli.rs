@@ -428,7 +428,8 @@ pub enum Prototype1StateStopAfter {
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1SuccessorSelection {
     GenerationLocal,
-    HistoryTraversal,
+    HistoryFrontierMax,
+    HistoryScoreChildProp,
 }
 
 #[derive(Debug, Parser)]
