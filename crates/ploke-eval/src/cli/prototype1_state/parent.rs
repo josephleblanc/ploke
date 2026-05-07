@@ -946,6 +946,13 @@ fn node_context(manifest_path: &Path, node: &Prototype1NodeRecord) -> Prototype1
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use tracing::field::{Field, Visit};
+    use tracing::{Event, Id, Subscriber};
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::registry::LookupSpan;
+    use tracing_subscriber::{Layer, Registry};
+
     use crate::{
         cli::prototype1_state::{
             history::{ActorRef, ArtifactRef, EvidenceRef, SealBlock, SuccessorRef},
@@ -953,6 +960,108 @@ mod tests {
         },
         intervention::{PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeStatus},
     };
+
+    #[derive(Clone, Default)]
+    struct TraceLines(Arc<Mutex<Vec<String>>>);
+
+    impl TraceLines {
+        fn push(&self, line: String) {
+            self.0.lock().expect("trace lock").push(line);
+        }
+
+        fn snapshot(&self) -> Vec<String> {
+            self.0.lock().expect("trace lock").clone()
+        }
+    }
+
+    #[derive(Default)]
+    struct TraceFields {
+        values: Vec<String>,
+    }
+
+    impl TraceFields {
+        fn push(&mut self, field: &Field, value: impl Into<String>) {
+            self.values
+                .push(format!("{}={}", field.name(), value.into()));
+        }
+
+        fn finish(self) -> String {
+            self.values.join(" ")
+        }
+    }
+
+    impl Visit for TraceFields {
+        fn record_bool(&mut self, field: &Field, value: bool) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_i64(&mut self, field: &Field, value: i64) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.push(field, format!("{value:?}"));
+        }
+    }
+
+    struct TraceLayer {
+        lines: TraceLines,
+    }
+
+    impl<S> Layer<S> for TraceLayer
+    where
+        S: Subscriber + for<'span> LookupSpan<'span>,
+    {
+        fn on_new_span(
+            &self,
+            attrs: &tracing::span::Attributes<'_>,
+            _id: &Id,
+            _ctx: Context<'_, S>,
+        ) {
+            let mut fields = TraceFields::default();
+            attrs.record(&mut fields);
+            self.lines.push(format!(
+                "span:{} {}",
+                attrs.metadata().name(),
+                fields.finish()
+            ));
+        }
+
+        fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+            let mut fields = TraceFields::default();
+            event.record(&mut fields);
+            self.lines.push(format!(
+                "event:{} {}",
+                event.metadata().target(),
+                fields.finish()
+            ));
+        }
+    }
+
+    fn collect_traces<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+        let lines = TraceLines::default();
+        let subscriber = Registry::default().with(TraceLayer {
+            lines: lines.clone(),
+        });
+        let guard = tracing::subscriber::set_default(subscriber);
+        let result = f();
+        drop(guard);
+        (result, lines.snapshot())
+    }
+
+    fn trace_contains(lines: &[String], needles: &[&str]) -> bool {
+        lines
+            .iter()
+            .any(|line| needles.iter().all(|needle| line.contains(needle)))
+    }
 
     fn identity(node_id: &str, generation: u32) -> ParentIdentity {
         ParentIdentity {
@@ -1051,6 +1160,31 @@ mod tests {
     fn child_files(parent: &ParentIdentity, child: Prototype1NodeRecord) -> ChildFiles {
         let resolved = resolved_for(&child);
         ChildFiles::from_resolved(&parent.campaign_id, child, resolved, false)
+    }
+
+    #[test]
+    fn parent_planning_transition_emits_authority_trace() {
+        let parent = parent("parent-a", 0);
+
+        let (_planned, trace) = collect_traces(|| parent.planned_from_locked_child_plan());
+
+        assert!(trace_contains(
+            &trace,
+            &[
+                "transition=Parent<Ready>->Parent<Planned>",
+                "authority=parent_broadcast_channel",
+                "role=parent",
+                "node_id=parent-a",
+            ],
+        ));
+        assert!(trace_contains(
+            &trace,
+            &[
+                "locked parent child-plan broadcast",
+                "campaign_id=campaign",
+                "branch_id=branch-parent-a",
+            ],
+        ));
     }
 
     #[test]
