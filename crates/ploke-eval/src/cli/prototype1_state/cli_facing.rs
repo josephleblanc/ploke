@@ -33,8 +33,9 @@ use crate::{
         Prototype1MonitorReportCommand, Prototype1MonitorSubcommand,
         Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand, Prototype1RunnerCommand,
         Prototype1ScoreCommand, Prototype1StateCommand, Prototype1StateStopAfter,
-        Prototype1SuccessorSelection, TimingTrace, advance_eval_closure, advance_protocol_closure,
-        default_batch_id, pending_prototype1_stages, persist_intervention_apply_for_record,
+        Prototype1SuccessorSelection, Prototype1TraversalMetrics, TimingTrace,
+        advance_eval_closure, advance_protocol_closure, default_batch_id,
+        pending_prototype1_stages, persist_intervention_apply_for_record,
         persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
         print_issue_case_block,
         prototype1_process::{
@@ -6344,18 +6345,22 @@ impl Prototype1StateCommand {
         .await?;
         let parent_selection =
             ParentSelection::new(&manifest_path, &parent_identity, &child_outcomes);
+        let metric_inputs = traversal_metric_inputs(self.successor_selection_metrics);
         let selection = if self.stop_after == Prototype1StateStopAfter::Complete {
             match self.successor_selection {
                 Prototype1SuccessorSelection::GenerationLocal => {
                     generation_selection(&child_outcomes).map(|decision| (decision, None))
                 }
                 Prototype1SuccessorSelection::HistoryFrontierMax => parent_selection
-                    .select_from_history(self.successor_selection_seed, StrategyKind::default())?
+                    .select_from_history(
+                        self.successor_selection_seed,
+                        StrategyKind::default().with_metrics(metric_inputs),
+                    )?
                     .map(|(decision, material)| (decision, Some(material))),
                 Prototype1SuccessorSelection::HistoryScoreChildProp => parent_selection
                     .select_from_history(
                         self.successor_selection_seed,
-                        StrategyKind::score_child_prop(),
+                        StrategyKind::score_child_prop().with_metrics(metric_inputs),
                     )?
                     .map(|(decision, material)| (decision, Some(material))),
             }
@@ -6573,6 +6578,15 @@ impl Prototype1StateCommand {
             )?;
         }
         Ok(())
+    }
+}
+
+fn traversal_metric_inputs(input: Prototype1TraversalMetrics) -> crate::metric::Inputs {
+    match input {
+        Prototype1TraversalMetrics::Operational => crate::metric::Inputs::Operational,
+        Prototype1TraversalMetrics::OperationalAndProtocol => {
+            crate::metric::Inputs::OperationalAndProtocol
+        }
     }
 }
 
@@ -8125,6 +8139,7 @@ mod tests {
             stop_after: Prototype1StateStopAfter::Complete,
             successor_selection: Prototype1SuccessorSelection::GenerationLocal,
             successor_selection_seed: 0,
+            successor_selection_metrics: Prototype1TraversalMetrics::Operational,
             format: InspectOutputFormat::Table,
         }
     }

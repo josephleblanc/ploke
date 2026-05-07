@@ -432,6 +432,13 @@ pub enum Prototype1SuccessorSelection {
     HistoryScoreChildProp,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1TraversalMetrics {
+    Operational,
+    OperationalAndProtocol,
+}
+
 #[derive(Debug, Parser)]
 #[command(about = "Run the typed Prototype 1 state transitions for the active parent checkout")]
 pub struct Prototype1StateCommand {
@@ -473,6 +480,10 @@ pub struct Prototype1StateCommand {
     /// Replay seed committed by History-backed traversal selection.
     #[arg(long, default_value_t = 0)]
     pub successor_selection_seed: u64,
+
+    /// Metric-bearing states used by History-backed traversal scoring.
+    #[arg(long, value_enum, default_value_t = Prototype1TraversalMetrics::Operational)]
+    pub successor_selection_metrics: Prototype1TraversalMetrics,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,

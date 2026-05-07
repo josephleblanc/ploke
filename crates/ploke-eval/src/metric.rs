@@ -7,6 +7,25 @@ use crate::protocol::protocol_aggregate::{
     ProtocolAggregate, ProtocolDerivedMetrics, ProtocolReviewSignals,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Inputs {
+    Operational,
+    OperationalAndProtocol,
+}
+
+impl Default for Inputs {
+    fn default() -> Self {
+        Self::Operational
+    }
+}
+
+impl Inputs {
+    pub(crate) fn includes_protocol(self) -> bool {
+        matches!(self, Self::OperationalAndProtocol)
+    }
+}
+
 pub(crate) type Operational = OperationalRunMetrics;
 
 pub(crate) trait Summary {

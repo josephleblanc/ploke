@@ -1,3 +1,10 @@
+// TODO(prototype1-history-traversal): split this file by responsibility before
+// adding more traversal behavior. The current root carries strategy definitions,
+// History candidate projection/filtering, candidate accessors, score assembly,
+// sealed decision material, and tests. Move toward modules such as `strategy`,
+// `candidate`, `score`, and `history` so new scoring sources do not turn this
+// file into another flattened catch-all.
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -16,19 +23,48 @@ use crate::{
         SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope, SubjectRef,
     },
     intervention::Prototype1SelectionPolicyOutcome,
-    metric::Summary,
+    metric::{self, Summary},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum StrategyKind {
-    FrontierMax { normalize_frontier: bool },
-    ScoreChildProp { top_m: usize, lambda_millis: u32 },
+    FrontierMax {
+        normalize_frontier: bool,
+        #[serde(default)]
+        metrics: metric::Inputs,
+    },
+    ScoreChildProp {
+        top_m: usize,
+        lambda_millis: u32,
+        #[serde(default)]
+        metrics: metric::Inputs,
+    },
 }
 
 impl StrategyKind {
     pub(crate) fn score_child_prop() -> Self {
         ScoreChildProp::default().evidence()
+    }
+
+    pub(crate) fn with_metrics(self, metrics: metric::Inputs) -> Self {
+        match self {
+            Self::FrontierMax {
+                normalize_frontier, ..
+            } => Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+            },
+            Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                ..
+            } => Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+            },
+        }
     }
 }
 
@@ -36,6 +72,7 @@ impl Default for StrategyKind {
     fn default() -> Self {
         Self::FrontierMax {
             normalize_frontier: true,
+            metrics: metric::Inputs::default(),
         }
     }
 }
@@ -43,12 +80,14 @@ impl Default for StrategyKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FrontierMax {
     normalize_frontier: bool,
+    metrics: metric::Inputs,
 }
 
 impl Default for FrontierMax {
     fn default() -> Self {
         Self {
             normalize_frontier: true,
+            metrics: metric::Inputs::default(),
         }
     }
 }
@@ -57,6 +96,7 @@ impl Default for FrontierMax {
 pub(crate) struct ScoreChildProp {
     top_m: usize,
     lambda_millis: u32,
+    metrics: metric::Inputs,
 }
 
 impl Default for ScoreChildProp {
@@ -64,6 +104,7 @@ impl Default for ScoreChildProp {
         Self {
             top_m: 3,
             lambda_millis: 10_000,
+            metrics: metric::Inputs::default(),
         }
     }
 }
@@ -87,6 +128,7 @@ impl Strategy for FrontierMax {
     fn evidence(self) -> StrategyKind {
         StrategyKind::FrontierMax {
             normalize_frontier: self.normalize_frontier,
+            metrics: self.metrics,
         }
     }
 
@@ -96,7 +138,13 @@ impl Strategy for FrontierMax {
         child_counts: &BTreeMap<String, usize>,
         seed: u64,
     ) -> Result<Option<StrategySelection>, HistoryError> {
-        select_frontier_max(items, child_counts, seed, self.normalize_frontier)
+        select_frontier_max(
+            items,
+            child_counts,
+            seed,
+            self.normalize_frontier,
+            self.metrics,
+        )
     }
 }
 
@@ -107,6 +155,7 @@ impl Strategy for ScoreChildProp {
         StrategyKind::ScoreChildProp {
             top_m: self.top_m,
             lambda_millis: self.lambda_millis,
+            metrics: self.metrics,
         }
     }
 
@@ -116,7 +165,14 @@ impl Strategy for ScoreChildProp {
         child_counts: &BTreeMap<String, usize>,
         seed: u64,
     ) -> Result<Option<StrategySelection>, HistoryError> {
-        select_score_child_prop(items, child_counts, seed, self.top_m, self.lambda_millis)
+        select_score_child_prop(
+            items,
+            child_counts,
+            seed,
+            self.top_m,
+            self.lambda_millis,
+            self.metrics,
+        )
     }
 }
 
@@ -155,17 +211,26 @@ pub(crate) fn select(
     strategy: StrategyKind,
 ) -> Result<Option<Selection>, HistoryError> {
     match strategy {
-        StrategyKind::FrontierMax { normalize_frontier } => {
-            candidates.traverse(seed, FrontierMax { normalize_frontier })
-        }
+        StrategyKind::FrontierMax {
+            normalize_frontier,
+            metrics,
+        } => candidates.traverse(
+            seed,
+            FrontierMax {
+                normalize_frontier,
+                metrics,
+            },
+        ),
         StrategyKind::ScoreChildProp {
             top_m,
             lambda_millis,
+            metrics,
         } => candidates.traverse(
             seed,
             ScoreChildProp {
                 top_m,
                 lambda_millis,
+                metrics,
             },
         ),
     }
@@ -601,7 +666,7 @@ fn selectable_decision(case: &CandidateCase<'_>) -> Option<SuccessorDecision> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct PerformanceScore(i64);
 
-fn performance_score(case: CandidateCase<'_>) -> Option<PerformanceScore> {
+fn performance_score(case: CandidateCase<'_>, metrics: metric::Inputs) -> Option<PerformanceScore> {
     let input = case.selection_input()?;
     let decision = decide_candidate(input.clone());
     let mut score = match decision.outcome {
@@ -618,9 +683,11 @@ fn performance_score(case: CandidateCase<'_>) -> Option<PerformanceScore> {
     {
         score += metrics.selection_points();
     }
-    for run in case.compared_runs() {
-        if let Some(treatment) = run.treatment_protocol.as_ref() {
-            score += treatment.selection_delta_points(run.baseline_protocol.as_ref());
+    if metrics.includes_protocol() {
+        for run in case.compared_runs() {
+            if let Some(treatment) = run.treatment_protocol.as_ref() {
+                score += treatment.selection_delta_points(run.baseline_protocol.as_ref());
+            }
         }
     }
 
@@ -658,9 +725,10 @@ impl TraversalScore {
         case: &CandidateCase<'_>,
         child_counts: &BTreeMap<String, usize>,
         max_performance: Option<PerformanceScore>,
+        metrics: metric::Inputs,
     ) -> Option<Self> {
         let input = case.selection_input()?;
-        let performance = performance_score(*case)?;
+        let performance = performance_score(*case, metrics)?;
         let frontier_delta = max_performance
             .map(|max| performance.0 - max.0)
             .unwrap_or_default();
@@ -698,12 +766,13 @@ fn select_frontier_max(
     child_counts: &BTreeMap<String, usize>,
     seed: u64,
     normalize_frontier: bool,
+    metrics: metric::Inputs,
 ) -> Result<Option<StrategySelection>, HistoryError> {
     let max_performance = if normalize_frontier {
         items
             .iter()
             .map(|item| CandidateCase::from_payload(&item.payload))
-            .filter_map(performance_score)
+            .filter_map(|case| performance_score(case, metrics))
             .max()
     } else {
         None
@@ -722,7 +791,8 @@ fn select_frontier_max(
         {
             continue;
         }
-        let Some(score) = TraversalScore::for_case(&case, child_counts, max_performance) else {
+        let Some(score) = TraversalScore::for_case(&case, child_counts, max_performance, metrics)
+        else {
             continue;
         };
         let tie = tie_break_key(seed, index, &payload)?;
@@ -745,6 +815,7 @@ fn select_frontier_max(
         let mut rationale = vec![
             "traversal_strategy=frontier_max".to_string(),
             format!("frontier_max_normalize_frontier={normalize_frontier}"),
+            format!("metric_inputs={}", metric_inputs_name(metrics)),
         ];
         if let Some(max_performance) = max_performance {
             rationale.push(format!(
@@ -781,8 +852,9 @@ fn select_score_child_prop(
     seed: u64,
     top_m: usize,
     lambda_millis: u32,
+    metrics: metric::Inputs,
 ) -> Result<Option<StrategySelection>, HistoryError> {
-    let weights = score_child_prop_weights(items, child_counts, top_m, lambda_millis);
+    let weights = score_child_prop_weights(items, child_counts, top_m, lambda_millis, metrics);
     if weights.is_empty() {
         return Ok(None);
     }
@@ -806,6 +878,7 @@ fn select_score_child_prop(
         "traversal_strategy=score_child_prop".to_string(),
         format!("score_child_prop_top_m={top_m}"),
         format!("score_child_prop_lambda={lambda:.3}"),
+        format!("metric_inputs={}", metric_inputs_name(metrics)),
         format!("score_child_prop_total_weight={total_weight:.9}"),
         format!("score_child_prop_sample={sample:.9}"),
         format!("score_child_prop_selected_weight={:.9}", weight.weight),
@@ -827,6 +900,7 @@ fn score_child_prop_weights(
     child_counts: &BTreeMap<String, usize>,
     top_m: usize,
     lambda_millis: u32,
+    metrics: metric::Inputs,
 ) -> Vec<ScoreChildPropWeight> {
     let mut selectable = Vec::new();
     for (index, item) in items.iter().enumerate() {
@@ -840,7 +914,7 @@ fn score_child_prop_weights(
         {
             continue;
         }
-        let Some(performance) = performance_score(case) else {
+        let Some(performance) = performance_score(case, metrics) else {
             continue;
         };
         let Some(input) = case.selection_input() else {
@@ -909,6 +983,13 @@ fn score_child_prop_weights(
             }
         })
         .collect()
+}
+
+fn metric_inputs_name(inputs: metric::Inputs) -> &'static str {
+    match inputs {
+        metric::Inputs::Operational => "operational",
+        metric::Inputs::OperationalAndProtocol => "operational_and_protocol",
+    }
 }
 
 fn sigmoid(x: f64) -> f64 {
@@ -1305,6 +1386,52 @@ mod tests {
     }
 
     #[test]
+    fn traversal_metric_inputs_gate_protocol_scoring() {
+        let low = traversal_item(with_protocol(
+            decision_grade_payload(
+                "low-protocol",
+                "branch-low-protocol",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            protocol(1, 1, 2, 2, 0),
+        ));
+        let high = traversal_item(with_protocol(
+            decision_grade_payload(
+                "high-protocol",
+                "branch-high-protocol",
+                None,
+                1,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            protocol(3, 3, 0, 0, 2),
+        ));
+        let items = vec![low, high];
+        let child_counts = BTreeMap::new();
+
+        let operational = score_child_prop_weights(
+            &items,
+            &child_counts,
+            3,
+            10_000,
+            metric::Inputs::Operational,
+        );
+        let with_protocol = score_child_prop_weights(
+            &items,
+            &child_counts,
+            3,
+            10_000,
+            metric::Inputs::OperationalAndProtocol,
+        );
+
+        assert_eq!(operational[0].performance, operational[1].performance);
+        assert!(with_protocol[1].performance > with_protocol[0].performance);
+    }
+
+    #[test]
     fn traversal_downweights_over_expanded_candidates() {
         let expanded = candidate_from_payload(decision_grade_payload(
             "expanded",
@@ -1404,7 +1531,8 @@ mod tests {
         let mut child_counts = BTreeMap::new();
         child_counts.insert("expanded".to_string(), 1);
 
-        let weights = score_child_prop_weights(&items, &child_counts, 3, 10_000);
+        let weights =
+            score_child_prop_weights(&items, &child_counts, 3, 10_000, metric::Inputs::default());
 
         assert_eq!(weights.len(), 2);
         let expanded = weights.iter().find(|weight| weight.index == 0).unwrap();
@@ -1542,6 +1670,67 @@ mod tests {
                 scope: SelectionScope::new("generation_local:test"),
             },
         }
+    }
+
+    fn with_protocol(
+        mut payload: EvaluationPayload,
+        treatment: metric::Protocol,
+    ) -> EvaluationPayload {
+        payload
+            .sealed_evidence
+            .as_mut()
+            .expect("sealed evidence")
+            .evaluations
+            .first_mut()
+            .expect("evaluation")
+            .compared_runs
+            .push(SealedComparedRunEvidence {
+                instance_id: Some("instance-a".to_string()),
+                status: Some("compared".to_string()),
+                baseline_citation: None,
+                treatment_citation: None,
+                baseline_metrics: None,
+                treatment_metrics: None,
+                baseline_protocol: None,
+                treatment_protocol: Some(treatment),
+                diagnostics: Vec::new(),
+                baseline_run: None,
+                treatment_run: None,
+            });
+        payload
+    }
+
+    fn protocol(
+        reviewed_call_count: usize,
+        reviewed_segment_count: usize,
+        missing_call_count: usize,
+        missing_segment_count: usize,
+        focused_progress: usize,
+    ) -> metric::Protocol {
+        metric::Protocol {
+            scanned_artifact_count: 0,
+            artifact_counts: BTreeMap::new(),
+            total_calls_in_run: reviewed_call_count + missing_call_count,
+            total_segments_in_anchor: reviewed_segment_count + missing_segment_count,
+            reviewed_call_count,
+            reviewed_segment_count,
+            missing_call_count,
+            missing_segment_count,
+            skipped_segment_review_count: 0,
+            segment_anchor_mismatch_count: 0,
+            call_review_overall_counts: focused_progress_count(focused_progress),
+            segment_review_overall_counts: focused_progress_count(focused_progress),
+            call_review_confidence_counts: BTreeMap::new(),
+            segment_review_confidence_counts: BTreeMap::new(),
+            calls_with_segment_crosswalk: reviewed_call_count,
+            calls_without_segment_crosswalk: 0,
+            average_calls_per_anchor_segment_x1000: 0,
+            review_signal_totals: BTreeMap::new(),
+        }
+    }
+
+    fn focused_progress_count(value: usize) -> BTreeMap<String, usize> {
+        BTreeMap::from([("focused_progress".to_string(), value)])
     }
 
     fn decision_grade_payload(
