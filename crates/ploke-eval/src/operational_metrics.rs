@@ -110,10 +110,7 @@ impl OperationalRunMetrics {
         let aborted_repair_loop = aborted
             && same_file_patch_max_streak >= REPAIR_LOOP_STREAK_THRESHOLD
             && !nonempty_valid_patch;
-        let convergence = !aborted
-            && patch_apply_state == PatchApplyState::Applied
-            && nonempty_valid_patch
-            && !aborted_repair_loop;
+        let convergence = !aborted && nonempty_valid_patch && !aborted_repair_loop;
         let oracle_eligible =
             convergence && submission_artifact_state == SubmissionArtifactState::Nonempty;
 
@@ -132,6 +129,57 @@ impl OperationalRunMetrics {
             convergence,
             oracle_eligible,
         }
+    }
+
+    pub fn tool_failure_rate(&self) -> f64 {
+        if self.tool_calls_total == 0 {
+            0.0
+        } else {
+            self.tool_calls_failed as f64 / self.tool_calls_total as f64
+        }
+    }
+
+    pub fn failure_pressure(&self) -> usize {
+        self.tool_calls_failed
+            .saturating_add(self.partial_patch_failures)
+            .saturating_add(usize::from(self.aborted))
+            .saturating_add(usize::from(self.aborted_repair_loop))
+    }
+
+    pub fn retry_pressure(&self) -> usize {
+        self.same_file_patch_retry_count
+            .saturating_add(self.same_file_patch_max_streak.saturating_sub(1))
+    }
+
+    pub fn has_applied_patch(&self) -> bool {
+        self.patch_apply_state == PatchApplyState::Applied
+    }
+
+    pub fn has_submission_artifact(&self) -> bool {
+        self.submission_artifact_state == SubmissionArtifactState::Nonempty
+    }
+
+    pub fn has_usable_patch(&self) -> bool {
+        self.nonempty_valid_patch
+    }
+
+    pub fn selection_quality_points(&self) -> i64 {
+        let mut score = 0;
+        score += if self.oracle_eligible {
+            900
+        } else if self.convergence {
+            500
+        } else if self.nonempty_valid_patch {
+            200
+        } else {
+            0
+        };
+        score += i64::from(self.patch_attempted) * 50;
+        score -= (self.tool_calls_failed as i64) * 25;
+        score -= (self.partial_patch_failures as i64) * 10;
+        score -= i64::from(self.aborted) * 500;
+        score -= i64::from(self.aborted_repair_loop) * 250;
+        score
     }
 }
 
@@ -326,6 +374,33 @@ mod tests {
             outcome,
             agent_turn_artifact: None,
         }
+    }
+
+    #[test]
+    fn derived_metrics_use_exclusive_success_tiers() {
+        let metrics = OperationalRunMetrics {
+            tool_calls_total: 4,
+            tool_calls_failed: 1,
+            patch_attempted: true,
+            patch_apply_state: PatchApplyState::Applied,
+            submission_artifact_state: SubmissionArtifactState::Nonempty,
+            partial_patch_failures: 2,
+            same_file_patch_retry_count: 3,
+            same_file_patch_max_streak: 2,
+            aborted: false,
+            aborted_repair_loop: false,
+            nonempty_valid_patch: true,
+            convergence: true,
+            oracle_eligible: true,
+        };
+
+        assert_eq!(metrics.tool_failure_rate(), 0.25);
+        assert_eq!(metrics.failure_pressure(), 3);
+        assert_eq!(metrics.retry_pressure(), 4);
+        assert!(metrics.has_applied_patch());
+        assert!(metrics.has_submission_artifact());
+        assert!(metrics.has_usable_patch());
+        assert_eq!(metrics.selection_quality_points(), 905);
     }
 
     fn completed_edit_call(

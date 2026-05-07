@@ -11,6 +11,12 @@
 //! candidate, evaluation, judgment, validator, import, and selection records.
 //! Selection evidence remains evidence: the Crown/History path is what makes a
 //! selected successor authoritative for a lineage.
+//!
+//! History-backed traversal policy lives in [`traversal`]. Its scoring
+//! algorithms should start from `traversal::CandidateCase`, not only from the
+//! generation-local [`SelectionInput`], because History payloads can also carry
+//! sealed evaluation, runtime, branch, citation, diagnostic, and Artifact
+//! material.
 
 use std::path::PathBuf;
 

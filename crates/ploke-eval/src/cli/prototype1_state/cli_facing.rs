@@ -5713,7 +5713,7 @@ impl<'a> ParentSelection<'a> {
             .map_err(|err| PrepareError::InvalidBatchSelection {
                 detail: format!("failed to add current generation traversal candidates: {err}"),
             })?;
-        let Some(selection) = traversal_selection::decide(traversal_candidates, seed, strategy)
+        let Some(selection) = traversal_selection::select(traversal_candidates, seed, strategy)
             .map_err(|err| PrepareError::InvalidBatchSelection {
                 detail: format!("failed to decide History traversal successor: {err}"),
             })?

@@ -140,15 +140,15 @@ pub(crate) struct Selection {
 }
 
 #[cfg(test)]
-pub(crate) fn decide_history(
+pub(crate) fn select_from_history(
     history: HistoryCandidates,
     seed: u64,
     strategy: StrategyKind,
 ) -> Result<Option<Selection>, HistoryError> {
-    decide(Candidates::from_history(history), seed, strategy)
+    select(Candidates::from_history(history), seed, strategy)
 }
 
-pub(crate) fn decide(
+pub(crate) fn select(
     candidates: Candidates,
     seed: u64,
     strategy: StrategyKind,
@@ -316,6 +316,89 @@ impl Source {
 /// This keeps the candidate universe richer than the current scorer. Policies
 /// can opt into optional sections by reading them from the case, while the
 /// sealed History payload remains the replayable source of facts.
+///
+/// Scoring inventory, grouped by signal:
+///
+/// Identity and lineage:
+/// `candidate`
+/// `selection_input.candidate.node_id`
+/// `selection_input.candidate.branch_id`
+/// `selection_input.candidate.generation`
+/// `sealed_evidence.coordinate.node_id`
+/// `sealed_evidence.coordinate.parent_node_id`
+/// `sealed_evidence.coordinate.branch_id`
+/// `sealed_evidence.coordinate.generation`
+/// `sealed_evidence.coordinate.plan_index`
+/// `sealed_evidence.coordinate.primary_runtime_id`
+/// `sealed_evidence.evaluations[*].branch_id`
+/// `sealed_evidence.runtimes[*].runtime_id`
+/// `sealed_evidence.branches[*].branch_id`
+/// `sealed_evidence.branches[*].candidate_id`
+/// `sealed_evidence.branches[*].source_state_id`
+///
+/// Policy, lifecycle, and evaluation outcome:
+/// `selection_input.branch_disposition`
+/// `selection_input.evaluation_artifact_path`
+/// `selection_input.comparisons[*].instance_id`
+/// `selection_input.comparisons[*].status`
+/// `sealed_evidence.lifecycle.planner_outcome`
+/// `sealed_evidence.lifecycle.node_status`
+/// `sealed_evidence.evaluations[*].evaluation_procedure_id`
+/// `sealed_evidence.evaluations[*].evaluator_identity`
+/// `sealed_evidence.evaluations[*].eval_set_identity`
+/// `sealed_evidence.evaluations[*].overall_disposition`
+/// `sealed_evidence.evaluations[*].compared_runs[*].instance_id`
+/// `sealed_evidence.evaluations[*].compared_runs[*].status`
+///
+/// Operational metrics:
+/// `selection_input.comparisons[*].parent_metrics`
+/// `selection_input.comparisons[*].child_metrics`
+/// `sealed_evidence.evaluations[*].compared_runs[*].baseline_metrics`
+/// `sealed_evidence.evaluations[*].compared_runs[*].treatment_metrics`
+/// `OperationalRunMetrics.tool_calls_total`
+/// `OperationalRunMetrics.tool_calls_failed`
+/// `OperationalRunMetrics.patch_attempted`
+/// `OperationalRunMetrics.patch_apply_state`
+/// `OperationalRunMetrics.submission_artifact_state`
+/// `OperationalRunMetrics.partial_patch_failures`
+/// `OperationalRunMetrics.same_file_patch_retry_count`
+/// `OperationalRunMetrics.same_file_patch_max_streak`
+/// `OperationalRunMetrics.aborted`
+/// `OperationalRunMetrics.aborted_repair_loop`
+/// `OperationalRunMetrics.nonempty_valid_patch`
+/// `OperationalRunMetrics.convergence`
+/// `OperationalRunMetrics.oracle_eligible`
+///
+/// Rich run snapshots:
+/// `sealed_evidence.evaluations[*].compared_runs[*].baseline_run`
+/// `sealed_evidence.evaluations[*].compared_runs[*].treatment_run`
+///
+/// Citations, diagnostics, and provenance:
+/// `sealed_evidence.evaluations[*].evaluation_artifact_citation`
+/// `sealed_evidence.evaluations[*].primary_report_citation`
+/// `sealed_evidence.evaluations[*].compared_runs[*].baseline_citation`
+/// `sealed_evidence.evaluations[*].compared_runs[*].treatment_citation`
+/// `sealed_evidence.evaluations[*].compared_runs[*].diagnostics`
+/// `sealed_evidence.runtimes[*].document_citations`
+/// `sealed_evidence.runtimes[*].journal_citations`
+/// `sealed_evidence.branches[*].branch_evidence_citations`
+/// `sealed_evidence.extra_document_citations`
+/// `sealed_evidence.extra_journal_citations`
+/// `sealed_evidence.child_diagnostics`
+/// `payload.source_refs`
+/// `payload.source_hashes`
+/// `payload.projection_failures`
+///
+/// Artifact handoff:
+/// `artifact.node`
+/// `artifact.resolved`
+///
+/// Traversal provenance:
+/// `Item::source`
+///
+/// Candidate-set root and membership proofs are validated before a payload
+/// becomes an `Item`; those proof objects are not currently exposed to strategy
+/// code.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CandidateCase<'a> {
     candidate: &'a SubjectRef,
@@ -519,23 +602,10 @@ fn performance_score(case: CandidateCase<'_>) -> Option<PerformanceScore> {
         .iter()
         .filter_map(|comparison| comparison.child_metrics.as_ref())
     {
-        score += operational_points(metrics);
+        score += metrics.selection_quality_points();
     }
 
     Some(PerformanceScore(score))
-}
-
-fn operational_points(metrics: &OperationalRunMetrics) -> i64 {
-    let mut score = 0;
-    score += i64::from(metrics.oracle_eligible) * 400;
-    score += i64::from(metrics.convergence) * 300;
-    score += i64::from(metrics.nonempty_valid_patch) * 200;
-    score += i64::from(metrics.patch_attempted) * 50;
-    score -= (metrics.tool_calls_failed as i64) * 25;
-    score -= (metrics.partial_patch_failures as i64) * 10;
-    score -= i64::from(metrics.aborted) * 500;
-    score -= i64::from(metrics.aborted_repair_loop) * 250;
-    score
 }
 
 fn successful_child_counts(considered: &[EvaluationPayload]) -> BTreeMap<String, usize> {
@@ -996,7 +1066,8 @@ mod tests {
             ))],
         };
 
-        let selection = decide_history(candidates, 0, StrategyKind::default()).expect("traversal");
+        let selection =
+            select_from_history(candidates, 0, StrategyKind::default()).expect("traversal");
 
         assert!(selection.is_none());
     }
@@ -1013,7 +1084,7 @@ mod tests {
         ));
         candidate.candidate_set_membership = None;
 
-        let selection = decide_history(
+        let selection = select_from_history(
             HistoryCandidates {
                 scope: SelectionScope::all_admitted_candidates(),
                 candidates: vec![candidate],
@@ -1072,7 +1143,7 @@ mod tests {
             metrics(true, true, 0),
         ));
 
-        let selection = decide_history(
+        let selection = select_from_history(
             HistoryCandidates {
                 scope: SelectionScope::all_admitted_candidates(),
                 candidates: vec![candidate],
@@ -1104,7 +1175,7 @@ mod tests {
             metrics(true, true, 0),
         ));
 
-        let selection = decide_history(
+        let selection = select_from_history(
             HistoryCandidates {
                 scope: SelectionScope::all_admitted_candidates(),
                 candidates: vec![weak, strong],
@@ -1150,7 +1221,7 @@ mod tests {
                 vec![current],
             )
             .expect("current generation candidates");
-        let selection = decide(candidates, 0, StrategyKind::default())
+        let selection = select(candidates, 0, StrategyKind::default())
             .expect("traversal")
             .expect("selection");
 
@@ -1239,7 +1310,7 @@ mod tests {
             metrics(true, true, 0),
         ));
 
-        let selection = decide_history(
+        let selection = select_from_history(
             HistoryCandidates {
                 scope: SelectionScope::all_admitted_candidates(),
                 candidates: vec![expanded, child_of_expanded, frontier],
@@ -1277,10 +1348,10 @@ mod tests {
             ],
         };
 
-        let first = decide_history(candidates.clone(), 42, StrategyKind::default())
+        let first = select_from_history(candidates.clone(), 42, StrategyKind::default())
             .expect("first")
             .expect("first selection");
-        let second = decide_history(candidates, 42, StrategyKind::default())
+        let second = select_from_history(candidates, 42, StrategyKind::default())
             .expect("second")
             .expect("second selection");
 
@@ -1346,10 +1417,10 @@ mod tests {
                 )),
             ],
         };
-        let first = decide_history(candidates.clone(), 99, StrategyKind::score_child_prop())
+        let first = select_from_history(candidates.clone(), 99, StrategyKind::score_child_prop())
             .expect("first")
             .expect("first selection");
-        let second = decide_history(candidates, 99, StrategyKind::score_child_prop())
+        let second = select_from_history(candidates, 99, StrategyKind::score_child_prop())
             .expect("second")
             .expect("second selection");
 

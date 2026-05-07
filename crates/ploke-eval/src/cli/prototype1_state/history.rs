@@ -5804,7 +5804,7 @@ mod tests {
 
         let history = History::new(store);
         let scope = SelectionScope::all_admitted_candidates();
-        let traversal = crate::successor_selection::traversal::decide_history(
+        let traversal = crate::successor_selection::traversal::select_from_history(
             history.candidates(&scope).expect("history candidates"),
             7,
             StrategyKind::default(),
@@ -5885,7 +5885,7 @@ mod tests {
         store.append(&state1, &sealed1).expect("append gen1");
 
         let scope = SelectionScope::all_admitted_candidates();
-        let first_traversal = crate::successor_selection::traversal::decide_history(
+        let first_traversal = crate::successor_selection::traversal::select_from_history(
             History::new(store.clone())
                 .candidates(&scope)
                 .expect("initial history candidates"),
@@ -5931,7 +5931,7 @@ mod tests {
             "traversal decisions must not replay their considered set as new candidates"
         );
 
-        let second_traversal = crate::successor_selection::traversal::decide_history(
+        let second_traversal = crate::successor_selection::traversal::select_from_history(
             candidates_after_traversal,
             7,
             StrategyKind::default(),
