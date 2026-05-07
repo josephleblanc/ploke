@@ -10,6 +10,7 @@
 pub(crate) mod graph;
 pub(crate) mod harness;
 pub(crate) mod surface;
+pub(crate) mod tui;
 
 pub(crate) use harness::ArtifactDelta;
 

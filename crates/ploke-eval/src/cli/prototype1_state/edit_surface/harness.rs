@@ -29,7 +29,7 @@ pub(crate) struct ArtifactDelta {
 }
 
 impl ArtifactDelta {
-    fn from_check(check: surface::Check) -> Self {
+    pub(super) fn from_check(check: surface::Check) -> Self {
         let (base, after, touches) = check.into_parts();
         Self {
             base,

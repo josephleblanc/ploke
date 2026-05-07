@@ -39,6 +39,10 @@ Restart-oriented table of contents for `docs/active/agents/` and nearby restart-
   Restart handoff for translating the edit-surface framework into `ploke-eval` trait adapters, including the `CodeGraphView` / `EditHarness` split and the open approve/apply boundary.
 - [2026-05-07-prototype1-edit-surface-implementation-plan.md](./2026-05-07-prototype1-edit-surface-implementation-plan.md)
   Validation-gated implementation plan for wiring bounded `ploke-tui` edit surfaces into Prototype 1 candidate generation, History evidence, and long-run readiness.
+- [2026-05-07-edit-surface-phase1-review.md](./2026-05-07-edit-surface-phase1-review.md)
+  Review of the Phase 1 edit-surface authority boundary, projection binding, delta construction visibility, and validation gates.
+- [2026-05-07-edit-surface-phase2-adapter-review.md](./2026-05-07-edit-surface-phase2-adapter-review.md)
+  Review of the Phase 2 first-slice `ploke-tui` / `ploke-db` edit-surface adapter scaffold, including authority, projection binding, digest evidence, and commit blockers.
 - [2026-04-17_eval-failure-and-protocol-audit/README.md](./2026-04-17_eval-failure-and-protocol-audit/README.md)
   Control-plane docs for failed-run audit, known-limitations reconciliation, blind trace review, and protocol-output comparison.
 - [2026-04-16_eval-closure-formal-sketch.md](./2026-04-16_eval-closure-formal-sketch.md)
