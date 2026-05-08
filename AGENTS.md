@@ -10,6 +10,19 @@
 - Requirement: when running `cargo test`, bound the default output to the useful tail or a targeted error filter, such as `cargo test -p <crate> <test-filter> -- <test-args> 2>&1 | tail -n 20`, `cargo test -p <crate> ... 2>&1 | rg 'E[0-9]+'`, or `cargo test -p <crate> ... 2>&1 | rg '<regex>'`.
 - Use fuller `cargo test` output only when the bounded output is insufficient to diagnose the failure, and make that expansion explicit.
 
+## Token Budget / Sub-Agent Model Routing
+
+- Prefer fewer sub-agents first. A cheaper sub-agent still spends tokens if it reads too broadly or duplicates work already done in the main thread.
+- Model routing should account for both model capability and plan-credit cost. Treat output as especially expensive, so ask sub-agents for compact reports rather than long explanations.
+- Prefer `gpt-5.3-codex-spark` for bounded discovery and very small mechanical tasks when it is available.
+- Use `gpt-5.4-mini` as the cheap fallback for summarization, search narrowing, compile-error triage, mechanical edits, and tests from an obvious pattern.
+- Use `gpt-5.3-codex` for bounded implementation work where Spark or mini is likely too weak but the task is still local and code-shaped.
+- Use `gpt-5.4` for harder review, diagnosis, or multi-file reasoning when 5.5 is not clearly justified.
+- Reserve `gpt-5.5` for architectural changes, Prototype 1 History/Crown/Runtime/Artifact invariants, subtle Rust type/lifetime/async/concurrency reasoning, multi-file edits where semantic authority matters, diagnosing agent/tool workflow failures, and final review before applying or accepting a high-risk patch.
+- Use Spark or mini for finding where a symbol, file, command, or behavior is defined; summarizing a module or narrow file cluster; small refactors with obvious local patterns; mechanical edits; writing tests from an existing nearby pattern; checking a compile error and proposing a narrow fix; and quick diff review before escalating.
+- Ask Spark and mini agents for exact file paths and line ranges, compact findings, commands used, and the smallest verification command. Do not ask them to dump large logs, artifacts, JSON records, prompts, responses, benchmark payloads, or broad search output.
+- Escalate only after a cheaper model has narrowed the search surface, unless the task is already known to require invariant-sensitive reasoning.
+
 ## Coding Style & Naming Discipline
 
 - Requirement: do not flatten role/state structure into long compound names when a type parameter, enum state, module boundary, or transition carrier can express it. Prefer `Child<Ready>` over `ChildReady`, `RuntimeTraceEntry::ChildReady`, `ChildHeartbeat`, or `observe_child_ready_state`.

@@ -1765,14 +1765,23 @@ fn mark_continuity(steps: &mut [Step], diagnostics: &mut Vec<String>) -> Continu
     continuity
 }
 
-fn display_parent(parent_node_id: Option<&str>) -> &str {
-    parent_node_id.unwrap_or("-")
+fn display_parent(parent_node_id: Option<&str>) -> String {
+    display_id_opt(parent_node_id)
 }
 
 fn choice_ids(choices: &[Choice]) -> String {
     let ids = choices
         .iter()
         .map(|choice| choice.node_id.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    if ids.is_empty() { "-".to_string() } else { ids }
+}
+
+fn choice_ids_short(choices: &[Choice]) -> String {
+    let ids = choices
+        .iter()
+        .map(|choice| short_id(&choice.node_id))
         .collect::<Vec<_>>()
         .join(",");
     if ids.is_empty() { "-".to_string() } else { ids }
@@ -1791,8 +1800,8 @@ fn delta_summary(deltas: &[Delta]) -> String {
             let against = delta
                 .against
                 .as_ref()
-                .map(|against| against.node_id.as_str())
-                .unwrap_or("-");
+                .map(|against| short_id(&against.node_id))
+                .unwrap_or_else(|| "-".to_string());
             let value = delta
                 .value
                 .map(|value| {
@@ -1804,7 +1813,7 @@ fn delta_summary(deltas: &[Delta]) -> String {
                 })
                 .unwrap_or_else(|| "-".to_string());
             format!(
-                "{basis}:{:?}:{against}:{value}:n{}",
+                "{basis}:{:?}@{against}:{value}:n{}",
                 delta.state, delta.count
             )
         })
@@ -1816,69 +1825,210 @@ fn delta_summary(deltas: &[Delta]) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Align {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Column {
+    heading: &'static str,
+    max_width: usize,
+    align: Align,
+}
+
+impl Column {
+    const fn left(heading: &'static str, max_width: usize) -> Self {
+        Self {
+            heading,
+            max_width,
+            align: Align::Left,
+        }
+    }
+
+    const fn right(heading: &'static str, max_width: usize) -> Self {
+        Self {
+            heading,
+            max_width,
+            align: Align::Right,
+        }
+    }
+}
+
+fn print_table(columns: &[Column], rows: Vec<Vec<String>>) {
+    for line in table_lines(columns, &rows) {
+        println!("{line}");
+    }
+}
+
+fn table_lines(columns: &[Column], rows: &[Vec<String>]) -> Vec<String> {
+    let widths = columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            let content_width = rows
+                .iter()
+                .filter_map(|row| row.get(index))
+                .map(|value| value.chars().count())
+                .max()
+                .unwrap_or(0);
+            column
+                .heading
+                .chars()
+                .count()
+                .max(content_width)
+                .min(column.max_width)
+        })
+        .collect::<Vec<_>>();
+
+    let mut lines = Vec::with_capacity(rows.len() + 2);
+    lines.push(render_table_row(
+        columns,
+        &widths,
+        &columns
+            .iter()
+            .map(|column| column.heading.to_string())
+            .collect::<Vec<_>>(),
+    ));
+    lines.push(
+        widths
+            .iter()
+            .map(|width| "-".repeat(*width))
+            .collect::<Vec<_>>()
+            .join("-+-"),
+    );
+    for row in rows {
+        lines.push(render_table_row(columns, &widths, row));
+    }
+    lines
+}
+
+fn render_table_row(columns: &[Column], widths: &[usize], row: &[String]) -> String {
+    columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            let value = row.get(index).map(String::as_str).unwrap_or("-");
+            let value = fit_text(value, widths[index]);
+            match column.align {
+                Align::Left => format!("{value:<width$}", width = widths[index]),
+                Align::Right => format!("{value:>width$}", width = widths[index]),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
 fn print_generations(generations: &[Generation]) {
     println!("generation summaries");
     println!("{}", "-".repeat(40));
-    println!(
-        "gen | nodes | done | failed | evals | dashboard_rank | selected | authority | top_ranked | deltas | tool_fail_rate"
+    print_table(
+        &[
+            Column::right("gen", 4),
+            Column::right("nodes", 5),
+            Column::right("done", 4),
+            Column::right("fail", 4),
+            Column::right("evals", 5),
+            Column::right("sel_rank", 8),
+            Column::left("selected", 18),
+            Column::left("authority", 18),
+            Column::left("top", 18),
+            Column::left("deltas", 48),
+            Column::right("fail_rate", 9),
+        ],
+        generations
+            .iter()
+            .map(|row| {
+                vec![
+                    row.generation.to_string(),
+                    row.nodes.to_string(),
+                    row.completed.to_string(),
+                    row.failed.to_string(),
+                    row.evaluations.to_string(),
+                    display_opt(row.selected_dashboard_rank),
+                    display_id_opt(row.selected_node_id.as_deref()),
+                    row.selected_authority.unwrap_or("-").to_string(),
+                    display_id_opt(row.top_ranked_node_id.as_deref()),
+                    delta_summary(&row.deltas),
+                    display_rate(row.failed_tool_call_rate),
+                ]
+            })
+            .collect(),
     );
-    for row in generations {
-        println!(
-            "{} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {}",
-            row.generation,
-            row.nodes,
-            row.completed,
-            row.failed,
-            row.evaluations,
-            display_opt(row.selected_dashboard_rank),
-            row.selected_node_id.as_deref().unwrap_or("-"),
-            row.selected_authority.unwrap_or("-"),
-            row.top_ranked_node_id.as_deref().unwrap_or("-"),
-            delta_summary(&row.deltas),
-            display_rate(row.failed_tool_call_rate),
-        );
-    }
 }
 
 fn print_cohorts(cohorts: &[Cohort]) {
     println!("cohorts");
     println!("{}", "-".repeat(40));
-    println!(
-        "gen | lineage | parent | nodes | done | evals | selected | top | deltas | patch_attempted | applied | partial | aborted | repair_loops | tool_fail_rate"
-    );
-    for row in cohorts {
-        let selected = row
-            .selected
+    println!("selection");
+    print_table(
+        &[
+            Column::right("gen", 4),
+            Column::left("parent", 18),
+            Column::right("nodes", 5),
+            Column::right("done", 4),
+            Column::right("evals", 5),
+            Column::right("sel", 3),
+            Column::left("selected", 28),
+            Column::left("top", 18),
+            Column::left("deltas", 48),
+        ],
+        cohorts
             .iter()
-            .map(|choice| choice.node_id.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
-        println!(
-            "{} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {}",
-            row.key.generation,
-            row.key.lineage.as_deref().unwrap_or("-"),
-            row.key.parent_node_id.as_deref().unwrap_or("-"),
-            row.nodes,
-            row.completed,
-            row.evaluations,
-            if selected.is_empty() {
-                "-".to_string()
-            } else {
-                selected
-            },
-            row.top
-                .as_ref()
-                .map(|choice| choice.node_id.as_str())
-                .unwrap_or("-"),
-            delta_summary(&row.deltas),
-            row.patch_attempted_instances,
-            row.applied_patch_instances,
-            row.partial_patch_instances,
-            row.aborted_instances,
-            row.aborted_repair_loop_instances,
-            display_rate(row.failed_tool_call_rate),
-        );
-    }
+            .map(|row| {
+                vec![
+                    row.key.generation.to_string(),
+                    display_id_opt(row.key.parent_node_id.as_deref()),
+                    row.nodes.to_string(),
+                    row.completed.to_string(),
+                    row.evaluations.to_string(),
+                    row.selected_count.to_string(),
+                    choice_ids_short(&row.selected),
+                    row.top
+                        .as_ref()
+                        .map(|choice| short_id(&choice.node_id))
+                        .unwrap_or_else(|| "-".to_string()),
+                    delta_summary(&row.deltas),
+                ]
+            })
+            .collect(),
+    );
+    println!();
+    println!("health");
+    print_table(
+        &[
+            Column::right("gen", 4),
+            Column::left("parent", 18),
+            Column::left("lineage", 18),
+            Column::right("patch", 5),
+            Column::right("applied", 7),
+            Column::right("partial", 7),
+            Column::right("aborted", 7),
+            Column::right("repair", 6),
+            Column::right("tools", 5),
+            Column::right("failed", 6),
+            Column::right("fail_rate", 9),
+        ],
+        cohorts
+            .iter()
+            .map(|row| {
+                vec![
+                    row.key.generation.to_string(),
+                    display_id_opt(row.key.parent_node_id.as_deref()),
+                    display_id_opt(row.key.lineage.as_deref()),
+                    row.patch_attempted_instances.to_string(),
+                    row.applied_patch_instances.to_string(),
+                    row.partial_patch_instances.to_string(),
+                    row.aborted_instances.to_string(),
+                    row.aborted_repair_loop_instances.to_string(),
+                    row.total_tool_calls.to_string(),
+                    row.failed_tool_calls.to_string(),
+                    display_rate(row.failed_tool_call_rate),
+                ]
+            })
+            .collect(),
+    );
 }
 
 fn print_trajectory(trajectory: &Trajectory, include_diagnostics: bool) {
@@ -1888,48 +2038,79 @@ fn print_trajectory(trajectory: &Trajectory, include_diagnostics: bool) {
     println!("state: {:?}", trajectory.state);
     println!();
     println!("cohort decisions");
-    println!(
-        "gen | parent | nodes | done | evals | decision | selected_count | selected | top | deltas"
+    print_table(
+        &[
+            Column::right("gen", 4),
+            Column::left("parent", 18),
+            Column::right("nodes", 5),
+            Column::right("done", 4),
+            Column::right("evals", 5),
+            Column::left("decision", 8),
+            Column::right("sel", 3),
+            Column::left("selected", 28),
+            Column::left("top", 18),
+            Column::left("deltas", 48),
+        ],
+        trajectory
+            .decisions
+            .iter()
+            .map(|decision| {
+                vec![
+                    decision.key.generation.to_string(),
+                    display_parent(decision.key.parent_node_id.as_deref()),
+                    decision.nodes.to_string(),
+                    decision.completed.to_string(),
+                    decision.evaluations.to_string(),
+                    format!("{:?}", decision.state),
+                    decision.selected_count.to_string(),
+                    choice_ids_short(&decision.selected),
+                    decision
+                        .top
+                        .as_ref()
+                        .map(|choice| short_id(&choice.node_id))
+                        .unwrap_or_else(|| "-".to_string()),
+                    delta_summary(&decision.deltas),
+                ]
+            })
+            .collect(),
     );
-    for decision in &trajectory.decisions {
-        println!(
-            "{} | {} | {} | {} | {} | {:?} | {} | {} | {} | {}",
-            decision.key.generation,
-            display_parent(decision.key.parent_node_id.as_deref()),
-            decision.nodes,
-            decision.completed,
-            decision.evaluations,
-            decision.state,
-            decision.selected_count,
-            choice_ids(&decision.selected),
-            decision
-                .top
-                .as_ref()
-                .map(|choice| choice.node_id.as_str())
-                .unwrap_or("-"),
-            delta_summary(&decision.deltas),
-        );
-    }
     println!();
     println!("unambiguous projection steps");
-    println!(
-        "gen | parent | selected | branch | authority | rank | disposition | dashboard_score | continuity | deltas"
+    print_table(
+        &[
+            Column::right("gen", 4),
+            Column::left("parent", 18),
+            Column::left("selected", 18),
+            Column::left("branch", 18),
+            Column::left("authority", 18),
+            Column::right("rank", 4),
+            Column::left("disp", 12),
+            Column::right("score", 8),
+            Column::left("continuity", 20),
+            Column::left("deltas", 48),
+        ],
+        trajectory
+            .steps
+            .iter()
+            .map(|row| {
+                vec![
+                    row.generation.to_string(),
+                    display_parent(row.cohort.parent_node_id.as_deref()),
+                    display_id_opt(row.selected_node_id.as_deref()),
+                    display_id_opt(row.selected_branch_id.as_deref()),
+                    row.selected_authority.unwrap_or("-").to_string(),
+                    display_opt(row.selected_dashboard_rank),
+                    row.selected_disposition
+                        .as_deref()
+                        .unwrap_or("-")
+                        .to_string(),
+                    display_opt(row.selected_dashboard_score),
+                    row.parent_continuity.unwrap_or("-").to_string(),
+                    delta_summary(&row.deltas),
+                ]
+            })
+            .collect(),
     );
-    for row in &trajectory.steps {
-        println!(
-            "{} | {} | {} | {} | {} | {} | {} | {} | {} | {}",
-            row.generation,
-            display_parent(row.cohort.parent_node_id.as_deref()),
-            row.selected_node_id.as_deref().unwrap_or("-"),
-            row.selected_branch_id.as_deref().unwrap_or("-"),
-            row.selected_authority.unwrap_or("-"),
-            display_opt(row.selected_dashboard_rank),
-            row.selected_disposition.as_deref().unwrap_or("-"),
-            display_opt(row.selected_dashboard_score),
-            row.parent_continuity.unwrap_or("-"),
-            delta_summary(&row.deltas),
-        );
-    }
     if include_diagnostics && !trajectory.diagnostics.is_empty() {
         println!();
         println!("trajectory diagnostics");
@@ -1942,34 +2123,75 @@ fn print_trajectory(trajectory: &Trajectory, include_diagnostics: bool) {
 fn print_rows(rows: &[Row]) {
     println!("node rows");
     println!("{}", "-".repeat(40));
-    println!(
-        "gen | node | runtime | branch | status | disposition | selected | selection_authority | dashboard_rank | dashboard_score | compared | oracle | converged | patch_attempted | applied | partial | aborted | repair_loops | tools | failed"
+    println!("selection");
+    print_table(
+        &[
+            Column::right("gen", 4),
+            Column::left("node", 18),
+            Column::left("branch", 18),
+            Column::left("runtime", 18),
+            Column::left("selected", 8),
+            Column::left("authority", 18),
+            Column::right("rank", 4),
+            Column::right("score", 8),
+            Column::left("disp", 16),
+        ],
+        rows.iter()
+            .map(|row| {
+                vec![
+                    display_opt(row.generation),
+                    short_id(&row.node_id),
+                    display_id_opt(row.branch_id.as_deref()),
+                    display_id_opt(row.runtime_id.as_deref()),
+                    yes_no(row.selected).to_string(),
+                    row.selection_authority.unwrap_or("-").to_string(),
+                    display_opt(row.dashboard_rank),
+                    row.dashboard_score.to_string(),
+                    row.disposition.as_deref().unwrap_or("-").to_string(),
+                ]
+            })
+            .collect(),
     );
-    for row in rows {
-        println!(
-            "{} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {}",
-            display_opt(row.generation),
-            row.node_id,
-            row.runtime_id.as_deref().unwrap_or("-"),
-            row.branch_id.as_deref().unwrap_or("-"),
-            row.status.as_deref().unwrap_or("-"),
-            row.disposition.as_deref().unwrap_or("-"),
-            yes_no(row.selected),
-            row.selection_authority.unwrap_or("-"),
-            display_opt(row.dashboard_rank),
-            row.dashboard_score,
-            row.compared_instances,
-            row.oracle_eligible_instances,
-            row.converged_instances,
-            row.patch_attempted_instances,
-            row.applied_patch_instances,
-            row.partial_patch_instances,
-            row.aborted_instances,
-            row.aborted_repair_loop_instances,
-            row.total_tool_calls,
-            row.failed_tool_calls,
-        );
-    }
+    println!();
+    println!("health");
+    print_table(
+        &[
+            Column::right("gen", 4),
+            Column::left("node", 18),
+            Column::left("status", 16),
+            Column::right("cmp", 3),
+            Column::right("oracle", 6),
+            Column::right("conv", 4),
+            Column::right("patch", 5),
+            Column::right("applied", 7),
+            Column::right("partial", 7),
+            Column::right("aborted", 7),
+            Column::right("repair", 6),
+            Column::right("tools", 5),
+            Column::right("failed", 6),
+            Column::right("fail_rate", 9),
+        ],
+        rows.iter()
+            .map(|row| {
+                vec![
+                    display_opt(row.generation),
+                    short_id(&row.node_id),
+                    row.status.as_deref().unwrap_or("-").to_string(),
+                    row.compared_instances.to_string(),
+                    row.oracle_eligible_instances.to_string(),
+                    row.converged_instances.to_string(),
+                    row.patch_attempted_instances.to_string(),
+                    row.applied_patch_instances.to_string(),
+                    row.partial_patch_instances.to_string(),
+                    row.aborted_instances.to_string(),
+                    row.aborted_repair_loop_instances.to_string(),
+                    row.total_tool_calls.to_string(),
+                    row.failed_tool_calls.to_string(),
+                    display_rate(row.failed_tool_call_rate),
+                ]
+            })
+            .collect(),
+    );
 }
 
 fn totals_from_compared(compared: &[ComparedRunEvidence]) -> Totals {
@@ -2125,6 +2347,33 @@ fn display_opt<T: std::fmt::Display>(value: Option<T>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string())
+}
+
+fn display_id_opt(value: Option<&str>) -> String {
+    value.map(short_id).unwrap_or_else(|| "-".to_string())
+}
+
+fn short_id(value: &str) -> String {
+    const MAX_WIDTH: usize = 18;
+    fit_text(value, MAX_WIDTH)
+}
+
+fn fit_text(value: &str, max_width: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_width {
+        return value.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "~".to_string();
+    }
+
+    let prefix_width = max_width.saturating_sub(1);
+    let mut output = value.chars().take(prefix_width).collect::<String>();
+    output.push('~');
+    output
 }
 
 fn display_rate(value: Option<f64>) -> String {

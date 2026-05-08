@@ -686,7 +686,7 @@ fn ensure_node_child_path(node_dir: &Path, path: &Path) -> Result<(), PrepareErr
     })
 }
 
-fn cleanup_prototype1_child_build_products(
+pub(crate) fn cleanup_prototype1_child_build_products(
     manifest_path: &Path,
     campaign_id: &str,
     node: &crate::intervention::Prototype1NodeRecord,

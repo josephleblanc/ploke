@@ -39,11 +39,11 @@ use crate::{
         persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
         print_issue_case_block,
         prototype1_process::{
-            SuccessorHandoffMode, execute_prototype1_runner_invocation,
-            persist_prototype1_buildable_child_artifact, record_prototype1_successor_completion,
-            record_prototype1_successor_ready, run_prototype1_branch_evaluation,
-            spawn_and_handoff_prototype1_successor, validate_child_surface,
-            validate_prototype1_successor_continuation,
+            SuccessorHandoffMode, cleanup_prototype1_child_build_products,
+            execute_prototype1_runner_invocation, persist_prototype1_buildable_child_artifact,
+            record_prototype1_successor_completion, record_prototype1_successor_ready,
+            run_prototype1_branch_evaluation, spawn_and_handoff_prototype1_successor,
+            validate_child_surface, validate_prototype1_successor_continuation,
         },
         prototype1_state::{
             backend::{
@@ -6014,6 +6014,9 @@ fn run_planned_child(
             }
         }
     };
+    if stop_after == Prototype1StateStopAfter::Complete {
+        cleanup_prototype1_child_build_products(&manifest_path, &campaign_id, &report_node)?;
+    }
 
     Ok(PlannedChildOutcome {
         plan_index,
