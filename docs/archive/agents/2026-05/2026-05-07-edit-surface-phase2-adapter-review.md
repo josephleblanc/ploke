@@ -13,7 +13,7 @@ visibility, and commit blockers.
 Related planning files:
 
 - `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-implementation-plan.md`
-- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-model.md`
+- `docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md`
 - `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-handoff.md`
 - `docs/archive/agents/2026-05/2026-05-07-edit-surface-phase1-review.md`
 - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/mod.rs`

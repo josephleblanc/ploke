@@ -6,7 +6,7 @@ Carry forward the bounded `ploke-tui` edit-surface integration for Prototype 1 s
 
 Related files:
 
-- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-model.md`
+- `docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md`
 - `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-handoff.md`
 - `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-implementation-plan.md`
 - `docs/archive/agents/2026-05/2026-05-07-tui-edit-surface-producer-review.md`
@@ -76,4 +76,3 @@ The core invariant is still:
 - only the parent may create writable candidate Artifacts;
 - proposed Artifact deltas must be checked against the bounded surface before they become candidates;
 - History must carry enough sealed evidence for later selection/scoring without re-reading mutable projection files.
-

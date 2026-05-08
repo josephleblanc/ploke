@@ -13,7 +13,7 @@ History-backed traversal selection.
 
 Related planning files:
 
-- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-model.md`
+- `docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md`
 - `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-handoff.md`
 - `docs/active/agents/2026-05-06-prototype1-execution-surface-model.md`
 - `docs/active/agents/2026-05-06_history-traversal-invariant-review.md`
@@ -443,7 +443,7 @@ action.
 The main thread should stay light. Sub-agents should read this file plus:
 
 ```text
-docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-model.md
+docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md
 docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-handoff.md
 ```
 

@@ -620,12 +620,6 @@ pub struct Prototype1HistoryPreviewCommand {
 }
 
 #[derive(Debug, Parser)]
-pub struct Prototype1MonitorStatusCommand {
-    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
-    pub format: InspectOutputFormat,
-}
-
-#[derive(Debug, Parser)]
 pub struct Prototype1MonitorTimingCommand {
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,

@@ -4697,6 +4697,7 @@ dependencies = [
  "ploke-error",
  "ploke-llm",
  "ploke-protocol",
+ "ploke-records",
  "ploke-test-utils",
  "ploke-tui",
  "regex",
@@ -4816,6 +4817,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "ploke-records"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

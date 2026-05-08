@@ -10,7 +10,7 @@ and eventual `ploke-tui` integration.
 
 Related planning files:
 
-- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-model.md`
+- `docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md`
 - `docs/active/todo/2026-05-05_long-horizon.md`
 - `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
 - `crates/ploke-tui/src/tools/code_edit.rs`
@@ -23,7 +23,7 @@ Related planning files:
 The concise framework doc is now:
 
 ```text
-docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-model.md
+docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md
 ```
 
 It captures the current agreed model:
@@ -212,4 +212,3 @@ Concrete next slice:
 A 15-generation Prototype 1 loop is currently running separately. Do not assume
 its result. Before acting on loop runtime behavior after compaction, inspect the
 campaign state and monitor output first.
-

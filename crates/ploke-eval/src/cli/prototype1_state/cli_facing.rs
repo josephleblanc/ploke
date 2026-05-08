@@ -28,12 +28,11 @@ use crate::{
         Prototype1CandidateGenerator, Prototype1ChildEvidenceCommand,
         Prototype1ChildScheduleMode as CliChildScheduleMode, Prototype1EditSurface,
         Prototype1HistoryPreviewCommand, Prototype1LoopCommand, Prototype1LoopStopAfter,
-        Prototype1MetricsCommand, Prototype1MonitorPeekCommand, Prototype1MonitorStatusCommand,
-        Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand, Prototype1ScoreCommand,
-        Prototype1SelectionShowCommand, Prototype1StateCommand, Prototype1StateStopAfter,
-        Prototype1SuccessorSelection, Prototype1TraversalMetrics, TimingTrace,
-        advance_eval_closure, advance_protocol_closure, default_batch_id,
-        pending_prototype1_stages, persist_intervention_apply_for_record,
+        Prototype1MetricsCommand, Prototype1MonitorPeekCommand, Prototype1MonitorTimingCommand,
+        Prototype1MonitorWatchCommand, Prototype1ScoreCommand, Prototype1SelectionShowCommand,
+        Prototype1StateCommand, Prototype1StateStopAfter, Prototype1SuccessorSelection,
+        Prototype1TraversalMetrics, TimingTrace, advance_eval_closure, advance_protocol_closure,
+        default_batch_id, pending_prototype1_stages, persist_intervention_apply_for_record,
         persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
         print_issue_case_block,
         prototype1_process::{
@@ -1863,15 +1862,6 @@ struct TerminalState {
     detail: String,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct MonitorStatusTarget {
-    pub(crate) campaign_id: String,
-    pub(crate) campaign_source: &'static str,
-    pub(crate) repo_root: PathBuf,
-    pub(crate) repo_root_source: &'static str,
-    pub(crate) warnings: Vec<String>,
-}
-
 impl HistoryCommand {
     pub fn run(self) -> Result<(), PrepareError> {
         let repo_root = match self.repo_root.clone() {
@@ -1963,15 +1953,6 @@ fn run_score_selection_review(
             format: command.format,
         },
     )
-}
-
-fn run_monitor_status(
-    campaign_id: &str,
-    manifest_path: &Path,
-    target: &MonitorStatusTarget,
-    command: &Prototype1MonitorStatusCommand,
-) -> Result<(), PrepareError> {
-    crate::cli::prototype1_state::status::run(campaign_id, manifest_path, target, command)
 }
 
 fn run_selection_show(
@@ -7523,49 +7504,6 @@ fn prototype1_benchmark_family_id(benchmark_family: BenchmarkFamily) -> &'static
     }
 }
 
-fn prototype1_branch_status_report(
-    campaign_id: &str,
-    campaign_manifest_path: &Path,
-    registry: &crate::intervention::Prototype1BranchRegistry,
-) -> Prototype1BranchStatusReport {
-    let mut branches = Vec::new();
-    for source in &registry.source_nodes {
-        for branch in &source.branches {
-            branches.push(Prototype1BranchStateRow {
-                instance_id: source.instance_id.clone(),
-                source_state_id: source.source_state_id.clone(),
-                parent_branch_id: source.parent_branch_id.clone(),
-                target_relpath: source.target_relpath.clone(),
-                source_content_hash: source.source_content_hash.clone(),
-                selected_branch_id: source.selected_branch_id.clone(),
-                branch_id: branch.branch_id.clone(),
-                candidate_id: branch.candidate_id.clone(),
-                branch_label: branch.branch_label.clone(),
-                status: serde_name(&branch.status).to_string(),
-                apply_id: branch.apply_id.clone(),
-            });
-        }
-    }
-
-    Prototype1BranchStatusReport {
-        campaign_id: campaign_id.to_string(),
-        branch_registry_path: prototype1_branch_registry_path(campaign_manifest_path),
-        source_nodes: registry.source_nodes.len(),
-        active_targets: registry.active_targets.len(),
-        active_target_state: registry
-            .active_targets
-            .iter()
-            .map(|entry| Prototype1ActiveTargetReport {
-                target_relpath: entry.target_relpath.clone(),
-                source_state_id: entry.source_state_id.clone(),
-                active_branch_id: entry.active_branch_id.clone(),
-                active_apply_id: entry.active_apply_id.clone(),
-            })
-            .collect(),
-        branches,
-    }
-}
-
 fn load_prepared_batch_for_loop(
     batch_manifest: PathBuf,
 ) -> Result<(PathBuf, PreparedMsbBatch), PrepareError> {
@@ -7858,24 +7796,6 @@ pub(crate) struct Prototype1LoopBranchEvaluationSummary {
     failed_tool_calls: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Prototype1RunnerReport {
-    campaign_id: String,
-    scheduler_path: PathBuf,
-    scheduler: Prototype1SchedulerState,
-    node: Prototype1RunnerNodeReport,
-    runner_result: Option<Prototype1RunnerResult>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Prototype1RunnerNodeReport {
-    node: Prototype1NodeRecord,
-    workspace_exists: bool,
-    binary_exists: bool,
-    runner_result_exists: bool,
-    runner_args: Vec<String>,
-}
-
 #[derive(Debug, Serialize)]
 pub(crate) struct Prototype1StateReport {
     campaign_id: String,
@@ -7891,73 +7811,6 @@ pub(crate) struct Prototype1StateReport {
     successor_runtime: Option<String>,
     successor_pid: Option<u32>,
     successor_ready_path: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Prototype1BranchStatusReport {
-    campaign_id: String,
-    branch_registry_path: PathBuf,
-    source_nodes: usize,
-    active_targets: usize,
-    active_target_state: Vec<Prototype1ActiveTargetReport>,
-    branches: Vec<Prototype1BranchStateRow>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Prototype1ActiveTargetReport {
-    target_relpath: PathBuf,
-    source_state_id: String,
-    active_branch_id: Option<String>,
-    active_apply_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Prototype1BranchStateRow {
-    instance_id: String,
-    source_state_id: String,
-    parent_branch_id: Option<String>,
-    target_relpath: PathBuf,
-    source_content_hash: String,
-    selected_branch_id: Option<String>,
-    branch_id: String,
-    candidate_id: String,
-    branch_label: String,
-    status: String,
-    apply_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Prototype1BranchShowReport {
-    campaign_id: String,
-    branch_registry_path: PathBuf,
-    instance_id: String,
-    source_state_id: String,
-    parent_branch_id: Option<String>,
-    target_relpath: PathBuf,
-    source_content_hash: String,
-    selected_branch_id: Option<String>,
-    branch_id: String,
-    candidate_id: String,
-    branch_label: String,
-    status: String,
-    apply_id: Option<String>,
-    proposed_content_hash: String,
-    proposed_content: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Prototype1BranchApplyReport {
-    campaign_id: String,
-    branch_registry_path: PathBuf,
-    branch_id: String,
-    candidate_id: String,
-    source_state_id: String,
-    target_relpath: PathBuf,
-    absolute_path: PathBuf,
-    changed: bool,
-    apply_id: String,
-    source_content_hash: String,
-    applied_content_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -8255,112 +8108,6 @@ fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
     }
 }
 
-fn print_prototype1_branch_status_report(report: &Prototype1BranchStatusReport) {
-    println!("prototype1 branch state");
-    println!("{}", "-".repeat(40));
-    println!("campaign_id: {}", report.campaign_id);
-    println!("branch_registry: {}", report.branch_registry_path.display());
-    println!(
-        "source_nodes/active_targets/branches: {}/{}/{}",
-        report.source_nodes,
-        report.active_targets,
-        report.branches.len()
-    );
-    println!();
-    println!("active targets");
-    println!("{}", "-".repeat(40));
-    if report.active_target_state.is_empty() {
-        println!("(none)");
-    } else {
-        for target in &report.active_target_state {
-            println!("- {}", target.target_relpath.display());
-            println!("  source_state_id: {}", target.source_state_id);
-            if let Some(branch_id) = target.active_branch_id.as_ref() {
-                println!("  active_branch_id: {}", branch_id);
-            } else {
-                println!("  active_branch_id: (none)");
-            }
-            if let Some(apply_id) = target.active_apply_id.as_ref() {
-                println!("  active_apply_id: {}", apply_id);
-            }
-        }
-    }
-    println!();
-    println!("branches");
-    println!("{}", "-".repeat(40));
-    if report.branches.is_empty() {
-        println!("(none)");
-    } else {
-        for branch in &report.branches {
-            println!("- {}", branch.branch_id);
-            println!("  instance_id: {}", branch.instance_id);
-            println!("  source_state_id: {}", branch.source_state_id);
-            println!(
-                "  parent_branch_id: {}",
-                branch.parent_branch_id.as_deref().unwrap_or("(none)")
-            );
-            println!("  target: {}", branch.target_relpath.display());
-            println!("  candidate_id: {}", branch.candidate_id);
-            println!("  branch_label: {}", branch.branch_label);
-            println!("  status: {}", branch.status);
-            if let Some(selected_branch_id) = branch.selected_branch_id.as_ref() {
-                println!("  selected_branch_id: {}", selected_branch_id);
-            }
-            if let Some(apply_id) = branch.apply_id.as_ref() {
-                println!("  apply_id: {}", apply_id);
-            }
-        }
-    }
-}
-
-fn print_prototype1_branch_show_report(report: &Prototype1BranchShowReport) {
-    println!("prototype1 branch show");
-    println!("{}", "-".repeat(40));
-    println!("campaign_id: {}", report.campaign_id);
-    println!("branch_id: {}", report.branch_id);
-    println!("candidate_id: {}", report.candidate_id);
-    println!("branch_label: {}", report.branch_label);
-    println!("status: {}", report.status);
-    println!("instance_id: {}", report.instance_id);
-    println!("source_state_id: {}", report.source_state_id);
-    println!(
-        "parent_branch_id: {}",
-        report.parent_branch_id.as_deref().unwrap_or("(none)")
-    );
-    println!("target: {}", report.target_relpath.display());
-    println!(
-        "selected_branch_id: {}",
-        report.selected_branch_id.as_deref().unwrap_or("(none)")
-    );
-    println!(
-        "apply_id: {}",
-        report.apply_id.as_deref().unwrap_or("(none)")
-    );
-    println!("source_content_hash: {}", report.source_content_hash);
-    println!("proposed_content_hash: {}", report.proposed_content_hash);
-    println!("content:");
-    println!("{}", "-".repeat(40));
-    print!("{}", report.proposed_content);
-    if !report.proposed_content.ends_with('\n') {
-        println!();
-    }
-}
-
-fn print_prototype1_branch_apply_report(report: &Prototype1BranchApplyReport) {
-    println!("prototype1 branch apply");
-    println!("{}", "-".repeat(40));
-    println!("campaign_id: {}", report.campaign_id);
-    println!("branch_id: {}", report.branch_id);
-    println!("candidate_id: {}", report.candidate_id);
-    println!("source_state_id: {}", report.source_state_id);
-    println!("target: {}", report.target_relpath.display());
-    println!("absolute_path: {}", report.absolute_path.display());
-    println!("changed: {}", yes_no(report.changed));
-    println!("apply_id: {}", report.apply_id);
-    println!("source_content_hash: {}", report.source_content_hash);
-    println!("applied_content_hash: {}", report.applied_content_hash);
-}
-
 fn print_prototype1_branch_evaluation_report(report: &Prototype1BranchEvaluationReport) {
     println!("prototype1 branch evaluation");
     println!("{}", "-".repeat(40));
@@ -8408,108 +8155,6 @@ fn print_prototype1_branch_evaluation_report(report: &Prototype1BranchEvaluation
         println!("{}", "-".repeat(40));
         for reason in &report.reasons {
             println!("- {}", reason);
-        }
-    }
-}
-
-fn print_prototype1_runner_report(report: &Prototype1RunnerReport) {
-    println!("prototype1 runner");
-    println!("{}", "-".repeat(40));
-    println!("campaign_id: {}", report.campaign_id);
-    println!("scheduler: {}", report.scheduler_path.display());
-    let scheduler = &report.scheduler;
-    println!(
-        "search_policy: generations<={} nodes<={} children={}..={} mode={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
-        scheduler.policy.max_generations,
-        scheduler.policy.max_total_nodes,
-        scheduler.policy.child_budget.min,
-        scheduler.policy.child_budget.max,
-        serde_name(&scheduler.policy.child_schedule_mode),
-        yes_no(scheduler.policy.stop_on_first_keep),
-        yes_no(scheduler.policy.require_keep_for_continuation),
-        yes_no(scheduler.policy.explore_from_rejected)
-    );
-    if let Some(decision) = scheduler.last_continuation_decision.as_ref() {
-        println!(
-            "continuation: {} next_generation={} total_nodes_after_continue={} selected_next_branch_id={} selected_branch_disposition={}",
-            serde_name(&decision.disposition),
-            decision.next_generation,
-            decision.total_nodes_after_continue,
-            decision
-                .selected_next_branch_id
-                .as_deref()
-                .unwrap_or("(none)"),
-            decision
-                .selected_branch_disposition
-                .as_deref()
-                .unwrap_or("(none)")
-        );
-    }
-    println!("frontier: {}", scheduler.frontier_node_ids.join(", "));
-    if !scheduler.completed_node_ids.is_empty() {
-        println!("completed: {}", scheduler.completed_node_ids.join(", "));
-    }
-    if !scheduler.failed_node_ids.is_empty() {
-        println!("failed: {}", scheduler.failed_node_ids.join(", "));
-    }
-    println!();
-    println!("node");
-    println!("{}", "-".repeat(40));
-    let node = &report.node.node;
-    println!("node_id: {}", node.node_id);
-    println!(
-        "parent_node_id: {}",
-        node.parent_node_id.as_deref().unwrap_or("(none)")
-    );
-    println!("generation: {}", node.generation);
-    println!("status: {}", serde_name(&node.status));
-    println!("instance_id: {}", node.instance_id);
-    println!("source_state_id: {}", node.source_state_id);
-    println!(
-        "parent_branch_id: {}",
-        node.parent_branch_id.as_deref().unwrap_or("(none)")
-    );
-    println!("branch_id: {}", node.branch_id);
-    println!("candidate_id: {}", node.candidate_id);
-    println!("target: {}", node.target_relpath.display());
-    println!("node_dir: {}", node.node_dir.display());
-    println!("workspace_root: {}", node.workspace_root.display());
-    println!(
-        "workspace_exists/binary_exists/result_exists: {}/{}/{}",
-        yes_no(report.node.workspace_exists),
-        yes_no(report.node.binary_exists),
-        yes_no(report.node.runner_result_exists)
-    );
-    println!("binary_path: {}", node.binary_path.display());
-    println!(
-        "runner_request_path: {}",
-        node.runner_request_path.display()
-    );
-    println!("runner_result_path: {}", node.runner_result_path.display());
-    println!("runner_args: {}", report.node.runner_args.join(" "));
-    if let Some(result) = report.runner_result.as_ref() {
-        println!();
-        println!("runner result");
-        println!("{}", "-".repeat(40));
-        println!("disposition: {}", serde_name(&result.disposition));
-        println!("status: {}", serde_name(&result.status));
-        println!(
-            "treatment_campaign_id: {}",
-            result.treatment_campaign_id.as_deref().unwrap_or("(none)")
-        );
-        println!(
-            "evaluation_artifact_path: {}",
-            result
-                .evaluation_artifact_path
-                .as_ref()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "(none)".to_string())
-        );
-        if let Some(detail) = result.detail.as_deref() {
-            println!("detail: {detail}");
-        }
-        if let Some(code) = result.exit_code {
-            println!("exit_code: {code}");
         }
     }
 }

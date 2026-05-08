@@ -252,7 +252,9 @@ pub(crate) fn record_prototype1_successor_ready(
             .to_string(),
         campaign_id: invocation.campaign_id().to_string(),
         node_id: invocation.node_id().to_string(),
-        runtime_id: invocation.runtime_id(),
+        runtime_id: crate::cli::prototype1_state::invocation::record_runtime_id(
+            invocation.runtime_id(),
+        ),
         pid: std::process::id(),
         recorded_at: Utc::now().to_rfc3339(),
     };
@@ -290,7 +292,9 @@ pub(crate) fn record_prototype1_successor_completion(
                 .to_string(),
         campaign_id: invocation.campaign_id().to_string(),
         node_id: invocation.node_id().to_string(),
-        runtime_id: invocation.runtime_id(),
+        runtime_id: crate::cli::prototype1_state::invocation::record_runtime_id(
+            invocation.runtime_id(),
+        ),
         status,
         trace_path: trace_path.clone(),
         detail: detail.clone(),

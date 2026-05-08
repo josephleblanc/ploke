@@ -36,6 +36,11 @@ use crate::intervention::{
 };
 use crate::spec::PrepareError;
 
+pub(crate) use ploke_records::invocation::{
+    SUCCESSOR_COMPLETION_SCHEMA_VERSION, SUCCESSOR_READY_SCHEMA_VERSION,
+    SuccessorCompletionRecord, SuccessorCompletionStatus, SuccessorReadyRecord,
+};
+
 use super::{
     channel::Endpoints,
     event::RuntimeId,
@@ -84,6 +89,11 @@ fn successor_parent_argv(
 
 /// Durable schema version for runtime invocations.
 pub(crate) const SCHEMA_VERSION: &str = "prototype1-invocation.v1";
+
+/// Project eval's authority-bearing runtime id into the passive record schema.
+pub(crate) fn record_runtime_id(runtime_id: RuntimeId) -> ploke_records::ids::RuntimeId {
+    ploke_records::ids::RuntimeId(runtime_id.to_string())
+}
 
 /// Runtime role for one invocation attempt.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -587,48 +597,6 @@ pub(crate) fn write_successor_invocation_for_retired_parent(
 ) -> Result<(), PrepareError> {
     write_successor_invocation(path, invocation)
 }
-
-/// Successor-ready acknowledgement written by a detached successor runtime.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct SuccessorReadyRecord {
-    pub schema_version: String,
-    pub campaign_id: String,
-    pub node_id: String,
-    pub runtime_id: RuntimeId,
-    pub pid: u32,
-    pub recorded_at: String,
-}
-
-/// Durable schema version for successor-ready acknowledgements.
-pub(crate) const SUCCESSOR_READY_SCHEMA_VERSION: &str = "prototype1-successor-ready.v1";
-
-/// Terminal status for one successor rehydration attempt.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum SuccessorCompletionStatus {
-    /// The successor completed one bounded rehydrated controller generation.
-    Succeeded,
-    /// The successor acknowledged handoff but failed during rehydration.
-    Failed,
-}
-
-/// Completion record written after a successor attempts controller rehydration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct SuccessorCompletionRecord {
-    pub schema_version: String,
-    pub campaign_id: String,
-    pub node_id: String,
-    pub runtime_id: RuntimeId,
-    pub status: SuccessorCompletionStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_path: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-    pub recorded_at: String,
-}
-
-/// Durable schema version for successor completion records.
-pub(crate) const SUCCESSOR_COMPLETION_SCHEMA_VERSION: &str = "prototype1-successor-completion.v1";
 
 /// Directory containing successor-ready acknowledgements for one node.
 pub(crate) fn successor_ready_dir(node_dir: &Path) -> PathBuf {

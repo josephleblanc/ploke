@@ -2,11 +2,7 @@
 
 Purpose: catalogue **where files live**, what they **mean**, which **trait-shaped** I/O seams exist, and how **scheduler generations** relate to **History** — without treating this document as authority. **Sealed History and Crown transitions** remain the correctness boundary; monitors and previews are projections only (see [`evidence.rs`](evidence.rs) module docs and AGENTS guidelines).
 
-Canonical in-code labels: `prototype1_monitor_locations` in [`cli_facing.rs`](cli_facing.rs) (~line 2585). Run:
-
-```bash
-ploke-eval loop prototype1-monitor list --campaign <id> --repo-root <checkout>
-```
+Canonical file-map labels remain in `cli_facing.rs` (`prototype1_monitor_locations`) for local diagnostics.
 
 ## Two trees to keep straight (anchors)
 
@@ -35,12 +31,12 @@ flowchart LR
 |------------|------|
 | `loop prototype1` | Legacy/high-level controller; may write **`prototype1/prototype1-loop-trace.json`**. Prefer typed path for live handoff. |
 | `loop prototype1-state` | Typed **parent**: materialise, build, spawn, History seal, successor handoff; writes under campaign **`prototype1/`** + identity in **`--repo-root`**. |
-| `loop prototype1-runner` | **Leaf child**: **`--invocation`** JSON; evaluates one node; writes attempt **`results/`** / runner projection. |
-| `loop prototype1-monitor` | **Read-only projections** (`list`, `status`, previews). Not admission authority. |
+| *(removed)* `loop prototype1-runner` | Leaf execution is now reached through the typed `prototype1-state` runtime path. |
+| *(removed)* `loop prototype1-monitor` | Read-only monitor command surface removed; use `history` / evidence projections and on-disk inspection. |
 
 ## Files under `campaigns/<id>/prototype1/` (relative to manifest parent)
 
-Aligned with **`prototype1_monitor_locations`** plus **History** paths from **`FsBlockStore::for_campaign_manifest`** ([`history.rs`](history.rs)).
+Aligned with current typed runtime paths plus **History** paths from **`FsBlockStore::for_campaign_manifest`** ([`history.rs`](history.rs)).
 
 | Path | Volatility | Contents / contract |
 |------|-------------|---------------------|
@@ -63,9 +59,9 @@ Aligned with **`prototype1_monitor_locations`** plus **History** paths from **`F
 
 Optional: **`PLOKE_PROTOTYPE1_TRACE_JSONL`** enables observation JSONL via [`tracing_setup.rs`](../../tracing_setup.rs).
 
-## Monitor list vs History directory
+## History directory visibility
 
-**`prototype1-monitor list`** is driven **`only`** by **`prototype1_monitor_locations`**. That list **does not enumerate** **`prototype1/history/{blocks,index}/…`**. Inspect History on disk explicitly or via History/preview CLI that reads **`FsBlockStore`** layout.
+History files under **`prototype1/history/{blocks,index}/…`** are inspected directly on disk or via `history`/preview CLI that reads **`FsBlockStore`** layout.
 
 ## Glossary — “generation” and related terms
 
@@ -100,7 +96,7 @@ Most scheduler/registry/node JSON uses **direct serde + `fs`** in [`intervention
 
 ## Process arc (one lineage step)
 
-Conceptual ordering: **`prototype1-state`** updates scheduler → writes **`invocation`** (and optionally channel roots) → spawns **`prototype1-runner`** → child writes **`results` / runner-result** → parent scores/selects → may **`FsBlockStore::append`** sealed block → **successor-ready / completion** files → **`prototype1-state --handoff-invocation`** on advanced **`repo_root`** with updated **parent identity**.
+Conceptual ordering: **`prototype1-state`** updates scheduler → writes **`invocation`** (and optionally channel roots) → evaluates child runtime via the typed path → child writes **`results` / runner-result** → parent scores/selects → may **`FsBlockStore::append`** sealed block → **successor-ready / completion** files → **`prototype1-state --handoff-invocation`** on advanced **`repo_root`** with updated **parent identity**.
 
 ---
 *Descriptive appendix only.* For inner eval core continuation see [`inner/HANDOFF.md`](../../inner/HANDOFF.md).

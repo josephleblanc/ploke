@@ -6,7 +6,7 @@ Reviewed:
 
 - `AGENTS.md`
 - `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-implementation-plan.md`
-- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-model.md`
+- `docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md`
 - `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-handoff.md`
 - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/`
 - `crates/ploke-eval/src/cli/prototype1_state/mod.rs`

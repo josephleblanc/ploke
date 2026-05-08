@@ -31,9 +31,10 @@ projection over existing Prototype 1 records.
 
 The proposed split is:
 
-- `ploke-records`: shared passive serde record schemas for persisted Prototype 1
-  files. These records have fields and format versions, but no authority to
-  open, admit, seal, append, select, or advance the loop.
+- `ploke-records`: shared recording and report schemas for persisted Prototype 1
+  files and loop-command outputs. Public record/projection types should derive
+  `Serialize` and `Deserialize`, carry fields and format versions, and have no
+  authority to open, admit, seal, append, select, or advance the loop.
 - `ploke-eval`: runtime and authority crate. It may wrap `ploke-records` values
   in typestate carriers such as `Parent<S>`, `Crown<S>`, `Block<S>`, and
   `Entry<S>`, and it owns the transition methods that turn records/evidence into
@@ -86,6 +87,50 @@ The exact API can differ, but the invariant should not: deserializing a record
 does not grant `Block<Sealed>`, `Crown<Locked>`, `Parent<Ready>`, or append
 authority. The transition into an authority carrier remains in `ploke-eval`.
 
+This means `Block<S>` and `Entry<S>` should not move wholesale into
+`ploke-records` in the first implementation. They are not just schemas; they are
+the local carriers for admissible History transitions. Their private fields,
+state markers, constructors, and move-only methods are part of the correctness
+boundary. What can move is the passive data they project to or hydrate from:
+headers, entry payloads, hashes, lineage refs, schema versions, timestamps, and
+other serialized fields.
+
+The intended shape is therefore:
+
+- `ploke-records::history::BlockRecord` and related record structs describe the
+  persisted bytes;
+- `ploke-eval::...::history::Block<S>` owns the verified/open/sealed state and
+  may contain a `BlockRecord`;
+- `ploke-records::history::EntryRecord` and related record structs describe
+  persisted entry payloads;
+- `ploke-eval::...::history::Entry<S>` owns draft/observed/proposed/admitted
+  state and the transition methods that produce admitted entries.
+
+If a current `Block` or `Entry` field is only a serialized fact, it is a
+candidate to move into a record. If a field or method controls whether an entry
+may be admitted, a block may be sealed, or a lineage head may advance, it stays
+inside `ploke-eval` behind the authority carrier.
+
+Mirror records are allowed when the UI needs to read something that corresponds
+to a typestate carrier. A mirror record is the recorded shape of a carrier, not
+the carrier itself. For example, a `SealedBlockRecord`, `AdmittedEntryRecord`, or
+`ParentRuntimeRecord` may expose the fields needed by reports and browser views,
+but deserializing one only produces recorded data. It does not recreate the
+functional typestate value unless `ploke-eval` explicitly verifies it and wraps
+it back into the appropriate authority carrier.
+
+The target user-facing flow is:
+
+1. `ploke-eval` loop commands continue to run the authoritative Prototype 1
+   process and persist or emit typed records.
+2. Those persisted files and command outputs use types defined in
+   `ploke-records`.
+3. `ploke-tree` reads those shared types and assembles a friendly view of the
+   ongoing multi-generational loop.
+4. The browser or native UI depends on `ploke-tree` and `ploke-records`, not on
+   `ploke-eval`, while still having typed access to all persisted data that
+   `ploke-eval` intentionally exposes for reporting.
+
 ## Source Boundaries
 
 `ploke-records` should contain passive source schemas. `ploke-tree` should load
@@ -109,6 +154,11 @@ builders after their passive record inputs are available from `ploke-records`,
 or it may move shared projection code out of `cli_facing.rs` into a library
 module. `ploke-tree` should never call `ploke-eval` authority constructors just
 to render a UI.
+
+Loop-facing `ploke-eval` commands should prefer emitting `ploke-records` values
+as JSON when they need to expose active run state for another interface. Human
+text remains a renderer. It should not be the interchange format for the tree
+browser.
 
 ## Projection Model
 
@@ -203,6 +253,7 @@ campaign state, modify the parent checkout, or advance History.
 
 `ploke-records` should be simpler: public serde structs, schema version
 constants, stable field names, and small helpers for non-authoritative parsing.
+Its public data-carrying types should derive `Serialize` and `Deserialize`.
 It should not expose `verify_from_record`, `seal`, `append`, or transition
 methods. Those belong to `ploke-eval`.
 
@@ -300,9 +351,12 @@ types in `ploke-eval` rather than putting them into the persisted record.
 
 1. Add `ploke-records` with passive record structs for the smallest useful
    subset: scheduler nodes, parent identity, journal entries, channel envelopes,
-   invocation/result records, and sealed History block records.
+   invocation/result records, and passive History block/entry record shapes.
+   Do not move `Block<S>` or `Entry<S>` themselves in this step.
 2. Refactor `ploke-eval` authority types to contain or convert from
-   `ploke-records` structs without making authority constructors public.
+   `ploke-records` structs without making authority constructors public. For
+   History, this means adapting `Block<S>` and `Entry<S>` around passive records,
+   not exporting their typestate transitions to the shared crate.
 3. Add `ploke-tree` with `RunForest` DTOs and `FsRunStore` over
    `ploke-records`.
 4. Add snapshot export JSON and a small golden fixture from synthetic records.
