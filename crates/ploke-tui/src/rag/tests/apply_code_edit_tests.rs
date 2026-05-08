@@ -1,9 +1,9 @@
 use super::*;
 use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus, PreviewMode};
-use crate::rag::tools::{apply_code_edit_tool, apply_ns_code_edit_tool};
+use crate::rag::tools::{apply_code_edit_tool, apply_ns_code_edit_tool, resolve_code_edit_request};
 use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
 use crate::test_utils::new_test_harness::AppHarness;
-use ploke_core::rag_types::ApplyCodeEditResult;
+use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, rag_types::ApplyCodeEditResult};
 use ploke_db::NodeType;
 use ploke_llm::response::FunctionCall;
 use ploke_test_utils::workspace_root;
@@ -376,6 +376,137 @@ async fn test_canonical_resolution_success() {
         );
         assert!(!edit.replacement.is_empty(), "Should have replacement code");
     }
+    restore_fixture();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resolve_code_edit_request_returns_write_data_without_staging() {
+    let harness = AppHarness::spawn()
+        .await
+        .expect("spawn harness - requires database backup");
+
+    let edit_request = create_canonical_edit_request(
+        "src/structs.rs",
+        "crate::structs::SampleStruct",
+        NodeType::Struct,
+        "pub struct SampleStruct { pub field: String, pub new_field: i32, }",
+        Some(0.95),
+    );
+
+    let before_count = harness.state.proposals.read().await.len();
+    let writes = resolve_code_edit_request(&harness.state, &edit_request)
+        .await
+        .expect("canonical resolver returns write data");
+    let after_count = harness.state.proposals.read().await.len();
+
+    assert_eq!(
+        before_count, after_count,
+        "resolver must not stage proposals"
+    );
+    assert_eq!(writes.len(), 1);
+    let write = &writes[0];
+    assert_eq!(write.name, "crate::structs::SampleStruct");
+    assert!(write.file_path.to_string_lossy().contains("structs.rs"));
+    assert!(write.start_byte < write.end_byte);
+    assert_eq!(
+        write.replacement,
+        "pub struct SampleStruct { pub field: String, pub new_field: i32, }"
+    );
+
+    restore_fixture();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resolve_code_edit_request_returns_splice_write_data_without_staging() {
+    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let expected_file_hash = TrackingHash(Uuid::new_v4());
+    let edit_request = ApplyCodeEditRequest {
+        edits: vec![Edit::Splice {
+            file_path: "src/structs.rs".to_string(),
+            expected_file_hash,
+            start_byte: 0,
+            end_byte: 6,
+            replacement: "// sample".to_string(),
+            namespace: PROJECT_NAMESPACE_UUID,
+        }],
+        confidence: Some(0.7),
+    };
+
+    let writes = resolve_code_edit_request(&harness.state, &edit_request)
+        .await
+        .expect("splice resolver returns write data");
+
+    assert_eq!(writes.len(), 1);
+    let write = &writes[0];
+    assert_eq!(write.expected_file_hash, expected_file_hash);
+    assert_eq!(write.start_byte, 0);
+    assert_eq!(write.end_byte, 6);
+    assert_eq!(write.replacement, "// sample");
+    assert!(
+        write
+            .file_path
+            .to_string_lossy()
+            .ends_with("src/structs.rs")
+    );
+    assert!(
+        harness.state.proposals.read().await.is_empty(),
+        "resolver must not stage splice proposals"
+    );
+
+    restore_fixture();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resolve_code_edit_request_rejects_outside_tool_path_without_staging() {
+    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let edit_request = create_canonical_edit_request(
+        "../fixture_nodes_copy/src/structs.rs",
+        "crate::structs::SampleStruct",
+        NodeType::Struct,
+        "pub struct SampleStruct { pub field: String, }",
+        Some(0.9),
+    );
+
+    let err = resolve_code_edit_request(&harness.state, &edit_request)
+        .await
+        .expect_err("outside path must reject");
+
+    assert!(
+        err.message.contains("invalid path"),
+        "unexpected resolver error: {err:?}"
+    );
+    assert!(
+        harness.state.proposals.read().await.is_empty(),
+        "resolver failure must not stage proposals"
+    );
+
+    restore_fixture();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resolve_code_edit_request_returns_ambiguity_error_without_staging() {
+    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let edit_request = create_canonical_edit_request(
+        "src/impls.rs",
+        "crate::impls::SimpleStruct::trait_method",
+        NodeType::Method,
+        "fn trait_method(&self) -> i32 { 42 }",
+        Some(0.9),
+    );
+
+    let err = resolve_code_edit_request(&harness.state, &edit_request)
+        .await
+        .expect_err("ambiguous method target must reject");
+
+    assert!(
+        err.message.contains("Ambiguous") || err.message.contains("multiple"),
+        "unexpected resolver error: {err:?}"
+    );
+    assert!(
+        harness.state.proposals.read().await.is_empty(),
+        "resolver failure must not stage proposals"
+    );
+
     restore_fixture();
 }
 

@@ -51,6 +51,8 @@ Restart-oriented table of contents for `docs/active/agents/` and nearby restart-
   Review of the Phase 3 first integration slice, covering CLI semantics, fail-closed TUI edit-surface behavior, legacy plan reuse, authority boundaries, and test adequacy.
 - [2026-05-07-edit-surface-backend-bridge-review.md](./2026-05-07-edit-surface-backend-bridge-review.md)
   Review of the backend bridge for bounded single-file edit-surface validation, after-hash authority, child-carrier conversion, containment gaps, and commit readiness.
+- [2026-05-07-edit-surface-resolver-extraction-review.md](./2026-05-07-edit-surface-resolver-extraction-review.md)
+  Review of the stage-free TUI resolver extraction, eval-side resolved-write conversion, backend-owned hash authority, path checks, and live wiring readiness.
 - [2026-04-17_eval-failure-and-protocol-audit/README.md](./2026-04-17_eval-failure-and-protocol-audit/README.md)
   Control-plane docs for failed-run audit, known-limitations reconciliation, blind trace review, and protocol-output comparison.
 - [2026-04-16_eval-closure-formal-sketch.md](./2026-04-16_eval-closure-formal-sketch.md)

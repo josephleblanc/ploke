@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-use ploke_core::tool_types::ToolName;
+use ploke_core::{WriteSnippetData, tool_types::ToolName};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -214,6 +214,62 @@ pub(crate) struct EditProposal {
     pub(crate) run_id: String,
     pub(crate) touches: Vec<ProposedTouch>,
     pub(crate) reported_after_file_hash: Option<String>,
+}
+
+/// Convert resolved TUI byte-span writes into the backend proposal carrier.
+///
+/// `WriteSnippetData::expected_file_hash` is TUI tracking evidence, not the
+/// authority-side expected base hash. This projection reads the target file
+/// from the parent checkout and fills `ProposedTouch::expected_file_hash` with
+/// the backend-owned content hash that `validate_edit_surface_candidate`
+/// expects.
+pub(crate) fn proposal_from_resolved_writes(
+    repo_root: &Path,
+    surface: Prototype1EditSurface,
+    proposal_id: impl Into<String>,
+    run_id: impl Into<String>,
+    writes: &[WriteSnippetData],
+) -> Result<EditProposal, BackendError> {
+    let mut touches = Vec::with_capacity(writes.len());
+    for write in writes {
+        let relpath = write_relpath(repo_root, &write.file_path)?;
+        validate_normal_repo_relpath(&relpath)?;
+        let absolute_target = repo_root.join(&relpath);
+        let source_content =
+            fs::read_to_string(&absolute_target).map_err(|source| BackendError::ReadTarget {
+                path: absolute_target,
+                source,
+            })?;
+        touches.push(ProposedTouch {
+            target: write.name.clone(),
+            relpath,
+            start: write.start_byte,
+            end: write.end_byte,
+            expected_file_hash: content_hash(&source_content),
+            replacement: write.replacement.clone(),
+        });
+    }
+
+    Ok(EditProposal {
+        surface,
+        proposal_id: proposal_id.into(),
+        run_id: run_id.into(),
+        touches,
+        reported_after_file_hash: None,
+    })
+}
+
+fn write_relpath(repo_root: &Path, file_path: &Path) -> Result<PathBuf, BackendError> {
+    if file_path.is_absolute() {
+        file_path
+            .strip_prefix(repo_root)
+            .map(Path::to_path_buf)
+            .map_err(|_| BackendError::InvalidEditSurfacePath {
+                path: file_path.to_path_buf(),
+            })
+    } else {
+        Ok(file_path.to_path_buf())
+    }
 }
 
 /// Checked single-file edit that has passed the authority-side surface gate.
@@ -1923,9 +1979,11 @@ mod tests {
         PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity, parent_identity_commit_message,
         parent_identity_relpath, write_parent_identity,
     };
+    use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
+    use uuid::Uuid;
 
     fn run_git_test(repo_root: &std::path::Path, args: &[&str]) {
         let output = Command::new("git")
@@ -2007,6 +2065,19 @@ mod tests {
                 expected_file_hash: hash,
                 replacement: "new".to_string(),
             }],
+        }
+    }
+
+    fn write_data_for(repo_root: &std::path::Path, relpath: &std::path::Path) -> WriteSnippetData {
+        WriteSnippetData {
+            id: Uuid::new_v4(),
+            name: "code_edit".to_string(),
+            file_path: repo_root.join(relpath),
+            expected_file_hash: TrackingHash(Uuid::new_v4()),
+            start_byte: 4,
+            end_byte: 7,
+            replacement: "new".to_string(),
+            namespace: PROJECT_NAMESPACE_UUID,
         }
     }
 
@@ -2100,6 +2171,57 @@ R  old.rs -> new.rs
         assert_eq!(checked.proposed_content(), "let new = 1;\n");
         assert_eq!(checked.delta().touches().len(), 1);
         assert_ne!(checked.base_artifact_id(), checked.derived_artifact_id());
+    }
+
+    #[test]
+    fn edit_surface_resolved_write_conversion_uses_backend_content_hash_and_validates() {
+        let tmp = init_git_repo();
+        let source = "let old = 1;\n";
+        let relpath = write_tui_target(tmp.path(), source);
+        let write = write_data_for(tmp.path(), &relpath);
+        let tracking_hash = write.expected_file_hash.0.to_string();
+
+        let tracking_only = super::EditProposal {
+            surface: crate::cli::Prototype1EditSurface::PlokeTuiTools,
+            proposal_id: "proposal-tracking".to_string(),
+            run_id: "run-1".to_string(),
+            reported_after_file_hash: None,
+            touches: vec![super::ProposedTouch {
+                target: write.name.clone(),
+                relpath: relpath.clone(),
+                start: write.start_byte,
+                end: write.end_byte,
+                expected_file_hash: tracking_hash.clone(),
+                replacement: write.replacement.clone(),
+            }],
+        };
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), tracking_only)
+            .expect_err("TUI TrackingHash is not the backend content hash");
+        assert!(matches!(err, BackendError::StaleEditBaseHash { .. }));
+
+        let converted = super::proposal_from_resolved_writes(
+            tmp.path(),
+            crate::cli::Prototype1EditSurface::PlokeTuiTools,
+            "proposal-content",
+            "run-1",
+            &[write],
+        )
+        .expect("convert resolved writes");
+
+        assert_eq!(
+            converted.touches[0].expected_file_hash,
+            super::content_hash(source)
+        );
+        assert_ne!(converted.touches[0].expected_file_hash, tracking_hash);
+
+        let checked = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), converted)
+            .expect("converted proposal validates");
+        assert_eq!(checked.target_relpath(), relpath.as_path());
+        assert_eq!(checked.source_content_hash(), super::content_hash(source));
+        assert_eq!(checked.proposed_content(), "let new = 1;\n");
     }
 
     #[test]

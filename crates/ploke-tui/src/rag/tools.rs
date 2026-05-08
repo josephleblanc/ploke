@@ -623,11 +623,8 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uu
     let ToolCallParams {
         state,
         event_bus,
-        request_id,
-        parent_id,
-        name,
         typed_req,
-        call_id,
+        ..
     } = tool_call_params.clone();
     if let Some(parse_failure) = state
         .with_system_read(|sys| sys.last_parse_failure().cloned())
@@ -649,16 +646,66 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uu
         return None;
     }
 
-    // Resolve each edit by canonical path -> EmbeddingData -> WriteSnippetData
+    let edits = match resolve_code_edit_request(&state, &typed_req).await {
+        Ok(edits) => edits,
+        Err(err) => {
+            tool_call_params.tool_call_failed_error(err);
+            return None;
+        }
+    };
+
+    stage_semantic_edit_proposal(tool_call_params, edits).await
+}
+
+/// Resolve `apply_code_edit` semantic/splice requests into concrete byte-span
+/// writes without staging proposals, emitting events, or applying edits.
+pub async fn resolve_code_edit_request(
+    state: &AppState,
+    request: &ApplyCodeEditRequest,
+) -> Result<Vec<WriteSnippetData>, ToolError> {
+    let tool = ToolName::ApplyCodeEdit;
+    if request.edits.is_empty() {
+        return Err(ToolError::new(
+            tool,
+            ToolErrorCode::InvalidFormat,
+            "No edits provided",
+        ));
+    }
+
     let tool_paths = state
         .with_system_read(|sys| {
             sys.tool_path_context()
                 .map(|(p, pol)| (p.clone(), pol.clone()))
         })
         .await;
-    let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
+    let resolve_path = |path: &str| -> Result<(PathBuf, bool), ToolError> {
+        let p = PathBuf::from(path);
+        let file_was_relative = !p.is_absolute();
+        let abs_path = match &tool_paths {
+            Some((primary, policy)) => {
+                path_scoping::resolve_tool_path(p.as_path(), primary, policy).map_err(|err| {
+                    ToolError::new(
+                        tool,
+                        ToolErrorCode::InvalidFormat,
+                        format!("invalid path: {err}"),
+                    )
+                })?
+            }
+            None => {
+                if p.is_absolute() {
+                    p
+                } else {
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| PathBuf::from("."))
+                        .join(p)
+                }
+            }
+        };
+        Ok((abs_path, file_was_relative))
+    };
 
-    for edit in typed_req.edits.iter() {
+    let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(request.edits.len());
+    for edit in request.edits.iter() {
         match edit {
             Edit::Splice {
                 file_path,
@@ -668,28 +715,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uu
                 replacement,
                 namespace,
             } => {
-                let p = PathBuf::from(file_path);
-                let abs_path = match &tool_paths {
-                    Some((primary, policy)) => {
-                        match path_scoping::resolve_tool_path(p.as_path(), primary, policy) {
-                            Ok(pb) => pb,
-                            Err(err) => {
-                                let msg = format!("invalid path: {}", err);
-                                tool_call_params.tool_call_failed(msg);
-                                return None;
-                            }
-                        }
-                    }
-                    None => {
-                        if p.is_absolute() {
-                            p
-                        } else {
-                            std::env::current_dir()
-                                .unwrap_or_else(|_| PathBuf::from("."))
-                                .join(p)
-                        }
-                    }
-                };
+                let (abs_path, _) = resolve_path(file_path)?;
                 let ws = WriteSnippetData {
                     id: uuid::Uuid::new_v4(),
                     name: abs_path
@@ -716,42 +742,12 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uu
                         "Unsupported node type '{}': only primary_and_assoc_nodes() are supported for code editing",
                         node_type.relation_str()
                     );
-                    tool_call_params.tool_call_failed(err);
-                    return None;
+                    return Err(ToolError::new(tool, ToolErrorCode::WrongType, err));
                 }
-                // TODO: Clean up the next 20 lines or so
-                let p = PathBuf::from(file);
-                let file_was_relative = !p.is_absolute();
-                let abs_path = match &tool_paths {
-                    Some((primary, policy)) => {
-                        match path_scoping::resolve_tool_path(p.as_path(), primary, policy) {
-                            Ok(pb) => pb,
-                            Err(err) => {
-                                let msg = format!("invalid path: {}", err);
-                                tool_call_params.tool_call_failed(msg);
-                                return None;
-                            }
-                        }
-                    }
-                    None => {
-                        if p.is_absolute() {
-                            p
-                        } else {
-                            std::env::current_dir()
-                                .unwrap_or_else(|_| PathBuf::from("."))
-                                .join(p)
-                        }
-                    }
-                };
+                let (abs_path, file_was_relative) = resolve_path(file)?;
                 let canon_trim = canon.trim();
-                let semantic_target = match split_canon_for_semantic_target(canon_trim, *node_type)
-                {
-                    Ok(target) => target,
-                    Err(msg) => {
-                        tool_call_params.tool_call_failed(msg);
-                        return None;
-                    }
-                };
+                let semantic_target = split_canon_for_semantic_target(canon_trim, *node_type)
+                    .map_err(|msg| ToolError::new(tool, ToolErrorCode::InvalidFormat, msg))?;
                 let mod_path_owned = semantic_target.module_path().to_vec();
                 let item_name = semantic_target.item_name();
                 let mut nodes = match ploke_db::helpers::graph_resolve_exact(
@@ -764,8 +760,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uu
                     Ok(v) => v,
                     Err(e) => {
                         let err = format!("DB resolve failed: {}", e);
-                        tool_call_params.tool_call_failed(err);
-                        return None;
+                        return Err(ToolError::new(tool, ToolErrorCode::Internal, err));
                     }
                 };
                 if nodes.is_empty() {
@@ -779,8 +774,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uu
                         Ok(v) => v,
                         Err(e) => {
                             let err = format!("DB relaxed resolve failed: {}", e);
-                            tool_call_params.tool_call_failed(err);
-                            return None;
+                            return Err(ToolError::new(tool, ToolErrorCode::Internal, err));
                         }
                     };
                     let filtered: Vec<ploke_core::io_types::EmbeddingData> = cands
@@ -802,8 +796,11 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uu
                                 {
                                     Ok(target) => target,
                                     Err(e) => {
-                                        tool_call_params.tool_call_failed(e);
-                                        return None;
+                                        return Err(ToolError::new(
+                                            tool,
+                                            ToolErrorCode::InvalidFormat,
+                                            e,
+                                        ));
                                     }
                                 };
                             let method_nodes = match ploke_db::helpers::graph_resolve_exact(
@@ -816,33 +813,28 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uu
                                 Ok(v) => v,
                                 Err(e) => {
                                     let err = format!("DB method probe failed: {}", e);
-                                    tool_call_params.tool_call_failed(err);
-                                    return None;
+                                    return Err(ToolError::new(tool, ToolErrorCode::Internal, err));
                                 }
                             };
                             if method_nodes.len() == 1 {
-                                let err = function_to_method_hint(
-                                    name,
+                                return Err(function_to_method_hint(
+                                    tool,
                                     canon,
                                     &abs_path,
                                     method_target.module_path(),
                                     method_target.owner_name(),
                                     method_target.item_name(),
-                                );
-                                tool_call_params.tool_call_failed_error(err);
-                                return None;
+                                ));
                             } else if method_nodes.len() > 1 {
-                                let err = ambiguous_method_target_error(
-                                    name,
+                                return Err(ambiguous_method_target_error(
+                                    tool,
                                     canon,
                                     &abs_path,
                                     method_target.module_path(),
                                     method_target.owner_name(),
                                     method_target.item_name(),
                                     method_nodes.len(),
-                                );
-                                tool_call_params.tool_call_failed_error(err);
-                                return None;
+                                ));
                             }
                         }
                         let cfiles: Vec<String> = filtered
@@ -855,8 +847,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uu
                             abs_path.display(),
                             cfiles
                         );
-                        tool_call_params.tool_call_failed(err);
-                        return None;
+                        return Err(ToolError::new(tool, ToolErrorCode::InvalidFormat, err));
                     }
                     if filtered.len() > 1 {
                         let cfiles: Vec<String> = filtered
@@ -870,23 +861,20 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uu
                             abs_path.display(),
                             cfiles
                         );
-                        tool_call_params.tool_call_failed(err);
-                        return None;
+                        return Err(ToolError::new(tool, ToolErrorCode::InvalidFormat, err));
                     }
                     nodes = filtered;
                 }
                 if nodes.len() > 1 {
-                    let err = ambiguous_method_target_error(
-                        name,
+                    return Err(ambiguous_method_target_error(
+                        tool,
                         canon,
                         &abs_path,
                         semantic_target.module_path(),
                         semantic_target.owner_name(),
                         semantic_target.item_name(),
                         nodes.len(),
-                    );
-                    tool_call_params.tool_call_failed_error(err);
-                    return None;
+                    ));
                 }
                 let ed = nodes.remove(0);
                 let ws = WriteSnippetData {
@@ -902,12 +890,12 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uu
                 edits.push(ws);
             }
             Edit::Patch { .. } => {
-                tracing::trace!("Patch found in apply_code_edit_tool call");
+                tracing::trace!("Patch found in resolve_code_edit_request call");
             }
         }
     }
 
-    stage_semantic_edit_proposal(tool_call_params, edits).await
+    Ok(edits)
 }
 
 pub async fn apply_ns_code_edit_tool(
