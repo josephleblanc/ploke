@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: orchestration hygiene and artifact monitor
 - task description: durable operating note for the current long-running pass over doc hygiene, restart cleanup, testing/documentation audit, and protocol-artifact coverage generation without new `ploke-protocol` development
-- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/active/agents/2026-04-15_ploke-protocol-control-note.md`
+- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-control-note.md`
 
 ## Operating Constraints
 

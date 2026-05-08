@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: active observability test contains `todo!()` fields
 - task description: track the incomplete active `ploke-db` observability test that appears to panic if executed because required fields are still filled with `todo!()`
-- related planning files: `docs/testing/BACKUP_DB_FIXTURES.md`, `docs/active/agents/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`
+- related planning files: `docs/testing/BACKUP_DB_FIXTURES.md`, `docs/archive/agents/2026-04/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`
 
 ## Summary
 

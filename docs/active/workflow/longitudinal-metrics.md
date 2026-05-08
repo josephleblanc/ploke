@@ -4,7 +4,7 @@
 - owning_branch: `refactor/tool-calls`
 - review_cadence: update when a formal run lands or a metric definition changes
 - update_trigger: update after formal run ingestion, schema changes, or capture/backfill changes
-- source: [eval-design.md](../plans/evals/eval-design.md), [run-manifest.v0.draft.json](../../workflow/run-manifest.v0.draft.json), [S2A report](../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md)
+- source: [eval-design.md](../plans/evals/eval-design.md), [run-manifest.v0.draft.json](../../workflow/run-manifest.v0.draft.json), [S2A report](../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md)
 
 This is the central roll-up surface for longitudinal eval metrics. Numeric truth comes from immutable run artifacts; narrative workflow docs may explain gaps, but they are not numeric sources.
 
@@ -67,6 +67,6 @@ Lightest-weight bootstrap path:
 
 ## Prototype Validation
 
-- Sample run: [S2D sample JSONL row](../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_sample.rows.jsonl) and [S2D sample render](../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_sample.rendered.md)
+- Sample run: [S2D sample JSONL row](../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S2D_sample.rows.jsonl) and [S2D sample render](../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S2D_sample.rendered.md)
 - Proven now: a small real run sample can seed a companion row and regenerate a markdown view from the current run-directory artifacts.
 - Still hypothetical: target-converged `experiment_id` / `manifest_id`, timing, token-cost, and turn-level misuse/recovery capture.

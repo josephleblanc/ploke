@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: documentation audit note
 - task description: compact note capturing current README, folder-index, and doc-comment findings for later user review
-- related planning files: `docs/active/agents/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`, `docs/active/agents/2026-04-15_docs-hygiene-tracker.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`, `docs/archive/agents/2026-04/2026-04-15_docs-hygiene-tracker.md`
 
 ## Highest-Signal Findings
 

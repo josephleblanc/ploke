@@ -10,19 +10,19 @@
 - related issues/prs: none yet
 - linked manifest ids: none
 - linked artifacts:
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/packet-P0-campaign-protocol-triage.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-triage-implementation-report.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-synthesis.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-diagnosis-workflow.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-diagnosis-subagent-template.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-search-thrash.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-request-code-context.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-read-file.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-partial-next-step.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-artifact-errors.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-read-file-partial-next-step.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_edr-0003-downstream-validation-plan.md`
-  - `docs/active/agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_edr-0003-baseline-cohort-report.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/packet-P0-campaign-protocol-triage.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-triage-implementation-report.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-synthesis.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-diagnosis-workflow.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-diagnosis-subagent-template.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-search-thrash.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-request-code-context.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-read-file.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-partial-next-step.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-artifact-errors.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-read-file-partial-next-step.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_edr-0003-downstream-validation-plan.md`
+  - `docs/archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_edr-0003-baseline-cohort-report.md`
 
 ## Decision
 

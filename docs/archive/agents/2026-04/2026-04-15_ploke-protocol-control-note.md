@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: ploke-protocol control note
 - task description: durable control note for the `ploke-protocol` architecture thread across forks, checkpoints, and restart surfaces
-- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/agents/2026-04-15_protocol-cold-start-reference.md`, `docs/active/agents/2026-04-15_ploke-protocol-architecture-checkpoint.md`, `docs/active/workflow/handoffs/recent-activity.md`
+- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/archive/agents/2026-04/2026-04-15_protocol-cold-start-reference.md`, `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-architecture-checkpoint.md`, `docs/active/workflow/handoffs/recent-activity.md`
 
 ## Purpose
 

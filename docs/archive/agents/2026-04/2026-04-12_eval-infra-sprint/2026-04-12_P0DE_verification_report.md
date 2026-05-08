@@ -4,7 +4,7 @@
 
 - No code changes were made in this verification pass.
 - Inspected the existing `ploke-eval` implementation in [record.rs](/home/brasides/code/ploke/crates/ploke-eval/src/record.rs:463), [record.rs](/home/brasides/code/ploke/crates/ploke-eval/src/record.rs:795), and [record.rs](/home/brasides/code/ploke/crates/ploke-eval/src/record.rs:985), plus the targeted tests in [introspection_integration.rs](/home/brasides/code/ploke/crates/ploke-eval/tests/introspection_integration.rs:140) and [setup_phase_integration.rs](/home/brasides/code/ploke/crates/ploke-eval/tests/setup_phase_integration.rs:335).
-- Verified `P0D` and `P0E` explicitly on top of accepted `P0C`; this report does not reopen or broaden the accepted `ploke-db` helper slice from [2026-04-12_P0C_report.md](/home/brasides/code/ploke/docs/active/agents/2026-04-12_eval-infra-sprint/2026-04-12_P0C_report.md).
+- Verified `P0D` and `P0E` explicitly on top of accepted `P0C`; this report does not reopen or broaden the accepted `ploke-db` helper slice from [2026-04-12_P0C_report.md](/home/brasides/code/ploke/docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P0C_report.md).
 
 ## claims
 

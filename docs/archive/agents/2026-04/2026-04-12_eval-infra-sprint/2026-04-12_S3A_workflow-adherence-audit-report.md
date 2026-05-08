@@ -10,9 +10,9 @@
   - The skills layer does not yet provide a dedicated orchestration/reporting skill, so agents must infer how to apply the protocol from several partial skills.
 
 - evidence:
-  - `docs/active/agents/2026-04-12_eval-infra-sprint/2026-04-12_S3A_workflow-adherence-audit.md` defines the packet scope and required report shape.
-  - `docs/active/agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md` requires evidence-backed claims, claim-to-criterion mapping, and a bounded verifier budget.
-  - `docs/active/agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md` adds the current-state table and packet links, but no reusable template.
+  - `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S3A_workflow-adherence-audit.md` defines the packet scope and required report shape.
+  - `docs/archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md` requires evidence-backed claims, claim-to-criterion mapping, and a bounded verifier budget.
+  - `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md` adds the current-state table and packet links, but no reusable template.
   - `docs/active/workflow/README.md` still frames startup around workflow docs and handoffs, not a control-plane template.
   - `docs/workflow/handoff-template.md` is minimal and does not force claims, evidence, unsupported claims, or verifier budget.
   - `docs/active/workflow/handoffs/2026-04-09_run-record-design-handoff.md` and `docs/active/workflow/handoffs/2026-04-10_conversation-capture-design.md` are narrative handoffs, not structured claim/evidence reports.

@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: docs hygiene tracker
 - task description: track the current restart/doc-hygiene findings, unattended-doc candidates, and a stable folder table-of-contents policy for later review
-- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/agents/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`, `docs/active/workflow/handoffs/recent-activity.md`
+- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/archive/agents/2026-04/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`, `docs/active/workflow/handoffs/recent-activity.md`
 
 ## Current Findings
 

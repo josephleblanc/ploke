@@ -19,7 +19,7 @@
   - named test command(s)
   - explicit note on what replay behavior remains blocked pending `P0C`
   - artifact or assertion evidence that persisted turn data is no longer placeholder-only
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: ready
 
 ## Permission Gate

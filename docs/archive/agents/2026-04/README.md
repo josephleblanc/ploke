@@ -26,3 +26,25 @@ Archived April 2026 agent docs and snapshots.
   Deprecated runrecord implementation plan.
 - `plan-setup-phase-implementation.md`
   Setup-phase implementation planning note.
+
+## Moved from `docs/active/agents/` (2026-05-08 archive wave)
+
+These topic trees and loose notes were **`git mv`’d** here from [`docs/active/agents/`](../../../active/agents/readme.md) to shrink the active surface; intra-folder relative links remain valid.
+
+### Eval infra, orchestration, and protocol checkpoints
+
+- `2026-04-08_ripgrep-edition-parse-handoff.md`, `2026-04-08_setup-reliability-ripgrep-parse-handoff.md`, `2026-04-09_run-manifest-design-note.md`, `2026-04-09_run-record-type-inventory.md`
+- `2026-04-12_eval-infra-sprint/`, `2026-04-12_eval-orchestration-protocol/`, `2026-04-13_orchestration-doc-discipline/`
+- Loose `2026-04-13_*` CLI / inspect UX notes and skill meta experiment
+- `2026-04-15_*.md` protocol / clap baseline / hygiene / tooling checkpoints + `2026-04-15_proto-inspect-agent-study/`
+
+### Closure, failure audit, and eval procedure model
+
+- `2026-04-16_eval-closure-formal-sketch.md`, `2026-04-17_eval-failure-and-protocol-audit/`
+- `2026-04-18_ploke-eval-canonical-artifact-set.md`, `2026-04-18_ploke-eval-procedure-model.md`
+
+### History / Crown reviews and Phase 1 audit
+
+- `history-artifact-claim-review-2026-04-30/`, `history-claims-review-2026-04-29/`, `history-crown-review-2026-04-29-post-mint/`, `history-live-seal-review-2026-04-29/`
+- `history-sealed-artifact-startup-review-2026-04-30/`, `history-surface-admission-review-2026-04-30/`
+- `prototype1-architecture-gap-audit-2026-04-30/`, `phase-1-audit/`

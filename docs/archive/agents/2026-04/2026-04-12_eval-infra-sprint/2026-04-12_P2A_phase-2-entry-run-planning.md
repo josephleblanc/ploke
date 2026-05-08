@@ -7,7 +7,7 @@
 - Design intent: Turn the now-accepted Phase 1 substrate and active run-policy artifacts into a concrete, fairness-aware next-step packet for Phase 2 rather than leaving phase advancement as an implicit chat decision
 - Scope: Review the phased plan, hypothesis/priority/evidence workflow artifacts, and target capability registry to propose the first bounded Phase 2 run-planning slice, including candidate targets or subsets, explicit run-policy constraints, and any remaining blockers that must be cleared before a formal baseline batch
 - Non-goals: Do not launch live benchmark runs, do not modify production code, do not redesign the target capability registry schema, do not silently adopt new validity-guard thresholds without documenting the basis
-- Owned files: `docs/active/workflow/**`, `docs/active/plans/evals/**`, `docs/active/agents/2026-04-12_eval-infra-sprint/**`
+- Owned files: `docs/active/workflow/**`, `docs/active/plans/evals/**`, `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/**`
 - Dependencies: accepted `P0A`-`P0F`, accepted `S2B`, integrated `target-capability-registry.md`, current `priority-queue.md`, `hypothesis-registry.md`, and `evidence-ledger.md`
 - Acceptance criteria:
   1. The packet produces a bounded recommendation for the first Phase 2 run-planning slice, with explicit target or subset candidates and linked run-policy annotations from the target capability registry.
@@ -17,7 +17,7 @@
   - explicit review of `phased-exec-plan.md`, `hypothesis-registry.md`, `priority-queue.md`, `evidence-ledger.md`, and `target-capability-registry.md`
   - candidate target/subset list with per-target run-policy notes
   - blocker table or equivalent summary tying the recommendation to current workflow state
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: ready
 
 ## Permission Gate

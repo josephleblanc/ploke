@@ -5,7 +5,7 @@ Task Title: Proto Inspect Agent Comparison
 Task Description: Compare what different information constraints allow agents to infer from `ploke-eval inspect proto` command outputs while keeping the command surface fixed.
 Related Planning Files:
 - `docs/active/CURRENT_FOCUS.md`
-- `docs/active/agents/2026-04-15_protocol-aggregate-cli.md`
+- `docs/archive/agents/2026-04/2026-04-15_protocol-aggregate-cli.md`
 
 Question: What is the most unexpected thing in the `ploke-eval inspect proto` commands output?
 

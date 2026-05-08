@@ -11,8 +11,8 @@ TUI writes into authority-side edit proposals.
 Related planning files:
 
 - `AGENTS.md`
-- `docs/active/agents/2026-05-07-prototype1-edit-surface-implementation-plan.md`
-- `docs/active/agents/2026-05-07-edit-surface-backend-bridge-review.md`
+- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-implementation-plan.md`
+- `docs/archive/agents/2026-05/2026-05-07-edit-surface-backend-bridge-review.md`
 - `crates/ploke-tui/src/rag/tools.rs`
 - `crates/ploke-tui/src/rag/tests/apply_code_edit_tests.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/backend.rs`

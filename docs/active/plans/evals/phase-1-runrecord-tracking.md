@@ -20,7 +20,7 @@ This work enables:
 - **A5 (measurement)**: "Replay and introspection" — RunRecord enables querying without re-running (hard gate for H0)
 
 **Reference docs:**
-- [RunRecord type inventory](../../agents/2026-04-09_run-record-type-inventory.md)
+- [RunRecord type inventory](../../../archive/agents/2026-04/2026-04-09_run-record-type-inventory.md)
 - [RunRecord design handoff](../../workflow/handoffs/2026-04-09_run-record-design-handoff.md)
 - [Phase execution plan](./phased-exec-plan.md)
 
@@ -329,7 +329,7 @@ Also added `ReplayState` struct containing:
 ## Linked Artifacts
 
 - **Hypothesis:** A5 (docs/active/workflow/hypothesis-registry.md)
-- **Type Inventory:** docs/active/agents/2026-04-09_run-record-type-inventory.md
+- **Type Inventory:** docs/archive/agents/2026-04/2026-04-09_run-record-type-inventory.md
 - **Design Handoff:** docs/active/workflow/handoffs/2026-04-09_run-record-design-handoff.md
 - **Original Plan:** docs/archive/agents/2026-04/2026-04-09_runrecord-implementation-plan.md (deprecated)
 
@@ -345,7 +345,7 @@ An independent audit discovered that while basic types and methods exist, **core
 | SetupPhase population | **NOT IMPLEMENTED** | Blocks validation - always `null` in output |
 | Historical DB queries | **NOT POSSIBLE** | Blocks replay - all queries hardcode `@ 'NOW'` |
 
-**See:** [Phase 1 Audit Synthesis](../../../agents/phase-1-audit/AUDIT_SYNTHESIS.md)
+**See:** [Phase 1 Audit Synthesis](../../../archive/agents/2026-04/phase-1-audit/AUDIT_SYNTHESIS.md)
 
 ### Revised Status
 
@@ -366,7 +366,7 @@ An independent audit discovered that while basic types and methods exist, **core
 ## Linked Artifacts
 
 - **Hypothesis:** A5 (docs/active/workflow/hypothesis-registry.md)
-- **Type Inventory:** docs/active/agents/2026-04-09_run-record-type-inventory.md
+- **Type Inventory:** docs/archive/agents/2026-04/2026-04-09_run-record-type-inventory.md
 - **Design Handoff:** docs/active/workflow/handoffs/2026-04-09_run-record-design-handoff.md
 - **Original Plan:** docs/archive/agents/2026-04/2026-04-09_runrecord-implementation-plan.md (deprecated)
-- **Phase 1 Audit:** docs/active/agents/phase-1-audit/AUDIT_SYNTHESIS.md (NEW)
+- **Phase 1 Audit:** docs/archive/agents/2026-04/phase-1-audit/AUDIT_SYNTHESIS.md (NEW)

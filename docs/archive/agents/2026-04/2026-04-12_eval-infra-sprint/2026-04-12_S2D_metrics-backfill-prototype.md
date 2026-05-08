@@ -17,7 +17,7 @@
   - sampled formal-run input set
   - concrete output artifact or prototype summary
   - explicit note on what still remains manual or blocked
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: accepted
 
 ## Permission Gate

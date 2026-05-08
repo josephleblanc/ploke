@@ -14,10 +14,10 @@ handling, short-run readiness, and missing History evidence.
 Related planning files:
 
 - `AGENTS.md`
-- `docs/active/agents/2026-05-07-prototype1-edit-surface-implementation-plan.md`
-- `docs/active/agents/2026-05-07-edit-surface-resolver-extraction-review.md`
-- `docs/active/agents/2026-05-07-edit-surface-backend-bridge-review.md`
-- `docs/active/agents/2026-05-07-tui-edit-surface-producer-note.md`
+- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-implementation-plan.md`
+- `docs/archive/agents/2026-05/2026-05-07-edit-surface-resolver-extraction-review.md`
+- `docs/archive/agents/2026-05/2026-05-07-edit-surface-backend-bridge-review.md`
+- `docs/archive/agents/2026-05/2026-05-07-tui-edit-surface-producer-note.md`
 - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/backend.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/identity.rs`

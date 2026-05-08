@@ -9,7 +9,7 @@
 - hypothesis ids: `A1`, `A5`
 - related issues/prs: none yet
 - linked manifest ids: none
-- linked artifacts: `docs/active/agents/2026-04-13_cli-trace-review-skill-meta-experiment.md`
+- linked artifacts: `docs/archive/agents/2026-04/2026-04-13_cli-trace-review-skill-meta-experiment.md`
 
 ## Decision
 

@@ -25,10 +25,10 @@
 
 - **PROTOCOL DIAGNOSIS WORKFLOW IS NOW EXPLICIT, BUT ITS EXPERIMENT RECORD REMAINS ACTIVE AND INCONCLUSIVE**
   - Added a formal protocol-driven diagnosis workflow and sub-agent launch template:
-    - [2026-04-17_protocol-diagnosis-workflow.md](../../agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-diagnosis-workflow.md)
-    - [2026-04-17_protocol-diagnosis-subagent-template.md](../../agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-diagnosis-subagent-template.md)
+    - [2026-04-17_protocol-diagnosis-workflow.md](../../../archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-diagnosis-workflow.md)
+    - [2026-04-17_protocol-diagnosis-subagent-template.md](../../../archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_protocol-diagnosis-subagent-template.md)
   - Ran a bounded parallel workflow trial across issue, tool, combined, and status slices and captured the synthesis in:
-    - [2026-04-17_workflow-trial-synthesis.md](../../agents/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-synthesis.md)
+    - [2026-04-17_workflow-trial-synthesis.md](../../../archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/2026-04-17_workflow-trial-synthesis.md)
   - The governing experiment record is:
     - [EDR-0003-protocol-diagnosis-workflow-experiment.md](../edr/EDR-0003-protocol-diagnosis-workflow-experiment.md)
   - Important status:
@@ -236,7 +236,7 @@
     - the next implementation slice is optional sparse event emission, but the immediate operational move is still to resume the protocol coverage queue
 
 - **EVAL-CLOSURE FORMAL SKETCH LANDED AS THE NEW COMPACT PLANNING SURFACE**
-  - Added [2026-04-16_eval-closure-formal-sketch.md](../../agents/2026-04-16_eval-closure-formal-sketch.md)
+  - Added [2026-04-16_eval-closure-formal-sketch.md](../../../archive/agents/2026-04/2026-04-16_eval-closure-formal-sketch.md)
   - The note reframes the active problem as layered closure over:
     - benchmark-instance mapping
     - eval-artifact completion
@@ -294,7 +294,7 @@
     - resume protocol coverage exactly from that frontier rather than rescanning from zero
 
 - **COZO-FRAMED BUILDER-REVIVAL DESIGN NOTE WAS LANDED**
-  - Added [2026-04-15_ploke-db-builder-revival-note.md](../../agents/2026-04-15_ploke-db-builder-revival-note.md)
+  - Added [2026-04-15_ploke-db-builder-revival-note.md](../../../archive/agents/2026-04/2026-04-15_ploke-db-builder-revival-note.md)
   - The note now:
     - frames Cozo as `an algebra of relations`
     - treats the builder revival as a basis-aware query-intent surface
@@ -319,7 +319,7 @@
     - the current CLI is now more clearly an admissibility / evidence-trust surface
     - it is still not yet the intervention-ranking view
   - Restart references:
-    - [2026-04-15_protocol-aggregate-cli.md](../../agents/2026-04-15_protocol-aggregate-cli.md)
+    - [2026-04-15_protocol-aggregate-cli.md](../../../archive/agents/2026-04/2026-04-15_protocol-aggregate-cli.md)
 
 - **CURRENT PASS SHIFTED FROM PROTOCOL DEVELOPMENT TO ORCHESTRATED HYGIENE + ARTIFACT COVERAGE**
   - New `ploke-protocol` development is intentionally shelved for now.
@@ -330,7 +330,7 @@
     - testing-surface auditing
     - persisted protocol-artifact generation across finished eval runs
   - Active orchestration note:
-    - [2026-04-15_orchestration-hygiene-and-artifact-monitor.md](../../agents/2026-04-15_orchestration-hygiene-and-artifact-monitor.md)
+    - [2026-04-15_orchestration-hygiene-and-artifact-monitor.md](../../../archive/agents/2026-04/2026-04-15_orchestration-hygiene-and-artifact-monitor.md)
   - Operational consequence:
     - treat this as a documentation, monitoring, and artifact-generation pass
     - prefer reports and tracking docs over fresh implementation work
@@ -350,7 +350,7 @@
     - once at least half coverage is present, run sampled sanity-check review passes comparing protocol outputs against `inspect`-based qualitative reads
 
 - **DOC HYGIENE TRACKING SURFACES WERE ADDED**
-  - Added [2026-04-15_docs-hygiene-tracker.md](../../agents/2026-04-15_docs-hygiene-tracker.md)
+  - Added [2026-04-15_docs-hygiene-tracker.md](../../../archive/agents/2026-04/2026-04-15_docs-hygiene-tracker.md)
   - Current tracked concerns include:
     - stale restart pointers
     - under-indexed README surfaces
@@ -392,7 +392,7 @@
     - this is still a bootstrap, not a full protocol framework
     - persistence, richer input packets, calibration, and a second protocol remain next-step work
   - Active handoff:
-    - [ploke-protocol bootstrap handoff](../../agents/2026-04-12_eval-infra-sprint/2026-04-14_ploke-protocol-bootstrap-handoff.md)
+    - [ploke-protocol bootstrap handoff](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-14_ploke-protocol-bootstrap-handoff.md)
 
 - **TOKIO-RS FULL BATCH COMPLETED 25/25**
   - The fresh `tokio-rs-all` second-target batch completed with `25` attempted, `25` succeeded, `0` failed, and `stopped_early: false`
@@ -421,7 +421,7 @@
     - do not force a generic benchmark-family row into the target-capability registry unless a real benchmark-wide limitation appears; the registry remains a run-policy/interpretability surface, not a benchmark inventory
 
 - **TOKIO-RS PROBE COMPLETED CLEANLY AND OPENS THE SECOND-REPO BATCH PATH**
-  - Added [tokio-rs probe and batch entry](../../agents/2026-04-12_eval-infra-sprint/2026-04-13_tokio-rs-probe-and-batch-entry.md)
+  - Added [tokio-rs probe and batch entry](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-13_tokio-rs-probe-and-batch-entry.md)
   - Ran a reviewed single-instance probe on `tokio-rs__tokio-6618` using the upstream `tokio-rs__tokio_dataset.jsonl` file and a normal `~/.ploke-eval/repos/tokio-rs/tokio` checkout
   - Probe result:
     - completed successfully
@@ -438,7 +438,7 @@
     - prepare and launch a fresh `tokio-rs` batch id across the visible `tokio-rs` instance family
 
 - **RIPGREP BATCH EXECUTION ROLLED FORWARD TO A USABLE 14-RUN ARTIFACT SET**
-  - Added [ripgrep batch rollup and next target](../../agents/2026-04-12_eval-infra-sprint/2026-04-13_ripgrep-batch-rollup-and-next-target.md)
+  - Added [ripgrep batch rollup and next target](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-13_ripgrep-batch-rollup-and-next-target.md)
   - Under time pressure, the first `ripgrep-all` batch attempt exposed an operational caveat:
     - the original batch id was reused after an earlier failed attempt
     - `run_batch()` only writes `batch-run-summary.json` after the full loop finishes
@@ -456,7 +456,7 @@
     - the next bounded orchestrator move is choosing a second repo, classifying it in the target capability registry, and launching a fresh batch id for that repo
 
 - **RAW LLM FULL-RESPONSE TRACE STOPGAP LANDED FOR EVAL INTROSPECTION**
-  - Added [LLM full response trace stopgap](../../agents/2026-04-12_eval-infra-sprint/2026-04-13_llm-full-response-trace-stopgap.md)
+  - Added [LLM full response trace stopgap](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-13_llm-full-response-trace-stopgap.md)
   - Landed a narrow production-code slice in `ploke-tui` and `ploke-eval` with explicit user permission:
     - `ploke-tui` now emits a serialized wrapper record to a dedicated `llm-full-response` tracing target just before finish-policy handling
     - the wrapper currently carries `assistant_message_id`, per-turn `response_index`, and the full `OpenAiResponse`
@@ -478,7 +478,7 @@
     - the next bounded fix is the missing final-response capture, not broader schema redesign
 
 - **INSPECT TURN-SELECTION UX TIGHTENED; LOOP VIEW SCOPED FOR RESTART**
-  - Added [inspect turns and loop UX note](../../agents/2026-04-13_inspect-turns-and-loop-ux-note.md)
+  - Added [inspect turns and loop UX note](../../../archive/agents/2026-04/2026-04-13_inspect-turns-and-loop-ux-note.md)
   - Accepted the CLI inspection ladder:
     - `inspect conversations` as the compact turn-selection surface
     - `inspect turns` as the clearer alias-compatible mental model
@@ -494,7 +494,7 @@
     - the next bounded slice is a dedicated `inspect turn --show loop` mid-level view rather than overloading `messages`
 
 - **CLI TRACE REVIEW SKILL META-EXPERIMENT SEEDED AND ROUND 1 COMPLETED**
-  - Added [CLI trace review skill meta-experiment](../../agents/2026-04-13_cli-trace-review-skill-meta-experiment.md)
+  - Added [CLI trace review skill meta-experiment](../../../archive/agents/2026-04/2026-04-13_cli-trace-review-skill-meta-experiment.md)
   - Added [EDR-0002](../edr/EDR-0002-cli-trace-review-skill-experiment.md) to track the prompt-comparison experiment before promoting the workflow into a durable repo-local skill
   - Fixed the first-round evidence surface to CLI-only `ploke-eval inspect tool-calls` drill-downs against the latest run and explicitly prohibited `crates/ploke-eval/` source inspection during the comparison
   - Ran three parallel prompt variants over the same latest-run trace:
@@ -512,7 +512,7 @@
 ## 2026-04-12
 
 - **`P2G` ACCEPTED; FIRST FORMAL PHASE 2 RUNS EXECUTED**
-  - Added [P2G report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2G_report.md)
+  - Added [P2G report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2G_report.md)
   - Accepted the narrow `ploke-eval` runner-surface follow-up:
     - explicit arm provenance now distinguishes shell-only control vs structured treatment in runner artifacts
     - selected endpoint provenance now persists in `execution-log.json` and `record.json.gz`
@@ -542,13 +542,13 @@
     - no current evidence that `EVAL_HARNESS` or `RUNTIME_INFRA` explains the retry discrepancy
 
 - **EVAL ORCHESTRATION PROTOCOL ADOPTED** — active control plane created for Phase 1 P0 gaps
-  - Created [Eval Orchestration Protocol](../../agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md) and compact [templates](../../agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-templates.md)
+  - Created [Eval Orchestration Protocol](../../../archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md) and compact [templates](../../../archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-templates.md)
   - Workers now report claims plus evidence, not self-certified "verified/done" status
   - Verifier passes are bounded; orchestrator is sole acceptance authority
   - [AGENTS.md](../../../../AGENTS.md) now mirrors the cold-start sequence and points directly at the protocol for eval execution
 
 - **EVAL INFRA SPRINT CONTROL PLANE ACTIVE**
-  - Active planning doc moved from audit synthesis to [2026-04-12_eval-infra-sprint-control-plane.md](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
+  - Active planning doc moved from audit synthesis to [2026-04-12_eval-infra-sprint-control-plane.md](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md)
   - Seeded initial P0 packets:
     - `P0A` SetupPhase schema extension
     - `P0B` SetupPhase capture wiring
@@ -571,16 +571,16 @@
 
 - **PRIMARY PATCH DISPOSITION STARTED**
   - Reviewed current in-worktree `ploke-eval` changes against `P0A/P0B`
-  - Added [P0A/P0B initial verification note](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0AB_initial-verification-note.md)
+  - Added [P0A/P0B initial verification note](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P0AB_initial-verification-note.md)
   - Current state:
     - setup schema/capture look independently checked inside `ploke-eval`
     - the same patch also includes replay/query additions that should remain unaccepted pending `P0C` permission and stronger evidence
   - Accepted sidecar reports:
-    - [S2A report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md)
-    - [S3A report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3A_workflow-adherence-audit-report.md)
+    - [S2A report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md)
+    - [S3A report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S3A_workflow-adherence-audit-report.md)
 
 - **S1A ACCEPTED; NEW FOLLOW-UP PACKETS SEEDED**
-  - Accepted [S1A coherence audit report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1A_ploke-eval-coherence-audit-report.md)
+  - Accepted [S1A coherence audit report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S1A_ploke-eval-coherence-audit-report.md)
   - New primary-lane packet added:
     - `P0F` turn-record fidelity and replay-state reconstruction
   - New sidecar follow-up packets added:
@@ -590,13 +590,13 @@
     - replay/inspection risk is not only historical-query support; current turn persistence inside `ploke-eval` is itself a blocking fidelity issue
 
 - **S2B/S3B ACCEPTED; P0F ACCEPTED AFTER INDEPENDENT CHECK**
-  - Accepted [S2B ledger report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2B_longitudinal-metrics-ledger-report.md) and created [longitudinal-metrics.md](../longitudinal-metrics.md) as the central metrics roll-up artifact
-  - Accepted [S3B template report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3B_control-plane-and-handoff-template-tightening-report.md) and tightened:
+  - Accepted [S2B ledger report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S2B_longitudinal-metrics-ledger-report.md) and created [longitudinal-metrics.md](../longitudinal-metrics.md) as the central metrics roll-up artifact
+  - Accepted [S3B template report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S3B_control-plane-and-handoff-template-tightening-report.md) and tightened:
     - [handoff-template.md](../../../../docs/workflow/handoff-template.md)
-    - [eval orchestration templates](../../agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-templates.md)
+    - [eval orchestration templates](../../../archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-templates.md)
   - Current primary-lane state:
     - `P0F` retry changes landed in `crates/ploke-eval/src/record.rs` and related tests
-    - independent verification completed against targeted `ploke-eval` tests, so `P0F` is accepted on the strength of [P0F retry report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0F_retry-report.md)
+    - independent verification completed against targeted `ploke-eval` tests, so `P0F` is accepted on the strength of [P0F retry report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P0F_retry-report.md)
     - remaining ambiguity is now concentrated in the mixed-scope `P0A/P0B/P0D/P0E` patch and the `P0C` permission gate
 
 - **S2B LEDGER CREATED**
@@ -610,7 +610,7 @@
   - These are active sidecar packets, not deferred backlog, but they remain non-blocking relative to the primary P0 lane
 
 - **S3C INVENTORY REPORT COMPLETED**
-  - Produced [S3C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3C_report.md) with a signal inventory, noisy/unavailable split, exploratory hypotheses, and a narrow `S3D` recommendation
+  - Produced [S3C report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S3C_report.md) with a signal inventory, noisy/unavailable split, exploratory hypotheses, and a narrow `S3D` recommendation
   - The report treats current-focus, control-plane, recent-activity, evidence-ledger, hypothesis-registry, longitudinal-metrics, EDR, and handoff artifacts as the highest-signal workflow sources
   - The next meta-process experiment should be observational and small rather than a process rewrite
 
@@ -620,19 +620,19 @@
   - `P0C` remains permission-gated for implementation because it touches `crates/ploke-db/`
 
 - **`P0A` / `P0B` / `P0C0` ACCEPTANCE BOUNDARIES CLARIFIED**
-  - Accepted `P0A` and `P0B` as setup-only slices on the strength of [P0A/P0B scope separation review](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0AB_scope-separation-review.md)
+  - Accepted `P0A` and `P0B` as setup-only slices on the strength of [P0A/P0B scope separation review](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P0AB_scope-separation-review.md)
   - Explicitly kept `DbState`, `lookup`, `query`, `replay_query`, and the mixed replay tests outside that acceptance boundary
-  - Accepted `P0C0` on the strength of [query-builder survey report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0C0_query-builder-survey-report.md)
+  - Accepted `P0C0` on the strength of [query-builder survey report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P0C0_query-builder-survey-report.md)
   - Chosen direction for `P0C`: use the existing `raw_query_at_timestamp()` / `DbState` helper path rather than extending `QueryBuilder` during the primary P0 lane
 
 - **`P0C` ACCEPTED WITH BASELINE COMPARISON**
-  - Accepted the narrow historical-query helper slice on the strength of [P0C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0C_report.md)
+  - Accepted the narrow historical-query helper slice on the strength of [P0C report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P0C_report.md)
   - Acceptance boundary is explicit: `Database::raw_query_at_timestamp()` now requires at least one `@ 'NOW'` marker, rewrites all such markers to the supplied timestamp, and has targeted tests for historical behavior, missing-marker rejection, and multi-marker rewriting
   - Did not accept the whole dirty `crates/ploke-db/src/database.rs` diff by implication; only the helper-contract/test slice is in scope for this packet
   - Pre/post full-workspace regression runs used the same environment overrides and showed no new failures: both runs remained red only on `ploke-tui` integration tests `post_apply_rescan::approve_emits_rescan_sysinfo_under_default_profile` and `post_apply_rescan::approve_emits_rescan_sysinfo_under_verbose_profile`
 
 - **`P0D` / `P0E` ACCEPTED; PRIMARY P0 LANE CLOSED**
-  - Accepted `P0D` and `P0E` on the strength of [P0D/P0E verification report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P0DE_verification_report.md)
+  - Accepted `P0D` and `P0E` on the strength of [P0D/P0E verification report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P0DE_verification_report.md)
   - `TurnRecord::db_state()` / `DbState::lookup()` and `RunRecord::replay_query()` now meet their packet criteria on top of accepted `P0C`
   - No code changes were needed in the verification pass; acceptance is based on targeted `ploke-eval` tests over the existing implementation
   - Residual risks were explicitly bounded rather than treated as blockers:
@@ -653,69 +653,69 @@
   - Test signal remains in `crates/ploke-eval/tests/introspection_integration.rs`; the cleanup did not touch accepted P0 runtime behavior
 
 - **FIRST POST-P0 SIDECAR WAVE ACCEPTED**
-  - Accepted [S1B report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1B_report.md) as a narrow `ploke-eval` cleanup slice: the redundant standalone introspection smoke test is gone, and `introspection_integration.rs` remains the canonical stronger suite
-  - Accepted [S1C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1C_inspect-cli-ux-audit-report.md): the inspect CLI is usable as a bootstrap surface, but `inspect turn --show messages` still exposes a placeholder gap and is the cleanest polish follow-up
-  - Accepted [S2C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2C_report.md): the longitudinal metrics path now specifies an append-only JSONL companion plus regenerated markdown ledger as the lightest-weight ingestion/bootstrap design
-  - Accepted [S2D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_report.md): a tiny real sample now proves the companion-row + regenerated-markdown shape, while canonical manifest keys and a few telemetry fields remain intentionally hypothetical
-  - Accepted [S3C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3C_report.md): the highest-signal workflow sources are now explicit, and the recommended next step is a narrow observational `S3D` packet rather than a broad process rewrite
+  - Accepted [S1B report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S1B_report.md) as a narrow `ploke-eval` cleanup slice: the redundant standalone introspection smoke test is gone, and `introspection_integration.rs` remains the canonical stronger suite
+  - Accepted [S1C report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S1C_inspect-cli-ux-audit-report.md): the inspect CLI is usable as a bootstrap surface, but `inspect turn --show messages` still exposes a placeholder gap and is the cleanest polish follow-up
+  - Accepted [S2C report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S2C_report.md): the longitudinal metrics path now specifies an append-only JSONL companion plus regenerated markdown ledger as the lightest-weight ingestion/bootstrap design
+  - Accepted [S2D report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S2D_report.md): a tiny real sample now proves the companion-row + regenerated-markdown shape, while canonical manifest keys and a few telemetry fields remain intentionally hypothetical
+  - Accepted [S3C report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S3C_report.md): the highest-signal workflow sources are now explicit, and the recommended next step is a narrow observational `S3D` packet rather than a broad process rewrite
   - Operational consequence: the next decision is between bounded follow-up packets, not rediscovery of the primary lane or the first sidecar wave
 
 - **POST-SIDECAR FOLLOW-UP PACKETS SEEDED**
-  - Added [S1D](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1D_inspect-cli-polish.md) for the smallest inspect-CLI polish work exposed by `S1C`
-  - Added [S2D](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_metrics-backfill-prototype.md) to validate the proposed JSONL-companion/regenerated-ledger path against a small real sample
-  - Added [S3D](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3D_restart-rubric-sample.md) for a narrow restart-rubric observational pass over recent workflow artifacts
+  - Added [S1D](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S1D_inspect-cli-polish.md) for the smallest inspect-CLI polish work exposed by `S1C`
+  - Added [S2D](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S2D_metrics-backfill-prototype.md) to validate the proposed JSONL-companion/regenerated-ledger path against a small real sample
+  - Added [S3D](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S3D_restart-rubric-sample.md) for a narrow restart-rubric observational pass over recent workflow artifacts
 
 - **S1D ACCEPTED**
   - Replaced the misleading `inspect turn --show messages` placeholder with structured JSON output and kept bootstrap discoverability explicit in help text
-  - Accepted [S1D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1D_report.md) on targeted test and live-command evidence
+  - Accepted [S1D report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S1D_report.md) on targeted test and live-command evidence
 
 - **S2D ACCEPTED**
-  - Added [S2D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S2D_report.md) plus a tiny sample companion row and regenerated markdown excerpt
+  - Added [S2D report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S2D_report.md) plus a tiny sample companion row and regenerated markdown excerpt
   - The sample shows that the backfill/render loop is viable on the current run-directory artifact set, but canonical manifest keys and some telemetry fields stay hypothetical until the formal manifest path lands
 
 - **S3D ACCEPTED**
-  - Added [S3D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S3D_report.md) after sampling `CURRENT_FOCUS.md`, the control plane, and `recent-activity.md` against a restart rubric
+  - Added [S3D report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S3D_report.md) after sampling `CURRENT_FOCUS.md`, the control plane, and `recent-activity.md` against a restart rubric
   - The sample supports keeping the current recovery chain unchanged for now; no additional process change is justified yet
 
 - **S1E SEEDED**
-  - Added [S1E](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1E_setup-phase-test-cleanup.md) as the next narrow `ploke-eval` cleanup packet
+  - Added [S1E](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S1E_setup-phase-test-cleanup.md) as the next narrow `ploke-eval` cleanup packet
   - Scope is limited to the duplicated setup/helper path inside `crates/ploke-eval/tests/setup_phase_integration.rs`
 
 - **S1E ACCEPTED WITH NO-CHANGE OUTCOME**
-  - Added [S1E report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_S1E_report.md)
+  - Added [S1E report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S1E_report.md)
   - The suspected duplication in `setup_phase_integration.rs` is a single shared test-only fixture builder, not shallow redundancy worth removing
   - Operational consequence: this is not the next high-value `ploke-eval` cleanup target
 
 - **TARGET CAPABILITY REGISTRY PROPOSAL ADDED**
   - Added durable schema/rules doc at [docs/workflow/target-capability-registry.md](../../../../docs/workflow/target-capability-registry.md)
   - Added living registry at [target-capability-registry.md](../target-capability-registry.md)
-  - Added proposal note at [2026-04-12_target-capability-registry-proposal.md](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_target-capability-registry-proposal.md)
+  - Added proposal note at [2026-04-12_target-capability-registry-proposal.md](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_target-capability-registry-proposal.md)
   - Purpose: record parser blockers, modeling coverage gaps, and scaling constraints as target/task run-policy annotations so unfair targets can be skipped by default and revisited deliberately when new features bring them into scope
   - Ripgrep is recorded as the example resolved-blocker case: the mixed-edition parser issue is no longer active, but the target remains useful as a regression/sentinel recheck
 
 - **TARGET CAPABILITY REGISTRY INTEGRATED INTO RESTART PATH**
   - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md) so the registry is treated as a live workflow artifact, not only a proposal
   - Updated [workflow/README.md](../README.md) so target selection, run-policy decisions, and fairness interpretation explicitly consult [target-capability-registry.md](../target-capability-registry.md)
-  - Updated the active [eval infra sprint control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) resume path to read the registry before target-sensitive planning
+  - Updated the active [eval infra sprint control plane](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) resume path to read the registry before target-sensitive planning
   - Operational consequence: cold starts and run-planning passes now have an explicit place to check known parser/modeling/scaling constraints before scheduling formal work
 
 - **PHASE 2 ENTRY PACKET SEEDED**
-  - Added [P2A - Phase 2 Entry Run Planning](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2A_phase-2-entry-run-planning.md)
-  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md) and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so `P2A` is the default resume point
+  - Added [P2A - Phase 2 Entry Run Planning](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2A_phase-2-entry-run-planning.md)
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md) and the active [control plane](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so `P2A` is the default resume point
   - Purpose: convert the accepted Phase 1 substrate plus the live target capability registry into a bounded recommendation for the first Phase 2 baseline/control planning slice
   - Expected output: candidate targets or subsets, explicit run-policy notes, remaining blockers, and one clear next packet recommendation
 
 - **P2A ACCEPTED; P2B SEEDED**
-  - Added [P2A report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2A_report.md)
+  - Added [P2A report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2A_report.md)
   - `P2A` recommends a conservative ripgrep-first Phase 2 entry path:
     - `BurntSushi__ripgrep-1294` stays the documented mixed-edition `A2` sentinel
     - `BurntSushi__ripgrep-2209` remains the replay/introspection reference artifact
     - broader formal baseline/control scheduling stays blocked until `A2`, validity-guard policy, and manifest convergence are clearer
-  - Added [P2B - Ripgrep A2 Validation](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2B_ripgrep-a2-validation.md) as the new default resume packet
-  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) to reflect the new blocker order
+  - Added [P2B - Ripgrep A2 Validation](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2B_ripgrep-a2-validation.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) to reflect the new blocker order
 
 - **P2B ACCEPTED; P2C SEEDED**
-  - Added [P2B report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2B_report.md)
+  - Added [P2B report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2B_report.md)
   - Ran the ripgrep sentinel re-entry check through the current code path instead of relying on the ambiguous older `BurntSushi__ripgrep-1294` run directory:
     - targeted `syn_parser` edition-2015 repro tests passed
     - a fresh temp-root `BurntSushi__ripgrep-1294` `run-msb-single` completed indexing and snapshotting
@@ -724,20 +724,20 @@
     - the old ripgrep mixed-edition parser blocker is no longer the active Phase 2 gate
     - ripgrep remains a useful regression sentinel, but it can also stay in the bounded baseline-candidate set
     - formal baseline/control work is still blocked on validity-guard policy and manifest convergence
-  - Added [P2C - Validity-Guard Policy](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2C_validity-guard-policy.md) as the new default resume packet
-  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [target-capability-registry.md](../target-capability-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) to reflect the new blocker order
+  - Added [P2C - Validity-Guard Policy](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2C_validity-guard-policy.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [target-capability-registry.md](../target-capability-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) to reflect the new blocker order
 
 - **P2C ACCEPTED; P2D SEEDED**
-  - Added [P2C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2C_report.md)
+  - Added [P2C report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2C_report.md)
   - Reviewed the live workflow/design/config artifacts and made the validity-guard policy explicit:
     - the draft experiment config already contains example numeric guards for provider and setup failures
     - those numbers are not yet globally binding because [readiness-status.md](../readiness-status.md) still says current numeric validity guards remain draft unless adopted in an EDR or experiment config used for a formal run
     - operational consequence: formal baseline/control work remains blocked, but now for a narrower reason than before; the ambiguity is no longer "what is the policy?" but "which concrete manifest/config surface will adopt it first?"
-  - Added [P2D - Manifest And Config Convergence](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2D_manifest-config-convergence.md) as the new default resume packet
-  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so manifest/config convergence is now the leading Phase 2 gate
+  - Added [P2D - Manifest And Config Convergence](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2D_manifest-config-convergence.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so manifest/config convergence is now the leading Phase 2 gate
 
 - **P2D ACCEPTED; P2E SEEDED**
-  - Added [P2D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2D_report.md)
+  - Added [P2D report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2D_report.md)
   - Compared the draft run-manifest/config schemas against representative current `ploke-eval` runs and the current CLI/runner surfaces
   - Accepted one bounded formal-run entry surface for the first formal Phase 2 packet:
     - `run.json` as identity/budget anchor
@@ -748,11 +748,11 @@
   - Operational consequence:
     - the programme no longer needs to rediscover where formal provenance and validity evidence live before opening the first real Phase 2 packet
     - validity guards should be adopted in the first formal-run experiment config plus EDR, with explicit waivers for draft-only fields that are not yet harness-frozen
-  - Added [P2E - Phase 2 Formal Entry Planning](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2E_phase-2-formal-entry-planning.md) as the new default resume packet
-  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so formal-entry planning is now the leading Phase 2 gate
+  - Added [P2E - Phase 2 Formal Entry Planning](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2E_phase-2-formal-entry-planning.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so formal-entry planning is now the leading Phase 2 gate
 
 - **P2E ACCEPTED; P2F SEEDED**
-  - Added [P2E report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2E_report.md)
+  - Added [P2E report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2E_report.md)
   - Accepted the first narrow formal-entry plan:
     - `BurntSushi__ripgrep-1294` is the single live anchor target for the first formal packet
     - `BurntSushi__ripgrep-2209` remains reference-only for replay/introspection support
@@ -764,13 +764,13 @@
     - `require_full_telemetry`
     - `require_frozen_subset`
   - Accepted the first-packet waiver boundary for draft-only fields not frozen by current harness artifacts, including prompt provenance, tool-schema/policy fields, retry/timeout IDs, and observed wall time
-  - Added [P2F - Ripgrep First Formal Phase 2 Packet](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2F_ripgrep-formal-packet.md) as the new default resume packet
-  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so the next move is authoring the first real formal packet rather than more pre-planning
+  - Added [P2F - Ripgrep First Formal Phase 2 Packet](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2F_ripgrep-formal-packet.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so the next move is authoring the first real formal packet rather than more pre-planning
 
 - **P2F ACCEPTED; P2G SEEDED**
-  - Added [2026-04-12_exp-001-ripgrep-1294-phase2-entry.config.json](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_exp-001-ripgrep-1294-phase2-entry.config.json) as the first concrete formal Phase 2 config artifact
+  - Added [2026-04-12_exp-001-ripgrep-1294-phase2-entry.config.json](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_exp-001-ripgrep-1294-phase2-entry.config.json) as the first concrete formal Phase 2 config artifact
   - Added active [EDR-0001-ripgrep-1294-phase2-entry.md](../edr/EDR-0001-ripgrep-1294-phase2-entry.md) and updated the active EDR index
-  - Added [P2F report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2F_report.md)
+  - Added [P2F report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2F_report.md)
   - Accepted the first real formal packet at the workflow level:
     - one config
     - one EDR
@@ -779,8 +779,8 @@
   - Operational consequence:
     - the remaining blocker is now a narrow `ploke-eval` execution-surface issue
     - the current runner still hardcodes benchmark chat policy and does not yet expose a concrete per-arm shell-only versus structured control surface
-  - Added [P2G - Runner Arm Surface](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2G_runner-arm-surface.md) as the new default resume packet
-  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so the next move is the `ploke-eval` runner prerequisite rather than more workflow planning
+  - Added [P2G - Runner Arm Surface](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2G_runner-arm-surface.md) as the new default resume packet
+  - Updated [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md), [hypothesis-registry.md](../hypothesis-registry.md), [priority-queue.md](../priority-queue.md), and the active [control plane](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md) so the next move is the `ploke-eval` runner prerequisite rather than more workflow planning
 
 ## 2026-04-11 (Late Evening)
 
@@ -790,7 +790,7 @@
   - **Key finding:** SetupPhase is **NEVER POPULATED** (verified `null` in record.json.gz)
   - **Key finding:** Historical DB queries **NOT POSSIBLE** (all queries hardcode `@ 'NOW'`)
   - **Phase 1 status:** INCOMPLETE - requires 3-4 days additional work
-  - **Audit docs:** [PHASE_1_AUDIT_MASTER.md](../../agents/phase-1-audit/PHASE_1_AUDIT_MASTER.md), [AUDIT_SYNTHESIS.md](../../agents/phase-1-audit/AUDIT_SYNTHESIS.md)
+  - **Audit docs:** [PHASE_1_AUDIT_MASTER.md](../../../archive/agents/2026-04/phase-1-audit/PHASE_1_AUDIT_MASTER.md), [AUDIT_SYNTHESIS.md](../../../archive/agents/2026-04/phase-1-audit/AUDIT_SYNTHESIS.md)
 
 - **DUAL SYN VERSION SUPPORT IMPLEMENTED** — A2 parser issue (code complete, validation blocked)
   - syn1 dispatch, conversion layer, DRY refactoring complete
@@ -929,8 +929,8 @@
 - **AGENTS.md** now references eval workflow documentation
 - **A5** marked as hard gate for H0 interpretation in hypothesis registry
 - **Diagnostic hypotheses** added to registry with `D-{DOMAIN}-{NNN}` format (Option C)
-- **Cozo time travel** clarified for DB snapshot strategy — see [2026-04-09_run-manifest-design-note.md](../../agents/2026-04-09_run-manifest-design-note.md)
+- **Cozo time travel** clarified for DB snapshot strategy — see [2026-04-09_run-manifest-design-note.md](../../../archive/agents/2026-04/2026-04-09_run-manifest-design-note.md)
 - **Run manifest vs run record** design converged — manifest is lightweight/differentiating, record is comprehensive with Cozo timestamps
-- **Type inventory** created — complete catalog of serializable types for run record implementation — see [2026-04-09_run-record-type-inventory.md](../../agents/2026-04-09_run-record-type-inventory.md)
+- **Type inventory** created — complete catalog of serializable types for run record implementation — see [2026-04-09_run-record-type-inventory.md](../../../archive/agents/2026-04/2026-04-09_run-record-type-inventory.md)
 - **Handoff doc** created — [2026-04-09_run-record-design-handoff.md](./2026-04-09_run-record-design-handoff.md)
 - **Phase 1 tracking** created — [phase-1-runrecord-tracking.md](../../plans/evals/phase-1-runrecord-tracking.md) — implementation plan validated, ready to begin

@@ -17,7 +17,7 @@
   - sampled artifact list
   - explicit rubric dimensions and findings
   - concise recommendation tied to the sample rather than general preference
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: accepted
 
 ## Permission Gate

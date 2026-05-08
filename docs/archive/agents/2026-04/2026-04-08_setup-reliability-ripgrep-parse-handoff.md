@@ -240,4 +240,4 @@ In `crates/ingest/syn_parser/src/discovery/workspace.rs`:
 
 If resuming after compaction, a good next prompt is:
 
-"Continue from `docs/active/agents/2026-04-08_setup-reliability-ripgrep-parse-handoff.md`. Add nested parser diagnostic extraction for the historical ripgrep setup replay so we can identify the actual failing member/file behind the misleading `focused_root` label, then rerun the replay and report the concrete failing source path."
+"Continue from `docs/archive/agents/2026-04/2026-04-08_setup-reliability-ripgrep-parse-handoff.md`. Add nested parser diagnostic extraction for the historical ripgrep setup replay so we can identify the actual failing member/file behind the misleading `focused_root` label, then rerun the replay and report the concrete failing source path."

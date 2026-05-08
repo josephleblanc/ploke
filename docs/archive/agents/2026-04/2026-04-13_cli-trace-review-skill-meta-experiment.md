@@ -3,7 +3,7 @@
 - date: 2026-04-13
 - task title: CLI trace review skill meta-experiment
 - task description: Compare several instruction templates for `ploke-eval` CLI-only run-trace review before promoting the workflow into a durable repo-local skill.
-- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/README.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/active/plans/evals/phased-exec-plan.md`, `docs/active/agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`, `docs/workflow/skills/postmortem-protocol/SKILL.md`, `docs/workflow/skills/experiment-cycle/SKILL.md`, `docs/active/workflow/edr/EDR-0002-cli-trace-review-skill-experiment.md`
+- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/README.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/active/plans/evals/phased-exec-plan.md`, `docs/archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`, `docs/workflow/skills/postmortem-protocol/SKILL.md`, `docs/workflow/skills/experiment-cycle/SKILL.md`, `docs/active/workflow/edr/EDR-0002-cli-trace-review-skill-experiment.md`
 
 ## Purpose
 

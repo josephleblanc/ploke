@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: protocol cold-start reference
 - task description: compact reference for the evalnomicon-to-`ploke-protocol` thread, covering persisted eval artifacts, access/query surfaces, and the current conceptual framing for typed mixed-mode protocols
-- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/README.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/active/agents/2026-04-12_eval-infra-sprint/2026-04-14_ploke-protocol-bootstrap-handoff.md`, `docs/workflow/evalnomicon/src/core/conceptual-framework.md`, `docs/workflow/evalnomicon/protocol-typing-scratch.md`
+- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/README.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-14_ploke-protocol-bootstrap-handoff.md`, `docs/workflow/evalnomicon/src/core/conceptual-framework.md`, `docs/workflow/evalnomicon/protocol-typing-scratch.md`
 
 ## Why This Note Exists
 

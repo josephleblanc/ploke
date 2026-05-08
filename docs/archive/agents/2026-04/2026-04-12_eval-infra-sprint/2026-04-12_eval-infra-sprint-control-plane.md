@@ -3,7 +3,7 @@
 **Date:** 2026-04-12
 **Task Title:** Eval infrastructure sprint control plane
 **Task Description:** Active orchestration document for closing the Phase 1 P0 audit gaps in replay, inspection, and setup recording without losing design intent or workflow context.
-**Related Planning Files:** `docs/active/plans/evals/eval-design.md`, `docs/active/plans/evals/phased-exec-plan.md`, `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/README.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/active/agents/phase-1-audit/AUDIT_SYNTHESIS.md`, `docs/active/agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`
+**Related Planning Files:** `docs/active/plans/evals/eval-design.md`, `docs/active/plans/evals/phased-exec-plan.md`, `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/README.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/archive/agents/2026-04/phase-1-audit/AUDIT_SYNTHESIS.md`, `docs/archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`
 
 ## Status
 

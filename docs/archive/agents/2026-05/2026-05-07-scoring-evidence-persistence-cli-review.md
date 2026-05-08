@@ -16,7 +16,7 @@ If the run stops before a selected successor reaches handoff sealing, there may 
 
 ## 2. Persisted Data Inventory
 
-- Reviewer 1 context: active selection now defaults to History traversal with current-generation candidates appended, and Reviewer 1 identified handoff cleanliness/tracked-file risk before rerun: `docs/active/agents/2026-05-07-loop-rerun-readiness-review.md:1`.
+- Reviewer 1 context: active selection now defaults to History traversal with current-generation candidates appended, and Reviewer 1 identified handoff cleanliness/tracked-file risk before rerun: `docs/archive/agents/2026-05/2026-05-07-loop-rerun-readiness-review.md:1`.
 
 - Filesystem child evidence remains in normal campaign records, and the read-only store loads it from the transition journal, evaluations, node invocations/results/ready/completion records, node records, runner requests, and runner results: `crates/ploke-eval/src/cli/prototype1_state/history_preview.rs:128`, `crates/ploke-eval/src/cli/prototype1_state/history_preview.rs:147`, `crates/ploke-eval/src/cli/prototype1_state/history_preview.rs:197`, `crates/ploke-eval/src/cli/prototype1_state/history_preview.rs:203`.
 

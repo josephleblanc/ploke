@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: testing audit note
 - task description: compact note capturing the current testing-surface findings for later user review, with emphasis on incomplete tests and backup fixture policy drift
-- related planning files: `docs/active/agents/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`, `docs/testing/BACKUP_DB_FIXTURES.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`, `docs/testing/BACKUP_DB_FIXTURES.md`
 
 ## Highest-Signal Findings
 

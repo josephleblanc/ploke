@@ -3,7 +3,7 @@
 - date: 2026-04-13
 - task title: locate existing archive and stale-doc discipline for orchestration/eval workflow docs
 - task description: determine whether the repo already contains a specific protocol or convention for retiring, archiving, or superseding stale orchestration and eval-workflow documents before proposing any new process changes
-- related planning files: `docs/active/plans/evals/eval-design.md`, `docs/active/agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`, `docs/active/workflow/README.md`, `docs/active/workflow/handoffs/recent-activity.md`
+- related planning files: `docs/active/plans/evals/eval-design.md`, `docs/archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`, `docs/active/workflow/README.md`, `docs/active/workflow/handoffs/recent-activity.md`
 
 ## Purpose
 

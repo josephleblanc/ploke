@@ -23,7 +23,7 @@
   likely getting lost. Also in this we should chase down where all the files actually live for the
   fractured Report types and log types we are generating - I think there are over 20 different
   types for this and some have already been surveyed in docs/reports/prototype1-record-audit/
-  history-admission-map.md and docs/active/agents/history-surface-admission-review-2026-04-30 but
+  history-admission-map.md and docs/archive/agents/2026-04/history-surface-admission-review-2026-04-30 but
   there may still be more. I'd like use to arrive at a definitive, complete report of what we have
   to draw from here, where it is stored, what the provenance is, whether it is stale in terms of
   file location etc, and then we can decide what is valuable for us - previously we were mostly

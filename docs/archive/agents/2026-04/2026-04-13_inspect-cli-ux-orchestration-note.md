@@ -3,7 +3,7 @@
 - date: 2026-04-13
 - task title: bounded orchestration for inspect CLI UX follow-up
 - task description: keep the current `ploke-eval inspect` UX lane coherent across review, test hardening, commit, loop-view implementation, and CLI-vs-non-CLI diagnostic comparison without expanding the broader control plane unless packet state materially changes
-- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/plans/evals/eval-design.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/active/agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`, `docs/active/agents/2026-04-13_inspect-turns-and-loop-ux-note.md`
+- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/plans/evals/eval-design.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`, `docs/archive/agents/2026-04/2026-04-13_inspect-turns-and-loop-ux-note.md`
 
 ## Purpose
 
@@ -158,6 +158,6 @@ Known caveat:
 If this lane is resumed after interruption:
 
 1. read this note
-2. read `docs/active/agents/2026-04-13_inspect-turns-and-loop-ux-note.md`
+2. read `docs/archive/agents/2026-04/2026-04-13_inspect-turns-and-loop-ux-note.md`
 3. inspect the latest `ICU-REVIEW-1` and `ICU-TEST-1` outputs
 4. decide commit readiness before opening the loop-view implementation packet

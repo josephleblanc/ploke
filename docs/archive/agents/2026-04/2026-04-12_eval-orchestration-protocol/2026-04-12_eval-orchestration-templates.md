@@ -3,7 +3,7 @@
 **Date:** 2026-04-12
 **Task Title:** Eval orchestration templates
 **Task Description:** Provide compact task packet and report templates for the eval orchestration protocol.
-**Related Planning Files:** `docs/active/agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`, `docs/active/plans/evals/eval-design.md`, `docs/active/CURRENT_FOCUS.md`
+**Related Planning Files:** `docs/archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`, `docs/active/plans/evals/eval-design.md`, `docs/active/CURRENT_FOCUS.md`
 
 ## Task Packet Template
 

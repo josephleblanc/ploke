@@ -19,7 +19,7 @@
   - concise findings with concrete file references
   - explicit recommendation with tradeoffs and impact on `P0C/P0D/P0E`
   - note on what was not sampled
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: ready
 
 ## Permission Gate

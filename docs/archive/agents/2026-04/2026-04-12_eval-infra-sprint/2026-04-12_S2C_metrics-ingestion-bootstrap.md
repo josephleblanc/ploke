@@ -19,7 +19,7 @@
   - explicit proposed storage/update flow
   - note on automation assumptions and operational prerequisites
   - recommended follow-up packet for implementation or backfill
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: accepted
 
 ## Permission Gate

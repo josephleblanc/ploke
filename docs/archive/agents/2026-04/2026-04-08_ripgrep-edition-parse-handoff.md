@@ -226,5 +226,5 @@ If no:
 
 ## Resume Prompt
 
-Continue from `docs/active/agents/2026-04-08_ripgrep-edition-parse-handoff.md`.
+Continue from `docs/archive/agents/2026-04/2026-04-08_ripgrep-edition-parse-handoff.md`.
 Create a focused `syn_parser` repro for a Rust 2015 crate that uses `async` as an identifier, confirm the current failure mode, then inspect `syn` and our parser entrypoints to determine whether edition-aware parsing can fix it cleanly or whether a broader parser adaptation is required.

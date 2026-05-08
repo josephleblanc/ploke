@@ -29,6 +29,9 @@ Optional related handoffs (repair links when moves land; same serialization rule
 
 ## Topics in this bucket
 
-Add one bullet per moved top-level folder or loose file group (mirror style in [`2026-04/README.md`](../2026-04/README.md)).
+Moved from [`docs/active/agents/`](../../../active/agents/readme.md) on **2026-05-08** (whole files/trees preserved):
 
--
+- **`2026-05-07-*` edit-surface thread:** phase reviews (`edit-surface-phase[1-4]-*`), integration slice, backend bridge, resolver extraction, scoring evidence CLI review, loop rerun readiness review.
+- **`2026-05-07-prototype1-edit-surface-*.md`:** model, handoff, implementation plan for bounded TUI/edit-surface wiring into Prototype 1.
+- **`2026-05-07-tui-edit-surface-producer-{note,review}.md`** — deterministic parent-side producer notes.
+- **History readiness reviews dated 2026-05-01:** `history-startup-state-review-2026-05-01/`, `single-ruler-readiness-2026-05-01/`, `startup-history-invariant-review-2026-05-01-0955/`.

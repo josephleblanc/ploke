@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: ploke-protocol state composition checkpoint
 - task description: second architectural checkpoint for `crates/ploke-protocol`, shifting the crate from typed value composition toward typed state transitions with explicit fork and merge semantics
-- related planning files: `docs/active/agents/2026-04-15_ploke-protocol-control-note.md`, `docs/active/agents/2026-04-15_ploke-protocol-architecture-checkpoint.md`, `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-control-note.md`, `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-architecture-checkpoint.md`, `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md`
 
 ## What Changed
 

@@ -7,7 +7,7 @@
 - Design intent: Convert accepted `P2D` convergence guidance into the first real formal execution-planning packet without pretending the long-term manifest/config story is already complete
 - Scope: Choose the first bounded formal Phase 2 candidate slice, define the concrete experiment-config and EDR surfaces it should use, state the adopted validity guards and waivers, and leave behind one clear execution-planning recommendation
 - Non-goals: Do not launch the formal batch yet, do not modify production code, do not broaden into a full benchmark schedule, do not silently treat draft-only provenance fields as runtime-frozen
-- Owned files: `docs/active/workflow/**`, `docs/workflow/**`, `docs/active/agents/2026-04-12_eval-infra-sprint/**`
+- Owned files: `docs/active/workflow/**`, `docs/workflow/**`, `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/**`
 - Dependencies: accepted `P2B`, accepted `P2C`, accepted `P2D`, `docs/workflow/experiment-config.v0.draft.json`, `docs/workflow/edr/EDR_TEMPLATE.md`, `docs/active/workflow/target-capability-registry.md`, current `ploke-eval` run artifact surface
 - Acceptance criteria:
   1. The packet identifies one bounded formal Phase 2 candidate slice and ties it to the accepted target/run-policy state.
@@ -17,5 +17,5 @@
   - direct citations to `P2B`, `P2C`, `P2D`, the target capability registry, and the current artifact/config surfaces
   - an explicit list of adopted guards versus waived or deferred draft fields
   - one clear next-packet recommendation after formal-entry planning
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: ready

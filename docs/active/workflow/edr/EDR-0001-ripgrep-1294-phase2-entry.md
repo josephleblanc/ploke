@@ -10,11 +10,11 @@
 - related issues/prs: none yet
 - linked manifest ids: none yet
 - linked artifacts:
-  - [P2B report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2B_report.md)
-  - [P2C report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2C_report.md)
-  - [P2D report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2D_report.md)
-  - [P2E report](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_P2E_report.md)
-  - [exp-001 config](../../agents/2026-04-12_eval-infra-sprint/2026-04-12_exp-001-ripgrep-1294-phase2-entry.config.json)
+  - [P2B report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2B_report.md)
+  - [P2C report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2C_report.md)
+  - [P2D report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2D_report.md)
+  - [P2E report](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_P2E_report.md)
+  - [exp-001 config](../../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_exp-001-ripgrep-1294-phase2-entry.config.json)
 
 ## Decision
 

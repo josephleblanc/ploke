@@ -28,14 +28,15 @@ use crate::{
         Prototype1BranchApplyCommand, Prototype1BranchEvaluateCommand,
         Prototype1BranchRestoreCommand, Prototype1BranchSelectCommand, Prototype1BranchShowCommand,
         Prototype1BranchStatusCommand, Prototype1CandidateGenerator,
-        Prototype1ChildEvidenceCommand, Prototype1EditSurface, Prototype1HistoryPreviewCommand,
-        Prototype1LoopCommand, Prototype1LoopStopAfter, Prototype1MetricsCommand,
-        Prototype1MonitorCommand, Prototype1MonitorPeekCommand, Prototype1MonitorReportCommand,
-        Prototype1MonitorSubcommand, Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand,
-        Prototype1RunnerCommand, Prototype1ScoreCommand, Prototype1SelectionShowCommand,
-        Prototype1StateCommand, Prototype1StateStopAfter, Prototype1SuccessorSelection,
-        Prototype1TraversalMetrics, TimingTrace, advance_eval_closure, advance_protocol_closure,
-        default_batch_id, pending_prototype1_stages, persist_intervention_apply_for_record,
+        Prototype1ChildEvidenceCommand, Prototype1ChildScheduleMode as CliChildScheduleMode,
+        Prototype1EditSurface, Prototype1HistoryPreviewCommand, Prototype1LoopCommand,
+        Prototype1LoopStopAfter, Prototype1MetricsCommand, Prototype1MonitorCommand,
+        Prototype1MonitorPeekCommand, Prototype1MonitorReportCommand, Prototype1MonitorSubcommand,
+        Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand, Prototype1RunnerCommand,
+        Prototype1ScoreCommand, Prototype1SelectionShowCommand, Prototype1StateCommand,
+        Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
+        TimingTrace, advance_eval_closure, advance_protocol_closure, default_batch_id,
+        pending_prototype1_stages, persist_intervention_apply_for_record,
         persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
         print_issue_case_block,
         prototype1_process::{
@@ -92,10 +93,10 @@ use crate::{
     intervention::{
         ArtifactEdit, Intervention, InterventionApplyInput, InterventionCandidate,
         InterventionSpec, IssueCase, Outcome, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
-        Prototype1ChildBudget, Prototype1ContinuationDecision, Prototype1ContinuationDisposition,
-        Prototype1NodeRecord, Prototype1NodeStatus, Prototype1RunnerResult,
-        Prototype1SchedulerState, Prototype1SearchPolicy, RecordStore, TreatmentBranchNode,
-        TreatmentBranchStatus, ValidationPolicy, execute_intervention_apply,
+        Prototype1ChildBudget, Prototype1ChildScheduleMode, Prototype1ContinuationDecision,
+        Prototype1ContinuationDisposition, Prototype1NodeRecord, Prototype1NodeStatus,
+        Prototype1RunnerResult, Prototype1SchedulerState, Prototype1SearchPolicy, RecordStore,
+        TreatmentBranchNode, TreatmentBranchStatus, ValidationPolicy, execute_intervention_apply,
         load_or_default_branch_registry, load_scheduler_state, mark_treatment_branch_applied,
         project_node_status, prototype1_branch_registry_path, prototype1_node_id,
         prototype1_scheduler_path, register_root_parent_node, resolve_treatment_branch,
@@ -203,6 +204,7 @@ fn prepare_prototype1_parent_setup(
         max_generations: command.max_generations,
         max_total_nodes: command.max_total_nodes,
         child_budget,
+        child_schedule_mode: child_schedule_mode_from_command(command),
         stop_on_first_keep: command.stop_on_first_keep,
         require_keep_for_continuation: command.require_keep_for_continuation,
         explore_from_rejected: command.explore_from_rejected,
@@ -287,11 +289,12 @@ fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
     println!("generation: {}", report.generation);
     println!("branch_id: {}", report.branch_id);
     println!(
-        "search_policy: generations<={} nodes<={} children={}..={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
+        "search_policy: generations<={} nodes<={} children={}..={} mode={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
         report.search_policy.max_generations,
         report.search_policy.max_total_nodes,
         report.search_policy.child_budget.min,
         report.search_policy.child_budget.max,
+        serde_name(&report.search_policy.child_schedule_mode),
         yes_no(report.search_policy.stop_on_first_keep),
         yes_no(report.search_policy.require_keep_for_continuation),
         yes_no(report.search_policy.explore_from_rejected)
@@ -1477,6 +1480,7 @@ impl Prototype1LoopControllerInput {
                 max_generations: command.max_generations,
                 max_total_nodes: command.max_total_nodes,
                 child_budget,
+                child_schedule_mode: child_schedule_mode_from_command(command),
                 stop_on_first_keep: command.stop_on_first_keep,
                 require_keep_for_continuation: command.require_keep_for_continuation,
                 explore_from_rejected: command.explore_from_rejected,
@@ -1514,6 +1518,15 @@ fn child_budget_from_command(
         min: command.min_children,
         max: command.max_children,
     })
+}
+
+fn child_schedule_mode_from_command(
+    command: &Prototype1LoopCommand,
+) -> Prototype1ChildScheduleMode {
+    match command.child_schedule_mode {
+        CliChildScheduleMode::FullBatch => Prototype1ChildScheduleMode::FullBatch,
+        CliChildScheduleMode::AdaptiveBatch => Prototype1ChildScheduleMode::AdaptiveBatch,
+    }
 }
 
 async fn run_prototype1_loop_controller(
@@ -6040,6 +6053,7 @@ async fn run_child_fanout(
     repo_root: &Path,
     journal_path: &Path,
     stop_after: Prototype1StateStopAfter,
+    child_schedule_mode: Prototype1ChildScheduleMode,
     child_budget: Prototype1ChildBudget,
     children: Vec<ChildFiles>,
 ) -> Result<Vec<PlannedChildOutcome>, PrepareError> {
@@ -6049,7 +6063,7 @@ async fn run_child_fanout(
         });
     }
 
-    let fanout_width = usize::min(child_budget.min as usize, children.len()).max(1);
+    let fanout_width = child_schedule_mode.fanout_width(child_budget, children.len());
     info!(
         target: EXECUTION_DEBUG_TARGET,
         role = "parent",
@@ -6057,6 +6071,7 @@ async fn run_child_fanout(
         transition = "ChildPlan->ChildFanout",
         campaign = %campaign_id,
         planned_children = children.len(),
+        schedule_mode = %serde_name(&child_schedule_mode),
         fanout_width = fanout_width,
         budget_min = child_budget.min,
         budget_max = child_budget.max,
@@ -6126,6 +6141,11 @@ async fn run_child_fanout(
 
         completed.sort_by_key(|outcome| outcome.plan_index);
         if stop_after != Prototype1StateStopAfter::Complete {
+            break;
+        }
+        if child_schedule_mode == Prototype1ChildScheduleMode::AdaptiveBatch {
+            // TODO(prototype1-adaptive-batch-selection): feed each completed batch into
+            // generation selection and stop early when a successor is chosen.
             break;
         }
         next = end;
@@ -7135,14 +7155,26 @@ impl Prototype1StateCommand {
             mut children,
         } = planned_children;
         let planned_child_count = plan.body().children().len();
-        // TODO(prototype1-child-budget-authority): this default is a compatibility bridge.
-        // Runtime fanout policy should be carried by bootstrap/handoff/History authority,
-        // not recovered from scheduler projections and not hidden as an ambient default.
-        let child_budget = if self.stop_after == Prototype1StateStopAfter::Complete {
-            Prototype1SearchPolicy::default().child_budget
-        } else {
-            Prototype1ChildBudget { min: 1, max: 1 }
-        };
+        let (mut child_budget, mut child_schedule_mode) =
+            if self.stop_after == Prototype1StateStopAfter::Complete {
+                let scheduler =
+                    load_scheduler_state(&manifest_path, OperatorProjectionRead::cli_operator())?;
+                (
+                    scheduler.policy.child_budget,
+                    scheduler.policy.child_schedule_mode,
+                )
+            } else {
+                // Non-Complete modes intentionally run one child as a debug/inspection slice.
+                (
+                    Prototype1ChildBudget { min: 1, max: 1 },
+                    Prototype1ChildScheduleMode::AdaptiveBatch,
+                )
+            };
+        if self.stop_after != Prototype1StateStopAfter::Complete && self.node_id.is_some() {
+            // Non-Complete + explicit node id is a single-node debug path.
+            child_budget = Prototype1ChildBudget { min: 1, max: 1 };
+            child_schedule_mode = Prototype1ChildScheduleMode::AdaptiveBatch;
+        }
         if self.node_id.is_none() {
             children.truncate(child_budget.max as usize);
         }
@@ -7153,6 +7185,7 @@ impl Prototype1StateCommand {
             &repo_root,
             &journal_path,
             self.stop_after,
+            child_schedule_mode,
             child_budget,
             children,
         )
@@ -8309,11 +8342,12 @@ fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
     println!("stage_reached: {}", serde_name(&report.stage_reached));
     println!("dry_run: {}", yes_no(report.dry_run));
     println!(
-        "search_policy: generations<={} nodes<={} children={}..={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
+        "search_policy: generations<={} nodes<={} children={}..={} mode={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
         report.search_policy.max_generations,
         report.search_policy.max_total_nodes,
         report.search_policy.child_budget.min,
         report.search_policy.child_budget.max,
+        serde_name(&report.search_policy.child_schedule_mode),
         yes_no(report.search_policy.stop_on_first_keep),
         yes_no(report.search_policy.require_keep_for_continuation),
         yes_no(report.search_policy.explore_from_rejected)
@@ -8669,11 +8703,12 @@ fn print_prototype1_runner_report(report: &Prototype1RunnerReport) {
     println!("scheduler: {}", report.scheduler_path.display());
     let scheduler = &report.scheduler;
     println!(
-        "search_policy: generations<={} nodes<={} children={}..={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
+        "search_policy: generations<={} nodes<={} children={}..={} mode={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
         scheduler.policy.max_generations,
         scheduler.policy.max_total_nodes,
         scheduler.policy.child_budget.min,
         scheduler.policy.child_budget.max,
+        serde_name(&scheduler.policy.child_schedule_mode),
         yes_no(scheduler.policy.stop_on_first_keep),
         yes_no(scheduler.policy.require_keep_for_continuation),
         yes_no(scheduler.policy.explore_from_rejected)

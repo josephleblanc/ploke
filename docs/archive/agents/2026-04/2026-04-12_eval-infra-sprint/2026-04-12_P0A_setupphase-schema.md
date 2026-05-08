@@ -17,7 +17,7 @@
   - targeted diff summary for `record.rs`
   - named test command(s) covering serialization shape or round-trip
   - explicit note on whether backward-compat or fixture impact was checked
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: ready
 
 ## Permission Gate

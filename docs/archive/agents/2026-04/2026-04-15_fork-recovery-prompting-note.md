@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: fork recovery prompting note
 - task description: compact note on how to resume the `ploke-protocol` thread efficiently across earlier-node forks with minimal chat-state dependence
-- related planning files: `docs/active/agents/2026-04-15_ploke-protocol-control-note.md`, `docs/active/agents/2026-04-15_ploke-protocol-state-composition-checkpoint.md`, `docs/active/CURRENT_FOCUS.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-control-note.md`, `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-state-composition-checkpoint.md`, `docs/active/CURRENT_FOCUS.md`
 
 ## What Worked Well
 

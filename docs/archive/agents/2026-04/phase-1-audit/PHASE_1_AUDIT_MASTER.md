@@ -25,7 +25,7 @@ Phase 1 was marked COMPLETE in `phase-1-runrecord-tracking.md`, but critical gap
 ### Reference Documents (all sub-agents should consult)
 - `docs/active/plans/evals/eval-design.md` §VII - The Introspection & Replay API specification
 - `docs/active/plans/evals/phased-exec-plan.md` - Phase 1 deliverables and exit criteria
-- `docs/active/agents/2026-04-09_run-record-type-inventory.md` - Expected RunRecord schema
+- `docs/archive/agents/2026-04/2026-04-09_run-record-type-inventory.md` - Expected RunRecord schema
 - `phase-1-runrecord-tracking.md` - Claims of what's complete
 
 ### Methodology
@@ -42,7 +42,7 @@ Sub-agents investigate in parallel, appending findings to this document.
 
 ### RunRecord Schema Findings from Agent 2
 
-**Investigated:** `crates/ploke-eval/src/record.rs`, `docs/active/agents/2026-04-09_run-record-type-inventory.md`
+**Investigated:** `crates/ploke-eval/src/record.rs`, `docs/archive/agents/2026-04/2026-04-09_run-record-type-inventory.md`
 
 **Claims vs Reality:**
 

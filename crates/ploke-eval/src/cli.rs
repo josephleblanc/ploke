@@ -879,6 +879,13 @@ pub enum Prototype1LoopStopAfter {
     Compare,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum Prototype1ChildScheduleMode {
+    FullBatch,
+    AdaptiveBatch,
+}
+
 #[derive(Debug, Parser)]
 #[command(
     about = "Run the Prototype 1 loop through baseline, treatment, and compare",
@@ -1016,6 +1023,10 @@ pub struct Prototype1LoopCommand {
     /// Maximum direct child candidates to evaluate for one parent generation.
     #[arg(long, default_value_t = 6)]
     pub max_children: u32,
+
+    /// Child scheduling mode: run all planned children (`full-batch`) or run in `min-children` batches (`adaptive-batch`).
+    #[arg(long, value_enum, default_value_t = Prototype1ChildScheduleMode::FullBatch)]
+    pub child_schedule_mode: Prototype1ChildScheduleMode,
 
     /// Stop search continuation once a keep-worthy branch is found.
     #[arg(long)]
@@ -12227,6 +12238,10 @@ mod tests {
                 assert_eq!(cmd.max_total_nodes, 32);
                 assert_eq!(cmd.min_children, 2);
                 assert_eq!(cmd.max_children, 6);
+                assert_eq!(
+                    cmd.child_schedule_mode,
+                    Prototype1ChildScheduleMode::FullBatch
+                );
                 assert!(cmd.require_keep_for_continuation);
                 assert!(cmd.explore_from_rejected);
                 assert_eq!(cmd.stop_after, Prototype1LoopStopAfter::InterventionApply);
@@ -13142,6 +13157,8 @@ mod tests {
             "3",
             "--max-children",
             "5",
+            "--child-schedule-mode",
+            "adaptive-batch",
             "--stop-on-first-keep",
             "--require-keep-for-continuation",
             "false",
@@ -13158,6 +13175,10 @@ mod tests {
                 assert_eq!(cmd.max_total_nodes, 99);
                 assert_eq!(cmd.min_children, 3);
                 assert_eq!(cmd.max_children, 5);
+                assert_eq!(
+                    cmd.child_schedule_mode,
+                    Prototype1ChildScheduleMode::AdaptiveBatch
+                );
                 assert!(cmd.stop_on_first_keep);
                 assert!(!cmd.require_keep_for_continuation);
                 assert!(!cmd.explore_from_rejected);

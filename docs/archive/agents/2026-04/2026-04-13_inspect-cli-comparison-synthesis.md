@@ -3,7 +3,7 @@
 - date: 2026-04-13
 - task title: CLI-only vs non-CLI inspection comparison for `BurntSushi__ripgrep-1294`
 - task description: preserve the first bounded comparison wave after landing `inspect turn --show loop`, including the mismatch between CLI-only and direct-artifact narratives and the resulting metric/UX follow-up targets
-- related planning files: `docs/active/plans/evals/eval-design.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/active/agents/2026-04-13_inspect-cli-ux-orchestration-note.md`, `docs/active/agents/2026-04-13_inspect-turns-and-loop-ux-note.md`
+- related planning files: `docs/active/plans/evals/eval-design.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/archive/agents/2026-04/2026-04-13_inspect-cli-ux-orchestration-note.md`, `docs/archive/agents/2026-04/2026-04-13_inspect-turns-and-loop-ux-note.md`
 
 ## Scope
 

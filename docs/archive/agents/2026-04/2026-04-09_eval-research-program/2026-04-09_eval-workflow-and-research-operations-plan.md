@@ -5,7 +5,7 @@
 - task description: Turn the current eval, replay, tool-design, setup-reliability, and observability goals into a reusable workflow that guides implementation priorities, supports long-running investigation, and produces evidence suitable for internal decisions and future publication.
 - related planning files:
   - `/home/brasides/code/ploke/docs/active/agents/2026-04-06_eval-benchmarking-report.md`
-  - `/home/brasides/code/ploke/docs/active/agents/2026-04-08_setup-reliability-ripgrep-parse-handoff.md`
+  - `/home/brasides/code/ploke/docs/archive/agents/2026-04/2026-04-08_setup-reliability-ripgrep-parse-handoff.md`
   - `/home/brasides/code/ploke/docs/active/agents/2026-04-09_openrouter-timeout-followup-handoff.md`
   - `/home/brasides/code/ploke/docs/active/agents/2026-04-07_tool-node-kind-vocabulary-design.md`
 

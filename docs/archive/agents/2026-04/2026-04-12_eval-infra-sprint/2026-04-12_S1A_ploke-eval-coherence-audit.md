@@ -7,7 +7,7 @@
 - Design intent: Produce a compact, high-signal audit of `ploke-eval` API shape, duplication, drift, and trivially passing test risk without broadening into implementation
 - Scope: Audit `crates/ploke-eval/` and its immediate eval-facing boundaries for coherence issues relevant to the active replay/inspection sprint
 - Non-goals: Do not implement fixes, do not redesign the whole crate, do not touch production crates outside `ploke-eval`
-- Owned files: `crates/ploke-eval/src/**`, `crates/ploke-eval/tests/**`, `docs/active/agents/phase-1-audit/AUDIT_SYNTHESIS.md`, `docs/active/plans/evals/eval-design.md`
+- Owned files: `crates/ploke-eval/src/**`, `crates/ploke-eval/tests/**`, `docs/archive/agents/2026-04/phase-1-audit/AUDIT_SYNTHESIS.md`, `docs/active/plans/evals/eval-design.md`
 - Dependencies: none
 - Acceptance criteria:
   1. The audit identifies the highest-signal API/coherence/drift findings in `ploke-eval`.
@@ -18,7 +18,7 @@
   - concise findings with concrete file references
   - explicit note on what was not audited
   - prioritized next-action suggestions suitable for future packets
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: ready
 
 ## Permission Gate

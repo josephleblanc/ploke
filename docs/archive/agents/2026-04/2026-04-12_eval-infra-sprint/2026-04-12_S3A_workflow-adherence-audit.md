@@ -7,7 +7,7 @@
 - Design intent: Audit workflow docs, handoffs, and skill/process surfaces against the orchestration protocol to find where context is still likely to be lost
 - Scope: Review recent workflow artifacts and process docs for adherence, discoverability, and likely failure modes in agent execution
 - Non-goals: Do not rewrite all workflow docs in this packet, do not implement new skills yet, do not broaden into unrelated product-process critique
-- Owned files: `docs/active/workflow/README.md`, `docs/active/workflow/readiness-status.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/active/agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`, `docs/workflow/skills/`, recent handoffs as sampled
+- Owned files: `docs/active/workflow/README.md`, `docs/active/workflow/readiness-status.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md`, `docs/workflow/skills/`, recent handoffs as sampled
 - Dependencies: none
 - Acceptance criteria:
   1. The audit identifies concrete places where workflow adherence is likely to fail for agents.
@@ -18,7 +18,7 @@
   - concise findings with concrete doc references
   - explicit note on what was not sampled
   - recommended next packet(s) for documentation or skill changes
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: ready
 
 ## Permission Gate

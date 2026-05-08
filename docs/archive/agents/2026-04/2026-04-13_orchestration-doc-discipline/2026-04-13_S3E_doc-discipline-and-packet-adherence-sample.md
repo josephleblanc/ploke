@@ -15,7 +15,7 @@
   - do not build archive tooling or telemetry
   - do not restructure the entire `docs/active/agents/` tree
 - Owned files:
-  - `docs/active/agents/2026-04-12_eval-orchestration-protocol/**`
+  - `docs/archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/**`
   - `docs/active/workflow/**`
   - selected recent packet/report docs under `docs/active/agents/**`
   - `AGENTS.md`
@@ -33,7 +33,7 @@
   - explicit rubric dimensions
   - concrete findings with file references
   - concise recommendation tied to the sample
-- Report-back location: `docs/active/agents/2026-04-13_orchestration-doc-discipline/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-13_orchestration-doc-discipline/`
 - Status: ready
 
 ## Suggested Rubric

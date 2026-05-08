@@ -18,7 +18,7 @@
   - named test command(s)
   - explicit note on query result shape and error behavior
   - explicit note on whether the method is raw-query oriented or wraps a narrower API
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: proposed
 
 ## Permission Gate

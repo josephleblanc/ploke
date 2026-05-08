@@ -7,7 +7,7 @@
 ## implemented
 
 - Tightened `docs/workflow/handoff-template.md` into a compact handoff/report skeleton with a current-state table, numbered acceptance criteria, claims, evidence, `unsupported_claims`, `not_checked`, risks, and resume steps.
-- Tightened `docs/active/agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-templates.md` so the reusable packet/report templates explicitly require current-state control-plane structure and bounded evidence framing.
+- Tightened `docs/archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-templates.md` so the reusable packet/report templates explicitly require current-state control-plane structure and bounded evidence framing.
 
 ## claims
 
@@ -18,7 +18,7 @@
 ## evidence
 
 - `docs/workflow/handoff-template.md` now contains a current-state table plus the `Acceptance Criteria`, `Claims`, `Evidence`, `unsupported_claims`, `not_checked`, and `Risks` sections.
-- `docs/active/agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-templates.md` now includes a compact current-state table for active control-plane docs and explicit report rules for bounded evidence and `unsupported_claims`.
+- `docs/archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-templates.md` now includes a compact current-state table for active control-plane docs and explicit report rules for bounded evidence and `unsupported_claims`.
 - No production code or runtime behavior changed.
 
 ## unsupported_claims

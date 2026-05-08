@@ -5,8 +5,8 @@
 - task description: Preserve the restart-critical state after the campaign-backed `closure advance all` run, with emphasis on why protocol advancement was so expensive, what hard blockers appeared, and why the next pass should shift from raw operator execution toward design and tool-improvement work.
 - related planning files:
   - [CURRENT_FOCUS.md](../../CURRENT_FOCUS.md)
-  - [2026-04-16_eval-closure-formal-sketch.md](../../agents/2026-04-16_eval-closure-formal-sketch.md)
-  - [2026-04-15_ploke-protocol-control-note.md](../../agents/2026-04-15_ploke-protocol-control-note.md)
+  - [2026-04-16_eval-closure-formal-sketch.md](../../../archive/agents/2026-04/2026-04-16_eval-closure-formal-sketch.md)
+  - [2026-04-15_ploke-protocol-control-note.md](../../../archive/agents/2026-04/2026-04-15_ploke-protocol-control-note.md)
 
 ## Restart-Critical State
 

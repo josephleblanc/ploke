@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: protocol artifact persistence and inspection surface
 - task description: persist run-local protocol artifacts for the existing `ploke-protocol` procedures and add a compact `ploke-eval` retrieval surface for listing and drilling into those artifacts
-- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/README.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/active/agents/2026-04-15_protocol-cold-start-reference.md`
+- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/README.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/archive/agents/2026-04/2026-04-15_protocol-cold-start-reference.md`
 
 ## Summary
 

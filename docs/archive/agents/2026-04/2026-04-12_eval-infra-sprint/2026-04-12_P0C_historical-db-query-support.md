@@ -18,7 +18,7 @@
   - named test command(s)
   - explicit statement of query syntax or API contract used for historical access
   - explicit note on any correctness or migration risks
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: blocked
 
 ## Permission Gate

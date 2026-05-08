@@ -10,18 +10,18 @@ The recovery pointer is clear: Phase 1 replay/inspection is closed, and the acti
 ## assistant
 Cold restart state as of **2026-04-13**:
 
-The active recovery pointer is [CURRENT_FOCUS.md](/home/brasides/code/ploke/docs/active/CURRENT_FOCUS.md), which points to the active control plane at [2026-04-12_eval-infra-sprint-control-plane.md](/home/brasides/code/ploke/docs/active/agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md). Phase 1’s blocking P0 replay/inspection lane is closed and accepted. The live work is now Phase 2 entry: use the completed `tokio-rs-all` batch to do a cleaner evaluation pass over retrieval quality, tool failures, patch-loop discipline, and context bloat before choosing the next intervention or target expansion.
+The active recovery pointer is [CURRENT_FOCUS.md](/home/brasides/code/ploke/docs/active/CURRENT_FOCUS.md), which points to the active control plane at [2026-04-12_eval-infra-sprint-control-plane.md](/home/brasides/code/ploke/docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md). Phase 1’s blocking P0 replay/inspection lane is closed and accepted. The live work is now Phase 2 entry: use the completed `tokio-rs-all` batch to do a cleaner evaluation pass over retrieval quality, tool failures, patch-loop discipline, and context bloat before choosing the next intervention or target expansion.
 
 Operationally, the current source of truth is still `docs/active/workflow/*`, especially [recent-activity.md](/home/brasides/code/ploke/docs/active/workflow/handoffs/recent-activity.md) and [target-capability-registry.md](/home/brasides/code/ploke/docs/active/workflow/target-capability-registry.md). `tokio-rs__tokio` is currently `watch` + `default_run`, with the `25/25` batch completed and considered operationally successful, but not yet clean enough to treat as a final optimization baseline. Ripgrep is no longer the active execution problem.
 
 Execution contract on restart:
-- Follow the orchestration rules in [2026-04-12_eval-orchestration-protocol.md](/home/brasides/code/ploke/docs/active/agents/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md).
+- Follow the orchestration rules in [2026-04-12_eval-orchestration-protocol.md](/home/brasides/code/ploke/docs/archive/agents/2026-04/2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md).
 - Before substantial eval work, use the required harness reference at [harness.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/unit_tests/harness.rs).
 - Do not change production code outside `crates/ploke-eval/` without explicit user permission.
 
 Immediate next move:
 - Review the completed `tokio-rs` artifacts and score gross tool failures, retrieval drift, and context bloat.
-- Use [2026-04-13_tokio-rs-probe-and-batch-entry.md](/home/brasides/code/ploke/docs/active/agents/2026-04-12_eval-infra-sprint/2026-04-13_tokio-rs-probe-and-batch-entry.md) plus the registry as the current batch-entry context.
+- Use [2026-04-13_tokio-rs-probe-and-batch-entry.md](/home/brasides/code/ploke/docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-13_tokio-rs-probe-and-batch-entry.md) plus the registry as the current batch-entry context.
 - Only after that pass decide whether to intervene on agent behavior, narrow scope, or expand further.
 
 If you want, I can take the next step and start the post-batch `tokio-rs` evaluation pass now.

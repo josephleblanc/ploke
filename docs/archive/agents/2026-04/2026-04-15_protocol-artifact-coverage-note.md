@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: protocol artifact coverage note
 - task description: track current persisted protocol-artifact coverage across finished eval runs and record sampled sanity-check results
-- related planning files: `docs/active/agents/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`, `docs/active/CURRENT_FOCUS.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`, `docs/active/CURRENT_FOCUS.md`
 
 ## Coverage Snapshot
 

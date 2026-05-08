@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: ploke-protocol architecture checkpoint
 - task description: checkpoint note for the first major rewrite of `crates/ploke-protocol` from a one-shot review bootstrap into a typed composed procedure model with per-step artifacts
-- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/agents/2026-04-15_protocol-cold-start-reference.md`, `docs/active/agents/2026-04-12_eval-infra-sprint/2026-04-14_ploke-protocol-bootstrap-handoff.md`, `docs/workflow/evalnomicon/protocol-typing-scratch.md`, `docs/workflow/evalnomicon/src/core/conceptual-framework.md`
+- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/archive/agents/2026-04/2026-04-15_protocol-cold-start-reference.md`, `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-14_ploke-protocol-bootstrap-handoff.md`, `docs/workflow/evalnomicon/protocol-typing-scratch.md`, `docs/workflow/evalnomicon/src/core/conceptual-framework.md`
 
 ## What Changed
 

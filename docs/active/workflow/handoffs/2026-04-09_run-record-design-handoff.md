@@ -4,7 +4,7 @@
 **To:** Next session  
 **Date:** 2026-04-09  
 **Branch:** `refactor/tool-calls`  
-**Related:** [2026-04-09_run-record-type-inventory.md](../../agents/2026-04-09_run-record-type-inventory.md), [2026-04-09_run-manifest-design-note.md](../../agents/2026-04-09_run-manifest-design-note.md)
+**Related:** [2026-04-09_run-record-type-inventory.md](../../../archive/agents/2026-04/2026-04-09_run-record-type-inventory.md), [2026-04-09_run-manifest-design-note.md](../../../archive/agents/2026-04/2026-04-09_run-manifest-design-note.md)
 
 ---
 
@@ -75,12 +75,12 @@ RunRecord
 
 ## Artifacts Created
 
-1. **[2026-04-09_run-record-type-inventory.md](../../agents/2026-04-09_run-record-type-inventory.md)**
+1. **[2026-04-09_run-record-type-inventory.md](../../../archive/agents/2026-04/2026-04-09_run-record-type-inventory.md)**
    - Complete type catalog with file paths and line numbers
    - Proposed `RunRecord` structure
    - Implementation checklist (TODO items)
 
-2. **[2026-04-09_run-manifest-design-note.md](../../agents/2026-04-09_run-manifest-design-note.md)**
+2. **[2026-04-09_run-manifest-design-note.md](../../../archive/agents/2026-04/2026-04-09_run-manifest-design-note.md)**
    - Cozo time travel clarification
    - Revised artifact layout
    - Example manifest and record structures
@@ -138,7 +138,7 @@ RunRecord
 
 ## Resume Prompt
 
-Continue from [2026-04-09_run-record-type-inventory.md](../../agents/2026-04-09_run-record-type-inventory.md).
+Continue from [2026-04-09_run-record-type-inventory.md](../../../archive/agents/2026-04/2026-04-09_run-record-type-inventory.md).
 
 Start with the implementation checklist:
 1. Define `RunRecord` struct

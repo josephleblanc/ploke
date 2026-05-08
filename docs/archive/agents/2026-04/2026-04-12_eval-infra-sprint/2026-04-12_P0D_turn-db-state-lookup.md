@@ -18,7 +18,7 @@
   - named test command(s)
   - explicit note on what `lookup(name)` matches and what it intentionally does not match yet
   - explicit note on error behavior for missing timestamps or missing setup data
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: proposed
 
 ## Permission Gate

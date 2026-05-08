@@ -18,7 +18,7 @@
   - proposed minimal metric set with rationale
   - explicit note on missing data or aggregation blockers
   - recommended next packet(s) for implementation or backfill
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: ready
 
 ## Permission Gate

@@ -18,7 +18,7 @@
   - concise findings or changes tied to concrete file references
   - explicit note on test-strength implications
   - recommended follow-up packet(s) if more than one cleanup slice remains
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: accepted
 
 ## Permission Gate

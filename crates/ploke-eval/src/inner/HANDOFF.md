@@ -7,7 +7,7 @@
 
 ## Read First
 
-1. `docs/active/agents/2026-04-18_ploke-eval-procedure-model.md`
+1. `docs/archive/agents/2026-04/2026-04-18_ploke-eval-procedure-model.md`
 2. `crates/ploke-eval/src/inner/core.rs`
 3. `crates/ploke-eval/src/inner/registry.rs`
 

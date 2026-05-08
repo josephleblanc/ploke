@@ -11,10 +11,10 @@ after-Artifact validation can be provided.
 
 Related planning files:
 
-- `docs/active/agents/2026-05-07-prototype1-edit-surface-implementation-plan.md`
-- `docs/active/agents/2026-05-07-prototype1-edit-surface-model.md`
-- `docs/active/agents/2026-05-07-prototype1-edit-surface-handoff.md`
-- `docs/active/agents/2026-05-07-edit-surface-phase2-authority-review.md`
+- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-implementation-plan.md`
+- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-model.md`
+- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-handoff.md`
+- `docs/archive/agents/2026-05/2026-05-07-edit-surface-phase2-authority-review.md`
 - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/`
 

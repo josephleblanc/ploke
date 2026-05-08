@@ -7,7 +7,7 @@
 - Design intent: Turn the accepted `P2C` policy into one bounded convergence step so the first formal Phase 2 packet can point at a concrete manifest/config surface instead of parallel drafts
 - Scope: Compare the draft run-manifest and experiment-config schemas against current harness output artifacts, identify the minimum convergence needed for a first formal baseline/control packet, and leave behind one explicit recommendation for the formal-run entry surface
 - Non-goals: Do not launch new eval runs, do not modify production code, do not silently declare the full long-term manifest design complete, do not broaden into target-selection work beyond what is needed to define the formal-run entry surface
-- Owned files: `docs/active/workflow/**`, `docs/workflow/**`, `docs/active/agents/2026-04-12_eval-infra-sprint/**`
+- Owned files: `docs/active/workflow/**`, `docs/workflow/**`, `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/**`
 - Dependencies: accepted `P2C`, `docs/workflow/run-manifest.v0.draft.json`, `docs/workflow/experiment-config.v0.draft.json`, `docs/active/workflow/evidence-ledger.md`, `docs/active/plans/evals/eval-design.md`, current `ploke-eval` run artifact layout
 - Acceptance criteria:
   1. The packet identifies which manifest/config fields already map cleanly onto current harness artifacts versus which remain draft-only or split across files.
@@ -17,5 +17,5 @@
   - direct citations to the draft manifest/config files and the current harness artifact layout
   - an explicit statement about what a first formal-run packet should freeze versus what can remain draft
   - one clear next-packet recommendation after the convergence decision
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: ready

@@ -11,9 +11,9 @@ Scope: current uncommitted changes in:
 
 Context read:
 
-- `docs/active/agents/2026-05-07-edit-surface-implementation-handoff.md`
-- `docs/active/agents/2026-05-07-prototype1-edit-surface-implementation-plan.md`
-- `docs/active/agents/2026-05-07-prototype1-edit-surface-model.md`
+- `docs/archive/agents/2026-05/2026-05-07-edit-surface-implementation-handoff.md`
+- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-implementation-plan.md`
+- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-model.md`
 
 ## Summary
 

@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: protocol segment review rejects a valid intent segment index
 - task description: track the persistent `tool-call-segment-review` failure on `tokio-rs__tokio-6409` where the latest intent-segmentation artifact contains segment `2`, but the review command reports that index as not found
-- related planning files: `docs/active/agents/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`
 
 ## Summary
 
@@ -39,7 +39,7 @@ does include `segment_index = 2`.
 - date: 2026-04-15
 - task title: protocol segment review rejects tokio-rs__tokio-5179 segment 5
 - task description: track a second persistent `tool-call-segment-review` failure where `tokio-rs__tokio-5179` segment `4` was recoverable after retry, but segment `5` still fails with `segment index 5 not found`
-- related planning files: `docs/active/agents/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`
 
 ### Evidence
 

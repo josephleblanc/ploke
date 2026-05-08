@@ -19,6 +19,8 @@ pub struct Prototype1SearchPolicy {
     pub max_total_nodes: u32,
     #[serde(default)]
     pub child_budget: Prototype1ChildBudget,
+    #[serde(default)]
+    pub child_schedule_mode: Prototype1ChildScheduleMode,
     pub stop_on_first_keep: bool,
     pub require_keep_for_continuation: bool,
     #[serde(default = "default_explore_from_rejected")]
@@ -31,6 +33,7 @@ impl Default for Prototype1SearchPolicy {
             max_generations: 1,
             max_total_nodes: 32,
             child_budget: Prototype1ChildBudget::default(),
+            child_schedule_mode: Prototype1ChildScheduleMode::default(),
             stop_on_first_keep: false,
             require_keep_for_continuation: true,
             explore_from_rejected: true,
@@ -51,6 +54,30 @@ pub struct Prototype1ChildBudget {
 impl Default for Prototype1ChildBudget {
     fn default() -> Self {
         Self { min: 2, max: 6 }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Prototype1ChildScheduleMode {
+    #[default]
+    #[serde(alias = "full_batch")]
+    FullBatch,
+    #[serde(alias = "adaptive_batch")]
+    AdaptiveBatch,
+}
+
+impl Prototype1ChildScheduleMode {
+    pub fn fanout_width(
+        self,
+        child_budget: Prototype1ChildBudget,
+        planned_children: usize,
+    ) -> usize {
+        let planned = planned_children.max(1);
+        match self {
+            Self::FullBatch => planned,
+            Self::AdaptiveBatch => usize::min(child_budget.min as usize, planned).max(1),
+        }
     }
 }
 
@@ -1238,6 +1265,67 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_policy_defaults_child_schedule_mode_when_missing_in_json() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let scheduler_path = prototype1_scheduler_path(&manifest);
+        fs::create_dir_all(
+            scheduler_path
+                .parent()
+                .expect("scheduler parent directory should exist"),
+        )
+        .expect("create scheduler dir");
+
+        let payload = serde_json::json!({
+            "schema_version": PROTOTYPE1_SCHEDULER_SCHEMA_VERSION,
+            "campaign_id": "test-campaign",
+            "updated_at": "2026-05-08T00:00:00Z",
+            "policy": {
+                "max_generations": 2,
+                "max_total_nodes": 9,
+                "child_budget": { "min": 2, "max": 6 },
+                "stop_on_first_keep": false,
+                "require_keep_for_continuation": true,
+                "explore_from_rejected": true
+            },
+            "frontier_node_ids": [],
+            "completed_node_ids": [],
+            "failed_node_ids": [],
+            "nodes": []
+        });
+        fs::write(
+            &scheduler_path,
+            serde_json::to_vec_pretty(&payload).expect("serialize test scheduler"),
+        )
+        .expect("write scheduler");
+
+        let scheduler =
+            load_scheduler_state(&manifest, OperatorProjectionRead::projection_module())
+                .expect("load scheduler");
+        assert_eq!(
+            scheduler.policy.child_schedule_mode,
+            Prototype1ChildScheduleMode::FullBatch
+        );
+    }
+
+    #[test]
+    fn child_schedule_mode_controls_fanout_width() {
+        let budget = Prototype1ChildBudget { min: 2, max: 6 };
+        assert_eq!(
+            Prototype1ChildScheduleMode::FullBatch.fanout_width(budget, 6),
+            6
+        );
+        assert_eq!(
+            Prototype1ChildScheduleMode::AdaptiveBatch.fanout_width(budget, 6),
+            2
+        );
+        assert_eq!(
+            Prototype1ChildScheduleMode::FullBatch.fanout_width(budget, 0),
+            1
+        );
+    }
+
+    #[test]
     fn register_treatment_node_propagates_visible_graph_provenance() {
         let tmp = tempdir().expect("tmp");
         let manifest = campaign_manifest_path(tmp.path());
@@ -1369,6 +1457,7 @@ mod tests {
             max_generations: 2,
             max_total_nodes: 8,
             child_budget: Prototype1ChildBudget::default(),
+            child_schedule_mode: Prototype1ChildScheduleMode::default(),
             stop_on_first_keep: false,
             require_keep_for_continuation: true,
             explore_from_rejected: true,
@@ -1435,6 +1524,7 @@ mod tests {
                 max_generations: 2,
                 max_total_nodes: 8,
                 child_budget: Prototype1ChildBudget::default(),
+                child_schedule_mode: Prototype1ChildScheduleMode::default(),
                 stop_on_first_keep: false,
                 require_keep_for_continuation: true,
                 explore_from_rejected: true,

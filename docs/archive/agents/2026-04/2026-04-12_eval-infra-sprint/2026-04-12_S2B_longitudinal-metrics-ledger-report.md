@@ -17,7 +17,7 @@
 
 ## evidence
 
-- `docs/active/agents/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md` identified the minimal metric set and the need for a single central roll-up doc.
+- `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_S2A_longitudinal-metrics-report.md` identified the minimal metric set and the need for a single central roll-up doc.
 - `docs/active/plans/evals/eval-design.md` distinguishes outcome metrics from validity/health metrics and names the relevant metric families.
 - `docs/workflow/run-manifest.v0.draft.json` provides the target manifest fields used for per-run formulas.
 - `docs/active/workflow/README.md` now points to the ledger as a live workflow artifact.

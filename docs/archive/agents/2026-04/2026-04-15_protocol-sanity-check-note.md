@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: protocol sanity-check note
 - task description: capture the first sampled sanity-check results comparing `ploke-eval inspect` trace reads against persisted protocol artifacts
-- related planning files: `docs/active/agents/2026-04-15_protocol-artifact-coverage-note.md`, `docs/active/agents/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_protocol-artifact-coverage-note.md`, `docs/archive/agents/2026-04/2026-04-15_orchestration-hygiene-and-artifact-monitor.md`
 
 ## Summary
 

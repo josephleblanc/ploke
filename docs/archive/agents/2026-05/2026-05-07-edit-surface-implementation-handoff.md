@@ -6,10 +6,10 @@ Carry forward the bounded `ploke-tui` edit-surface integration for Prototype 1 s
 
 Related files:
 
-- `docs/active/agents/2026-05-07-prototype1-edit-surface-model.md`
-- `docs/active/agents/2026-05-07-prototype1-edit-surface-handoff.md`
-- `docs/active/agents/2026-05-07-prototype1-edit-surface-implementation-plan.md`
-- `docs/active/agents/2026-05-07-tui-edit-surface-producer-review.md`
+- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-model.md`
+- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-handoff.md`
+- `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-implementation-plan.md`
+- `docs/archive/agents/2026-05/2026-05-07-tui-edit-surface-producer-review.md`
 
 ## Current State
 

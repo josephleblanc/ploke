@@ -1,98 +1,29 @@
 # Active Agent Docs
 
-Restart-oriented table of contents for `docs/active/agents/` and nearby restart-critical surfaces.
+**Thread (2026-05-08):** Day-to-day topical notes that used to accumulate here now live under [`docs/archive/agents/2026-04/`](../../archive/agents/2026-04/README.md) and [`docs/archive/agents/2026-05/`](../../archive/agents/2026-05/README.md). This directory keeps only the shared **restart spine** plus living indexes.
 
-## Start Here
+If you read three things after a long break: [`CURRENT_FOCUS.md`](../CURRENT_FOCUS.md), [`workflow/handoffs/recent-activity.md`](../workflow/handoffs/recent-activity.md), and the in-repo Cursor plan for your current implementation thread (e.g. `.cursor/plans/prototype1_history_admitted_evaluation_*.plan.md`).
 
-- [../CURRENT_FOCUS.md](../CURRENT_FOCUS.md)
-  Primary restart pointer for the current eval/protocol thread.
-- [../workflow/handoffs/recent-activity.md](../workflow/handoffs/recent-activity.md)
-  Rolling workflow board with the freshest state changes and restart consequences.
-- [../workflow/handoffs/2026-04-17_protocol-design-reset.md](../workflow/handoffs/2026-04-17_protocol-design-reset.md)
-  Compact restart handoff for the protocol frontier, scheduler cost model, and design pivot.
+## Start here
 
-## Current Planning Surfaces
+- [`CURRENT_FOCUS.md`](../CURRENT_FOCUS.md) — primary restart pointer (code + workflow thread).
+- [`workflow/handoffs/recent-activity.md`](../workflow/handoffs/recent-activity.md) — rolling activity log (links into archive where needed).
+- [`workflow/handoffs/2026-04-17_protocol-design-reset.md`](../workflow/handoffs/2026-04-17_protocol-design-reset.md) — compact eval/protocol design pivot (historical baseline; follow-on work is often in archive + `ploke-eval` inner handoff).
 
-- [2026-05-06-prototype1-execution-surface-model.md](./2026-05-06-prototype1-execution-surface-model.md)
-  Clean-sweep target model for Prototype 1 execution file surfaces: History, channel, Artifact backend, and quarantined write-only telemetry/projections.
-- [2026-05-06-prototype1-execution-surface-clean-sweep-handoff.md](./2026-05-06-prototype1-execution-surface-clean-sweep-handoff.md)
-  Restart handoff for the active Prototype 1 clean-sweep implementation, including current diff state, verified commands, remaining projection-reader work, and next audit steps.
-- [2026-05-06-history-handoff-hydration-review.md](./2026-05-06-history-handoff-hydration-review.md)
-  Reviewer audit for History-backed traversal handoff hydration, sealed Artifact payloads, and clean-sweep invariant risks.
-- [2026-05-06-prototype1-file-io-index.md](./2026-05-06-prototype1-file-io-index.md)
-  Consolidated file I/O index for Prototype 1 parent, child, successor, scheduler, runner, evidence, and projection surfaces.
-- [2026-05-06-prototype1-file-surface-cleanhouse-map.md](./2026-05-06-prototype1-file-surface-cleanhouse-map.md)
-  Reconciliation map for the five Prototype 1 file-surface inventory reports and the clean sweep directive.
-- [2026-05-06-prototype1-file-surfaces-invocation-channel.md](./2026-05-06-prototype1-file-surfaces-invocation-channel.md)
-  Inventory of invocation, runtime channel, and parent/child communication file surfaces.
-- [2026-05-06-prototype1-file-surfaces-projections-evidence.md](./2026-05-06-prototype1-file-surfaces-projections-evidence.md)
-  Inventory of projection and evidence-preview file surfaces that must not drive loop execution.
-- [2026-05-06-prototype1-file-surfaces-scheduler-runner.md](./2026-05-06-prototype1-file-surfaces-scheduler-runner.md)
-  Inventory of scheduler, runner, node, branch, and journal file reads/writes in Prototype 1 execution paths.
-- [2026-05-06-prototype1-file-surfaces-successor-history.md](./2026-05-06-prototype1-file-surfaces-successor-history.md)
-  Inventory of successor handoff, startup, and History/Crown file surfaces.
-- [2026-05-06_history-traversal-invariant-review.md](./2026-05-06_history-traversal-invariant-review.md)
-  History traversal invariant review covering current-generation bridge, candidate provenance, and historical handoff gaps.
-- [2026-05-07-prototype1-edit-surface-model.md](./2026-05-07-prototype1-edit-surface-model.md)
-  Formal-procedure style model for connecting `ploke-tui` edit proposals to the Prototype 1 surface-bounded create transition without making UI proposal storage or raw patch text authoritative.
-- [2026-05-07-prototype1-edit-surface-handoff.md](./2026-05-07-prototype1-edit-surface-handoff.md)
-  Restart handoff for translating the edit-surface framework into `ploke-eval` trait adapters, including the `CodeGraphView` / `EditHarness` split and the open approve/apply boundary.
-- [2026-05-07-prototype1-edit-surface-implementation-plan.md](./2026-05-07-prototype1-edit-surface-implementation-plan.md)
-  Validation-gated implementation plan for wiring bounded `ploke-tui` edit surfaces into Prototype 1 candidate generation, History evidence, and long-run readiness.
-- [2026-05-07-edit-surface-phase1-review.md](./2026-05-07-edit-surface-phase1-review.md)
-  Review of the Phase 1 edit-surface authority boundary, projection binding, delta construction visibility, and validation gates.
-- [2026-05-07-edit-surface-phase2-adapter-review.md](./2026-05-07-edit-surface-phase2-adapter-review.md)
-  Review of the Phase 2 first-slice `ploke-tui` / `ploke-db` edit-surface adapter scaffold, including authority, projection binding, digest evidence, and commit blockers.
-- [2026-05-07-edit-surface-phase2-authority-review.md](./2026-05-07-edit-surface-phase2-authority-review.md)
-  Review of the Phase 2 second-slice edit-surface authority fixes, including reported/applied separation, post-Artifact validation, projection digest authority, and remaining visibility blockers.
-- [2026-05-07-edit-surface-phase3-integration-slice.md](./2026-05-07-edit-surface-phase3-integration-slice.md)
-  First Phase 3 integration slice for candidate-generator/edit-surface CLI knobs, parent selection dispatch, and the backend-owned after-Artifact validation blocker.
-- [2026-05-07-edit-surface-phase3-integration-review.md](./2026-05-07-edit-surface-phase3-integration-review.md)
-  Review of the Phase 3 first integration slice, covering CLI semantics, fail-closed TUI edit-surface behavior, legacy plan reuse, authority boundaries, and test adequacy.
-- [2026-05-07-edit-surface-backend-bridge-review.md](./2026-05-07-edit-surface-backend-bridge-review.md)
-  Review of the backend bridge for bounded single-file edit-surface validation, after-hash authority, child-carrier conversion, containment gaps, and commit readiness.
-- [2026-05-07-edit-surface-resolver-extraction-review.md](./2026-05-07-edit-surface-resolver-extraction-review.md)
-  Review of the stage-free TUI resolver extraction, eval-side resolved-write conversion, backend-owned hash authority, path checks, and live wiring readiness.
-- [2026-05-07-tui-edit-surface-producer-note.md](./2026-05-07-tui-edit-surface-producer-note.md)
-  Note for the minimal live deterministic parent-side `tui-edit-surface` producer, including direct-splice behavior, dedupe, budget cap, and authority limits.
-- [2026-05-07-tui-edit-surface-producer-review.md](./2026-05-07-tui-edit-surface-producer-review.md)
-  Review of the live deterministic TUI edit-surface producer, covering budget defaults, comment append safety, UI authority, resolver bypass, child projection, duplicates, short-run readiness, and missing History evidence.
-- [2026-05-07-edit-surface-implementation-handoff.md](./2026-05-07-edit-surface-implementation-handoff.md)
-  Compact restart handoff for the bounded `ploke-tui` edit-surface implementation, including committed phases, dirty Phase 4 evidence persistence work, risks, and next validation steps.
-- [2026-05-07-edit-surface-phase4-evidence-review.md](./2026-05-07-edit-surface-phase4-evidence-review.md)
-  Review of Phase 4 edit-surface evidence persistence, including existing-plan bypass, surface Artifact binding, durable replay gaps, and follow-up resolution.
-- [2026-04-17_eval-failure-and-protocol-audit/README.md](./2026-04-17_eval-failure-and-protocol-audit/README.md)
-  Control-plane docs for failed-run audit, known-limitations reconciliation, blind trace review, and protocol-output comparison.
-- [2026-04-16_eval-closure-formal-sketch.md](./2026-04-16_eval-closure-formal-sketch.md)
-  Active planning note for layered registry/eval/protocol closure.
-- [2026-04-15_ploke-protocol-control-note.md](./2026-04-15_ploke-protocol-control-note.md)
-  Authoritative checkpoint for the active `ploke-protocol` architecture thread.
-- [2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md](./2026-04-12_eval-orchestration-protocol/2026-04-12_eval-orchestration-protocol.md)
-  Execution contract for eval-control-plane work unless explicitly superseded.
+## Archived topical material (trajectory)
 
-## Supporting Context
+- **April 2026 (eval infra, protocol checkpoints, History/Crown review trees, phase-1 audit):** [`docs/archive/agents/2026-04/`](../../archive/agents/2026-04/README.md) — includes e.g. [`2026-04-12_eval-infra-sprint/`](../../archive/agents/2026-04/2026-04-12_eval-infra-sprint/README.md), [`2026-04-17_eval-failure-and-protocol-audit/`](../../archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/README.md), and `history-*-review-*` / `prototype1-architecture-gap-audit-*` folders.
+- **May 2026 (edit surface + Prototype 1 handoffs/reviews):** [`docs/archive/agents/2026-05/`](../../archive/agents/2026-05/README.md) — `2026-05-07-*` reviews, handoffs, and related History startup reviews.
 
-- [2026-04-18_ploke-eval-canonical-artifact-set.md](./2026-04-18_ploke-eval-canonical-artifact-set.md)
-  Reduced stored artifact policy for the `ploke-eval` rewrite: one registration surface, one run/evidence record, one final DB attachment, and explicit elimination rules for duplicate sidecars.
-- [2026-04-18_ploke-eval-procedure-model.md](./2026-04-18_ploke-eval-procedure-model.md)
-  Eval-specific procedure model for the `ploke-eval` rewrite: larger run execution object, configuration authority, transition boundaries, and semantic-vs-evidence-vs-projection separation.
-- [2026-04-18_ploke-eval-pipeline-recon/README.md](./2026-04-18_ploke-eval-pipeline-recon/README.md)
-  Recon packet for untangling the current `ploke-eval` patch-generation domain: runtime construction, run-setup configuration, domain mapping, and entanglement notes.
-- [2026-04-15_protocol-aggregate-cli.md](./2026-04-15_protocol-aggregate-cli.md)
-  Aggregate inspection surface for protocol artifacts and coverage.
-- [2026-04-15_clap-baseline-eval-orchestration.md](./2026-04-15_clap-baseline-eval-orchestration.md)
-  Batch/operator context for the Clap-heavy Rust baseline work.
-- [2026-04-12_eval-infra-sprint/README.md](./2026-04-12_eval-infra-sprint/README.md)
-  Legacy sprint archive index; keep for lineage, not as the primary restart surface.
+The former `2026-05-06-prototype1-*` execution-surface inventory links that appeared in older TOCs are **not present in this tree**; use archive + git history if you need that exact filename set.
+
+## Still in this folder
+
+- [`open-questions.md`](open-questions.md) — agent-to-agent questions (not direct user prompts).
+- [`notable-inconsistencies.md`](notable-inconsistencies.md) — durable inconsistencies worth tracking.
 
 ## Conventions
 
-- When creating a new active agent document, use the current date (`yyyy-mm-dd`) at the beginning of the file or directory name.
-- In the document header include:
-  - date
-  - task title
-  - task description
-  - related planning files
-- Archived one-off agent docs live under `docs/archive/agents/YYYY-MM/`.
-- `open-questions.md` is for agent-to-agent open questions, not direct user prompts.
-- `notable-inconsistencies.md` is for durable inconsistencies worth preserving without forcing immediate action.
+- When creating a **new** topical agent doc, prefer a dated name (`yyyy-mm-dd_…`) under `docs/active/agents/` only if it is genuinely part of the current restart spine; otherwise add it under the appropriate `docs/archive/agents/YYYY-MM/` bucket as work completes.
+- Headers should include date, title, short description, and related planning files (with archive-resolved paths once moved).
+- Workspace rule set: [`AGENTS.md`](../../../AGENTS.md).

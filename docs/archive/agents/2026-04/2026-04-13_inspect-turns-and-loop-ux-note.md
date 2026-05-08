@@ -3,7 +3,7 @@
 - date: 2026-04-13
 - task title: `ploke-eval inspect` turn-selection and loop-view UX
 - task description: preserve the accepted CLI inspection workflow decisions from the collaborative design pass, including the implemented turn-selection improvements and the next bounded slice for a mid-level loop view
-- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/active/agents/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md`
+- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/handoffs/recent-activity.md`, `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/2026-04-12_eval-infra-sprint-control-plane.md`
 
 ## Scope
 

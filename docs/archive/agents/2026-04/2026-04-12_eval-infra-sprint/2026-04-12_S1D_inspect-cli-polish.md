@@ -17,7 +17,7 @@
   - targeted command or test evidence for the changed CLI path
   - concise diff summary tied to concrete file references
   - explicit note on residual discoverability or coverage gaps
-- Report-back location: `docs/active/agents/2026-04-12_eval-infra-sprint/`
+- Report-back location: `docs/archive/agents/2026-04/2026-04-12_eval-infra-sprint/`
 - Status: accepted
 
 ## Permission Gate

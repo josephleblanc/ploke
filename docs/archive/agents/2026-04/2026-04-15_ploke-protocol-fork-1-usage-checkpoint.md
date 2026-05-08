@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: ploke-protocol fork-1 usage checkpoint
 - task description: usage-based checkpoint for the first fork after the major `ploke-protocol` rewrite, comparing the new tool-call review protocol against the older CLI-first `inspect tool-calls` workflow
-- related planning files: `docs/active/agents/2026-04-15_ploke-protocol-control-note.md`, `docs/active/agents/2026-04-15_ploke-protocol-architecture-checkpoint.md`, `docs/workflow/evalnomicon/src/meta-experiments/02-prototing-protocol.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-control-note.md`, `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-architecture-checkpoint.md`, `docs/workflow/evalnomicon/src/meta-experiments/02-prototing-protocol.md`
 
 ## Scope
 

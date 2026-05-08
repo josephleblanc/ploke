@@ -3,7 +3,7 @@
 **Date:** 2026-04-12
 **Task Title:** Eval orchestration protocol
 **Task Description:** Define a concrete sub-agent coordination protocol for eval and harness work that minimizes drift, prevents self-certification, and survives orchestrator replacement.
-**Related Planning Files:** `docs/active/plans/evals/eval-design.md`, `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/README.md`, `docs/active/agents/phase-1-audit/AUDIT_SYNTHESIS.md`
+**Related Planning Files:** `docs/active/plans/evals/eval-design.md`, `docs/active/CURRENT_FOCUS.md`, `docs/active/workflow/README.md`, `docs/archive/agents/2026-04/phase-1-audit/AUDIT_SYNTHESIS.md`
 
 ## Purpose
 
