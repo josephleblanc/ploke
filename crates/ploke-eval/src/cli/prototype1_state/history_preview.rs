@@ -652,6 +652,9 @@ struct SelectionCandidateShow {
     selection_input_ok: bool,
     sealed_evidence: bool,
     artifact: bool,
+    surface_evidence: bool,
+    surface_delta_id: Option<String>,
+    surface_proposal_id: Option<String>,
     primary_runtime_id: Option<String>,
     decision_grade_eligible: bool,
     identity_gaps: Vec<String>,
@@ -737,6 +740,10 @@ fn selection_show_from_entry(
         .map(|(index, payload)| {
             let input = payload.selection_input.as_ref();
             let sealed = payload.sealed_evidence.as_ref();
+            let surface = payload
+                .artifact
+                .as_ref()
+                .and_then(|artifact| artifact.surface.as_ref());
             let grade = payload.decision_grade_eligibility();
             SelectionCandidateShow {
                 index,
@@ -752,6 +759,9 @@ fn selection_show_from_entry(
                 selection_input_ok: payload.verify_selection_input_binding().unwrap_or(false),
                 sealed_evidence: sealed.is_some(),
                 artifact: payload.artifact.is_some(),
+                surface_evidence: surface.is_some(),
+                surface_delta_id: surface.map(|value| value.delta_id.clone()),
+                surface_proposal_id: surface.map(|value| value.proposal_id.clone()),
                 primary_runtime_id: sealed
                     .and_then(|value| value.coordinate.primary_runtime_id.clone()),
                 decision_grade_eligible: grade.eligible,
@@ -842,7 +852,7 @@ fn print_selection_show(show: &SelectionShow) {
     );
     for candidate in &show.considered {
         println!(
-            "  [{}] selected={} candidate={} node={} branch={} gen={} disp={} decision_grade={} input_ok={} sealed={} artifact={} runtime={}",
+            "  [{}] selected={} candidate={} node={} branch={} gen={} disp={} decision_grade={} input_ok={} sealed={} artifact={} surface={} runtime={}",
             candidate.index,
             candidate.selected,
             candidate.candidate,
@@ -857,8 +867,16 @@ fn print_selection_show(show: &SelectionShow) {
             candidate.selection_input_ok,
             candidate.sealed_evidence,
             candidate.artifact,
+            candidate.surface_evidence,
             candidate.primary_runtime_id.as_deref().unwrap_or("-")
         );
+        if let Some(delta_id) = &candidate.surface_delta_id {
+            println!(
+                "      surface: proposal={} delta={}",
+                candidate.surface_proposal_id.as_deref().unwrap_or("-"),
+                delta_id
+            );
+        }
         if !candidate.identity_gaps.is_empty() {
             println!("      gaps: {}", candidate.identity_gaps.join("; "));
         }

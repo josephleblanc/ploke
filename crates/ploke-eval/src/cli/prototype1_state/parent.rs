@@ -11,7 +11,7 @@ use crate::{
         backend::{GitWorktreeBackend, WorkspaceBackend},
         history::{
             ArtifactLocator, BlockHead, BlockStore, BlockStoreError, FsBlockStore, HistoryError,
-            LineageId, LineageState, StoreHead, TreeKeyCommitment,
+            LineageId, LineageState, StoreHead, SurfaceEvidence, TreeKeyCommitment,
         },
         identity::{ParentIdentity, parent_identity_path},
         inner::{At, File, LineageKey, Message, MessageBox, Transition},
@@ -173,6 +173,8 @@ pub(crate) struct ChildFiles {
     node: Prototype1NodeRecord,
     request: Prototype1RunnerRequest,
     resolved: ResolvedTreatmentBranch,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    surface: Option<SurfaceEvidence>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,7 +226,13 @@ impl ChildFiles {
             request: runner_request_from_node(campaign_id, &node, stop_on_error),
             node,
             resolved,
+            surface: None,
         }
+    }
+
+    pub(crate) fn with_surface(mut self, evidence: SurfaceEvidence) -> Self {
+        self.surface = Some(evidence);
+        self
     }
 
     pub(crate) fn node_id(&self) -> &str {
@@ -241,6 +249,10 @@ impl ChildFiles {
 
     pub(crate) fn resolved(&self) -> &ResolvedTreatmentBranch {
         &self.resolved
+    }
+
+    pub(crate) fn surface(&self) -> Option<&SurfaceEvidence> {
+        self.surface.as_ref()
     }
 }
 

@@ -57,6 +57,10 @@ Restart-oriented table of contents for `docs/active/agents/` and nearby restart-
   Note for the minimal live deterministic parent-side `tui-edit-surface` producer, including direct-splice behavior, dedupe, budget cap, and authority limits.
 - [2026-05-07-tui-edit-surface-producer-review.md](./2026-05-07-tui-edit-surface-producer-review.md)
   Review of the live deterministic TUI edit-surface producer, covering budget defaults, comment append safety, UI authority, resolver bypass, child projection, duplicates, short-run readiness, and missing History evidence.
+- [2026-05-07-edit-surface-implementation-handoff.md](./2026-05-07-edit-surface-implementation-handoff.md)
+  Compact restart handoff for the bounded `ploke-tui` edit-surface implementation, including committed phases, dirty Phase 4 evidence persistence work, risks, and next validation steps.
+- [2026-05-07-edit-surface-phase4-evidence-review.md](./2026-05-07-edit-surface-phase4-evidence-review.md)
+  Review of Phase 4 edit-surface evidence persistence, including existing-plan bypass, surface Artifact binding, durable replay gaps, and follow-up resolution.
 - [2026-04-17_eval-failure-and-protocol-audit/README.md](./2026-04-17_eval-failure-and-protocol-audit/README.md)
   Control-plane docs for failed-run audit, known-limitations reconciliation, blind trace review, and protocol-output comparison.
 - [2026-04-16_eval-closure-formal-sketch.md](./2026-04-16_eval-closure-formal-sketch.md)

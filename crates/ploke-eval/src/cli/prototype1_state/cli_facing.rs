@@ -61,7 +61,8 @@ use crate::{
                 SealedBranchEvidence, SealedCandidateEvidence, SealedComparedRunEvidence,
                 SealedEvaluationEvidence, SealedEvidenceCitation, SealedRuntimeEvidence,
                 SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
-                SelectionScope, SubjectRef, TraversalCandidateSource, TraversalEvidence,
+                SelectionScope, SubjectRef, SurfaceArtifactRef, SurfaceEvidence, SurfaceTouch,
+                TraversalCandidateSource, TraversalEvidence,
             },
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -354,6 +355,7 @@ struct PlannedChildOutcome {
     child_runtime: Option<String>,
     evaluation_report: Option<Prototype1BranchEvaluationReport>,
     selection_input: Option<SelectionInput>,
+    surface: Option<SurfaceEvidence>,
 }
 
 struct SelectionSealMaterial {
@@ -461,11 +463,6 @@ enum CandidateGenerationError {
         produced: usize,
     },
     #[error(
-        "candidate-generator=tui-edit-surface cannot reuse existing child plan '{}': the plan format does not yet carry edit-surface check/delta evidence, so using it would silently bypass the requested generator",
-        path.display()
-    )]
-    ExistingPlanLacksEditSurfaceEvidence { path: PathBuf },
-    #[error(
         "checked edit for surface {actual:?} cannot be materialized through requested surface {expected:?}"
     )]
     SurfaceMismatch {
@@ -480,6 +477,12 @@ enum CandidateGenerationError {
     TargetMismatch { checked: PathBuf, node: PathBuf },
     #[error("checked edit-surface proposal was rejected by backend validation: {detail}")]
     BackendRejected { detail: String },
+    #[error("failed to persist checked edit-surface evidence: {detail}")]
+    EvidenceProjection { detail: String },
+    #[error(
+        "deterministic tui edit-surface candidate '{node_id}' is missing checked edit-surface evidence"
+    )]
+    MissingDeterministicEvidence { node_id: String },
 }
 
 impl CandidateGenerationError {
@@ -521,12 +524,56 @@ fn child_files_from_checked_edit(
     node.derived_artifact_id = Some(derived_artifact_id.clone());
 
     let resolved = resolved_from_checked_edit(&node, checked);
-    Ok(ChildFiles::from_resolved(
-        campaign_id,
-        node,
-        resolved,
-        stop_on_error,
-    ))
+    let surface = surface_evidence_from_checked_edit(TUI_EDIT_SURFACE_PRODUCER_ID, checked)
+        .map_err(|err| CandidateGenerationError::EvidenceProjection {
+            detail: err.to_string(),
+        })?;
+    Ok(ChildFiles::from_resolved(campaign_id, node, resolved, stop_on_error).with_surface(surface))
+}
+
+fn surface_evidence_from_checked_edit(
+    producer_id: &str,
+    checked: &CheckedSurfaceEdit,
+) -> Result<SurfaceEvidence, crate::cli::prototype1_state::history::HistoryError> {
+    let policy = checked.surface();
+    let touches = checked
+        .delta()
+        .touches()
+        .iter()
+        .map(|touch| {
+            let span = touch.span();
+            let target = span.target();
+            SurfaceTouch {
+                target_relpath: target.path().clone(),
+                target_name: target.name().to_string(),
+                span_relpath: span.path().clone(),
+                start: span.start(),
+                end: span.end(),
+                base_hash: span.hash().as_str().to_string(),
+                replacement: touch.replacement().to_string(),
+                replacement_hash: format!("{:x}", Sha256::digest(touch.replacement().as_bytes())),
+            }
+        })
+        .collect::<Vec<_>>();
+    SurfaceEvidence::checked(
+        producer_id,
+        checked.proposal_id().to_string(),
+        checked.run_id().to_string(),
+        serde_name(&policy),
+        checked.target_relpath().to_path_buf(),
+        SurfaceArtifactRef {
+            artifact_id: checked.delta().base().id().clone(),
+            hash: checked.delta().base().hash().as_str().to_string(),
+        },
+        SurfaceArtifactRef {
+            artifact_id: checked.delta().after().id().clone(),
+            hash: checked.delta().after().hash().as_str().to_string(),
+        },
+        checked.patch_id().clone(),
+        checked.source_content_hash().to_string(),
+        checked.proposed_content_hash().to_string(),
+        touches,
+    )
 }
 
 fn resolved_from_checked_edit(
@@ -867,9 +914,213 @@ fn validate_and_write_tui_child_plan(
                 ),
             });
         }
+        validate_deterministic_surface_evidence(child)?;
     }
 
     write_child_plan_file(path, body)
+}
+
+fn validate_deterministic_surface_evidence(child: &ChildFiles) -> Result<(), PrepareError> {
+    if child.resolved().branch.synthesized_spec_id != TUI_EDIT_SURFACE_PRODUCER_ID {
+        return Ok(());
+    }
+    let node = child.node_record();
+    let Some(surface) = child.surface() else {
+        return Err(CandidateGenerationError::MissingDeterministicEvidence {
+            node_id: node.node_id.clone(),
+        }
+        .into_prepare());
+    };
+    if surface.producer_id != TUI_EDIT_SURFACE_PRODUCER_ID {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried producer evidence '{}'",
+                node.node_id, surface.producer_id
+            ),
+        });
+    }
+    validate_surface_evidence_binding(node, child.resolved(), surface)
+}
+
+fn validate_requested_tui_surface_child(child: &ChildFiles) -> Result<(), PrepareError> {
+    if child.resolved().branch.synthesized_spec_id != TUI_EDIT_SURFACE_PRODUCER_ID {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "candidate-generator=tui-edit-surface cannot use child '{}' produced by '{}'",
+                child.node_id(),
+                child.resolved().branch.synthesized_spec_id
+            ),
+        });
+    }
+    validate_deterministic_surface_evidence(child)
+}
+
+fn validate_surface_evidence_binding(
+    node: &Prototype1NodeRecord,
+    resolved: &crate::intervention::ResolvedTreatmentBranch,
+    surface: &SurfaceEvidence,
+) -> Result<(), PrepareError> {
+    surface
+        .verify_integrity()
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried invalid surface evidence: {}",
+                node.node_id, source
+            ),
+        })?;
+    if surface.target_relpath != node.target_relpath
+        || surface.target_relpath != resolved.target_relpath
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried evidence for target '{}', node target '{}', resolved target '{}'",
+                node.node_id,
+                surface.target_relpath.display(),
+                node.target_relpath.display(),
+                resolved.target_relpath.display()
+            ),
+        });
+    }
+    let expected_policy = serde_name(&Prototype1EditSurface::PlokeTuiTools);
+    if surface.policy != expected_policy {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried policy '{}', expected '{}'",
+                node.node_id, surface.policy, expected_policy
+            ),
+        });
+    }
+    if surface.source_content_hash != resolved.source_content_hash
+        || surface.source_content_hash
+            != format!("{:x}", Sha256::digest(resolved.source_content.as_bytes()))
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried source hash '{}', resolved source hash '{}'",
+                node.node_id, surface.source_content_hash, resolved.source_content_hash
+            ),
+        });
+    }
+    if surface.proposed_content_hash != resolved.branch.proposed_content_hash
+        || surface.proposed_content_hash
+            != format!(
+                "{:x}",
+                Sha256::digest(resolved.branch.proposed_content.as_bytes())
+            )
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried proposed hash '{}', resolved proposed hash '{}'",
+                node.node_id, surface.proposed_content_hash, resolved.branch.proposed_content_hash
+            ),
+        });
+    }
+    require_artifact_id_binding(
+        &node.node_id,
+        "base_artifact_id",
+        node.base_artifact_id.as_ref(),
+        &surface.base.artifact_id,
+    )?;
+    require_artifact_id_binding(
+        &node.node_id,
+        "derived_artifact_id",
+        node.derived_artifact_id.as_ref(),
+        &surface.after.artifact_id,
+    )?;
+    require_artifact_id_binding(
+        &node.node_id,
+        "branch.derived_artifact_id",
+        resolved.branch.derived_artifact_id.as_ref(),
+        &surface.after.artifact_id,
+    )?;
+    require_patch_id_binding(
+        &node.node_id,
+        "patch_id",
+        node.patch_id.as_ref(),
+        &surface.patch_id,
+    )?;
+    require_patch_id_binding(
+        &node.node_id,
+        "branch.patch_id",
+        resolved.branch.patch_id.as_ref(),
+        &surface.patch_id,
+    )?;
+    require_operation_target_binding(
+        &node.node_id,
+        "operation_target",
+        node.operation_target.as_ref(),
+        &surface.base.artifact_id,
+    )?;
+    require_operation_target_binding(
+        &node.node_id,
+        "branch.generation_target",
+        resolved.branch.generation_target.as_ref(),
+        &surface.base.artifact_id,
+    )?;
+    if resolved.branch.apply_id.as_deref() != Some(surface.proposal_id.as_str()) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried proposal '{}', branch apply_id {:?}",
+                node.node_id, surface.proposal_id, resolved.branch.apply_id
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn require_artifact_id_binding(
+    node_id: &str,
+    field: &str,
+    actual: Option<&crate::loop_graph::ArtifactId>,
+    expected: &crate::loop_graph::ArtifactId,
+) -> Result<(), PrepareError> {
+    if actual == Some(expected) {
+        return Ok(());
+    }
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "deterministic tui edit-surface child '{}' carried surface Artifact {}, but {} was {:?}",
+            node_id, expected, field, actual
+        ),
+    })
+}
+
+fn require_patch_id_binding(
+    node_id: &str,
+    field: &str,
+    actual: Option<&crate::loop_graph::PatchId>,
+    expected: &crate::loop_graph::PatchId,
+) -> Result<(), PrepareError> {
+    if actual == Some(expected) {
+        return Ok(());
+    }
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "deterministic tui edit-surface child '{}' carried surface patch {}, but {} was {:?}",
+            node_id, expected, field, actual
+        ),
+    })
+}
+
+fn require_operation_target_binding(
+    node_id: &str,
+    field: &str,
+    actual: Option<&crate::loop_graph::OperationTarget>,
+    expected: &crate::loop_graph::ArtifactId,
+) -> Result<(), PrepareError> {
+    match actual {
+        Some(crate::loop_graph::OperationTarget::Artifact { artifact_id })
+            if artifact_id == expected =>
+        {
+            Ok(())
+        }
+        _ => Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried surface base Artifact {}, but {} was {:?}",
+                node_id, expected, field, actual
+            ),
+        }),
+    }
 }
 
 fn produce_tui_edit_surface_candidates(
@@ -5413,14 +5664,6 @@ async fn resolve_child_plan(
     ));
     let candidate_generation = CandidateGenerationConfig::from_command(command);
     let receipt = if plan_at.path().exists() {
-        if candidate_generation.generator == Prototype1CandidateGenerator::TuiEditSurface {
-            return Err(
-                CandidateGenerationError::ExistingPlanLacksEditSurfaceEvidence {
-                    path: plan_at.path().to_path_buf(),
-                }
-                .into_prepare(),
-            );
-        }
         receive_existing_child_plan(campaign_id, manifest_path, repo_root, parent)?
     } else {
         run_parent_target_selection(
@@ -5439,6 +5682,11 @@ async fn resolve_child_plan(
         .iter()
         .cloned()
         .collect::<Vec<_>>();
+    if candidate_generation.generator == Prototype1CandidateGenerator::TuiEditSurface {
+        for child in &children {
+            validate_requested_tui_surface_child(child)?;
+        }
+    }
 
     let children = if let Some(node_id) = command.node_id.as_ref() {
         let candidate = children
@@ -5509,6 +5757,7 @@ fn run_planned_child(
     let node = child.node_record().clone();
     let request = child.runner_request().clone();
     let resolved = child.resolved().clone();
+    let surface = child.surface().cloned();
     let node_id = node.node_id.clone();
     let child_path_span = tracing::info_span!(
         target: EXECUTION_DEBUG_TARGET,
@@ -5762,6 +6011,7 @@ fn run_planned_child(
         child_runtime,
         evaluation_report,
         selection_input,
+        surface,
     })
 }
 
@@ -6168,12 +6418,10 @@ impl<'a> ParentSelection<'a> {
             ));
             let procedure = ProcedureRef::new(crate::successor_selection::PROCEDURE_ID);
             let sealed_body = current_generation_candidate_evidence(outcome)?;
+            let artifact = candidate_artifact_from_outcome(outcome)?;
             let mut builder = EvaluationPayload::builder(candidate.clone(), procedure)
                 .sealed_candidate_evidence(sealed_body)
-                .candidate_artifact(CandidateArtifact::new(
-                    outcome.node.clone(),
-                    outcome.resolved.clone(),
-                ));
+                .candidate_artifact(artifact);
 
             if let Some(input) = outcome.selection_input.as_ref() {
                 builder = builder.selection_input(input.clone()).map_err(|err| {
@@ -6290,6 +6538,25 @@ impl ScopeFor<Generation> for ParentSelection<'_> {
     }
 }
 
+fn candidate_artifact_from_outcome(
+    outcome: &PlannedChildOutcome,
+) -> Result<CandidateArtifact, PrepareError> {
+    let artifact = CandidateArtifact::new(outcome.node.clone(), outcome.resolved.clone());
+    match outcome.surface.clone() {
+        Some(surface) => {
+            validate_surface_evidence_binding(&outcome.node, &outcome.resolved, &surface)?;
+            Ok(artifact.with_surface(surface))
+        }
+        None if outcome.resolved.branch.synthesized_spec_id == TUI_EDIT_SURFACE_PRODUCER_ID => {
+            Err(CandidateGenerationError::MissingDeterministicEvidence {
+                node_id: outcome.node_id.clone(),
+            }
+            .into_prepare())
+        }
+        None => Ok(artifact),
+    }
+}
+
 #[instrument(
     target = EXECUTION_DEBUG_TARGET,
     level = "debug",
@@ -6308,6 +6575,17 @@ fn select_artifact_for_handoff(
     let artifact = material.selected_artifact()?;
     let node = artifact.node().clone();
     let resolved = artifact.resolved().clone();
+    if resolved.branch.synthesized_spec_id == TUI_EDIT_SURFACE_PRODUCER_ID
+        && artifact.surface.is_none()
+    {
+        return Err(CandidateGenerationError::MissingDeterministicEvidence {
+            node_id: node.node_id.clone(),
+        }
+        .into_prepare());
+    }
+    if let Some(surface) = artifact.surface.as_ref() {
+        validate_surface_evidence_binding(&node, &resolved, surface)?;
+    }
     if node.node_id != decision.candidate_node_id {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -8698,19 +8976,37 @@ mod tests {
             node.derived_artifact_id.as_ref(),
             Some(checked.derived_artifact_id())
         );
+        let surface = child.surface().expect("checked edit evidence");
+        assert_eq!(surface.producer_id, TUI_EDIT_SURFACE_PRODUCER_ID);
+        assert_eq!(surface.proposal_id, "proposal-1");
+        assert_eq!(surface.run_id, "run-1");
+        assert_eq!(surface.policy, "ploke_tui_tools");
+        assert_eq!(surface.target_relpath, relpath);
+        assert_eq!(&surface.base.artifact_id, checked.base_artifact_id());
+        assert_eq!(&surface.after.artifact_id, checked.derived_artifact_id());
+        assert_eq!(&surface.patch_id, checked.patch_id());
+        assert_eq!(surface.source_content_hash, checked.source_content_hash());
+        assert_eq!(
+            surface.proposed_content_hash,
+            checked.proposed_content_hash()
+        );
+        assert_eq!(surface.touches.len(), 1);
+        assert_eq!(surface.touches[0].replacement, "new");
+        assert!(surface.delta_id.starts_with("surface-delta:"));
     }
 
     #[test]
-    fn tui_edit_surface_does_not_reuse_unproven_existing_plan() {
-        let path = PathBuf::from("/tmp/child-plan.json");
-        let error = CandidateGenerationError::ExistingPlanLacksEditSurfaceEvidence { path };
+    fn legacy_child_files_serialize_without_surface_evidence() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node = test_node(tmp.path(), "node-child", "branch-child", "candidate-child");
+        let child =
+            ChildFiles::from_resolved("campaign", node.clone(), test_resolved(&node), false);
 
-        let PrepareError::InvalidBatchSelection { detail } = error.into_prepare() else {
-            panic!("unexpected error variant");
-        };
-        assert!(detail.contains("cannot reuse existing child plan"));
-        assert!(detail.contains("does not yet carry edit-surface check/delta evidence"));
-        assert!(detail.contains("silently bypass"));
+        let serialized = serde_json::to_value(&child).expect("child files json");
+
+        assert!(serialized.get("surface").is_none());
+        let decoded: ChildFiles = serde_json::from_value(serialized).expect("legacy child files");
+        assert!(decoded.surface().is_none());
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -9178,6 +9474,66 @@ mod tests {
         }
     }
 
+    fn test_surface_evidence(target_relpath: PathBuf) -> SurfaceEvidence {
+        let source_hash = format!("{:x}", Sha256::digest("old".as_bytes()));
+        let proposed_hash = format!("{:x}", Sha256::digest("new".as_bytes()));
+        SurfaceEvidence::checked(
+            TUI_EDIT_SURFACE_PRODUCER_ID,
+            "proposal-test",
+            "run-test",
+            "ploke_tui_tools",
+            target_relpath.clone(),
+            SurfaceArtifactRef {
+                artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-test"),
+                hash: "base-hash".to_string(),
+            },
+            SurfaceArtifactRef {
+                artifact_id: crate::loop_graph::ArtifactId::new("artifact:after-test"),
+                hash: "after-hash".to_string(),
+            },
+            crate::loop_graph::PatchId::new("patch:test"),
+            source_hash,
+            proposed_hash,
+            vec![SurfaceTouch {
+                target_relpath: target_relpath.clone(),
+                target_name: "code_edit:0".to_string(),
+                span_relpath: target_relpath,
+                start: 0,
+                end: 3,
+                base_hash: "base-hash".to_string(),
+                replacement: "new".to_string(),
+                replacement_hash: format!("{:x}", Sha256::digest("new".as_bytes())),
+            }],
+        )
+        .expect("surface evidence")
+    }
+
+    fn bind_test_tui_surface_fields(
+        node: &mut Prototype1NodeRecord,
+        resolved: &mut crate::intervention::ResolvedTreatmentBranch,
+    ) {
+        let base = crate::loop_graph::ArtifactId::new("artifact:base-test");
+        let after = crate::loop_graph::ArtifactId::new("artifact:after-test");
+        let patch = crate::loop_graph::PatchId::new("patch:test");
+        let source_hash = format!("{:x}", Sha256::digest("old".as_bytes()));
+        let proposed_hash = format!("{:x}", Sha256::digest("new".as_bytes()));
+        node.operation_target = Some(crate::loop_graph::OperationTarget::Artifact {
+            artifact_id: base.clone(),
+        });
+        node.base_artifact_id = Some(base.clone());
+        node.patch_id = Some(patch.clone());
+        node.derived_artifact_id = Some(after.clone());
+        resolved.source_content = "old".to_string();
+        resolved.source_content_hash = source_hash;
+        resolved.branch.proposed_content = "new".to_string();
+        resolved.branch.proposed_content_hash = proposed_hash;
+        resolved.branch.patch_id = Some(patch);
+        resolved.branch.generation_target =
+            Some(crate::loop_graph::OperationTarget::Artifact { artifact_id: base });
+        resolved.branch.apply_id = Some("proposal-test".to_string());
+        resolved.branch.derived_artifact_id = Some(after);
+    }
+
     fn test_completed_outcome(
         mut node: Prototype1NodeRecord,
         resolved: crate::intervention::ResolvedTreatmentBranch,
@@ -9197,6 +9553,7 @@ mod tests {
             child_runtime: Some(format!("runtime:{}", node.node_id)),
             evaluation_report: Some(report),
             selection_input: Some(selection_input),
+            surface: None,
             node,
         }
     }
@@ -9268,6 +9625,136 @@ mod tests {
                 .all(|line| !line.contains("FsEvidenceStore") && !line.contains("history_preview")),
             "trace should stay on the typed child outcome path: {trace:#?}"
         );
+    }
+
+    #[test]
+    fn current_generation_candidates_include_edit_surface_evidence() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+        node.parent_node_id = Some("node-parent".to_string());
+        node.target_relpath = PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs");
+        let mut resolved = test_resolved(&node);
+        resolved.branch.synthesized_spec_id = TUI_EDIT_SURFACE_PRODUCER_ID.to_string();
+        bind_test_tui_surface_fields(&mut node, &mut resolved);
+        let mut outcome = test_completed_outcome(node.clone(), resolved, 0);
+        outcome.surface = Some(test_surface_evidence(node.target_relpath.clone()));
+        let parent_identity = test_parent_identity();
+        let parent_selection = ParentSelection::new(
+            &manifest_path,
+            &parent_identity,
+            std::slice::from_ref(&outcome),
+        );
+
+        let projection = parent_selection
+            .current_generation_candidates()
+            .expect("current generation candidate projection");
+
+        let payload = &projection.considered[0];
+        let artifact = payload.artifact.as_ref().expect("candidate artifact");
+        let surface = artifact.surface.as_ref().expect("surface evidence");
+        assert_eq!(surface.producer_id, TUI_EDIT_SURFACE_PRODUCER_ID);
+        assert_eq!(surface.proposal_id, "proposal-test");
+        assert_eq!(surface.target_relpath, node.target_relpath);
+        assert_eq!(surface.touches.len(), 1);
+        assert!(surface.delta_id.starts_with("surface-delta:"));
+
+        let serialized = serde_json::to_value(payload).expect("payload json");
+        assert_eq!(
+            serialized["artifact"]["surface"]["producer_id"],
+            TUI_EDIT_SURFACE_PRODUCER_ID
+        );
+        assert_eq!(
+            serialized["artifact"]["surface"]["touches"][0]["replacement"],
+            "new"
+        );
+        assert!(
+            serialized["artifact"]["surface"]["delta_digest"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+    }
+
+    #[test]
+    fn current_generation_candidates_reject_deterministic_missing_surface_evidence() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+        node.parent_node_id = Some("node-parent".to_string());
+        let mut resolved = test_resolved(&node);
+        resolved.branch.synthesized_spec_id = TUI_EDIT_SURFACE_PRODUCER_ID.to_string();
+        let outcome = test_completed_outcome(node, resolved, 0);
+        let parent_identity = test_parent_identity();
+        let parent_selection = ParentSelection::new(
+            &manifest_path,
+            &parent_identity,
+            std::slice::from_ref(&outcome),
+        );
+
+        let err = match parent_selection.current_generation_candidates() {
+            Ok(_) => panic!("deterministic producer must fail closed without evidence"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, PrepareError::InvalidBatchSelection { .. }));
+        assert!(
+            err.to_string()
+                .contains("missing checked edit-surface evidence")
+        );
+    }
+
+    #[test]
+    fn requested_tui_surface_child_rejects_legacy_plan_child() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+        let child = ChildFiles::from_resolved(
+            "campaign",
+            node,
+            test_resolved(&test_node(
+                tmp.path(),
+                "node-child",
+                "branch-child",
+                "candidate-1",
+            )),
+            false,
+        );
+
+        let err = match validate_requested_tui_surface_child(&child) {
+            Ok(_) => panic!("tui generator must not reuse legacy child plan entries"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("cannot use child"));
+        assert!(err.to_string().contains("produced by 'spec-1'"));
+    }
+
+    #[test]
+    fn current_generation_candidates_reject_surface_artifact_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+        node.parent_node_id = Some("node-parent".to_string());
+        node.target_relpath = PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs");
+        let mut resolved = test_resolved(&node);
+        resolved.branch.synthesized_spec_id = TUI_EDIT_SURFACE_PRODUCER_ID.to_string();
+        bind_test_tui_surface_fields(&mut node, &mut resolved);
+        node.derived_artifact_id = Some(crate::loop_graph::ArtifactId::new("artifact:wrong-after"));
+        let mut outcome = test_completed_outcome(node.clone(), resolved, 0);
+        outcome.surface = Some(test_surface_evidence(node.target_relpath.clone()));
+        let parent_identity = test_parent_identity();
+        let parent_selection = ParentSelection::new(
+            &manifest_path,
+            &parent_identity,
+            std::slice::from_ref(&outcome),
+        );
+
+        let err = match parent_selection.current_generation_candidates() {
+            Ok(_) => panic!("mismatched surface Artifact must fail before sealing"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, PrepareError::InvalidBatchSelection { .. }));
+        assert!(err.to_string().contains("derived_artifact_id"));
     }
 
     #[test]

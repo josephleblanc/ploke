@@ -419,6 +419,7 @@ use uuid::Uuid;
 
 use super::event::{RecordedAt, RuntimeId};
 use crate::OperationalRunMetrics;
+use crate::loop_graph::{ArtifactId, PatchId};
 use crate::metric;
 
 const SCHEMA_VERSION: u32 = 1;
@@ -2672,6 +2673,161 @@ pub(crate) struct SealedCandidateEvidence {
     pub(crate) child_diagnostics: Vec<String>,
 }
 
+/// Serializable evidence for one checked edit-surface candidate.
+///
+/// This is the durable projection of the backend-owned surface check and apply
+/// result. It is intentionally candidate-local: legacy candidates may carry no
+/// edit evidence, but deterministic edit-surface candidates must not silently
+/// downgrade to a plain text-file branch projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SurfaceEvidence {
+    pub(crate) schema_version: u32,
+    pub(crate) producer_id: String,
+    pub(crate) proposal_id: String,
+    pub(crate) run_id: String,
+    pub(crate) policy: String,
+    pub(crate) target_relpath: PathBuf,
+    pub(crate) base: SurfaceArtifactRef,
+    pub(crate) after: SurfaceArtifactRef,
+    pub(crate) patch_id: PatchId,
+    pub(crate) source_content_hash: String,
+    pub(crate) proposed_content_hash: String,
+    pub(crate) touches: Vec<SurfaceTouch>,
+    pub(crate) touches_digest: HistoryHash,
+    pub(crate) delta_id: String,
+    pub(crate) delta_digest: HistoryHash,
+    pub(crate) check_status: SurfaceCheckStatus,
+    pub(crate) apply_status: SurfaceApplyStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SurfaceArtifactRef {
+    pub(crate) artifact_id: ArtifactId,
+    pub(crate) hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SurfaceTouch {
+    pub(crate) target_relpath: PathBuf,
+    pub(crate) target_name: String,
+    pub(crate) span_relpath: PathBuf,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) base_hash: String,
+    pub(crate) replacement: String,
+    pub(crate) replacement_hash: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SurfaceCheckStatus {
+    Checked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SurfaceApplyStatus {
+    Applied,
+}
+
+impl SurfaceEvidence {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn checked(
+        producer_id: impl Into<String>,
+        proposal_id: impl Into<String>,
+        run_id: impl Into<String>,
+        policy: impl Into<String>,
+        target_relpath: PathBuf,
+        base: SurfaceArtifactRef,
+        after: SurfaceArtifactRef,
+        patch_id: PatchId,
+        source_content_hash: impl Into<String>,
+        proposed_content_hash: impl Into<String>,
+        touches: Vec<SurfaceTouch>,
+    ) -> Result<Self, HistoryError> {
+        let touches_digest = HistoryHash::of_domain_json(
+            "prototype1.history.surface_evidence.touches.v1",
+            &touches,
+        )?;
+        let delta = SurfaceDeltaPreimage {
+            base: &base,
+            after: &after,
+            patch_id: &patch_id,
+            touches_digest: &touches_digest,
+        };
+        let delta_digest =
+            HistoryHash::of_domain_json("prototype1.history.surface_evidence.delta.v1", &delta)?;
+        let delta_id = format!("surface-delta:{}", delta_digest.as_str());
+        Ok(Self {
+            schema_version: 1,
+            producer_id: producer_id.into(),
+            proposal_id: proposal_id.into(),
+            run_id: run_id.into(),
+            policy: policy.into(),
+            target_relpath,
+            base,
+            after,
+            patch_id,
+            source_content_hash: source_content_hash.into(),
+            proposed_content_hash: proposed_content_hash.into(),
+            touches,
+            touches_digest,
+            delta_id,
+            delta_digest,
+            check_status: SurfaceCheckStatus::Checked,
+            apply_status: SurfaceApplyStatus::Applied,
+        })
+    }
+
+    pub(crate) fn verify_integrity(&self) -> Result<(), HistoryError> {
+        if self.schema_version != 1 {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "surface evidence has unsupported schema_version {}",
+                    self.schema_version
+                ),
+            });
+        }
+        let touches_digest = HistoryHash::of_domain_json(
+            "prototype1.history.surface_evidence.touches.v1",
+            &self.touches,
+        )?;
+        if touches_digest != self.touches_digest {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "surface evidence touches_digest does not match touches".to_string(),
+            });
+        }
+        let delta = SurfaceDeltaPreimage {
+            base: &self.base,
+            after: &self.after,
+            patch_id: &self.patch_id,
+            touches_digest: &self.touches_digest,
+        };
+        let delta_digest =
+            HistoryHash::of_domain_json("prototype1.history.surface_evidence.delta.v1", &delta)?;
+        if delta_digest != self.delta_digest {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "surface evidence delta_digest does not match delta preimage".to_string(),
+            });
+        }
+        let delta_id = format!("surface-delta:{}", self.delta_digest.as_str());
+        if delta_id != self.delta_id {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "surface evidence delta_id does not match delta_digest".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+struct SurfaceDeltaPreimage<'a> {
+    base: &'a SurfaceArtifactRef,
+    after: &'a SurfaceArtifactRef,
+    patch_id: &'a PatchId,
+    touches_digest: &'a HistoryHash,
+}
+
 /// Candidate-local Artifact payload sealed with selection evidence.
 ///
 /// This is the handoff material needed to reconstruct a typed
@@ -2683,6 +2839,8 @@ pub(crate) struct CandidateArtifact {
     pub(crate) schema_version: u32,
     pub(crate) node: crate::intervention::Prototype1NodeRecord,
     pub(crate) resolved: crate::intervention::ResolvedTreatmentBranch,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) surface: Option<SurfaceEvidence>,
 }
 
 impl CandidateArtifact {
@@ -2694,7 +2852,14 @@ impl CandidateArtifact {
             schema_version: 1,
             node,
             resolved,
+            surface: None,
         }
+    }
+
+    pub(crate) fn with_surface(mut self, evidence: SurfaceEvidence) -> Self {
+        self.schema_version = self.schema_version.max(2);
+        self.surface = Some(evidence);
+        self
     }
 
     pub(crate) fn node(&self) -> &crate::intervention::Prototype1NodeRecord {
