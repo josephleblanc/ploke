@@ -118,6 +118,7 @@ use crate::{
     spec::PrepareError,
     successor_selection::{
         CandidateRef, RunComparison, SelectionInput, SuccessorDecision,
+        decision::SuccessorOutcome,
         traversal::{self as traversal_selection, StrategyKind},
     },
 };
@@ -6055,6 +6056,7 @@ async fn run_child_fanout(
     stop_after: Prototype1StateStopAfter,
     child_schedule_mode: Prototype1ChildScheduleMode,
     child_budget: Prototype1ChildBudget,
+    plan_index_offset: usize,
     children: Vec<ChildFiles>,
 ) -> Result<Vec<PlannedChildOutcome>, PrepareError> {
     if children.is_empty() {
@@ -6073,6 +6075,7 @@ async fn run_child_fanout(
         planned_children = children.len(),
         schedule_mode = %serde_name(&child_schedule_mode),
         fanout_width = fanout_width,
+        plan_index_offset = plan_index_offset,
         budget_min = child_budget.min,
         budget_max = child_budget.max,
         stop_after = ?stop_after,
@@ -6094,7 +6097,7 @@ async fn run_child_fanout(
         let end = usize::min(next + fanout_width, children.len());
         let mut join_set = tokio::task::JoinSet::new();
         for (offset, child) in children[next..end].iter().cloned().enumerate() {
-            let plan_index = next + offset;
+            let plan_index = plan_index_offset + next + offset;
             let campaign_id = campaign_id.to_string();
             let manifest_path = manifest_path.to_path_buf();
             let repo_root = repo_root.to_path_buf();
@@ -6143,11 +6146,6 @@ async fn run_child_fanout(
         if stop_after != Prototype1StateStopAfter::Complete {
             break;
         }
-        if child_schedule_mode == Prototype1ChildScheduleMode::AdaptiveBatch {
-            // TODO(prototype1-adaptive-batch-selection): feed each completed batch into
-            // generation selection and stop early when a successor is chosen.
-            break;
-        }
         next = end;
     }
 
@@ -6162,6 +6160,74 @@ async fn run_child_fanout(
         "completed parent child fanout"
     );
     Ok(completed)
+}
+
+async fn run_adaptive_child_fanout(
+    campaign_id: &str,
+    manifest_path: &Path,
+    repo_root: &Path,
+    journal_path: &Path,
+    parent_identity: &ParentIdentity,
+    child_budget: Prototype1ChildBudget,
+    children: Vec<ChildFiles>,
+    selection_seed: u64,
+    selection_strategy: ActiveSelectionStrategy,
+) -> Result<
+    (
+        Vec<PlannedChildOutcome>,
+        Option<(SuccessorDecision, SelectionSealMaterial)>,
+    ),
+    PrepareError,
+> {
+    if children.is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "child plan contained no runnable child nodes".to_string(),
+        });
+    }
+
+    let fanout_width =
+        Prototype1ChildScheduleMode::AdaptiveBatch.fanout_width(child_budget, children.len());
+    let mut completed = Vec::new();
+    let mut selection = None;
+    let mut next = 0usize;
+    while next < children.len() {
+        let end = usize::min(next + fanout_width, children.len());
+        let batch = children[next..end].to_vec();
+        let mut batch_outcomes = run_child_fanout(
+            campaign_id,
+            manifest_path,
+            repo_root,
+            journal_path,
+            Prototype1StateStopAfter::Complete,
+            Prototype1ChildScheduleMode::FullBatch,
+            child_budget,
+            next,
+            batch,
+        )
+        .await?;
+        completed.append(&mut batch_outcomes);
+        completed.sort_by_key(|outcome| outcome.plan_index);
+
+        let parent_selection = ParentSelection::new(manifest_path, parent_identity, &completed);
+        selection = parent_selection.select_successor(selection_seed, selection_strategy)?;
+        if adaptive_selection_accepts_successor(&selection) {
+            break;
+        }
+        next = end;
+    }
+
+    Ok((completed, selection))
+}
+
+fn adaptive_selection_accepts_successor(
+    selection: &Option<(SuccessorDecision, SelectionSealMaterial)>,
+) -> bool {
+    selection.as_ref().is_some_and(|(decision, _)| {
+        matches!(
+            decision.outcome,
+            SuccessorOutcome::Accepted | SuccessorOutcome::ExploreFrom
+        )
+    })
 }
 
 fn continuation_disposition_for_selection(
@@ -7179,27 +7245,45 @@ impl Prototype1StateCommand {
             children.truncate(child_budget.max as usize);
         }
 
-        let child_outcomes = run_child_fanout(
-            &campaign_id,
-            &manifest_path,
-            &repo_root,
-            &journal_path,
-            self.stop_after,
-            child_schedule_mode,
-            child_budget,
-            children,
-        )
-        .await?;
-        let parent_selection =
-            ParentSelection::new(&manifest_path, &parent_identity, &child_outcomes);
         let metric_inputs = traversal_metric_inputs(self.successor_selection_metrics);
-        let selection = if self.stop_after == Prototype1StateStopAfter::Complete {
-            parent_selection.select_successor(
+        let selection_strategy = self.successor_selection.active_strategy(metric_inputs);
+        let (child_outcomes, selection) = if self.stop_after == Prototype1StateStopAfter::Complete
+            && child_schedule_mode == Prototype1ChildScheduleMode::AdaptiveBatch
+        {
+            run_adaptive_child_fanout(
+                &campaign_id,
+                &manifest_path,
+                &repo_root,
+                &journal_path,
+                &parent_identity,
+                child_budget,
+                children,
                 self.successor_selection_seed,
-                self.successor_selection.active_strategy(metric_inputs),
-            )?
+                selection_strategy,
+            )
+            .await?
         } else {
-            None
+            let child_outcomes = run_child_fanout(
+                &campaign_id,
+                &manifest_path,
+                &repo_root,
+                &journal_path,
+                self.stop_after,
+                child_schedule_mode,
+                child_budget,
+                0,
+                children,
+            )
+            .await?;
+            let parent_selection =
+                ParentSelection::new(&manifest_path, &parent_identity, &child_outcomes);
+            let selection = if self.stop_after == Prototype1StateStopAfter::Complete {
+                parent_selection
+                    .select_successor(self.successor_selection_seed, selection_strategy)?
+            } else {
+                None
+            };
+            (child_outcomes, selection)
         };
         let selected_node_id = selection
             .as_ref()
