@@ -46,7 +46,10 @@ use crate::{
             validate_prototype1_successor_continuation,
         },
         prototype1_state::{
-            backend::{CheckedSurfaceEdit, GitWorktreeBackend, WorkspaceBackend},
+            backend::{
+                CheckedSurfaceEdit, EditProposal, GitWorktreeBackend, ProposedTouch,
+                WorkspaceBackend,
+            },
             c1::{C1, MaterializeBranch},
             c2::BuildChild,
             c3::SpawnChild,
@@ -87,14 +90,14 @@ use crate::{
     evaluate_branch, instances_dir,
     intervention::{
         ArtifactEdit, Intervention, InterventionApplyInput, InterventionCandidate,
-        InterventionSpec, IssueCase, Outcome, Prototype1ChildBudget,
-        Prototype1ContinuationDecision, Prototype1ContinuationDisposition, Prototype1NodeRecord,
-        Prototype1NodeStatus, Prototype1RunnerResult, Prototype1SchedulerState,
-        Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
-        ValidationPolicy, execute_intervention_apply, load_or_default_branch_registry,
-        load_scheduler_state, mark_treatment_branch_applied, project_node_status,
-        prototype1_branch_registry_path, prototype1_node_id, prototype1_scheduler_path,
-        register_root_parent_node, resolve_treatment_branch,
+        InterventionSpec, IssueCase, Outcome, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+        Prototype1ChildBudget, Prototype1ContinuationDecision, Prototype1ContinuationDisposition,
+        Prototype1NodeRecord, Prototype1NodeStatus, Prototype1RunnerResult,
+        Prototype1SchedulerState, Prototype1SearchPolicy, RecordStore, TreatmentBranchNode,
+        TreatmentBranchStatus, ValidationPolicy, execute_intervention_apply,
+        load_or_default_branch_registry, load_scheduler_state, mark_treatment_branch_applied,
+        project_node_status, prototype1_branch_registry_path, prototype1_node_id,
+        prototype1_scheduler_path, register_root_parent_node, resolve_treatment_branch,
         resolved_treatment_branches_from_synthesis, restore_treatment_branch, select_primary_issue,
         select_treatment_branch, treatment_branch_id, write_node_projection,
         write_treatment_evaluation_projection,
@@ -442,9 +445,21 @@ impl CandidateGenerationConfig {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 enum CandidateGenerationError {
     #[error(
-        "candidate-generator=tui-edit-surface cannot publish a child plan for edit-surface={surface:?}: no TUI proposal producer is wired yet; backend validation/conversion now requires a concrete single-file proposal and will not fake candidate generation"
+        "candidate-generator=tui-edit-surface target '{}' for edit-surface={surface:?} is missing from the parent checkout",
+        path.display()
     )]
-    MissingTuiProposalProducer { surface: Prototype1EditSurface },
+    MissingEditSurfaceTarget {
+        surface: Prototype1EditSurface,
+        path: PathBuf,
+    },
+    #[error(
+        "candidate-generator=tui-edit-surface produced {produced} unique checked candidates for edit-surface={surface:?}, fewer than required minimum {min}"
+    )]
+    InsufficientUniqueProposals {
+        surface: Prototype1EditSurface,
+        min: usize,
+        produced: usize,
+    },
     #[error(
         "candidate-generator=tui-edit-surface cannot reuse existing child plan '{}': the plan format does not yet carry edit-surface check/delta evidence, so using it would silently bypass the requested generator",
         path.display()
@@ -463,6 +478,8 @@ enum CandidateGenerationError {
         node.display()
     )]
     TargetMismatch { checked: PathBuf, node: PathBuf },
+    #[error("checked edit-surface proposal was rejected by backend validation: {detail}")]
+    BackendRejected { detail: String },
 }
 
 impl CandidateGenerationError {
@@ -503,7 +520,24 @@ fn child_files_from_checked_edit(
     node.patch_id = Some(patch_id.clone());
     node.derived_artifact_id = Some(derived_artifact_id.clone());
 
-    let resolved = crate::intervention::ResolvedTreatmentBranch {
+    let resolved = resolved_from_checked_edit(&node, checked);
+    Ok(ChildFiles::from_resolved(
+        campaign_id,
+        node,
+        resolved,
+        stop_on_error,
+    ))
+}
+
+fn resolved_from_checked_edit(
+    node: &Prototype1NodeRecord,
+    checked: &CheckedSurfaceEdit,
+) -> crate::intervention::ResolvedTreatmentBranch {
+    let patch_id = checked.patch_id().clone();
+    let base_artifact_id = checked.base_artifact_id().clone();
+    let derived_artifact_id = checked.derived_artifact_id().clone();
+
+    crate::intervention::ResolvedTreatmentBranch {
         instance_id: node.instance_id.clone(),
         source_state_id: node.source_state_id.clone(),
         parent_branch_id: node.parent_branch_id.clone(),
@@ -516,7 +550,7 @@ fn child_files_from_checked_edit(
             candidate_id: node.candidate_id.clone(),
             patch_id: Some(patch_id),
             branch_label: format!("tui edit surface {}", node.candidate_id),
-            synthesized_spec_id: "prototype1:tui-edit-surface:v1".to_string(),
+            synthesized_spec_id: TUI_EDIT_SURFACE_PRODUCER_ID.to_string(),
             proposed_content: checked.proposed_content().to_string(),
             proposed_content_hash: checked.proposed_content_hash().to_string(),
             generation_target: Some(crate::loop_graph::OperationTarget::Artifact {
@@ -529,13 +563,7 @@ fn child_files_from_checked_edit(
             derived_artifact_id: Some(derived_artifact_id),
             latest_evaluation: None,
         },
-    };
-    Ok(ChildFiles::from_resolved(
-        campaign_id,
-        node,
-        resolved,
-        stop_on_error,
-    ))
+    }
 }
 
 async fn run_parent_target_selection(
@@ -667,16 +695,297 @@ async fn run_legacy_parent_target_selection(
 }
 
 async fn run_tui_edit_surface_parent_target_selection(
-    _campaign_id: &str,
-    _manifest_path: &Path,
-    _repo_root: &Path,
-    _parent: Parent<Ready>,
+    campaign_id: &str,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: Parent<Ready>,
     edit_surface: Prototype1EditSurface,
 ) -> Result<ChildPlanReceipt, PrepareError> {
-    Err(CandidateGenerationError::MissingTuiProposalProducer {
-        surface: edit_surface,
+    publish_tui_edit_surface_child_plan(
+        campaign_id,
+        manifest_path,
+        repo_root,
+        parent,
+        edit_surface,
+        Prototype1SearchPolicy::default().child_budget,
+    )
+}
+
+const TUI_EDIT_SURFACE_TARGET: &str = "crates/ploke-tui/src/tools/code_edit.rs";
+const TUI_EDIT_SURFACE_PRODUCER_ID: &str = "prototype1:tui-edit-surface:deterministic-v1";
+
+fn publish_tui_edit_surface_child_plan(
+    campaign_id: &str,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: Parent<Ready>,
+    edit_surface: Prototype1EditSurface,
+    child_budget: Prototype1ChildBudget,
+) -> Result<ChildPlanReceipt, PrepareError> {
+    let parent_identity = parent.identity().clone();
+    let root_node = parent.node().clone();
+    let running_parent = project_node_status(&root_node, Prototype1NodeStatus::Running);
+    write_node_projection(&running_parent)?;
+
+    let checked = produce_tui_edit_surface_candidates(
+        repo_root,
+        edit_surface,
+        &parent_identity,
+        child_budget,
+    )?;
+    let expected_generation = parent_identity.generation + 1;
+    let mut children = Vec::with_capacity(checked.len());
+
+    for (index, checked) in checked.iter().enumerate() {
+        let candidate_id = format!("tui-edit-surface-g{}-{:02}", expected_generation, index + 1);
+        let branch_id = treatment_branch_id(
+            &parent_identity.branch_id,
+            checked.target_relpath(),
+            &candidate_id,
+        );
+        let provisional_node = Prototype1NodeRecord {
+            schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+            node_id: prototype1_node_id(&branch_id, expected_generation),
+            parent_node_id: Some(parent_identity.node_id.clone()),
+            generation: expected_generation,
+            instance_id: parent_identity
+                .instance_id
+                .clone()
+                .unwrap_or_else(|| parent_identity.node_id.clone()),
+            source_state_id: parent_identity.branch_id.clone(),
+            operation_target: None,
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            parent_branch_id: Some(parent_identity.branch_id.clone()),
+            branch_id,
+            candidate_id,
+            target_relpath: checked.target_relpath().to_path_buf(),
+            node_dir: PathBuf::new(),
+            workspace_root: PathBuf::new(),
+            binary_path: PathBuf::new(),
+            runner_request_path: PathBuf::new(),
+            runner_result_path: PathBuf::new(),
+            status: Prototype1NodeStatus::Planned,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let resolved = resolved_from_checked_edit(&provisional_node, checked);
+        let (node, _request) = write_treatment_evaluation_projection(
+            campaign_id,
+            manifest_path,
+            &resolved,
+            expected_generation,
+            Some(parent_identity.node_id.as_str()),
+            repo_root,
+            false,
+        )?;
+        children.push(
+            child_files_from_checked_edit(campaign_id, edit_surface, node, checked, false)
+                .map_err(CandidateGenerationError::into_prepare)?,
+        );
     }
-    .into_prepare())
+
+    if children.len() < child_budget.min as usize {
+        let failed_parent = project_node_status(&root_node, Prototype1NodeStatus::Failed);
+        write_node_projection(&failed_parent)?;
+        return Err(CandidateGenerationError::InsufficientUniqueProposals {
+            surface: edit_surface,
+            min: child_budget.min as usize,
+            produced: children.len(),
+        }
+        .into_prepare());
+    }
+
+    let files = ChildPlanFiles::for_parent(manifest_path, &parent_identity, children);
+    let at = files.message_at();
+    let open = Open::<ChildPlan>::from_sender(parent, files);
+    let (planned, locked) = open
+        .lock(at, |at, body| {
+            validate_and_write_tui_child_plan(&parent_identity, at.path(), body)
+        })
+        .map_err(|err| {
+            let (_parent, source) = err.into_parts();
+            source
+        })?;
+    receive_child_plan(
+        campaign_id,
+        manifest_path,
+        repo_root,
+        &parent_identity,
+        planned,
+        locked,
+    )
+}
+
+fn validate_and_write_tui_child_plan(
+    parent: &ParentIdentity,
+    path: &Path,
+    body: &ChildPlanFiles,
+) -> Result<(), PrepareError> {
+    let expected_generation = parent.generation + 1;
+    if body.parent_node_id() != parent.node_id {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "tui edit-surface child plan recipient '{}' did not match parent '{}'",
+                body.parent_node_id(),
+                parent.node_id
+            ),
+        });
+    }
+    if body.child_generation() != expected_generation {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "tui edit-surface child plan generation {} did not match expected generation {}",
+                body.child_generation(),
+                expected_generation
+            ),
+        });
+    }
+    if body.children().is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "tui edit-surface child plan cannot be empty".to_string(),
+        });
+    }
+    for child in body.children() {
+        let node = child.node_record();
+        if node.generation != expected_generation
+            || node.parent_node_id.as_deref() != Some(parent.node_id.as_str())
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "tui edit-surface child '{}' is not a direct child of parent '{}'",
+                    node.node_id, parent.node_id
+                ),
+            });
+        }
+        if child.resolved().branch.synthesized_spec_id != TUI_EDIT_SURFACE_PRODUCER_ID {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "tui edit-surface child '{}' was not produced by the deterministic producer",
+                    node.node_id
+                ),
+            });
+        }
+    }
+
+    write_child_plan_file(path, body)
+}
+
+fn produce_tui_edit_surface_candidates(
+    repo_root: &Path,
+    edit_surface: Prototype1EditSurface,
+    parent: &ParentIdentity,
+    child_budget: Prototype1ChildBudget,
+) -> Result<Vec<CheckedSurfaceEdit>, PrepareError> {
+    if child_budget.min == 0 || child_budget.max == 0 || child_budget.min > child_budget.max {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "invalid tui edit-surface child budget: min={} max={}",
+                child_budget.min, child_budget.max
+            ),
+        });
+    }
+    let max = child_budget.max as usize;
+    let min = child_budget.min as usize;
+    let seed = format!("{}:{}", parent.node_id, parent.generation);
+    let replacements = (0..max).map(|index| {
+        format!(
+            "\n// prototype1 edit-surface candidate {}:{}; next: replace deterministic direct-splice generation with LLM proposal production.\n",
+            seed,
+            index + 1
+        )
+    });
+    let proposals = direct_splice_proposals(repo_root, edit_surface, replacements, min, max)?;
+    let backend = GitWorktreeBackend;
+    let mut checked = Vec::with_capacity(proposals.len());
+    let mut proposed_hashes = BTreeSet::new();
+
+    for proposal in proposals {
+        let candidate = backend
+            .validate_edit_surface_candidate(repo_root, proposal)
+            .map_err(|source| {
+                CandidateGenerationError::BackendRejected {
+                    detail: source.to_string(),
+                }
+                .into_prepare()
+            })?;
+        if proposed_hashes.insert(candidate.proposed_content_hash().to_string()) {
+            checked.push(candidate);
+        }
+    }
+
+    if checked.len() < min {
+        return Err(CandidateGenerationError::InsufficientUniqueProposals {
+            surface: edit_surface,
+            min,
+            produced: checked.len(),
+        }
+        .into_prepare());
+    }
+
+    Ok(checked)
+}
+
+fn direct_splice_proposals(
+    repo_root: &Path,
+    edit_surface: Prototype1EditSurface,
+    replacements: impl IntoIterator<Item = String>,
+    min: usize,
+    max: usize,
+) -> Result<Vec<EditProposal>, PrepareError> {
+    let relpath = PathBuf::from(TUI_EDIT_SURFACE_TARGET);
+    let target = repo_root.join(&relpath);
+    if !target.exists() {
+        return Err(CandidateGenerationError::MissingEditSurfaceTarget {
+            surface: edit_surface,
+            path: relpath,
+        }
+        .into_prepare());
+    }
+    let source = fs::read_to_string(&target).map_err(|source| PrepareError::ReadManifest {
+        path: target.clone(),
+        source,
+    })?;
+    let base_hash = format!("{:x}", Sha256::digest(source.as_bytes()));
+    let start = source.len();
+    let mut proposals = Vec::new();
+    let mut proposed_hashes = BTreeSet::new();
+
+    for (index, replacement) in replacements.into_iter().enumerate() {
+        if proposals.len() >= max {
+            break;
+        }
+        let proposed_hash = format!("{:x}", Sha256::digest(format!("{source}{replacement}")));
+        if !proposed_hashes.insert(proposed_hash) {
+            continue;
+        }
+        proposals.push(EditProposal {
+            surface: edit_surface,
+            proposal_id: format!("tui-edit-surface-proposal-{:02}", index + 1),
+            run_id: format!("tui-edit-surface-run-{:02}", index + 1),
+            reported_after_file_hash: None,
+            touches: vec![ProposedTouch {
+                target: "direct-splice:eof-comment".to_string(),
+                relpath: relpath.clone(),
+                start,
+                end: start,
+                expected_file_hash: base_hash.clone(),
+                replacement,
+            }],
+        });
+    }
+
+    if proposals.len() < min {
+        return Err(CandidateGenerationError::InsufficientUniqueProposals {
+            surface: edit_surface,
+            min,
+            produced: proposals.len(),
+        }
+        .into_prepare());
+    }
+
+    Ok(proposals)
 }
 
 fn receive_existing_child_plan(
@@ -8328,20 +8637,6 @@ mod tests {
     }
 
     #[test]
-    fn tui_edit_surface_generation_fails_closed_before_child_plan() {
-        let error = CandidateGenerationError::MissingTuiProposalProducer {
-            surface: Prototype1EditSurface::PlokeTuiTools,
-        };
-
-        let PrepareError::InvalidBatchSelection { detail } = error.into_prepare() else {
-            panic!("unexpected error variant");
-        };
-        assert!(detail.contains("candidate-generator=tui-edit-surface"));
-        assert!(detail.contains("no TUI proposal producer is wired yet"));
-        assert!(detail.contains("will not fake candidate generation"));
-    }
-
-    #[test]
     fn checked_edit_surface_candidate_converts_to_single_file_child_files() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let relpath = PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs");
@@ -8416,6 +8711,261 @@ mod tests {
         assert!(detail.contains("cannot reuse existing child plan"));
         assert!(detail.contains("does not yet carry edit-surface check/delta evidence"));
         assert!(detail.contains("silently bypass"));
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct NoopBackend;
+
+    impl WorkspaceBackend for NoopBackend {
+        type Branch = String;
+        type Head = String;
+        type Root = PathBuf;
+        type TreeKey = String;
+
+        fn realize(
+            &self,
+            _request: &crate::cli::prototype1_state::backend::RealizeRequest,
+        ) -> Result<
+            crate::cli::prototype1_state::backend::Workspace<Self::Branch, Self::Head, Self::Root>,
+            crate::cli::prototype1_state::backend::BackendError,
+        > {
+            unimplemented!("not needed by parent readiness tests")
+        }
+
+        fn remove(
+            &self,
+            _repo_root: &Path,
+            _workspace: &crate::cli::prototype1_state::backend::Workspace<
+                Self::Branch,
+                Self::Head,
+                Self::Root,
+            >,
+        ) -> Result<(), crate::cli::prototype1_state::backend::BackendError> {
+            unimplemented!("not needed by parent readiness tests")
+        }
+
+        fn workspace_for_node(
+            &self,
+            _node_id: &str,
+            _node_dir: &Path,
+            _workspace_root: &Path,
+        ) -> Result<
+            crate::cli::prototype1_state::backend::Workspace<Self::Branch, Self::Head, Self::Root>,
+            crate::cli::prototype1_state::backend::BackendError,
+        > {
+            unimplemented!("not needed by parent readiness tests")
+        }
+
+        fn persist_workspace_target(
+            &self,
+            _workspace: &crate::cli::prototype1_state::backend::Workspace<
+                Self::Branch,
+                Self::Head,
+                Self::Root,
+            >,
+            _target_relpath: &Path,
+            _message: &str,
+        ) -> Result<Self::Head, crate::cli::prototype1_state::backend::BackendError> {
+            unimplemented!("not needed by parent readiness tests")
+        }
+
+        fn persist_workspace_files(
+            &self,
+            _workspace: &crate::cli::prototype1_state::backend::Workspace<
+                Self::Branch,
+                Self::Head,
+                Self::Root,
+            >,
+            _relpaths: &[PathBuf],
+            _message: &str,
+        ) -> Result<Self::Head, crate::cli::prototype1_state::backend::BackendError> {
+            unimplemented!("not needed by parent readiness tests")
+        }
+
+        fn verify_artifact_target(
+            &self,
+            _repo_root: &Path,
+            _artifact: &Self::Branch,
+            _target_relpath: &Path,
+            _expected_content: &str,
+        ) -> Result<(), crate::cli::prototype1_state::backend::BackendError> {
+            unimplemented!("not needed by parent readiness tests")
+        }
+
+        fn install_artifact_in_active_checkout(
+            &self,
+            _active_parent_root: &Path,
+            _artifact: &Self::Branch,
+        ) -> Result<Self::Head, crate::cli::prototype1_state::backend::BackendError> {
+            unimplemented!("not needed by parent readiness tests")
+        }
+
+        fn checkout_fresh_parent_branch(
+            &self,
+            _active_parent_root: &Path,
+            _branch: &str,
+        ) -> Result<Self::Head, crate::cli::prototype1_state::backend::BackendError> {
+            unimplemented!("not needed by parent readiness tests")
+        }
+
+        fn persist_active_checkout_files(
+            &self,
+            _active_parent_root: &Path,
+            _relpaths: &[PathBuf],
+            _message: &str,
+        ) -> Result<Self::Head, crate::cli::prototype1_state::backend::BackendError> {
+            unimplemented!("not needed by parent readiness tests")
+        }
+
+        fn validate_parent_checkout(
+            &self,
+            _active_parent_root: &Path,
+            _identity: &ParentIdentity,
+        ) -> Result<(), crate::cli::prototype1_state::backend::BackendError> {
+            Ok(())
+        }
+
+        fn clean_tree_key(
+            &self,
+            _active_parent_root: &Path,
+        ) -> Result<Self::TreeKey, crate::cli::prototype1_state::backend::BackendError> {
+            unimplemented!("not needed by parent readiness tests")
+        }
+
+        fn surface_commitment(
+            &self,
+            _before_root: &Path,
+            _after_root: &Path,
+        ) -> Result<
+            crate::cli::prototype1_state::history::SurfaceCommitment,
+            crate::cli::prototype1_state::backend::BackendError,
+        > {
+            unimplemented!("not needed by parent readiness tests")
+        }
+    }
+
+    fn write_tui_surface_target(repo_root: &Path, content: &str) {
+        let target = repo_root.join(TUI_EDIT_SURFACE_TARGET);
+        fs::create_dir_all(target.parent().expect("target parent")).expect("create target dir");
+        fs::write(target, content).expect("write target");
+    }
+
+    fn ready_parent_for_test(manifest_path: &Path, repo_root: &Path) -> Parent<Ready> {
+        let identity = test_parent_identity();
+        let unchecked = Parent::<Unchecked>::load(manifest_path, identity.clone())
+            .expect("load unchecked parent");
+        let checked = unchecked
+            .check(
+                &NoopBackend,
+                manifest_path,
+                Check {
+                    campaign_id: &identity.campaign_id,
+                    active_root: repo_root,
+                },
+            )
+            .expect("checked parent");
+        let startup =
+            Startup::<Genesis>::from_history(checked.identity(), manifest_path).expect("startup");
+        checked.ready(startup).expect("ready parent")
+    }
+
+    #[test]
+    fn tui_edit_surface_producer_creates_default_checked_candidates() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_tui_surface_target(tmp.path(), "pub fn sentinel() {}\n");
+        let parent = test_parent_identity();
+
+        let checked = produce_tui_edit_surface_candidates(
+            tmp.path(),
+            Prototype1EditSurface::PlokeTuiTools,
+            &parent,
+            Prototype1SearchPolicy::default().child_budget,
+        )
+        .expect("checked candidates");
+
+        assert!(checked.len() >= Prototype1SearchPolicy::default().child_budget.min as usize);
+        assert!(checked.len() <= Prototype1SearchPolicy::default().child_budget.max as usize);
+        let hashes = checked
+            .iter()
+            .map(|candidate| candidate.proposed_content_hash().to_string())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(hashes.len(), checked.len());
+        assert!(checked.iter().all(|candidate| {
+            candidate.surface() == Prototype1EditSurface::PlokeTuiTools
+                && candidate.target_relpath() == Path::new(TUI_EDIT_SURFACE_TARGET)
+        }));
+    }
+
+    #[test]
+    fn direct_splice_producer_dedupes_duplicate_proposed_contents() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_tui_surface_target(tmp.path(), "pub fn sentinel() {}\n");
+        let replacements = vec![
+            "\n// duplicate candidate\n".to_string(),
+            "\n// duplicate candidate\n".to_string(),
+            "\n// distinct candidate\n".to_string(),
+        ];
+
+        let proposals = direct_splice_proposals(
+            tmp.path(),
+            Prototype1EditSurface::PlokeTuiTools,
+            replacements.clone(),
+            1,
+            3,
+        )
+        .expect("deduped proposals");
+        assert_eq!(proposals.len(), 2);
+
+        let error = direct_splice_proposals(
+            tmp.path(),
+            Prototype1EditSurface::PlokeTuiTools,
+            replacements,
+            3,
+            3,
+        )
+        .expect_err("duplicates cannot satisfy min");
+        let PrepareError::InvalidBatchSelection { detail } = error else {
+            panic!("unexpected error variant");
+        };
+        assert!(detail.contains("fewer than required minimum 3"));
+    }
+
+    #[test]
+    fn tui_edit_surface_parent_selection_publishes_child_plan() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let repo_root = tmp.path().join("repo");
+        write_tui_surface_target(&repo_root, "pub fn sentinel() {}\n");
+        let parent = ready_parent_for_test(&manifest_path, &repo_root);
+        let budget = Prototype1ChildBudget { min: 2, max: 3 };
+
+        let receipt = publish_tui_edit_surface_child_plan(
+            "campaign",
+            &manifest_path,
+            &repo_root,
+            parent,
+            Prototype1EditSurface::PlokeTuiTools,
+            budget,
+        )
+        .expect("published child plan");
+
+        let body = receipt.plan.body();
+        assert_eq!(receipt.parent.identity().node_id, "node-parent");
+        assert_eq!(body.children().len(), 3);
+        assert_eq!(body.parent_node_id(), "node-parent");
+        assert!(body.message().exists());
+        for child in body.children() {
+            let node = child.node_record();
+            assert_eq!(node.parent_node_id.as_deref(), Some("node-parent"));
+            assert_eq!(node.generation, 1);
+            assert_eq!(node.target_relpath, PathBuf::from(TUI_EDIT_SURFACE_TARGET));
+            assert_eq!(
+                child.resolved().branch.synthesized_spec_id,
+                TUI_EDIT_SURFACE_PRODUCER_ID
+            );
+            assert!(node.node_dir.join("node.json").exists());
+            assert!(node.runner_request_path.exists());
+        }
     }
 
     fn checked_edit_surface_delta_for_test()
