@@ -20,6 +20,10 @@ into the main evalnomicon book.
 - [`prototype1-timing-projection-handoff-2026-05-02.md`](prototype1-timing-projection-handoff-2026-05-02.md)
   Restart handoff for joining Prototype 1 node phase timings with run,
   turn/tool, full-response, eval, and History/Crown timing evidence.
+- [`prototype1-run-tree-browser-design.md`](prototype1-run-tree-browser-design.md)
+  Draft `ploke-records` schema split and `ploke-tree` projection contract for a
+  browser-viewable Prototype 1 run tree over typed evidence, liveness, metrics,
+  scores, and History.
 - [`runtime/`](runtime/)
   Runtime-focused Prototype 1 drafts, starting with child execution and timeout
   behavior.

@@ -123,19 +123,18 @@ use crate::cli::prototype1_state::invocation::SuccessorInvocation;
 use crate::loop_graph::RuntimeId;
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use std::process::Command as ProcessCommand;
-use tracing::{Instrument, debug, info, instrument, warn};
+use tracing::debug;
 
 use super::*;
 use crate::BranchDisposition;
 use crate::cli::prototype1_state::backend::{GitWorktreeBackend, WorkspaceBackend};
-use crate::cli::prototype1_state::channel::{Channel, Cursor, Endpoints, FileTransport, ToParent};
-use crate::cli::prototype1_state::child::{Child, Starting};
+use crate::cli::prototype1_state::channel::{Channel, Cursor, FileTransport, ToParent};
 use crate::cli::prototype1_state::cli_facing::{
     Prototype1BranchEvaluationReport, build_prototype1_branch_evaluation_report,
     ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
     prototype1_branch_evaluation_path,
 };
-use crate::cli::prototype1_state::event::{Paths, RecordedAt, Refs};
+use crate::cli::prototype1_state::event::RecordedAt;
 use crate::cli::prototype1_state::history::{
     ActorRef, ArtifactLocator, ArtifactRef, BlockStore, DraftEntry, Entry, EntryKind, EvidenceRef,
     FsBlockStore, GenesisAuthority, LineageId, LineageState, Observation, OpenBlock,
@@ -156,14 +155,12 @@ use crate::cli::prototype1_state::observe;
 use crate::cli::prototype1_state::parent::{Parent, Retired, Selectable};
 use crate::cli::prototype1_state::selection;
 use crate::cli::prototype1_state::successor::Record as SuccessorRecord;
-use crate::cli::prototype1_state::telemetry::RuntimeTelemetry;
 use crate::intervention::{
     CommitPhase, Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerResult,
     RecordStore, ResolvedTreatmentBranch, TreatmentBranchEvaluationSummary, project_node_status,
     project_resolved_treatment_branch_evaluation, prototype1_branch_registry_path,
-    resolve_treatment_branch, write_node_projection, write_runner_result_at,
+    write_node_projection, write_runner_result_at,
 };
-use crate::projection::OperatorProjectionRead;
 
 const SUCCESSOR_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const SUCCESSOR_READY_POLL: std::time::Duration = std::time::Duration::from_millis(50);
@@ -233,51 +230,6 @@ fn process_output_excerpt(bytes: &[u8]) -> Option<String> {
         text
     };
     Some(excerpt)
-}
-
-fn prototype1_child_starting(
-    campaign_id: &str,
-    node: &crate::intervention::Prototype1NodeRecord,
-    resolved: &ResolvedTreatmentBranch,
-    workspace_root: &Path,
-    runtime_id: RuntimeId,
-    journal_path: &Path,
-) -> Result<Child<Starting>, PrepareError> {
-    let refs = Refs {
-        campaign_id: campaign_id.to_string(),
-        node_id: node.node_id.clone(),
-        instance_id: node.instance_id.clone(),
-        source_state_id: node.source_state_id.clone(),
-        branch_id: node.branch_id.clone(),
-        candidate_id: node.candidate_id.clone(),
-        branch_label: resolved.branch.branch_label.clone(),
-        spec_id: resolved.branch.synthesized_spec_id.clone(),
-    };
-    let paths = Paths {
-        repo_root: workspace_root.to_path_buf(),
-        workspace_root: workspace_root.to_path_buf(),
-        binary_path: node.binary_path.clone(),
-        target_relpath: node.target_relpath.clone(),
-        absolute_path: workspace_root.join(&node.target_relpath),
-    };
-
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %campaign_id,
-        node_id = %node.node_id,
-        runtime_id = %runtime_id,
-        journal_path = %journal_path.display(),
-        "recording child ready handshake"
-    );
-
-    Ok(Child::new(
-        journal_path.to_path_buf(),
-        runtime_id,
-        node.generation,
-        refs,
-        paths,
-        std::process::id(),
-    ))
 }
 
 fn channel_error_phase(
@@ -1529,38 +1481,6 @@ fn record_attempt_runner_result(
     Ok(result)
 }
 
-/// Execute one branch evaluation in-process inside the child runner binary.
-///
-/// This is the leaf treatment-evaluation operation. It:
-/// - assumes the parent already materialized the branch and built this binary
-/// - runs exactly one treatment `eval -> protocol -> compare` path
-/// - persists a `runner-result.json`
-/// - does not spawn any additional processes
-///
-/// This function is intentionally terminal with respect to process creation.
-pub(super) async fn run_prototype1_branch_evaluation(
-    baseline_campaign_id: &str,
-    branch_id: &str,
-    repo_root: &Path,
-    stop_on_error: bool,
-) -> Result<Prototype1BranchEvaluationReport, PrepareError> {
-    let baseline_manifest_path = campaign_manifest_path(baseline_campaign_id)?;
-    let resolved_branch = resolve_treatment_branch(
-        baseline_campaign_id,
-        &baseline_manifest_path,
-        branch_id,
-        OperatorProjectionRead::cli_operator(),
-    )?;
-    run_prototype1_resolved_branch_evaluation(
-        baseline_campaign_id,
-        &baseline_manifest_path,
-        &resolved_branch,
-        repo_root,
-        stop_on_error,
-    )
-    .await
-}
-
 pub(super) async fn run_prototype1_resolved_branch_evaluation(
     baseline_campaign_id: &str,
     baseline_manifest_path: &Path,
@@ -1751,214 +1671,4 @@ pub(super) async fn run_prototype1_resolved_branch_evaluation(
             Err(error)
         }
     }
-}
-
-#[instrument(
-    target = "ploke_exec",
-    level = "debug",
-    skip(invocation_path),
-    fields(invocation_path = %invocation_path.display())
-)]
-pub(super) async fn execute_prototype1_runner_invocation(
-    invocation_path: &Path,
-) -> Result<Prototype1RunnerResult, PrepareError> {
-    let invocation = match crate::cli::prototype1_state::invocation::load_executable(
-        invocation_path,
-    )? {
-        crate::cli::prototype1_state::invocation::InvocationAuthority::Child(invocation) => {
-            invocation
-        }
-        crate::cli::prototype1_state::invocation::InvocationAuthority::Successor(_) => {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "successor invocation '{}' must be executed via execute_prototype1_successor_invocation",
-                    invocation_path.display()
-                ),
-            });
-        }
-    };
-    let manifest_path = campaign_manifest_path(invocation.campaign_id())?;
-    let node = invocation.node_record()?.clone();
-    let request = invocation.runner_request()?.clone();
-    let resolved = invocation.resolved()?.clone();
-
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %invocation.campaign_id(),
-        node_id = %invocation.node_id(),
-        workspace_root = %request.workspace_root.display(),
-        invocation_path = %invocation_path.display(),
-        "loaded executable prototype1 child invocation"
-    );
-    info!(
-        target: EXECUTION_DEBUG_TARGET,
-        role = "child",
-        authority = "runtime_invocation",
-        transition = "Invocation->Child<Starting>",
-        campaign = %invocation.campaign_id(),
-        node_id = %invocation.node_id(),
-        generation = node.generation,
-        branch_id = %node.branch_id,
-        runtime_id = %invocation.runtime_id(),
-        workspace_root = %request.workspace_root.display(),
-        invocation_path = %invocation_path.display(),
-        "loaded executable child runtime invocation"
-    );
-
-    let node = project_node_status(&node, Prototype1NodeStatus::Running);
-    write_node_projection(&node)?;
-    let child = prototype1_child_starting(
-        invocation.campaign_id(),
-        &node,
-        &resolved,
-        &request.workspace_root,
-        invocation.runtime_id(),
-        invocation.journal_path(),
-    )?;
-    let channel = invocation
-        .channel_endpoints()
-        .map(|endpoints: Endpoints| Channel::for_child(&child, endpoints, FileTransport));
-    let channel = match channel {
-        Some(channel) => {
-            info!(
-                target: EXECUTION_DEBUG_TARGET,
-                role = "child",
-                authority = "child_runtime_channel",
-                transition = "Child<Starting>->ReadyMessage",
-                campaign = %invocation.campaign_id(),
-                node_id = %invocation.node_id(),
-                generation = node.generation,
-                branch_id = %node.branch_id,
-                runtime_id = %invocation.runtime_id(),
-                "sending child ready channel payload"
-            );
-            Some(
-                channel
-                    .send_ready()
-                    .map_err(|err| channel_error_phase("prototype1_child_channel_ready", err))?
-                    .0,
-            )
-        }
-        None => None,
-    };
-    let child = child.ready().map_err(|err| PrepareError::DatabaseSetup {
-        phase: "prototype1_child_ready",
-        detail: err.to_string(),
-    })?;
-    let channel = match channel {
-        Some(channel) => {
-            info!(
-                target: EXECUTION_DEBUG_TARGET,
-                role = "child",
-                authority = "child_runtime_channel",
-                transition = "Child<Ready>->EvaluatingMessage",
-                campaign = %invocation.campaign_id(),
-                node_id = %invocation.node_id(),
-                generation = node.generation,
-                branch_id = %node.branch_id,
-                runtime_id = %invocation.runtime_id(),
-                "sending child evaluating channel payload"
-            );
-            Some(
-                channel
-                    .send_evaluating()
-                    .map_err(|err| channel_error_phase("prototype1_child_channel_evaluating", err))?
-                    .0,
-            )
-        }
-        None => None,
-    };
-    let child = child
-        .evaluating()
-        .map_err(|err| PrepareError::DatabaseSetup {
-            phase: "prototype1_child_evaluating",
-            detail: err.to_string(),
-        })?;
-
-    let telemetry = RuntimeTelemetry::child(
-        invocation.campaign_id(),
-        &node,
-        invocation.runtime_id(),
-        "child_evaluation",
-    );
-    telemetry.install_for_chat_requests();
-    let outcome = run_prototype1_resolved_branch_evaluation(
-        invocation.campaign_id(),
-        &manifest_path,
-        &resolved,
-        &request.workspace_root,
-        request.stop_on_error,
-    )
-    .instrument(telemetry.span())
-    .await;
-
-    let (result, evaluation) = match outcome {
-        Ok(report) => (
-            build_succeeded_runner_result(invocation.campaign_id(), &node, &report),
-            Some(report),
-        ),
-        Err(err) => (
-            build_treatment_failed_runner_result(
-                invocation.campaign_id(),
-                &node,
-                err.to_string(),
-                None,
-                None,
-                None,
-            ),
-            None,
-        ),
-    };
-    let runner_result_path = crate::cli::prototype1_state::invocation::result_path(
-        &node.node_dir,
-        invocation.runtime_id(),
-    );
-    let result = record_attempt_runner_result(
-        invocation.campaign_id(),
-        &manifest_path,
-        &node,
-        invocation.runtime_id(),
-        result,
-    )?;
-    let _child = child
-        .result_written(runner_result_path.clone())
-        .map_err(|err| PrepareError::DatabaseSetup {
-            phase: "prototype1_child_result_written",
-            detail: err.to_string(),
-        })?;
-    if let Some(channel) = channel {
-        info!(
-            target: EXECUTION_DEBUG_TARGET,
-            role = "child",
-            authority = "child_runtime_channel",
-            transition = "Child<ResultWritten>->TerminalResultMessage",
-            campaign = %invocation.campaign_id(),
-            node_id = %invocation.node_id(),
-            generation = node.generation,
-            branch_id = %node.branch_id,
-            runtime_id = %invocation.runtime_id(),
-            disposition = ?result.disposition,
-            status = ?result.status,
-            "sending child terminal result channel payload"
-        );
-        if let Err(err) = channel.send_terminal_result(result.clone(), evaluation) {
-            warn!(
-                target: EXECUTION_DEBUG_TARGET,
-                campaign = %invocation.campaign_id(),
-                node_id = %invocation.node_id(),
-                runtime_id = %invocation.runtime_id(),
-                error = ?err,
-                "failed to write child terminal result channel payload after attempt result was persisted"
-            );
-        }
-    }
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %invocation.campaign_id(),
-        node_id = %invocation.node_id(),
-        disposition = ?result.disposition,
-        status = ?result.status,
-        "prototype1 child invocation completed"
-    );
-    Ok(result)
 }

@@ -25,25 +25,21 @@ use crate::{
     campaign_manifest_path,
     cli::{
         Depth, HistoryCommand, HistorySubcommand, InspectOutputFormat,
-        Prototype1BranchApplyCommand, Prototype1BranchEvaluateCommand,
-        Prototype1BranchRestoreCommand, Prototype1BranchSelectCommand, Prototype1BranchShowCommand,
-        Prototype1BranchStatusCommand, Prototype1CandidateGenerator,
-        Prototype1ChildEvidenceCommand, Prototype1ChildScheduleMode as CliChildScheduleMode,
-        Prototype1EditSurface, Prototype1HistoryPreviewCommand, Prototype1LoopCommand,
-        Prototype1LoopStopAfter, Prototype1MetricsCommand, Prototype1MonitorCommand,
-        Prototype1MonitorPeekCommand, Prototype1MonitorReportCommand, Prototype1MonitorSubcommand,
-        Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand, Prototype1RunnerCommand,
-        Prototype1ScoreCommand, Prototype1SelectionShowCommand, Prototype1StateCommand,
-        Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
-        TimingTrace, advance_eval_closure, advance_protocol_closure, default_batch_id,
+        Prototype1CandidateGenerator, Prototype1ChildEvidenceCommand,
+        Prototype1ChildScheduleMode as CliChildScheduleMode, Prototype1EditSurface,
+        Prototype1HistoryPreviewCommand, Prototype1LoopCommand, Prototype1LoopStopAfter,
+        Prototype1MetricsCommand, Prototype1MonitorPeekCommand, Prototype1MonitorStatusCommand,
+        Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand, Prototype1ScoreCommand,
+        Prototype1SelectionShowCommand, Prototype1StateCommand, Prototype1StateStopAfter,
+        Prototype1SuccessorSelection, Prototype1TraversalMetrics, TimingTrace,
+        advance_eval_closure, advance_protocol_closure, default_batch_id,
         pending_prototype1_stages, persist_intervention_apply_for_record,
         persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
         print_issue_case_block,
         prototype1_process::{
             SuccessorHandoffMode, cleanup_prototype1_child_build_products,
-            execute_prototype1_runner_invocation, persist_prototype1_buildable_child_artifact,
-            record_prototype1_successor_completion, record_prototype1_successor_ready,
-            run_prototype1_branch_evaluation, spawn_and_handoff_prototype1_successor,
+            persist_prototype1_buildable_child_artifact, record_prototype1_successor_completion,
+            record_prototype1_successor_ready, spawn_and_handoff_prototype1_successor,
             validate_child_surface, validate_prototype1_successor_continuation,
         },
         prototype1_state::{
@@ -1846,312 +1842,6 @@ fn prepare_or_load_prototype1_batch(
     Ok((manifest_path, prepared.batch))
 }
 
-impl Prototype1BranchStatusCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        let manifest_path = campaign_manifest_path(&self.campaign)?;
-        let registry = load_or_default_branch_registry(
-            &self.campaign,
-            &manifest_path,
-            OperatorProjectionRead::cli_operator(),
-        )?;
-        let report = prototype1_branch_status_report(&self.campaign, &manifest_path, &registry);
-        match self.format {
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
-                );
-            }
-            InspectOutputFormat::Table => print_prototype1_branch_status_report(&report),
-        }
-        Ok(())
-    }
-}
-
-impl Prototype1BranchShowCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        let manifest_path = campaign_manifest_path(&self.campaign)?;
-        let branch_registry_path = prototype1_branch_registry_path(&manifest_path);
-        let resolved = resolve_treatment_branch(
-            &self.campaign,
-            &manifest_path,
-            &self.branch_id,
-            OperatorProjectionRead::cli_operator(),
-        )?;
-        let report = Prototype1BranchShowReport {
-            campaign_id: self.campaign,
-            branch_registry_path,
-            instance_id: resolved.instance_id.clone(),
-            source_state_id: resolved.source_state_id.clone(),
-            parent_branch_id: resolved.parent_branch_id.clone(),
-            target_relpath: resolved.target_relpath.clone(),
-            source_content_hash: resolved.source_content_hash.clone(),
-            selected_branch_id: resolved.selected_branch_id.clone(),
-            branch_id: resolved.branch.branch_id.clone(),
-            candidate_id: resolved.branch.candidate_id.clone(),
-            branch_label: resolved.branch.branch_label.clone(),
-            status: format!("{:?}", resolved.branch.status).to_ascii_lowercase(),
-            apply_id: resolved.branch.apply_id.clone(),
-            proposed_content_hash: resolved.branch.proposed_content_hash.clone(),
-            proposed_content: resolved.branch.proposed_content.clone(),
-        };
-        match self.format {
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
-                );
-            }
-            InspectOutputFormat::Table => print_prototype1_branch_show_report(&report),
-        }
-        Ok(())
-    }
-}
-
-impl Prototype1BranchApplyCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        let manifest_path = campaign_manifest_path(&self.campaign)?;
-        let branch_registry_path = prototype1_branch_registry_path(&manifest_path);
-        let repo_root = if let Some(path) = self.repo_root {
-            path
-        } else {
-            std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
-                path: PathBuf::from("."),
-                source,
-            })?
-        };
-        let resolved = resolve_treatment_branch(
-            &self.campaign,
-            &manifest_path,
-            &self.branch_id,
-            OperatorProjectionRead::cli_operator(),
-        )?;
-        let tool = tool_name_for_description_relpath(&resolved.target_relpath)?;
-        let candidate = InterventionCandidate {
-            candidate_id: resolved.branch.candidate_id.clone(),
-            branch_label: resolved.branch.branch_label.clone(),
-            proposed_content: resolved.branch.proposed_content.clone(),
-            // This manual operator path reconstructs a candidate from the
-            // branch handle. The registry will recover patch provenance from
-            // its stored branch record or text-file fallback; future materialize
-            // paths should pass registry provenance directly.
-            patch_id: None,
-            spec: InterventionSpec::ToolGuidanceMutation {
-                spec_id: resolved.branch.synthesized_spec_id.clone(),
-                evidence_basis: "prototype1_branch_apply".to_string(),
-                intended_effect: "materialize stored treatment branch content".to_string(),
-                tool,
-                edit: ArtifactEdit::ReplaceWholeText {
-                    new_text: resolved.branch.proposed_content.clone(),
-                },
-                validation_policy: ValidationPolicy::for_tool_description_target(tool),
-            },
-        };
-        let input = InterventionApplyInput {
-            source_state_id: resolved.source_state_id.clone(),
-            candidate,
-            target_relpath: resolved.target_relpath.clone(),
-            expected_source_content: resolved.source_content.clone(),
-            repo_root,
-            // No whole-worktree artifact identity is available in this manual
-            // apply command yet. `execute_intervention_apply` will derive only
-            // text-file surface identities.
-            base_artifact_id: None,
-            patch_id: None,
-        };
-        let output =
-            execute_intervention_apply(&input).map_err(|source| PrepareError::DatabaseSetup {
-                phase: "prototype1_branch_apply",
-                detail: source.to_string(),
-            })?;
-        let _ = mark_treatment_branch_applied(
-            &self.campaign,
-            &manifest_path,
-            &input.target_relpath,
-            &output,
-        )?;
-        let report = Prototype1BranchApplyReport {
-            campaign_id: self.campaign,
-            branch_registry_path,
-            branch_id: self.branch_id,
-            candidate_id: output.candidate_id.clone(),
-            source_state_id: output.treatment_state.source_state_id.clone(),
-            target_relpath: output.target_relpath.clone(),
-            absolute_path: output.absolute_path.clone(),
-            changed: output.changed,
-            apply_id: output.treatment_state.apply_id.clone(),
-            source_content_hash: output.source_content_hash,
-            applied_content_hash: output.applied_content_hash,
-        };
-        match self.format {
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
-                );
-            }
-            InspectOutputFormat::Table => print_prototype1_branch_apply_report(&report),
-        }
-        Ok(())
-    }
-}
-
-impl Prototype1BranchEvaluateCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        let repo_root = if let Some(path) = self.repo_root {
-            path
-        } else {
-            std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
-                path: PathBuf::from("."),
-                source,
-            })?
-        };
-        let report = run_prototype1_branch_evaluation(
-            &self.campaign,
-            &self.branch_id,
-            &repo_root,
-            self.stop_on_error,
-        )
-        .await?;
-
-        match self.format {
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
-                );
-            }
-            InspectOutputFormat::Table => print_prototype1_branch_evaluation_report(&report),
-        }
-        Ok(())
-    }
-}
-
-impl Prototype1BranchSelectCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        let manifest_path = campaign_manifest_path(&self.campaign)?;
-        let registry = select_treatment_branch(&self.campaign, &manifest_path, &self.branch_id)?;
-        let report = prototype1_branch_status_report(&self.campaign, &manifest_path, &registry);
-        match self.format {
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
-                );
-            }
-            InspectOutputFormat::Table => print_prototype1_branch_status_report(&report),
-        }
-        Ok(())
-    }
-}
-
-impl Prototype1BranchRestoreCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        let manifest_path = campaign_manifest_path(&self.campaign)?;
-        let repo_root = if let Some(path) = self.repo_root {
-            path
-        } else {
-            std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
-                path: PathBuf::from("."),
-                source,
-            })?
-        };
-        let restored =
-            restore_treatment_branch(&self.campaign, &manifest_path, &self.branch_id, &repo_root)?;
-        match self.format {
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&restored).map_err(PrepareError::Serialize)?
-                );
-            }
-            InspectOutputFormat::Table => {
-                println!("prototype1 branch restore");
-                println!("{}", "-".repeat(40));
-                println!("campaign_id: {}", self.campaign);
-                println!("branch_id: {}", restored.branch_id);
-                println!("source_state_id: {}", restored.source_state_id);
-                println!("target: {}", restored.target_relpath.display());
-                println!("changed: {}", yes_no(restored.changed));
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Prototype1RunnerCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        if let Some(invocation_path) = self.invocation.clone() {
-            if self.campaign.is_some() || self.node_id.is_some() {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: "prototype1-runner expects either --invocation or --campaign/--node-id, not both"
-                        .to_string(),
-                });
-            }
-
-            if self.execute {
-                match invocation::load_executable(&invocation_path)? {
-                    InvocationAuthority::Child(_) => {
-                        let result = execute_prototype1_runner_invocation(&invocation_path).await?;
-                        match self.format {
-                            InspectOutputFormat::Json => {
-                                println!(
-                                    "{}",
-                                    serde_json::to_string_pretty(&result)
-                                        .map_err(PrepareError::Serialize)?
-                                );
-                            }
-                            InspectOutputFormat::Table => {
-                                println!("prototype1 runner invocation");
-                                println!("{}", "-".repeat(40));
-                                println!("invocation: {}", invocation_path.display());
-                                println!("campaign_id: {}", result.campaign_id);
-                                println!("node_id: {}", result.node_id);
-                                println!("branch_id: {}", result.branch_id);
-                                println!("status: {:?}", result.status);
-                                println!("disposition: {:?}", result.disposition);
-                            }
-                        }
-                    }
-                    InvocationAuthority::Successor(_) => {
-                        return Err(PrepareError::InvalidBatchSelection {
-                            detail: format!(
-                                "successor invocation '{}' must be executed by loop prototype1-state --handoff-invocation",
-                                invocation_path.display()
-                            ),
-                        });
-                    }
-                }
-                return Ok(());
-            }
-
-            let invocation = invocation::load(&invocation_path)?;
-            match self.format {
-                InspectOutputFormat::Json => {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&invocation)
-                            .map_err(PrepareError::Serialize)?
-                    );
-                }
-                InspectOutputFormat::Table => {
-                    println!("prototype1 runner invocation");
-                    println!("{}", "-".repeat(40));
-                    println!("path: {}", invocation_path.display());
-                    println!("role: {:?}", invocation.role);
-                    println!("campaign_id: {}", invocation.campaign_id);
-                    println!("node_id: {}", invocation.node_id);
-                    println!("runtime_id: {}", invocation.runtime_id);
-                    println!("journal_path: {}", invocation.journal_path.display());
-                }
-            }
-            return Ok(());
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone)]
 struct Prototype1MonitorLocation {
     label: &'static str,
@@ -2173,57 +1863,13 @@ struct TerminalState {
     detail: String,
 }
 
-impl Prototype1MonitorCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        let repo_root = match self.repo_root.clone() {
-            Some(path) => path,
-            None => current_dir_as_repo_root()?,
-        };
-        let campaign_id = resolve_prototype1_monitor_campaign(&self, &repo_root)?;
-        let manifest_path = campaign_manifest_path(&campaign_id)?;
-        let command = self.command.unwrap_or(Prototype1MonitorSubcommand::Report(
-            Prototype1MonitorReportCommand {
-                format: InspectOutputFormat::Table,
-            },
-        ));
-
-        match command {
-            Prototype1MonitorSubcommand::List => {
-                print_prototype1_monitor_locations(&manifest_path, Some(&repo_root));
-                Ok(())
-            }
-            Prototype1MonitorSubcommand::HistoryMetrics(command) => {
-                run_metric_slice(&campaign_id, &manifest_path, &command)
-            }
-            Prototype1MonitorSubcommand::HistoryScores(command) => {
-                run_score_report(&campaign_id, &manifest_path, &command)
-            }
-            Prototype1MonitorSubcommand::ScoreSelectionReview(command) => {
-                run_score_selection_review(&campaign_id, &manifest_path, &command)
-            }
-            Prototype1MonitorSubcommand::SelectionShow(command) => {
-                run_selection_show(&campaign_id, &manifest_path, &command)
-            }
-            Prototype1MonitorSubcommand::ChildEvidence(command) => {
-                run_child_evidence(&campaign_id, &manifest_path, &command)
-            }
-            Prototype1MonitorSubcommand::Peek(command) => {
-                peek_prototype1_monitor_locations(&manifest_path, Some(&repo_root), &command)
-            }
-            Prototype1MonitorSubcommand::Report(command) => {
-                crate::cli::prototype1_state::report::run(&campaign_id, &manifest_path, &command)
-            }
-            Prototype1MonitorSubcommand::Timing(command) => {
-                print_prototype1_monitor_timing(&campaign_id, &manifest_path, &command)
-            }
-            Prototype1MonitorSubcommand::HistoryPreview(command) => {
-                run_history_preview(&campaign_id, &manifest_path, &command)
-            }
-            Prototype1MonitorSubcommand::Watch(command) => {
-                watch_prototype1_monitor_locations(&manifest_path, Some(&repo_root), &command)
-            }
-        }
-    }
+#[derive(Debug, Clone)]
+pub(crate) struct MonitorStatusTarget {
+    pub(crate) campaign_id: String,
+    pub(crate) campaign_source: &'static str,
+    pub(crate) repo_root: PathBuf,
+    pub(crate) repo_root_source: &'static str,
+    pub(crate) warnings: Vec<String>,
 }
 
 impl HistoryCommand {
@@ -2317,6 +1963,15 @@ fn run_score_selection_review(
             format: command.format,
         },
     )
+}
+
+fn run_monitor_status(
+    campaign_id: &str,
+    manifest_path: &Path,
+    target: &MonitorStatusTarget,
+    command: &Prototype1MonitorStatusCommand,
+) -> Result<(), PrepareError> {
+    crate::cli::prototype1_state::status::run(campaign_id, manifest_path, target, command)
 }
 
 fn run_selection_show(
@@ -5536,29 +5191,6 @@ fn resolve_prototype1_state_campaign(
     Err(PrepareError::InvalidBatchSelection {
         detail: format!(
             "--campaign was omitted and no parent identity exists at '{}'. Active Prototype 1 execution does not read selection.json; pass --campaign explicitly or run from a checkout with parent identity.",
-            crate::cli::prototype1_state::identity::parent_identity_path(repo_root).display()
-        ),
-    })
-}
-
-fn resolve_prototype1_monitor_campaign(
-    command: &Prototype1MonitorCommand,
-    repo_root: &Path,
-) -> Result<String, PrepareError> {
-    if let Some(campaign) = command.campaign.as_ref() {
-        return Ok(campaign.clone());
-    }
-    if let Some(campaign) = infer_campaign_from_parent_identity(repo_root)? {
-        return Ok(campaign);
-    }
-    if let Some(campaign) = load_active_selection(OperatorProjectionRead::cli_operator())?.campaign
-    {
-        return Ok(campaign);
-    }
-
-    Err(PrepareError::InvalidBatchSelection {
-        detail: format!(
-            "--campaign was omitted, no parent identity exists at '{}', and no active campaign is selected. Run `ploke-eval select campaign <campaign>` or pass --campaign.",
             crate::cli::prototype1_state::identity::parent_identity_path(repo_root).display()
         ),
     })

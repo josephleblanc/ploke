@@ -636,6 +636,10 @@
 //!
 //! ## Persisted artifact map
 //!
+//! Operator appendix (commands, path table, glossary: scheduler generations vs History, channel vs journal,
+//! monitor list gap for `prototype1/history/`): **`PROTOTYPE1_LOOP_OPERATOR.md`** in this directory. The labelled
+//! list shipped with `loop prototype1-monitor list` is `prototype1_monitor_locations` in `cli_facing.rs`.
+//!
 //! Campaign-scoped Prototype 1 state lives under:
 //!
 //! ```text
@@ -655,6 +659,9 @@
 //! - `transition-journal.jsonl`
 //!   Append-only typed transition log for child-ready and successor-handoff
 //!   events.
+//! - `history/`
+//!   **`FsBlockStore`** sealed-block stream and indexes (see **`history`** module). Heads are projections of sealed blocks,
+//!   not standalone authority fields. Paths here are **not** enumerated by `prototype1-monitor list`; see **PROTOTYPE1_LOOP_OPERATOR.md**.
 //! - `messages/child-plan/<parent-node-id>.json`
 //!   Typed parent-owned child-plan box. The Parent writes this after producing
 //!   the candidate set for a turn and reads it back before selecting a child.
@@ -780,6 +787,7 @@ pub(crate) mod record;
 pub(crate) mod report;
 pub(crate) mod score;
 pub(crate) mod selection;
+pub(crate) mod status;
 pub(crate) mod successor;
 pub(crate) mod telemetry;
 pub(crate) mod workspace;

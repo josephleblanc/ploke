@@ -11,6 +11,14 @@
 2. `crates/ploke-eval/src/inner/core.rs`
 3. `crates/ploke-eval/src/inner/registry.rs`
 
+## Prototype 1 loop filesystem (`ploke-eval loop`)
+
+For **`loop prototype1-state` / `prototype1-runner` / `prototype1-monitor`**: persisted layout under **`$PLOKE_EVAL_HOME/campaigns/...`**, **`--repo-root`**, traits (**`RecordStore`**, **`BlockStore`**, **`FileTransport`**), and **scheduler generations vs sealed History**, read:
+
+`crates/ploke-eval/src/cli/prototype1_state/PROTOTYPE1_LOOP_OPERATOR.md`
+
+That file is descriptive; admission authority stays on History/Crown, not monitor output.
+
 ## What Exists
 
 - `RunStorageRoots`, `RunIntent`, and `FrozenRunSpec` in `inner/core.rs`

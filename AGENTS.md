@@ -14,8 +14,7 @@
 
 - Prefer fewer sub-agents first. A cheaper sub-agent still spends tokens if it reads too broadly or duplicates work already done in the main thread.
 - Model routing should account for both model capability and plan-credit cost. Treat output as especially expensive, so ask sub-agents for compact reports rather than long explanations.
-- Prefer `gpt-5.3-codex-spark` for bounded discovery and very small mechanical tasks when it is available.
-- Use `gpt-5.4-mini` as the cheap fallback for summarization, search narrowing, compile-error triage, mechanical edits, and tests from an obvious pattern.
+- Use `gpt-5.4-mini` as the cheap fallback for bounded discovery, summarization, search narrowing, compile-error triage, mechanical edits, and tests from an obvious pattern.
 - Use `gpt-5.3-codex` for bounded implementation work where Spark or mini is likely too weak but the task is still local and code-shaped.
 - Use `gpt-5.4` for harder review, diagnosis, or multi-file reasoning when 5.5 is not clearly justified.
 - Reserve `gpt-5.5` for architectural changes, Prototype 1 History/Crown/Runtime/Artifact invariants, subtle Rust type/lifetime/async/concurrency reasoning, multi-file edits where semantic authority matters, diagnosing agent/tool workflow failures, and final review before applying or accepting a high-risk patch.
