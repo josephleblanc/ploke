@@ -43,6 +43,8 @@ Restart-oriented table of contents for `docs/active/agents/` and nearby restart-
   Review of the Phase 1 edit-surface authority boundary, projection binding, delta construction visibility, and validation gates.
 - [2026-05-07-edit-surface-phase2-adapter-review.md](./2026-05-07-edit-surface-phase2-adapter-review.md)
   Review of the Phase 2 first-slice `ploke-tui` / `ploke-db` edit-surface adapter scaffold, including authority, projection binding, digest evidence, and commit blockers.
+- [2026-05-07-edit-surface-phase2-authority-review.md](./2026-05-07-edit-surface-phase2-authority-review.md)
+  Review of the Phase 2 second-slice edit-surface authority fixes, including reported/applied separation, post-Artifact validation, projection digest authority, and remaining visibility blockers.
 - [2026-04-17_eval-failure-and-protocol-audit/README.md](./2026-04-17_eval-failure-and-protocol-audit/README.md)
   Control-plane docs for failed-run audit, known-limitations reconciliation, blind trace review, and protocol-output comparison.
 - [2026-04-16_eval-closure-formal-sketch.md](./2026-04-16_eval-closure-formal-sketch.md)

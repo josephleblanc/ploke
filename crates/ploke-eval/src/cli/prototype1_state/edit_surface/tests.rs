@@ -49,6 +49,25 @@ fn fixture() -> (
     (artifact, graph, root, child, sibling)
 }
 
+fn tui_rule(text: &str) -> tui::Rule {
+    tui::Rule::named("tui-tool-edit-surface", "v1", text)
+}
+
+fn tui_source(text: &str) -> tui::Source {
+    tui::Source::derived("tui-tool-edit-surface", "v1", text)
+}
+
+fn tui_projection(graph_projection: &graph::Projection) -> tui::Projection {
+    tui::Projector::new(
+        "projection:tui-tools",
+        tui_source("graph projection for tui tool edit surface"),
+        [tui_rule(
+            "include crates/ploke-tui/src/tools and rag edit files",
+        )],
+    )
+    .project(graph_projection)
+}
+
 #[test]
 fn graph_projection_is_tied_to_artifact_identity() {
     let (artifact, graph, _, _, _) = fixture();
@@ -353,17 +372,34 @@ fn parent_ancestor_rules_can_narrow_but_not_widen_grant() {
 }
 
 #[test]
-fn tui_projection_binding_carries_artifact_identity_and_projection_hash() {
-    let artifact = aref("artifact:base", "tree:base");
-    let projection = tui::Projection::new(
+fn tui_projection_digest_is_deterministic_from_canonical_inputs() {
+    let (artifact, graph, _, _, _) = fixture();
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let projector = tui::Projector::new(
         "projection:tui-tools",
-        href("projection:hash"),
-        artifact.clone(),
+        tui_source("graph projection for tui tool edit surface"),
+        [tui_rule(
+            "include crates/ploke-tui/src/tools and rag edit files",
+        )],
     );
 
+    let projection = projector.project(&graph_projection);
+    let same = projector.project(&graph_projection);
+
     assert_eq!(projection.id(), "projection:tui-tools");
-    assert_eq!(projection.hash(), &href("projection:hash"));
-    assert_eq!(projection.artifact(), &artifact);
+    assert_eq!(projection.hash(), same.hash());
+    assert_eq!(projection.artifact(), artifact.reference());
+    assert_ne!(projection.hash(), &href("projection:hash"));
+}
+
+#[test]
+fn tui_projection_hash_cannot_be_supplied_as_proof() {
+    let (artifact, graph, _, _, _) = fixture();
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let projection = tui_projection(&graph_projection);
+
+    assert_ne!(projection.hash(), &href("caller:supplied"));
+    assert_eq!(projection.artifact(), artifact.reference());
 }
 
 #[test]
@@ -373,19 +409,22 @@ fn tui_rules_and_bounds_record_digest_and_source() {
     let graph_bounds = graph
         .bounds(&graph_projection, &[graph::Rule::Include(child)])
         .expect("derive bounds");
-    let projection = tui::Projection::new(
-        "projection:tui-tools",
-        href("projection:hash"),
-        artifact.reference().clone(),
+    let rule = tui::Rule::inline(
+        "inline-edit-surface",
+        "v1",
+        "include ploke-tui rag editing surface",
     );
-    let rule = tui::Rule::inline("include ploke-tui rag editing surface");
-    let bounds = tui::Bounds::new(
-        projection,
+    let projection = tui::Projector::new(
+        "projection:tui-tools",
+        tui::Source::derived(
+            "tui-tool-edit-surface",
+            "v1",
+            "graph bounds from tui tool surface rule",
+        ),
         [rule.clone()],
-        tui::Source::Derived("graph bounds from tui tool surface rule".to_string()),
-        graph_bounds,
     )
-    .expect("adapter bounds");
+    .project(&graph_projection);
+    let bounds = tui::Bounds::new(projection, graph_bounds).expect("adapter bounds");
 
     assert_eq!(bounds.rules(), &[rule]);
     assert!(matches!(bounds.rules()[0].source(), tui::Source::Inline(_)));
@@ -395,24 +434,49 @@ fn tui_rules_and_bounds_record_digest_and_source() {
 }
 
 #[test]
+fn tui_rule_definition_changes_bounds_digest() {
+    let (artifact, graph, _, child, _) = fixture();
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let graph_bounds = graph
+        .bounds(&graph_projection, &[graph::Rule::Include(child)])
+        .expect("derive bounds");
+    let first = tui::Projector::new(
+        "projection:tui-tools",
+        tui_source("graph projection for tui tool edit surface"),
+        [tui::Rule::named(
+            "tui-tool-edit-surface",
+            "v1",
+            "include tools and rag editing",
+        )],
+    )
+    .project(&graph_projection);
+    let second = tui::Projector::new(
+        "projection:tui-tools",
+        tui_source("graph projection for tui tool edit surface changed"),
+        [tui::Rule::named(
+            "tui-tool-edit-surface",
+            "v1",
+            "include tools only",
+        )],
+    )
+    .project(&graph_projection);
+
+    let first = tui::Bounds::new(first, graph_bounds.clone()).expect("first bounds");
+    let second = tui::Bounds::new(second, graph_bounds).expect("second bounds");
+
+    assert_ne!(first.rules()[0].digest(), second.rules()[0].digest());
+    assert_ne!(first.digest(), second.digest());
+}
+
+#[test]
 fn tui_material_span_converts_to_touch_after_expected_hash_check() {
     let (artifact, graph, _, child, _) = fixture();
     let graph_projection = graph.project(&artifact).expect("project artifact");
     let graph_bounds = graph
         .bounds(&graph_projection, &[graph::Rule::Include(child.clone())])
         .expect("derive bounds");
-    let projection = tui::Projection::new(
-        "projection:tui-tools",
-        href("projection:hash"),
-        artifact.reference().clone(),
-    );
-    let bounds = tui::Bounds::new(
-        projection,
-        [tui::Rule::named("tui-tool-edit-surface")],
-        tui::Source::Named("tui-tool-edit-surface".to_string()),
-        graph_bounds,
-    )
-    .expect("adapter bounds");
+    let projection = tui_projection(&graph_projection);
+    let bounds = tui::Bounds::new(projection, graph_bounds).expect("adapter bounds");
     let material = tui::MaterialSpan::new(
         child,
         "src/lib.rs",
@@ -440,18 +504,8 @@ fn tui_material_span_rejects_expected_hash_mismatch_before_touch() {
     let graph_bounds = graph
         .bounds(&graph_projection, &[graph::Rule::Include(child.clone())])
         .expect("derive bounds");
-    let projection = tui::Projection::new(
-        "projection:tui-tools",
-        href("projection:hash"),
-        artifact.reference().clone(),
-    );
-    let bounds = tui::Bounds::new(
-        projection,
-        [tui::Rule::named("tui-tool-edit-surface")],
-        tui::Source::Named("tui-tool-edit-surface".to_string()),
-        graph_bounds,
-    )
-    .expect("adapter bounds");
+    let projection = tui_projection(&graph_projection);
+    let bounds = tui::Bounds::new(projection, graph_bounds).expect("adapter bounds");
     let material = tui::MaterialSpan::new(
         child,
         "src/lib.rs",
@@ -485,19 +539,22 @@ fn tui_adapter_rejects_stale_projection_artifact_mismatch() {
     let graph_bounds = graph
         .bounds(&graph_projection, &[graph::Rule::Include(child)])
         .expect("derive bounds");
-    let stale_projection = tui::Projection::new(
-        "projection:tui-tools",
-        href("projection:hash"),
+    let other = surface::Artifact::new(
         aref("artifact:other", "tree:other"),
+        [(PathBuf::from("src/lib.rs"), href("file:lib:v1"))],
     );
-
-    let err = tui::Bounds::new(
-        stale_projection,
-        [tui::Rule::named("tui-tool-edit-surface")],
-        tui::Source::Named("tui-tool-edit-surface".to_string()),
-        graph_bounds,
+    let other_graph_projection = graph.project(&other).expect("project other artifact");
+    let stale_projection = tui::Projector::new(
+        "projection:tui-tools",
+        tui_source("graph projection for tui tool edit surface"),
+        [tui_rule(
+            "include crates/ploke-tui/src/tools and rag edit files",
+        )],
     )
-    .expect_err("projection artifact mismatch must fail");
+    .project(&other_graph_projection);
+
+    let err = tui::Bounds::new(stale_projection, graph_bounds)
+        .expect_err("projection artifact mismatch must fail");
 
     assert!(matches!(err, tui::Error::StaleProjection));
 }
@@ -509,18 +566,8 @@ fn tui_adapter_rejects_out_of_bounds_canonical_target() {
     let graph_bounds = graph
         .bounds(&graph_projection, &[graph::Rule::Include(child)])
         .expect("derive bounds");
-    let projection = tui::Projection::new(
-        "projection:tui-tools",
-        href("projection:hash"),
-        artifact.reference().clone(),
-    );
-    let bounds = tui::Bounds::new(
-        projection,
-        [tui::Rule::named("tui-tool-edit-surface")],
-        tui::Source::Named("tui-tool-edit-surface".to_string()),
-        graph_bounds,
-    )
-    .expect("adapter bounds");
+    let projection = tui_projection(&graph_projection);
+    let bounds = tui::Bounds::new(projection, graph_bounds).expect("adapter bounds");
     let material = tui::MaterialSpan::new(
         sibling.clone(),
         "src/lib.rs",
@@ -547,18 +594,8 @@ fn tui_adapter_rejects_auto_apply_stage_request() {
     let graph_bounds = graph
         .bounds(&graph_projection, &[graph::Rule::Include(child.clone())])
         .expect("derive bounds");
-    let projection = tui::Projection::new(
-        "projection:tui-tools",
-        href("projection:hash"),
-        artifact.reference().clone(),
-    );
-    let bounds = tui::Bounds::new(
-        projection.clone(),
-        [tui::Rule::named("tui-tool-edit-surface")],
-        tui::Source::Named("tui-tool-edit-surface".to_string()),
-        graph_bounds,
-    )
-    .expect("adapter bounds");
+    let projection = tui_projection(&graph_projection);
+    let bounds = tui::Bounds::new(projection.clone(), graph_bounds).expect("adapter bounds");
     let touch = bounds
         .touch(
             &artifact,
@@ -604,18 +641,9 @@ fn tui_apply_evidence_is_all_applied_or_rejected() {
             ],
         )
         .expect("derive bounds");
-    let projection = tui::Projection::new(
-        "projection:tui-tools",
-        href("projection:hash"),
-        artifact.reference().clone(),
-    );
-    let bounds = tui::Bounds::new(
-        projection.clone(),
-        [tui::Rule::named("tui-tool-edit-surface")],
-        tui::Source::Named("tui-tool-edit-surface".to_string()),
-        graph_bounds.clone(),
-    )
-    .expect("adapter bounds");
+    let projection = tui_projection(&graph_projection);
+    let bounds =
+        tui::Bounds::new(projection.clone(), graph_bounds.clone()).expect("adapter bounds");
     let child_touch = bounds
         .touch(
             &artifact,
@@ -674,9 +702,9 @@ fn tui_apply_evidence_is_all_applied_or_rejected() {
         vec![tui::Write::applied(&child_touch, href("file:lib:v2"))],
     )
     .expect("partial apply evidence");
-    assert!(matches!(rejected, tui::Apply::Rejected { .. }));
+    assert!(rejected.is_rejected());
 
-    let applied = tui::Apply::from_results(
+    let reported = tui::Apply::from_results(
         proposal,
         check,
         vec![
@@ -686,7 +714,202 @@ fn tui_apply_evidence_is_all_applied_or_rejected() {
     )
     .expect("all apply evidence");
 
-    assert!(matches!(applied, tui::Apply::Applied { .. }));
+    assert!(reported.is_reported());
+}
+
+#[test]
+fn tui_apply_wrong_after_artifact_hash_fails() {
+    let (artifact, graph, _, child, _) = fixture();
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let graph_bounds = graph
+        .bounds(&graph_projection, &[graph::Rule::Include(child.clone())])
+        .expect("derive bounds");
+    let projection = tui_projection(&graph_projection);
+    let bounds =
+        tui::Bounds::new(projection.clone(), graph_bounds.clone()).expect("adapter bounds");
+    let touch = bounds
+        .touch(
+            &artifact,
+            tui::MaterialSpan::new(
+                child,
+                "src/lib.rs",
+                10,
+                40,
+                href("file:lib:v1"),
+                tui::MaterialSource::DbExact {
+                    relation: "function".to_string(),
+                    canon: "crate::child".to_string(),
+                },
+            ),
+            "fn child() {}",
+        )
+        .expect("touch");
+    let grant = surface::Grant::new(
+        artifact.reference().clone(),
+        graph_bounds,
+        surface::Area::new([touch.span().clone()]),
+    )
+    .expect("grant");
+    let proposal = tui::Proposal::stage(tui::Stage {
+        proposal: "proposal:apply",
+        run: "run:apply",
+        base: artifact.reference(),
+        after: aref("artifact:after", "tree:after"),
+        projection: &projection,
+        touches: vec![touch.clone()],
+        auto_apply: false,
+    })
+    .expect("stage");
+    let check = grant.check(proposal.draft()).expect("surface check");
+    let reported = tui::Apply::from_results(
+        proposal,
+        check,
+        vec![tui::Write::applied(&touch, href("file:lib:v2"))],
+    )
+    .expect("reported apply");
+    let wrong_after = surface::Artifact::new(
+        aref("artifact:after", "tree:wrong"),
+        [(PathBuf::from("src/lib.rs"), href("file:lib:v2"))],
+    );
+
+    let err = reported
+        .validate(&wrong_after)
+        .expect_err("wrong after artifact must fail");
+
+    assert!(matches!(err, tui::Error::AfterArtifactMismatch { .. }));
+}
+
+#[test]
+fn tui_apply_wrong_touched_after_hash_fails() {
+    let (artifact, graph, _, child, _) = fixture();
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let graph_bounds = graph
+        .bounds(&graph_projection, &[graph::Rule::Include(child.clone())])
+        .expect("derive bounds");
+    let projection = tui_projection(&graph_projection);
+    let bounds =
+        tui::Bounds::new(projection.clone(), graph_bounds.clone()).expect("adapter bounds");
+    let touch = bounds
+        .touch(
+            &artifact,
+            tui::MaterialSpan::new(
+                child,
+                "src/lib.rs",
+                10,
+                40,
+                href("file:lib:v1"),
+                tui::MaterialSource::DbExact {
+                    relation: "function".to_string(),
+                    canon: "crate::child".to_string(),
+                },
+            ),
+            "fn child() {}",
+        )
+        .expect("touch");
+    let grant = surface::Grant::new(
+        artifact.reference().clone(),
+        graph_bounds,
+        surface::Area::new([touch.span().clone()]),
+    )
+    .expect("grant");
+    let after = aref("artifact:after", "tree:after");
+    let proposal = tui::Proposal::stage(tui::Stage {
+        proposal: "proposal:apply",
+        run: "run:apply",
+        base: artifact.reference(),
+        after: after.clone(),
+        projection: &projection,
+        touches: vec![touch.clone()],
+        auto_apply: false,
+    })
+    .expect("stage");
+    let check = grant.check(proposal.draft()).expect("surface check");
+    let reported = tui::Apply::from_results(
+        proposal,
+        check,
+        vec![tui::Write::applied(&touch, href("file:lib:v2"))],
+    )
+    .expect("reported apply");
+    let wrong_after = surface::Artifact::new(
+        after,
+        [(PathBuf::from("src/lib.rs"), href("file:lib:wrong"))],
+    );
+
+    let err = reported
+        .validate(&wrong_after)
+        .expect_err("wrong touched after hash must fail");
+
+    assert!(matches!(
+        err,
+        tui::Error::AfterHashMismatch {
+            expected,
+            actual,
+            ..
+        } if expected == href("file:lib:v2") && actual == href("file:lib:wrong")
+    ));
+}
+
+#[test]
+fn tui_apply_valid_after_artifact_validation_produces_delta() {
+    let (artifact, graph, _, child, _) = fixture();
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let graph_bounds = graph
+        .bounds(&graph_projection, &[graph::Rule::Include(child.clone())])
+        .expect("derive bounds");
+    let projection = tui_projection(&graph_projection);
+    let bounds =
+        tui::Bounds::new(projection.clone(), graph_bounds.clone()).expect("adapter bounds");
+    let touch = bounds
+        .touch(
+            &artifact,
+            tui::MaterialSpan::new(
+                child,
+                "src/lib.rs",
+                10,
+                40,
+                href("file:lib:v1"),
+                tui::MaterialSource::DbExact {
+                    relation: "function".to_string(),
+                    canon: "crate::child".to_string(),
+                },
+            ),
+            "fn child() {}",
+        )
+        .expect("touch");
+    let grant = surface::Grant::new(
+        artifact.reference().clone(),
+        graph_bounds,
+        surface::Area::new([touch.span().clone()]),
+    )
+    .expect("grant");
+    let after = aref("artifact:after", "tree:after");
+    let proposal = tui::Proposal::stage(tui::Stage {
+        proposal: "proposal:apply",
+        run: "run:apply",
+        base: artifact.reference(),
+        after: after.clone(),
+        projection: &projection,
+        touches: vec![touch.clone()],
+        auto_apply: false,
+    })
+    .expect("stage");
+    let check = grant.check(proposal.draft()).expect("surface check");
+    let reported = tui::Apply::from_results(
+        proposal,
+        check,
+        vec![tui::Write::applied(&touch, href("file:lib:v2"))],
+    )
+    .expect("reported apply");
+    let after_artifact = surface::Artifact::new(
+        after.clone(),
+        [(PathBuf::from("src/lib.rs"), href("file:lib:v2"))],
+    );
+
+    let applied = reported
+        .validate(&after_artifact)
+        .expect("valid after artifact");
+
+    assert!(applied.is_applied());
 }
 
 #[test]

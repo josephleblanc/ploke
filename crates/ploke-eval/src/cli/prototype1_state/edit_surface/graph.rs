@@ -154,6 +154,14 @@ impl Projection {
         self.spans.get(target)
     }
 
+    pub(crate) fn spans(&self) -> impl Iterator<Item = &Span> {
+        self.spans.values()
+    }
+
+    pub(crate) fn edges(&self) -> impl Iterator<Item = (&Target, &BTreeSet<Target>)> {
+        self.edges.iter()
+    }
+
     fn descendants(&self, target: &Target) -> BTreeSet<Target> {
         let mut found = BTreeSet::new();
         let mut queue = VecDeque::new();

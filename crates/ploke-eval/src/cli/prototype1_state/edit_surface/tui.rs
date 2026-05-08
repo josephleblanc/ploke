@@ -39,13 +39,62 @@ impl Digest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Def {
+    id: String,
+    version: String,
+    text: String,
+}
+
+impl Def {
+    pub(crate) fn new(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        text: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            version: version.into(),
+            text: text.into(),
+        }
+    }
+
+    fn parts(&self) -> [&str; 3] {
+        [&self.id, &self.version, &self.text]
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Source {
-    Named(String),
-    Inline(String),
-    Derived(String),
+    Named(Def),
+    Inline(Def),
+    Derived(Def),
 }
 
 impl Source {
+    pub(crate) fn named(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        text: impl Into<String>,
+    ) -> Self {
+        Self::Named(Def::new(id, version, text))
+    }
+
+    pub(crate) fn inline(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        text: impl Into<String>,
+    ) -> Self {
+        Self::Inline(Def::new(id, version, text))
+    }
+
+    pub(crate) fn derived(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        text: impl Into<String>,
+    ) -> Self {
+        Self::Derived(Def::new(id, version, text))
+    }
+
     fn tag(&self) -> &'static str {
         match self {
             Self::Named(_) => "named",
@@ -54,7 +103,7 @@ impl Source {
         }
     }
 
-    fn label(&self) -> &str {
+    fn def(&self) -> &Def {
         match self {
             Self::Named(value) | Self::Inline(value) | Self::Derived(value) => value,
         }
@@ -68,15 +117,23 @@ pub(crate) struct Rule {
 }
 
 impl Rule {
-    pub(crate) fn named(name: impl Into<String>) -> Self {
-        let source = Source::Named(name.into());
-        let digest = Digest::of(["named".as_bytes(), source.label().as_bytes()]);
+    pub(crate) fn named(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        text: impl Into<String>,
+    ) -> Self {
+        let source = Source::named(id, version, text);
+        let digest = Self::compute_digest(&source);
         Self { source, digest }
     }
 
-    pub(crate) fn inline(source: impl Into<String>) -> Self {
-        let source = Source::Inline(source.into());
-        let digest = Digest::of(["inline".as_bytes(), source.label().as_bytes()]);
+    pub(crate) fn inline(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        text: impl Into<String>,
+    ) -> Self {
+        let source = Source::inline(id, version, text);
+        let digest = Self::compute_digest(&source);
         Self { source, digest }
     }
 
@@ -87,6 +144,16 @@ impl Rule {
     pub(crate) fn digest(&self) -> &Digest {
         &self.digest
     }
+
+    fn compute_digest(source: &Source) -> Digest {
+        let [id, version, text] = source.def().parts();
+        Digest::of([
+            source.tag().as_bytes(),
+            id.as_bytes(),
+            version.as_bytes(),
+            text.as_bytes(),
+        ])
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,17 +161,11 @@ pub(crate) struct Projection {
     id: String,
     hash: surface::Hash,
     artifact: surface::Ref,
+    source: Source,
+    rules: Vec<Rule>,
 }
 
 impl Projection {
-    pub(crate) fn new(id: impl Into<String>, hash: surface::Hash, artifact: surface::Ref) -> Self {
-        Self {
-            id: id.into(),
-            hash,
-            artifact,
-        }
-    }
-
     pub(crate) fn id(&self) -> &str {
         &self.id
     }
@@ -117,12 +178,84 @@ impl Projection {
         &self.artifact
     }
 
+    pub(crate) fn source(&self) -> &Source {
+        &self.source
+    }
+
+    pub(crate) fn rules(&self) -> &[Rule] {
+        &self.rules
+    }
+
     fn check_artifact(&self, artifact: &surface::Ref) -> Result<(), Error> {
         if &self.artifact == artifact {
             Ok(())
         } else {
             Err(Error::StaleProjection)
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Projector {
+    id: String,
+    source: Source,
+    rules: Vec<Rule>,
+}
+
+impl Projector {
+    pub(crate) fn new(
+        id: impl Into<String>,
+        source: Source,
+        rules: impl IntoIterator<Item = Rule>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            source,
+            rules: rules.into_iter().collect(),
+        }
+    }
+
+    pub(crate) fn project(&self, graph: &graph::Projection) -> Projection {
+        let digest = Self::compute_digest(&self.id, &self.source, &self.rules, graph);
+        let hash = surface::Hash::new(digest.as_str());
+        Projection {
+            id: self.id.clone(),
+            hash,
+            artifact: graph.artifact().clone(),
+            source: self.source.clone(),
+            rules: self.rules.clone(),
+        }
+    }
+
+    fn compute_digest(
+        id: &str,
+        source: &Source,
+        rules: &[Rule],
+        graph: &graph::Projection,
+    ) -> Digest {
+        let mut parts = vec![
+            b"projection".to_vec(),
+            id.as_bytes().to_vec(),
+            format!("{:?}", graph.artifact().id()).into_bytes(),
+            graph.artifact().hash().as_str().as_bytes().to_vec(),
+        ];
+        push_source(&mut parts, source);
+        parts.extend(
+            rules
+                .iter()
+                .map(|rule| rule.digest.as_str().as_bytes().to_vec()),
+        );
+        for span in graph.spans() {
+            push_span(&mut parts, span);
+        }
+        for (parent, children) in graph.edges() {
+            parts.push(b"edge".to_vec());
+            push_target(&mut parts, parent);
+            for child in children {
+                push_target(&mut parts, child);
+            }
+        }
+        Digest::of(parts)
     }
 }
 
@@ -136,14 +269,10 @@ pub(crate) struct Bounds {
 }
 
 impl Bounds {
-    pub(crate) fn new(
-        projection: Projection,
-        rules: impl IntoIterator<Item = Rule>,
-        source: Source,
-        graph: graph::Bounds,
-    ) -> Result<Self, Error> {
+    pub(crate) fn new(projection: Projection, graph: graph::Bounds) -> Result<Self, Error> {
         projection.check_artifact(graph.artifact())?;
-        let rules = rules.into_iter().collect::<Vec<_>>();
+        let rules = projection.rules.clone();
+        let source = projection.source.clone();
         let digest = Self::compute_digest(&projection, &rules, &source, &graph);
         Ok(Self {
             projection,
@@ -206,25 +335,20 @@ impl Bounds {
         graph: &graph::Bounds,
     ) -> Digest {
         let mut parts = vec![
+            b"bounds".to_vec(),
             projection.id.as_bytes().to_vec(),
             projection.hash.as_str().as_bytes().to_vec(),
             format!("{:?}", projection.artifact.id()).into_bytes(),
             projection.artifact.hash().as_str().as_bytes().to_vec(),
-            source.tag().as_bytes().to_vec(),
-            source.label().as_bytes().to_vec(),
         ];
+        push_source(&mut parts, source);
         parts.extend(
             rules
                 .iter()
                 .map(|rule| rule.digest.as_str().as_bytes().to_vec()),
         );
         for span in graph.spans() {
-            parts.push(span.target().name().as_bytes().to_vec());
-            parts.push(span.target().path().display().to_string().into_bytes());
-            parts.push(span.path().display().to_string().into_bytes());
-            parts.push(span.start().to_string().into_bytes());
-            parts.push(span.end().to_string().into_bytes());
-            parts.push(span.hash().as_str().as_bytes().to_vec());
+            push_span(&mut parts, span);
         }
         Digest::of(parts)
     }
@@ -495,7 +619,21 @@ impl Write {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Apply {
+pub(crate) struct Apply {
+    state: State,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum State {
+    Reported {
+        proposal: String,
+        run: String,
+        base: surface::Ref,
+        after: surface::Ref,
+        touches: Vec<surface::Touch>,
+        check: surface::Check,
+        writes: Vec<Write>,
+    },
     Applied {
         proposal: String,
         run: String,
@@ -528,15 +666,17 @@ impl Apply {
         let proposal_id = proposal.id.clone();
         let run_id = proposal.run.clone();
         if writes.len() != proposal.touches.len() {
-            return Ok(Self::Rejected {
-                proposal: proposal_id,
-                run: run_id,
-                reason: format!(
-                    "apply returned {} write results for {} touches",
-                    writes.len(),
-                    proposal.touches.len()
-                ),
-                writes,
+            return Ok(Self {
+                state: State::Rejected {
+                    proposal: proposal_id,
+                    run: run_id,
+                    reason: format!(
+                        "apply returned {} write results for {} touches",
+                        writes.len(),
+                        proposal.touches.len()
+                    ),
+                    writes,
+                },
             });
         }
         if writes
@@ -544,20 +684,84 @@ impl Apply {
             .zip(proposal.touches.iter())
             .any(|(write, touch)| write.span != *touch.span() || write.after.is_err())
         {
-            return Ok(Self::Rejected {
-                proposal: proposal_id,
-                run: run_id,
-                reason: "one or more touched spans were rejected".to_string(),
-                writes,
+            return Ok(Self {
+                state: State::Rejected {
+                    proposal: proposal_id,
+                    run: run_id,
+                    reason: "one or more touched spans were rejected".to_string(),
+                    writes,
+                },
             });
         }
 
-        Ok(Self::Applied {
-            proposal: proposal_id,
-            run: run_id,
-            delta: harness::ArtifactDelta::from_check(check),
-            writes,
+        Ok(Self {
+            state: State::Reported {
+                proposal: proposal_id,
+                run: run_id,
+                base: proposal.base,
+                after: proposal.after,
+                touches: proposal.touches,
+                check,
+                writes,
+            },
         })
+    }
+
+    pub(crate) fn validate(self, after_artifact: &surface::Artifact) -> Result<Self, Error> {
+        let (proposal, run, after, touches, check, writes) = match self.state {
+            State::Reported {
+                proposal,
+                run,
+                base: _base,
+                after,
+                touches,
+                check,
+                writes,
+            } => (proposal, run, after, touches, check, writes),
+            state => return Ok(Self { state }),
+        };
+
+        if after_artifact.reference() != &after {
+            return Err(Error::AfterArtifactMismatch {
+                expected: after,
+                actual: after_artifact.reference().clone(),
+            });
+        }
+
+        for (touch, write) in touches.iter().zip(writes.iter()) {
+            let expected = write.after.as_ref().expect("reported writes are applied");
+            let actual = after_artifact
+                .file_hash(touch.span().path())
+                .ok_or_else(|| Error::MissingAfterHash(touch.span().path().clone()))?;
+            if actual != expected {
+                return Err(Error::AfterHashMismatch {
+                    path: touch.span().path().clone(),
+                    expected: expected.clone(),
+                    actual: actual.clone(),
+                });
+            }
+        }
+
+        Ok(Self {
+            state: State::Applied {
+                proposal,
+                run,
+                delta: harness::ArtifactDelta::from_check(check),
+                writes,
+            },
+        })
+    }
+
+    pub(crate) fn is_reported(&self) -> bool {
+        matches!(self.state, State::Reported { .. })
+    }
+
+    pub(crate) fn is_rejected(&self) -> bool {
+        matches!(self.state, State::Rejected { .. })
+    }
+
+    pub(crate) fn is_applied(&self) -> bool {
+        matches!(self.state, State::Applied { .. })
     }
 }
 
@@ -579,8 +783,45 @@ pub(crate) enum Error {
     AutoApply,
     #[error("checked surface does not match proposal")]
     CheckMismatch,
+    #[error(
+        "after artifact did not match checked result: expected {expected:?}, actual {actual:?}"
+    )]
+    AfterArtifactMismatch {
+        expected: surface::Ref,
+        actual: surface::Ref,
+    },
+    #[error("after artifact has no hash for touched path: {0}")]
+    MissingAfterHash(PathBuf),
+    #[error("after artifact hash mismatch for {path}: expected {expected:?}, actual {actual:?}")]
+    AfterHashMismatch {
+        path: PathBuf,
+        expected: surface::Hash,
+        actual: surface::Hash,
+    },
 }
 
 fn hash_from_tracking(hash: TrackingHash) -> surface::Hash {
     surface::Hash::new(hash.0.to_string())
+}
+
+fn push_source(parts: &mut Vec<Vec<u8>>, source: &Source) {
+    let [id, version, text] = source.def().parts();
+    parts.push(source.tag().as_bytes().to_vec());
+    parts.push(id.as_bytes().to_vec());
+    parts.push(version.as_bytes().to_vec());
+    parts.push(text.as_bytes().to_vec());
+}
+
+fn push_target(parts: &mut Vec<Vec<u8>>, target: &graph::Target) {
+    parts.push(target.path().display().to_string().into_bytes());
+    parts.push(target.name().as_bytes().to_vec());
+}
+
+fn push_span(parts: &mut Vec<Vec<u8>>, span: &graph::Span) {
+    parts.push(b"span".to_vec());
+    push_target(parts, span.target());
+    parts.push(span.path().display().to_string().into_bytes());
+    parts.push(span.start().to_string().into_bytes());
+    parts.push(span.end().to_string().into_bytes());
+    parts.push(span.hash().as_str().as_bytes().to_vec());
 }
