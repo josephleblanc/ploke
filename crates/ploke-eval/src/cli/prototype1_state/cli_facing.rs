@@ -27,15 +27,15 @@ use crate::{
         Depth, HistoryCommand, HistorySubcommand, InspectOutputFormat,
         Prototype1BranchApplyCommand, Prototype1BranchEvaluateCommand,
         Prototype1BranchRestoreCommand, Prototype1BranchSelectCommand, Prototype1BranchShowCommand,
-        Prototype1BranchStatusCommand, Prototype1ChildEvidenceCommand,
-        Prototype1HistoryPreviewCommand, Prototype1LoopCommand, Prototype1LoopStopAfter,
-        Prototype1MetricsCommand, Prototype1MonitorCommand, Prototype1MonitorPeekCommand,
-        Prototype1MonitorReportCommand, Prototype1MonitorSubcommand,
-        Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand, Prototype1RunnerCommand,
-        Prototype1ScoreCommand, Prototype1SelectionShowCommand, Prototype1StateCommand,
-        Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
-        TimingTrace, advance_eval_closure, advance_protocol_closure, default_batch_id,
-        pending_prototype1_stages, persist_intervention_apply_for_record,
+        Prototype1BranchStatusCommand, Prototype1CandidateGenerator,
+        Prototype1ChildEvidenceCommand, Prototype1EditSurface, Prototype1HistoryPreviewCommand,
+        Prototype1LoopCommand, Prototype1LoopStopAfter, Prototype1MetricsCommand,
+        Prototype1MonitorCommand, Prototype1MonitorPeekCommand, Prototype1MonitorReportCommand,
+        Prototype1MonitorSubcommand, Prototype1MonitorTimingCommand, Prototype1MonitorWatchCommand,
+        Prototype1RunnerCommand, Prototype1ScoreCommand, Prototype1SelectionShowCommand,
+        Prototype1StateCommand, Prototype1StateStopAfter, Prototype1SuccessorSelection,
+        Prototype1TraversalMetrics, TimingTrace, advance_eval_closure, advance_protocol_closure,
+        default_batch_id, pending_prototype1_stages, persist_intervention_apply_for_record,
         persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
         print_issue_case_block,
         prototype1_process::{
@@ -408,7 +408,114 @@ impl SelectionSealMaterial {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CandidateGenerationConfig {
+    generator: Prototype1CandidateGenerator,
+    edit_surface: Prototype1EditSurface,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidateGenerationPath {
+    Legacy,
+    TuiEditSurface(Prototype1EditSurface),
+}
+
+impl CandidateGenerationConfig {
+    fn from_command(command: &Prototype1StateCommand) -> Self {
+        Self {
+            generator: command.candidate_generator,
+            edit_surface: command.edit_surface,
+        }
+    }
+
+    fn path(self) -> CandidateGenerationPath {
+        match self.generator {
+            Prototype1CandidateGenerator::Legacy => CandidateGenerationPath::Legacy,
+            Prototype1CandidateGenerator::TuiEditSurface => {
+                CandidateGenerationPath::TuiEditSurface(self.edit_surface)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+enum CandidateGenerationError {
+    #[error(
+        "candidate-generator=tui-edit-surface cannot publish a child plan for edit-surface={surface:?}: backend-owned after Artifact validation is not wired for checked TUI edits; next backend slice must materialize the proposed edit into a derived Artifact, recompute the derived Artifact id and touched file hashes from that checkout, pass that backend-owned surface::Artifact into edit_surface::tui::Apply::validate, then convert the resulting checked ArtifactDelta into ChildFiles/ResolvedTreatmentBranch evidence"
+    )]
+    BackendOwnedAfterArtifactValidationMissing { surface: Prototype1EditSurface },
+    #[error(
+        "candidate-generator=tui-edit-surface cannot reuse existing child plan '{}': the plan format does not yet carry edit-surface check/delta evidence, so using it would silently bypass the requested generator",
+        path.display()
+    )]
+    ExistingPlanLacksEditSurfaceEvidence { path: PathBuf },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CheckedEditSurfaceCandidate {
+    surface: Prototype1EditSurface,
+    delta: crate::cli::prototype1_state::edit_surface::ArtifactDelta,
+}
+
+#[cfg(test)]
+impl CheckedEditSurfaceCandidate {
+    fn new(
+        surface: Prototype1EditSurface,
+        delta: crate::cli::prototype1_state::edit_surface::ArtifactDelta,
+    ) -> Self {
+        Self { surface, delta }
+    }
+}
+
+impl CandidateGenerationError {
+    fn into_prepare(self) -> PrepareError {
+        PrepareError::InvalidBatchSelection {
+            detail: self.to_string(),
+        }
+    }
+}
+
+fn materialize_edit_surface_child_files(
+    edit_surface: Prototype1EditSurface,
+    checked: &[CheckedEditSurfaceCandidate],
+) -> Result<Vec<ChildFiles>, CandidateGenerationError> {
+    let _checked_touch_count = checked
+        .iter()
+        .filter(|candidate| candidate.surface == edit_surface)
+        .map(|candidate| candidate.delta.touches().len())
+        .sum::<usize>();
+    Err(
+        CandidateGenerationError::BackendOwnedAfterArtifactValidationMissing {
+            surface: edit_surface,
+        },
+    )
+}
+
 async fn run_parent_target_selection(
+    campaign_id: &str,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: Parent<Ready>,
+    config: CandidateGenerationConfig,
+) -> Result<ChildPlanReceipt, PrepareError> {
+    match config.path() {
+        CandidateGenerationPath::Legacy => {
+            run_legacy_parent_target_selection(campaign_id, manifest_path, repo_root, parent).await
+        }
+        CandidateGenerationPath::TuiEditSurface(edit_surface) => {
+            run_tui_edit_surface_parent_target_selection(
+                campaign_id,
+                manifest_path,
+                repo_root,
+                parent,
+                edit_surface,
+            )
+            .await
+        }
+    }
+}
+
+async fn run_legacy_parent_target_selection(
     campaign_id: &str,
     manifest_path: &Path,
     repo_root: &Path,
@@ -509,6 +616,22 @@ async fn run_parent_target_selection(
         &parent_identity,
         planned,
         locked,
+    )
+}
+
+async fn run_tui_edit_surface_parent_target_selection(
+    _campaign_id: &str,
+    _manifest_path: &Path,
+    _repo_root: &Path,
+    _parent: Parent<Ready>,
+    edit_surface: Prototype1EditSurface,
+) -> Result<ChildPlanReceipt, PrepareError> {
+    materialize_edit_surface_child_files(edit_surface, &[]).map_err(|err| err.into_prepare())?;
+    Err(
+        CandidateGenerationError::BackendOwnedAfterArtifactValidationMissing {
+            surface: edit_surface,
+        }
+        .into_prepare(),
     )
 }
 
@@ -4935,10 +5058,26 @@ async fn resolve_child_plan(
         manifest_path.to_path_buf(),
         parent_identity.node_id.clone(),
     ));
+    let candidate_generation = CandidateGenerationConfig::from_command(command);
     let receipt = if plan_at.path().exists() {
+        if candidate_generation.generator == Prototype1CandidateGenerator::TuiEditSurface {
+            return Err(
+                CandidateGenerationError::ExistingPlanLacksEditSurfaceEvidence {
+                    path: plan_at.path().to_path_buf(),
+                }
+                .into_prepare(),
+            );
+        }
         receive_existing_child_plan(campaign_id, manifest_path, repo_root, parent)?
     } else {
-        run_parent_target_selection(campaign_id, manifest_path, repo_root, parent).await?
+        run_parent_target_selection(
+            campaign_id,
+            manifest_path,
+            repo_root,
+            parent,
+            candidate_generation,
+        )
+        .await?
     };
     let children = receipt
         .plan
@@ -8117,8 +8256,126 @@ mod tests {
             successor_selection: Prototype1SuccessorSelection::HistoryScoreChildProp,
             successor_selection_seed: 0,
             successor_selection_metrics: Prototype1TraversalMetrics::Operational,
+            candidate_generator: Prototype1CandidateGenerator::Legacy,
+            edit_surface: Prototype1EditSurface::PlokeTuiTools,
             format: InspectOutputFormat::Table,
         }
+    }
+
+    #[test]
+    fn candidate_generation_config_dispatches_legacy_by_default() {
+        let command = state_command_without_ids();
+        let config = CandidateGenerationConfig::from_command(&command);
+
+        assert_eq!(config.path(), CandidateGenerationPath::Legacy);
+    }
+
+    #[test]
+    fn candidate_generation_config_dispatches_tui_edit_surface() {
+        let mut command = state_command_without_ids();
+        command.candidate_generator = Prototype1CandidateGenerator::TuiEditSurface;
+        command.edit_surface = Prototype1EditSurface::PlokeTuiTools;
+        let config = CandidateGenerationConfig::from_command(&command);
+
+        assert_eq!(
+            config.path(),
+            CandidateGenerationPath::TuiEditSurface(Prototype1EditSurface::PlokeTuiTools)
+        );
+    }
+
+    #[test]
+    fn tui_edit_surface_generation_fails_closed_before_child_plan() {
+        let error = CandidateGenerationError::BackendOwnedAfterArtifactValidationMissing {
+            surface: Prototype1EditSurface::PlokeTuiTools,
+        };
+
+        let PrepareError::InvalidBatchSelection { detail } = error.into_prepare() else {
+            panic!("unexpected error variant");
+        };
+        assert!(detail.contains("candidate-generator=tui-edit-surface"));
+        assert!(detail.contains("backend-owned after Artifact validation is not wired"));
+        assert!(detail.contains("edit_surface::tui::Apply::validate"));
+        assert!(detail.contains("ChildFiles/ResolvedTreatmentBranch"));
+    }
+
+    #[test]
+    fn checked_edit_surface_candidates_still_require_backend_owned_after_artifact() {
+        let delta = checked_edit_surface_delta_for_test();
+        let candidate =
+            CheckedEditSurfaceCandidate::new(Prototype1EditSurface::PlokeTuiTools, delta);
+
+        let error = materialize_edit_surface_child_files(
+            Prototype1EditSurface::PlokeTuiTools,
+            &[candidate],
+        )
+        .expect_err("checked carrier path must fail before child plan");
+
+        assert!(matches!(
+            error,
+            CandidateGenerationError::BackendOwnedAfterArtifactValidationMissing {
+                surface: Prototype1EditSurface::PlokeTuiTools
+            }
+        ));
+    }
+
+    #[test]
+    fn tui_edit_surface_does_not_reuse_unproven_existing_plan() {
+        let path = PathBuf::from("/tmp/child-plan.json");
+        let error = CandidateGenerationError::ExistingPlanLacksEditSurfaceEvidence { path };
+
+        let PrepareError::InvalidBatchSelection { detail } = error.into_prepare() else {
+            panic!("unexpected error variant");
+        };
+        assert!(detail.contains("cannot reuse existing child plan"));
+        assert!(detail.contains("does not yet carry edit-surface check/delta evidence"));
+        assert!(detail.contains("silently bypass"));
+    }
+
+    fn checked_edit_surface_delta_for_test()
+    -> crate::cli::prototype1_state::edit_surface::ArtifactDelta {
+        use crate::cli::prototype1_state::edit_surface::{
+            graph, graph::View as _, harness, harness::Harness as _, surface,
+        };
+        use crate::loop_graph::ArtifactId;
+
+        let path = PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs");
+        let target = graph::Target::new(&path, "code_edit_tool");
+        let file_hash = surface::Hash::new("before-file-hash");
+        let base = surface::Ref::new(ArtifactId::new("artifact:base"), surface::Hash::new("base"));
+        let after = surface::Ref::new(
+            ArtifactId::new("artifact:after"),
+            surface::Hash::new("after"),
+        );
+        let artifact = surface::Artifact::new(base.clone(), [(path.clone(), file_hash.clone())]);
+        let view = graph::Mock::new(
+            vec![graph::Node::new(target.clone(), path.clone(), 0, 4)],
+            [],
+        );
+        let projection = view.project(&artifact).expect("project graph");
+        let bounds = view
+            .bounds(&projection, &[graph::Rule::Include(target.clone())])
+            .expect("derive bounds");
+        let span = view
+            .resolve(&projection, &bounds, &target)
+            .expect("resolve bounded target");
+        let grant = surface::Grant::new(base.clone(), bounds, surface::Area::new([span.clone()]))
+            .expect("grant");
+        let touch = surface::Touch::new(span, "new");
+        let harness = harness::Mock::new(view);
+        let (proposal, _run) = harness
+            .propose(harness::Input {
+                proposal: "proposal-1",
+                run: "run-1",
+                base: &base,
+                after,
+                touches: vec![touch],
+            })
+            .expect("proposal");
+        let check = grant.check(proposal.draft()).expect("surface check");
+        let applied = harness
+            .apply_checked(proposal, check)
+            .expect("checked apply");
+        applied.delta().clone()
     }
 
     fn test_node(

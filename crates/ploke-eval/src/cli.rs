@@ -439,6 +439,19 @@ pub enum Prototype1TraversalMetrics {
     OperationalAndProtocol,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1CandidateGenerator {
+    Legacy,
+    TuiEditSurface,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1EditSurface {
+    PlokeTuiTools,
+}
+
 #[derive(Debug, Parser)]
 #[command(about = "Run the typed Prototype 1 state transitions for the active parent checkout")]
 pub struct Prototype1StateCommand {
@@ -484,6 +497,14 @@ pub struct Prototype1StateCommand {
     /// Metric-bearing states used by History-backed traversal scoring.
     #[arg(long, value_enum, default_value_t = Prototype1TraversalMetrics::Operational)]
     pub successor_selection_metrics: Prototype1TraversalMetrics,
+
+    /// Candidate generator used before publishing the child plan.
+    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::Legacy)]
+    pub candidate_generator: Prototype1CandidateGenerator,
+
+    /// Bounded edit surface used by edit-surface candidate generation.
+    #[arg(long, value_enum, default_value_t = Prototype1EditSurface::PlokeTuiTools)]
+    pub edit_surface: Prototype1EditSurface,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
@@ -12304,6 +12325,10 @@ mod tests {
             "/tmp/prototype1-successor.json",
             "--stop-after",
             "build",
+            "--candidate-generator",
+            "tui-edit-surface",
+            "--edit-surface",
+            "ploke-tui-tools",
         ])
         .expect("loop prototype1-state should parse");
 
@@ -12318,6 +12343,30 @@ mod tests {
                     Some(std::path::Path::new("/tmp/prototype1-successor.json"))
                 );
                 assert_eq!(cmd.stop_after, Prototype1StateStopAfter::Build);
+                assert_eq!(
+                    cmd.candidate_generator,
+                    Prototype1CandidateGenerator::TuiEditSurface
+                );
+                assert_eq!(cmd.edit_surface, Prototype1EditSurface::PlokeTuiTools);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_state_candidate_generator_defaults_to_legacy() {
+        let parsed = Cli::try_parse_from(["ploke-eval", "loop", "prototype1-state"])
+            .expect("loop prototype1-state should parse with generator defaults");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1State(cmd),
+            }) => {
+                assert_eq!(
+                    cmd.candidate_generator,
+                    Prototype1CandidateGenerator::Legacy
+                );
+                assert_eq!(cmd.edit_surface, Prototype1EditSurface::PlokeTuiTools);
             }
             other => panic!("unexpected command shape: {:?}", other),
         }
