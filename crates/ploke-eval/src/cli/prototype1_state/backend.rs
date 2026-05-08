@@ -6,7 +6,7 @@
 //! branching/restore problem cheaply, but they are not the semantic model.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use ploke_core::tool_types::ToolName;
@@ -14,6 +14,12 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::cli::Prototype1EditSurface;
+use crate::intervention::{text_file_artifact_id, text_replacement_patch_id};
+use crate::loop_graph::{ArtifactId, PatchId};
+
+use super::edit_surface::{self, graph, surface, tui};
+use super::event::ContentHash;
 use super::history::{HistoryHash, SurfaceCommitment};
 use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
 
@@ -188,6 +194,95 @@ pub(crate) struct RealizeRequest {
     pub proposed_content: String,
 }
 
+/// One lower edit touch supplied by the TUI proposal path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProposedTouch {
+    pub(crate) target: String,
+    pub(crate) relpath: PathBuf,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) expected_file_hash: String,
+    pub(crate) replacement: String,
+}
+
+/// Candidate edit proposal after the harness has identified concrete material
+/// spans but before `ploke-eval` admits the edit as a child candidate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EditProposal {
+    pub(crate) surface: Prototype1EditSurface,
+    pub(crate) proposal_id: String,
+    pub(crate) run_id: String,
+    pub(crate) touches: Vec<ProposedTouch>,
+    pub(crate) reported_after_file_hash: Option<String>,
+}
+
+/// Checked single-file edit that has passed the authority-side surface gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CheckedSurfaceEdit {
+    surface: Prototype1EditSurface,
+    proposal_id: String,
+    run_id: String,
+    target_relpath: PathBuf,
+    source_content: String,
+    proposed_content: String,
+    source_content_hash: String,
+    proposed_content_hash: String,
+    base_artifact_id: ArtifactId,
+    patch_id: PatchId,
+    derived_artifact_id: ArtifactId,
+    delta: edit_surface::ArtifactDelta,
+}
+
+impl CheckedSurfaceEdit {
+    pub(crate) fn surface(&self) -> Prototype1EditSurface {
+        self.surface
+    }
+
+    pub(crate) fn proposal_id(&self) -> &str {
+        &self.proposal_id
+    }
+
+    pub(crate) fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
+    pub(crate) fn target_relpath(&self) -> &Path {
+        &self.target_relpath
+    }
+
+    pub(crate) fn source_content(&self) -> &str {
+        &self.source_content
+    }
+
+    pub(crate) fn proposed_content(&self) -> &str {
+        &self.proposed_content
+    }
+
+    pub(crate) fn source_content_hash(&self) -> &str {
+        &self.source_content_hash
+    }
+
+    pub(crate) fn proposed_content_hash(&self) -> &str {
+        &self.proposed_content_hash
+    }
+
+    pub(crate) fn base_artifact_id(&self) -> &ArtifactId {
+        &self.base_artifact_id
+    }
+
+    pub(crate) fn patch_id(&self) -> &PatchId {
+        &self.patch_id
+    }
+
+    pub(crate) fn derived_artifact_id(&self) -> &ArtifactId {
+        &self.derived_artifact_id
+    }
+
+    pub(crate) fn delta(&self) -> &edit_surface::ArtifactDelta {
+        &self.delta
+    }
+}
+
 /// Realized descendant workspace.
 ///
 /// This is the backend's concrete witness that a child artifact world exists.
@@ -310,6 +405,42 @@ pub(crate) enum BackendError {
     MissingSurfaceFile { path: PathBuf },
     #[error("immutable surface changed across candidate artifact: before={before}, after={after}")]
     ImmutableSurfaceChanged { before: String, after: String },
+    #[error("edit-surface proposal for {surface:?} had no touches")]
+    EmptyEditTouches { surface: Prototype1EditSurface },
+    #[error("edit-surface proposal touched multiple files: {paths:?}")]
+    MultiFileEdit { paths: Vec<PathBuf> },
+    #[error("edit path '{path}' is outside edit surface {surface:?}")]
+    OutOfEditSurface {
+        surface: Prototype1EditSurface,
+        path: PathBuf,
+    },
+    #[error("edit path '{path}' is not a normal repository-relative path")]
+    InvalidEditSurfacePath { path: PathBuf },
+    #[error("edit span {start}..{end} is invalid for '{path}' with length {len}")]
+    InvalidEditSpan {
+        path: PathBuf,
+        start: usize,
+        end: usize,
+        len: usize,
+    },
+    #[error(
+        "edit spans overlap in '{path}': previous {previous_start}..{previous_end}, next {next_start}..{next_end}"
+    )]
+    OverlappingEditSpans {
+        path: PathBuf,
+        previous_start: usize,
+        previous_end: usize,
+        next_start: usize,
+        next_end: usize,
+    },
+    #[error("edit base hash for '{path}' is stale: expected {expected}, actual {actual}")]
+    StaleEditBaseHash {
+        path: PathBuf,
+        expected: String,
+        actual: String,
+    },
+    #[error("checked edit-surface transition failed: {detail}")]
+    EditSurfaceCheck { detail: String },
 }
 
 /// Backend for realizing descendant workspaces.
@@ -661,6 +792,233 @@ impl GitWorktreeBackend {
         }
 
         Ok(false)
+    }
+
+    /// Validate a concrete, already-produced TUI edit proposal and return the
+    /// current single-file child-candidate carrier.
+    ///
+    /// This is deliberately not a proposal generator. The live CLI path must
+    /// still fail closed until a real TUI proposal producer supplies these
+    /// spans and replacements.
+    pub(crate) fn validate_edit_surface_candidate(
+        &self,
+        repo_root: &Path,
+        proposal: EditProposal,
+    ) -> Result<CheckedSurfaceEdit, BackendError> {
+        use super::edit_surface::graph::View as _;
+
+        if proposal.touches.is_empty() {
+            return Err(BackendError::EmptyEditTouches {
+                surface: proposal.surface,
+            });
+        }
+
+        let mut paths = proposal
+            .touches
+            .iter()
+            .map(|touch| touch.relpath.clone())
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths.dedup();
+        if paths.len() != 1 {
+            return Err(BackendError::MultiFileEdit { paths });
+        }
+        let target_relpath = paths.remove(0);
+        validate_normal_repo_relpath(&target_relpath)?;
+        if !is_allowed_edit_surface_path(proposal.surface, &target_relpath) {
+            return Err(BackendError::OutOfEditSurface {
+                surface: proposal.surface,
+                path: target_relpath,
+            });
+        }
+
+        let absolute_target = repo_root.join(&target_relpath);
+        let source_content =
+            fs::read_to_string(&absolute_target).map_err(|source| BackendError::ReadTarget {
+                path: absolute_target,
+                source,
+            })?;
+        let source_hash = content_hash(&source_content);
+        let source_surface_hash = surface::Hash::new(source_hash.clone());
+
+        let mut touches = proposal.touches;
+        touches.sort_by_key(|touch| (touch.start, touch.end));
+        validate_touch_spans(&target_relpath, &source_content, &touches)?;
+        for touch in &touches {
+            if touch.expected_file_hash != source_hash {
+                return Err(BackendError::StaleEditBaseHash {
+                    path: target_relpath.clone(),
+                    expected: touch.expected_file_hash.clone(),
+                    actual: source_hash.clone(),
+                });
+            }
+        }
+
+        let proposed_content = fold_touches(&source_content, &touches);
+        let proposed_hash = content_hash(&proposed_content);
+        let proposed_surface_hash = surface::Hash::new(proposed_hash.clone());
+        let base_artifact_id = text_file_artifact_id(&target_relpath, &source_content);
+        let derived_artifact_id = text_file_artifact_id(&target_relpath, &proposed_content);
+        let patch_id =
+            text_replacement_patch_id(&target_relpath, &source_content, &proposed_content);
+        let base_ref = surface::Ref::new(base_artifact_id.clone(), source_surface_hash.clone());
+        let after_ref =
+            surface::Ref::new(derived_artifact_id.clone(), proposed_surface_hash.clone());
+
+        let artifact = surface::Artifact::new(
+            base_ref.clone(),
+            [(target_relpath.clone(), source_surface_hash.clone())],
+        );
+        let targets = touches
+            .iter()
+            .enumerate()
+            .map(|(index, touch)| {
+                graph::Target::new(
+                    target_relpath.clone(),
+                    format!("{}:{}", touch.target, index),
+                )
+            })
+            .collect::<Vec<_>>();
+        let graph_nodes = touches
+            .iter()
+            .zip(targets.iter())
+            .map(|(touch, target)| {
+                graph::Node::new(
+                    target.clone(),
+                    target_relpath.clone(),
+                    touch.start,
+                    touch.end,
+                )
+            })
+            .collect::<Vec<_>>();
+        let graph = graph::Mock::new(graph_nodes.clone(), []);
+        let projection =
+            graph
+                .project(&artifact)
+                .map_err(|err| BackendError::EditSurfaceCheck {
+                    detail: err.to_string(),
+                })?;
+        let rules = targets
+            .iter()
+            .cloned()
+            .map(graph::Rule::Include)
+            .collect::<Vec<_>>();
+        let graph_bounds =
+            graph
+                .bounds(&projection, &rules)
+                .map_err(|err| BackendError::EditSurfaceCheck {
+                    detail: err.to_string(),
+                })?;
+        let tui_projection = tui::Projector::new(
+            "prototype1:ploke-tui-tools",
+            tui::Source::derived(
+                "prototype1:ploke-tui-tools",
+                "v1",
+                "backend-owned single-file edit surface bridge",
+            ),
+            [tui::Rule::named(
+                "prototype1:ploke-tui-tools",
+                "v1",
+                "crates/ploke-tui/src/tools/** plus documented rag tool files",
+            )],
+        )
+        .project(&projection);
+        let tui_bounds =
+            tui::Bounds::new(tui_projection.clone(), graph_bounds.clone()).map_err(|err| {
+                BackendError::EditSurfaceCheck {
+                    detail: err.to_string(),
+                }
+            })?;
+
+        let mut checked_touches = Vec::new();
+        for (index, touch) in touches.iter().enumerate() {
+            let material = tui::MaterialSpan::new(
+                targets[index].clone(),
+                target_relpath.clone(),
+                touch.start,
+                touch.end,
+                source_surface_hash.clone(),
+                tui::MaterialSource::TuiSplice,
+            );
+            let checked = tui_bounds
+                .touch(&artifact, material, touch.replacement.clone())
+                .map_err(|err| BackendError::EditSurfaceCheck {
+                    detail: err.to_string(),
+                })?;
+            checked_touches.push(checked);
+        }
+
+        let grant = surface::Grant::new(
+            base_ref.clone(),
+            graph_bounds,
+            surface::Area::new(
+                checked_touches
+                    .iter()
+                    .map(|touch| touch.span().clone())
+                    .collect::<Vec<_>>(),
+            ),
+        )
+        .map_err(|err| BackendError::EditSurfaceCheck {
+            detail: err.to_string(),
+        })?;
+        let staged = tui::Proposal::stage(tui::Stage {
+            proposal: &proposal.proposal_id,
+            run: &proposal.run_id,
+            base: &base_ref,
+            after: after_ref.clone(),
+            projection: &tui_projection,
+            touches: checked_touches.clone(),
+            auto_apply: false,
+        })
+        .map_err(|err| BackendError::EditSurfaceCheck {
+            detail: err.to_string(),
+        })?;
+        let check = grant
+            .check(staged.draft())
+            .map_err(|err| BackendError::EditSurfaceCheck {
+                detail: err.to_string(),
+            })?;
+        let reported_after_hash = proposal
+            .reported_after_file_hash
+            .map(surface::Hash::new)
+            .unwrap_or_else(|| proposed_surface_hash.clone());
+        let writes = checked_touches
+            .iter()
+            .map(|touch| tui::Write::applied(touch, reported_after_hash.clone()))
+            .collect::<Vec<_>>();
+        let after_artifact = surface::Artifact::new(
+            after_ref,
+            [(target_relpath.clone(), proposed_surface_hash.clone())],
+        );
+        let applied = tui::Apply::from_results(staged, check, writes)
+            .map_err(|err| BackendError::EditSurfaceCheck {
+                detail: err.to_string(),
+            })?
+            .validate(&after_artifact)
+            .map_err(|err| BackendError::EditSurfaceCheck {
+                detail: err.to_string(),
+            })?;
+        let delta = applied
+            .delta()
+            .cloned()
+            .ok_or_else(|| BackendError::EditSurfaceCheck {
+                detail: "checked edit did not reach applied state".to_string(),
+            })?;
+
+        Ok(CheckedSurfaceEdit {
+            surface: proposal.surface,
+            proposal_id: proposal.proposal_id,
+            run_id: proposal.run_id,
+            target_relpath,
+            source_content,
+            proposed_content,
+            source_content_hash: source_hash,
+            proposed_content_hash: proposed_hash,
+            base_artifact_id,
+            patch_id,
+            derived_artifact_id,
+            delta,
+        })
     }
 
     fn persist_files(
@@ -1242,9 +1600,8 @@ impl WorkspaceBackend for GitWorktreeBackend {
             });
         }
 
-        let mutated_paths = tool_description_paths();
-        let mutated_before = surface_hash(before_root, &mutated_paths)?;
-        let mutated_after = surface_hash(after_root, &mutated_paths)?;
+        let mutated_before = surface_hash(before_root, &mutated_surface_paths(before_root)?)?;
+        let mutated_after = surface_hash(after_root, &mutated_surface_paths(after_root)?)?;
         let ambient_before = surface_hash(before_root, &[])?;
         let ambient_after = surface_hash(after_root, &[])?;
 
@@ -1341,6 +1698,108 @@ fn tool_description_paths() -> Vec<PathBuf> {
         .iter()
         .map(|tool| PathBuf::from(tool.description_artifact_relpath()))
         .collect()
+}
+
+fn ploke_tui_tool_files() -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("crates/ploke-tui/src/rag/tools.rs"),
+        PathBuf::from("crates/ploke-tui/src/rag/editing.rs"),
+    ]
+}
+
+fn mutated_surface_paths(worktree_root: &Path) -> Result<Vec<PathBuf>, BackendError> {
+    let mut paths = tool_description_paths();
+    paths.extend(ploke_tui_tool_files());
+    let tool_paths = tracked_paths(worktree_root, "crates/ploke-tui/src/tools")?;
+    if tool_paths.is_empty() {
+        return Err(BackendError::EmptySurfacePathspec {
+            root: worktree_root.to_path_buf(),
+            pathspec: "crates/ploke-tui/src/tools".to_string(),
+        });
+    }
+    paths.extend(tool_paths);
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn is_allowed_edit_surface_path(surface: Prototype1EditSurface, path: &Path) -> bool {
+    match surface {
+        Prototype1EditSurface::PlokeTuiTools => {
+            path.starts_with("crates/ploke-tui/src/tools")
+                || ploke_tui_tool_files().iter().any(|allowed| allowed == path)
+        }
+    }
+}
+
+fn validate_normal_repo_relpath(path: &Path) -> Result<(), BackendError> {
+    if path.as_os_str().is_empty() || path.is_absolute() {
+        return Err(BackendError::InvalidEditSurfacePath {
+            path: path.to_path_buf(),
+        });
+    }
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => {}
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
+                return Err(BackendError::InvalidEditSurfacePath {
+                    path: path.to_path_buf(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn content_hash(content: &str) -> String {
+    ContentHash::of(content).0
+}
+
+fn validate_touch_spans(
+    path: &Path,
+    source: &str,
+    touches: &[ProposedTouch],
+) -> Result<(), BackendError> {
+    let len = source.len();
+    let mut previous: Option<&ProposedTouch> = None;
+    for touch in touches {
+        if touch.start > touch.end
+            || touch.end > len
+            || !source.is_char_boundary(touch.start)
+            || !source.is_char_boundary(touch.end)
+        {
+            return Err(BackendError::InvalidEditSpan {
+                path: path.to_path_buf(),
+                start: touch.start,
+                end: touch.end,
+                len,
+            });
+        }
+        if let Some(prev) = previous {
+            if touch.start < prev.end {
+                return Err(BackendError::OverlappingEditSpans {
+                    path: path.to_path_buf(),
+                    previous_start: prev.start,
+                    previous_end: prev.end,
+                    next_start: touch.start,
+                    next_end: touch.end,
+                });
+            }
+        }
+        previous = Some(touch);
+    }
+    Ok(())
+}
+
+fn fold_touches(source: &str, touches: &[ProposedTouch]) -> String {
+    let mut result = source.to_string();
+    for touch in touches.iter().rev() {
+        result.replace_range(touch.start..touch.end, &touch.replacement);
+    }
+    result
 }
 
 fn surface_hash(worktree_root: &Path, relpaths: &[PathBuf]) -> Result<HistoryHash, BackendError> {
@@ -1502,6 +1961,15 @@ mod tests {
         let eval_path = repo_root.join("crates/ploke-eval/src");
         fs::create_dir_all(&eval_path).expect("create eval dir");
         fs::write(eval_path.join("lib.rs"), eval_text).expect("write eval file");
+        let tui_tool_path = repo_root.join("crates/ploke-tui/src/tools");
+        fs::create_dir_all(&tui_tool_path).expect("create tui tools dir");
+        fs::write(tui_tool_path.join("code_edit.rs"), tool_text).expect("write tui tool file");
+        for relpath in super::ploke_tui_tool_files() {
+            let path = repo_root.join(relpath);
+            fs::create_dir_all(path.parent().expect("tui file has parent"))
+                .expect("create tui file dir");
+            fs::write(path, tool_text).expect("write tui file");
+        }
         for relpath in super::tool_description_paths() {
             let path = repo_root.join(relpath);
             fs::create_dir_all(path.parent().expect("tool file has parent"))
@@ -1514,6 +1982,32 @@ mod tests {
             &["commit", "--no-gpg-sign", "-m", "surface files"],
         );
         tmp
+    }
+
+    fn write_tui_target(repo_root: &std::path::Path, content: &str) -> PathBuf {
+        let relpath = PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs");
+        let path = repo_root.join(&relpath);
+        fs::create_dir_all(path.parent().expect("target has parent")).expect("create target dir");
+        fs::write(path, content).expect("write tui target");
+        relpath
+    }
+
+    fn proposal_for(relpath: PathBuf, source: &str) -> super::EditProposal {
+        let hash = super::content_hash(source);
+        super::EditProposal {
+            surface: crate::cli::Prototype1EditSurface::PlokeTuiTools,
+            proposal_id: "proposal-1".to_string(),
+            run_id: "run-1".to_string(),
+            reported_after_file_hash: None,
+            touches: vec![super::ProposedTouch {
+                target: "code_edit".to_string(),
+                relpath,
+                start: 4,
+                end: 7,
+                expected_file_hash: hash,
+                replacement: "new".to_string(),
+            }],
+        }
     }
 
     fn identity(generation: u32, parent_id: &str, artifact_branch: &str) -> ParentIdentity {
@@ -1588,6 +2082,162 @@ R  old.rs -> new.rs
                 PathBuf::from("new.rs"),
             ]
         );
+    }
+
+    #[test]
+    fn edit_surface_bridge_accepts_single_file_proposal() {
+        let tmp = init_git_repo();
+        let relpath = write_tui_target(tmp.path(), "let old = 1;\n");
+        let checked = GitWorktreeBackend
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                proposal_for(relpath.clone(), "let old = 1;\n"),
+            )
+            .expect("single-file checked edit");
+
+        assert_eq!(checked.target_relpath(), relpath.as_path());
+        assert_eq!(checked.source_content(), "let old = 1;\n");
+        assert_eq!(checked.proposed_content(), "let new = 1;\n");
+        assert_eq!(checked.delta().touches().len(), 1);
+        assert_ne!(checked.base_artifact_id(), checked.derived_artifact_id());
+    }
+
+    #[test]
+    fn edit_surface_bridge_rejects_zero_touches() {
+        let tmp = init_git_repo();
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                super::EditProposal {
+                    surface: crate::cli::Prototype1EditSurface::PlokeTuiTools,
+                    proposal_id: "proposal-1".to_string(),
+                    run_id: "run-1".to_string(),
+                    touches: Vec::new(),
+                    reported_after_file_hash: None,
+                },
+            )
+            .expect_err("zero touches must reject");
+
+        assert!(matches!(err, BackendError::EmptyEditTouches { .. }));
+    }
+
+    #[test]
+    fn edit_surface_bridge_rejects_multi_file_proposal() {
+        let tmp = init_git_repo();
+        let relpath = write_tui_target(tmp.path(), "let old = 1;\n");
+        let hash = super::content_hash("let old = 1;\n");
+        let mut proposal = proposal_for(relpath, "let old = 1;\n");
+        proposal.touches.push(super::ProposedTouch {
+            target: "rag_tools".to_string(),
+            relpath: PathBuf::from("crates/ploke-tui/src/rag/tools.rs"),
+            start: 0,
+            end: 0,
+            expected_file_hash: hash,
+            replacement: "x".to_string(),
+        });
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .expect_err("multi-file proposal must reject");
+
+        assert!(matches!(err, BackendError::MultiFileEdit { .. }));
+    }
+
+    #[test]
+    fn edit_surface_bridge_rejects_overlapping_spans() {
+        let tmp = init_git_repo();
+        let relpath = write_tui_target(tmp.path(), "let old = 1;\n");
+        let hash = super::content_hash("let old = 1;\n");
+        let proposal = super::EditProposal {
+            surface: crate::cli::Prototype1EditSurface::PlokeTuiTools,
+            proposal_id: "proposal-1".to_string(),
+            run_id: "run-1".to_string(),
+            reported_after_file_hash: None,
+            touches: vec![
+                super::ProposedTouch {
+                    target: "first".to_string(),
+                    relpath: relpath.clone(),
+                    start: 4,
+                    end: 8,
+                    expected_file_hash: hash.clone(),
+                    replacement: "new".to_string(),
+                },
+                super::ProposedTouch {
+                    target: "second".to_string(),
+                    relpath,
+                    start: 7,
+                    end: 10,
+                    expected_file_hash: hash,
+                    replacement: "other".to_string(),
+                },
+            ],
+        };
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .expect_err("overlapping spans must reject");
+
+        assert!(matches!(err, BackendError::OverlappingEditSpans { .. }));
+    }
+
+    #[test]
+    fn edit_surface_bridge_rejects_out_of_surface_path() {
+        let tmp = init_git_repo();
+        let relpath = PathBuf::from("crates/ploke-eval/src/cli.rs");
+        let path = tmp.path().join(&relpath);
+        fs::create_dir_all(path.parent().expect("target has parent")).expect("create target dir");
+        fs::write(path, "let old = 1;\n").expect("write target");
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), proposal_for(relpath, "let old = 1;\n"))
+            .expect_err("out-of-surface path must reject");
+
+        assert!(matches!(err, BackendError::OutOfEditSurface { .. }));
+    }
+
+    #[test]
+    fn edit_surface_bridge_rejects_prefix_path_escape() {
+        let tmp = init_git_repo();
+        let escaped = PathBuf::from("crates/ploke-tui/src/tools/../../../../ploke-eval/src/lib.rs");
+        let resolved = tmp.path().join(&escaped);
+        fs::create_dir_all(resolved.parent().expect("target has parent"))
+            .expect("create escaped target dir");
+        fs::write(resolved, "let old = 1;\n").expect("write escaped target");
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), proposal_for(escaped, "let old = 1;\n"))
+            .expect_err("path escape must reject before surface prefix check");
+
+        assert!(matches!(err, BackendError::InvalidEditSurfacePath { .. }));
+    }
+
+    #[test]
+    fn edit_surface_bridge_rejects_stale_base_hash() {
+        let tmp = init_git_repo();
+        let relpath = write_tui_target(tmp.path(), "let old = 1;\n");
+        let mut proposal = proposal_for(relpath, "let old = 1;\n");
+        proposal.touches[0].expected_file_hash = "stale".to_string();
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .expect_err("stale expected hash must reject");
+
+        assert!(matches!(err, BackendError::StaleEditBaseHash { .. }));
+    }
+
+    #[test]
+    fn edit_surface_bridge_rejects_wrong_reported_after_hash() {
+        let tmp = init_git_repo();
+        let relpath = write_tui_target(tmp.path(), "let old = 1;\n");
+        let mut proposal = proposal_for(relpath, "let old = 1;\n");
+        proposal.reported_after_file_hash = Some("wrong-after".to_string());
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .expect_err("wrong executor after hash must reject");
+
+        assert!(matches!(err, BackendError::EditSurfaceCheck { .. }));
+        assert!(err.to_string().contains("after artifact hash mismatch"));
     }
 
     #[test]
@@ -1691,6 +2341,27 @@ R  old.rs -> new.rs
         backend
             .surface_commitment(before.path(), after.path())
             .expect("tool text mutation preserves immutable surface");
+    }
+
+    #[test]
+    fn surface_commitment_represents_ploke_tui_tool_mutation() {
+        let before = init_surface_repo("pub fn policy() {}\n", "same\n");
+        let after = init_surface_repo("pub fn policy() {}\n", "same\n");
+        fs::write(
+            after.path().join("crates/ploke-tui/src/tools/code_edit.rs"),
+            "changed tui tool\n",
+        )
+        .expect("mutate tui tool file");
+        let backend = GitWorktreeBackend;
+
+        let unchanged = backend
+            .surface_commitment(before.path(), before.path())
+            .expect("unchanged surface");
+        let changed = backend
+            .surface_commitment(before.path(), after.path())
+            .expect("tui tool mutation is represented");
+
+        assert_ne!(unchanged, changed);
     }
 
     #[test]

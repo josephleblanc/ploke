@@ -46,7 +46,7 @@ use crate::{
             validate_prototype1_successor_continuation,
         },
         prototype1_state::{
-            backend::{GitWorktreeBackend, WorkspaceBackend},
+            backend::{CheckedSurfaceEdit, GitWorktreeBackend, WorkspaceBackend},
             c1::{C1, MaterializeBranch},
             c2::BuildChild,
             c3::SpawnChild,
@@ -90,10 +90,11 @@ use crate::{
         InterventionSpec, IssueCase, Outcome, Prototype1ChildBudget,
         Prototype1ContinuationDecision, Prototype1ContinuationDisposition, Prototype1NodeRecord,
         Prototype1NodeStatus, Prototype1RunnerResult, Prototype1SchedulerState,
-        Prototype1SearchPolicy, RecordStore, ValidationPolicy, execute_intervention_apply,
-        load_or_default_branch_registry, load_scheduler_state, mark_treatment_branch_applied,
-        project_node_status, prototype1_branch_registry_path, prototype1_node_id,
-        prototype1_scheduler_path, register_root_parent_node, resolve_treatment_branch,
+        Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
+        ValidationPolicy, execute_intervention_apply, load_or_default_branch_registry,
+        load_scheduler_state, mark_treatment_branch_applied, project_node_status,
+        prototype1_branch_registry_path, prototype1_node_id, prototype1_scheduler_path,
+        register_root_parent_node, resolve_treatment_branch,
         resolved_treatment_branches_from_synthesis, restore_treatment_branch, select_primary_issue,
         select_treatment_branch, treatment_branch_id, write_node_projection,
         write_treatment_evaluation_projection,
@@ -441,30 +442,27 @@ impl CandidateGenerationConfig {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 enum CandidateGenerationError {
     #[error(
-        "candidate-generator=tui-edit-surface cannot publish a child plan for edit-surface={surface:?}: backend-owned after Artifact validation is not wired for checked TUI edits; next backend slice must materialize the proposed edit into a derived Artifact, recompute the derived Artifact id and touched file hashes from that checkout, pass that backend-owned surface::Artifact into edit_surface::tui::Apply::validate, then convert the resulting checked ArtifactDelta into ChildFiles/ResolvedTreatmentBranch evidence"
+        "candidate-generator=tui-edit-surface cannot publish a child plan for edit-surface={surface:?}: no TUI proposal producer is wired yet; backend validation/conversion now requires a concrete single-file proposal and will not fake candidate generation"
     )]
-    BackendOwnedAfterArtifactValidationMissing { surface: Prototype1EditSurface },
+    MissingTuiProposalProducer { surface: Prototype1EditSurface },
     #[error(
         "candidate-generator=tui-edit-surface cannot reuse existing child plan '{}': the plan format does not yet carry edit-surface check/delta evidence, so using it would silently bypass the requested generator",
         path.display()
     )]
     ExistingPlanLacksEditSurfaceEvidence { path: PathBuf },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CheckedEditSurfaceCandidate {
-    surface: Prototype1EditSurface,
-    delta: crate::cli::prototype1_state::edit_surface::ArtifactDelta,
-}
-
-#[cfg(test)]
-impl CheckedEditSurfaceCandidate {
-    fn new(
-        surface: Prototype1EditSurface,
-        delta: crate::cli::prototype1_state::edit_surface::ArtifactDelta,
-    ) -> Self {
-        Self { surface, delta }
-    }
+    #[error(
+        "checked edit for surface {actual:?} cannot be materialized through requested surface {expected:?}"
+    )]
+    SurfaceMismatch {
+        expected: Prototype1EditSurface,
+        actual: Prototype1EditSurface,
+    },
+    #[error(
+        "checked edit target '{}' did not match child node target '{}'",
+        checked.display(),
+        node.display()
+    )]
+    TargetMismatch { checked: PathBuf, node: PathBuf },
 }
 
 impl CandidateGenerationError {
@@ -475,20 +473,69 @@ impl CandidateGenerationError {
     }
 }
 
-fn materialize_edit_surface_child_files(
+fn child_files_from_checked_edit(
+    campaign_id: &str,
     edit_surface: Prototype1EditSurface,
-    checked: &[CheckedEditSurfaceCandidate],
-) -> Result<Vec<ChildFiles>, CandidateGenerationError> {
-    let _checked_touch_count = checked
-        .iter()
-        .filter(|candidate| candidate.surface == edit_surface)
-        .map(|candidate| candidate.delta.touches().len())
-        .sum::<usize>();
-    Err(
-        CandidateGenerationError::BackendOwnedAfterArtifactValidationMissing {
-            surface: edit_surface,
+    mut node: Prototype1NodeRecord,
+    checked: &CheckedSurfaceEdit,
+    stop_on_error: bool,
+) -> Result<ChildFiles, CandidateGenerationError> {
+    if checked.surface() != edit_surface {
+        return Err(CandidateGenerationError::SurfaceMismatch {
+            expected: edit_surface,
+            actual: checked.surface(),
+        });
+    }
+    if checked.target_relpath() != node.target_relpath.as_path() {
+        return Err(CandidateGenerationError::TargetMismatch {
+            checked: checked.target_relpath().to_path_buf(),
+            node: node.target_relpath.clone(),
+        });
+    }
+
+    let patch_id = checked.patch_id().clone();
+    let base_artifact_id = checked.base_artifact_id().clone();
+    let derived_artifact_id = checked.derived_artifact_id().clone();
+    node.operation_target = Some(crate::loop_graph::OperationTarget::Artifact {
+        artifact_id: base_artifact_id.clone(),
+    });
+    node.base_artifact_id = Some(base_artifact_id.clone());
+    node.patch_id = Some(patch_id.clone());
+    node.derived_artifact_id = Some(derived_artifact_id.clone());
+
+    let resolved = crate::intervention::ResolvedTreatmentBranch {
+        instance_id: node.instance_id.clone(),
+        source_state_id: node.source_state_id.clone(),
+        parent_branch_id: node.parent_branch_id.clone(),
+        target_relpath: checked.target_relpath().to_path_buf(),
+        source_content: checked.source_content().to_string(),
+        source_content_hash: checked.source_content_hash().to_string(),
+        selected_branch_id: Some(node.branch_id.clone()),
+        branch: TreatmentBranchNode {
+            branch_id: node.branch_id.clone(),
+            candidate_id: node.candidate_id.clone(),
+            patch_id: Some(patch_id),
+            branch_label: format!("tui edit surface {}", node.candidate_id),
+            synthesized_spec_id: "prototype1:tui-edit-surface:v1".to_string(),
+            proposed_content: checked.proposed_content().to_string(),
+            proposed_content_hash: checked.proposed_content_hash().to_string(),
+            generation_target: Some(crate::loop_graph::OperationTarget::Artifact {
+                artifact_id: base_artifact_id,
+            }),
+            generation_coordinate: None,
+            status: TreatmentBranchStatus::Selected,
+            apply_id: Some(checked.proposal_id().to_string()),
+            applied_content_hash: None,
+            derived_artifact_id: Some(derived_artifact_id),
+            latest_evaluation: None,
         },
-    )
+    };
+    Ok(ChildFiles::from_resolved(
+        campaign_id,
+        node,
+        resolved,
+        stop_on_error,
+    ))
 }
 
 async fn run_parent_target_selection(
@@ -626,13 +673,10 @@ async fn run_tui_edit_surface_parent_target_selection(
     _parent: Parent<Ready>,
     edit_surface: Prototype1EditSurface,
 ) -> Result<ChildPlanReceipt, PrepareError> {
-    materialize_edit_surface_child_files(edit_surface, &[]).map_err(|err| err.into_prepare())?;
-    Err(
-        CandidateGenerationError::BackendOwnedAfterArtifactValidationMissing {
-            surface: edit_surface,
-        }
-        .into_prepare(),
-    )
+    Err(CandidateGenerationError::MissingTuiProposalProducer {
+        surface: edit_surface,
+    }
+    .into_prepare())
 }
 
 fn receive_existing_child_plan(
@@ -8285,7 +8329,7 @@ mod tests {
 
     #[test]
     fn tui_edit_surface_generation_fails_closed_before_child_plan() {
-        let error = CandidateGenerationError::BackendOwnedAfterArtifactValidationMissing {
+        let error = CandidateGenerationError::MissingTuiProposalProducer {
             surface: Prototype1EditSurface::PlokeTuiTools,
         };
 
@@ -8293,29 +8337,72 @@ mod tests {
             panic!("unexpected error variant");
         };
         assert!(detail.contains("candidate-generator=tui-edit-surface"));
-        assert!(detail.contains("backend-owned after Artifact validation is not wired"));
-        assert!(detail.contains("edit_surface::tui::Apply::validate"));
-        assert!(detail.contains("ChildFiles/ResolvedTreatmentBranch"));
+        assert!(detail.contains("no TUI proposal producer is wired yet"));
+        assert!(detail.contains("will not fake candidate generation"));
     }
 
     #[test]
-    fn checked_edit_surface_candidates_still_require_backend_owned_after_artifact() {
-        let delta = checked_edit_surface_delta_for_test();
-        let candidate =
-            CheckedEditSurfaceCandidate::new(Prototype1EditSurface::PlokeTuiTools, delta);
+    fn checked_edit_surface_candidate_converts_to_single_file_child_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let relpath = PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs");
+        let target = tmp.path().join(&relpath);
+        fs::create_dir_all(target.parent().expect("target has parent")).expect("create target dir");
+        fs::write(&target, "let old = 1;\n").expect("write target");
+        let source_hash = format!("{:x}", Sha256::digest("let old = 1;\n".as_bytes()));
+        let checked = GitWorktreeBackend
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                crate::cli::prototype1_state::backend::EditProposal {
+                    surface: Prototype1EditSurface::PlokeTuiTools,
+                    proposal_id: "proposal-1".to_string(),
+                    run_id: "run-1".to_string(),
+                    reported_after_file_hash: None,
+                    touches: vec![crate::cli::prototype1_state::backend::ProposedTouch {
+                        target: "code_edit".to_string(),
+                        relpath: relpath.clone(),
+                        start: 4,
+                        end: 7,
+                        expected_file_hash: source_hash,
+                        replacement: "new".to_string(),
+                    }],
+                },
+            )
+            .expect("checked edit");
+        let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-child");
+        node.target_relpath = relpath.clone();
+        node.operation_target = None;
+        node.base_artifact_id = None;
+        node.patch_id = None;
+        node.derived_artifact_id = None;
 
-        let error = materialize_edit_surface_child_files(
+        let child = child_files_from_checked_edit(
+            "campaign",
             Prototype1EditSurface::PlokeTuiTools,
-            &[candidate],
+            node,
+            &checked,
+            false,
         )
-        .expect_err("checked carrier path must fail before child plan");
+        .expect("child files");
+        let resolved = child.resolved();
+        let node = child.node_record();
 
-        assert!(matches!(
-            error,
-            CandidateGenerationError::BackendOwnedAfterArtifactValidationMissing {
-                surface: Prototype1EditSurface::PlokeTuiTools
-            }
-        ));
+        assert_eq!(resolved.target_relpath, relpath);
+        assert_eq!(resolved.source_content, "let old = 1;\n");
+        assert_eq!(resolved.branch.proposed_content, "let new = 1;\n");
+        assert_eq!(resolved.branch.patch_id.as_ref(), Some(checked.patch_id()));
+        assert_eq!(
+            resolved.branch.derived_artifact_id.as_ref(),
+            Some(checked.derived_artifact_id())
+        );
+        assert_eq!(
+            node.base_artifact_id.as_ref(),
+            Some(checked.base_artifact_id())
+        );
+        assert_eq!(node.patch_id.as_ref(), Some(checked.patch_id()));
+        assert_eq!(
+            node.derived_artifact_id.as_ref(),
+            Some(checked.derived_artifact_id())
+        );
     }
 
     #[test]

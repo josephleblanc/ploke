@@ -53,13 +53,15 @@ pub use scheduler::{
     update_node_workspace_root, update_scheduler_policy, write_node_projection,
     write_runner_request_projection, write_runner_result_at, write_treatment_evaluation_projection,
 };
-pub(crate) use spec::operation_target_artifact_id;
 pub use spec::{
     AppliedEdit, ArtifactEdit, InterventionApplyInput, InterventionApplyOutput,
     InterventionCandidate, InterventionCandidateSet, InterventionExecutionInput,
     InterventionExecutionOutput, InterventionKind, InterventionSpec, InterventionSpecError,
     InterventionSynthesisInput, InterventionSynthesisOutput, TreatmentStateRef, ValidationPolicy,
     ValidationResult,
+};
+pub(crate) use spec::{
+    operation_target_artifact_id, text_file_artifact_id, text_replacement_patch_id,
 };
 pub(crate) use synthesize::synthesize_intervention_with_llm;
 pub use synthesize::{INTERVENTION_SYNTHESIS_PROCEDURE, synthesize_intervention};

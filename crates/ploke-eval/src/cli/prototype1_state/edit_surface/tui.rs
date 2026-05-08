@@ -763,6 +763,13 @@ impl Apply {
     pub(crate) fn is_applied(&self) -> bool {
         matches!(self.state, State::Applied { .. })
     }
+
+    pub(crate) fn delta(&self) -> Option<&ArtifactDelta> {
+        match &self.state {
+            State::Applied { delta, .. } => Some(delta),
+            State::Reported { .. } | State::Rejected { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
