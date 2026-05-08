@@ -21,6 +21,17 @@
 - Prefer names that describe the domain result, not the inspection mechanism: `stop_reason`, `changed_paths`, `summary`, `snapshot`, `entry_kind`.
 - Do not preserve intent by adding prefixes. Preserve intent with structure: modules, types, enums, traits, and explicit state carriers.
 
+## Anti-Blob Guardrails
+
+- Requirement: do not satisfy a request by piling up ad hoc report, view, info, status, or helper types when the underlying semantic object has not been named. Avoid new `*View`, `*Report`, `*Info`, `*Status`, and `*Output` carriers unless they are downstream projections of an already-defined domain object.
+- Requirement: CLI code is dispatch and projection. Do not add semantic authority, active-loop decision logic, or durable state interpretation to broad CLI files such as `cli_facing.rs`; move that logic behind a domain module boundary first.
+- Requirement: before adding monitor, timing, debug, or operator-output code, identify the chain explicitly: source facts, semantic fold, projection, renderer. Rendering must not introduce source facts or authority.
+- Requirement: do not add a generic trait or type just to make uncertain code look reusable. Traits and generics are appropriate when they enforce an authority boundary, backend adapter, typed state transition, strategy family, or shared semantic interface.
+- Requirement: no "minimal slice" that only makes the next command output look right while leaving a worse structure behind. A bounded implementation is fine, but it must establish or preserve the correct boundary.
+- Requirement: projection reads must stay behind explicit operator/projection capability boundaries. Active loop paths must use authoritative channels, History, Artifacts, or bootstrap facts, not convenience projection files.
+- If names, files, or helper clusters keep growing while solving a local failure, stop and identify the missing semantic object or module boundary before continuing.
+- Prefer deleting or isolating stale prototype clutter when it conflicts with the current model. Do not adapt new code around legacy scaffolding merely to preserve it.
+
 ## Prototype 1 Caution
 
 - Recent Prototype 1 code may contain agent-introduced scaffolding, duplicated records, overlong helpers, and weak abstractions created while chasing local failures. Do not treat nearby Prototype 1 patterns as authoritative just because they exist.

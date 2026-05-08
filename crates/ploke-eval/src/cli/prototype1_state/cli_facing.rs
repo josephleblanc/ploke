@@ -108,6 +108,7 @@ use crate::{
     projection::OperatorProjectionRead,
     protocol::load_protocol_aggregate,
     provider_prefs::load_provider_for_model,
+    recompute_closure_state,
     record::{RawFullResponseRecord, RunRecord, read_compressed_record},
     repos_dir, resolve_campaign_config, save_campaign_manifest,
     selection::{
@@ -162,6 +163,7 @@ impl Prototype1LoopCommand {
 struct Prototype1SetupReport {
     campaign_id: String,
     campaign_manifest: PathBuf,
+    closure_state_path: PathBuf,
     slice_dataset_path: PathBuf,
     scheduler_path: PathBuf,
     batch_id: String,
@@ -191,6 +193,7 @@ fn prepare_prototype1_parent_setup(
     }
 
     let campaign = prepare_prototype1_loop_campaign(command, &prepared_batch)?;
+    let closure_state_path = ensure_prototype1_baseline_closure_state(&campaign.resolved)?;
     let repo_root = std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
         path: PathBuf::from("."),
         source,
@@ -248,6 +251,7 @@ fn prepare_prototype1_parent_setup(
     Ok(Prototype1SetupReport {
         campaign_id: campaign.campaign_id,
         campaign_manifest: campaign.manifest_path.clone(),
+        closure_state_path,
         slice_dataset_path: campaign.slice_dataset_path,
         scheduler_path: prototype1_scheduler_path(&campaign.manifest_path),
         batch_id: prepared_batch.batch_id,
@@ -269,6 +273,7 @@ fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
     println!("{}", "-".repeat(40));
     println!("campaign_id: {}", report.campaign_id);
     println!("campaign_manifest: {}", report.campaign_manifest.display());
+    println!("closure_state: {}", report.closure_state_path.display());
     println!("slice_dataset: {}", report.slice_dataset_path.display());
     println!("scheduler: {}", report.scheduler_path.display());
     println!("batch_id: {}", report.batch_id);
@@ -329,6 +334,17 @@ fn load_existing_prototype1_campaign(
         slice_dataset_path,
         resolved,
     })
+}
+
+fn ensure_prototype1_baseline_closure_state(
+    config: &ResolvedCampaignConfig,
+) -> Result<PathBuf, PrepareError> {
+    let path = campaign_closure_state_path(&config.campaign_id)?;
+    if path.exists() {
+        load_closure_state(&config.campaign_id)?;
+        return Ok(path);
+    }
+    recompute_closure_state(config.closure_recompute_request()).map(|(path, _)| path)
 }
 
 struct ChildPlanReceipt {
@@ -6986,6 +7002,9 @@ impl Prototype1StateCommand {
         let campaign_id = resolve_prototype1_state_campaign(&self, &repo_root)?;
         record_active_prototype1_monitor_target(&campaign_id, &repo_root);
         let manifest_path = campaign_manifest_path(&campaign_id)?;
+        let resolved_campaign =
+            resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
+        ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
         let journal_path = prototype1_transition_journal_path(&manifest_path);
         let mut journal = PrototypeJournal::new(journal_path.clone());
         let turn_span = tracing::info_span!(

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use ploke_llm::{ModelId, ProviderKey};
 use serde::{Deserialize, Serialize};
 
+use crate::closure::ClosureRecomputeRequest;
 use crate::layout::{batches_dir, campaigns_dir, instances_dir};
 use crate::model_registry::{load_active_model, load_model_registry, registry_has_model};
 use crate::provider_prefs::load_provider_for_model;
@@ -227,6 +228,21 @@ impl ResolvedCampaignConfig {
                 phase: "campaign_model_id",
                 detail: err.to_string(),
             })
+    }
+
+    pub fn closure_recompute_request(&self) -> ClosureRecomputeRequest {
+        ClosureRecomputeRequest {
+            campaign_id: self.campaign_id.clone(),
+            benchmark_family: Some(self.benchmark_family),
+            model_id: Some(self.model_id.clone()),
+            provider_slug: self.provider_slug.clone(),
+            dataset_keys: dataset_keys_from_sources(&self.dataset_sources),
+            dataset_files: dataset_files_from_sources(&self.dataset_sources),
+            required_procedures: self.required_procedures.clone(),
+            instances_root: Some(self.instances_root.clone()),
+            batches_root: Some(self.batches_root.clone()),
+            framework: Some(self.framework.clone()),
+        }
     }
 }
 

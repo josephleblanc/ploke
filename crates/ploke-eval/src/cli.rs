@@ -5071,18 +5071,7 @@ struct ClosureAdvanceAllReport {
 }
 
 fn closure_request_from_campaign(config: &ResolvedCampaignConfig) -> ClosureRecomputeRequest {
-    ClosureRecomputeRequest {
-        campaign_id: config.campaign_id.clone(),
-        benchmark_family: Some(config.benchmark_family),
-        model_id: Some(config.model_id.clone()),
-        provider_slug: config.provider_slug.clone(),
-        dataset_keys: dataset_keys_from_sources(&config.dataset_sources),
-        dataset_files: dataset_files_from_sources(&config.dataset_sources),
-        required_procedures: config.required_procedures.clone(),
-        instances_root: Some(config.instances_root.clone()),
-        batches_root: Some(config.batches_root.clone()),
-        framework: Some(config.framework.clone()),
-    }
+    config.closure_recompute_request()
 }
 
 fn campaign_context_from_config(config: &ResolvedCampaignConfig) -> PreparedCampaignContext {

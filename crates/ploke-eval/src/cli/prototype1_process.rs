@@ -1636,6 +1636,11 @@ pub(super) async fn run_prototype1_resolved_branch_evaluation(
             "ResolveBaselineCampaign",
             || resolve_campaign_config(baseline_campaign_id, &CampaignOverrides::default()),
         )?;
+        let baseline_state = step!(
+            "prototype1.child.evaluate.load_baseline_state",
+            "LoadBaselineState",
+            || load_closure_state(baseline_campaign_id),
+        )?;
         let treatment_campaign = step!(
             "prototype1.child.evaluate.prepare_treatment_campaign",
             "PrepareTreatmentCampaign",
@@ -1667,12 +1672,6 @@ pub(super) async fn run_prototype1_resolved_branch_evaluation(
         )
         .await?;
 
-        let baseline_state = step!(
-            "prototype1.child.evaluate.load_baseline_state",
-            "LoadBaselineState",
-            || load_closure_state(baseline_campaign_id),
-            treatment_campaign_id = %treatment_campaign.campaign_id,
-        )?;
         let treatment_state = step!(
             "prototype1.child.evaluate.load_treatment_state",
             "LoadTreatmentState",
