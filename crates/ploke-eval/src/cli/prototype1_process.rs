@@ -129,12 +129,14 @@ use super::*;
 use crate::BranchDisposition;
 use crate::cli::prototype1_state::backend::{GitWorktreeBackend, WorkspaceBackend};
 use crate::cli::prototype1_state::channel::{Channel, Cursor, FileTransport, ToParent};
+use crate::cli::prototype1_state::child::Child;
 use crate::cli::prototype1_state::cli_facing::{
     Prototype1BranchEvaluationReport, build_prototype1_branch_evaluation_report,
     ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
     prototype1_branch_evaluation_path,
 };
 use crate::cli::prototype1_state::event::RecordedAt;
+use crate::cli::prototype1_state::event::{Paths, Refs};
 use crate::cli::prototype1_state::history::{
     ActorRef, ArtifactLocator, ArtifactRef, BlockStore, DraftEntry, Entry, EntryKind, EvidenceRef,
     FsBlockStore, GenesisAuthority, LineageId, LineageState, Observation, OpenBlock,
@@ -1482,6 +1484,156 @@ fn record_attempt_runner_result(
     let _ = write_runner_result_at(&node.runner_result_path, &result)?;
     let node = project_node_status(node, result.status);
     write_node_projection(&node)?;
+    Ok(result)
+}
+
+pub(super) async fn execute_prototype1_runner_invocation(
+    invocation_path: &Path,
+) -> Result<Prototype1RunnerResult, PrepareError> {
+    let invocation = match crate::cli::prototype1_state::invocation::load_executable(
+        invocation_path,
+    )? {
+        crate::cli::prototype1_state::invocation::InvocationAuthority::Child(invocation) => {
+            invocation
+        }
+        crate::cli::prototype1_state::invocation::InvocationAuthority::Successor(_) => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor invocation '{}' must be executed via execute_prototype1_successor_invocation",
+                    invocation_path.display()
+                ),
+            });
+        }
+    };
+    let manifest_path = campaign_manifest_path(invocation.campaign_id())?;
+    let node = invocation.node_record()?.clone();
+    let request = invocation.runner_request()?.clone();
+    let resolved = invocation.resolved()?.clone();
+
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %invocation.campaign_id(),
+        node_id = %invocation.node_id(),
+        workspace_root = %request.workspace_root.display(),
+        invocation_path = %invocation_path.display(),
+        "loaded executable prototype1 child invocation"
+    );
+
+    let child = Child::new(
+        invocation.journal_path().to_path_buf(),
+        invocation.runtime_id(),
+        node.generation,
+        Refs {
+            campaign_id: invocation.campaign_id().to_string(),
+            node_id: invocation.node_id().to_string(),
+            instance_id: node.instance_id.clone(),
+            source_state_id: node.source_state_id.clone(),
+            branch_id: node.branch_id.clone(),
+            candidate_id: node.candidate_id.clone(),
+            branch_label: resolved.branch.branch_label.clone(),
+            spec_id: resolved.branch.synthesized_spec_id.clone(),
+        },
+        Paths {
+            repo_root: request.workspace_root.clone(),
+            workspace_root: request.workspace_root.clone(),
+            binary_path: request.binary_path.clone(),
+            target_relpath: request.target_relpath.clone(),
+            absolute_path: request.workspace_root.join(&request.target_relpath),
+        },
+        std::process::id(),
+    );
+    let channel = invocation
+        .channel_endpoints()
+        .map(|endpoints| Channel::for_child(&child, endpoints, FileTransport));
+    let child = child.ready().map_err(|err| PrepareError::DatabaseSetup {
+        phase: "prototype1_child_ready",
+        detail: err.to_string(),
+    })?;
+    let channel = match channel {
+        Some(channel) => Some(
+            channel
+                .send_ready()
+                .map_err(|err| PrepareError::DatabaseSetup {
+                    phase: "prototype1_child_channel_ready",
+                    detail: format!("{err:?}"),
+                })?
+                .0,
+        ),
+        None => None,
+    };
+    let child = child
+        .evaluating()
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "prototype1_child_evaluating",
+            detail: err.to_string(),
+        })?;
+    let channel = match channel {
+        Some(channel) => Some(
+            channel
+                .send_evaluating()
+                .map_err(|err| PrepareError::DatabaseSetup {
+                    phase: "prototype1_child_channel_evaluating",
+                    detail: format!("{err:?}"),
+                })?
+                .0,
+        ),
+        None => None,
+    };
+
+    let outcome = run_prototype1_resolved_branch_evaluation(
+        invocation.campaign_id(),
+        &manifest_path,
+        &resolved,
+        &request.workspace_root,
+        request.stop_on_error,
+    )
+    .await;
+
+    let (result, evaluation) = match outcome {
+        Ok(report) => (
+            build_succeeded_runner_result(invocation.campaign_id(), &node, &report),
+            Some(report),
+        ),
+        Err(err) => (
+            build_treatment_failed_runner_result(
+                invocation.campaign_id(),
+                &node,
+                err.to_string(),
+                None,
+                None,
+                None,
+            ),
+            None,
+        ),
+    };
+    let runner_result_path = crate::cli::prototype1_state::invocation::result_path(
+        &node.node_dir,
+        invocation.runtime_id(),
+    );
+    let result = record_attempt_runner_result(
+        invocation.campaign_id(),
+        &manifest_path,
+        &node,
+        invocation.runtime_id(),
+        result,
+    )?;
+    let _child = child
+        .result_written(runner_result_path.clone())
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "prototype1_child_result_written",
+            detail: err.to_string(),
+        })?;
+    if let Some(channel) = channel {
+        let _ = channel.send_terminal_result(result.clone(), evaluation);
+    }
+    debug!(
+        target: EXECUTION_DEBUG_TARGET,
+        campaign = %invocation.campaign_id(),
+        node_id = %invocation.node_id(),
+        disposition = ?result.disposition,
+        status = ?result.status,
+        "prototype1 child invocation completed"
+    );
     Ok(result)
 }
 

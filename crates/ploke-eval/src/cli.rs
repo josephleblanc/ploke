@@ -403,6 +403,9 @@ pub enum LoopSubcommand {
     Prototype1Setup(Prototype1LoopCommand),
     /// Drive the typed Prototype 1 parent runtime path.
     Prototype1State(Prototype1StateCommand),
+    /// Inspect or execute one staged Prototype 1 runner invocation.
+    #[command(hide = true)]
+    Prototype1Runner(Prototype1RunnerCommand),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
@@ -495,6 +498,30 @@ pub struct Prototype1StateCommand {
     /// Bounded edit surface used by edit-surface candidate generation.
     #[arg(long, value_enum, default_value_t = Prototype1EditSurface::PlokeTuiTools)]
     pub edit_surface: Prototype1EditSurface,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Inspect one Prototype 1 runner invocation or execute one persisted child runtime"
+)]
+pub struct Prototype1RunnerCommand {
+    #[arg(long)]
+    pub campaign: Option<String>,
+
+    #[arg(long)]
+    pub node_id: Option<String>,
+
+    #[arg(long, value_name = "PATH")]
+    pub invocation: Option<PathBuf>,
+
+    #[arg(long, default_value_t = false)]
+    pub execute: bool,
+
+    #[arg(long, action = ArgAction::Set, default_value_t = false)]
+    pub stop_on_error: bool,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
@@ -1149,7 +1176,30 @@ impl LoopCommand {
             LoopSubcommand::Prototype1(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Setup(cmd) => cmd.run_setup().await,
             LoopSubcommand::Prototype1State(cmd) => cmd.run().await,
+            LoopSubcommand::Prototype1Runner(cmd) => cmd.run().await,
         }
+    }
+}
+
+impl Prototype1RunnerCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let Some(invocation) = self.invocation else {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "prototype1-runner requires --invocation".to_string(),
+            });
+        };
+        if !self.execute {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "prototype1-runner currently requires --execute".to_string(),
+            });
+        }
+        let _ = self.campaign;
+        let _ = self.node_id;
+        let _ = self.stop_on_error;
+        let _ = self.format;
+        prototype1_process::execute_prototype1_runner_invocation(&invocation)
+            .await
+            .map(|_| ())
     }
 }
 
@@ -12113,6 +12163,35 @@ mod tests {
                     Prototype1CandidateGenerator::TuiEditSurface
                 );
                 assert_eq!(cmd.edit_surface, Prototype1EditSurface::PlokeTuiTools);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_runner_invocation_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-runner",
+            "--invocation",
+            "/tmp/runtime.json",
+            "--execute",
+            "--format",
+            "json",
+        ])
+        .expect("loop prototype1-runner --invocation should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Runner(cmd),
+            }) => {
+                assert!(cmd.campaign.is_none());
+                assert!(cmd.node_id.is_none());
+                assert_eq!(cmd.invocation, Some(PathBuf::from("/tmp/runtime.json")));
+                assert!(cmd.execute);
+                assert!(!cmd.stop_on_error);
+                assert_eq!(cmd.format, InspectOutputFormat::Json);
             }
             other => panic!("unexpected command shape: {:?}", other),
         }
