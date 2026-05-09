@@ -12,6 +12,7 @@ use crate::{
         history::{
             ArtifactLocator, BlockHead, BlockStore, BlockStoreError, FsBlockStore, HistoryError,
             LineageId, LineageState, StoreHead, SurfaceEvidence, TreeKeyCommitment,
+            surface_attempt,
         },
         identity::{ParentIdentity, parent_identity_path},
         inner::{At, File, LineageKey, Message, MessageBox, Transition},
@@ -104,6 +105,8 @@ pub(crate) struct ChildPlanFiles {
     parent_node_id: String,
     child_generation: u32,
     children: Vec<ChildFiles>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rejected_surface_attempts: Vec<surface_attempt::Evidence>,
 }
 
 impl ChildPlanFiles {
@@ -119,7 +122,16 @@ impl ChildPlanFiles {
             // are generation k + 1.
             child_generation: parent.generation() + 1,
             children,
+            rejected_surface_attempts: Vec::new(),
         }
+    }
+
+    pub(crate) fn with_rejected_surface_attempts(
+        mut self,
+        rejected_surface_attempts: Vec<surface_attempt::Evidence>,
+    ) -> Self {
+        self.rejected_surface_attempts = rejected_surface_attempts;
+        self
     }
 
     pub(crate) fn message(&self) -> &Path {
@@ -140,6 +152,10 @@ impl ChildPlanFiles {
 
     pub(crate) fn children(&self) -> &[ChildFiles] {
         &self.children
+    }
+
+    pub(crate) fn rejected_surface_attempts(&self) -> &[surface_attempt::Evidence] {
+        &self.rejected_surface_attempts
     }
 
     pub(crate) fn contains_child(&self, node_id: &str) -> bool {

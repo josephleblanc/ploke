@@ -58,7 +58,7 @@ use crate::{
                 SealedEvaluationEvidence, SealedEvidenceCitation, SealedRuntimeEvidence,
                 SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
                 SelectionScope, SubjectRef, SurfaceArtifactRef, SurfaceEvidence, SurfaceTouch,
-                TraversalCandidateSource, TraversalEvidence,
+                TraversalCandidateSource, TraversalEvidence, surface_attempt,
             },
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -349,12 +349,14 @@ fn ensure_prototype1_baseline_closure_state(
 struct ChildPlanReceipt {
     parent: Parent<Selectable>,
     plan: Received<ChildPlan>,
+    rejected_surface_attempts: Vec<surface_attempt::Evidence>,
 }
 
 struct PlannedChildren {
     parent: Parent<Selectable>,
     plan: Received<ChildPlan>,
     children: Vec<ChildFiles>,
+    rejected_surface_attempts: Vec<surface_attempt::Evidence>,
 }
 
 #[derive(Debug)]
@@ -371,6 +373,11 @@ struct PlannedChildOutcome {
     evaluation_report: Option<Prototype1BranchEvaluationReport>,
     selection_input: Option<SelectionInput>,
     surface: Option<SurfaceEvidence>,
+}
+
+struct TuiEditSurfaceCandidates {
+    checked: Vec<CheckedSurfaceEdit>,
+    rejected_attempts: Vec<surface_attempt::Evidence>,
 }
 
 struct SelectionSealMaterial {
@@ -490,8 +497,6 @@ enum CandidateGenerationError {
         node.display()
     )]
     TargetMismatch { checked: PathBuf, node: PathBuf },
-    #[error("checked edit-surface proposal was rejected by backend validation: {detail}")]
-    BackendRejected { detail: String },
     #[error("failed to persist checked edit-surface evidence: {detail}")]
     EvidenceProjection { detail: String },
     #[error(
@@ -790,16 +795,16 @@ fn publish_tui_edit_surface_child_plan(
     let running_parent = project_node_status(&root_node, Prototype1NodeStatus::Running);
     write_node_projection(&running_parent)?;
 
-    let checked = produce_tui_edit_surface_candidates(
+    let generated = produce_tui_edit_surface_candidates(
         repo_root,
         edit_surface,
         &parent_identity,
         child_budget,
     )?;
     let expected_generation = parent_identity.generation() + 1;
-    let mut children = Vec::with_capacity(checked.len());
+    let mut children = Vec::with_capacity(generated.checked.len());
 
-    for (index, checked) in checked.iter().enumerate() {
+    for (index, checked) in generated.checked.iter().enumerate() {
         let candidate_id = format!("tui-edit-surface-g{}-{:02}", expected_generation, index + 1);
         let branch_id = treatment_branch_id(
             &parent_identity.branch_id(),
@@ -850,6 +855,11 @@ fn publish_tui_edit_surface_child_plan(
     }
 
     if children.len() < child_budget.min as usize {
+        persist_rejected_surface_attempt_child_plan(
+            manifest_path,
+            parent,
+            generated.rejected_attempts.clone(),
+        )?;
         let failed_parent = project_node_status(&root_node, Prototype1NodeStatus::Failed);
         write_node_projection(&failed_parent)?;
         return Err(CandidateGenerationError::InsufficientUniqueProposals {
@@ -860,7 +870,8 @@ fn publish_tui_edit_surface_child_plan(
         .into_prepare());
     }
 
-    let files = ChildPlanFiles::for_parent(manifest_path, &parent_identity, children);
+    let files = ChildPlanFiles::for_parent(manifest_path, &parent_identity, children)
+        .with_rejected_surface_attempts(generated.rejected_attempts.clone());
     let at = files.message_at();
     let open = Open::<ChildPlan>::from_sender(parent, files);
     let (planned, locked) = open
@@ -871,14 +882,36 @@ fn publish_tui_edit_surface_child_plan(
             let (_parent, source) = err.into_parts();
             source
         })?;
-    receive_child_plan(
+    let receipt = receive_child_plan(
         campaign_id,
         manifest_path,
         repo_root,
         &parent_identity,
         planned,
         locked,
-    )
+    )?;
+    Ok(receipt)
+}
+
+fn persist_rejected_surface_attempt_child_plan(
+    manifest_path: &Path,
+    parent: Parent<Ready>,
+    rejected_surface_attempts: Vec<surface_attempt::Evidence>,
+) -> Result<(), PrepareError> {
+    let parent_identity = parent.identity().clone();
+    let files = ChildPlanFiles::for_parent(manifest_path, &parent_identity, Vec::new())
+        .with_rejected_surface_attempts(rejected_surface_attempts);
+    let at = files.message_at();
+    let open = Open::<ChildPlan>::from_sender(parent, files);
+    let _ = open
+        .lock(at, |at, body| {
+            validate_and_write_tui_child_plan(&parent_identity, at.path(), body)
+        })
+        .map_err(|err| {
+            let (_parent, source) = err.into_parts();
+            source
+        })?;
+    Ok(())
 }
 
 fn validate_and_write_tui_child_plan(
@@ -905,9 +938,10 @@ fn validate_and_write_tui_child_plan(
             ),
         });
     }
-    if body.children().is_empty() {
+    if body.children().is_empty() && body.rejected_surface_attempts().is_empty() {
         return Err(PrepareError::InvalidBatchSelection {
-            detail: "tui edit-surface child plan cannot be empty".to_string(),
+            detail: "tui edit-surface child plan cannot be empty without rejected attempt evidence"
+                .to_string(),
         });
     }
     for child in body.children() {
@@ -1145,7 +1179,7 @@ fn produce_tui_edit_surface_candidates(
     edit_surface: Prototype1EditSurface,
     parent: &ParentIdentity,
     child_budget: Prototype1ChildBudget,
-) -> Result<Vec<CheckedSurfaceEdit>, PrepareError> {
+) -> Result<TuiEditSurfaceCandidates, PrepareError> {
     if child_budget.min == 0 || child_budget.max == 0 || child_budget.min > child_budget.max {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -1167,17 +1201,33 @@ fn produce_tui_edit_surface_candidates(
     let proposals = direct_splice_proposals(repo_root, edit_surface, replacements, min, max)?;
     let backend = GitWorktreeBackend;
     let mut checked = Vec::with_capacity(proposals.len());
+    let mut rejected_attempts = Vec::new();
     let mut proposed_hashes = BTreeSet::new();
 
     for proposal in proposals {
-        let candidate = backend
-            .validate_edit_surface_candidate(repo_root, proposal)
-            .map_err(|source| {
-                CandidateGenerationError::BackendRejected {
-                    detail: source.to_string(),
-                }
-                .into_prepare()
-            })?;
+        let rejected_attempt = |reason: String, proposal: &EditProposal| {
+            let target_relpath = proposal
+                .touches
+                .first()
+                .map(|touch| touch.relpath.clone())
+                .unwrap_or_else(|| PathBuf::from(TUI_EDIT_SURFACE_TARGET));
+            surface_attempt::Evidence::rejected(
+                TUI_EDIT_SURFACE_PRODUCER_ID,
+                proposal.proposal_id.clone(),
+                proposal.run_id.clone(),
+                serde_name(&proposal.surface).to_string(),
+                target_relpath,
+                reason,
+            )
+        };
+
+        let candidate = match backend.validate_edit_surface_candidate(repo_root, proposal.clone()) {
+            Ok(candidate) => candidate,
+            Err(source) => {
+                rejected_attempts.push(rejected_attempt(source.to_string(), &proposal));
+                continue;
+            }
+        };
         if proposed_hashes.insert(candidate.proposed_content_hash().to_string()) {
             checked.push(candidate);
         }
@@ -1192,7 +1242,10 @@ fn produce_tui_edit_surface_candidates(
         .into_prepare());
     }
 
-    Ok(checked)
+    Ok(TuiEditSurfaceCandidates {
+        checked,
+        rejected_attempts,
+    })
 }
 
 fn direct_splice_proposals(
@@ -1305,7 +1358,12 @@ fn receive_child_plan(
             detail: source.to_string(),
         }
     })?;
-    Ok(ChildPlanReceipt { parent, plan })
+    let rejected_surface_attempts = plan.body().rejected_surface_attempts().to_vec();
+    Ok(ChildPlanReceipt {
+        parent,
+        plan,
+        rejected_surface_attempts,
+    })
 }
 
 fn write_child_plan_file(path: &Path, body: &ChildPlanFiles) -> Result<(), PrepareError> {
@@ -5391,6 +5449,7 @@ async fn resolve_child_plan(
         parent: receipt.parent,
         plan: receipt.plan,
         children,
+        rejected_surface_attempts: receipt.rejected_surface_attempts,
     })
 }
 
@@ -5665,6 +5724,8 @@ fn run_planned_child(
         evaluation_report,
         selection_input,
         surface,
+        // Rejected attempts from proposal validation are tracked separately
+        // and projected as payload-only candidates.
     })
 }
 
@@ -5790,6 +5851,7 @@ async fn run_adaptive_child_fanout(
     parent_identity: &ParentIdentity,
     child_budget: Prototype1ChildBudget,
     children: Vec<ChildFiles>,
+    rejected_surface_attempts: &[surface_attempt::Evidence],
     selection_seed: u64,
     selection_strategy: ActiveSelectionStrategy,
 ) -> Result<
@@ -5828,7 +5890,12 @@ async fn run_adaptive_child_fanout(
         completed.append(&mut batch_outcomes);
         completed.sort_by_key(|outcome| outcome.plan_index);
 
-        let parent_selection = ParentSelection::new(manifest_path, parent_identity, &completed);
+        let parent_selection = ParentSelection::new(
+            manifest_path,
+            parent_identity,
+            &completed,
+            rejected_surface_attempts,
+        );
         selection = parent_selection.select_successor(selection_seed, selection_strategy)?;
         if adaptive_selection_accepts_successor(&selection) {
             break;
@@ -5868,6 +5935,7 @@ struct ParentSelection<'a> {
     manifest_path: &'a Path,
     parent_identity: &'a ParentIdentity,
     child_outcomes: &'a [PlannedChildOutcome],
+    rejected_surface_attempts: &'a [surface_attempt::Evidence],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -6114,11 +6182,13 @@ impl<'a> ParentSelection<'a> {
         manifest_path: &'a Path,
         parent_identity: &'a ParentIdentity,
         child_outcomes: &'a [PlannedChildOutcome],
+        rejected_surface_attempts: &'a [surface_attempt::Evidence],
     ) -> Self {
         Self {
             manifest_path,
             parent_identity,
             child_outcomes,
+            rejected_surface_attempts,
         }
     }
 
@@ -6147,6 +6217,9 @@ impl<'a> ParentSelection<'a> {
             let mut builder = EvaluationPayload::builder(candidate.clone(), procedure)
                 .sealed_candidate_evidence(sealed_body)
                 .candidate_artifact(artifact);
+            if let Some(surface) = outcome.surface.as_ref() {
+                builder = builder.surface_attempt_evidence(surface_attempt_from_surface(surface));
+            }
 
             if let Some(input) = outcome.selection_input.as_ref() {
                 builder = builder.selection_input(input.clone()).map_err(|err| {
@@ -6177,6 +6250,31 @@ impl<'a> ParentSelection<'a> {
             }
 
             considered.push(builder.build());
+        }
+        for (index, surface_attempt) in self.rejected_surface_attempts.iter().enumerate() {
+            let candidate = SubjectRef::new(format!(
+                "candidate:rejected_surface_attempt:{}:proposal_id={}",
+                index + 1,
+                surface_attempt.proposal_id
+            ));
+            let procedure = ProcedureRef::new(crate::successor_selection::PROCEDURE_ID);
+            let failure = SelectionProjectionFailure::committed(
+                SelectionProjectionFailureKind::MissingSelectionInput,
+                Some(candidate.clone()),
+                Some("missing_selection_input: rejected_surface_attempt_without_child_runtime".to_string()),
+            )
+            .map_err(|err| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "failed to commit selection projection failure id for rejected surface attempt proposal_id={}: {err}",
+                    surface_attempt.proposal_id
+                ),
+            })?;
+            projection_failures.push(failure.clone());
+            let payload = EvaluationPayload::builder(candidate, procedure)
+                .surface_attempt_evidence(surface_attempt.clone())
+                .projection_failure(failure)
+                .build();
+            considered.push(payload);
         }
 
         debug!(
@@ -6253,6 +6351,16 @@ impl<'a> ParentSelection<'a> {
         };
         Ok(Some((selection.decision, material)))
     }
+}
+
+fn surface_attempt_from_surface(surface: &SurfaceEvidence) -> surface_attempt::Evidence {
+    surface_attempt::Evidence::applied(
+        surface.producer_id.clone(),
+        surface.proposal_id.clone(),
+        surface.run_id.clone(),
+        surface.policy.clone(),
+        surface.target_relpath.clone(),
+    )
 }
 
 impl ScopeFor<Generation> for ParentSelection<'_> {
@@ -6839,6 +6947,7 @@ impl Prototype1StateCommand {
             parent,
             plan,
             mut children,
+            rejected_surface_attempts,
         } = planned_children;
         let planned_child_count = plan.body().children().len();
         let (mut child_budget, mut child_schedule_mode) =
@@ -6867,10 +6976,22 @@ impl Prototype1StateCommand {
 
         let metric_inputs = traversal_metric_inputs(self.successor_selection_metrics);
         let selection_strategy = self.successor_selection.active_strategy(metric_inputs);
-        let (child_outcomes, selection) = if self.stop_after == Prototype1StateStopAfter::Complete
+        let rejected_only_plan = self.stop_after == Prototype1StateStopAfter::Complete
+            && children.is_empty()
+            && !rejected_surface_attempts.is_empty();
+        let (child_outcomes, selection, rejected_attempt_payloads) = if rejected_only_plan {
+            let projection = ParentSelection::new(
+                &manifest_path,
+                &parent_identity,
+                &[],
+                &rejected_surface_attempts,
+            )
+            .current_generation_candidates()?;
+            (Vec::new(), None, Some(projection.considered.len()))
+        } else if self.stop_after == Prototype1StateStopAfter::Complete
             && child_schedule_mode == Prototype1ChildScheduleMode::AdaptiveBatch
         {
-            run_adaptive_child_fanout(
+            let (outcomes, selection) = run_adaptive_child_fanout(
                 &campaign_id,
                 &manifest_path,
                 &repo_root,
@@ -6878,10 +6999,12 @@ impl Prototype1StateCommand {
                 &parent_identity,
                 child_budget,
                 children,
+                &rejected_surface_attempts,
                 self.successor_selection_seed,
                 selection_strategy,
             )
-            .await?
+            .await?;
+            (outcomes, selection, None)
         } else {
             let child_outcomes = run_child_fanout(
                 &campaign_id,
@@ -6895,32 +7018,53 @@ impl Prototype1StateCommand {
                 children,
             )
             .await?;
-            let parent_selection =
-                ParentSelection::new(&manifest_path, &parent_identity, &child_outcomes);
+            let parent_selection = ParentSelection::new(
+                &manifest_path,
+                &parent_identity,
+                &child_outcomes,
+                &rejected_surface_attempts,
+            );
             let selection = if self.stop_after == Prototype1StateStopAfter::Complete {
                 parent_selection
                     .select_successor(self.successor_selection_seed, selection_strategy)?
             } else {
                 None
             };
-            (child_outcomes, selection)
+            (child_outcomes, selection, None)
         };
-        let selected_node_id = selection
-            .as_ref()
-            .map(|(decision, _)| decision.candidate_node_id.as_str());
-        let report_child =
-            outcome_for_report(&child_outcomes, selected_node_id).ok_or_else(|| {
+        let fallback_node = parent.node().clone();
+        let report_child = if rejected_attempt_payloads.is_some() {
+            None
+        } else {
+            let selected_node_id = selection
+                .as_ref()
+                .map(|(decision, _)| decision.candidate_node_id.as_str());
+            outcome_for_report(&child_outcomes, selected_node_id)
+        };
+        let (mut outcome, child_runtime) = if let Some(payloads) = rejected_attempt_payloads {
+            (
+                format!(
+                    "rejected_surface_attempts_only;children_ran=0;children_planned={};rejected_attempt_payloads={payloads}",
+                    planned_child_count
+                ),
+                None,
+            )
+        } else {
+            let report_child = report_child.as_ref().ok_or_else(|| {
                 PrepareError::InvalidBatchSelection {
                     detail: "child fanout completed without any child outcome".to_string(),
                 }
             })?;
-        let mut outcome = format!(
-            "{};children_ran={};children_planned={}",
-            report_child.outcome,
-            child_outcomes.len(),
-            planned_child_count
-        );
-        let child_runtime = report_child.child_runtime.clone();
+            (
+                format!(
+                    "{};children_ran={};children_planned={}",
+                    report_child.outcome,
+                    child_outcomes.len(),
+                    planned_child_count
+                ),
+                report_child.child_runtime.clone(),
+            )
+        };
         let mut successor_runtime = None;
         let mut successor_pid = None;
         let mut successor_ready_path = None;
@@ -7019,14 +7163,26 @@ impl Prototype1StateCommand {
         );
         let report = Prototype1StateReport {
             campaign_id,
-            node_id: report_child.node_id.clone(),
+            node_id: report_child
+                .as_ref()
+                .map(|child| child.node_id.clone())
+                .unwrap_or_else(|| fallback_node.node_id.clone()),
             repo_root,
             journal_path,
             stop_after: self.stop_after,
             outcome,
-            node_status: report_child.node_status,
-            workspace_root: report_child.workspace_root.clone(),
-            binary_path: report_child.binary_path.clone(),
+            node_status: report_child
+                .as_ref()
+                .map(|child| child.node_status)
+                .unwrap_or(fallback_node.status),
+            workspace_root: report_child
+                .as_ref()
+                .map(|child| child.workspace_root.clone())
+                .unwrap_or_else(|| fallback_node.workspace_root.clone()),
+            binary_path: report_child
+                .as_ref()
+                .map(|child| child.binary_path.clone())
+                .unwrap_or_else(|| fallback_node.binary_path.clone()),
             child_runtime,
             successor_runtime,
             successor_pid,
@@ -8597,16 +8753,18 @@ mod tests {
         write_tui_surface_target(tmp.path(), "pub fn sentinel() {}\n");
         let parent = test_parent_identity();
 
-        let checked = produce_tui_edit_surface_candidates(
+        let generated = produce_tui_edit_surface_candidates(
             tmp.path(),
             Prototype1EditSurface::PlokeTuiTools,
             &parent,
             Prototype1SearchPolicy::default().child_budget,
         )
         .expect("checked candidates");
+        let checked = &generated.checked;
 
         assert!(checked.len() >= Prototype1SearchPolicy::default().child_budget.min as usize);
         assert!(checked.len() <= Prototype1SearchPolicy::default().child_budget.max as usize);
+        assert!(generated.rejected_attempts.is_empty());
         let hashes = checked
             .iter()
             .map(|candidate| candidate.proposed_content_hash().to_string())
@@ -8674,6 +8832,8 @@ mod tests {
         let body = receipt.plan.body();
         assert_eq!(receipt.parent.identity().node_id(), "node-parent");
         assert_eq!(body.children().len(), 3);
+        assert!(body.rejected_surface_attempts().is_empty());
+        assert!(receipt.rejected_surface_attempts.is_empty());
         assert_eq!(body.parent_node_id(), "node-parent");
         assert!(body.message().exists());
         for child in body.children() {
@@ -8688,6 +8848,78 @@ mod tests {
             assert!(node.node_dir.join("node.json").exists());
             assert!(node.runner_request_path.exists());
         }
+    }
+
+    #[test]
+    fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child_plan() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let repo_root = tmp.path().join("repo");
+        write_tui_surface_target(&repo_root, "pub fn sentinel() {}\n");
+        let rejected = surface_attempt::Evidence::rejected(
+            TUI_EDIT_SURFACE_PRODUCER_ID,
+            "proposal-rejected",
+            "run-rejected",
+            "ploke_tui_tools",
+            PathBuf::from(TUI_EDIT_SURFACE_TARGET),
+            "backend rejected deterministic proposal",
+        );
+
+        let parent = ready_parent_for_test(&manifest_path, &repo_root);
+        persist_rejected_surface_attempt_child_plan(
+            &manifest_path,
+            parent,
+            vec![rejected.clone()],
+        )
+        .expect("persist rejected attempt child plan");
+
+        let resumed_parent = ready_parent_for_test(&manifest_path, &repo_root);
+        let receipt = receive_existing_child_plan(
+            "campaign",
+            &manifest_path,
+            &repo_root,
+            resumed_parent,
+        )
+        .expect("receive existing child plan");
+
+        assert!(
+            receipt.plan.body().children().is_empty(),
+            "rejected-attempt-only path must not fabricate child artifacts"
+        );
+        assert_eq!(
+            receipt.plan.body().rejected_surface_attempts(),
+            std::slice::from_ref(&rejected)
+        );
+        assert_eq!(
+            receipt.rejected_surface_attempts,
+            vec![rejected],
+            "rejected attempts should survive receive_existing_child_plan"
+        );
+
+        let parent_identity = test_parent_identity();
+        let parent_selection = ParentSelection::new(
+            &manifest_path,
+            &parent_identity,
+            &[],
+            &receipt.rejected_surface_attempts,
+        );
+        let projection = parent_selection
+            .current_generation_candidates()
+            .expect("rejected-only plan should still project payload evidence");
+        assert!(
+            projection
+                .considered
+                .iter()
+                .all(|payload| payload.artifact.is_none()),
+            "rejected-only projection must not fabricate child artifacts"
+        );
+        assert!(
+            projection
+                .considered
+                .iter()
+                .any(|payload| payload.has_parent_readable_surface_attempt()),
+            "rejected-only projection should produce parent-readable attempt evidence"
+        );
     }
 
     fn checked_edit_surface_delta_for_test()
@@ -8993,7 +9225,8 @@ mod tests {
         let resolved = test_resolved(&node);
         let outcomes = vec![test_completed_outcome(node, resolved, 0)];
         let parent_identity = test_parent_identity();
-        let parent_selection = ParentSelection::new(&manifest_path, &parent_identity, &outcomes);
+        let parent_selection =
+            ParentSelection::new(&manifest_path, &parent_identity, &outcomes, &[]);
 
         let (projection, trace) = collect_traces(|| {
             parent_selection
@@ -9070,6 +9303,7 @@ mod tests {
             &manifest_path,
             &parent_identity,
             std::slice::from_ref(&outcome),
+            &[],
         );
 
         let projection = parent_selection
@@ -9084,6 +9318,10 @@ mod tests {
         assert_eq!(surface.target_relpath, node.target_relpath);
         assert_eq!(surface.touches.len(), 1);
         assert!(surface.delta_id.starts_with("surface-delta:"));
+        assert!(
+            payload.has_parent_readable_surface_attempt(),
+            "applied surface evidence should project parent-readable attempt evidence"
+        );
 
         let serialized = serde_json::to_value(payload).expect("payload json");
         assert_eq!(
@@ -9098,6 +9336,118 @@ mod tests {
             serialized["artifact"]["surface"]["delta_digest"]
                 .as_str()
                 .is_some_and(|value| !value.is_empty())
+        );
+        assert_eq!(
+            serialized["surface_attempt"]["outcome"]["kind"],
+            "applied",
+            "surface attempt evidence should be parent-readable on payload"
+        );
+    }
+
+    #[test]
+    fn current_generation_candidates_include_rejected_edit_surface_attempt_payload() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+        node.parent_node_id = Some("node-parent".to_string());
+        let outcome = test_completed_outcome(node, test_resolved(&test_node(tmp.path(), "node-child", "branch-child", "candidate-1")), 0);
+        let parent_identity = test_parent_identity();
+        let rejected = surface_attempt::Evidence::rejected(
+            TUI_EDIT_SURFACE_PRODUCER_ID,
+            "proposal-rejected",
+            "run-rejected",
+            "ploke_tui_tools",
+            PathBuf::from(TUI_EDIT_SURFACE_TARGET),
+            "one or more touched spans were rejected",
+        );
+        let parent_selection = ParentSelection::new(
+            &manifest_path,
+            &parent_identity,
+            std::slice::from_ref(&outcome),
+            std::slice::from_ref(&rejected),
+        );
+
+        let projection = parent_selection
+            .current_generation_candidates()
+            .expect("current generation candidate projection");
+        let rejected_payload = projection
+            .considered
+            .iter()
+            .find(|payload| payload.surface_attempt.as_ref() == Some(&rejected))
+            .expect("rejected attempt payload");
+
+        assert!(
+            rejected_payload.artifact.is_none(),
+            "rejected attempt payload must not carry a candidate artifact"
+        );
+        assert!(
+            rejected_payload.has_parent_readable_surface_attempt(),
+            "rejected attempt payload should be parent-readable"
+        );
+    }
+
+    #[test]
+    fn payload_surface_attempt_rejected_is_parent_readable_without_artifact() {
+        let payload = EvaluationPayload::builder(
+            SubjectRef::new("candidate:rejected-attempt:plan_index=0"),
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+        )
+        .surface_attempt_evidence(surface_attempt::Evidence::rejected(
+            TUI_EDIT_SURFACE_PRODUCER_ID,
+            "proposal-rejected",
+            "run-rejected",
+            "ploke_tui_tools",
+            PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"),
+            "one or more touched spans were rejected",
+        ))
+        .build();
+
+        assert!(
+            payload.has_parent_readable_surface_attempt(),
+            "rejected attempt evidence must be visible from EvaluationPayload"
+        );
+        assert!(
+            payload.artifact.is_none(),
+            "rejected attempt evidence must not imply a derived artifact"
+        );
+
+        let serialized = serde_json::to_value(&payload).expect("payload json");
+        assert_eq!(
+            serialized["surface_attempt"]["producer_id"],
+            TUI_EDIT_SURFACE_PRODUCER_ID
+        );
+        assert_eq!(
+            serialized["surface_attempt"]["outcome"]["kind"],
+            "rejected"
+        );
+        assert_eq!(
+            serialized["surface_attempt"]["outcome"]["reason"],
+            "one or more touched spans were rejected"
+        );
+    }
+
+    #[test]
+    fn payload_without_surface_attempt_is_not_parent_readable_attempt_evidence() {
+        let payload = EvaluationPayload::builder(
+            SubjectRef::new("candidate:projection-only:plan_index=0"),
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+        )
+        .projection_failure(
+            SelectionProjectionFailure::committed(
+                SelectionProjectionFailureKind::MissingSelectionInput,
+                None,
+                Some(
+                    "log-only rejected apply mention should not count as typed attempt evidence"
+                        .to_string(),
+                ),
+            )
+            .expect("projection failure"),
+        )
+        .build();
+
+        assert!(
+            !payload.has_parent_readable_surface_attempt(),
+            "log/projection-only state must not count as parent-readable attempt evidence"
         );
     }
 
@@ -9115,6 +9465,7 @@ mod tests {
             &manifest_path,
             &parent_identity,
             std::slice::from_ref(&outcome),
+            &[],
         );
 
         let err = match parent_selection.current_generation_candidates() {
@@ -9172,6 +9523,7 @@ mod tests {
             &manifest_path,
             &parent_identity,
             std::slice::from_ref(&outcome),
+            &[],
         );
 
         let err = match parent_selection.current_generation_candidates() {

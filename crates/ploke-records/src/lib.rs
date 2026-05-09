@@ -12,6 +12,7 @@
 
 pub mod branch;
 pub mod channel;
+pub mod evaluation;
 pub mod history;
 pub mod identity;
 pub mod ids;

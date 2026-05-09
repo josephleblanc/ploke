@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use ploke_records::branch::Prototype1BranchRegistry;
 use ploke_records::channel::{Envelope, ToChild, ToParent};
+use ploke_records::evaluation::Artifact as EvaluationArtifact;
 use ploke_records::history::SealedBlockRecord;
 use ploke_records::identity::ParentIdentityRecord;
 use ploke_records::invocation::{
@@ -23,7 +24,7 @@ use ploke_records::scheduler::{NodeRecord, NodeStatusRecord, SchedulerStateRecor
 use serde::{Deserialize, Serialize};
 
 /// In-memory inputs for one run-forest projection.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RunForestInput {
     pub scheduler: SchedulerStateRecord,
     #[serde(default)]
@@ -39,7 +40,7 @@ pub struct RunForestInput {
 }
 
 /// UI-facing forest assembled from passive records.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RunForest {
     pub campaign: CampaignRef,
     pub roots: Vec<NodeKey>,
@@ -289,6 +290,7 @@ impl FsRunStore {
             transition_journal: self.load_transition_journal_evidence()?,
             history: self.load_history_evidence()?,
             channel_envelopes: self.load_channel_evidence()?,
+            evaluations: self.load_evaluation_evidence()?,
         })
     }
 
@@ -400,6 +402,29 @@ impl FsRunStore {
         }
 
         Ok(Some(evidence))
+    }
+
+    fn load_evaluation_evidence(&self) -> Result<Option<EvaluationEvidence>, FsRunStoreError> {
+        let dir = self.run_root.join("evaluations");
+        if !dir.is_dir() {
+            return Ok(None);
+        }
+
+        let mut index = BTreeMap::new();
+        let mut summary = EvaluationArtifactSummary::default();
+        for path in sorted_json_files(&dir)? {
+            summary.file_count += 1;
+            let artifact = self.read_json::<EvaluationArtifact>(&path)?;
+            summary.parsed_count += 1;
+            if artifact.overall_disposition == ploke_records::branch::Disposition::Keep {
+                summary.keep_count += 1;
+            } else {
+                summary.reject_count += 1;
+            }
+            index.insert(artifact.branch_id.clone(), artifact);
+        }
+
+        Ok(Some(EvaluationEvidence { summary, index }))
     }
 
     fn read_json<T>(&self, path: &Path) -> Result<T, FsRunStoreError>
@@ -732,7 +757,7 @@ fn attach_successor_completion(
 }
 
 /// Passive evidence counts loaded beside the scheduler tree.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct PassiveEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch_registry: Option<BranchRegistryEvidence>,
@@ -742,6 +767,8 @@ pub struct PassiveEvidence {
     pub history: Option<HistoryEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_envelopes: Option<ChannelEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluations: Option<EvaluationEvidence>,
 }
 
 /// Counts from a passive Prototype 1 branch registry.
@@ -777,6 +804,22 @@ pub struct ChannelEvidence {
     pub line_count: usize,
     pub parsed_count: usize,
     pub parse_error_count: usize,
+}
+
+/// Read-only typed evidence loaded from evaluation artifacts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct EvaluationEvidence {
+    pub summary: EvaluationArtifactSummary,
+    pub index: BTreeMap<String, EvaluationArtifact>,
+}
+
+/// Counts from persisted evaluation artifacts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvaluationArtifactSummary {
+    pub file_count: usize,
+    pub parsed_count: usize,
+    pub keep_count: usize,
+    pub reject_count: usize,
 }
 
 /// Stable node key used by tree projections.
@@ -1329,6 +1372,62 @@ mod tests {
             format!("{}\n", minimal_channel_line()),
         )
         .expect("write channel");
+        fs::create_dir_all(root.join("evaluations")).expect("create evaluations dir");
+        fs::write(
+            root.join("evaluations").join("branch-synthetic-1.json"),
+            r#"{
+  "baseline_campaign_id": "campaign-0",
+  "branch_id": "branch-synthetic-1",
+  "treatment_campaign_id": "campaign-1",
+  "branch_registry_path": "branches.json",
+  "evaluation_artifact_path": "evaluations/branch-synthetic-1.json",
+  "treatment_campaign_manifest": "nodes/child/manifest.json",
+  "treatment_closure_state_path": "nodes/child/closure-state.json",
+  "overall_disposition": "keep",
+  "reasons": [],
+  "compared_instances": [
+    {
+      "instance_id": "instance-1",
+      "baseline_metrics": {
+        "tool_calls_total": 3,
+        "tool_calls_failed": 0,
+        "patch_attempted": false,
+        "patch_apply_state": "no",
+        "submission_artifact_state": "nonempty",
+        "partial_patch_failures": 0,
+        "same_file_patch_retry_count": 0,
+        "same_file_patch_max_streak": 0,
+        "aborted": false,
+        "aborted_repair_loop": false,
+        "nonempty_valid_patch": true,
+        "convergence": true,
+        "oracle_eligible": true
+      },
+      "treatment_metrics": {
+        "tool_calls_total": 5,
+        "tool_calls_failed": 1,
+        "patch_attempted": true,
+        "patch_apply_state": "yes",
+        "submission_artifact_state": "empty",
+        "partial_patch_failures": 0,
+        "same_file_patch_retry_count": 1,
+        "same_file_patch_max_streak": 1,
+        "aborted": true,
+        "aborted_repair_loop": false,
+        "nonempty_valid_patch": false,
+        "convergence": false,
+        "oracle_eligible": false
+      },
+      "evaluation": {
+        "disposition": "keep",
+        "reasons": []
+      },
+      "status": "compared"
+    }
+  ]
+}"#,
+        )
+        .expect("write synthetic evaluation");
 
         let parent_identity_path = root.join("parent_identity.json");
         write_json(&parent_identity_path, &parent_identity("root", 0));
@@ -1389,6 +1488,46 @@ mod tests {
                 .parsed_count,
             1
         );
+        let evaluations = forest
+            .passive_evidence
+            .evaluations
+            .as_ref()
+            .expect("evaluation evidence");
+        assert_eq!(evaluations.summary.file_count, 1);
+        assert_eq!(evaluations.summary.parsed_count, 1);
+        assert_eq!(evaluations.summary.keep_count, 1);
+        assert_eq!(evaluations.summary.reject_count, 0);
+        let artifact = evaluations
+            .index
+            .get("branch-synthetic-1")
+            .expect("branch-synthetic-1");
+        let compared = artifact
+            .compared_instances
+            .first()
+            .expect("one synthetic compared instance");
+        assert_eq!(
+            compared
+                .baseline_metrics
+                .as_ref()
+                .expect("baseline metrics")
+                .tool_calls_total,
+            3
+        );
+        assert!(
+            compared
+                .treatment_metrics
+                .as_ref()
+                .expect("treatment metrics")
+                .aborted
+        );
+        assert_eq!(
+            compared
+                .evaluation
+                .as_ref()
+                .expect("evaluation")
+                .disposition,
+            ploke_records::branch::Disposition::Keep
+        );
         assert_no_sealed_history_authority(&forest);
 
         fs::remove_dir_all(root).expect("remove temp run");
@@ -1426,7 +1565,7 @@ mod tests {
             .expect("history evidence present");
 
         println!(
-            "nodes={} max_generation={} roots={} journal_lines={} journal_parsed={} journal_errors={} history_blocks={} history_entries={} history_record_errors={} history_json_errors={} branches={:?} channels={:?}",
+            "nodes={} max_generation={} roots={} journal_lines={} journal_parsed={} journal_errors={} history_blocks={} history_entries={} history_record_errors={} history_json_errors={} branches={:?} channels={:?} evaluations={:?}",
             forest.nodes.len(),
             max_generation,
             forest.roots.len(),
@@ -1439,6 +1578,7 @@ mod tests {
             history.json_parse_error_count,
             forest.passive_evidence.branch_registry,
             forest.passive_evidence.channel_envelopes,
+            forest.passive_evidence.evaluations.as_ref().map(|v| &v.summary),
         );
 
         assert!(
@@ -1469,6 +1609,71 @@ mod tests {
                 .parsed_count
                 > 0
         );
+        let evaluations = forest
+            .passive_evidence
+            .evaluations
+            .as_ref()
+            .expect("evaluation evidence present");
+        assert_eq!(evaluations.summary.file_count, 36);
+        assert_eq!(evaluations.summary.parsed_count, 36);
+        assert_eq!(evaluations.summary.keep_count, 20);
+        assert_eq!(evaluations.summary.reject_count, 16);
+
+        let branch_keep = evaluations
+            .index
+            .get("branch-116821c1239b4022")
+            .expect("branch-116821c1239b4022 artifact");
+        assert_eq!(branch_keep.overall_disposition, ploke_records::branch::Disposition::Keep);
+        let branch_keep_compared = branch_keep
+            .compared_instances
+            .first()
+            .expect("branch-116821 has compared instance");
+        assert_eq!(
+            branch_keep_compared
+                .baseline_metrics
+                .as_ref()
+                .expect("branch-116821 baseline metrics")
+                .tool_calls_total,
+            12
+        );
+        assert_eq!(
+            branch_keep_compared
+                .treatment_metrics
+                .as_ref()
+                .expect("branch-116821 treatment metrics")
+                .tool_calls_total,
+            17
+        );
+        assert!(
+            branch_keep_compared
+                .treatment_metrics
+                .as_ref()
+                .expect("branch-116821 treatment metrics")
+                .aborted
+        );
+        assert_eq!(
+            branch_keep_compared
+                .evaluation
+                .as_ref()
+                .expect("branch-116821 evaluation")
+                .disposition,
+            ploke_records::branch::Disposition::Keep
+        );
+
+        let branch_reject = evaluations
+            .index
+            .get("branch-01187cd17226d1a4")
+            .expect("branch-01187cd17226d1a4 artifact");
+        assert_eq!(
+            branch_reject.overall_disposition,
+            ploke_records::branch::Disposition::Reject
+        );
+        let branch_reject_compared = branch_reject
+            .compared_instances
+            .first()
+            .expect("branch-01187 has compared instance");
+        assert_eq!(branch_reject_compared.status, "missing_baseline_record");
+        assert!(branch_reject_compared.baseline_metrics.is_none());
         assert_no_sealed_history_authority(&forest);
     }
 

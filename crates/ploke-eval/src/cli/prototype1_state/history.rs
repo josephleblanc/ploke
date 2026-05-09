@@ -2700,6 +2700,71 @@ pub(crate) struct SurfaceEvidence {
     pub(crate) apply_status: SurfaceApplyStatus,
 }
 
+/// Durable attempt evidence for one edit-surface proposal, including rejected
+/// apply/write outcomes that do not produce an Artifact delta.
+pub(crate) mod surface_attempt {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub(crate) struct Evidence {
+        pub(crate) schema_version: u32,
+        pub(crate) producer_id: String,
+        pub(crate) proposal_id: String,
+        pub(crate) run_id: String,
+        pub(crate) policy: String,
+        pub(crate) target_relpath: PathBuf,
+        pub(crate) outcome: Outcome,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub(crate) enum Outcome {
+        Applied,
+        Rejected { reason: String },
+    }
+
+    impl Evidence {
+        pub(crate) fn applied(
+            producer_id: impl Into<String>,
+            proposal_id: impl Into<String>,
+            run_id: impl Into<String>,
+            policy: impl Into<String>,
+            target_relpath: PathBuf,
+        ) -> Self {
+            Self {
+                schema_version: 1,
+                producer_id: producer_id.into(),
+                proposal_id: proposal_id.into(),
+                run_id: run_id.into(),
+                policy: policy.into(),
+                target_relpath,
+                outcome: Outcome::Applied,
+            }
+        }
+
+        pub(crate) fn rejected(
+            producer_id: impl Into<String>,
+            proposal_id: impl Into<String>,
+            run_id: impl Into<String>,
+            policy: impl Into<String>,
+            target_relpath: PathBuf,
+            reason: impl Into<String>,
+        ) -> Self {
+            Self {
+                schema_version: 1,
+                producer_id: producer_id.into(),
+                proposal_id: proposal_id.into(),
+                run_id: run_id.into(),
+                policy: policy.into(),
+                target_relpath,
+                outcome: Outcome::Rejected {
+                    reason: reason.into(),
+                },
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SurfaceArtifactRef {
     pub(crate) artifact_id: ArtifactId,
@@ -2907,6 +2972,11 @@ pub(crate) struct EvaluationPayload {
     /// Sealed material required to hydrate a successor Artifact selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) artifact: Option<CandidateArtifact>,
+
+    /// Durable edit-surface attempt evidence visible to parent-time selection
+    /// and diagnosis, including rejected/no-artifact apply outcomes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) surface_attempt: Option<surface_attempt::Evidence>,
 }
 
 impl EvaluationPayload {
@@ -2925,6 +2995,7 @@ impl EvaluationPayload {
             source_hashes: Vec::new(),
             sealed_evidence: None,
             artifact: None,
+            surface_attempt: None,
         }
     }
 
@@ -3167,6 +3238,10 @@ impl EvaluationPayload {
                     .as_ref()
                     .and_then(|sealed| sealed.coordinate.branch_id.as_deref())
             })
+    }
+
+    pub(crate) fn has_parent_readable_surface_attempt(&self) -> bool {
+        self.surface_attempt.is_some()
     }
 }
 
@@ -3418,6 +3493,7 @@ pub(crate) struct EvaluationPayloadBuilder {
     source_hashes: Vec<HistoryHash>,
     sealed_evidence: Option<SealedCandidateEvidence>,
     artifact: Option<CandidateArtifact>,
+    surface_attempt: Option<surface_attempt::Evidence>,
 }
 
 impl EvaluationPayloadBuilder {
@@ -3456,6 +3532,14 @@ impl EvaluationPayloadBuilder {
         self
     }
 
+    pub(crate) fn surface_attempt_evidence(
+        mut self,
+        evidence: surface_attempt::Evidence,
+    ) -> Self {
+        self.surface_attempt = Some(evidence);
+        self
+    }
+
     pub(crate) fn build(mut self) -> EvaluationPayload {
         let mut schema_version = self.schema_version;
         if self.sealed_evidence.is_some() {
@@ -3463,6 +3547,9 @@ impl EvaluationPayloadBuilder {
         }
         if self.artifact.is_some() {
             schema_version = schema_version.max(3);
+        }
+        if self.surface_attempt.is_some() {
+            schema_version = schema_version.max(4);
         }
 
         if let Some(ref sealed) = self.sealed_evidence {
@@ -3484,6 +3571,7 @@ impl EvaluationPayloadBuilder {
             source_hashes: self.source_hashes,
             sealed_evidence: self.sealed_evidence,
             artifact: self.artifact,
+            surface_attempt: self.surface_attempt,
         }
     }
 }
@@ -6608,6 +6696,7 @@ mod tests {
                 child_diagnostics: Vec::new(),
             }),
             artifact: None,
+            surface_attempt: None,
         };
         let b = EvaluationPayload {
             schema_version: 2,
@@ -6646,6 +6735,7 @@ mod tests {
                 child_diagnostics: Vec::new(),
             }),
             artifact: None,
+            surface_attempt: None,
         };
 
         let first = SelectionDecisionEntry::new(
@@ -6736,6 +6826,7 @@ mod tests {
             source_hashes: Vec::new(),
             sealed_evidence: None,
             artifact: None,
+            surface_attempt: None,
         }];
 
         let err = SelectionDecisionEntry::new(
@@ -6794,6 +6885,7 @@ mod tests {
                 child_diagnostics: Vec::new(),
             }),
             artifact: None,
+            surface_attempt: None,
         }];
 
         let err = SelectionDecisionEntry::new(
@@ -6822,6 +6914,7 @@ mod tests {
             source_hashes: Vec::new(),
             sealed_evidence: None,
             artifact: None,
+            surface_attempt: None,
         };
         let grade = payload.decision_grade_eligibility();
         assert!(!grade.eligible);
