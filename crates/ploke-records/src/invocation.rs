@@ -8,8 +8,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::branch::ResolvedTreatmentBranch;
 use crate::ids::RuntimeId;
-use crate::value::JsonRecordValue;
+use crate::scheduler::{NodeRecord, RunnerRequestRecord};
 
 /// Durable schema version for runtime invocation records.
 pub const INVOCATION_SCHEMA_VERSION: &str = "prototype1-invocation.v1";
@@ -32,9 +33,8 @@ pub enum Role {
 
 /// Raw persisted bootstrap record for one prototype1 runtime attempt.
 ///
-/// The optional payload fields stay as generic JSON-compatible record values
-/// because their authoritative schemas still live upstream. Consumers may
-/// inspect or forward them, but this crate does not validate them.
+/// These payloads are passive typed records. Deserializing them does not create
+/// a runnable child/successor or grant authority to execute the loop.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InvocationRecord {
     pub schema_version: String,
@@ -46,11 +46,11 @@ pub struct InvocationRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_root: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node: Option<JsonRecordValue>,
+    pub node: Option<NodeRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request: Option<JsonRecordValue>,
+    pub request: Option<RunnerRequestRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolved: Option<JsonRecordValue>,
+    pub resolved: Option<ResolvedTreatmentBranch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_parent_root: Option<PathBuf>,
     pub created_at: String,

@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use super::ResolvedTreatmentBranch;
 use crate::loop_graph::{ArtifactId, OperationTarget, PatchId};
 use crate::projection::OperatorProjectionRead;
+use crate::record_emission::{EmitRecord, JsonRecordFile};
 use crate::spec::PrepareError;
 
 pub const PROTOTYPE1_SCHEDULER_SCHEMA_VERSION: &str = "prototype1-scheduler.v1";
@@ -463,12 +464,92 @@ fn save_node_record(record: &Prototype1NodeRecord) -> Result<(), PrepareError> {
         path: path.to_path_buf(),
         source,
     })?;
-    let bytes = serde_json::to_vec_pretty(record).map_err(PrepareError::Serialize)?;
     let record_path = record.node_dir.join("node.json");
-    fs::write(&record_path, bytes).map_err(|source| PrepareError::WriteManifest {
-        path: record_path,
-        source,
-    })
+    let passive = passive_node_record(record);
+    JsonRecordFile::new(&record_path).emit(&passive).map(|_| ())
+}
+
+fn passive_node_record(record: &Prototype1NodeRecord) -> ploke_records::scheduler::NodeRecord {
+    ploke_records::scheduler::NodeRecord {
+        schema_version: record.schema_version.clone(),
+        node_id: ploke_records::ids::SchedulerNodeId(record.node_id.clone()),
+        parent_node_id: record
+            .parent_node_id
+            .as_ref()
+            .map(|id| ploke_records::ids::SchedulerNodeId(id.clone())),
+        generation: record.generation,
+        instance_id: ploke_records::ids::InstanceId(record.instance_id.clone()),
+        source_state_id: ploke_records::ids::SourceStateId(record.source_state_id.clone()),
+        operation_target: record
+            .operation_target
+            .as_ref()
+            .map(passive_operation_target),
+        base_artifact_id: record.base_artifact_id.as_ref().map(passive_artifact_id),
+        patch_id: record.patch_id.as_ref().map(passive_patch_id),
+        derived_artifact_id: record.derived_artifact_id.as_ref().map(passive_artifact_id),
+        parent_branch_id: record
+            .parent_branch_id
+            .as_ref()
+            .map(|id| ploke_records::ids::BranchId(id.clone())),
+        branch_id: ploke_records::ids::BranchId(record.branch_id.clone()),
+        candidate_id: ploke_records::ids::CandidateId(record.candidate_id.clone()),
+        target_relpath: record.target_relpath.clone(),
+        node_dir: record.node_dir.clone(),
+        workspace_root: record.workspace_root.clone(),
+        binary_path: record.binary_path.clone(),
+        runner_request_path: record.runner_request_path.clone(),
+        runner_result_path: record.runner_result_path.clone(),
+        status: passive_node_status(record.status),
+        created_at: record.created_at.clone(),
+        updated_at: record.updated_at.clone(),
+    }
+}
+
+fn passive_operation_target(target: &OperationTarget) -> ploke_records::ids::OperationTarget {
+    match target {
+        OperationTarget::Artifact { artifact_id } => {
+            ploke_records::ids::OperationTarget::Artifact {
+                artifact_id: passive_artifact_id(artifact_id),
+            }
+        }
+        OperationTarget::PatchSet {
+            base_artifact_id,
+            patch_ids,
+        } => ploke_records::ids::OperationTarget::PatchSet {
+            base_artifact_id: passive_artifact_id(base_artifact_id),
+            patch_ids: patch_ids.iter().map(passive_patch_id).collect(),
+        },
+        OperationTarget::ArtifactSet {
+            base_artifact_id,
+            artifact_ids,
+        } => ploke_records::ids::OperationTarget::ArtifactSet {
+            base_artifact_id: base_artifact_id.as_ref().map(passive_artifact_id),
+            artifact_ids: artifact_ids.iter().map(passive_artifact_id).collect(),
+        },
+    }
+}
+
+fn passive_artifact_id(id: &ArtifactId) -> ploke_records::ids::ArtifactId {
+    ploke_records::ids::ArtifactId(id.as_str().to_string())
+}
+
+fn passive_patch_id(id: &PatchId) -> ploke_records::ids::PatchId {
+    ploke_records::ids::PatchId(id.as_str().to_string())
+}
+
+fn passive_node_status(status: Prototype1NodeStatus) -> ploke_records::scheduler::NodeStatusRecord {
+    match status {
+        Prototype1NodeStatus::Planned => ploke_records::scheduler::NodeStatusRecord::Planned,
+        Prototype1NodeStatus::WorkspaceStaged => {
+            ploke_records::scheduler::NodeStatusRecord::WorkspaceStaged
+        }
+        Prototype1NodeStatus::BinaryBuilt => {
+            ploke_records::scheduler::NodeStatusRecord::BinaryBuilt
+        }
+        Prototype1NodeStatus::Running => ploke_records::scheduler::NodeStatusRecord::Running,
+        Prototype1NodeStatus::Succeeded => ploke_records::scheduler::NodeStatusRecord::Succeeded,
+        Prototype1NodeStatus::Failed => ploke_records::scheduler::NodeStatusRecord::Failed,
+    }
 }
 
 fn save_runner_request(request: &Prototype1RunnerRequest, path: &Path) -> Result<(), PrepareError> {
@@ -1257,11 +1338,22 @@ mod tests {
             load_node_record(&manifest, &node.node_id, projection).expect("load node");
         let loaded_request =
             load_runner_request(&manifest, &node.node_id, projection).expect("load runner request");
+        let passive_node: ploke_records::scheduler::NodeRecord = serde_json::from_str(
+            &fs::read_to_string(prototype1_node_record_path(&manifest, &node.node_id))
+                .expect("read emitted node record"),
+        )
+        .expect("node projection parses as shared passive record");
 
         assert_eq!(loaded_scheduler.nodes[0].node_id, node.node_id);
         assert_eq!(loaded_node.branch_id, "branch-123");
         assert_eq!(loaded_request.node_id, node.node_id);
         assert_eq!(loaded_request.binary_path, node.binary_path);
+        assert_eq!(passive_node.node_id.as_str(), node.node_id);
+        assert_eq!(passive_node.branch_id.as_str(), node.branch_id);
+        assert_eq!(
+            <ploke_records::scheduler::NodeRecord as ploke_records::record::Record>::FAMILY,
+            ploke_records::record::RecordFamily::SchedulerNode
+        );
     }
 
     #[test]

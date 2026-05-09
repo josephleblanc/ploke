@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{
     BlockHash, BlockId, EntryId, HistoryHash, HistoryStateRoot, LineageId, RecordedAt,
 };
-use crate::value::JsonRecordValue;
+
+mod payload;
+
+pub use payload::*;
 
 /// Actor identity as stored in History records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,8 +96,8 @@ pub enum EntryKindRecord {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum EntryPayloadRecord {
     Direct,
-    SelectionDecision(JsonRecordValue),
-    IngressImport(JsonRecordValue),
+    SelectionDecision(SelectionDecisionEntryRecord),
+    IngressImport(IngressImportRecord),
 }
 
 /// Entry fields common to all stored entry states.
@@ -142,28 +145,153 @@ pub struct AdmittedEntryRecord {
     pub state: AdmittedEntryStateRecord,
 }
 
+/// Absolute cycle coordinate for strategy scheduling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct StepRecord(pub u64);
+
+/// Coarse phase of a periodic strategy cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PhaseRecord {
+    Expansion,
+    Evaluation,
+    Consolidation,
+    Hardening,
+}
+
+/// Coarse ordinal level for one risk axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LevelRecord {
+    Low,
+    Medium,
+    High,
+}
+
+/// Coarse risk profile for the current strategy phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RiskRecord {
+    pub exploration: LevelRecord,
+    pub mutation: LevelRecord,
+    pub finality: LevelRecord,
+}
+
 /// Regime context committed in block headers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RegimeRecord {
-    pub step: JsonRecordValue,
-    pub phase: JsonRecordValue,
-    pub risk: JsonRecordValue,
+    pub step: StepRecord,
+    pub phase: PhaseRecord,
+    pub risk: RiskRecord,
 }
 
 /// Artifact surface commitment carried in block headers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SurfaceCommitmentRecord {
-    pub immutable: JsonRecordValue,
-    pub mutated: JsonRecordValue,
-    pub ambient: JsonRecordValue,
+    pub immutable: SurfaceRecord,
+    pub mutated: SurfaceDeltaRecord,
+    pub ambient: SurfaceDeltaRecord,
+}
+
+/// Digest commitment to one partition of an Artifact surface.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurfaceRecord {
+    pub root: SurfaceRootRecord,
+}
+
+/// Root digest for a declared Artifact surface partition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurfaceRootRecord {
+    pub hash: HistoryHash,
+}
+
+/// Before/after commitment for a surface partition that policy compares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurfaceDeltaRecord {
+    pub before: SurfaceRecord,
+    pub after: SurfaceRecord,
+}
+
+/// Artifact-relative path used by block claims.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactPathRecord {
+    pub value: String,
+}
+
+/// Stable commitment to a backend-owned clean tree key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeKeyHashRecord {
+    pub hash: HistoryHash,
+}
+
+/// Typed content digest for a recoverable History object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DigestRecord {
+    pub hash: HistoryHash,
+}
+
+/// Witness for a block claim produced under the current ruling authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RulerWitnessRecord {
+    pub ruler: ActorRefRecord,
+    pub environment: OperationalEnvironmentRecord,
+    pub witnessed_at: RecordedAt,
+}
+
+/// Admission decision for a witnessed block claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdmissionRecord {
+    pub admitting_authority: ActorRefRecord,
+    pub policy: ProcedureRefRecord,
+    pub admitted_at: RecordedAt,
+}
+
+/// Flat stored form for one admitted, witnessed, verifiable claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlatClaimRecord<K, D> {
+    pub key: K,
+    pub digest: D,
+    pub witness: RulerWitnessRecord,
+    pub admission: AdmissionRecord,
+}
+
+/// Flattened block claims.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimsRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<FlatClaimRecord<ArtifactPathRecord, DigestRecord>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<FlatClaimRecord<ArtifactPathRecord, DigestRecord>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<FlatClaimRecord<ArtifactPathRecord, DigestRecord>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<FlatClaimRecord<TreeKeyHashRecord, DigestRecord>>,
+}
+
+/// Parent identity evidence committed into a parent-capable Artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParentIdentityRefRecord {
+    pub evidence: EvidenceRefRecord,
+}
+
+/// Authority that opens the first block for a lineage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GenesisAuthorityRecord {
+    pub bootstrap_policy: ProcedureRefRecord,
+    pub tree_key: TreeKeyHashRecord,
+    pub parent_identity: ParentIdentityRefRecord,
+}
+
+/// Authority that opens a non-genesis block from a sealed predecessor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PredecessorAuthorityRecord {
+    pub predecessor_block_hash: BlockHash,
 }
 
 /// Authority basis recorded for a block opening.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "value")]
 pub enum OpeningAuthorityRecord {
-    Genesis(JsonRecordValue),
-    Predecessor(JsonRecordValue),
+    Genesis(GenesisAuthorityRecord),
+    Predecessor(PredecessorAuthorityRecord),
 }
 
 /// Selected successor named in a sealed block.
@@ -199,7 +327,7 @@ pub struct SealedBlockHeaderRecord {
     pub crown_lock_transition: EvidenceRefRecord,
     pub selected_successor: SuccessorRefRecord,
     pub active_artifact: ArtifactRefRecord,
-    pub claims: JsonRecordValue,
+    pub claims: ClaimsRecord,
     pub sealed_at: RecordedAt,
     pub entry_count: usize,
     pub entries_root: HistoryHash,
@@ -211,7 +339,7 @@ pub struct SealedBlockHeaderRecord {
 pub struct SealedBlockStateRecord {
     pub header: SealedBlockHeaderRecord,
     #[serde(rename = "_private")]
-    pub private: JsonRecordValue,
+    pub private: (),
 }
 
 /// Stored sealed History block record.
@@ -230,8 +358,21 @@ mod tests {
     use crate::identity::{PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentityRecord};
     use crate::invocation::{InvocationRecord, Role};
 
-    fn value(value: &str) -> JsonRecordValue {
-        JsonRecordValue::String(value.to_string())
+    fn hash(value: char) -> crate::ids::HistoryHash {
+        crate::ids::HistoryHash(value.to_string().repeat(64))
+    }
+
+    fn surface(value: char) -> SurfaceRecord {
+        SurfaceRecord {
+            root: SurfaceRootRecord { hash: hash(value) },
+        }
+    }
+
+    fn surface_delta(before: char, after: char) -> SurfaceDeltaRecord {
+        SurfaceDeltaRecord {
+            before: surface(before),
+            after: surface(after),
+        }
     }
 
     #[test]
@@ -301,11 +442,27 @@ mod tests {
                         parent_block_hashes: vec![],
                         opened_from_state: crate::ids::HistoryStateRoot("0".repeat(64)),
                         regime: RegimeRecord {
-                            step: value("0"),
-                            phase: value("consolidation"),
-                            risk: value("balanced"),
+                            step: StepRecord(0),
+                            phase: PhaseRecord::Consolidation,
+                            risk: RiskRecord {
+                                exploration: LevelRecord::Medium,
+                                mutation: LevelRecord::Medium,
+                                finality: LevelRecord::Medium,
+                            },
                         },
-                        opening_authority: OpeningAuthorityRecord::Genesis(value("bootstrap")),
+                        opening_authority: OpeningAuthorityRecord::Genesis(
+                            GenesisAuthorityRecord {
+                                bootstrap_policy: ProcedureRefRecord {
+                                    value: "policy:bootstrap".to_string(),
+                                },
+                                tree_key: TreeKeyHashRecord { hash: hash('a') },
+                                parent_identity: ParentIdentityRefRecord {
+                                    evidence: EvidenceRefRecord {
+                                        value: "parent-identity".to_string(),
+                                    },
+                                },
+                            },
+                        ),
                         opened_by: actor.clone(),
                         opened_from_artifact: artifact.clone(),
                         ruling_authority: actor.clone(),
@@ -313,9 +470,9 @@ mod tests {
                             value: "policy:prototype1".to_string(),
                         },
                         surface: SurfaceCommitmentRecord {
-                            immutable: value("immutable"),
-                            mutated: value("mutated"),
-                            ambient: value("ambient"),
+                            immutable: surface('b'),
+                            mutated: surface_delta('c', 'd'),
+                            ambient: surface_delta('e', 'f'),
                         },
                         opened_at: crate::ids::RecordedAt(1),
                     },
@@ -325,13 +482,18 @@ mod tests {
                         artifact: artifact.clone(),
                     },
                     active_artifact: artifact,
-                    claims: JsonRecordValue::Object(Default::default()),
+                    claims: ClaimsRecord {
+                        policy: None,
+                        surface: None,
+                        manifest: None,
+                        artifact: None,
+                    },
                     sealed_at: crate::ids::RecordedAt(2),
                     entry_count: 0,
                     entries_root: crate::ids::HistoryHash("1".repeat(64)),
                     block_hash: crate::ids::BlockHash("2".repeat(64)),
                 },
-                private: JsonRecordValue::Object(Default::default()),
+                private: (),
             },
             entries: vec![],
         };

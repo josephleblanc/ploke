@@ -13,6 +13,8 @@ use ploke_protocol::{
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::record::{Record, RecordFamily, RecordFormat};
+
 mod artifacts;
 pub mod provenance;
 
@@ -53,6 +55,12 @@ pub enum ArtifactBody {
     ToolCallIntentSegmentation(IntentSegmentationPayload),
     ToolCallReview(ToolCallReviewPayload),
     ToolCallSegmentReview(ToolCallSegmentReviewPayload),
+}
+
+impl Record for Artifact {
+    const FAMILY: RecordFamily = RecordFamily::ProtocolArtifact;
+    const SCHEMA: &'static str = SCHEMA_V1;
+    const FORMAT: RecordFormat = RecordFormat::Json;
 }
 
 impl Artifact {

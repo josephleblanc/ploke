@@ -68,6 +68,21 @@ pub struct TreatmentBranchNode {
     pub latest_evaluation: Option<TreatmentBranchEvaluationSummary>,
 }
 
+/// Materialized branch payload carried by child invocation and handoff records.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResolvedTreatmentBranch {
+    pub instance_id: String,
+    pub source_state_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_branch_id: Option<String>,
+    pub target_relpath: PathBuf,
+    pub source_content: String,
+    pub source_content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_branch_id: Option<String>,
+    pub branch: TreatmentBranchNode,
+}
+
 /// One source state and target file with candidate treatment branches.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InterventionSourceNode {

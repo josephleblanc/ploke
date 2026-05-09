@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::branch::Disposition;
-use crate::value::JsonRecordValue;
+use crate::record::{Record, RecordFamily, RecordFormat};
+
+pub const ARTIFACT_SCHEMA_V1: &str = "prototype1-branch-evaluation.v1";
 
 /// One persisted Prototype 1 branch evaluation artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -33,6 +35,12 @@ pub struct Artifact {
     pub compared_instances: Vec<InstanceComparison>,
 }
 
+impl Record for Artifact {
+    const FAMILY: RecordFamily = RecordFamily::EvaluationArtifact;
+    const SCHEMA: &'static str = ARTIFACT_SCHEMA_V1;
+    const FORMAT: RecordFormat = RecordFormat::Json;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Evaluator {
     pub id: String,
@@ -40,7 +48,7 @@ pub struct Evaluator {
     pub version: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EvalSet {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,22 +58,68 @@ pub struct EvalSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explicit: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub benchmark_family: Option<String>,
+    pub benchmark_family: Option<BenchmarkFamily>,
     #[serde(default)]
     pub dataset_sources: Vec<DatasetSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub eval_policy: Option<JsonRecordValue>,
+    pub eval_policy: Option<EvalPolicy>,
     #[serde(default)]
     pub instance_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_treatment_instance_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BenchmarkFamily {
+    MultiSweBenchRust,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvalPolicy {
+    #[serde(default)]
+    pub include_partial: bool,
+    #[serde(default)]
+    pub stop_on_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include_dataset_labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_dataset_labels: Vec<String>,
+    #[serde(default)]
+    pub budget: EvalBudget,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_prefix: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvalBudget {
+    pub max_turns: u32,
+    pub max_tool_calls: u32,
+    pub wall_clock_secs: u32,
+}
+
+impl Default for EvalBudget {
+    fn default() -> Self {
+        Self {
+            max_turns: 40,
+            max_tool_calls: 200,
+            wall_clock_secs: 1800,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DatasetSource {
-    pub path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
+    pub key: Option<String>,
+    pub path: PathBuf,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

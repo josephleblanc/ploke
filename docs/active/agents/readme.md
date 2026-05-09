@@ -22,6 +22,7 @@ The former `2026-05-06-prototype1-*` execution-surface inventory links that appe
 - [`2026-05-08_bounded-edit-surface-handoff.md`](2026-05-08_bounded-edit-surface-handoff.md) — restart spine for the current bounded edit-surface / parent-planning thread, including authoritative docs, blocker status, known code audits, and next questions.
 - [`2026-05-08_bounded-edit-surface-implementation-orientation.md`](2026-05-08_bounded-edit-surface-implementation-orientation.md) — short operational packet for sub-agents implementing the bounded edit-surface plan, with core docs, invariants, task-stack ids, and slice prompt pattern.
 - [`2026-05-09_ploke-records-protocol-handoff.md`](2026-05-09_ploke-records-protocol-handoff.md) — restart spine for the separate `ploke-records` / `ploke-tree` passive schema thread, including the no-public-opaque-JSON rule, real-run verification, and next protocol module split.
+- [`2026-05-09_records-emission-clean-sweep-handoff.md`](2026-05-09_records-emission-clean-sweep-handoff.md) — restart spine for normalizing Prototype 1 persisted record emission around shared `ploke-records` schemas while preserving the clean-sweep rule against legacy projection-control reads.
 - [`open-questions.md`](open-questions.md) — agent-to-agent questions (not direct user prompts).
 - [`notable-inconsistencies.md`](notable-inconsistencies.md) — durable inconsistencies worth tracking.
 

@@ -13,6 +13,10 @@ use crate::ids::{
     ArtifactId, BranchId, CampaignId, CandidateId, InstanceId, OperationTarget, PatchId,
     SchedulerNodeId, SourceStateId,
 };
+use crate::record::{Record, RecordFamily, RecordFormat};
+
+pub const SCHEDULER_STATE_SCHEMA_V1: &str = "prototype1-scheduler.v1";
+pub const TREATMENT_NODE_SCHEMA_V1: &str = "prototype1-treatment-node.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SearchPolicyRecord {
@@ -207,6 +211,30 @@ pub struct SchedulerStateRecord {
     pub last_continuation_decision: Option<ContinuationDecisionRecord>,
     #[serde(default)]
     pub nodes: Vec<NodeRecord>,
+}
+
+impl Record for SchedulerStateRecord {
+    const FAMILY: RecordFamily = RecordFamily::SchedulerState;
+    const SCHEMA: &'static str = SCHEDULER_STATE_SCHEMA_V1;
+    const FORMAT: RecordFormat = RecordFormat::Json;
+}
+
+impl Record for NodeRecord {
+    const FAMILY: RecordFamily = RecordFamily::SchedulerNode;
+    const SCHEMA: &'static str = TREATMENT_NODE_SCHEMA_V1;
+    const FORMAT: RecordFormat = RecordFormat::Json;
+}
+
+impl Record for RunnerRequestRecord {
+    const FAMILY: RecordFamily = RecordFamily::RunnerRequest;
+    const SCHEMA: &'static str = TREATMENT_NODE_SCHEMA_V1;
+    const FORMAT: RecordFormat = RecordFormat::Json;
+}
+
+impl Record for RunnerResultRecord {
+    const FAMILY: RecordFamily = RecordFamily::RunnerResult;
+    const SCHEMA: &'static str = TREATMENT_NODE_SCHEMA_V1;
+    const FORMAT: RecordFormat = RecordFormat::Json;
 }
 
 #[cfg(test)]

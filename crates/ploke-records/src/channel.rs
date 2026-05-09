@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::evaluation::{EvalSet, Evaluator, InstanceComparison};
 use crate::ids::{RecordedAt, RuntimeId};
 use crate::invocation::{SuccessorCompletionRecord, SuccessorReadyRecord};
 use crate::scheduler::RunnerResultRecord;
@@ -91,9 +92,9 @@ pub struct EvaluationReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluation_procedure_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub evaluator_identity: Option<crate::value::JsonRecordValue>,
+    pub evaluator_identity: Option<Evaluator>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub eval_set_identity: Option<crate::value::JsonRecordValue>,
+    pub eval_set_identity: Option<EvalSet>,
     pub branch_registry_path: PathBuf,
     pub evaluation_artifact_path: PathBuf,
     pub treatment_campaign_manifest: PathBuf,
@@ -102,7 +103,7 @@ pub struct EvaluationReport {
     #[serde(default)]
     pub reasons: Vec<String>,
     #[serde(default)]
-    pub compared_instances: Vec<crate::value::JsonRecordValue>,
+    pub compared_instances: Vec<InstanceComparison>,
 }
 
 #[cfg(test)]

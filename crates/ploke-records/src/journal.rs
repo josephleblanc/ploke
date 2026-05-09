@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::identity::ParentIdentityRecord;
 use crate::ids::{ContentHash, RecordedAt, RuntimeId, TransitionId};
 use crate::scheduler::{ContinuationDecisionRecord, RunnerDispositionRecord};
-use crate::value::JsonRecordValue;
+use crate::selection::Decision;
 
 /// Append-only journal phase for one committed transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -354,7 +354,7 @@ pub enum SuccessorStateRecord {
     Selected {
         decision: ContinuationDecisionRecord,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        selection_decision: Option<JsonRecordValue>,
+        selection_decision: Option<Decision>,
     },
     Spawned {
         pid: u32,

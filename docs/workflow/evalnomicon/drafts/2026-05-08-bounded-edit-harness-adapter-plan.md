@@ -56,6 +56,233 @@ answer:
 - whether child evaluation improved the selected metrics;
 - why the successor was selected, rejected, or stopped.
 
+## Current Direction: Broad Ruling Parent With Protected Core
+
+The current preferred first pass leans toward the HyperAgents/DGM-H approach:
+give the ruling Parent broad room to decide what improvement to attempt, while
+mechanically protecting the parts of the system that make the experiment valid
+and safe enough to run unattended.
+
+The default surface is therefore not a narrow hand-selected tool file. It is:
+
+```text
+EditableSurface(a) = Γ_a \ ProtectedCore(a)
+```
+
+where `ProtectedCore` is the part of the artifact-bound code graph that the
+Parent may observe but ordinary child-producing edits must not modify.
+
+At minimum, `ProtectedCore` should include:
+
+```text
+Crown and History admission/sealing authority
+successor spawn / trampoline / process-lifecycle authority
+oracle and ground-truth evaluation authority
+future consensus/blockchain invariants
+dependency/build escape hatches
+OS/process/filesystem authority expansion paths
+```
+
+Natural-language instructions such as "do not edit Crown, History, successor
+spawn, oracle, dependency, or process authority code" are useful context for the
+LLM, but they are not the guarantee. The guarantee must come from the checked
+surface:
+
+```text
+g ⊢ q iff Q_r ⊆ R ∧ Q_w ⊆ W ∧ Q_w ∩ F = ∅
+```
+
+where `F` contains the protected core and high-risk capability-expansion
+surfaces.
+
+Under this direction, `Diagnosis` is context, not write authority. The Parent
+receives progressive disclosure of History/evaluation/protocol/tool evidence
+so it can decide what intervention might improve long-horizon outcomes. The
+spawn path admits only checked child artifacts whose writes respect the
+protected core and whose proposal/apply evidence can be recorded.
+
+The more focused route-table approaches remain useful alternatives. They can be
+compared later against the broad-ruling-parent approach on separate branches,
+parents, archive paths, or consensus/tree segments.
+
+### Form-Preserving Capability Growth
+
+The broad-parent experiment must not accidentally freeze the child below the
+Parent's capability level. That would defeat self-improvement. The admissibility
+rule is not:
+
+```text
+capabilities(child) ⊆ capabilities(parent)
+```
+
+The intended rule is:
+
+```text
+the child may gain object-level capabilities,
+but admitted transitions must preserve the framework form.
+```
+
+Separate the mutable object-level implementation from the protected framework
+contract:
+
+```text
+Artifact a =
+  Φ(a)  framework form / protected contract
+  Ω(a)  mutable object-level implementation and capabilities
+```
+
+Ordinary self-improvement may change `Ω`:
+
+```text
+Ω(a') may add better tools, better summaries, better retrieval, better
+protocol analysis, better planning, or other useful capabilities.
+```
+
+But it must preserve `Φ`:
+
+```text
+Φ(a') = Φ(a)
+```
+
+or pass through an explicitly admitted framework-migration path that is outside
+ordinary child generation.
+
+`Φ` is the continuity of form that makes a descendant still part of this
+framework rather than "some other program that scored well by escaping." It
+includes the Crown/History authority model, admitted child-spawn path,
+oracle/evaluation boundary, protected runtime lifecycle, artifact/provenance
+rules, sandbox/OS authority limits, and later consensus/blockchain invariants.
+
+The useful design region is therefore:
+
+```text
+Useful Transformations
+  ∩ Statically Checkable Properties
+  ∩ Sandbox-Enforceable Properties
+  ∩ Form-Preserving Transitions
+```
+
+The center is not "safe capability subset." It is:
+
+```text
+transformations that improve object-level capability
+while preserving the framework form.
+```
+
+This framing lets a child become better than the parent without letting it
+rewrite what "child", "authority", "evaluation", "History", or "successor"
+mean.
+
+### Protected Execution Invariant Across Descendants
+
+The important safety distinction is:
+
+```text
+the LLM can edit the child Artifact;
+the LLM cannot change the capabilities of its already-running Parent Runtime.
+```
+
+Because the Parent is a compiled binary editing a future artifact, it cannot
+expand its own runtime capabilities by changing files in the child worktree.
+It can only attempt to create a child that would have different capabilities.
+Therefore child spawn admission is the critical gate.
+
+For a protected execution subgraph `P_exec`, child spawn should require:
+
+```text
+digest_a(P_exec) = digest_child(P_exec)
+```
+
+and the parent binary that performs the check should itself have been built
+from an artifact with the same protected execution digest. Informally:
+
+```text
+if the Parent can only spawn a child through path P_exec,
+and spawning requires the child artifact to preserve P_exec,
+then every admitted descendant preserves P_exec by induction.
+```
+
+This is the desired invariant:
+
+```text
+∀ admitted edge a_i -> a_{i+1}.
+  digest_{a_i}(P_exec) = digest_{a_{i+1}}(P_exec)
+```
+
+So long as all successor creation flows through this admission path, the LLM
+can improve child capabilities outside the protected execution subgraph, but it
+cannot expand the capabilities that define child-spawn authority, History/Crown
+authority, or other protected experimental invariants.
+
+This guarantee is only as strong as the definition of `P_exec`, the material
+digest check, and the claim that there is no alternate child-spawn path outside
+`P_exec`.
+
+The `P_exec` digest check is one concrete mechanism for preserving part of
+`Φ`. It does not prove all of `Φ` by itself. Other parts of the framework form
+may require graph checks, static capability scans, sandbox policy, provenance
+checks, and explicit History admission rules.
+
+### Guarantees And Non-Guarantees
+
+What the broad protected-core approach can guarantee, if implemented correctly:
+
+- proposed writes do not touch the forbidden file/span/symbol surface;
+- child spawn is refused if protected execution digests differ;
+- ordinary candidates cannot edit Crown/History admission, successor spawn,
+  oracle, consensus, or other protected authority surfaces;
+- ordinary candidates cannot add obvious process-spawn or OS-authority paths
+  when those paths are included in `F` or a high-risk gate;
+- every admitted child can be tied to the parent artifact, runtime, objective,
+  disclosed evidence, proposal, checked delta, and evaluation outcome.
+
+What it does not guarantee:
+
+- that the LLM cannot make a harmful change in an allowed surface;
+- that coarse keyword/symbol scans catch every semantic way to gain OS
+  authority;
+- that natural-language constraints are followed;
+- that external runtime configuration files are safe unless their identities,
+  digests, and admission rules are part of the protected model;
+- that dynamic behavior through existing allowed code paths is harmless;
+- that the selected child is actually better except as measured by the
+  evaluation/oracle.
+
+External permission/config files are especially risky. If a runtime reads a
+mutable file to decide its own authority, that file becomes part of the
+capability surface. It must either be immutable, digested and admitted as part
+of `P_exec`, or excluded from runtime authority decisions. Otherwise the LLM
+may be unable to edit its current binary but still influence a future runtime by
+modifying the file that future runtime reads.
+
+### Progressive Disclosure And Observation Trace
+
+Broad authority should not mean dropping the Parent into an opaque codebase. The
+Parent should receive progressive disclosure:
+
+```text
+summary -> indexed evidence -> selected records -> exact snippets/spans
+```
+
+The system should record what was disclosed:
+
+```text
+ObservationTrace {
+  graph_snapshot_id,
+  history/evaluation/protocol summaries disclosed,
+  tool queries issued,
+  nodes/spans/snippets disclosed,
+  tool outputs disclosed,
+  context packet digests,
+}
+```
+
+This does not prove what the model "understood" or psychologically considered.
+It does prove which records, snippets, and tool outputs were made available to
+the proposal-generating conversation. That trace is necessary for later credit
+assignment and for comparing broad free-roaming children against more focused
+route-table children.
+
 ## Placeholder Milestones
 
 These milestones are placeholders for implementation planning. Fill them in as
@@ -272,6 +499,174 @@ The first surface choice should target the `ploke-tui` semantic edit resolver
 path. Current-branch construction should use exact anchors, same-file/module
 relations, explicit companions, and read-only search hits. Call graph and
 type-reference expansion remain future work.
+
+#### Considered Heuristic: Failure Mechanism To Surface Class
+
+One possible route policy is to classify a tool failure by the likely failure
+mechanism before choosing a surface. This is attractive because "tool failed"
+does not imply "edit the tool directory." The same externally visible failure
+can have different repair surfaces:
+
+```text
+model calls tool incorrectly
+  -> tool schema / parameter shape / error message / description
+  -> likely ploke-tui tool definition or tool metadata surface
+
+model calls tool successfully but uses it poorly with other tools
+  -> tool guidance / examples / tool_text / protocol scaffolding
+  -> likely prompt/tool-text/harness-guidance surface
+
+tool output is too large
+  -> output shaping / truncation / summarization / retrieval limits
+  -> likely tool implementation or RAG query surface
+
+retrieval result is inaccurate
+  -> query construction / ranking / embedding / database retrieval
+  -> likely ploke-tui RAG, ploke-db, or ploke-embed surface
+
+parser cannot see the requested code item
+  -> parse / IR / transform / database ingestion / re-embedding pipeline
+  -> not normally solvable inside the ploke-tui tools directory
+
+tool description is stale or misleading
+  -> tool description / schema / tool_text
+  -> likely bounded tool metadata or prompt surface
+
+parameter shape is poorly chosen
+  -> schema/API boundary
+  -> likely ploke-tui tool definition surface
+```
+
+This heuristic is under consideration, not yet the selected routing policy. If
+implemented, it should preserve an explicit intermediate distinction:
+
+```text
+Diagnosis
+  -> failure mechanism hypothesis
+  -> repairability class
+  -> SurfaceChoice
+  -> EditObjective
+```
+
+The route must also be allowed to return:
+
+```text
+insufficient_surface_evidence
+```
+
+when typed diagnosis evidence shows that something failed, but the available
+records do not justify a bounded edit surface. This preserves the distinction
+between "we know a failure occurred" and "we know where a code edit is likely
+causally upstream."
+
+#### Considered Framing: Surface Choice As Experiment Design
+
+Another possible framing is that parent-time routing is not primarily root
+cause diagnosis. It is bounded experiment design. The parent does not need to
+prove why a tool episode failed before acting. It needs to choose the next
+intervention that is cheap enough, safe enough, informative enough, and likely
+enough to improve either child quality or future credit assignment.
+
+Under this framing, the route is not:
+
+```text
+failure -> true cause -> edit that cause
+```
+
+It is:
+
+```text
+History evidence
+  -> bounded intervention objective
+  -> surface construction plan
+  -> one or more candidate children
+  -> observed outcome
+  -> later policy/credit update
+```
+
+The intervention can target different immediate effects:
+
+```text
+repair capability
+  e.g. improve request_code_context output shaping or argument validation
+
+improve affordance
+  e.g. clarify tool description, schema, examples, or error messages
+
+improve observability
+  e.g. preserve tool episode ids, output-size summaries, parser coverage
+       misses, or protocol-record links
+
+compare alternatives
+  e.g. spawn bounded children against multiple plausible surfaces and let
+       evaluation/selection judge the result
+
+decline to edit
+  e.g. record insufficient evidence and choose a read-only probe or no-op
+       when write authority would be speculative
+```
+
+This suggests a possible intermediate carrier:
+
+```text
+Diagnosis
+  -> InterventionObjective
+  -> SurfaceConstructionPlan
+  -> SurfaceChoice | ProbeChoice | InstrumentationChoice | NoAction
+```
+
+This is also only a considered solution. Its value is that it fits the
+multi-child loop: a child can be useful because it improves score, because it
+improves future visibility, or because it lets selection compare bounded
+interventions empirically. Its risk is that "experiment" can become too broad
+unless grants and objective records remain tight.
+
+#### Considered Alternatives From The HyperAgents Frame
+
+The HyperAgents/DGM-H pattern suggests not over-specifying the self-improvement
+route too early. It keeps an archive of evaluated variants, branches from
+selected parents, and lets useful process changes emerge as stepping stones.
+In that frame, parent-time routing may be better treated as constrained
+generation of useful variants rather than as a one-step causal proof.
+
+Possible solution families:
+
+```text
+Intervention portfolio
+  Same evidence produces several bounded children against different plausible
+  intervention types. Selection and later History decide which one was useful.
+
+Open-ended bounded mutation operators
+  Define broad operators such as ImproveAffordance, ImproveObservability,
+  ReduceCost, ImproveReliability, ImproveEvaluationAnalysis, or
+  ImproveGeneratorStrategy. Each operator constructs a bounded surface for the
+  current artifact instead of hard-coding one failure-to-file route.
+
+Probe or instrumentation children
+  Treat visibility improvements as first-class children. A child may add tool
+  episode records, preserve failed args/output/error ids, summarize large
+  outputs, record parser coverage misses, or link protocol artifacts to
+  History evidence, even if it does not immediately raise benchmark score.
+
+Archive-level credit assignment
+  Record intervention type, surface family, objective, and descendant outcomes
+  so later selection or analysis can learn which interventions tend to create
+  useful descendants. This avoids pretending that one local failure explains
+  one local surface.
+
+Budget-aware strategy
+  Vary intervention selection by remaining run budget: earlier generations can
+  explore/instrument/process-improve, middle generations can compare competing
+  hypotheses, and late generations can prefer conservative high-confidence
+  fixes.
+```
+
+These alternatives are qualitatively different from a static route table. They
+preserve room for stepping-stone variants and meta-level improvements while
+still allowing `ploke-eval` to enforce bounded grants and provenance. Their
+main risk is loss of focus: without tight objective records, evaluation hooks,
+and surface grants, "open-ended" can become broad, expensive, and hard to
+credit.
 
 Done when:
 

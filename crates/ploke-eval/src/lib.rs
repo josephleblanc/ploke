@@ -20,6 +20,7 @@ mod protocol_report;
 mod protocol_triage_report;
 pub mod provider_prefs;
 pub mod record;
+pub(crate) mod record_emission;
 pub mod registry;
 pub mod run_history;
 pub mod run_registry;

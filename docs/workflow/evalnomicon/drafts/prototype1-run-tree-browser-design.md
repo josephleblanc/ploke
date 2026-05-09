@@ -34,7 +34,9 @@ The proposed split is:
 - `ploke-records`: shared recording and report schemas for persisted Prototype 1
   files and loop-command outputs. Public record/projection types should derive
   `Serialize` and `Deserialize`, carry fields and format versions, and have no
-  authority to open, admit, seal, append, select, or advance the loop.
+  authority to open, admit, seal, append, select, or advance the loop. Public
+  record fields should be typed domain fields, not `serde_json::Value`,
+  `JsonRecordValue`, or equivalent opaque JSON placeholders.
 - `ploke-eval`: runtime and authority crate. It may wrap `ploke-records` values
   in typestate carriers such as `Parent<S>`, `Crown<S>`, `Block<S>`, and
   `Entry<S>`, and it owns the transition methods that turn records/evidence into
@@ -118,6 +120,20 @@ the carrier itself. For example, a `SealedBlockRecord`, `AdmittedEntryRecord`, o
 but deserializing one only produces recorded data. It does not recreate the
 functional typestate value unless `ploke-eval` explicitly verifies it and wraps
 it back into the appropriate authority carrier.
+
+Mirror records must still be typed. They are not permission to store untyped JSON
+subtrees in `ploke-records`. If a persisted value matters to the tree UI, its
+fields should be modeled in the shared record crate. If the source type cannot
+move because it also carries private constructors, typestate, or runtime
+authority, add a public typed mirror with the same serialized facts and leave
+the authority-bearing transition in `ploke-eval`.
+
+For producer normalization, `ploke-records` may define record metadata such as a
+record family, schema version, and wire format. `ploke-eval` should own the
+emission trait or store adapter, for example an `EmitRecord<R>` implementation
+over `R: ploke_records::Record`. That keeps write authority with the runtime
+crate while making every UI-facing persisted object structurally searchable as a
+typed shared schema.
 
 The target user-facing flow is:
 
