@@ -4823,6 +4823,7 @@ dependencies = [
 name = "ploke-records"
 version = "0.1.0"
 dependencies = [
+ "ploke-protocol",
  "serde",
  "serde_json",
 ]

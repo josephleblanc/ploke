@@ -20,6 +20,10 @@ use ploke_records::invocation::{
     SuccessorCompletionRecord, SuccessorCompletionStatus, SuccessorReadyRecord,
 };
 use ploke_records::journal::JournalEntry;
+use ploke_records::protocol::{
+    Artifact as ProtocolArtifact, TOOL_CALL_INTENT_SEGMENTATION, TOOL_CALL_REVIEW,
+    TOOL_CALL_SEGMENT_REVIEW,
+};
 use ploke_records::scheduler::{NodeRecord, NodeStatusRecord, SchedulerStateRecord};
 use serde::{Deserialize, Serialize};
 
@@ -218,6 +222,7 @@ fn merge_node_records(
 pub struct FsRunStore {
     run_root: PathBuf,
     parent_identity_path: Option<PathBuf>,
+    protocol_artifacts_dir: Option<PathBuf>,
 }
 
 impl FsRunStore {
@@ -225,6 +230,7 @@ impl FsRunStore {
         Self {
             run_root: run_root.into(),
             parent_identity_path: None,
+            protocol_artifacts_dir: None,
         }
     }
 
@@ -241,6 +247,11 @@ impl FsRunStore {
                 .join("prototype1")
                 .join("parent_identity.json"),
         );
+        self
+    }
+
+    pub fn with_protocol_artifacts_dir(mut self, path: impl Into<PathBuf>) -> Self {
+        self.protocol_artifacts_dir = Some(path.into());
         self
     }
 
@@ -291,6 +302,7 @@ impl FsRunStore {
             history: self.load_history_evidence()?,
             channel_envelopes: self.load_channel_evidence()?,
             evaluations: self.load_evaluation_evidence()?,
+            protocol_artifacts: self.load_protocol_artifacts_evidence()?,
         })
     }
 
@@ -425,6 +437,37 @@ impl FsRunStore {
         }
 
         Ok(Some(EvaluationEvidence { summary, index }))
+    }
+
+    fn load_protocol_artifacts_evidence(
+        &self,
+    ) -> Result<Option<ProtocolArtifactsEvidence>, FsRunStoreError> {
+        let Some(dir) = &self.protocol_artifacts_dir else {
+            return Ok(None);
+        };
+        if !dir.is_dir() {
+            return Ok(None);
+        }
+
+        let mut summary = ProtocolArtifactSummary::default();
+        let mut index = BTreeMap::new();
+        for path in sorted_json_files(dir)? {
+            summary.file_count += 1;
+            let artifact = self.read_json::<ProtocolArtifact>(&path)?;
+            summary.parsed_count += 1;
+            match artifact.procedure_name.as_str() {
+                TOOL_CALL_INTENT_SEGMENTATION => summary.intent_segmentation_count += 1,
+                TOOL_CALL_REVIEW => summary.review_count += 1,
+                TOOL_CALL_SEGMENT_REVIEW => summary.segment_review_count += 1,
+                _ => {}
+            }
+            if artifact.body().is_some() {
+                summary.typed_payload_count += 1;
+            }
+            index.insert(protocol_artifact_key(&path), artifact);
+        }
+
+        Ok(Some(ProtocolArtifactsEvidence { summary, index }))
     }
 
     fn read_json<T>(&self, path: &Path) -> Result<T, FsRunStoreError>
@@ -608,6 +651,14 @@ fn sorted_nested_channel_jsonl_files(run_root: &Path) -> Result<Vec<PathBuf>, Fs
     Ok(paths)
 }
 
+fn protocol_artifact_key(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .or_else(|| path.file_name().and_then(|name| name.to_str()))
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
 fn attach_parent_identity(
     nodes: &mut [TreeNode],
     index_by_key: &BTreeMap<NodeKey, usize>,
@@ -769,6 +820,8 @@ pub struct PassiveEvidence {
     pub channel_envelopes: Option<ChannelEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluations: Option<EvaluationEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_artifacts: Option<ProtocolArtifactsEvidence>,
 }
 
 /// Counts from a passive Prototype 1 branch registry.
@@ -820,6 +873,24 @@ pub struct EvaluationArtifactSummary {
     pub parsed_count: usize,
     pub keep_count: usize,
     pub reject_count: usize,
+}
+
+/// Read-only typed evidence loaded from protocol artifacts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ProtocolArtifactsEvidence {
+    pub summary: ProtocolArtifactSummary,
+    pub index: BTreeMap<String, ProtocolArtifact>,
+}
+
+/// Counts from persisted protocol artifacts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProtocolArtifactSummary {
+    pub file_count: usize,
+    pub parsed_count: usize,
+    pub intent_segmentation_count: usize,
+    pub review_count: usize,
+    pub segment_review_count: usize,
+    pub typed_payload_count: usize,
 }
 
 /// Stable node key used by tree projections.
@@ -1528,6 +1599,7 @@ mod tests {
                 .disposition,
             ploke_records::branch::Disposition::Keep
         );
+        assert!(forest.passive_evidence.protocol_artifacts.is_none());
         assert_no_sealed_history_authority(&forest);
 
         fs::remove_dir_all(root).expect("remove temp run");
@@ -1544,6 +1616,9 @@ mod tests {
             store = store.with_parent_identity_path(path);
         } else if let Ok(parent_root) = std::env::var("PLOKE_TREE_PARENT_ROOT") {
             store = store.with_parent_root(parent_root);
+        }
+        if let Ok(path) = std::env::var("PLOKE_TREE_PROTOCOL_ARTIFACTS_DIR") {
+            store = store.with_protocol_artifacts_dir(path);
         }
 
         let forest = store.load_forest().expect("load real campaign forest");
@@ -1681,6 +1756,58 @@ mod tests {
             .expect("branch-01187 has compared instance");
         assert_eq!(branch_reject_compared.status, "missing_baseline_record");
         assert!(branch_reject_compared.baseline_metrics.is_none());
+
+        let protocol_artifacts = forest
+            .passive_evidence
+            .protocol_artifacts
+            .as_ref()
+            .expect("protocol artifact evidence present");
+        assert_eq!(protocol_artifacts.summary.file_count, 16);
+        assert_eq!(protocol_artifacts.summary.parsed_count, 16);
+        assert_eq!(protocol_artifacts.summary.intent_segmentation_count, 1);
+        assert_eq!(protocol_artifacts.summary.review_count, 10);
+        assert_eq!(protocol_artifacts.summary.segment_review_count, 5);
+        assert_eq!(protocol_artifacts.summary.typed_payload_count, 16);
+
+        let segmentation = protocol_artifacts
+            .index
+            .values()
+            .find(|artifact| artifact.procedure_name == TOOL_CALL_INTENT_SEGMENTATION)
+            .expect("segmentation artifact");
+        let segmentation_payload = match segmentation.body() {
+            Some(ploke_records::protocol::ArtifactBody::ToolCallIntentSegmentation(payload)) => {
+                payload
+            }
+            other => panic!("expected segmentation payload, got {other:?}"),
+        };
+        assert_eq!(segmentation_payload.input.total_calls_in_run, 10);
+        assert_eq!(segmentation_payload.output.coverage.total_calls, 10);
+        assert_eq!(segmentation_payload.output.segments.len(), 5);
+
+        let review = protocol_artifacts
+            .index
+            .values()
+            .find(|artifact| artifact.procedure_name == TOOL_CALL_REVIEW)
+            .expect("review artifact");
+        let review_payload = match review.body() {
+            Some(ploke_records::protocol::ArtifactBody::ToolCallReview(payload)) => payload,
+            other => panic!("expected review payload, got {other:?}"),
+        };
+        assert_eq!(review_payload.output.packet.total_calls_in_run, 10);
+        assert_eq!(review_payload.output.packet.calls.len(), 3);
+
+        let segment_review = protocol_artifacts
+            .index
+            .values()
+            .find(|artifact| artifact.procedure_name == TOOL_CALL_SEGMENT_REVIEW)
+            .expect("segment review artifact");
+        let segment_review_payload = match segment_review.body() {
+            Some(ploke_records::protocol::ArtifactBody::ToolCallSegmentReview(payload)) => payload,
+            other => panic!("expected segment review payload, got {other:?}"),
+        };
+        assert_eq!(segment_review_payload.input.segment.start_index, 0);
+        assert_eq!(segment_review_payload.input.segment.end_index, 1);
+        assert_eq!(segment_review_payload.output.packet.segment_index, Some(0));
         assert_no_sealed_history_authority(&forest);
     }
 
