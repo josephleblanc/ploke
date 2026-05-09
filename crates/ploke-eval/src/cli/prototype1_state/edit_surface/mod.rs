@@ -10,11 +10,13 @@
 pub(crate) mod diagnosis;
 pub(crate) mod graph;
 pub(crate) mod harness;
+pub(crate) mod route;
 pub(crate) mod surface;
 pub(crate) mod tui;
 
 pub(crate) use diagnosis::{Diagnosis, classify};
 pub(crate) use harness::ArtifactDelta;
+pub(crate) use route::semantic_resolution;
 
 #[cfg(test)]
 mod tests;

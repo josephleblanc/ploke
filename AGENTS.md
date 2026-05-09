@@ -74,3 +74,11 @@
 - The audit must check that documentation and status claims do not overpromise what the current implementation proves, especially around tamper evidence, Crown authority, and compiler-enforced transition validity.
 - The audit must inspect the actual type barriers: private fields, sealed or module-private state markers, constructor visibility, move-only transition methods, and the durable records emitted by those transitions.
 - Treat any drift between claimed invariants and implemented constraints as a correctness issue. Fix the implementation, narrow the claim, or record the gap explicitly before relying on the History model for longer runs.
+
+## Prototype 1 Run Playback / Observability Plan
+
+- Before implementing `RunPlayback`, `RunPlaybackRef`, playback iterators, replay CLI commands, `ploke-tree` run projections, or front-facing UI/WebAssembly observability surfaces, read `docs/active/agents/2026-05-09_run-playback-typed-observability-plan.md`.
+- Playback is a read/projection layer over persisted typed records. It must not become active loop authority, and it must not parse rendered CLI output.
+- Preserve granularity structurally with typestates such as `RunPlayback<Coarse>` and `RunPlayback<Fine>` rather than string modes or report flags.
+- Provide both owned and borrowed playback forms. UI-facing paths should be able to use borrowed `RunPlaybackRef<'a, G>` projections over an already-loaded record store without cloning large payloads.
+- Coarsening, filtering, or rendering must not upgrade evidence authority. Steps should carry evidence strength separately from playback granularity.

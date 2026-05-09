@@ -47,6 +47,11 @@ failure kind
   -> objective for the multi-turn harness
 ```
 
+The replay-shaped parent-input splice is now covered on the History side:
+typed rejected surface-attempt evidence routes through `Diagnosis ->
+EditObjective -> SurfaceRequest` and admits to `EditableSurface`. Backend/TUI
+proposal-touch extraction remains a future slice.
+
 ## Authoritative Planning Docs
 
 Read these first, in this order:
@@ -351,7 +356,7 @@ invalid candidate generation / semantic edit resolution problem
   -> EditObjective for reducing invalid edit-surface candidates
 ```
 
-## Current Implementation Status: After Slice 7.2, During Slice 7.3
+## Current Implementation Status: After Slice 7.3, Before Slice 7.4
 
 Task-stack group:
 
@@ -364,15 +369,16 @@ Closed tasks:
 ```text
 bounded-edit-surface-attempt-evidence (7.1)
 bounded-edit-surface-diagnosis-splice (7.2)
+bounded-edit-surface-choice-objective (7.3)
 ```
 
 Open task:
 
 ```text
-bounded-edit-surface-choice-objective (7.3)
+bounded-edit-surface-parent-input-route (7.4)
 ```
 
-Partially implemented inside 7.3:
+Implemented inside 7.3:
 
 - `EditObjective`
 - `ProtectedCore`
@@ -407,8 +413,11 @@ explicit EditObjective + explicit ProtectedCore + explicit Γ_a
   -> Grant::check
 ```
 
-They do not prove the upstream route from real parent-time context/evidence
-into that primitive.
+`EditObjective` now carries a structured machine-readable `ObjectiveSpec`
+alongside evidence refs.
+
+That is now the intended scope of 7.3. The upstream route from parent-time
+context/evidence into that primitive belongs to 7.4.
 
 What is now implemented from 7.1:
 
@@ -516,20 +525,20 @@ acknowledged when implementing later carrier/surface/objective slices.
 Start here after compaction:
 
 ```text
-bounded-edit-surface-choice-objective (7.3)
+bounded-edit-surface-parent-input-route (7.4)
 ```
 
 Corrected status:
 
 ```text
-7.3 is still open.
+7.3 is closed at the local primitive boundary.
 
-Implemented local primitive:
+7.3 implemented:
   explicit EditObjective + explicit ProtectedCore + explicit Γ_a
     -> EditableSurface::broad
     -> Grant::check
 
-Missing upstream splice:
+7.4 owns the upstream splice:
   real-ish parent-time History/context evidence + graph projection +
   protected-core policy
     -> parent-side route/admission constructor
@@ -553,15 +562,17 @@ crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs
 
 docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md
   - indexes those tests as local primitive proofs only
-  - explicitly says they are not a completed 7.3 route proof
+  - explicitly separates the completed local 7.3 primitive from the 7.4
+    parent-input route proof
 ```
 
 Important correction:
 
 ```text
-Do not describe 7.3 as closed.
-The current tests prove B* -> C' for the local grant primitive.
-They do not prove A -> B* from real parent context/evidence.
+Do not reopen 7.3 merely because the parent input route is missing.
+The current tests prove the local surface/objective primitive.
+The A -> B* parent-input route from real-ish parent context/evidence belongs
+to 7.4.
 ```
 
 The plan direction also changed. The current preferred first pass is no longer a
@@ -601,7 +612,7 @@ Useful Transformations
 Concrete next implementation target:
 
 ```text
-bounded-edit-surface-choice-objective (7.3)
+bounded-edit-surface-parent-input-route (7.4)
 
 A':
   real-ish parent-time context/evidence fixture
@@ -617,6 +628,66 @@ C':
   ordinary writes remain allowed
   protected-core writes remain forbidden
 ```
+
+Partially implemented inside 7.4:
+
+- `SurfaceRequest::broad(...)`
+- `SurfaceRequest::admit()`
+- `surface_request_admits_parent_context_into_broad_surface`
+
+This proves the first local route/admission carrier:
+
+```text
+synthetic parent evidence/context refs
+  + explicit graph bounds Γ_a
+  + explicit ProtectedCore F
+    -> SurfaceRequest
+    -> EditObjective + EditableSurface
+    -> ordinary write passes / protected-core write fails
+```
+
+It does not yet prove extraction from real History records, `ploke-tui`
+proposal events, or backend `ProposedTouch` receipts.
+
+Do not treat this as one undifferentiated route test. The route should be
+closed by transition proofs:
+
+```text
+T1 EvidenceAdmitted:
+  replay-shaped History/context evidence
+    -> parent evidence/context admission
+    -> admitted refs for EditObjective
+
+T2 ObjectiveConstructed:
+  admitted refs + broad ruling policy
+    -> EditObjective
+    -> intent/evidence/constraints/success criteria recorded
+
+T3 SurfaceBounded:
+  EditObjective + Γ_a + ProtectedCore
+    -> EditableSurface::broad
+    -> W = Γ_a \ F
+
+T4 ProposalChecked:
+  SurfaceGrant + proposed touches
+    -> SurfaceCheck / Grant::check
+    -> ordinary writes pass, protected-core writes fail
+
+T5 CandidateProduced:
+  checked proposal + target Artifact
+    -> checked apply / ArtifactDelta
+    -> candidate Artifact evidence accepted downstream
+
+T6 OutcomeSelectable:
+  evaluated child candidate with provenance
+    -> parent selection fold
+    -> History-backed selection and successor handoff
+```
+
+Current 7.3 coverage is local T2/T3/T4 primitive behavior. The first 7.4
+request carrier covers local route/admission from synthetic parent refs into
+the 7.3 primitive. T1 and the replay-shaped `A' -> B*` splice from real
+History/proposal evidence into T2/T3 are still missing.
 
 Do not implement the real `ploke-tui` adapter yet. Do not move authority into
 `Harness`; it remains executor-only.
@@ -646,7 +717,7 @@ Good next scout prompt:
 Read docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md
 and docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md.
 
-Task: bounded-edit-surface-choice-objective (7.3).
+Task: bounded-edit-surface-parent-input-route (7.4).
 
 Inspect the new edit_surface surface primitives:
   EditObjective
@@ -656,8 +727,8 @@ Inspect the new edit_surface surface primitives:
 
 Find the smallest parent-side boundary where real-ish parent-time
 History/context evidence can be converted into an EditObjective and
-EditableSurface. The current tests hand-construct A; the missing splice is
-A -> B*.
+EditableSurface. 7.3 already proved the local primitive; 7.4 should prove the
+input-side splice from replay-shaped parent evidence into that primitive.
 
 Return exact files, line ranges, test names, and the smallest A -> B* splice
 test to add. Keep Harness executor-only.

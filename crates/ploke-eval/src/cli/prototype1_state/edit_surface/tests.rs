@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::cli::prototype1_state::history::EvidenceRef;
 use crate::loop_graph::ArtifactId;
 
-use super::{graph, harness, surface, tui};
+use super::{diagnosis, graph, harness, surface, tui};
 use graph::View;
 use harness::Harness;
 
@@ -69,6 +69,24 @@ fn tui_projection(graph_projection: &graph::Projection) -> tui::Projection {
     .project(graph_projection)
 }
 
+fn broad_objective_spec(summary: &str) -> surface::ObjectiveSpec {
+    surface::ObjectiveSpec::new(
+        summary,
+        surface::ObjectiveKind::BroadRulingParent,
+        surface::TargetMetric::OperationalAndProtocolScore,
+        surface::WritableIntent::BroadEditableSurface,
+    )
+    .with_constraints([
+        surface::ObjectiveConstraint::PreserveProtectedCore,
+        surface::ObjectiveConstraint::NoPolicySurfaceMutation,
+    ])
+    .with_success_criteria([
+        surface::SuccessCriterion::CandidateGenerationSucceeds,
+        surface::SuccessCriterion::ProtectedCoreUntouched,
+    ])
+    .with_requested_candidates(2)
+}
+
 #[test]
 fn broad_surface_admits_writable_touch_outside_protected_core() {
     let (artifact, graph, _, child, sibling) = fixture();
@@ -89,7 +107,7 @@ fn broad_surface_admits_writable_touch_outside_protected_core() {
         .resolve(&projection, &bounds, &sibling)
         .expect("resolve sibling");
     let objective = surface::EditObjective::new(
-        "improve broad parent quality",
+        broad_objective_spec("improve broad parent quality"),
         [],
         [EvidenceRef::new("history:context:score-trend")],
     );
@@ -135,7 +153,7 @@ fn broad_surface_rejects_touch_inside_protected_core() {
         .resolve(&projection, &bounds, &child)
         .expect("resolve child");
     let objective = surface::EditObjective::new(
-        "improve broad parent quality",
+        broad_objective_spec("improve broad parent quality"),
         [],
         [EvidenceRef::new("history:context:score-trend")],
     );
@@ -178,7 +196,7 @@ fn broad_surface_objective_records_context_without_diagnosis_specificity() {
         .resolve(&projection, &bounds, &child)
         .expect("resolve child");
     let objective = surface::EditObjective::new(
-        "improve broad parent quality",
+        broad_objective_spec("improve broad parent quality"),
         [],
         [
             EvidenceRef::new("history:context:score-trend"),
@@ -206,6 +224,266 @@ fn broad_surface_objective_records_context_without_diagnosis_specificity() {
         ]
     );
     assert_eq!(editable.objective(), &objective);
+}
+
+#[test]
+fn surface_request_admits_parent_context_into_broad_surface() {
+    let (artifact, graph, _, child, sibling) = fixture();
+    let projection = graph.project(&artifact).expect("project artifact");
+    let bounds = graph
+        .bounds(
+            &projection,
+            &[
+                graph::Rule::Include(child.clone()),
+                graph::Rule::Include(sibling.clone()),
+            ],
+        )
+        .expect("bounds");
+    let child_span = graph
+        .resolve(&projection, &bounds, &child)
+        .expect("resolve protected child");
+    let sibling_span = graph
+        .resolve(&projection, &bounds, &sibling)
+        .expect("resolve writable sibling");
+    let objective_spec = surface::ObjectiveSpec::new(
+        "let the parent improve the edit harness while preserving protected form",
+        surface::ObjectiveKind::ReduceKnownFailure {
+            limiter: diagnosis::Limiter::InvalidCandidateGeneration,
+            failure_kind: diagnosis::FailureKind::SemanticEditResolution,
+        },
+        surface::TargetMetric::InvalidEditSurfaceCandidates,
+        surface::WritableIntent::SemanticResolution,
+    )
+    .with_constraints([
+        surface::ObjectiveConstraint::PreserveProtectedCore,
+        surface::ObjectiveConstraint::ExactResolutionOnly,
+    ])
+    .with_success_criteria([
+        surface::SuccessCriterion::CandidateGenerationSucceeds,
+        surface::SuccessCriterion::ProtectedCoreUntouched,
+        surface::SuccessCriterion::MetricImproves(
+            surface::TargetMetric::InvalidEditSurfaceCandidates,
+        ),
+    ])
+    .with_requested_candidates(1);
+    let objective = surface::EditObjective::new(
+        objective_spec.clone(),
+        [EvidenceRef::new(
+            "history:diagnosis:semantic-edit-resolution",
+        )],
+        [
+            EvidenceRef::new("history:context:recent-child-outcomes"),
+            EvidenceRef::new("history:context:score-trend"),
+        ],
+    );
+
+    let editable = surface::SurfaceRequest::broad(
+        objective.clone(),
+        artifact.reference().clone(),
+        bounds,
+        surface::ProtectedCore::new([child_span.clone()]),
+    )
+    .admit()
+    .expect("surface request should admit broad surface");
+
+    assert_eq!(editable.objective(), &objective);
+    assert_eq!(
+        editable.objective().diagnosis_refs(),
+        &[EvidenceRef::new(
+            "history:diagnosis:semantic-edit-resolution"
+        )]
+    );
+    assert_eq!(
+        editable.objective().context_refs(),
+        &[
+            EvidenceRef::new("history:context:recent-child-outcomes"),
+            EvidenceRef::new("history:context:score-trend")
+        ]
+    );
+    assert_eq!(editable.objective().spec(), &objective_spec);
+    assert!(matches!(
+        editable.objective().spec().kind(),
+        surface::ObjectiveKind::ReduceKnownFailure {
+            limiter: diagnosis::Limiter::InvalidCandidateGeneration,
+            failure_kind: diagnosis::FailureKind::SemanticEditResolution,
+        }
+    ));
+    assert_eq!(
+        editable.objective().spec().target_metric(),
+        surface::TargetMetric::InvalidEditSurfaceCandidates
+    );
+    assert_eq!(
+        editable.objective().spec().writable_intent(),
+        surface::WritableIntent::SemanticResolution
+    );
+    assert_eq!(
+        editable.objective().spec().constraints(),
+        &[
+            surface::ObjectiveConstraint::PreserveProtectedCore,
+            surface::ObjectiveConstraint::ExactResolutionOnly,
+        ]
+    );
+    assert_eq!(
+        editable.objective().spec().success_criteria(),
+        &[
+            surface::SuccessCriterion::CandidateGenerationSucceeds,
+            surface::SuccessCriterion::ProtectedCoreUntouched,
+            surface::SuccessCriterion::MetricImproves(
+                surface::TargetMetric::InvalidEditSurfaceCandidates,
+            ),
+        ]
+    );
+    assert_eq!(editable.objective().spec().requested_candidates(), Some(1));
+
+    let allowed = surface::Touch::new(sibling_span, "fn sibling() {}");
+    editable
+        .grant()
+        .check(surface::Draft {
+            proposal: "proposal:parent-context-broad-surface",
+            base: artifact.reference(),
+            after: &aref("artifact:after", "tree:after"),
+            touches: &[allowed],
+        })
+        .expect("ordinary broad-surface write should pass");
+
+    let forbidden = surface::Touch::new(child_span.clone(), "fn child() {}");
+    let err = editable
+        .grant()
+        .check(surface::Draft {
+            proposal: "proposal:parent-context-protected-core",
+            base: artifact.reference(),
+            after: &aref("artifact:after", "tree:after"),
+            touches: &[forbidden],
+        })
+        .expect_err("protected-core write should fail");
+
+    assert!(matches!(err, surface::Error::Forbidden(span) if span == child_span));
+}
+
+#[test]
+fn replay_shaped_rejected_surface_attempt_admits_semantic_edit_surface_request() {
+    let (artifact, graph, _, child, sibling) = fixture();
+    let projection = graph.project(&artifact).expect("project artifact");
+    let bounds = graph
+        .bounds(
+            &projection,
+            &[
+                graph::Rule::Include(child.clone()),
+                graph::Rule::Include(sibling.clone()),
+            ],
+        )
+        .expect("bounds");
+    let child_span = graph
+        .resolve(&projection, &bounds, &child)
+        .expect("resolve protected child");
+    let sibling_span = graph
+        .resolve(&projection, &bounds, &sibling)
+        .expect("resolve writable sibling");
+
+    let payload = crate::cli::prototype1_state::history::EvaluationPayload::builder(
+        crate::cli::prototype1_state::history::SubjectRef::new(
+            "candidate:replay-shaped-rejected-surface-attempt",
+        ),
+        crate::cli::prototype1_state::history::ProcedureRef::new(
+            crate::successor_selection::PROCEDURE_ID,
+        ),
+    )
+    .source_ref(crate::cli::prototype1_state::history::EvidenceRef::new(
+        "history:surface_attempt:replay-shaped",
+    ))
+    .surface_attempt_evidence(
+        crate::cli::prototype1_state::history::surface_attempt::Evidence::rejected(
+            "prototype1:tui-edit-surface:deterministic-v1",
+            "proposal-rejected",
+            "run-rejected",
+            "ploke_tui_tools",
+            PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"),
+            "one or more touched spans were rejected",
+        ),
+    )
+    .build();
+
+    let diagnosis = diagnosis::classify(&payload).expect("diagnosis");
+    let context_refs = vec![
+        crate::cli::prototype1_state::history::EvidenceRef::new(
+            "history:context:replay-shaped-parent-route",
+        ),
+        crate::cli::prototype1_state::history::EvidenceRef::new("history:context:graph-bounds"),
+    ];
+    let (objective, request) = super::semantic_resolution(
+        &diagnosis,
+        artifact.reference().clone(),
+        bounds,
+        surface::ProtectedCore::new([child_span.clone()]),
+        context_refs.clone(),
+    );
+    let editable = request.admit().expect("surface request should admit");
+
+    assert_eq!(
+        objective.spec().kind(),
+        surface::ObjectiveKind::ReduceKnownFailure {
+            limiter: diagnosis::Limiter::InvalidCandidateGeneration,
+            failure_kind: diagnosis::FailureKind::SemanticEditResolution,
+        }
+    );
+    assert_eq!(
+        objective.spec().target_metric(),
+        surface::TargetMetric::InvalidEditSurfaceCandidates
+    );
+    assert_eq!(
+        objective.spec().writable_intent(),
+        surface::WritableIntent::SemanticResolution
+    );
+    assert_eq!(
+        objective.spec().constraints(),
+        &[
+            surface::ObjectiveConstraint::PreserveProtectedCore,
+            surface::ObjectiveConstraint::ExactResolutionOnly,
+        ]
+    );
+    assert_eq!(
+        objective.spec().success_criteria(),
+        &[
+            surface::SuccessCriterion::CandidateGenerationSucceeds,
+            surface::SuccessCriterion::ProtectedCoreUntouched,
+            surface::SuccessCriterion::MetricImproves(
+                surface::TargetMetric::InvalidEditSurfaceCandidates,
+            ),
+        ]
+    );
+    assert_eq!(objective.spec().requested_candidates(), Some(1));
+    assert_eq!(
+        objective.diagnosis_refs(),
+        &[crate::cli::prototype1_state::history::EvidenceRef::new(
+            "history:surface_attempt:replay-shaped",
+        )]
+    );
+    assert_eq!(objective.context_refs(), context_refs.as_slice());
+    assert_eq!(editable.objective(), &objective);
+
+    let allowed = surface::Touch::new(sibling_span, "fn sibling() {}");
+    editable
+        .grant()
+        .check(surface::Draft {
+            proposal: "proposal:replay-shaped-semantic-route",
+            base: artifact.reference(),
+            after: &aref("artifact:after", "tree:after"),
+            touches: &[allowed],
+        })
+        .expect("ordinary write should pass");
+
+    let forbidden = surface::Touch::new(child_span.clone(), "fn child() {}");
+    let err = editable
+        .grant()
+        .check(surface::Draft {
+            proposal: "proposal:replay-shaped-semantic-route-protected-core",
+            base: artifact.reference(),
+            after: &aref("artifact:after", "tree:after"),
+            touches: &[forbidden],
+        })
+        .expect_err("protected-core write should fail");
+
+    assert!(matches!(err, surface::Error::Forbidden(span) if span == child_span));
 }
 
 #[test]

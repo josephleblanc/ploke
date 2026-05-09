@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::cli::prototype1_state::history::EvidenceRef;
 use crate::loop_graph::ArtifactId;
 
-use super::graph;
+use super::{diagnosis, graph};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct Hash(String);
@@ -229,28 +229,150 @@ impl Check {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ObjectiveKind {
+    BroadRulingParent,
+    ReduceKnownFailure {
+        limiter: diagnosis::Limiter,
+        failure_kind: diagnosis::FailureKind,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TargetMetric {
+    InvalidEditSurfaceCandidates,
+    OperationalAndProtocolScore,
+    ChildAcceptanceRate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WritableIntent {
+    BroadEditableSurface,
+    ToolSurface,
+    SemanticResolution,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ObjectiveConstraint {
+    PreserveProtectedCore,
+    ExactResolutionOnly,
+    NoProcessAuthorityExpansion,
+    NoPolicySurfaceMutation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SuccessCriterion {
+    CandidateGenerationSucceeds,
+    ProtectedCoreUntouched,
+    EditSurfaceTestsPass,
+    MetricImproves(TargetMetric),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ObjectiveSpec {
+    summary: String,
+    kind: ObjectiveKind,
+    target_metric: TargetMetric,
+    writable_intent: WritableIntent,
+    constraints: Vec<ObjectiveConstraint>,
+    success_criteria: Vec<SuccessCriterion>,
+    requested_candidates: Option<usize>,
+}
+
+impl ObjectiveSpec {
+    pub(crate) fn new(
+        summary: impl Into<String>,
+        kind: ObjectiveKind,
+        target_metric: TargetMetric,
+        writable_intent: WritableIntent,
+    ) -> Self {
+        Self {
+            summary: summary.into(),
+            kind,
+            target_metric,
+            writable_intent,
+            constraints: Vec::new(),
+            success_criteria: Vec::new(),
+            requested_candidates: None,
+        }
+    }
+
+    pub(crate) fn with_constraints(
+        mut self,
+        constraints: impl IntoIterator<Item = ObjectiveConstraint>,
+    ) -> Self {
+        self.constraints = constraints.into_iter().collect();
+        self
+    }
+
+    pub(crate) fn with_success_criteria(
+        mut self,
+        success_criteria: impl IntoIterator<Item = SuccessCriterion>,
+    ) -> Self {
+        self.success_criteria = success_criteria.into_iter().collect();
+        self
+    }
+
+    pub(crate) fn with_requested_candidates(mut self, requested_candidates: usize) -> Self {
+        self.requested_candidates = Some(requested_candidates);
+        self
+    }
+
+    pub(crate) fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    pub(crate) fn kind(&self) -> ObjectiveKind {
+        self.kind
+    }
+
+    pub(crate) fn target_metric(&self) -> TargetMetric {
+        self.target_metric
+    }
+
+    pub(crate) fn writable_intent(&self) -> WritableIntent {
+        self.writable_intent
+    }
+
+    pub(crate) fn constraints(&self) -> &[ObjectiveConstraint] {
+        &self.constraints
+    }
+
+    pub(crate) fn success_criteria(&self) -> &[SuccessCriterion] {
+        &self.success_criteria
+    }
+
+    pub(crate) fn requested_candidates(&self) -> Option<usize> {
+        self.requested_candidates
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EditObjective {
-    intent: String,
+    spec: ObjectiveSpec,
     diagnosis_refs: Vec<EvidenceRef>,
     context_refs: Vec<EvidenceRef>,
 }
 
 impl EditObjective {
     pub(crate) fn new(
-        intent: impl Into<String>,
+        spec: ObjectiveSpec,
         diagnosis_refs: impl IntoIterator<Item = EvidenceRef>,
         context_refs: impl IntoIterator<Item = EvidenceRef>,
     ) -> Self {
         Self {
-            intent: intent.into(),
+            spec,
             diagnosis_refs: diagnosis_refs.into_iter().collect(),
             context_refs: context_refs.into_iter().collect(),
         }
     }
 
+    pub(crate) fn spec(&self) -> &ObjectiveSpec {
+        &self.spec
+    }
+
     pub(crate) fn intent(&self) -> &str {
-        &self.intent
+        self.spec.summary()
     }
 
     pub(crate) fn diagnosis_refs(&self) -> &[EvidenceRef] {
@@ -308,6 +430,39 @@ impl EditableSurface {
 
     pub(crate) fn grant(&self) -> &Grant {
         &self.grant
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SurfaceRequest {
+    objective: EditObjective,
+    artifact: Ref,
+    graph: graph::Bounds,
+    protected_core: ProtectedCore,
+}
+
+impl SurfaceRequest {
+    pub(crate) fn broad(
+        objective: EditObjective,
+        artifact: Ref,
+        graph: graph::Bounds,
+        protected_core: ProtectedCore,
+    ) -> Self {
+        Self {
+            objective,
+            artifact,
+            graph,
+            protected_core,
+        }
+    }
+
+    pub(crate) fn admit(self) -> Result<EditableSurface, Error> {
+        EditableSurface::broad(
+            self.objective,
+            self.artifact,
+            self.graph,
+            self.protected_core,
+        )
     }
 }
 

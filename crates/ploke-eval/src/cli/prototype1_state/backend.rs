@@ -1971,6 +1971,8 @@ fn parse_dirty_paths(stdout: &str) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use super::edit_surface::graph::View as _;
+    use super::edit_surface::{graph, surface, tui};
     use super::{
         BackendError, GitWorktreeBackend, WorkspaceBackend, WorktreeEntry, parse_dirty_paths,
         parse_worktree_list,
@@ -2068,11 +2070,11 @@ mod tests {
         }
     }
 
-    fn write_data_for(repo_root: &std::path::Path, relpath: &std::path::Path) -> WriteSnippetData {
+    fn write_data_for(_repo_root: &std::path::Path, relpath: &std::path::Path) -> WriteSnippetData {
         WriteSnippetData {
             id: Uuid::new_v4(),
             name: "code_edit".to_string(),
-            file_path: repo_root.join(relpath),
+            file_path: relpath.to_path_buf(),
             expected_file_hash: TrackingHash(Uuid::new_v4()),
             start_byte: 4,
             end_byte: 7,
@@ -2174,7 +2176,7 @@ R  old.rs -> new.rs
     }
 
     #[test]
-    fn edit_surface_resolved_write_conversion_uses_backend_content_hash_and_validates() {
+    fn edit_surface_resolved_write_conversion_lowers_to_surface_touch_and_grant_check() {
         let tmp = init_git_repo();
         let source = "let old = 1;\n";
         let relpath = write_tui_target(tmp.path(), source);
@@ -2206,7 +2208,7 @@ R  old.rs -> new.rs
             crate::cli::Prototype1EditSurface::PlokeTuiTools,
             "proposal-content",
             "run-1",
-            &[write],
+            &[write.clone()],
         )
         .expect("convert resolved writes");
 
@@ -2217,11 +2219,84 @@ R  old.rs -> new.rs
         assert_ne!(converted.touches[0].expected_file_hash, tracking_hash);
 
         let checked = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), converted)
+            .validate_edit_surface_candidate(tmp.path(), converted.clone())
             .expect("converted proposal validates");
         assert_eq!(checked.target_relpath(), relpath.as_path());
         assert_eq!(checked.source_content_hash(), super::content_hash(source));
         assert_eq!(checked.proposed_content(), "let new = 1;\n");
+
+        let tracking_hash = surface::Hash::new(tracking_hash);
+        let tracking_ref = surface::Ref::new(
+            super::text_file_artifact_id(&relpath, source),
+            tracking_hash.clone(),
+        );
+        let tracking_artifact = surface::Artifact::new(
+            tracking_ref.clone(),
+            [(relpath.clone(), tracking_hash.clone())],
+        );
+        let graph_target = graph::Target::new(relpath.clone(), write.name.clone());
+        let graph = graph::Mock::new(
+            vec![graph::Node::new(
+                graph_target.clone(),
+                relpath.clone(),
+                write.start_byte,
+                write.end_byte,
+            )],
+            [],
+        );
+        let graph_projection = graph.project(&tracking_artifact).expect("project artifact");
+        let graph_bounds = graph
+            .bounds(
+                &graph_projection,
+                &[graph::Rule::Include(graph_target.clone())],
+            )
+            .expect("derive bounds");
+        let tui_projection = tui::Projector::new(
+            "prototype1:ploke-tui-tools",
+            tui::Source::derived(
+                "prototype1:ploke-tui-tools",
+                "v1",
+                "backend-owned single-file edit surface bridge",
+            ),
+            [tui::Rule::named(
+                "prototype1:ploke-tui-tools",
+                "v1",
+                "crates/ploke-tui/src/tools/** plus documented rag tool files",
+            )],
+        )
+        .project(&graph_projection);
+        let tui_bounds =
+            tui::Bounds::new(tui_projection, graph_bounds.clone()).expect("adapter bounds");
+        let material = tui::MaterialSpan::from_write(graph_target, &write);
+        let touch = tui_bounds
+            .touch(
+                &tracking_artifact,
+                material,
+                converted.touches[0].replacement.clone(),
+            )
+            .expect("write lowers to touch");
+        let grant = surface::Grant::new(
+            tracking_ref.clone(),
+            graph_bounds,
+            surface::Area::new([touch.span().clone()]),
+        )
+        .expect("grant");
+        let after_ref = surface::Ref::new(
+            super::text_file_artifact_id(&relpath, "let new = 1;\n"),
+            surface::Hash::new(super::content_hash("let new = 1;\n")),
+        );
+        let check = grant
+            .check(surface::Draft {
+                proposal: &converted.proposal_id,
+                base: tracking_artifact.reference(),
+                after: &after_ref,
+                touches: &[touch],
+            })
+            .expect("checked touch");
+        let (base, after, touches) = check.into_parts();
+        assert_eq!(base, tracking_ref);
+        assert_eq!(after, after_ref);
+        assert_eq!(touches.len(), 1);
     }
 
     #[test]

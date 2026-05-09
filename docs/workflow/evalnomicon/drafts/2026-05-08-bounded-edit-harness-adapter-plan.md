@@ -890,6 +890,85 @@ The splice loop catches errors such as:
 - `B*` works only with hand-built unit data, not replay-shaped data;
 - `B*` silently depends on mutable state outside the stated boundary.
 
+### 4.1. Transition Proof Planning
+
+Do not scope a slice as "test the route" when the route contains several
+semantic transitions. Split the route into named transition proofs, and mark a
+slice complete only when the transitions it claims to cover have tests at the
+right boundary.
+
+For the first broad protected-core route, the route is:
+
+```text
+History/context evidence
+  -> EditObjective
+  -> EditableSurface = Γ_a \ ProtectedCore
+  -> checked proposal
+  -> candidate Artifact evidence
+  -> child evaluation
+  -> History-backed selection
+```
+
+The transition proof map is:
+
+```text
+T1 EvidenceAdmitted:
+  A': replay-shaped History/context evidence
+  B*: parent evidence/context admission
+  C': admitted context refs usable by EditObjective construction
+
+T2 ObjectiveConstructed:
+  A': admitted context refs + broad ruling policy
+  B*: EditObjective constructor/route
+  C': EditObjective records intent, evidence refs, constraints, and success
+      criteria without turning Diagnosis into write authority
+
+T3 SurfaceBounded:
+  A': EditObjective + graph projection Γ_a + ProtectedCore policy F
+  B*: EditableSurface::broad / Grant construction
+  C': Grant has W = Γ_a \ F and preserves F for admission checks
+
+T4 ProposalChecked:
+  A': SurfaceGrant + harness proposal touches Q_r/Q_w
+  B*: SurfaceCheck / checked proposal admission
+  C': ordinary writes are accepted, protected-core writes are rejected, and the
+      harness cannot apply without checked authority
+
+T5 CandidateProduced:
+  A': checked proposal + target Artifact
+  B*: checked apply / ArtifactDelta construction
+  C': candidate Artifact evidence is accepted by child-plan/materialization
+
+T6 OutcomeSelectable:
+  A': evaluated child candidate with surface/proposal/candidate evidence
+  B*: parent selection evidence fold
+  C': History-backed selection can compare the candidate and preserve
+      provenance into successor handoff
+```
+
+Current status after 7.3:
+
+```text
+T2: covered at the local primitive boundary using synthetic refs.
+T3: covered at the local primitive boundary using explicit Γ_a and explicit F.
+T4: covered at the local primitive boundary for Grant::check on hand-built Draft
+    touches.
+
+T1 is not covered.
+T2/T3 are not covered from replay-shaped parent inputs.
+T5/T6 are later slices.
+```
+
+This means the current local broad-surface tests are not wrong; they are just
+not enough to close the full route. They prove local admission behavior after
+the parent-side inputs already exist. The next slice, 7.4, owns the upstream
+splice:
+
+```text
+replay-shaped parent evidence + graph projection + protected-core policy
+  -> EditObjective + EditableSurface
+```
+
 ### 5. Mini Runtime Loop
 
 Only after the lower loops pass, run a tiny live Prototype 1 path:

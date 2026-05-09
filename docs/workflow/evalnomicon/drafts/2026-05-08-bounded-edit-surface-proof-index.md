@@ -179,6 +179,162 @@ explicit EditObjective + explicit ProtectedCore + explicit Γ_a
   -> Grant::check
 ```
 
+### Broad Route Transition Proof Map
+
+The first broad protected-core route should be tested as a chain of transition
+proofs, not as one vague route test:
+
+```text
+T1 EvidenceAdmitted:
+  A': replay-shaped History/context evidence
+  B*: parent evidence/context admission
+  C': admitted context refs usable by EditObjective construction
+
+T2 ObjectiveConstructed:
+  A': admitted context refs + broad ruling policy
+  B*: EditObjective construction
+  C': intent, evidence refs, constraints, and success criteria are recorded
+
+T3 SurfaceBounded:
+  A': EditObjective + graph projection Γ_a + ProtectedCore F
+  B*: EditableSurface::broad / Grant construction
+  C': W = Γ_a \ F and F is preserved for checks
+
+T4 ProposalChecked:
+  A': SurfaceGrant + proposed touches Q_r/Q_w
+  B*: SurfaceCheck / Grant::check / checked proposal admission
+  C': allowed writes pass and forbidden writes fail
+
+T5 CandidateProduced:
+  A': checked proposal + target Artifact
+  B*: checked apply / ArtifactDelta construction
+  C': candidate Artifact evidence is accepted downstream
+
+T6 OutcomeSelectable:
+  A': evaluated child candidate with candidate/proposal/surface evidence
+  B*: parent selection evidence fold
+  C': History-backed selection can compare and preserve provenance
+```
+
+Current coverage after 7.3 plus the 7.4 request carrier:
+
+```text
+T2: local coverage from synthetic context refs.
+T3: local coverage from explicit Γ_a and explicit F.
+T4: local coverage for Grant::check on hand-built Draft touches.
+T2/T3 route carrier: local coverage from SurfaceRequest into EditableSurface.
+
+T1: missing.
+T2/T3 from replay-shaped History records or ploke-tui proposal/event receipts:
+  missing.
+T5/T6: later slices.
+```
+
+That is enough for the local 7.3 primitive, but not enough for the full
+parent-input route. Slice 7.4 still needs this stronger splice:
+
+```text
+A': replay-shaped parent-time evidence + graph projection + protected-core policy
+B*: route/admission constructor
+C': EditObjective + EditableSurface with evidence refs and broad Grant
+```
+
+### `replay_shaped_rejected_surface_attempt_admits_semantic_edit_surface_request`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs:230
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval replay_shaped_rejected_surface_attempt_admits_semantic_edit_surface_request -- --nocapture
+```
+
+Local splice:
+
+```text
+A': replay-shaped rejected History surface-attempt evidence + graph projection +
+    protected-core policy
+B*: Diagnosis -> EditObjective -> SurfaceRequest route/admission constructor
+C': EditObjective + EditableSurface with evidence refs and broad Grant;
+    ordinary write passes and protected-core write fails
+```
+
+Formal meaning:
+
+```text
+admissible_D(EvaluationPayload.surface_attempt) -> Diagnosis
+Diagnosis + Γ_a + F -> EditObjective + SurfaceRequest
+SurfaceRequest.admit() -> EditableSurface
+Q_w ⊆ W ∧ Q_w ∩ F = ∅ -> accepted
+Q_w ∩ F ≠ ∅ -> rejected
+```
+
+Why non-trivial:
+
+- Proves the parent-time route now starts from replay-shaped typed evidence
+  instead of synthetic route-only refs.
+- Keeps `Diagnosis` classifier-only while the route helper owns objective and
+  request construction.
+- Preserves evidence refs and machine-readable objective fields across the
+  request boundary.
+
+Residual gap:
+
+- Backend/TUI proposal-touch extraction into `surface::Touch`/`Grant::check`
+  is now covered locally; request-policy receipts and generator provenance
+  remain future splices.
+
+### `surface_request_admits_parent_context_into_broad_surface`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs:212
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval surface_request_admits_parent_context_into_broad_surface -- --nocapture
+```
+
+Local splice:
+
+```text
+A': synthetic parent evidence/context refs + explicit graph bounds Γ_a +
+    explicit ProtectedCore F
+B*: SurfaceRequest::broad(...).admit()
+C': EditObjective + EditableSurface with broad Grant; ordinary write passes
+    and protected-core write fails
+```
+
+Formal meaning:
+
+```text
+admitted_context_refs -> EditObjective
+EditObjective + Γ_a + F -> g = (R, W, F)
+Q_w ⊆ W ∧ Q_w ∩ F = ∅ -> accepted
+Q_w ∩ F ≠ ∅ -> rejected
+```
+
+Why non-trivial:
+
+- Adds an eval-owned route/admission carrier above the executor boundary.
+- Keeps `Harness` out of authority decisions while making parent context flow
+  into the existing surface primitive.
+- Gives later `ploke-tui` proposal/event evidence a stable place to enter
+  before `SurfaceCheck`.
+
+Residual gap:
+
+- The parent evidence refs are still synthetic in the local parent-context
+  slice. This does not yet prove extraction from real History records,
+  ploke-tui proposal events, or backend `ProposedTouch` receipts.
+
 ### `broad_surface_admits_writable_touch_outside_protected_core`
 
 Location:
@@ -278,7 +434,7 @@ Local splice:
 
 ```text
 A': synthetic context/evidence refs without a narrow semantic-resolution Diagnosis
-B*: EditObjective records broad intent and context refs
+B*: EditObjective records broad intent, machine-readable spec fields, and context refs
 C': EditableSurface carries objective alongside broad Grant
 ```
 
@@ -300,7 +456,8 @@ Why non-trivial:
 Residual gap:
 
 - This does not yet record an `ObservationTrace` or prove progressive
-  disclosure from real parent-time History records.
+  disclosure from real parent-time History records, so real History/TUI
+  proposal extraction remains future work.
 
 ### `below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child_plan`
 

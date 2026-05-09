@@ -552,6 +552,72 @@ fn passive_node_status(status: Prototype1NodeStatus) -> ploke_records::scheduler
     }
 }
 
+fn passive_runner_disposition(
+    disposition: Prototype1RunnerDisposition,
+) -> ploke_records::scheduler::RunnerDispositionRecord {
+    match disposition {
+        Prototype1RunnerDisposition::Succeeded => {
+            ploke_records::scheduler::RunnerDispositionRecord::Succeeded
+        }
+        Prototype1RunnerDisposition::CompileFailed => {
+            ploke_records::scheduler::RunnerDispositionRecord::CompileFailed
+        }
+        Prototype1RunnerDisposition::TreatmentFailed => {
+            ploke_records::scheduler::RunnerDispositionRecord::TreatmentFailed
+        }
+    }
+}
+
+fn passive_runner_request_record(
+    request: &Prototype1RunnerRequest,
+) -> ploke_records::scheduler::RunnerRequestRecord {
+    ploke_records::scheduler::RunnerRequestRecord {
+        schema_version: request.schema_version.clone(),
+        campaign_id: ploke_records::ids::CampaignId(request.campaign_id.clone()),
+        node_id: ploke_records::ids::SchedulerNodeId(request.node_id.clone()),
+        generation: request.generation,
+        instance_id: ploke_records::ids::InstanceId(request.instance_id.clone()),
+        source_state_id: ploke_records::ids::SourceStateId(request.source_state_id.clone()),
+        operation_target: request
+            .operation_target
+            .as_ref()
+            .map(passive_operation_target),
+        base_artifact_id: request.base_artifact_id.as_ref().map(passive_artifact_id),
+        patch_id: request.patch_id.as_ref().map(passive_patch_id),
+        derived_artifact_id: request
+            .derived_artifact_id
+            .as_ref()
+            .map(passive_artifact_id),
+        branch_id: ploke_records::ids::BranchId(request.branch_id.clone()),
+        target_relpath: request.target_relpath.clone(),
+        workspace_root: request.workspace_root.clone(),
+        binary_path: request.binary_path.clone(),
+        stop_on_error: request.stop_on_error,
+        runner_args: request.runner_args.clone(),
+    }
+}
+
+fn passive_runner_result_record(
+    result: &Prototype1RunnerResult,
+) -> ploke_records::scheduler::RunnerResultRecord {
+    ploke_records::scheduler::RunnerResultRecord {
+        schema_version: result.schema_version.clone(),
+        campaign_id: ploke_records::ids::CampaignId(result.campaign_id.clone()),
+        node_id: ploke_records::ids::SchedulerNodeId(result.node_id.clone()),
+        generation: result.generation,
+        branch_id: ploke_records::ids::BranchId(result.branch_id.clone()),
+        status: passive_node_status(result.status),
+        disposition: passive_runner_disposition(result.disposition),
+        treatment_campaign_id: result.treatment_campaign_id.clone(),
+        evaluation_artifact_path: result.evaluation_artifact_path.clone(),
+        detail: result.detail.clone(),
+        exit_code: result.exit_code,
+        stdout_excerpt: result.stdout_excerpt.clone(),
+        stderr_excerpt: result.stderr_excerpt.clone(),
+        recorded_at: result.recorded_at.clone(),
+    }
+}
+
 fn save_runner_request(request: &Prototype1RunnerRequest, path: &Path) -> Result<(), PrepareError> {
     if let Some(parent) = request.binary_path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
@@ -563,11 +629,8 @@ fn save_runner_request(request: &Prototype1RunnerRequest, path: &Path) -> Result
         path: request.workspace_root.clone(),
         source,
     })?;
-    let bytes = serde_json::to_vec_pretty(request).map_err(PrepareError::Serialize)?;
-    fs::write(path, bytes).map_err(|source| PrepareError::WriteManifest {
-        path: path.to_path_buf(),
-        source,
-    })
+    let passive = passive_runner_request_record(request);
+    JsonRecordFile::new(path).emit(&passive).map(|_| ())
 }
 
 pub fn write_node_projection(record: &Prototype1NodeRecord) -> Result<(), PrepareError> {
@@ -639,17 +702,8 @@ pub fn runner_request_from_node(
 }
 
 fn save_runner_result(result: &Prototype1RunnerResult, path: &Path) -> Result<(), PrepareError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    let bytes = serde_json::to_vec_pretty(result).map_err(PrepareError::Serialize)?;
-    fs::write(path, bytes).map_err(|source| PrepareError::WriteManifest {
-        path: path.to_path_buf(),
-        source,
-    })
+    let passive = passive_runner_result_record(result);
+    JsonRecordFile::new(path).emit(&passive).map(|_| ())
 }
 
 pub fn write_runner_result_at(
@@ -1343,6 +1397,11 @@ mod tests {
                 .expect("read emitted node record"),
         )
         .expect("node projection parses as shared passive record");
+        let passive_request: ploke_records::scheduler::RunnerRequestRecord = serde_json::from_str(
+            &fs::read_to_string(prototype1_runner_request_path(&manifest, &node.node_id))
+                .expect("read emitted runner request"),
+        )
+        .expect("runner request projection parses as shared passive record");
 
         assert_eq!(loaded_scheduler.nodes[0].node_id, node.node_id);
         assert_eq!(loaded_node.branch_id, "branch-123");
@@ -1350,9 +1409,76 @@ mod tests {
         assert_eq!(loaded_request.binary_path, node.binary_path);
         assert_eq!(passive_node.node_id.as_str(), node.node_id);
         assert_eq!(passive_node.branch_id.as_str(), node.branch_id);
+        assert_eq!(passive_request.node_id.as_str(), node.node_id);
+        assert_eq!(passive_request.branch_id.as_str(), node.branch_id);
         assert_eq!(
             <ploke_records::scheduler::NodeRecord as ploke_records::record::Record>::FAMILY,
             ploke_records::record::RecordFamily::SchedulerNode
+        );
+        assert_eq!(
+            <ploke_records::scheduler::RunnerRequestRecord as ploke_records::record::Record>::FAMILY,
+            ploke_records::record::RecordFamily::RunnerRequest
+        );
+    }
+
+    #[test]
+    fn runner_result_projection_parses_as_shared_passive_record() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+
+        let (_scheduler, node, _request) = register_treatment_evaluation_node(
+            "test-campaign",
+            &manifest,
+            &resolved_branch(),
+            2,
+            None,
+            tmp.path(),
+            false,
+        )
+        .expect("register node");
+        let result = Prototype1RunnerResult {
+            schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+            campaign_id: "test-campaign".to_string(),
+            node_id: node.node_id.clone(),
+            generation: node.generation,
+            branch_id: node.branch_id.clone(),
+            status: Prototype1NodeStatus::Failed,
+            disposition: Prototype1RunnerDisposition::CompileFailed,
+            treatment_campaign_id: Some("treatment-1".to_string()),
+            evaluation_artifact_path: Some(tmp.path().join("evaluation.json")),
+            detail: Some("compile failed".to_string()),
+            exit_code: Some(101),
+            stdout_excerpt: Some(String::new()),
+            stderr_excerpt: Some("error[E0425]".to_string()),
+            recorded_at: "2026-05-09T00:00:00Z".to_string(),
+        };
+
+        write_runner_result_at(&node.runner_result_path, &result).expect("write runner result");
+        let loaded = load_runner_result(
+            &manifest,
+            &node.node_id,
+            OperatorProjectionRead::projection_module(),
+        )
+        .expect("load runner result");
+        let passive_result: ploke_records::scheduler::RunnerResultRecord = serde_json::from_str(
+            &fs::read_to_string(prototype1_runner_result_path(&manifest, &node.node_id))
+                .expect("read emitted runner result"),
+        )
+        .expect("runner result projection parses as shared passive record");
+
+        assert_eq!(loaded.node_id, node.node_id);
+        assert_eq!(
+            loaded.disposition,
+            Prototype1RunnerDisposition::CompileFailed
+        );
+        assert_eq!(passive_result.node_id.as_str(), node.node_id);
+        assert_eq!(
+            passive_result.disposition,
+            ploke_records::scheduler::RunnerDispositionRecord::CompileFailed
+        );
+        assert_eq!(
+            <ploke_records::scheduler::RunnerResultRecord as ploke_records::record::Record>::FAMILY,
+            ploke_records::record::RecordFamily::RunnerResult
         );
     }
 

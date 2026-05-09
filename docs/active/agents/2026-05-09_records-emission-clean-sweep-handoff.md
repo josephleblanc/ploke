@@ -255,6 +255,71 @@ untyped payloads.
 
 ## Next Task
 
+Immediate restart note after the aborted replay-orientation turn:
+
+- The user asked for a coarse replay/tracking view over the earlier loop run,
+  roughly:
+  parent/ruler -> child candidates -> evaluations/scores -> selected child ->
+  crown/ruler handoff -> sealed block -> successor parent continues.
+- I over-read during that orientation turn. On restart, do not repeat broad
+  searches or dump raw JSON/log output into context. Use the commands below
+  only if needed, with bounded output.
+- The relevant campaign sampled was:
+  `p1-edit-surface-history-long-20260508-1`
+- Existing records are already sufficient for a coarse sealed replay:
+  - `prototype1/history/blocks/segment-000000.jsonl` has 12 sealed blocks.
+  - Each block has one sealed successor-selection entry.
+  - Each selection entry carries:
+    - opened/ruling parent actor in the block header;
+    - selected candidate in the entry payload;
+    - considered candidate set with node id, branch id, generation,
+      disposition, runtime, artifact/surface evidence, and comparison status;
+    - deterministic `ScoreChildProp` replay data when `selection-show --replay`
+      is used.
+  - Evaluation artifacts under `prototype1/evaluations/*.json` provide
+    per-branch keep/reject and compared metrics.
+  - Node records provide parent-node/generation/branch links, but this is a
+    projection surface. Do not use scheduler/node projections as authority for
+    active loop control.
+- A good existing command for one sealed decision is:
+
+```bash
+target/debug/ploke-eval history selection-show --campaign p1-edit-surface-history-long-20260508-1 --row 0 --replay
+```
+
+- Useful observed coarse chain from sealed History block headers:
+
+```text
+block 0: parent node-2cd25c1a4b66689c selected node-3e763294f101073e
+block 1: parent node-3e763294f101073e selected node-6b5787969ab23367
+block 2: parent node-6b5787969ab23367 selected node-987d373c2423f01f
+block 3: parent node-987d373c2423f01f selected node-887ce7c2e98b2e7c
+block 4: parent node-887ce7c2e98b2e7c selected node-6a6601f8840f022e
+block 5: parent node-6a6601f8840f022e selected node-b58e5b0763125f55
+block 6: parent node-b58e5b0763125f55 selected node-93f045d8cb5bd9f1
+block 7: parent node-93f045d8cb5bd9f1 selected node-135cae235102bcb7
+block 8: parent node-135cae235102bcb7 selected node-259cd4224fa8f263
+block 9: parent node-259cd4224fa8f263 selected node-3f1e3cde5785d098
+block 10: parent node-3f1e3cde5785d098 selected node-3f1e3cde5785d098
+block 11: parent node-3f1e3cde5785d098 selected node-259cd4224fa8f263
+```
+
+- Important interpretation caveats:
+  - block 0 selected a rejected candidate because every generation-1 candidate
+    had missing baseline evidence; the decision outcome was `Stop`, but the
+    selected coordinate was still committed.
+  - later blocks consider accumulated History candidates, not just the newly
+    spawned sibling set, so the projection must show both selected successor
+    and considered set.
+  - existing `history metrics --view trajectory` is useful but degraded: it
+    reports ambiguous trajectory state because it folds mutable/projection
+    evidence by parent/generation cohorts. The sealed History replay is the
+    better basis for the user’s requested ruler/crown timeline.
+- If implementing a durable replay view, make it a read-only projection over
+  typed History records, probably in `ploke-tree` or the existing
+  `history_preview`/metrics projection layer. Do not put authority in CLI
+  rendering, and do not parse rendered command output.
+
 Do not start with History. Continue the lowest-authority scheduler projection
 family and prove the pattern before moving to higher-authority records.
 
