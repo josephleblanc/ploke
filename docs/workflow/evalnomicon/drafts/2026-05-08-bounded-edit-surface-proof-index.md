@@ -116,16 +116,21 @@ flowchart LR
     B2["B*: current generation projection"]
     C2["C': candidate payload<br/>artifact.surface + ArtifactDelta + applied attempt"]
 
+    A4["A': checked mock surface edit"]
+    B4["B*: ChildFiles construction<br/>SurfaceEvidence + ArtifactDelta"]
+    C4["C': requested TUI-surface child-plan consumer accepts it"]
+
     A3["A': projection/log-only state"]
     B3["B*: payload construction"]
     C3["C': no typed attempt evidence"]
 
     A1 --> B1 --> C1
     A2 --> B2 --> C2
+    A4 --> B4 --> C4
     A3 --> B3 --> C3
 ```
 
-Future request-policy receipt splice:
+Partially covered request-policy receipt splice:
 
 ```text
 A': parent artifact + router config + EditObjective
@@ -133,7 +138,7 @@ B*: Router-backed harness request construction
 C': complete EffectiveRequestPolicyReceipt with stable client_policy_hash
 ```
 
-Negative counterpart:
+Negative counterpart not yet fully covered:
 
 ```text
 A': proposal from a material model call with no receipt or incomplete policy
@@ -141,7 +146,7 @@ B*: proposal admission
 C': rejected before SurfaceCheck / candidate admission
 ```
 
-Future generator-surface provenance splice:
+Covered bounded generator-surface provenance splice:
 
 ```text
 A': parent Artifact contains generator surface version T_a and EditObjective
@@ -216,22 +221,30 @@ T6 OutcomeSelectable:
   C': History-backed selection can compare and preserve provenance
 ```
 
-Current coverage after 7.3 plus the 7.4 request carrier:
+Current coverage after 7.3 plus the 7.4 request carrier and narrow 7.5 splice:
 
 ```text
 T2: local coverage from synthetic context refs.
 T3: local coverage from explicit Γ_a and explicit F.
 T4: local coverage for Grant::check on hand-built Draft touches.
 T2/T3 route carrier: local coverage from SurfaceRequest into EditableSurface.
+T5: local coverage for checked edit -> ArtifactDelta/SurfaceEvidence -> requested TUI-surface child-plan consumer acceptance.
 
 T1: missing.
 T2/T3 from replay-shaped History records or ploke-tui proposal/event receipts:
   missing.
-T5/T6: later slices.
+T5 request-policy receipt, generator provenance, and live TUI adapter:
+  missing.
+T6: later slice.
 ```
 
 That is enough for the local 7.3 primitive, but not enough for the full
-parent-input route. Slice 7.4 still needs this stronger splice:
+parent-input route or live generation. Slice 7.4 is locally covered, the narrow
+7.5 child-plan consumer splice is locally covered, and the bounded 7.5.2
+generator-surface provenance splice is covered for deterministic/non-router
+proposal evidence. Open work remains: the live Router-backed request-policy
+receipt splice, live ploke-tui adapter execution, and T6 selection/outcome
+selectability.
 
 ```text
 A': replay-shaped parent-time evidence + graph projection + protected-core policy
@@ -287,6 +300,176 @@ Residual gap:
 - Backend/TUI proposal-touch extraction into `surface::Touch`/`Grant::check`
   is now covered locally; request-policy receipts and generator provenance
   remain future splices.
+
+### `checked_edit_surface_candidate_is_accepted_by_tui_child_plan_consumer`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:8457
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval checked_edit_surface_candidate_is_accepted_by_tui_child_plan_consumer -- --nocapture
+```
+
+Local splice:
+
+```text
+A': EditProposal checked by the bounded edit surface authority boundary
+B*: CheckedSurfaceEdit::surface_evidence(...)
+    + child_files_from_checked_edit(...)
+C': validate_requested_tui_surface_child accepts ChildFiles with
+    SurfaceEvidence and ArtifactDelta bound to the requested target
+```
+
+Formal meaning:
+
+```text
+g ⊢ q
+valid_a(q)
+apply_a(q) = (a', δ)
+child_files(a', δ, evidence(a, Γ_a, g, q, ρ_a(q))) accepted by requested
+TUI-surface child-plan consumer
+```
+
+Why non-trivial:
+
+- Proves the narrow 7.5 downstream splice from checked edit evidence into
+  child-plan consumer acceptance.
+- Keeps the proof at the authority/consumer boundary without claiming live
+  ploke-tui generation.
+- Binds `ArtifactDelta` and `SurfaceEvidence` before the requested TUI child
+  path accepts the candidate.
+
+Residual gap:
+
+- Does not prove live Router-backed request construction, live TUI adapter
+  execution, or T6 selection/outcome selectability.
+
+### `request_policy_receipt_hash_is_stable_for_equivalent_effective_provider_policy`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/request_policy.rs
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval request_policy_receipt_hash -- --nocapture
+```
+
+Local splice:
+
+```text
+A': equivalent effective Router/provider policy preimages
+B*: EffectiveRequestPolicyReceipt canonical hash construction
+C': same client_policy_hash
+```
+
+Why non-trivial:
+
+- Proves the request-policy receipt hash is over the stable effective client
+  policy, not over arbitrary response metadata or unordered provider fields.
+- Establishes the local carrier needed before live Router-backed proposal
+  admission can require receipts.
+
+Residual gap:
+
+- Does not prove a live proposal-producing Router request is built or that a
+  Router-backed proposal reaches admission with the receipt attached.
+
+### `request_policy_receipt_hash_changes_when_effective_policy_changes`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/request_policy.rs
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval request_policy_receipt_hash -- --nocapture
+```
+
+Local splice:
+
+```text
+A': effective Router/provider policy preimages that differ in one material
+    client-policy field
+B*: EffectiveRequestPolicyReceipt canonical hash construction
+C': different client_policy_hash
+```
+
+Why non-trivial:
+
+- Proves material client-policy changes are visible to the receipt hash.
+- Keeps 7.5.1 honest as a policy-reconstruction carrier rather than a
+  presence-only receipt flag.
+
+### `edit_surface_bridge_rejects_mutated_generator_surface_provenance`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/backend.rs
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval edit_surface_bridge_rejects_mutated_generator_surface_provenance -- --nocapture
+```
+
+Local splice:
+
+```text
+A': EditProposal with forged/mutated generator_surface provenance
+B*: GitWorktreeBackend::validate_edit_surface_candidate
+C': rejected before CheckedSurfaceEdit / ArtifactDelta admission
+```
+
+Why non-trivial:
+
+- Proves backend admission recomputes/checks generator-surface provenance
+  instead of trusting proposal-provided metadata.
+- Closes the backend-side negative for the bounded 7.5.2 provenance splice.
+
+### `requested_tui_surface_child_rejects_router_backed_proposal_producer`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval requested_tui_surface_child_rejects_router_backed_proposal_producer -- --nocapture
+```
+
+Local splice:
+
+```text
+A': requested deterministic/non-router TUI-surface child evidence cites a
+    Router-backed proposal producer
+B*: requested TUI child-plan validation
+C': rejected before deterministic child acceptance
+```
+
+Why non-trivial:
+
+- Proves the deterministic/non-router path cannot silently accept
+  Router-backed provenance.
+- Keeps 7.5.1 partial: Router-backed proposal evidence needs its own live
+  receipt/admission splice instead of being smuggled through deterministic
+  fixtures.
 
 ### `surface_request_admits_parent_context_into_broad_surface`
 

@@ -544,56 +544,12 @@ fn child_files_from_checked_edit(
     node.derived_artifact_id = Some(derived_artifact_id.clone());
 
     let resolved = resolved_from_checked_edit(&node, checked);
-    let surface = surface_evidence_from_checked_edit(TUI_EDIT_SURFACE_PRODUCER_ID, checked)
+    let surface = checked
+        .surface_evidence(TUI_EDIT_SURFACE_PRODUCER_ID)
         .map_err(|err| CandidateGenerationError::EvidenceProjection {
             detail: err.to_string(),
         })?;
     Ok(ChildFiles::from_resolved(campaign_id, node, resolved, stop_on_error).with_surface(surface))
-}
-
-fn surface_evidence_from_checked_edit(
-    producer_id: &str,
-    checked: &CheckedSurfaceEdit,
-) -> Result<SurfaceEvidence, crate::cli::prototype1_state::history::HistoryError> {
-    let policy = checked.surface();
-    let touches = checked
-        .delta()
-        .touches()
-        .iter()
-        .map(|touch| {
-            let span = touch.span();
-            let target = span.target();
-            SurfaceTouch {
-                target_relpath: target.path().clone(),
-                target_name: target.name().to_string(),
-                span_relpath: span.path().clone(),
-                start: span.start(),
-                end: span.end(),
-                base_hash: span.hash().as_str().to_string(),
-                replacement: touch.replacement().to_string(),
-                replacement_hash: format!("{:x}", Sha256::digest(touch.replacement().as_bytes())),
-            }
-        })
-        .collect::<Vec<_>>();
-    SurfaceEvidence::checked(
-        producer_id,
-        checked.proposal_id().to_string(),
-        checked.run_id().to_string(),
-        serde_name(&policy),
-        checked.target_relpath().to_path_buf(),
-        SurfaceArtifactRef {
-            artifact_id: checked.delta().base().id().clone(),
-            hash: checked.delta().base().hash().as_str().to_string(),
-        },
-        SurfaceArtifactRef {
-            artifact_id: checked.delta().after().id().clone(),
-            hash: checked.delta().after().hash().as_str().to_string(),
-        },
-        checked.patch_id().clone(),
-        checked.source_content_hash().to_string(),
-        checked.proposed_content_hash().to_string(),
-        touches,
-    )
 }
 
 fn resolved_from_checked_edit(
@@ -1041,6 +997,17 @@ fn validate_surface_evidence_binding(
             ),
         });
     }
+    if !matches!(
+        surface.proposal_producer,
+        crate::cli::prototype1_state::edit_surface::request_policy::ProposalProducer::NonRouter
+    ) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried router-backed proposal producer {:?}",
+                node.node_id, surface.proposal_producer
+            ),
+        });
+    }
     if surface.source_content_hash != resolved.source_content_hash
         || surface.source_content_hash
             != format!("{:x}", Sha256::digest(resolved.source_content.as_bytes()))
@@ -1063,6 +1030,34 @@ fn validate_surface_evidence_binding(
             detail: format!(
                 "deterministic tui edit-surface child '{}' carried proposed hash '{}', resolved proposed hash '{}'",
                 node.node_id, surface.proposed_content_hash, resolved.branch.proposed_content_hash
+            ),
+        });
+    }
+    let expected_generator_surface = GitWorktreeBackend
+        .generator_surface_for_surface_touches(
+            &surface.target_relpath,
+            &resolved.source_content,
+            &surface.touches,
+        )
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' could not reconstruct generator_surface provenance: {}",
+                node.node_id, source
+            ),
+        })?;
+    let Some(actual_generator_surface) = surface.generator_surface.as_ref() else {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried no generator_surface provenance",
+                node.node_id
+            ),
+        });
+    };
+    if actual_generator_surface != &expected_generator_surface {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried generator_surface {:?}, expected {:?}",
+                node.node_id, actual_generator_surface, expected_generator_surface
             ),
         });
     }
@@ -1281,19 +1276,31 @@ fn direct_splice_proposals(
         if !proposed_hashes.insert(proposed_hash) {
             continue;
         }
+        let touches = vec![ProposedTouch {
+            target: "direct-splice:eof-comment".to_string(),
+            relpath: relpath.clone(),
+            start,
+            end: start,
+            expected_file_hash: base_hash.clone(),
+            replacement,
+        }];
+        let generator_surface = GitWorktreeBackend
+            .generator_surface_for_proposed_touches(&relpath, &source, &touches)
+            .map_err(|source| {
+                CandidateGenerationError::EvidenceProjection {
+                    detail: source.to_string(),
+                }
+                .into_prepare()
+            })?;
         proposals.push(EditProposal {
             surface: edit_surface,
             proposal_id: format!("tui-edit-surface-proposal-{:02}", index + 1),
             run_id: format!("tui-edit-surface-run-{:02}", index + 1),
+            proposal_producer:
+                crate::cli::prototype1_state::edit_surface::request_policy::ProposalProducer::NonRouter,
+            generator_surface,
             reported_after_file_hash: None,
-            touches: vec![ProposedTouch {
-                target: "direct-splice:eof-comment".to_string(),
-                relpath: relpath.clone(),
-                start,
-                end: start,
-                expected_file_hash: base_hash.clone(),
-                replacement,
-            }],
+            touches,
         });
     }
 
@@ -8498,7 +8505,7 @@ mod tests {
     }
 
     #[test]
-    fn checked_edit_surface_candidate_converts_to_single_file_child_files() {
+    fn checked_edit_surface_candidate_is_accepted_by_tui_child_plan_consumer() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let relpath = PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs");
         let target = tmp.path().join(&relpath);
@@ -8512,6 +8519,22 @@ mod tests {
                     surface: Prototype1EditSurface::PlokeTuiTools,
                     proposal_id: "proposal-1".to_string(),
                     run_id: "run-1".to_string(),
+                    proposal_producer:
+                        crate::cli::prototype1_state::edit_surface::request_policy::ProposalProducer::NonRouter,
+                    generator_surface: GitWorktreeBackend
+                        .generator_surface_for_proposed_touches(
+                            &relpath,
+                            "let old = 1;\n",
+                            &[crate::cli::prototype1_state::backend::ProposedTouch {
+                                target: "code_edit".to_string(),
+                                relpath: relpath.clone(),
+                                start: 4,
+                                end: 7,
+                                expected_file_hash: source_hash.clone(),
+                                replacement: "new".to_string(),
+                            }],
+                        )
+                        .expect("generator surface"),
                     reported_after_file_hash: None,
                     touches: vec![crate::cli::prototype1_state::backend::ProposedTouch {
                         target: "code_edit".to_string(),
@@ -8576,6 +8599,9 @@ mod tests {
         assert_eq!(surface.touches.len(), 1);
         assert_eq!(surface.touches[0].replacement, "new");
         assert!(surface.delta_id.starts_with("surface-delta:"));
+
+        validate_requested_tui_surface_child(&child)
+            .expect("tui child-plan consumer accepts child");
     }
 
     #[test]
@@ -9128,6 +9154,22 @@ mod tests {
     fn test_surface_evidence(target_relpath: PathBuf) -> SurfaceEvidence {
         let source_hash = format!("{:x}", Sha256::digest("old".as_bytes()));
         let proposed_hash = format!("{:x}", Sha256::digest("new".as_bytes()));
+        let generator_surface = GitWorktreeBackend
+            .generator_surface_for_surface_touches(
+                &target_relpath,
+                "old",
+                &[SurfaceTouch {
+                    target_relpath: target_relpath.clone(),
+                    target_name: "code_edit:0".to_string(),
+                    span_relpath: target_relpath.clone(),
+                    start: 0,
+                    end: 3,
+                    base_hash: "base-hash".to_string(),
+                    replacement: "new".to_string(),
+                    replacement_hash: format!("{:x}", Sha256::digest("new".as_bytes())),
+                }],
+            )
+            .expect("generator surface");
         SurfaceEvidence::checked(
             TUI_EDIT_SURFACE_PRODUCER_ID,
             "proposal-test",
@@ -9145,6 +9187,8 @@ mod tests {
             crate::loop_graph::PatchId::new("patch:test"),
             source_hash,
             proposed_hash,
+            crate::cli::prototype1_state::edit_surface::request_policy::ProposalProducer::NonRouter,
+            generator_surface,
             vec![SurfaceTouch {
                 target_relpath: target_relpath.clone(),
                 target_name: "code_edit:0".to_string(),
@@ -9501,6 +9545,124 @@ mod tests {
 
         assert!(err.to_string().contains("cannot use child"));
         assert!(err.to_string().contains("produced by 'spec-1'"));
+    }
+
+    #[test]
+    fn requested_tui_surface_child_rejects_missing_generator_surface_provenance() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+        node.parent_node_id = Some("node-parent".to_string());
+        node.target_relpath = PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs");
+        let mut resolved = test_resolved(&node);
+        resolved.branch.synthesized_spec_id = TUI_EDIT_SURFACE_PRODUCER_ID.to_string();
+        bind_test_tui_surface_fields(&mut node, &mut resolved);
+        let mut surface = test_surface_evidence(node.target_relpath.clone());
+        surface.generator_surface = None;
+        let child =
+            ChildFiles::from_resolved("campaign", node, resolved, false).with_surface(surface);
+
+        let err = match validate_requested_tui_surface_child(&child) {
+            Ok(_) => panic!("missing generator provenance must reject"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, PrepareError::InvalidBatchSelection { .. }));
+        assert!(
+            err.to_string()
+                .contains("missing generator_surface provenance")
+        );
+    }
+
+    #[test]
+    fn requested_tui_surface_child_rejects_mismatched_generator_surface_provenance() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+        node.parent_node_id = Some("node-parent".to_string());
+        node.target_relpath = PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs");
+        let mut resolved = test_resolved(&node);
+        resolved.branch.synthesized_spec_id = TUI_EDIT_SURFACE_PRODUCER_ID.to_string();
+        bind_test_tui_surface_fields(&mut node, &mut resolved);
+        let mut surface = test_surface_evidence(node.target_relpath.clone());
+        let generator_surface = surface
+            .generator_surface
+            .as_mut()
+            .expect("surface generator provenance");
+        generator_surface.source_version = "v2".to_string();
+        let child =
+            ChildFiles::from_resolved("campaign", node, resolved, false).with_surface(surface);
+
+        let err = match validate_requested_tui_surface_child(&child) {
+            Ok(_) => panic!("mismatched generator provenance must reject"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, PrepareError::InvalidBatchSelection { .. }));
+        assert!(err.to_string().contains("carried generator_surface"));
+    }
+
+    #[test]
+    fn requested_tui_surface_child_rejects_router_backed_proposal_producer() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+        node.parent_node_id = Some("node-parent".to_string());
+        node.target_relpath = PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs");
+        let mut resolved = test_resolved(&node);
+        resolved.branch.synthesized_spec_id = TUI_EDIT_SURFACE_PRODUCER_ID.to_string();
+        bind_test_tui_surface_fields(&mut node, &mut resolved);
+        let mut surface = test_surface_evidence(node.target_relpath.clone());
+        surface.proposal_producer =
+            crate::cli::prototype1_state::edit_surface::request_policy::ProposalProducer::Router {
+                request_policy:
+                    crate::cli::prototype1_state::edit_surface::request_policy::Receipt {
+                        schema_version: 1,
+                        base_artifact_id: surface.base.artifact_id.clone(),
+                        objective:
+                            crate::cli::prototype1_state::edit_surface::request_policy::ObjectiveBinding {
+                                summary: "router proposal".to_string(),
+                                target_metric: "invalid_edit_surface_candidates".to_string(),
+                                writable_intent: "semantic_resolution".to_string(),
+                            },
+                        router: "openrouter".to_string(),
+                        model:
+                            crate::cli::prototype1_state::edit_surface::request_policy::Effective {
+                                value: "openai/gpt-5".to_string(),
+                                origin:
+                                    crate::cli::prototype1_state::edit_surface::request_policy::PolicyOrigin::Explicit,
+                            },
+                        response_format:
+                            crate::cli::prototype1_state::edit_surface::request_policy::Effective {
+                                value:
+                                    crate::cli::prototype1_state::edit_surface::request_policy::ResponseFormat::JsonObject,
+                                origin:
+                                    crate::cli::prototype1_state::edit_surface::request_policy::PolicyOrigin::Explicit,
+                            },
+                        stop:
+                            crate::cli::prototype1_state::edit_surface::request_policy::Effective {
+                                value: vec!["STOP".to_string()],
+                                origin:
+                                    crate::cli::prototype1_state::edit_surface::request_policy::PolicyOrigin::Default,
+                            },
+                        stream:
+                            crate::cli::prototype1_state::edit_surface::request_policy::Effective {
+                                value: false,
+                                origin:
+                                    crate::cli::prototype1_state::edit_surface::request_policy::PolicyOrigin::Default,
+                            },
+                        parameters:
+                            crate::cli::prototype1_state::edit_surface::request_policy::ParameterPolicy::default(),
+                        provider: None,
+                        client_policy_hash: "not-checked-on-deterministic-path".to_string(),
+                    },
+            };
+        let child =
+            ChildFiles::from_resolved("campaign", node, resolved, false).with_surface(surface);
+
+        let err = match validate_requested_tui_surface_child(&child) {
+            Ok(_) => panic!("router-backed deterministic provenance must reject"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, PrepareError::InvalidBatchSelection { .. }));
     }
 
     #[test]

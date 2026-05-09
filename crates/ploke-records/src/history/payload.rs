@@ -438,11 +438,44 @@ pub enum TraversalCandidateSourceRecord {
     CurrentGeneration,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TraversalMetricInputsRecord {
+    #[default]
+    Operational,
+    OperationalAndProtocol,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TraversalStrategyRecord {
+    FrontierMax {
+        normalize_frontier: bool,
+        #[serde(default)]
+        metrics: TraversalMetricInputsRecord,
+    },
+    ScoreChildProp {
+        top_m: usize,
+        lambda_millis: u32,
+        #[serde(default)]
+        metrics: TraversalMetricInputsRecord,
+    },
+}
+
+impl Default for TraversalStrategyRecord {
+    fn default() -> Self {
+        Self::FrontierMax {
+            normalize_frontier: true,
+            metrics: TraversalMetricInputsRecord::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraversalEvidenceRecord {
     pub seed: u64,
     #[serde(default)]
-    pub strategy: String,
+    pub strategy: TraversalStrategyRecord,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_source: Option<TraversalCandidateSourceRecord>,
 }
@@ -467,4 +500,74 @@ pub struct SelectionDecisionEntryRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub traversal: Option<TraversalEvidenceRecord>,
     pub decision: selection::Decision,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::Deserialize;
+    use serde_json::json;
+
+    use super::{
+        TraversalCandidateSourceRecord, TraversalEvidenceRecord, TraversalMetricInputsRecord,
+        TraversalStrategyRecord,
+    };
+
+    #[test]
+    fn traversal_evidence_accepts_structured_strategy_shape() {
+        let value = json!({
+            "seed": 0,
+            "strategy": {
+                "kind": "score_child_prop",
+                "top_m": 3,
+                "lambda_millis": 10000,
+                "metrics": "operational_and_protocol"
+            },
+            "selected_source": "current_generation"
+        });
+
+        let parsed: TraversalEvidenceRecord =
+            serde_json::from_value(value).expect("parse traversal evidence");
+        assert_eq!(parsed.seed, 0);
+        assert_eq!(
+            parsed.strategy,
+            TraversalStrategyRecord::ScoreChildProp {
+                top_m: 3,
+                lambda_millis: 10_000,
+                metrics: TraversalMetricInputsRecord::OperationalAndProtocol,
+            }
+        );
+        assert_eq!(
+            parsed.selected_source,
+            Some(TraversalCandidateSourceRecord::CurrentGeneration)
+        );
+    }
+
+    #[test]
+    fn legacy_string_strategy_fails_at_strategy_path() {
+        #[derive(Debug, Deserialize)]
+        #[allow(dead_code)]
+        struct LegacyTraversalEvidenceRecord {
+            seed: u64,
+            strategy: String,
+            selected_source: Option<TraversalCandidateSourceRecord>,
+        }
+
+        let json = r#"{
+            "seed": 0,
+            "strategy": {
+                "kind": "score_child_prop",
+                "top_m": 3,
+                "lambda_millis": 10000,
+                "metrics": "operational_and_protocol"
+            },
+            "selected_source": "current_generation"
+        }"#;
+        let mut deserializer = serde_json::Deserializer::from_str(json);
+        let error = serde_path_to_error::deserialize::<_, LegacyTraversalEvidenceRecord>(
+            &mut deserializer,
+        )
+        .expect_err("legacy traversal strategy should fail");
+
+        assert_eq!(error.path().to_string(), "strategy");
+    }
 }

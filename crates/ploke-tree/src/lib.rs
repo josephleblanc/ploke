@@ -11,6 +11,13 @@ use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
+mod playback;
+
+pub use playback::{
+    CoarseHistorySpine, CoarseHistoryStep, CoarseHistoryWarning, build_coarse_history_spine,
+    coarse_run_playback_from_sealed_history, project_coarse_history_spine,
+};
+
 use ploke_records::branch::Prototype1BranchRegistry;
 use ploke_records::channel::{Envelope, ToChild, ToParent};
 use ploke_records::evaluation::Artifact as EvaluationArtifact;
@@ -293,6 +300,41 @@ impl FsRunStore {
 
     pub fn load_forest(&self) -> Result<RunForest, FsRunStoreError> {
         Ok(assemble_run_forest(self.load()?))
+    }
+
+    pub fn load_history_blocks(&self) -> Result<Vec<SealedBlockRecord>, FsRunStoreError> {
+        let blocks_dir = self.run_root.join("history").join("blocks");
+        if !blocks_dir.is_dir() {
+            return Ok(Vec::new());
+        }
+
+        let mut blocks = Vec::new();
+        for path in sorted_files_with_prefix(&blocks_dir, "segment-", "jsonl")? {
+            let file = fs::File::open(&path).map_err(|source| FsRunStoreError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            for line in io::BufReader::new(file).lines() {
+                let line = line.map_err(|source| FsRunStoreError::Io {
+                    path: path.clone(),
+                    source,
+                })?;
+                if line.trim().is_empty() {
+                    continue;
+                }
+
+                let record =
+                    serde_json::from_str::<SealedBlockRecord>(&line).map_err(|source| {
+                        FsRunStoreError::Json {
+                            path: path.clone(),
+                            source,
+                        }
+                    })?;
+                blocks.push(record);
+            }
+        }
+
+        Ok(blocks)
     }
 
     fn load_passive_evidence(&self) -> Result<PassiveEvidence, FsRunStoreError> {
@@ -1199,10 +1241,24 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use ploke_records::history::{
+        ActorRefRecord, AdmittedEntryRecord, AdmittedEntryStateRecord, ArtifactRefRecord,
+        BlockCommonRecord, ClaimsRecord, EntryCoreRecord, EntryKindRecord, EntryPayloadRecord,
+        EvidenceRefRecord, GenesisAuthorityRecord, LevelRecord, OpeningAuthorityRecord,
+        OperationalEnvironmentRecord, ParentIdentityRefRecord, PhaseRecord, ProcedureRefRecord,
+        RegimeRecord, RiskRecord, SealedBlockHeaderRecord, SealedBlockRecord,
+        SealedBlockStateRecord, SelectionDecisionEntryRecord, StepRecord, SubjectRefRecord,
+        SuccessorRefRecord, SurfaceCommitmentRecord, SurfaceDeltaRecord, SurfaceRecord,
+        SurfaceRootRecord, TreeKeyHashRecord,
+    };
     use ploke_records::identity::ParentIdentityRecord;
     use ploke_records::ids::{
-        BranchId, CampaignId, CandidateId, InstanceId, RuntimeId, SchedulerNodeId, SourceStateId,
+        BlockHash, BlockId, BranchId, CampaignId, CandidateId, EntryId, HistoryHash,
+        HistoryStateRoot, InstanceId, LineageId, RecordedAt, RuntimeId, SchedulerNodeId,
+        SourceStateId,
     };
+    use ploke_records::playback::EvidenceStrength;
+    use ploke_records::selection::{Decision, Outcome};
 
     use super::*;
 
@@ -1393,6 +1449,75 @@ mod tests {
         assert_eq!(forest.node("root").children, vec![NodeKey::from("child")]);
         assert_eq!(forest.node("child").parent, Some(NodeKey::from("root")));
         assert!(forest.lanes.frontier.is_empty());
+    }
+
+    #[test]
+    fn coarse_history_spine_orders_by_height_preserves_selection_and_emits_warnings() {
+        let block_zero =
+            synthetic_sealed_block(0, vec![], "hash-0", Some(("candidate-0", 2)), "runtime-0");
+        let block_one = synthetic_sealed_block(
+            1,
+            vec!["hash-0"],
+            "hash-1",
+            Some(("candidate-1", 3)),
+            "runtime-1",
+        );
+        let block_two =
+            synthetic_sealed_block(2, vec!["unexpected-parent"], "hash-2", None, "runtime-2");
+
+        let spine =
+            build_coarse_history_spine(&[block_two.clone(), block_zero.clone(), block_one.clone()]);
+        let CoarseHistorySpine { steps, warnings } = spine;
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].block_height, 0);
+        assert_eq!(steps[1].block_height, 1);
+        assert_eq!(steps[2].block_height, 2);
+        assert_eq!(steps[1].parent_block_hashes, vec!["hash-0".to_owned()]);
+        assert_eq!(
+            steps[2].parent_block_hashes,
+            vec!["unexpected-parent".to_owned()]
+        );
+        assert_eq!(steps[1].selected_candidate.as_deref(), Some("candidate-1"));
+        assert_eq!(steps[1].considered_candidate_count, 3);
+        assert_eq!(steps[2].selected_candidate, None);
+        assert_eq!(steps[2].considered_candidate_count, 0);
+        assert_eq!(
+            warnings,
+            vec![
+                CoarseHistoryWarning::ParentHashLinkMismatch {
+                    previous_block_height: 1,
+                    previous_block_hash: "hash-1".to_owned(),
+                    block_height: 2,
+                    block_hash: "hash-2".to_owned(),
+                    parent_block_hashes: vec!["unexpected-parent".to_owned()],
+                },
+                CoarseHistoryWarning::MissingSelectionDecisionPayload {
+                    block_height: 2,
+                    block_hash: "hash-2".to_owned(),
+                },
+            ]
+        );
+
+        let projected_steps =
+            project_coarse_history_spine(&[block_two.clone(), block_zero.clone(), block_one]);
+        assert_eq!(projected_steps, steps);
+
+        match &steps[0].selected_successor.runtime {
+            ActorRefRecord::Runtime(runtime) => assert_eq!(runtime.0, "runtime-0"),
+            other => panic!("expected runtime successor, got {other:?}"),
+        }
+
+        let playback = coarse_run_playback_from_sealed_history(&[block_two, block_zero]);
+        let ids = playback
+            .iter()
+            .map(|step| step.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["history:0:hash-0", "history:2:hash-2",]);
+        assert!(
+            playback
+                .iter()
+                .all(|step| step.evidence == EvidenceStrength::SealedHistory)
+        );
     }
 
     #[test]
@@ -1811,6 +1936,67 @@ mod tests {
         assert_no_sealed_history_authority(&forest);
     }
 
+    #[test]
+    #[ignore]
+    fn coarse_playback_real_run() {
+        let run_root = std::env::var("PLOKE_TREE_RUN_ROOT")
+            .expect("set PLOKE_TREE_RUN_ROOT to a prototype1 run root");
+        let store = FsRunStore::new(run_root);
+
+        let blocks = store
+            .load_history_blocks()
+            .expect("load sealed history blocks");
+        let spine = build_coarse_history_spine(&blocks);
+        let steps = project_coarse_history_spine(&blocks);
+
+        println!(
+            "coarse_history blocks={} steps={} warnings={}",
+            blocks.len(),
+            steps.len(),
+            spine.warnings.len()
+        );
+        for step in &steps {
+            let warning_count = spine
+                .warnings
+                .iter()
+                .filter(|warning| match warning {
+                    CoarseHistoryWarning::ParentHashLinkMismatch { block_height, .. }
+                    | CoarseHistoryWarning::MissingSelectionDecisionPayload {
+                        block_height, ..
+                    } => *block_height == step.block_height,
+                })
+                .count();
+            println!(
+                "block {} selected {} candidates {} warnings {}",
+                step.block_height,
+                step.selected_candidate.as_deref().unwrap_or("none"),
+                step.considered_candidate_count,
+                warning_count
+            );
+        }
+
+        assert_eq!(
+            blocks.len(),
+            12,
+            "known fixture run should currently have 12 sealed history blocks"
+        );
+        assert_eq!(
+            steps.len(),
+            12,
+            "known fixture run should currently project 12 coarse history steps"
+        );
+        assert!(
+            steps
+                .windows(2)
+                .all(|pair| pair[0].block_height <= pair[1].block_height),
+            "coarse history projection must preserve monotonic block heights"
+        );
+        assert!(
+            !spine.warnings.is_empty(),
+            "expected warnings to be visible in known fixture coarse history playback"
+        );
+    }
+
     trait ForestTestExt {
         fn node(&self, key: &str) -> &TreeNode;
     }
@@ -1964,5 +2150,215 @@ mod tests {
             .expect("time after epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("ploke-tree-{name}-{}-{nanos}", std::process::id()))
+    }
+
+    fn synthetic_sealed_block(
+        block_height: u64,
+        parent_block_hashes: Vec<&str>,
+        block_hash: &str,
+        selection: Option<(&str, usize)>,
+        runtime_id: &str,
+    ) -> SealedBlockRecord {
+        let runtime = ActorRefRecord::Runtime(RuntimeId(runtime_id.to_owned()));
+        let artifact = ArtifactRefRecord {
+            value: format!("artifact:{runtime_id}"),
+        };
+
+        let entries = selection
+            .map(|(candidate, considered_count)| {
+                vec![AdmittedEntryRecord {
+                    core: EntryCoreRecord {
+                        entry_id: EntryId(format!("entry-{block_height}")),
+                        entry_kind: EntryKindRecord::Decision,
+                        subject: SubjectRefRecord {
+                            value: format!("subject-{block_height}"),
+                        },
+                        executor: runtime.clone(),
+                        input_refs: Vec::new(),
+                        output_refs: Vec::new(),
+                        occurred_at: RecordedAt(100 + block_height as i64),
+                        payload: EntryPayloadRecord::SelectionDecision(
+                            SelectionDecisionEntryRecord {
+                                schema_version: 1,
+                                procedure_or_policy: ProcedureRefRecord {
+                                    value: "policy:selection".to_owned(),
+                                },
+                                scope: ploke_records::history::SelectionScopeRecord {
+                                    value: "history".to_owned(),
+                                },
+                                selected_candidate: Some(SubjectRefRecord {
+                                    value: candidate.to_owned(),
+                                }),
+                                considered: (0..considered_count)
+                                    .map(|idx| ploke_records::history::EvaluationPayloadRecord {
+                                        schema_version: 1,
+                                        candidate: SubjectRefRecord {
+                                            value: format!("{candidate}-{idx}"),
+                                        },
+                                        procedure: ProcedureRefRecord {
+                                            value: "selection:eval".to_owned(),
+                                        },
+                                        selection_input: None,
+                                        selection_input_hash: None,
+                                        projection_failures: Vec::new(),
+                                        source_refs: Vec::new(),
+                                        source_hashes: Vec::new(),
+                                        sealed_evidence: None,
+                                        artifact: None,
+                                        surface_attempt: None,
+                                    })
+                                    .collect(),
+                                considered_sources: Vec::new(),
+                                considered_order_hash: HistoryHash("a".repeat(64)),
+                                candidate_set: None,
+                                projection_failures: Vec::new(),
+                                traversal: None,
+                                decision: Decision {
+                                    procedure_id: "selector-v1".to_owned(),
+                                    candidate_node_id: "node-0".to_owned(),
+                                    selected_branch_id: Some("branch-0".to_owned()),
+                                    branch_disposition: "keep".to_owned(),
+                                    outcome: Outcome::Accepted,
+                                    findings: Vec::new(),
+                                    rationale: Vec::new(),
+                                },
+                            },
+                        ),
+                    },
+                    state: AdmittedEntryStateRecord {
+                        observed: ploke_records::history::ObservedEntryRecord {
+                            observer: runtime.clone(),
+                            recorder: runtime.clone(),
+                            operational_environment: OperationalEnvironmentRecord {
+                                runtime: None,
+                                artifact: None,
+                                binary: None,
+                                tool_surface: None,
+                                procedure_version: None,
+                                model: None,
+                                code_graph: None,
+                                oracle_task: None,
+                                recorder: None,
+                            },
+                            payload_ref: EvidenceRefRecord {
+                                value: "payload".to_owned(),
+                            },
+                            payload_hash: HistoryHash("b".repeat(64)),
+                            observed_at: RecordedAt(100 + block_height as i64),
+                            recorded_at: RecordedAt(100 + block_height as i64),
+                        },
+                        proposer: runtime.clone(),
+                        procedure_or_policy: ProcedureRefRecord {
+                            value: "policy:selection".to_owned(),
+                        },
+                        admitting_authority: runtime.clone(),
+                        ruling_authority: runtime.clone(),
+                        lineage_id: LineageId("lineage:synthetic".to_owned()),
+                        block_id: BlockId(format!("block-{block_height}")),
+                        block_height,
+                    },
+                }]
+            })
+            .unwrap_or_default();
+
+        SealedBlockRecord {
+            state: SealedBlockStateRecord {
+                header: SealedBlockHeaderRecord {
+                    common: BlockCommonRecord {
+                        schema_version: 1,
+                        block_id: BlockId(format!("block-{block_height}")),
+                        lineage_id: LineageId("lineage:synthetic".to_owned()),
+                        block_height,
+                        parent_block_hashes: parent_block_hashes
+                            .into_iter()
+                            .map(|hash| BlockHash(hash.to_owned()))
+                            .collect(),
+                        opened_from_state: HistoryStateRoot("0".repeat(64)),
+                        regime: RegimeRecord {
+                            step: StepRecord(block_height),
+                            phase: PhaseRecord::Consolidation,
+                            risk: RiskRecord {
+                                exploration: LevelRecord::Medium,
+                                mutation: LevelRecord::Medium,
+                                finality: LevelRecord::Medium,
+                            },
+                        },
+                        opening_authority: OpeningAuthorityRecord::Genesis(
+                            GenesisAuthorityRecord {
+                                bootstrap_policy: ProcedureRefRecord {
+                                    value: "policy:bootstrap".to_owned(),
+                                },
+                                tree_key: TreeKeyHashRecord {
+                                    hash: HistoryHash("c".repeat(64)),
+                                },
+                                parent_identity: ParentIdentityRefRecord {
+                                    evidence: EvidenceRefRecord {
+                                        value: "parent".to_owned(),
+                                    },
+                                },
+                            },
+                        ),
+                        opened_by: runtime.clone(),
+                        opened_from_artifact: artifact.clone(),
+                        ruling_authority: runtime.clone(),
+                        policy_ref: ProcedureRefRecord {
+                            value: "policy:selection".to_owned(),
+                        },
+                        surface: SurfaceCommitmentRecord {
+                            immutable: SurfaceRecord {
+                                root: SurfaceRootRecord {
+                                    hash: HistoryHash("d".repeat(64)),
+                                },
+                            },
+                            mutated: SurfaceDeltaRecord {
+                                before: SurfaceRecord {
+                                    root: SurfaceRootRecord {
+                                        hash: HistoryHash("e".repeat(64)),
+                                    },
+                                },
+                                after: SurfaceRecord {
+                                    root: SurfaceRootRecord {
+                                        hash: HistoryHash("f".repeat(64)),
+                                    },
+                                },
+                            },
+                            ambient: SurfaceDeltaRecord {
+                                before: SurfaceRecord {
+                                    root: SurfaceRootRecord {
+                                        hash: HistoryHash("1".repeat(64)),
+                                    },
+                                },
+                                after: SurfaceRecord {
+                                    root: SurfaceRootRecord {
+                                        hash: HistoryHash("2".repeat(64)),
+                                    },
+                                },
+                            },
+                        },
+                        opened_at: RecordedAt(90 + block_height as i64),
+                    },
+                    crown_lock_transition: EvidenceRefRecord {
+                        value: "evidence:crown-lock".to_owned(),
+                    },
+                    selected_successor: SuccessorRefRecord {
+                        runtime,
+                        artifact: artifact.clone(),
+                    },
+                    active_artifact: artifact,
+                    claims: ClaimsRecord {
+                        policy: None,
+                        surface: None,
+                        manifest: None,
+                        artifact: None,
+                    },
+                    sealed_at: RecordedAt(110 + block_height as i64),
+                    entry_count: entries.len(),
+                    entries_root: HistoryHash("3".repeat(64)),
+                    block_hash: BlockHash(block_hash.to_owned()),
+                },
+                private: (),
+            },
+            entries,
+        }
     }
 }

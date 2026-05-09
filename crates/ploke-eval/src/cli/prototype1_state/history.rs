@@ -2692,6 +2692,10 @@ pub(crate) struct SurfaceEvidence {
     pub(crate) patch_id: PatchId,
     pub(crate) source_content_hash: String,
     pub(crate) proposed_content_hash: String,
+    #[serde(default)]
+    pub(crate) proposal_producer: super::edit_surface::request_policy::ProposalProducer,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) generator_surface: Option<super::edit_surface::tui::GeneratorSurfaceVersion>,
     pub(crate) touches: Vec<SurfaceTouch>,
     pub(crate) touches_digest: HistoryHash,
     pub(crate) delta_id: String,
@@ -2808,6 +2812,8 @@ impl SurfaceEvidence {
         patch_id: PatchId,
         source_content_hash: impl Into<String>,
         proposed_content_hash: impl Into<String>,
+        proposal_producer: super::edit_surface::request_policy::ProposalProducer,
+        generator_surface: super::edit_surface::tui::GeneratorSurfaceVersion,
         touches: Vec<SurfaceTouch>,
     ) -> Result<Self, HistoryError> {
         let touches_digest = HistoryHash::of_domain_json(
@@ -2824,7 +2830,7 @@ impl SurfaceEvidence {
             HistoryHash::of_domain_json("prototype1.history.surface_evidence.delta.v1", &delta)?;
         let delta_id = format!("surface-delta:{}", delta_digest.as_str());
         Ok(Self {
-            schema_version: 1,
+            schema_version: 2,
             producer_id: producer_id.into(),
             proposal_id: proposal_id.into(),
             run_id: run_id.into(),
@@ -2835,6 +2841,8 @@ impl SurfaceEvidence {
             patch_id,
             source_content_hash: source_content_hash.into(),
             proposed_content_hash: proposed_content_hash.into(),
+            proposal_producer,
+            generator_surface: Some(generator_surface),
             touches,
             touches_digest,
             delta_id,
@@ -2845,7 +2853,7 @@ impl SurfaceEvidence {
     }
 
     pub(crate) fn verify_integrity(&self) -> Result<(), HistoryError> {
-        if self.schema_version != 1 {
+        if !matches!(self.schema_version, 1 | 2) {
             return Err(HistoryError::InvalidSelectionDecision {
                 detail: format!(
                     "surface evidence has unsupported schema_version {}",
@@ -2879,6 +2887,14 @@ impl SurfaceEvidence {
         if delta_id != self.delta_id {
             return Err(HistoryError::InvalidSelectionDecision {
                 detail: "surface evidence delta_id does not match delta_digest".to_string(),
+            });
+        }
+        self.proposal_producer
+            .verify_complete(&self.base.artifact_id)
+            .map_err(|detail| HistoryError::InvalidSelectionDecision { detail })?;
+        if self.schema_version >= 2 && self.generator_surface.is_none() {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "surface evidence is missing generator_surface provenance".to_string(),
             });
         }
         Ok(())

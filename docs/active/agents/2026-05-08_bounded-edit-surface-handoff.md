@@ -50,7 +50,8 @@ failure kind
 The replay-shaped parent-input splice is now covered on the History side:
 typed rejected surface-attempt evidence routes through `Diagnosis ->
 EditObjective -> SurfaceRequest` and admits to `EditableSurface`. Backend/TUI
-proposal-touch extraction remains a future slice.
+proposal-touch lowering is also covered at the local/proof boundary; the real
+live adapter remains a future slice.
 
 ## Authoritative Planning Docs
 
@@ -356,7 +357,7 @@ invalid candidate generation / semantic edit resolution problem
   -> EditObjective for reducing invalid edit-surface candidates
 ```
 
-## Current Implementation Status: After Slice 7.3, Before Slice 7.4
+## Current Implementation Status: After Narrow Slice 7.5 Local/Proof Coverage
 
 Task-stack group:
 
@@ -372,10 +373,18 @@ bounded-edit-surface-diagnosis-splice (7.2)
 bounded-edit-surface-choice-objective (7.3)
 ```
 
-Open task:
+Closed slice tasks:
 
 ```text
-bounded-edit-surface-parent-input-route (7.4)
+bounded-edit-surface-mock-candidate (7.5 narrow splice)
+```
+
+Open follow-up tasks:
+
+```text
+bounded-edit-surface-request-policy-receipt (7.5.1)
+bounded-edit-surface-generator-provenance (7.5.2)
+bounded-edit-surface-tui-adapter (7.6)
 ```
 
 Implemented inside 7.3:
@@ -402,7 +411,7 @@ cargo test -p ploke-eval edit_surface:: -- --nocapture 2>&1 | tail -n 80
 Result from this thread:
 
 ```text
-28 edit_surface tests passed
+30 edit_surface tests passed
 ```
 
 Important: these tests prove only the local primitive:
@@ -416,8 +425,66 @@ explicit EditObjective + explicit ProtectedCore + explicit Γ_a
 `EditObjective` now carries a structured machine-readable `ObjectiveSpec`
 alongside evidence refs.
 
-That is now the intended scope of 7.3. The upstream route from parent-time
-context/evidence into that primitive belongs to 7.4.
+7.4 extends this with local/proof coverage for the parent-side route and
+proposal-touch lowering:
+
+- `SurfaceRequest::broad(...).admit()`
+- `route::semantic_resolution(...)` from typed replay-shaped History evidence
+- backend proposal-touch splices through `tui::MaterialSpan` /
+  `tui::Bounds::touch` into `surface::Touch`
+- `Grant::check` accepting the checked touch shape
+
+These remain local/proof-level slices. Real History extraction, live
+Router-backed request-policy receipt admission, live TUI adapter execution, and
+T6 selection/outcome selectability remain future work.
+
+7.5 narrow splice is now implemented and reviewed:
+
+- `CheckedSurfaceEdit::surface_evidence(...)`
+- `child_files_from_checked_edit(...)`
+- `validate_requested_tui_surface_child(...)`
+- `checked_edit_surface_candidate_is_accepted_by_tui_child_plan_consumer`
+
+What this proves:
+
+```text
+EditProposal
+  -> CheckedSurfaceEdit / ArtifactDelta
+  -> ChildFiles / SurfaceEvidence
+  -> requested TUI-surface child-plan consumer acceptance
+```
+
+This does not prove live generation, live Router-backed request-policy receipt
+admission, the real ploke-tui adapter, or parent selection of the resulting
+outcome.
+
+7.5.1 is partially implemented:
+
+- `edit_surface::request_policy` defines the typed request-policy receipt
+  carrier and canonical `client_policy_hash`.
+- `request_policy_receipt_hash_is_stable_for_equivalent_effective_provider_policy`
+  proves equivalent effective client policies hash the same way.
+- `request_policy_receipt_hash_changes_when_effective_policy_changes` proves a
+  material effective policy change changes the hash.
+- `requested_tui_surface_child_rejects_router_backed_proposal_producer` proves
+  Router-backed provenance is not silently accepted on the deterministic
+  non-router child path.
+
+7.5.1 is not closed: the live proposal-producing Router request builder and
+end-to-end Router-backed proposal admission splice still need to be added.
+
+7.5.2 is implemented in bounded deterministic/non-router scope:
+
+- `tui::GeneratorSurfaceVersion` records the generator surface version derived
+  from typed TUI bounds/projection material.
+- `EditProposal -> CheckedSurfaceEdit -> SurfaceEvidence` now carries that
+  generator-surface provenance.
+- `edit_surface_bridge_rejects_mutated_generator_surface_provenance` proves
+  backend admission rejects forged generator provenance.
+- `requested_tui_surface_child_rejects_missing_generator_surface_provenance`
+  and `requested_tui_surface_child_rejects_mismatched_generator_surface_provenance`
+  prove child-plan consumption fails closed when provenance is absent or does
+  not match the requested TUI surface.
 
 What is now implemented from 7.1:
 
@@ -525,24 +592,47 @@ acknowledged when implementing later carrier/surface/objective slices.
 Start here after compaction:
 
 ```text
-bounded-edit-surface-parent-input-route (7.4)
+bounded-edit-surface-request-policy-receipt (7.5.1)
 ```
 
 Corrected status:
 
 ```text
-7.3 is closed at the local primitive boundary.
+7.4 local/proof coverage is closed at the local boundary.
 
 7.3 implemented:
   explicit EditObjective + explicit ProtectedCore + explicit Γ_a
     -> EditableSurface::broad
     -> Grant::check
 
-7.4 owns the upstream splice:
-  real-ish parent-time History/context evidence + graph projection +
-  protected-core policy
-    -> parent-side route/admission constructor
-    -> EditObjective + EditableSurface with evidence refs and broad Grant
+7.4 added the local/proof route:
+  typed replay-shaped History evidence + graph projection + protected-core
+  policy
+    -> SurfaceRequest::broad(...).admit()
+    -> route::semantic_resolution(...)
+    -> proposal-touch lowering into surface::Touch
+    -> Grant::check accepts the checked touch shape
+
+7.5 narrow splice is implemented/proven locally:
+  SurfaceRequest + checked proposal/touches
+    -> CheckedSurfaceEdit / ArtifactDelta
+    -> ChildFiles / SurfaceEvidence
+    -> requested TUI-surface child-plan consumer accepts it
+
+7.5.1 partial:
+  request-policy receipt carrier + stable client_policy_hash local tests exist,
+  but live Router-backed proposal request/admission is still open
+
+7.5.2 implemented/proven in bounded deterministic/non-router scope:
+  GeneratorSurfaceVersion
+    -> EditProposal
+    -> CheckedSurfaceEdit
+    -> SurfaceEvidence
+    -> backend and child-plan provenance checks
+
+Remaining:
+  live Router-backed request-policy receipt admission, live TUI adapter, and
+  T6 selection/outcome selectability.
 ```
 
 What changed since the previous handoff:
@@ -559,25 +649,30 @@ crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs
   - broad_surface_admits_writable_touch_outside_protected_core
   - broad_surface_rejects_touch_inside_protected_core
   - broad_surface_objective_records_context_without_diagnosis_specificity
+  - route::semantic_resolution and proposal-touch splice coverage
 
 docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md
   - indexes those tests as local primitive proofs only
-  - explicitly separates the completed local 7.3 primitive from the 7.4
-    parent-input route proof
+  - explicitly separates the completed local/proof 7.4 route and narrow 7.5
+    downstream candidate splice from later live Router/TUI/selection work
 ```
 
 Important correction:
 
 ```text
-Do not reopen 7.3 merely because the parent input route is missing.
-The current tests prove the local surface/objective primitive.
-The A -> B* parent-input route from real-ish parent context/evidence belongs
-to 7.4.
+Do not reopen 7.3 or 7.5 merely because live generation or parent selection is
+missing. The current tests prove the local surface/objective primitive, the 7.4
+local/proof route, and the narrow 7.5 checked-candidate-to-child-plan splice.
+The bounded 7.5.2 generator-surface provenance splice is also now closed for
+deterministic/non-router proposal evidence. Live Router-backed request-policy
+receipt admission, live TUI adapter execution, and T6 selection/outcome
+selectability remain separate open tasks.
 ```
 
-The plan direction also changed. The current preferred first pass is no longer a
-narrow `Diagnosis -> one semantic resolver SurfaceChoice` route. It is the
-broad protected-core route:
+The plan direction also changed. The current preferred first pass is no longer
+a narrow `Diagnosis -> one semantic resolver SurfaceChoice` route. It is the
+broad protected-core route, with 7.4 proving the route/proposal-touch splice
+and 7.5 proving the candidate acceptance splice:
 
 ```text
 History/context evidence
@@ -609,24 +704,19 @@ Useful Transformations
   ∩ Form-Preserving Transitions
 ```
 
-Concrete next implementation target:
+Implemented narrow 7.5 splice:
 
 ```text
-bounded-edit-surface-parent-input-route (7.4)
+bounded-edit-surface-mock-candidate (7.5)
 
 A':
-  real-ish parent-time context/evidence fixture
-  plus graph projection
-  plus protected-core policy
+  SurfaceRequest + checked proposal/touches
 
 B*:
-  parent-side route/admission constructor
+  CheckedSurfaceEdit / ArtifactDelta / candidate artifact evidence
 
 C':
-  EditObjective carries context/evidence refs
-  EditableSurface::broad builds a broad Grant
-  ordinary writes remain allowed
-  protected-core writes remain forbidden
+  requested TUI-surface child-plan consumer accepts it
 ```
 
 Partially implemented inside 7.4:
@@ -684,28 +774,58 @@ T6 OutcomeSelectable:
     -> History-backed selection and successor handoff
 ```
 
-Current 7.3 coverage is local T2/T3/T4 primitive behavior. The first 7.4
-request carrier covers local route/admission from synthetic parent refs into
-the 7.3 primitive. T1 and the replay-shaped `A' -> B*` splice from real
-History/proposal evidence into T2/T3 are still missing.
+Current 7.3 coverage is local T2/T3/T4 primitive behavior. The 7.4 coverage is
+local/proof route/admission plus proposal-touch lowering from typed
+replay-shaped evidence into the 7.3 primitive. The narrow 7.5 coverage proves
+checked edit evidence lowers into `ChildFiles` and is accepted by the requested
+TUI-surface child-plan consumer.
+
+7.5.2 is now closed in bounded deterministic/non-router scope. Proposal
+evidence cites a `tui::GeneratorSurfaceVersion`, and that provenance is checked
+at both backend admission and requested TUI child-plan validation:
+
+```text
+typed TUI bounds/projection material
+  -> GeneratorSurfaceVersion
+  -> EditProposal
+  -> CheckedSurfaceEdit
+  -> SurfaceEvidence
+  -> requested TUI child-plan validation
+```
+
+Tests added for this closure:
+
+```text
+edit_surface_bridge_rejects_mutated_generator_surface_provenance
+requested_tui_surface_child_rejects_missing_generator_surface_provenance
+requested_tui_surface_child_rejects_mismatched_generator_surface_provenance
+```
+
+7.5.1 is partially implemented but remains open. The local request-policy
+receipt carrier exists and has stable hash tests:
+
+```text
+request_policy_receipt_hash_is_stable_for_equivalent_effective_provider_policy
+request_policy_receipt_hash_changes_when_effective_policy_changes
+requested_tui_surface_child_rejects_router_backed_proposal_producer
+```
+
+What remains for 7.5.1:
+
+```text
+parent Artifact + Router config/defaults + EditObjective
+  -> live proposal-producing Router request builder
+  -> complete effective request-policy receipt
+  -> Router-backed proposal admission rejects missing/incomplete/mismatched receipts
+```
 
 Do not implement the real `ploke-tui` adapter yet. Do not move authority into
-`Harness`; it remains executor-only.
-
-Later blocker before `bounded-edit-surface-tui-adapter (7.6)`:
+`Harness`; it remains executor-only. The next blocker before
+`bounded-edit-surface-tui-adapter (7.6)` is:
 
 ```text
 bounded-edit-surface-request-policy-receipt (7.5.1)
-bounded-edit-surface-generator-provenance (7.5.2)
 ```
-
-Use a fake Router or deterministic harness to prove that proposal-producing
-Router calls return complete effective request-policy receipts, and that
-proposal admission rejects missing or incomplete receipts.
-
-Also prove that proposal records cite generator-surface versions from the
-parent Artifact before the real TUI adapter depends on mutable generator
-machinery.
 
 ## Suggested Sub-Agent Pattern
 
@@ -717,21 +837,20 @@ Good next scout prompt:
 Read docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md
 and docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md.
 
-Task: bounded-edit-surface-parent-input-route (7.4).
+Task: bounded-edit-surface-request-policy-receipt (7.5.1).
 
-Inspect the new edit_surface surface primitives:
-  EditObjective
-  ProtectedCore
-  EditableSurface::broad
-  Grant::with_forbidden
+Inspect the next Router-backed provenance splice:
+  effective request-policy receipt
+  proposal admission
+  candidate artifact evidence
 
-Find the smallest parent-side boundary where real-ish parent-time
-History/context evidence can be converted into an EditObjective and
-EditableSurface. 7.3 already proved the local primitive; 7.4 should prove the
-input-side splice from replay-shaped parent evidence into that primitive.
+Find the smallest boundary where Router-backed proposals become admissible only
+with complete request-policy receipts. 7.5 already proves the narrow downstream
+child-plan acceptance splice. 7.5.2 already proves bounded generator-surface
+provenance in the deterministic/non-router path.
 
-Return exact files, line ranges, test names, and the smallest A -> B* splice
-test to add. Keep Harness executor-only.
+Return exact files, line ranges, test names, and the smallest A -> B* -> C'
+splice test to add. Keep Harness executor-only.
 ```
 
 Useful sidecar scout, if needed:
@@ -751,6 +870,16 @@ Known useful targeted command from prior audit:
 
 ```bash
 cargo test -p ploke-eval edit_surface::tests -- --nocapture 2>&1 | tail -n 30
+```
+
+Recent targeted commands from the 7.5.1/7.5.2 pass:
+
+```bash
+cargo test -p ploke-eval request_policy_receipt_hash 2>&1 | tail -n 20
+cargo test -p ploke-eval edit_surface_bridge_rejects_mutated_generator_surface_provenance 2>&1 | tail -n 20
+cargo test -p ploke-eval requested_tui_surface_child_rejects_router_backed_proposal_producer 2>&1 | tail -n 20
+cargo test -p ploke-eval requested_tui_surface_child_rejects_mismatched_generator_surface_provenance 2>&1 | tail -n 20
+cargo test -p ploke-eval checked_edit_surface_candidate_is_accepted_by_tui_child_plan_consumer 2>&1 | tail -n 60
 ```
 
 Use bounded output for cargo tests per `AGENTS.md`.

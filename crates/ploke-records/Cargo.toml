@@ -11,3 +11,4 @@ ploke-protocol = { workspace = true }
 
 [dev-dependencies]
 serde_json.workspace = true
+serde_path_to_error = "0.1"

@@ -18,9 +18,11 @@ use crate::cli::Prototype1EditSurface;
 use crate::intervention::{text_file_artifact_id, text_replacement_patch_id};
 use crate::loop_graph::{ArtifactId, PatchId};
 
-use super::edit_surface::{self, graph, surface, tui};
+use super::edit_surface::{self, graph, request_policy, surface, tui};
 use super::event::ContentHash;
-use super::history::{HistoryHash, SurfaceCommitment};
+use super::history::{
+    HistoryError, HistoryHash, SurfaceArtifactRef, SurfaceCommitment, SurfaceEvidence, SurfaceTouch,
+};
 use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
 
 /// Git branch name for one backend-managed child lineage.
@@ -212,6 +214,8 @@ pub(crate) struct EditProposal {
     pub(crate) surface: Prototype1EditSurface,
     pub(crate) proposal_id: String,
     pub(crate) run_id: String,
+    pub(crate) proposal_producer: request_policy::ProposalProducer,
+    pub(crate) generator_surface: tui::GeneratorSurfaceVersion,
     pub(crate) touches: Vec<ProposedTouch>,
     pub(crate) reported_after_file_hash: Option<String>,
 }
@@ -231,29 +235,43 @@ pub(crate) fn proposal_from_resolved_writes(
     writes: &[WriteSnippetData],
 ) -> Result<EditProposal, BackendError> {
     let mut touches = Vec::with_capacity(writes.len());
+    let mut source_content = None;
     for write in writes {
         let relpath = write_relpath(repo_root, &write.file_path)?;
         validate_normal_repo_relpath(&relpath)?;
         let absolute_target = repo_root.join(&relpath);
-        let source_content =
+        let content =
             fs::read_to_string(&absolute_target).map_err(|source| BackendError::ReadTarget {
                 path: absolute_target,
                 source,
             })?;
+        source_content.get_or_insert_with(|| content.clone());
         touches.push(ProposedTouch {
             target: write.name.clone(),
             relpath,
             start: write.start_byte,
             end: write.end_byte,
-            expected_file_hash: content_hash(&source_content),
+            expected_file_hash: content_hash(&content),
             replacement: write.replacement.clone(),
         });
     }
+    let source_content = source_content.unwrap_or_default();
+    let target_relpath = touches
+        .first()
+        .map(|touch| touch.relpath.clone())
+        .ok_or(BackendError::EmptyEditTouches { surface })?;
+    let generator_surface = GitWorktreeBackend.generator_surface_for_proposed_touches(
+        &target_relpath,
+        &source_content,
+        &touches,
+    )?;
 
     Ok(EditProposal {
         surface,
         proposal_id: proposal_id.into(),
         run_id: run_id.into(),
+        proposal_producer: request_policy::ProposalProducer::NonRouter,
+        generator_surface,
         touches,
         reported_after_file_hash: None,
     })
@@ -278,6 +296,8 @@ pub(crate) struct CheckedSurfaceEdit {
     surface: Prototype1EditSurface,
     proposal_id: String,
     run_id: String,
+    proposal_producer: request_policy::ProposalProducer,
+    generator_surface: tui::GeneratorSurfaceVersion,
     target_relpath: PathBuf,
     source_content: String,
     proposed_content: String,
@@ -336,6 +356,56 @@ impl CheckedSurfaceEdit {
 
     pub(crate) fn delta(&self) -> &edit_surface::ArtifactDelta {
         &self.delta
+    }
+
+    pub(crate) fn surface_evidence(
+        &self,
+        producer_id: &str,
+    ) -> Result<SurfaceEvidence, HistoryError> {
+        let touches = self
+            .delta
+            .touches()
+            .iter()
+            .map(|touch| {
+                let span = touch.span();
+                let target = span.target();
+                SurfaceTouch {
+                    target_relpath: target.path().clone(),
+                    target_name: target.name().to_string(),
+                    span_relpath: span.path().clone(),
+                    start: span.start(),
+                    end: span.end(),
+                    base_hash: span.hash().as_str().to_string(),
+                    replacement: touch.replacement().to_string(),
+                    replacement_hash: format!(
+                        "{:x}",
+                        Sha256::digest(touch.replacement().as_bytes())
+                    ),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        SurfaceEvidence::checked(
+            producer_id,
+            self.proposal_id.clone(),
+            self.run_id.clone(),
+            crate::cli::serde_name(&self.surface),
+            self.target_relpath.clone(),
+            SurfaceArtifactRef {
+                artifact_id: self.delta.base().id().clone(),
+                hash: self.delta.base().hash().as_str().to_string(),
+            },
+            SurfaceArtifactRef {
+                artifact_id: self.delta.after().id().clone(),
+                hash: self.delta.after().hash().as_str().to_string(),
+            },
+            self.patch_id.clone(),
+            self.source_content_hash.clone(),
+            self.proposed_content_hash.clone(),
+            self.proposal_producer.clone(),
+            self.generator_surface.clone(),
+            touches,
+        )
     }
 }
 
@@ -863,14 +933,23 @@ impl GitWorktreeBackend {
     ) -> Result<CheckedSurfaceEdit, BackendError> {
         use super::edit_surface::graph::View as _;
 
-        if proposal.touches.is_empty() {
+        let EditProposal {
+            surface: proposal_surface,
+            proposal_id,
+            run_id,
+            proposal_producer,
+            generator_surface,
+            touches: proposal_touches,
+            reported_after_file_hash,
+        } = proposal;
+
+        if proposal_touches.is_empty() {
             return Err(BackendError::EmptyEditTouches {
-                surface: proposal.surface,
+                surface: proposal_surface,
             });
         }
 
-        let mut paths = proposal
-            .touches
+        let mut paths = proposal_touches
             .iter()
             .map(|touch| touch.relpath.clone())
             .collect::<Vec<_>>();
@@ -881,9 +960,9 @@ impl GitWorktreeBackend {
         }
         let target_relpath = paths.remove(0);
         validate_normal_repo_relpath(&target_relpath)?;
-        if !is_allowed_edit_surface_path(proposal.surface, &target_relpath) {
+        if !is_allowed_edit_surface_path(proposal_surface, &target_relpath) {
             return Err(BackendError::OutOfEditSurface {
-                surface: proposal.surface,
+                surface: proposal_surface,
                 path: target_relpath,
             });
         }
@@ -897,7 +976,7 @@ impl GitWorktreeBackend {
         let source_hash = content_hash(&source_content);
         let source_surface_hash = surface::Hash::new(source_hash.clone());
 
-        let mut touches = proposal.touches;
+        let mut touches = proposal_touches;
         touches.sort_by_key(|touch| (touch.start, touch.end));
         validate_touch_spans(&target_relpath, &source_content, &touches)?;
         for touch in &touches {
@@ -917,6 +996,24 @@ impl GitWorktreeBackend {
         let derived_artifact_id = text_file_artifact_id(&target_relpath, &proposed_content);
         let patch_id =
             text_replacement_patch_id(&target_relpath, &source_content, &proposed_content);
+        proposal_producer
+            .verify_complete(&base_artifact_id)
+            .map_err(|detail| BackendError::EditSurfaceCheck { detail })?;
+        let expected_generator_surface = self.generator_surface_for_proposed_touches(
+            &target_relpath,
+            &source_content,
+            &touches,
+        )?;
+        if generator_surface != expected_generator_surface {
+            return Err(BackendError::EditSurfaceCheck {
+                detail: format!(
+                    "proposal generator surface mismatch for '{}': expected {:?}, got {:?}",
+                    target_relpath.display(),
+                    expected_generator_surface,
+                    generator_surface
+                ),
+            });
+        }
         let base_ref = surface::Ref::new(base_artifact_id.clone(), source_surface_hash.clone());
         let after_ref =
             surface::Ref::new(derived_artifact_id.clone(), proposed_surface_hash.clone());
@@ -965,22 +1062,9 @@ impl GitWorktreeBackend {
                 .map_err(|err| BackendError::EditSurfaceCheck {
                     detail: err.to_string(),
                 })?;
-        let tui_projection = tui::Projector::new(
-            "prototype1:ploke-tui-tools",
-            tui::Source::derived(
-                "prototype1:ploke-tui-tools",
-                "v1",
-                "backend-owned single-file edit surface bridge",
-            ),
-            [tui::Rule::named(
-                "prototype1:ploke-tui-tools",
-                "v1",
-                "crates/ploke-tui/src/tools/** plus documented rag tool files",
-            )],
-        )
-        .project(&projection);
+        let tui_projection = tui::generator_projection(&projection);
         let tui_bounds =
-            tui::Bounds::new(tui_projection.clone(), graph_bounds.clone()).map_err(|err| {
+            tui::generator_bounds(&projection, graph_bounds.clone()).map_err(|err| {
                 BackendError::EditSurfaceCheck {
                     detail: err.to_string(),
                 }
@@ -1018,8 +1102,8 @@ impl GitWorktreeBackend {
             detail: err.to_string(),
         })?;
         let staged = tui::Proposal::stage(tui::Stage {
-            proposal: &proposal.proposal_id,
-            run: &proposal.run_id,
+            proposal: &proposal_id,
+            run: &run_id,
             base: &base_ref,
             after: after_ref.clone(),
             projection: &tui_projection,
@@ -1034,8 +1118,7 @@ impl GitWorktreeBackend {
             .map_err(|err| BackendError::EditSurfaceCheck {
                 detail: err.to_string(),
             })?;
-        let reported_after_hash = proposal
-            .reported_after_file_hash
+        let reported_after_hash = reported_after_file_hash
             .map(surface::Hash::new)
             .unwrap_or_else(|| proposed_surface_hash.clone());
         let writes = checked_touches
@@ -1062,9 +1145,11 @@ impl GitWorktreeBackend {
             })?;
 
         Ok(CheckedSurfaceEdit {
-            surface: proposal.surface,
-            proposal_id: proposal.proposal_id,
-            run_id: proposal.run_id,
+            surface: proposal_surface,
+            proposal_id,
+            run_id,
+            proposal_producer,
+            generator_surface,
             target_relpath,
             source_content,
             proposed_content,
@@ -1075,6 +1160,92 @@ impl GitWorktreeBackend {
             derived_artifact_id,
             delta,
         })
+    }
+
+    pub(crate) fn generator_surface_for_proposed_touches(
+        &self,
+        target_relpath: &Path,
+        source_content: &str,
+        touches: &[ProposedTouch],
+    ) -> Result<tui::GeneratorSurfaceVersion, BackendError> {
+        let target_specs = touches
+            .iter()
+            .enumerate()
+            .map(|(index, touch)| {
+                (
+                    format!("{}:{}", touch.target, index),
+                    touch.start,
+                    touch.end,
+                )
+            })
+            .collect::<Vec<_>>();
+        self.generator_surface_for_named_spans(target_relpath, source_content, &target_specs)
+    }
+
+    pub(crate) fn generator_surface_for_surface_touches(
+        &self,
+        target_relpath: &Path,
+        source_content: &str,
+        touches: &[SurfaceTouch],
+    ) -> Result<tui::GeneratorSurfaceVersion, BackendError> {
+        let target_specs = touches
+            .iter()
+            .map(|touch| (touch.target_name.clone(), touch.start, touch.end))
+            .collect::<Vec<_>>();
+        self.generator_surface_for_named_spans(target_relpath, source_content, &target_specs)
+    }
+
+    fn generator_surface_for_named_spans(
+        &self,
+        target_relpath: &Path,
+        source_content: &str,
+        targets: &[(String, usize, usize)],
+    ) -> Result<tui::GeneratorSurfaceVersion, BackendError> {
+        use super::edit_surface::graph::View as _;
+
+        let source_hash = content_hash(source_content);
+        let source_surface_hash = surface::Hash::new(source_hash);
+        let artifact = surface::Artifact::new(
+            surface::Ref::new(
+                text_file_artifact_id(target_relpath, source_content),
+                source_surface_hash.clone(),
+            ),
+            [(target_relpath.to_path_buf(), source_surface_hash.clone())],
+        );
+        let graph_targets = targets
+            .iter()
+            .map(|(name, _, _)| graph::Target::new(target_relpath.to_path_buf(), name.clone()))
+            .collect::<Vec<_>>();
+        let graph_nodes = targets
+            .iter()
+            .zip(graph_targets.iter())
+            .map(|((_, start, end), target)| {
+                graph::Node::new(target.clone(), target_relpath.to_path_buf(), *start, *end)
+            })
+            .collect::<Vec<_>>();
+        let graph = graph::Mock::new(graph_nodes, []);
+        let projection =
+            graph
+                .project(&artifact)
+                .map_err(|err| BackendError::EditSurfaceCheck {
+                    detail: err.to_string(),
+                })?;
+        let rules = graph_targets
+            .into_iter()
+            .map(graph::Rule::Include)
+            .collect::<Vec<_>>();
+        let graph_bounds =
+            graph
+                .bounds(&projection, &rules)
+                .map_err(|err| BackendError::EditSurfaceCheck {
+                    detail: err.to_string(),
+                })?;
+        let tui_bounds = tui::generator_bounds(&projection, graph_bounds).map_err(|err| {
+            BackendError::EditSurfaceCheck {
+                detail: err.to_string(),
+            }
+        })?;
+        Ok(tui::GeneratorSurfaceVersion::capture(&tui_bounds))
     }
 
     fn persist_files(
@@ -1972,7 +2143,7 @@ fn parse_dirty_paths(stdout: &str) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::edit_surface::graph::View as _;
-    use super::edit_surface::{graph, surface, tui};
+    use super::edit_surface::{graph, request_policy, surface, tui};
     use super::{
         BackendError, GitWorktreeBackend, WorkspaceBackend, WorktreeEntry, parse_dirty_paths,
         parse_worktree_list,
@@ -2052,21 +2223,32 @@ mod tests {
         relpath
     }
 
-    fn proposal_for(relpath: PathBuf, source: &str) -> super::EditProposal {
+    fn proposal_for(
+        repo_root: &std::path::Path,
+        relpath: PathBuf,
+        source: &str,
+    ) -> super::EditProposal {
         let hash = super::content_hash(source);
+        let touches = vec![super::ProposedTouch {
+            target: "code_edit".to_string(),
+            relpath: relpath.clone(),
+            start: 4,
+            end: 7,
+            expected_file_hash: hash,
+            replacement: "new".to_string(),
+        }];
+        let generator_surface = GitWorktreeBackend
+            .generator_surface_for_proposed_touches(&relpath, source, &touches)
+            .expect("generator surface");
+        let _ = repo_root;
         super::EditProposal {
             surface: crate::cli::Prototype1EditSurface::PlokeTuiTools,
             proposal_id: "proposal-1".to_string(),
             run_id: "run-1".to_string(),
+            proposal_producer: request_policy::ProposalProducer::NonRouter,
+            generator_surface,
             reported_after_file_hash: None,
-            touches: vec![super::ProposedTouch {
-                target: "code_edit".to_string(),
-                relpath,
-                start: 4,
-                end: 7,
-                expected_file_hash: hash,
-                replacement: "new".to_string(),
-            }],
+            touches,
         }
     }
 
@@ -2164,7 +2346,7 @@ R  old.rs -> new.rs
         let checked = GitWorktreeBackend
             .validate_edit_surface_candidate(
                 tmp.path(),
-                proposal_for(relpath.clone(), "let old = 1;\n"),
+                proposal_for(tmp.path(), relpath.clone(), "let old = 1;\n"),
             )
             .expect("single-file checked edit");
 
@@ -2187,6 +2369,21 @@ R  old.rs -> new.rs
             surface: crate::cli::Prototype1EditSurface::PlokeTuiTools,
             proposal_id: "proposal-tracking".to_string(),
             run_id: "run-1".to_string(),
+            proposal_producer: request_policy::ProposalProducer::NonRouter,
+            generator_surface: GitWorktreeBackend
+                .generator_surface_for_proposed_touches(
+                    &relpath,
+                    source,
+                    &[super::ProposedTouch {
+                        target: write.name.clone(),
+                        relpath: relpath.clone(),
+                        start: write.start_byte,
+                        end: write.end_byte,
+                        expected_file_hash: tracking_hash.clone(),
+                        replacement: write.replacement.clone(),
+                    }],
+                )
+                .expect("generator surface"),
             reported_after_file_hash: None,
             touches: vec![super::ProposedTouch {
                 target: write.name.clone(),
@@ -2251,22 +2448,8 @@ R  old.rs -> new.rs
                 &[graph::Rule::Include(graph_target.clone())],
             )
             .expect("derive bounds");
-        let tui_projection = tui::Projector::new(
-            "prototype1:ploke-tui-tools",
-            tui::Source::derived(
-                "prototype1:ploke-tui-tools",
-                "v1",
-                "backend-owned single-file edit surface bridge",
-            ),
-            [tui::Rule::named(
-                "prototype1:ploke-tui-tools",
-                "v1",
-                "crates/ploke-tui/src/tools/** plus documented rag tool files",
-            )],
-        )
-        .project(&graph_projection);
         let tui_bounds =
-            tui::Bounds::new(tui_projection, graph_bounds.clone()).expect("adapter bounds");
+            tui::generator_bounds(&graph_projection, graph_bounds.clone()).expect("adapter bounds");
         let material = tui::MaterialSpan::from_write(graph_target, &write);
         let touch = tui_bounds
             .touch(
@@ -2309,6 +2492,15 @@ R  old.rs -> new.rs
                     surface: crate::cli::Prototype1EditSurface::PlokeTuiTools,
                     proposal_id: "proposal-1".to_string(),
                     run_id: "run-1".to_string(),
+                    proposal_producer: request_policy::ProposalProducer::NonRouter,
+                    generator_surface: tui::GeneratorSurfaceVersion {
+                        projection_id: "projection".to_string(),
+                        projection_hash: "hash".to_string(),
+                        bounds_digest: "bounds".to_string(),
+                        source_kind: tui::GeneratorSourceKind::Derived,
+                        source_id: "source".to_string(),
+                        source_version: "v1".to_string(),
+                    },
                     touches: Vec::new(),
                     reported_after_file_hash: None,
                 },
@@ -2323,7 +2515,7 @@ R  old.rs -> new.rs
         let tmp = init_git_repo();
         let relpath = write_tui_target(tmp.path(), "let old = 1;\n");
         let hash = super::content_hash("let old = 1;\n");
-        let mut proposal = proposal_for(relpath, "let old = 1;\n");
+        let mut proposal = proposal_for(tmp.path(), relpath, "let old = 1;\n");
         proposal.touches.push(super::ProposedTouch {
             target: "rag_tools".to_string(),
             relpath: PathBuf::from("crates/ploke-tui/src/rag/tools.rs"),
@@ -2349,6 +2541,31 @@ R  old.rs -> new.rs
             surface: crate::cli::Prototype1EditSurface::PlokeTuiTools,
             proposal_id: "proposal-1".to_string(),
             run_id: "run-1".to_string(),
+            proposal_producer: request_policy::ProposalProducer::NonRouter,
+            generator_surface: GitWorktreeBackend
+                .generator_surface_for_proposed_touches(
+                    &relpath,
+                    "let old = 1;\n",
+                    &[
+                        super::ProposedTouch {
+                            target: "first".to_string(),
+                            relpath: relpath.clone(),
+                            start: 4,
+                            end: 8,
+                            expected_file_hash: hash.clone(),
+                            replacement: "new".to_string(),
+                        },
+                        super::ProposedTouch {
+                            target: "second".to_string(),
+                            relpath: relpath.clone(),
+                            start: 7,
+                            end: 10,
+                            expected_file_hash: hash.clone(),
+                            replacement: "other".to_string(),
+                        },
+                    ],
+                )
+                .expect("generator surface"),
             reported_after_file_hash: None,
             touches: vec![
                 super::ProposedTouch {
@@ -2386,7 +2603,10 @@ R  old.rs -> new.rs
         fs::write(path, "let old = 1;\n").expect("write target");
 
         let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), proposal_for(relpath, "let old = 1;\n"))
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                proposal_for(tmp.path(), relpath, "let old = 1;\n"),
+            )
             .expect_err("out-of-surface path must reject");
 
         assert!(matches!(err, BackendError::OutOfEditSurface { .. }));
@@ -2402,7 +2622,10 @@ R  old.rs -> new.rs
         fs::write(resolved, "let old = 1;\n").expect("write escaped target");
 
         let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), proposal_for(escaped, "let old = 1;\n"))
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                proposal_for(tmp.path(), escaped, "let old = 1;\n"),
+            )
             .expect_err("path escape must reject before surface prefix check");
 
         assert!(matches!(err, BackendError::InvalidEditSurfacePath { .. }));
@@ -2412,7 +2635,7 @@ R  old.rs -> new.rs
     fn edit_surface_bridge_rejects_stale_base_hash() {
         let tmp = init_git_repo();
         let relpath = write_tui_target(tmp.path(), "let old = 1;\n");
-        let mut proposal = proposal_for(relpath, "let old = 1;\n");
+        let mut proposal = proposal_for(tmp.path(), relpath, "let old = 1;\n");
         proposal.touches[0].expected_file_hash = "stale".to_string();
 
         let err = GitWorktreeBackend
@@ -2426,7 +2649,7 @@ R  old.rs -> new.rs
     fn edit_surface_bridge_rejects_wrong_reported_after_hash() {
         let tmp = init_git_repo();
         let relpath = write_tui_target(tmp.path(), "let old = 1;\n");
-        let mut proposal = proposal_for(relpath, "let old = 1;\n");
+        let mut proposal = proposal_for(tmp.path(), relpath, "let old = 1;\n");
         proposal.reported_after_file_hash = Some("wrong-after".to_string());
 
         let err = GitWorktreeBackend
@@ -2435,6 +2658,24 @@ R  old.rs -> new.rs
 
         assert!(matches!(err, BackendError::EditSurfaceCheck { .. }));
         assert!(err.to_string().contains("after artifact hash mismatch"));
+    }
+
+    #[test]
+    fn edit_surface_bridge_rejects_mutated_generator_surface_provenance() {
+        let tmp = init_git_repo();
+        let relpath = write_tui_target(tmp.path(), "let old = 1;\n");
+        let mut proposal = proposal_for(tmp.path(), relpath, "let old = 1;\n");
+        proposal.generator_surface.source_version = "forged-version".to_string();
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .expect_err("mutated generator surface must reject");
+
+        assert!(matches!(err, BackendError::EditSurfaceCheck { .. }));
+        assert!(
+            err.to_string()
+                .contains("proposal generator surface mismatch")
+        );
     }
 
     #[test]

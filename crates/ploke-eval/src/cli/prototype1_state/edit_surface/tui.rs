@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use ploke_core::{EmbeddingData, TrackingHash, WriteSnippetData};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
@@ -61,6 +62,14 @@ impl Def {
     fn parts(&self) -> [&str; 3] {
         [&self.id, &self.version, &self.text]
     }
+
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn version(&self) -> &str {
+        &self.version
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +115,49 @@ impl Source {
     fn def(&self) -> &Def {
         match self {
             Self::Named(value) | Self::Inline(value) | Self::Derived(value) => value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GeneratorSourceKind {
+    Named,
+    Inline,
+    Derived,
+}
+
+impl GeneratorSourceKind {
+    fn of(source: &Source) -> Self {
+        match source {
+            Source::Named(_) => Self::Named,
+            Source::Inline(_) => Self::Inline,
+            Source::Derived(_) => Self::Derived,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GeneratorSurfaceVersion {
+    pub(crate) projection_id: String,
+    pub(crate) projection_hash: String,
+    pub(crate) bounds_digest: String,
+    pub(crate) source_kind: GeneratorSourceKind,
+    pub(crate) source_id: String,
+    pub(crate) source_version: String,
+}
+
+impl GeneratorSurfaceVersion {
+    pub(crate) fn capture(bounds: &Bounds) -> Self {
+        let source = bounds.source();
+        let def = source.def();
+        Self {
+            projection_id: bounds.projection().id().to_string(),
+            projection_hash: bounds.projection().hash().as_str().to_string(),
+            bounds_digest: bounds.digest().as_str().to_string(),
+            source_kind: GeneratorSourceKind::of(source),
+            source_id: def.id().to_string(),
+            source_version: def.version().to_string(),
         }
     }
 }
@@ -257,6 +309,30 @@ impl Projector {
         }
         Digest::of(parts)
     }
+}
+
+pub(crate) fn generator_projection(graph_projection: &graph::Projection) -> Projection {
+    Projector::new(
+        "prototype1:ploke-tui-tools",
+        Source::derived(
+            "prototype1:ploke-tui-tools",
+            "v1",
+            "backend-owned single-file edit surface bridge",
+        ),
+        [Rule::named(
+            "prototype1:ploke-tui-tools",
+            "v1",
+            "crates/ploke-tui/src/tools/** plus documented rag tool files",
+        )],
+    )
+    .project(graph_projection)
+}
+
+pub(crate) fn generator_bounds(
+    graph_projection: &graph::Projection,
+    graph_bounds: graph::Bounds,
+) -> Result<Bounds, Error> {
+    Bounds::new(generator_projection(graph_projection), graph_bounds)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
