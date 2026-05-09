@@ -7050,11 +7050,12 @@ impl Prototype1StateCommand {
                 None,
             )
         } else {
-            let report_child = report_child.as_ref().ok_or_else(|| {
-                PrepareError::InvalidBatchSelection {
-                    detail: "child fanout completed without any child outcome".to_string(),
-                }
-            })?;
+            let report_child =
+                report_child
+                    .as_ref()
+                    .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                        detail: "child fanout completed without any child outcome".to_string(),
+                    })?;
             (
                 format!(
                     "{};children_ran={};children_planned={}",
@@ -8866,21 +8867,13 @@ mod tests {
         );
 
         let parent = ready_parent_for_test(&manifest_path, &repo_root);
-        persist_rejected_surface_attempt_child_plan(
-            &manifest_path,
-            parent,
-            vec![rejected.clone()],
-        )
-        .expect("persist rejected attempt child plan");
+        persist_rejected_surface_attempt_child_plan(&manifest_path, parent, vec![rejected.clone()])
+            .expect("persist rejected attempt child plan");
 
         let resumed_parent = ready_parent_for_test(&manifest_path, &repo_root);
-        let receipt = receive_existing_child_plan(
-            "campaign",
-            &manifest_path,
-            &repo_root,
-            resumed_parent,
-        )
-        .expect("receive existing child plan");
+        let receipt =
+            receive_existing_child_plan("campaign", &manifest_path, &repo_root, resumed_parent)
+                .expect("receive existing child plan");
 
         assert!(
             receipt.plan.body().children().is_empty(),
@@ -9338,8 +9331,7 @@ mod tests {
                 .is_some_and(|value| !value.is_empty())
         );
         assert_eq!(
-            serialized["surface_attempt"]["outcome"]["kind"],
-            "applied",
+            serialized["surface_attempt"]["outcome"]["kind"], "applied",
             "surface attempt evidence should be parent-readable on payload"
         );
     }
@@ -9350,7 +9342,16 @@ mod tests {
         let manifest_path = tmp.path().join("campaign.json");
         let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
         node.parent_node_id = Some("node-parent".to_string());
-        let outcome = test_completed_outcome(node, test_resolved(&test_node(tmp.path(), "node-child", "branch-child", "candidate-1")), 0);
+        let outcome = test_completed_outcome(
+            node,
+            test_resolved(&test_node(
+                tmp.path(),
+                "node-child",
+                "branch-child",
+                "candidate-1",
+            )),
+            0,
+        );
         let parent_identity = test_parent_identity();
         let rejected = surface_attempt::Evidence::rejected(
             TUI_EDIT_SURFACE_PRODUCER_ID,
@@ -9416,10 +9417,7 @@ mod tests {
             serialized["surface_attempt"]["producer_id"],
             TUI_EDIT_SURFACE_PRODUCER_ID
         );
-        assert_eq!(
-            serialized["surface_attempt"]["outcome"]["kind"],
-            "rejected"
-        );
+        assert_eq!(serialized["surface_attempt"]["outcome"]["kind"], "rejected");
         assert_eq!(
             serialized["surface_attempt"]["outcome"]["reason"],
             "one or more touched spans were rejected"

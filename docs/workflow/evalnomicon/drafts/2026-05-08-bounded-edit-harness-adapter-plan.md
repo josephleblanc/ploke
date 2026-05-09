@@ -17,6 +17,12 @@ is to give `ploke-eval` a stable operation boundary for creating checked
 candidate Artifacts while allowing different harnesses to propose and
 mechanically apply edits.
 
+Related proof index:
+
+- [`2026-05-08-bounded-edit-surface-proof-index.md`](2026-05-08-bounded-edit-surface-proof-index.md)
+  Maps implementation tests to the formal surface/edit judgments and records
+  formal gaps exposed by the tests.
+
 ## Target End State
 
 Prototype 1 should be able to inspect its own recent History, identify a
@@ -73,7 +79,7 @@ ResolvedTouches
 SurfaceCheck
 CheckedProposal
 ArtifactDelta
-SurfaceAttemptEvidence
+surface_attempt::Evidence
 ```
 
 These names are placeholders for the semantic objects, not a command to add
@@ -95,8 +101,9 @@ Each carrier has a limited job:
 - `SurfaceCheck`: the result of containment and material validity checks.
 - `CheckedProposal`: the proof-like authorization that unlocks checked apply.
 - `ArtifactDelta`: the material transition from one Artifact to another.
-- `SurfaceAttemptEvidence`: durable evidence for successful or rejected
-  edit-surface attempts.
+- `surface_attempt::Evidence`: durable evidence for successful or rejected
+  edit-surface attempts, under a namespace that keeps `Surface`, `Attempt`,
+  and `Outcome` structurally related instead of flattened into one noun.
 
 ## Slice Discipline
 
@@ -224,7 +231,7 @@ that a later Parent can read from History.
 The important distinction is that failed candidate-generation attempts must not
 disappear as local harness state, logs, or absence of children. They need a
 durable typed projection such as `SurfaceEvidence` or
-`EditSurfaceAttemptEvidence`.
+`surface_attempt::Evidence`.
 
 Done when:
 
@@ -1336,7 +1343,7 @@ durable bridge from edit-surface attempt state into History evidence:
 
 ```text
 edit_surface attempt/check/apply result
-  -> typed SurfaceEvidence or EditSurfaceAttemptEvidence
+  -> typed SurfaceEvidence or surface_attempt::Evidence
   -> CandidateArtifact / EvaluationPayload evidence
   -> parent-time History query
   -> Diagnosis

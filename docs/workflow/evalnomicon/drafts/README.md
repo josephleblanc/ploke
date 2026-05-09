@@ -27,6 +27,9 @@ into the main evalnomicon book.
   Implementation brief for the bounded edit operation adapter: `ploke-eval`
   owns grants/checks/admission while `ploke-tui` or another harness proposes
   and applies checked edits behind a trait boundary.
+- [`2026-05-08-bounded-edit-surface-proof-index.md`](2026-05-08-bounded-edit-surface-proof-index.md)
+  Test-to-formal-proof index for the bounded edit-surface plan, mapping splice
+  tests to formal judgments and naming gaps exposed by the tests.
 - [`prototype1-run-tree-browser-design.md`](prototype1-run-tree-browser-design.md)
   Draft `ploke-records` schema split and `ploke-tree` projection contract for a
   browser-viewable Prototype 1 run tree over typed evidence, liveness, metrics,

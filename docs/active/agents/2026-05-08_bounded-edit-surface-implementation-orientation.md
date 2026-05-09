@@ -148,7 +148,7 @@ ResolvedTouches
 SurfaceCheck
 CheckedProposal
 ArtifactDelta
-SurfaceAttemptEvidence
+surface_attempt::Evidence
 ```
 
 Existing code may already provide some of these under nearby names. Prefer

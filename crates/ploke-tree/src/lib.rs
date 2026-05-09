@@ -1578,7 +1578,11 @@ mod tests {
             history.json_parse_error_count,
             forest.passive_evidence.branch_registry,
             forest.passive_evidence.channel_envelopes,
-            forest.passive_evidence.evaluations.as_ref().map(|v| &v.summary),
+            forest
+                .passive_evidence
+                .evaluations
+                .as_ref()
+                .map(|v| &v.summary),
         );
 
         assert!(
@@ -1623,7 +1627,10 @@ mod tests {
             .index
             .get("branch-116821c1239b4022")
             .expect("branch-116821c1239b4022 artifact");
-        assert_eq!(branch_keep.overall_disposition, ploke_records::branch::Disposition::Keep);
+        assert_eq!(
+            branch_keep.overall_disposition,
+            ploke_records::branch::Disposition::Keep
+        );
         let branch_keep_compared = branch_keep
             .compared_instances
             .first()

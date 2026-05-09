@@ -3532,10 +3532,7 @@ impl EvaluationPayloadBuilder {
         self
     }
 
-    pub(crate) fn surface_attempt_evidence(
-        mut self,
-        evidence: surface_attempt::Evidence,
-    ) -> Self {
+    pub(crate) fn surface_attempt_evidence(mut self, evidence: surface_attempt::Evidence) -> Self {
         self.surface_attempt = Some(evidence);
         self
     }

@@ -51,9 +51,17 @@ failure kind
 
 Read these first, in this order:
 
+- [`docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md`](2026-05-08_bounded-edit-surface-implementation-orientation.md)
+  Short operational packet for sub-agents: core docs, invariants, task-flow
+  diagram, task-stack ids, and prompt pattern.
 - [`docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-harness-adapter-plan.md`](../../workflow/evalnomicon/drafts/2026-05-08-bounded-edit-harness-adapter-plan.md)
   Current implementation plan. Includes formal surface algebra, current blocker
-  status, parent planning layer, phase plan, and sub-agent brief.
+  status, stable vocabulary, validation loops, first worked route, and
+  milestone/slice plan.
+- [`docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md`](../../workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md)
+  Test-to-formal-proof index. Maps the current tests to `A' -> B* -> C'`
+  splices and records formal gaps such as rejected-attempt evidence and
+  apply-outcome classification.
 - [`docs/workflow/evalnomicon/drafts/formal-edit-surface.md`](../../workflow/evalnomicon/drafts/formal-edit-surface.md)
   Formal core copied from the discussion: `Γ_a = (V_a, E_a, μ_a)`, grants
   `(R,W,F)`, proposal resolution `(Q_r,Q_w)`, containment, validity, and apply.
@@ -287,20 +295,140 @@ invalid candidate generation / semantic edit resolution problem
   -> EditObjective for reducing invalid edit-surface candidates
 ```
 
+## Current Implementation Status: After Slice 7.1
+
+Task-stack group:
+
+```text
+bounded-edit-surface-evidence-route
+```
+
+Closed task:
+
+```text
+bounded-edit-surface-attempt-evidence (7.1)
+```
+
+What is now implemented:
+
+- Rejected and applied edit-surface attempts have typed payload evidence through
+  `history::surface_attempt::{Evidence, Outcome}`.
+- `EvaluationPayload.surface_attempt` carries parent-readable attempt evidence.
+- `ChildPlanFiles` persists rejected edit-surface attempts so they survive
+  resume.
+- Below-min candidate generation writes a rejected-attempt-only child plan and
+  still fails closed without fabricating child artifacts.
+- Resumed rejected-only plans skip child fanout and project
+  `EvaluationPayload.surface_attempt` with `artifact = None`.
+- Applied success path still uses `SurfaceEvidence` / `CandidateArtifact.surface`
+  for checked Artifact transitions.
+
+Files changed by the 7.1 implementation:
+
+- `crates/ploke-eval/src/cli/prototype1_state/history.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/parent.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+
+Key proof tests are indexed in:
+
+- [`docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md`](../../workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md)
+
+Especially important tests:
+
+- `below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child_plan`
+- `current_generation_candidates_include_rejected_edit_surface_attempt_payload`
+- `payload_surface_attempt_rejected_is_parent_readable_without_artifact`
+- `payload_without_surface_attempt_is_not_parent_readable_attempt_evidence`
+- `tui_apply_evidence_is_all_applied_or_rejected`
+
+Accepted reviewer conclusion:
+
+```text
+7.1 is complete enough to start 7.2.
+```
+
+Non-blocking risk to carry forward:
+
+- Rejected-only turns produce payload evidence but no selection/handoff path
+  (`selection = None`). The next slice must diagnose directly from
+  `EvaluationPayload.surface_attempt`; it must not assume a sealed successor
+  selection entry exists for rejected-only turns.
+
+Formal gaps exposed by 7.1 tests:
+
+```text
+H' = H ⋅ reject(a, Γ_a, g, q, ρ_a(q), reason)
+
+typed_attempt_evidence(e)
+
+projection(e) ∨ log(e) ∨ ui_state(e)
+  does not imply typed_attempt_evidence(e)
+
+ApplyOutcome(q) = Applied(a', δ) | Rejected(reason)
+```
+
+These gaps are recorded in the proof index. They should be addressed or
+acknowledged when implementing later carrier/diagnosis slices.
+
+## Next Task
+
+Start here after compaction:
+
+```text
+bounded-edit-surface-diagnosis-splice (7.2)
+```
+
+Goal:
+
+```text
+EvaluationPayload.surface_attempt
+  -> Diagnosis {
+       limiter: invalid_candidate_generation,
+       failure_kind: semantic_edit_resolution,
+       evidence_refs: ...,
+     }
+```
+
+Required splice:
+
+```text
+A': replay-shaped rejected edit-surface attempt payload
+B*: diagnosis classifier
+C': SurfaceChoice/EditObjective contract can consume the diagnosis
+```
+
+Required negative splice:
+
+```text
+A': projection/log/TUI-local failure without typed surface_attempt evidence
+B*: diagnosis classifier
+C': no semantic_resolution diagnosis
+```
+
+Do not implement surface choice or `EditObjective` yet unless the diagnosis
+contract requires a tiny downstream consumer fixture.
+
 ## Suggested Sub-Agent Pattern
 
 Use one scout at a time unless there are independent questions.
 
-Good first scout prompt:
+Good next scout prompt:
 
 ```text
-Inspect current ploke-eval History/scoring/selection records and report what
-typed evidence is available to a parent before candidate generation. Do not
-design new code. Return file paths, line ranges, and which fields can support
-Diagnosis -> SurfaceChoice -> EditObjective.
+Read docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md
+and docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md.
+
+Task: bounded-edit-surface-diagnosis-splice (7.2).
+
+Inspect the current `EvaluationPayload.surface_attempt` path and propose the
+smallest location for a mechanistic diagnosis classifier that maps rejected
+edit-surface attempt evidence to
+invalid_candidate_generation / semantic_edit_resolution.
+
+Return exact files, line ranges, test names, and one A' -> B* -> C' splice.
 ```
 
-Second scout only after that:
+Useful sidecar scout, if needed:
 
 ```text
 Inspect edit_surface graph/surface/harness modules and propose the smallest
@@ -320,4 +448,3 @@ cargo test -p ploke-eval edit_surface::tests -- --nocapture 2>&1 | tail -n 30
 ```
 
 Use bounded output for cargo tests per `AGENTS.md`.
-

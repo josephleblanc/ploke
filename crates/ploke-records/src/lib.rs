@@ -18,5 +18,6 @@ pub mod identity;
 pub mod ids;
 pub mod invocation;
 pub mod journal;
+pub mod protocol;
 pub mod scheduler;
 pub mod value;
