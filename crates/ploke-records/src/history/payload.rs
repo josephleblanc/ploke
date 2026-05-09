@@ -563,10 +563,9 @@ mod tests {
             "selected_source": "current_generation"
         }"#;
         let mut deserializer = serde_json::Deserializer::from_str(json);
-        let error = serde_path_to_error::deserialize::<_, LegacyTraversalEvidenceRecord>(
-            &mut deserializer,
-        )
-        .expect_err("legacy traversal strategy should fail");
+        let error =
+            serde_path_to_error::deserialize::<_, LegacyTraversalEvidenceRecord>(&mut deserializer)
+                .expect_err("legacy traversal strategy should fail");
 
         assert_eq!(error.path().to_string(), "strategy");
     }

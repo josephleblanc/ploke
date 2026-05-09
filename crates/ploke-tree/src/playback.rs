@@ -1,5 +1,5 @@
 use ploke_records::history::{EntryPayloadRecord, SealedBlockRecord, SuccessorRefRecord};
-use ploke_records::playback::{Coarse, CoarseStep, EvidenceStrength, RunPlayback};
+use ploke_records::playback::{Coarse, CoarseStep, CoarseStepRef, EvidenceStrength, RunPlayback};
 use serde::{Deserialize, Serialize};
 
 /// Coarse sealed-History step projected for passive run playback.
@@ -131,9 +131,38 @@ pub fn coarse_run_playback_from_sealed_history(
     let steps = project_coarse_history_spine(blocks)
         .into_iter()
         .map(|step| CoarseStep {
-            id: format!("history:{}:{}", step.block_height, step.block_hash),
+            id: step.block_hash,
             evidence: EvidenceStrength::SealedHistory,
         })
         .collect();
     RunPlayback::new(steps)
+}
+
+/// Build borrowed coarse playback steps from sealed History blocks.
+pub fn coarse_run_playback_ref_steps_from_sealed_history<'a>(
+    blocks: &'a [SealedBlockRecord],
+) -> Vec<CoarseStepRef<'a>> {
+    let mut ordered = blocks.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        left.state
+            .header
+            .common
+            .block_height
+            .cmp(&right.state.header.common.block_height)
+            .then_with(|| {
+                left.state
+                    .header
+                    .block_hash
+                    .0
+                    .cmp(&right.state.header.block_hash.0)
+            })
+    });
+
+    ordered
+        .into_iter()
+        .map(|block| CoarseStepRef {
+            id: block.state.header.block_hash.0.as_str(),
+            evidence: EvidenceStrength::SealedHistory,
+        })
+        .collect()
 }

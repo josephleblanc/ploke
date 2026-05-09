@@ -1,6 +1,9 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use ploke_core::{EmbeddingData, TrackingHash};
+use ploke_db::NodeType;
+use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db, workspace_root};
 use uuid::Uuid;
 
 use crate::cli::prototype1_state::history::EvidenceRef;
@@ -1355,5 +1358,144 @@ fn tui_adapter_wraps_db_resolved_embedding_data() {
     assert!(matches!(
         material.source(),
         tui::MaterialSource::DbExact { .. }
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn real_tui_resolver_touch_is_checked_before_adapter_apply() {
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+    let runtime = ploke_tui::app::commands::harness::TestRuntime::new(&fixture_db);
+    let fixture_root = workspace_root().join("tests/fixture_crates/fixture_nodes");
+    runtime
+        .setup_loaded_standalone_crate(fixture_root.clone())
+        .await;
+    let state = runtime.state_arc();
+    let expected_path = fixture_root.join("src/structs.rs");
+    let mut expected_nodes = ploke_db::helpers::graph_resolve_exact(
+        &fixture_db,
+        NodeType::Struct.relation_str(),
+        &expected_path,
+        &["crate".to_string(), "structs".to_string()],
+        "SampleStruct",
+    )
+    .expect("fixture struct resolves");
+    assert_eq!(expected_nodes.len(), 1, "fixture canonical must be unique");
+    let expected_node = expected_nodes.remove(0);
+    let expected_hash = href(&expected_node.file_tracking_hash.0.to_string());
+    let expected_target = graph::Target::new(expected_path.clone(), "SampleStruct");
+    let request = ploke_tui::rag::utils::ApplyCodeEditRequest {
+        edits: vec![ploke_tui::rag::utils::Edit::Canonical {
+            file: "src/structs.rs".to_string(),
+            canon: "crate::structs::SampleStruct".to_string(),
+            node_type: NodeType::Struct,
+            code: "pub struct SampleStruct { pub field: String, pub new_field: i32, }".to_string(),
+        }],
+        confidence: Some(0.95),
+    };
+    let writes = ploke_tui::rag::tools::resolve_code_edit_request(&state, &request)
+        .await
+        .expect("resolve edit request");
+    assert_eq!(writes.len(), 1, "fixture canonical edit should resolve");
+    let write = &writes[0];
+    assert_eq!(write.file_path, expected_path);
+    assert_eq!(write.expected_file_hash, expected_node.file_tracking_hash);
+    assert_eq!(write.start_byte, expected_node.start_byte);
+    assert_eq!(write.end_byte, expected_node.end_byte);
+
+    let artifact = surface::Artifact::new(
+        aref("artifact:base", "tree:base"),
+        [(expected_path.clone(), expected_hash.clone())],
+    );
+    let graph = graph::Mock::new(
+        vec![graph::Node::new(
+            expected_target.clone(),
+            expected_path.clone(),
+            expected_node.start_byte,
+            expected_node.end_byte,
+        )],
+        [],
+    );
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let graph_bounds = graph
+        .bounds(
+            &graph_projection,
+            &[graph::Rule::Include(expected_target.clone())],
+        )
+        .expect("derive bounds");
+    let projection = tui_projection(&graph_projection);
+    let bounds = tui::Bounds::new(projection.clone(), graph_bounds.clone()).expect("bounds");
+    let wrong_hash_artifact = surface::Artifact::new(
+        aref("artifact:base", "tree:base"),
+        [(expected_path.clone(), href("file:wrong"))],
+    );
+    let hash_err = bounds
+        .touches(
+            &wrong_hash_artifact,
+            std::slice::from_ref(&expected_target),
+            &writes,
+        )
+        .expect_err("independent hash mismatch must fail before apply");
+    assert!(matches!(hash_err, tui::Error::ExpectedHashMismatch { .. }));
+    let resolved = bounds
+        .touches(&artifact, std::slice::from_ref(&expected_target), &writes)
+        .expect("lower resolved writes");
+    let touches = resolved.into_vec();
+    let grant = surface::Grant::new(
+        artifact.reference().clone(),
+        graph_bounds,
+        surface::Area::new(touches.iter().map(|touch| touch.span().clone())),
+    )
+    .expect("grant");
+    let harness = harness::Mock::new(graph);
+    let after = aref("artifact:after", "tree:after");
+    let (proposal, _run) = harness
+        .propose(harness::Input {
+            proposal: "proposal:real-tui-resolver",
+            run: "run:real-tui-resolver",
+            base: artifact.reference(),
+            after: after.clone(),
+            touches: touches.clone(),
+        })
+        .expect("propose");
+    let check = grant.check(proposal.draft()).expect("grant check");
+    let applied = harness
+        .apply_checked(proposal, check)
+        .expect("checked apply");
+
+    assert_eq!(applied.delta().base(), artifact.reference());
+    assert_eq!(applied.delta().after(), &after);
+    assert_eq!(applied.delta().touches(), touches.as_slice());
+}
+
+#[test]
+fn tui_bounds_touches_requires_one_target_per_write() {
+    let (artifact, graph, _, child, _) = fixture();
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let graph_bounds = graph
+        .bounds(&graph_projection, &[graph::Rule::Include(child)])
+        .expect("bounds");
+    let projection = tui_projection(&graph_projection);
+    let bounds = tui::Bounds::new(projection, graph_bounds).expect("bounds");
+    let writes = vec![ploke_core::WriteSnippetData {
+        id: Uuid::new_v4(),
+        name: "child".to_string(),
+        file_path: PathBuf::from("src/lib.rs"),
+        expected_file_hash: TrackingHash(Uuid::new_v4()),
+        start_byte: 10,
+        end_byte: 40,
+        replacement: "fn child() {}".to_string(),
+        namespace: Uuid::new_v4(),
+    }];
+
+    let err = bounds
+        .touches(&artifact, &[], &writes)
+        .expect_err("target/write mismatch must fail");
+    assert!(matches!(
+        err,
+        tui::Error::TargetWriteCountMismatch {
+            targets: 0,
+            writes: 1
+        }
     ));
 }

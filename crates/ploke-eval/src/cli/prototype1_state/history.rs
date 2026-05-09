@@ -6014,8 +6014,24 @@ mod tests {
         let lineage = LineageId::new("lineage:a");
         let expected_state = store.lineage_state(&lineage).expect("read empty state");
         let mut block = open_block_from_state(&expected_state, 0, Vec::new());
+        let considered = vec![evaluation_payload("child-a", "branch-a", 0)];
+        let selected = considered[0].candidate.clone();
+        let selection = SelectionDecisionEntry::new_with_traversal(
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            Some(selected),
+            considered,
+            Vec::new(),
+            Some(TraversalEvidence {
+                seed: 7,
+                strategy: StrategyKind::default(),
+                selected_source: Some(TraversalCandidateSource::CurrentGeneration),
+            }),
+            selection_decision("child-a", "branch-a"),
+        )
+        .expect("selection entry with traversal");
         let admitted_entry_id = block
-            .admit(proposed_entry(), actor("admitter"))
+            .admit(proposed_selection_entry(selection), actor("admitter"))
             .expect("admit entry");
         let sealed = seal(block);
         let expected_block_hash = sealed.block_hash().to_hex();
@@ -6063,6 +6079,32 @@ mod tests {
             passive.entries[0].core.entry_id.0,
             admitted_entry_id.to_string()
         );
+        let selection = match &passive.entries[0].core.payload {
+            ploke_records::history::EntryPayloadRecord::SelectionDecision(selection) => selection,
+            other => panic!("expected passive selection decision payload, got {other:?}"),
+        };
+        assert_eq!(
+            selection
+                .selected_candidate
+                .as_ref()
+                .map(|subject| subject.value.as_str()),
+            Some("candidate:child-a:plan_index=0")
+        );
+        assert_eq!(selection.considered.len(), 1);
+        assert!(selection.considered[0].selection_input.is_some());
+        let traversal = selection
+            .traversal
+            .as_ref()
+            .expect("passive traversal evidence");
+        assert_eq!(traversal.seed, 7);
+        assert_eq!(
+            traversal.selected_source,
+            Some(ploke_records::history::TraversalCandidateSourceRecord::CurrentGeneration)
+        );
+        assert!(matches!(
+            traversal.strategy,
+            ploke_records::history::TraversalStrategyRecord::FrontierMax { .. }
+        ));
         assert_eq!(passive.entries[0].state.lineage_id.0, lineage.as_str());
         assert_eq!(passive.entries[0].state.block_height, sealed.block_height());
     }

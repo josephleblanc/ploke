@@ -404,6 +404,27 @@ impl Bounds {
         Ok(surface::Touch::new(span, replacement))
     }
 
+    pub(crate) fn touches(
+        &self,
+        artifact: &surface::Artifact,
+        targets: &[graph::Target],
+        writes: &[WriteSnippetData],
+    ) -> Result<ResolvedTouches, Error> {
+        if targets.len() != writes.len() {
+            return Err(Error::TargetWriteCountMismatch {
+                targets: targets.len(),
+                writes: writes.len(),
+            });
+        }
+        let mut touches = Vec::with_capacity(writes.len());
+        for (target, write) in targets.iter().cloned().zip(writes) {
+            let material = MaterialSpan::from_write(target, write);
+            let touch = self.touch(artifact, material, write.replacement.clone())?;
+            touches.push(touch);
+        }
+        Ok(ResolvedTouches { touches })
+    }
+
     fn compute_digest(
         projection: &Projection,
         rules: &[Rule],
@@ -427,6 +448,21 @@ impl Bounds {
             push_span(&mut parts, span);
         }
         Digest::of(parts)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedTouches {
+    touches: Vec<surface::Touch>,
+}
+
+impl ResolvedTouches {
+    pub(crate) fn as_slice(&self) -> &[surface::Touch] {
+        &self.touches
+    }
+
+    pub(crate) fn into_vec(self) -> Vec<surface::Touch> {
+        self.touches
     }
 }
 
@@ -862,6 +898,8 @@ pub(crate) enum Error {
     },
     #[error("canonical target is outside adapter bounds: {0:?}")]
     OutsideBounds(graph::Target),
+    #[error("target/write count mismatch: targets={targets}, writes={writes}")]
+    TargetWriteCountMismatch { targets: usize, writes: usize },
     #[error("auto-apply is not available through the eval adapter")]
     AutoApply,
     #[error("checked surface does not match proposal")]

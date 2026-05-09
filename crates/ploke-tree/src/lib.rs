@@ -15,7 +15,8 @@ mod playback;
 
 pub use playback::{
     CoarseHistorySpine, CoarseHistoryStep, CoarseHistoryWarning, build_coarse_history_spine,
-    coarse_run_playback_from_sealed_history, project_coarse_history_spine,
+    coarse_run_playback_from_sealed_history, coarse_run_playback_ref_steps_from_sealed_history,
+    project_coarse_history_spine,
 };
 
 use ploke_records::branch::Prototype1BranchRegistry;
@@ -1257,7 +1258,7 @@ mod tests {
         HistoryStateRoot, InstanceId, LineageId, RecordedAt, RuntimeId, SchedulerNodeId,
         SourceStateId,
     };
-    use ploke_records::playback::EvidenceStrength;
+    use ploke_records::playback::{EvidenceStrength, RunPlaybackRef};
     use ploke_records::selection::{Decision, Outcome};
 
     use super::*;
@@ -1507,15 +1508,28 @@ mod tests {
             other => panic!("expected runtime successor, got {other:?}"),
         }
 
-        let playback = coarse_run_playback_from_sealed_history(&[block_two, block_zero]);
+        let playback =
+            coarse_run_playback_from_sealed_history(&[block_two.clone(), block_zero.clone()]);
         let ids = playback
             .iter()
             .map(|step| step.id.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["history:0:hash-0", "history:2:hash-2",]);
+        assert_eq!(ids, vec!["hash-0", "hash-2"]);
         assert!(
             playback
                 .iter()
+                .all(|step| step.evidence == EvidenceStrength::SealedHistory)
+        );
+
+        let ref_blocks = [block_two, block_zero];
+        let playback_ref_steps = coarse_run_playback_ref_steps_from_sealed_history(&ref_blocks);
+        let playback_ref =
+            RunPlaybackRef::<ploke_records::playback::Coarse>::new(playback_ref_steps.as_slice());
+        let ref_ids = playback_ref.iter().map(|step| step.id).collect::<Vec<_>>();
+        assert_eq!(ref_ids, vec!["hash-0", "hash-2"]);
+        assert!(
+            playback_ref
+                .into_iter()
                 .all(|step| step.evidence == EvidenceStrength::SealedHistory)
         );
     }
@@ -1992,8 +2006,16 @@ mod tests {
             "coarse history projection must preserve monotonic block heights"
         );
         assert!(
-            !spine.warnings.is_empty(),
-            "expected warnings to be visible in known fixture coarse history playback"
+            steps.iter().all(|step| step.selected_candidate.is_some()),
+            "known fixture coarse history steps should expose selected candidates"
+        );
+        assert!(
+            steps.iter().all(|step| step.considered_candidate_count > 0),
+            "known fixture coarse history steps should expose considered candidate counts"
+        );
+        assert!(
+            spine.warnings.is_empty(),
+            "known fixture coarse history playback should not warn when sealed blocks link and selection payloads are present"
         );
     }
 
