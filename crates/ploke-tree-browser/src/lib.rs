@@ -5,8 +5,13 @@
 //! authority. Callers provide typed records or `ploke-tree` projections; this
 //! crate shapes them for visual browsing.
 
+use std::collections::BTreeMap;
+
+use ploke_records::branch::{Disposition, Prototype1BranchRegistry};
+use ploke_records::evaluation::Artifact as EvaluationArtifact;
 use ploke_records::history::SealedBlockRecord;
 use ploke_records::playback::{EvidenceStrength, FineOrder, FineStepKind};
+use ploke_records::protocol::Artifact as ProtocolArtifact;
 use ploke_tree::{
     CoarseHistorySpine, CoarseHistoryWarning, build_coarse_history_spine,
     fine_run_playback_from_sealed_history,
@@ -20,6 +25,23 @@ pub struct PlaybackBrowserModel {
     pub step_count: usize,
     pub warning_count: usize,
     pub steps: Vec<PlaybackBrowserStep>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_summary: Option<RunSummary>,
+}
+
+/// Top-level summary of a completed (or in-progress) run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunSummary {
+    pub campaign_id: String,
+    pub node_count: usize,
+    pub generation_count: u64,
+    pub sealed_block_count: usize,
+    pub evaluation_count: usize,
+    pub evaluations_kept: usize,
+    pub evaluations_rejected: usize,
+    pub journal_entry_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +68,65 @@ pub struct PlaybackBrowserStep {
     pub considered_candidate_count: usize,
     pub warning_count: usize,
     pub evidence: EvidenceStrength,
+    // ── join keys (extracted from label or joined from journal) ──
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_id: Option<String>,
+    // ── detail snapshots (populated by enriched projections) ──
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluation: Option<EvaluationSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<SurfaceSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<ProtocolSnapshot>,
+}
+
+/// Evaluation metrics snapshot for a candidate step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvaluationSnapshot {
+    pub disposition: Disposition,
+    pub tool_calls_total: u64,
+    pub tool_calls_failed: u64,
+    pub patch_attempted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_apply_state: Option<String>,
+    pub nonempty_valid_patch: bool,
+    pub convergence: bool,
+    pub oracle_eligible: bool,
+    pub aborted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasons: Option<Vec<String>>,
+}
+
+/// Surface/edit evidence snapshot for a candidate step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurfaceSnapshot {
+    pub target_relpath: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed_content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_state_id: Option<String>,
+}
+
+/// Protocol artifact summary for a candidate step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtocolSnapshot {
+    pub intent_segmentation_count: usize,
+    pub tool_call_review_count: usize,
+    pub segment_review_count: usize,
+    pub issue_detection_count: usize,
+    pub synthesis_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_slug: Option<String>,
 }
 
 pub fn coarse_history_browser_model_from_blocks(
@@ -71,6 +152,12 @@ pub fn coarse_history_browser_model(spine: &CoarseHistorySpine) -> PlaybackBrows
             considered_candidate_count: step.considered_candidate_count,
             warning_count: warnings_for_block(&spine.warnings, step.block_height),
             evidence: EvidenceStrength::SealedHistory,
+            node_id: None,
+            branch_id: None,
+            candidate_id: None,
+            evaluation: None,
+            surface: None,
+            protocol: None,
         })
         .collect::<Vec<_>>();
 
@@ -80,6 +167,7 @@ pub fn coarse_history_browser_model(spine: &CoarseHistorySpine) -> PlaybackBrows
         step_count: steps.len(),
         warning_count: spine.warnings.len(),
         steps,
+        run_summary: None,
     }
 }
 
@@ -102,6 +190,12 @@ pub fn fine_history_browser_model_from_blocks(
             considered_candidate_count: 0,
             warning_count: 0,
             evidence: step.evidence,
+            node_id: None,
+            branch_id: None,
+            candidate_id: None,
+            evaluation: None,
+            surface: None,
+            protocol: None,
         })
         .collect::<Vec<_>>();
 
@@ -111,6 +205,181 @@ pub fn fine_history_browser_model_from_blocks(
         step_count: steps.len(),
         warning_count: 0,
         steps,
+        run_summary: None,
+    }
+}
+
+/// Enrich a fine-history browser model with evaluation, surface, and protocol
+/// detail by joining against loaded records.
+///
+/// `evaluations` is keyed by `branch_id`.
+/// `protocol_artifacts` is keyed by a run-scoped artifact path.
+/// `branch_registry` provides the node→branch→candidate join chain.
+pub fn enrich_fine_browser_model(
+    model: &mut PlaybackBrowserModel,
+    evaluations: &BTreeMap<String, EvaluationArtifact>,
+    branch_registry: Option<&Prototype1BranchRegistry>,
+    protocol_artifacts: Option<&BTreeMap<String, ProtocolArtifact>>,
+) {
+    // Build node_id → source_node lookup from branch registry.
+    let source_by_instance: BTreeMap<&str, &ploke_records::branch::InterventionSourceNode> =
+        if let Some(registry) = branch_registry {
+            registry
+                .source_nodes
+                .iter()
+                .map(|source| (source.instance_id.as_str(), source))
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+
+    // Build branch_id → branch_node lookup.
+    let branch_by_id: BTreeMap<&str, &ploke_records::branch::TreatmentBranchNode> =
+        if let Some(registry) = branch_registry {
+            registry
+                .source_nodes
+                .iter()
+                .flat_map(|source| source.branches.iter())
+                .map(|branch| (branch.branch_id.as_str(), branch))
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+
+    // Build node_id → protocol artifact counts.
+    let protocol_by_node: BTreeMap<&str, ProtocolCounts> =
+        if let Some(artifacts) = protocol_artifacts {
+            artifacts
+                .values()
+                .fold(BTreeMap::new(), |mut acc, artifact| {
+                    let entry = acc.entry(artifact.subject_id.as_str()).or_default();
+                    match artifact.procedure_name.as_str() {
+                        "tool_call_intent_segmentation" => entry.intent_segmentation_count += 1,
+                        "tool_call_review" => entry.tool_call_review_count += 1,
+                        "tool_call_segment_review" => entry.segment_review_count += 1,
+                        "intervention_issue_detection" => entry.issue_detection_count += 1,
+                        "intervention_synthesis" => entry.synthesis_count += 1,
+                        _ => {}
+                    }
+                    if entry.model_id.is_none() {
+                        entry.model_id = artifact.model_id.clone();
+                        entry.provider_slug = artifact.provider_slug.clone();
+                    }
+                    acc
+                })
+        } else {
+            BTreeMap::new()
+        };
+
+    for step in &mut model.steps {
+        // Extract node_id from candidate label: "candidate:node-NODEID:plan_index=N"
+        let node_id = extract_node_id_from_label(step.label.as_deref());
+        step.node_id = node_id.clone();
+
+        // Join through branch registry to find branch_id and surface evidence.
+        if let Some(node_id) = &node_id {
+            // Look up source node by instance_id (which may match node_id pattern).
+            // The branch registry keys by instance_id; we try node_id as instance_id.
+            if let Some(source) = source_by_instance.get(node_id.as_str()) {
+                if let Some(selected) = &source.selected_branch_id {
+                    step.branch_id = Some(selected.clone());
+                    if let Some(branch) = branch_by_id.get(selected.as_str()) {
+                        step.candidate_id = Some(branch.candidate_id.clone());
+                        step.surface = Some(SurfaceSnapshot {
+                            target_relpath: source.target_relpath.to_string_lossy().into_owned(),
+                            patch_id: branch.patch_id.as_ref().map(|p| p.0.clone()),
+                            source_content_hash: Some(source.source_content_hash.clone()),
+                            proposed_content_hash: Some(branch.proposed_content_hash.clone()),
+                            source_state_id: Some(source.source_state_id.clone()),
+                        });
+                    }
+                }
+            }
+
+            // Attach protocol snapshot.
+            if let Some(counts) = protocol_by_node.get(node_id.as_str()) {
+                step.protocol = Some(ProtocolSnapshot {
+                    intent_segmentation_count: counts.intent_segmentation_count,
+                    tool_call_review_count: counts.tool_call_review_count,
+                    segment_review_count: counts.segment_review_count,
+                    issue_detection_count: counts.issue_detection_count,
+                    synthesis_count: counts.synthesis_count,
+                    model_id: counts.model_id.clone(),
+                    provider_slug: counts.provider_slug.clone(),
+                });
+            }
+        }
+
+        // Attach evaluation snapshot by branch_id.
+        if let Some(branch_id) = &step.branch_id {
+            if let Some(eval) = evaluations.get(branch_id.as_str()) {
+                let metrics: Option<&ploke_records::evaluation::RunMetrics> = eval
+                    .compared_instances
+                    .first()
+                    .and_then(|cmp| cmp.treatment_metrics.as_ref());
+                step.evaluation = Some(EvaluationSnapshot {
+                    disposition: eval.overall_disposition,
+                    tool_calls_total: metrics.map_or(0, |m| m.tool_calls_total),
+                    tool_calls_failed: metrics.map_or(0, |m| m.tool_calls_failed),
+                    patch_attempted: metrics.map_or(false, |m| m.patch_attempted),
+                    patch_apply_state: metrics.and_then(|m| {
+                        if m.patch_apply_state.is_empty() {
+                            None
+                        } else {
+                            Some(m.patch_apply_state.clone())
+                        }
+                    }),
+                    nonempty_valid_patch: metrics.map_or(false, |m| m.nonempty_valid_patch),
+                    convergence: metrics.map_or(false, |m| m.convergence),
+                    oracle_eligible: metrics.map_or(false, |m| m.oracle_eligible),
+                    aborted: metrics.map_or(false, |m| m.aborted),
+                    reasons: Some(eval.reasons.clone()).filter(|r| !r.is_empty()),
+                });
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ProtocolCounts {
+    intent_segmentation_count: usize,
+    tool_call_review_count: usize,
+    segment_review_count: usize,
+    issue_detection_count: usize,
+    synthesis_count: usize,
+    model_id: Option<String>,
+    provider_slug: Option<String>,
+}
+
+fn extract_node_id_from_label(label: Option<&str>) -> Option<String> {
+    let label = label?;
+    // Format: "candidate:node-NODEID:plan_index=N"
+    if !label.starts_with("candidate:node-") {
+        return None;
+    }
+    let rest = label.strip_prefix("candidate:node-")?;
+    rest.split(':').next().map(ToOwned::to_owned)
+}
+
+/// Build a `RunSummary` from loaded evidence counts.
+pub fn build_run_summary(
+    campaign_id: String,
+    node_count: usize,
+    max_generation: u64,
+    sealed_block_count: usize,
+    evaluation_summary: Option<&ploke_tree::EvaluationArtifactSummary>,
+    journal_entry_count: usize,
+) -> RunSummary {
+    RunSummary {
+        campaign_id,
+        node_count,
+        generation_count: max_generation,
+        sealed_block_count,
+        evaluation_count: evaluation_summary.map_or(0, |s| s.parsed_count),
+        evaluations_kept: evaluation_summary.map_or(0, |s| s.keep_count),
+        evaluations_rejected: evaluation_summary.map_or(0, |s| s.reject_count),
+        journal_entry_count,
+        terminal_status: None,
     }
 }
 
