@@ -125,6 +125,9 @@ line numbers remain valid. Start with these anchors:
 - `ploke-tui` is a harness/executor behind a trait boundary, not authority.
 - TUI proposal state, CLI output, logs, mutable reports, and monitor views are
   not source truth.
+- Logs, projections, monitor views, and TUI-local state are records inside the
+  model, not special material outside it. They become decision inputs only
+  through explicit admission rules such as `AdmissibleEvidence<Diagnosis>`.
 - Ordinary candidate edits must not mutate `crates/ploke-eval`; mutating
   policy-bearing code requires a separate protocol-upgrade/fork surface.
 - Path globs and tool names are constructors for graph subsets, not the
@@ -215,9 +218,18 @@ Current bounded-edit-surface task group:
 - `bounded-edit-surface-mock-candidate`
   Produce a checked mock candidate ArtifactDelta and verify downstream
   candidate consumers accept it.
+- `bounded-edit-surface-request-policy-receipt`
+  Prove proposal-producing Router calls return complete effective
+  request-policy receipts before the real TUI adapter is admitted.
+- `bounded-edit-surface-generator-provenance`
+  Record which generator surfaces from the parent Artifact participated in
+  proposal generation, especially when those surfaces are themselves editable.
 - `bounded-edit-surface-tui-adapter`
   Implement the concrete `ploke-tui` adapter after the authority-side contract
   is proven with fixtures.
+- `bounded-edit-surface-generator-fitness-analysis`
+  Later analysis task: correlate generator-surface deltas with descendant
+  proposal/evaluation quality after enough multi-generation evidence exists.
 - `bounded-edit-surface-mini-run`
   Run the smallest live trampoline proof after lower loops pass.
 
@@ -248,8 +260,11 @@ flowchart TD
 
     D["7.4 Authority carriers<br/>ProjectionIdentity, ResolvedTouches, Check/CheckedProposal shape"]
     E["7.5 Mock candidate splice<br/>grant + objective + mock harness -> checked ArtifactDelta -> candidate consumer"]
+    R["7.5.1 Request policy receipt<br/>Router-backed proposal calls expose stable effective client policy"]
+    GP["7.5.2 Generator provenance<br/>proposal cites generator surfaces from parent Artifact"]
     F["7.6 ploke-tui adapter<br/>real semantic target resolution and checked apply behind boundary"]
     G["7.7 Mini run<br/>tiny trampoline proof with child eval + History selection"]
+    GA["7.8 Generator fitness analysis<br/>later correlation over descendant quality"]
 
     P1["Existing History/selection infra<br/>items 1-5 from long-horizon"]
     P2["Existing edit_surface skeleton<br/>Grant, Check, SurfaceEvidence, ArtifactDelta"]
@@ -268,14 +283,18 @@ flowchart TD
     C --> E
     A --> E
 
+    E --> R
     P3 --> F
     D --> F
     E --> F
+    R --> F
+    GP --> F
     C --> F
 
     F --> G
     E --> G
     P1 --> G
+    G --> GA
 ```
 
 ### Parallel Work
@@ -309,9 +328,18 @@ Should wait for `7.3` and enough of `7.4`:
 
 Should wait for `7.5`:
 
+- `bounded-edit-surface-request-policy-receipt`: use a fake Router or
+  deterministic harness to prove proposal-producing model calls expose complete
+  effective request-policy receipts.
+- `bounded-edit-surface-generator-provenance`: prove proposal records cite the
+  generator surface versions from the parent Artifact that participated in
+  generation.
+
+Should wait for `7.5` and the receipt/provenance proofs:
+
 - `7.6 ploke-tui adapter`, unless the work is only a read-only scout. The real
   adapter should implement a proven authority-side contract, not define one
-  opportunistically.
+  opportunistically or rely on ambient `ploke-tui`/Router config.
 
 Should wait for `7.6`:
 
@@ -326,6 +354,8 @@ The critical path for the first live proof is:
   -> 7.2 Diagnosis splice
   -> 7.3 Surface + objective
   -> 7.5 Mock candidate splice
+  -> 7.5.1 Request policy receipt
+  -> 7.5.2 Generator provenance
   -> 7.6 ploke-tui adapter
   -> 7.7 Mini run
 ```

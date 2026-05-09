@@ -7,11 +7,13 @@
 //! projection to one Artifact, grant a writable surface, check a proposal, and
 //! project an admitted patch-shaped result.
 
+pub(crate) mod diagnosis;
 pub(crate) mod graph;
 pub(crate) mod harness;
 pub(crate) mod surface;
 pub(crate) mod tui;
 
+pub(crate) use diagnosis::{Diagnosis, classify};
 pub(crate) use harness::ArtifactDelta;
 
 #[cfg(test)]

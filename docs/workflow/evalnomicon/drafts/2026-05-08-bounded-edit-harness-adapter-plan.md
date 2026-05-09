@@ -714,6 +714,123 @@ diagnose, replay, score, and select it later:
 Rendered previews, TUI proposal status, chat events, and user-facing command
 output may be recorded as telemetry, but they are not the authority source.
 
+### Observation And Admission
+
+Do not treat logging, monitoring, or UI state as special material outside the
+model. In a self-modifying evaluator, the loop may eventually edit its own
+observers and projection code, so the model must distinguish record existence
+from decision authority.
+
+Use this authority chain:
+
+```text
+Event
+  -> Observation
+  -> Record
+  -> AdmissibleEvidence<D>
+  -> DecisionInput<D>
+```
+
+where `D` is a decision domain such as:
+
+```text
+Diagnosis
+Selection
+SurfaceCheck
+HistoryAdmission
+OperatorProjection
+```
+
+A record can exist without being admissible for a decision:
+
+```text
+record(rec) does not imply admissible_D(rec)
+```
+
+and:
+
+```text
+projection(rec) ∨ log(rec) ∨ ui_state(rec)
+  does not imply admissible_D(rec)
+```
+
+unless an explicit admission rule for `D` says otherwise.
+
+For the first route, the admissible diagnosis input is the typed
+`surface_attempt::Evidence` carried by `EvaluationPayload.surface_attempt`.
+Projection text, raw logs, monitor views, TUI-local proposal state, and absence
+of a child Artifact are records or symptoms, but they are not diagnosis inputs
+unless admitted through the typed evidence path.
+
+### Generator Surface Provenance
+
+Some edited surfaces are part of the machinery that generates future children.
+When those surfaces change, later generation records must cite which version of
+that machinery they actually used.
+
+Track surface roles explicitly:
+
+```text
+SurfaceRole =
+    ObjectSurface
+  | GeneratorSurface
+  | ObserverSurface
+  | PolicySurface
+```
+
+Meaning:
+
+- `ObjectSurface`: code being improved or evaluated.
+- `GeneratorSurface`: tools, prompts, configs, or code used to create future
+  candidate proposals.
+- `ObserverSurface`: tools, prompts, configs, or code used to observe, score,
+  record, diagnose, or project state.
+- `PolicySurface`: code or configs used to admit, authorize, select, or change
+  rules.
+
+A graph node or file can have multiple roles. For example, `ploke-tui`
+semantic edit machinery is a `GeneratorSurface`; parts of it may also be an
+`ObserverSurface`. `ploke-eval` admission/selection code is a `PolicySurface`.
+
+Generator-artifact coupling invariant:
+
+```text
+GeneratedProposal(q) =>
+  ∃ parent_runtime, parent_artifact, generator_surface_version.
+    hydrated_from(parent_runtime, parent_artifact)
+    ∧ used_generator_surface(q, generator_surface_version)
+    ∧ generator_surface_version ∈ parent_artifact
+```
+
+If an `ArtifactDelta` modifies a `GeneratorSurface`, later proposal records
+must cite the exact modified generator-surface version from the parent Runtime
+Artifact that performed the generation. This lets later analysis trace paths
+such as:
+
+```text
+δ_tool
+  -> modified GeneratorSurface T'
+  -> T' used by later parent Runtime
+  -> Proposal q_next
+  -> ArtifactDelta δ_next
+  -> descendant evaluation score
+```
+
+The current implementation path only needs to preserve this provenance. Full
+descendant-fitness analysis of generator-surface changes is deferred and tracked
+in the task stack as `bounded-edit-surface-generator-fitness-analysis`.
+
+Future-only Rust scaffolding for this section must not be silent dead code. If
+a type, enum variant, or helper exists only to preserve this planned provenance
+shape before it is used, add a nearby comment citing the task-stack id and use:
+
+```rust
+#[allow(dead_code, reason = "task-stack:bounded-edit-surface-generator-fitness-analysis preserves planned generator-fitness analysis")]
+```
+
+Do this only for code whose future use is explicitly tracked in the task stack;
+otherwise delete or defer the code.
+
 ## Existing Algebra
 
 The current conceptual carriers are:
@@ -729,6 +846,8 @@ The current conceptual carriers are:
   grant and hashes/identity match.
 - `ArtifactDelta`: material patch from one Artifact to another.
 - `History`: durable candidate/evaluation/selection evidence substrate.
+- `AdmissibleEvidence<D>`: a record admitted for a specific decision domain,
+  not merely something that was observed or logged.
 
 This workstream also needs parent-side planning carriers:
 
@@ -940,6 +1059,22 @@ The current implementation may store this inside existing candidate payloads or
 History evidence records, but the data must not exist only as a mutable report,
 TUI proposal state, or CLI rendering.
 
+Rejected attempts are not successful Artifact transitions, but they are still
+surface-attempt events that can be admitted for diagnosis:
+
+```text
+AttemptOutcome_a(q) =
+    Applied(a', δ)
+  | Rejected(reason)
+
+H' = H ⋅ Attempt(a, Γ_a, g, q, ρ_a(q), AttemptOutcome_a(q))
+```
+
+The success-only admission above is the `Applied(a', δ)` case. The rejected
+case produces no `a'` and no `δ`, but it may still produce
+`AdmissibleEvidence<Diagnosis>` when the record came through the authorized
+evaluation/payload path.
+
 ### Current Code Mapping
 
 Recent code inspection found that `ploke-eval` already has much of the skeleton:
@@ -958,7 +1093,9 @@ The formalization exposes the missing or underspecified carriers:
 - explicit resolved touches `(Q_r, Q_w)`;
 - a dedicated `CheckedProposal`;
 - material validity evidence for `valid_a(q)`;
-- History admission evidence that records the full chain.
+- History admission evidence that records the full chain;
+- explicit admission rules from records to `AdmissibleEvidence<D>` for
+  diagnosis, selection, surface checking, and operator projection.
 
 These are mostly sharper return types and proof carriers, not a demand for a
 large new API surface.
@@ -1434,7 +1571,63 @@ include:
 For `ploke-tui`, existing staging and preview generation are reusable here.
 They remain executor evidence, not authority.
 
-### 6. Expose Touches Before Apply
+### 6. Return Effective Request Policy Receipts
+
+For every Router/model call that materially shapes a proposal, the harness must
+return an effective request-policy receipt. Replay does not need to reproduce
+the same model output, but it must reconstruct the same client-side request
+policy that the parent runtime used.
+
+The receipt should include:
+
+- Router trait/backend identity and policy id;
+- router/config source paths or ids plus digests;
+- which values were explicit and which came from defaults;
+- resolved model/provider request fields such as model, endpoint class,
+  temperature, top_p, top_k, max tokens, seed, stop sequences, response format,
+  tool choice, reasoning effort, timeout, retry policy, and fallback policy;
+- prompt, schema, and tool definition digests;
+- material context selection policy and digest;
+- request payload digest and response payload digest;
+- external execution receipt fields when available: provider request id,
+  response id, provider selected, finish reason, usage, routing metadata, and
+  system fingerprint;
+- explicit `unknown` values for external metadata the provider does not expose.
+
+The receipt must distinguish:
+
+```text
+client_policy_hash
+request_payload_hash
+response_payload_hash
+external_execution_receipt_hash
+```
+
+This is a provenance requirement, not a determinism claim. If OpenRouter or an
+upstream provider routes nondeterministically, uses an unknown backend, or
+returns no quantization/fingerprint metadata, that nondeterminism should be
+recorded as unknown external execution detail. It must not be confused with a
+different client-side policy.
+
+Admission invariant:
+
+```text
+AdmitProposal(q) =>
+  ∀ call ∈ material_model_calls(q).
+    ∃ receipt(call).
+      complete_effective_policy(receipt)
+```
+
+`material_model_calls(q)` are model calls that shape the target, patch,
+proposal, validation argument, or other proposal-authoring evidence. UI chatter
+and non-authority summaries may remain telemetry, but they must not be cited as
+proposal provenance.
+
+This receipt is especially important at the `ploke-eval` / `ploke-tui` /
+`ploke-llm::Router` boundary. The adapter must not rely on ambient `ploke-tui`
+or provider config that is not represented in the receipt.
+
+### 7. Expose Touches Before Apply
 
 `ploke-eval` needs structured touches before any write happens:
 
@@ -1461,7 +1654,7 @@ Touches = {
 The first implementation may store these as vectors of resolved touch records,
 but the distinction must not be lost.
 
-### 7. Apply Only With Checked Authorization
+### 8. Apply Only With Checked Authorization
 
 The harness must not self-authorize writes. It applies only after receiving a
 `ploke-eval` check/authorization value derived from the proposal and grant.
@@ -1472,7 +1665,7 @@ For v1, the authorization should only exist for a passed check:
 SurfaceCheck::Passed -> CheckedProposal -> apply_checked
 ```
 
-### 8. Return Apply Evidence
+### 9. Return Apply Evidence
 
 The apply result must include:
 
@@ -1484,7 +1677,7 @@ The apply result must include:
 - whether the write was all-or-rejected;
 - enough data for `ploke-eval` to compute or verify the derived Artifact.
 
-### 9. Use All-Or-Rejected Semantics For V1
+### 10. Use All-Or-Rejected Semantics For V1
 
 Partial application should not silently count as success. Either all planned
 edits apply, or the operation returns a rejected/failed outcome with evidence.
@@ -1492,7 +1685,7 @@ edits apply, or the operation returns a rejected/failed outcome with evidence.
 Later partial-edit behavior can be modeled explicitly, but it should not be the
 default for candidate creation.
 
-### 10. Hide Harness Internals
+### 11. Hide Harness Internals
 
 The adapter may use `ploke-tui::AppState`, proposal maps, commands, actors,
 event bus, or `TestRuntime` internally. The trait surface should not expose
@@ -1768,6 +1961,8 @@ Implement a concrete adapter that uses `ploke-tui` machinery behind the trait.
 Minimum behavior:
 
 - bind to an explicit target artifact/worktree;
+- return effective request-policy receipts for proposal-producing
+  `ploke-llm::Router` calls;
 - load or project an index tied to that artifact;
 - resolve one exact semantic target inside the granted surface;
 - stage proposal evidence;
@@ -1780,6 +1975,18 @@ stand up TUI services without terminal UI coupling.
 
 The adapter may use TUI proposal staging internally. It must return operation
 evidence across the trait boundary, not `AppState.proposals` as authority.
+
+Before wiring the real TUI adapter, prove the request-policy receipt behavior
+with a fake Router or deterministic harness:
+
+```text
+A': parent artifact + router config + EditObjective
+B*: harness builds proposal-producing Router request
+C': complete effective request-policy receipt with stable client_policy_hash
+```
+
+Negative tests should reject proposal admission when a material model call has
+no receipt or an incomplete effective policy.
 
 ### Phase E: Candidate Creation Integration
 

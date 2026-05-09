@@ -33,6 +33,45 @@ apply_a(q) = (a', δ)
 H' = H ⋅ (a, Γ_a, g, q, ρ_a(q), δ, a')
 ```
 
+Observation/admission objects:
+
+```text
+event e
+observation obs = observe(observer, e)
+record rec = record(writer, obs)
+evidence ev = admit_D(rec)
+d ∈ inputs(D) iff admit_D(rec) = Some(ev)
+```
+
+where `D` is a decision domain such as `Diagnosis`, `Selection`,
+`SurfaceCheck`, `HistoryAdmission`, or `OperatorProjection`.
+
+A record can exist without being admissible evidence for a decision:
+
+```text
+record(rec) does not imply admissible_D(rec)
+
+projection(rec) ∨ log(rec) ∨ ui_state(rec)
+  does not imply admissible_D(rec)
+```
+
+unless an explicit admission rule for `D` says otherwise.
+
+Surface-attempt admission:
+
+```text
+AttemptOutcome_a(q) =
+    Applied(a', δ)
+  | Rejected(reason)
+
+H' = H ⋅ Attempt(a, Γ_a, g, q, ρ_a(q), AttemptOutcome_a(q))
+```
+
+The success-only notation
+`H' = H ⋅ (a, Γ_a, g, q, ρ_a(q), δ, a')` is the `Applied(a', δ)`
+case. `Rejected(reason)` produces no `a'` and no `δ`, but may still be
+admitted as `AdmissibleEvidence<Diagnosis>`.
+
 Current implementation vocabulary used by these tests:
 
 ```text
@@ -53,7 +92,7 @@ q rejected
   => no apply_a(q)
   => no a'
   => no δ
-  => still record typed evidence that q was attempted/rejected
+  => H admits Attempt(..., Rejected(reason)) for the relevant decision domain
 ```
 
 That rejected-attempt evidence is not the same as History admission of a
@@ -79,6 +118,39 @@ flowchart LR
     A1 --> B1 --> C1
     A2 --> B2 --> C2
     A3 --> B3 --> C3
+```
+
+Future request-policy receipt splice:
+
+```text
+A': parent artifact + router config + EditObjective
+B*: Router-backed harness request construction
+C': complete EffectiveRequestPolicyReceipt with stable client_policy_hash
+```
+
+Negative counterpart:
+
+```text
+A': proposal from a material model call with no receipt or incomplete policy
+B*: proposal admission
+C': rejected before SurfaceCheck / candidate admission
+```
+
+Future generator-surface provenance splice:
+
+```text
+A': parent Artifact contains generator surface version T_a and EditObjective
+B*: harness/proposal construction uses T_a
+C': proposal provenance cites T_a as the used GeneratorSurface
+```
+
+Later descendant-fitness analysis, tracked separately, should consume the
+provenance chain:
+
+```text
+ArtifactDelta δ modifies GeneratorSurface T
+  -> later proposal cites modified T'
+  -> descendant evaluation score changes
 ```
 
 ## Test Index
@@ -112,8 +184,8 @@ q rejected
   => no apply_a(q)
   => no a'
   => no δ
-  => evidence(q rejected) survives persistence/recovery
-  => later parent can read evidence(q rejected)
+  => Attempt(..., Rejected(reason)) survives persistence/recovery
+  => admit_Diagnosis(record) = Some(surface_attempt::Evidence)
 ```
 
 Why non-trivial:
@@ -124,15 +196,15 @@ Why non-trivial:
 
 Formal gap:
 
-- The core formal model names successful admission:
-  `H' = H ⋅ (a, Γ_a, g, q, ρ_a(q), δ, a')`.
-- It should also name rejected-attempt evidence explicitly:
+- The core formal model now names rejected-attempt admission with
+  `AttemptOutcome_a(q)`.
+- The remaining gap is to make the code's admission rule explicit:
 
 ```text
-H' = H ⋅ reject(a, Γ_a, g, q, ρ_a(q), reason)
+admit_Diagnosis(record) = Some(surface_attempt::Evidence)
 ```
 
-or a similarly typed evidence event.
+only for records from the authorized evaluation/payload path.
 
 ### `current_generation_candidates_include_edit_surface_evidence`
 
@@ -204,7 +276,8 @@ Formal meaning:
 q rejected
   => no apply_a(q)
   => artifact = None
-  => evidence(q rejected) enters parent-readable payload projection
+  => Attempt(..., Rejected(reason)) enters parent-readable payload projection
+  => admitted as Diagnosis input
 ```
 
 Why non-trivial:
@@ -215,8 +288,9 @@ Why non-trivial:
 
 Formal gap:
 
-- Same rejected-attempt evidence gap as above. The formal plan should name
-  rejection evidence as a first-class non-transition event.
+- Same admission-rule gap as above. The formal plan now names the rejected
+  attempt event; implementation still needs explicit admission rules as more
+  decision domains consume records.
 
 ### `payload_surface_attempt_rejected_is_parent_readable_without_artifact`
 
@@ -243,8 +317,8 @@ C': has_parent_readable_surface_attempt() is true and artifact is absent
 Formal meaning:
 
 ```text
-evidence(q rejected) is not evidence(apply_a(q))
-evidence(q rejected) does not imply ∃ a'. apply_a(q) = (a', δ)
+Attempt(..., Rejected(reason)) is not Attempt(..., Applied(a', δ))
+Attempt(..., Rejected(reason)) does not imply ∃ a'. apply_a(q) = (a', δ)
 ```
 
 Why non-trivial:
@@ -254,12 +328,14 @@ Why non-trivial:
 
 Formal gap:
 
-- The formal representation should explicitly distinguish:
+- The formal representation now explicitly distinguishes:
 
 ```text
-AttemptEvidence(q, rejected)
-ArtifactTransitionEvidence(a, q, a', δ)
+AttemptOutcome_a(q) = Applied(a', δ) | Rejected(reason)
 ```
+
+The implementation still needs to preserve that distinction as more consumers
+start reading the evidence.
 
 ### `payload_without_surface_attempt_is_not_parent_readable_attempt_evidence`
 
@@ -286,7 +362,7 @@ C': has_parent_readable_surface_attempt() is false
 Formal meaning:
 
 ```text
-projection/log/diagnostic text does not imply AttemptEvidence(q, outcome)
+projection/log/diagnostic text does not imply admissible_Diagnosis(record)
 ```
 
 Why non-trivial:
@@ -297,18 +373,61 @@ Why non-trivial:
 
 Formal gap:
 
-- The plan states this rule operationally, but the formal model should name the
-  predicate:
+- The observation/admission model now names the predicate:
 
 ```text
-typed_attempt_evidence(e) iff e is admitted as structured attempt evidence
+admissible_D(record)
 ```
 
 and the negative rule:
 
 ```text
-projection(e) ∨ log(e) ∨ ui_state(e)
-  does not imply typed_attempt_evidence(e)
+projection(rec) ∨ log(rec) ∨ ui_state(rec)
+  does not imply admissible_Diagnosis(rec)
+```
+
+### `classify_rejected_surface_attempt_without_artifact_as_semantic_edit_resolution`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/diagnosis.rs
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval classify_rejected_surface_attempt_without_artifact_as_semantic_edit_resolution -- --nocapture
+```
+
+Splice:
+
+```text
+A': payload with typed surface_attempt::Evidence::Rejected and artifact = None
+B*: edit_surface::diagnosis::classify(&EvaluationPayload)
+C': Diagnosis { limiter = invalid_candidate_generation, failure_kind = semantic_edit_resolution }
+```
+
+### `payload_without_surface_attempt_is_not_semantic_edit_resolution_diagnosis`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/diagnosis.rs
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval payload_without_surface_attempt_is_not_semantic_edit_resolution_diagnosis -- --nocapture
+```
+
+Splice:
+
+```text
+A': projection/log-like payload detail without typed surface_attempt evidence
+B*: edit_surface::diagnosis::classify(&EvaluationPayload)
+C': no semantic_edit_resolution diagnosis
 ```
 
 ### `tui_apply_evidence_is_all_applied_or_rejected`
@@ -379,36 +498,55 @@ H' = H ⋅ (a, Γ_a, g, q, ρ_a(q), δ, a')
 Needed rejected-attempt notation:
 
 ```text
-H' = H ⋅ reject(a, Γ_a, g, q, ρ_a(q), reason)
-```
+AttemptOutcome_a(q) =
+    Applied(a', δ)
+  | Rejected(reason)
 
-or:
-
-```text
-AttemptEvidence = Applied(a', δ) | Rejected(reason)
+H' = H ⋅ Attempt(a, Γ_a, g, q, ρ_a(q), AttemptOutcome_a(q))
 ```
 
 with `Applied(a', δ)` linked to the successful Artifact transition and
 `Rejected(reason)` explicitly not producing `a'`.
 
-### Typed Evidence Predicate
+### Observation And Admission
 
-Needed authority predicate:
+Needed authority chain:
 
 ```text
-typed_attempt_evidence(e)
+event e
+observation obs = observe(observer, e)
+record rec = record(writer, obs)
+evidence ev = admit_D(rec)
+d ∈ inputs(D) iff admit_D(rec) = Some(ev)
+```
+
+Decision domains include:
+
+```text
+Diagnosis
+Selection
+SurfaceCheck
+HistoryAdmission
+OperatorProjection
+```
+
+The authority predicate is decision-relative:
+
+```text
+admissible_D(rec)
 ```
 
 with:
 
 ```text
-projection(e) ∨ log(e) ∨ ui_state(e)
-  does not imply typed_attempt_evidence(e)
+projection(rec) ∨ log(rec) ∨ ui_state(rec)
+  does not imply admissible_D(rec)
 ```
 
 This is the formal counterpart of the operational rule that CLI output, logs,
-mutable reports, monitor views, and TUI-local proposal state are not source
-truth.
+mutable reports, monitor views, and TUI-local proposal state may be records,
+but they are not automatically source truth for diagnosis, selection, or
+checked apply.
 
 ### Apply Outcome Classification
 
@@ -430,3 +568,28 @@ Rejected(reason) iff no successful total apply exists
 This is the formal counterpart of the all-or-rejected semantics used by the
 TUI apply evidence test.
 
+### Effective Request Policy Receipt
+
+Needed Router/proposal provenance judgment:
+
+```text
+AdmitProposal(q) =>
+  ∀ call ∈ material_model_calls(q).
+    ∃ receipt(call).
+      complete_effective_policy(receipt)
+```
+
+`complete_effective_policy(receipt)` means the receipt reconstructs the
+client-side policy used to build the request, including explicit/defaulted
+parameter values, config source digests, prompt/schema/tool digests,
+retry/fallback policy, request/response payload digests, and available external
+provider receipt metadata.
+
+The proof target is not deterministic model output. The proof target is:
+
+```text
+same parent code + same admitted inputs + same client-side request policy
+```
+
+External provider nondeterminism is allowed, but it must be represented as
+external receipt metadata or explicit `unknown`, not silently dropped.

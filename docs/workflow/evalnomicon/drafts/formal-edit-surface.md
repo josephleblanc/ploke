@@ -73,6 +73,84 @@ History admission is:
 H' = H ⋅ (a, Γₐ, g, q, ρₐ(q), δ, a')
 ```
 
+Rejected attempts need a sibling admission form because they do not produce an
+Artifact transition:
+
+```text
+AttemptOutcomeₐ(q) =
+    Applied(a', δ)
+  | Rejected(reason)
+
+H' = H ⋅ Attempt(a, Γₐ, g, q, ρₐ(q), AttemptOutcomeₐ(q))
+```
+
+`Applied(a', δ)` implies `applyₐ(q) = (a', δ)`. `Rejected(reason)` implies no
+derived Artifact `a'` and no `δ`, but the attempt can still be admitted as
+evidence for later diagnosis.
+
+## Observation And Admission
+
+No record is outside the model merely because it is "just logging." In a
+self-modifying evaluator, observations, logs, projections, UI state, and typed
+History records are all records with different authority and admissibility.
+
+Use the following authority chain:
+
+```text
+event e
+observer o
+observation obs = observe(o, e)
+record rec = record(writer, obs)
+evidence ev = admit_D(rec)
+decision input d ∈ inputs(D) iff admit_D(rec) = Some(ev)
+```
+
+where `D` is a decision domain such as:
+
+```text
+Diagnosis
+Selection
+SurfaceCheck
+HistoryAdmission
+OperatorProjection
+```
+
+A record can exist without being admissible evidence for a decision:
+
+```text
+record(rec) does not imply admissible_D(rec)
+```
+
+and specifically:
+
+```text
+projection(rec) ∨ log(rec) ∨ ui_state(rec)
+  does not imply admissible_D(rec)
+```
+
+unless an explicit admission rule for `D` says otherwise.
+
+For the first bounded edit-surface route:
+
+```text
+SurfaceAttempt event
+  -> authorized evaluation record
+  -> admit_Diagnosis(record) = Some(surface_attempt::Evidence)
+  -> Diagnosis input
+```
+
+The negative case is just as important:
+
+```text
+log/projection/TUI-local record
+  -> admit_Diagnosis(record) = None
+  -> not a Diagnosis input
+```
+
+This keeps self-observation mechanisms editable without letting self-authored
+logs, reports, or UI projections silently become authority for diagnosis,
+selection, or checked apply.
+
 That is the actual core.
 
 Everything else is implementation detail:

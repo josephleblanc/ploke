@@ -149,6 +149,62 @@ CheckedProposal unlocks apply_checked
 Path globs, canonical prefixes, node kinds, and manual allowlists are ways to
 construct graph subsets. They are not the surface itself.
 
+Observation and logging are also inside the model. In a self-modifying
+evaluator, there are no authority-free "just logs"; there are records with
+different admissibility for different decisions:
+
+```text
+Event
+  -> Observation
+  -> Record
+  -> AdmissibleEvidence<D>
+  -> DecisionInput<D>
+```
+
+Projection text, raw logs, monitor views, and TUI-local state may be records,
+but they are not automatically admissible for `Diagnosis`, `Selection`,
+`SurfaceCheck`, or `HistoryAdmission`.
+
+Router/model calls that materially shape a harness proposal need an additional
+receipt before the real `ploke-tui` adapter is admitted:
+
+```text
+AdmitProposal(q) =>
+  ∀ call ∈ material_model_calls(q).
+    ∃ receipt(call).
+      complete_effective_policy(receipt)
+```
+
+The receipt proves reconstructability of the client-side request policy, not
+deterministic replay of the model output. It should distinguish explicit
+values, defaulted values, config source digests, prompt/schema/tool digests,
+request/response payload digests, retry/fallback policy, and external provider
+metadata or explicit `unknown` values.
+
+Generation records also need generator-surface provenance. If a parent Runtime
+uses code, tools, prompts, or configs from its own Artifact to generate a
+proposal, the proposal record must cite the version of those generator surfaces
+that actually participated:
+
+```text
+GeneratedProposal(q) =>
+  ∃ parent_runtime, parent_artifact, generator_surface_version.
+    hydrated_from(parent_runtime, parent_artifact)
+    ∧ used_generator_surface(q, generator_surface_version)
+    ∧ generator_surface_version ∈ parent_artifact
+```
+
+This is separate from the later statistical/fitness analysis. The near-term
+requirement is provenance preservation; the later task is correlating
+generator-surface deltas with descendant proposal/evaluation quality.
+
+Do not add future-only Rust scaffolding silently. If a future-use type or helper
+is necessary before its consumer exists, cite the relevant task-stack id with a
+searchable marker such as
+`#[allow(dead_code, reason = "task-stack:<task-id> <short reason>")]`. Only do
+this for items explicitly tracked in the task stack; otherwise defer or delete
+the code.
+
 ### Parent Planning Layer
 
 Use existing History/scoring evidence to drive candidate generation:
@@ -295,7 +351,7 @@ invalid candidate generation / semantic edit resolution problem
   -> EditObjective for reducing invalid edit-surface candidates
 ```
 
-## Current Implementation Status: After Slice 7.1
+## Current Implementation Status: After Slice 7.2
 
 Task-stack group:
 
@@ -303,13 +359,14 @@ Task-stack group:
 bounded-edit-surface-evidence-route
 ```
 
-Closed task:
+Closed tasks:
 
 ```text
 bounded-edit-surface-attempt-evidence (7.1)
+bounded-edit-surface-diagnosis-splice (7.2)
 ```
 
-What is now implemented:
+What is now implemented from 7.1:
 
 - Rejected and applied edit-surface attempts have typed payload evidence through
   `history::surface_attempt::{Evidence, Outcome}`.
@@ -323,11 +380,37 @@ What is now implemented:
 - Applied success path still uses `SurfaceEvidence` / `CandidateArtifact.surface`
   for checked Artifact transitions.
 
+What is now implemented from 7.2:
+
+- `edit_surface::diagnosis::Diagnosis` is the first authority-side diagnosis
+  carrier.
+- `edit_surface::diagnosis::classify(&EvaluationPayload)` is a pure
+  mechanistic classifier over typed parent-readable payload evidence.
+- Rejected `surface_attempt` evidence with `artifact = None` classifies as:
+
+```text
+Diagnosis {
+  limiter: invalid_candidate_generation,
+  failure_kind: semantic_edit_resolution,
+  ...
+}
+```
+
+- Payloads without typed `surface_attempt` evidence do not classify as
+  `semantic_edit_resolution`, even if they contain projection/log-like failure
+  prose.
+
 Files changed by the 7.1 implementation:
 
 - `crates/ploke-eval/src/cli/prototype1_state/history.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/parent.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+
+Files changed by the 7.2 implementation:
+
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/diagnosis.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/mod.rs`
+- `docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md`
 
 Key proof tests are indexed in:
 
@@ -339,74 +422,104 @@ Especially important tests:
 - `current_generation_candidates_include_rejected_edit_surface_attempt_payload`
 - `payload_surface_attempt_rejected_is_parent_readable_without_artifact`
 - `payload_without_surface_attempt_is_not_parent_readable_attempt_evidence`
+- `classify_rejected_surface_attempt_without_artifact_as_semantic_edit_resolution`
+- `payload_without_surface_attempt_is_not_semantic_edit_resolution_diagnosis`
 - `tui_apply_evidence_is_all_applied_or_rejected`
 
 Accepted reviewer conclusion:
 
 ```text
-7.1 is complete enough to start 7.2.
+7.2 is accepted. The classifier stays on typed parent-readable evidence and
+does not consult logs, CLI text, projection views, or TUI-local state.
 ```
 
 Non-blocking risk to carry forward:
 
 - Rejected-only turns produce payload evidence but no selection/handoff path
-  (`selection = None`). The next slice must diagnose directly from
-  `EvaluationPayload.surface_attempt`; it must not assume a sealed successor
+  (`selection = None`). Diagnosis now reads directly from
+  `EvaluationPayload.surface_attempt`; later surface/objective routing must keep
+  using that typed evidence path and must not assume a sealed successor
   selection entry exists for rejected-only turns.
+- `classify` also checks `payload.artifact.is_none()`. That is still typed
+  authority, but it means the 7.2 contract is specifically rejected attempt
+  evidence that did not produce an Artifact.
+- The 7.2 proof-index entries are lighter than the older sections. If the proof
+  index becomes a stricter audit artifact, expand their formal meaning and
+  "why non-trivial" prose.
 
 Formal gaps exposed by 7.1 tests:
 
 ```text
-H' = H ⋅ reject(a, Γ_a, g, q, ρ_a(q), reason)
+AttemptOutcome_a(q) =
+    Applied(a', δ)
+  | Rejected(reason)
 
-typed_attempt_evidence(e)
+H' = H ⋅ Attempt(a, Γ_a, g, q, ρ_a(q), AttemptOutcome_a(q))
 
-projection(e) ∨ log(e) ∨ ui_state(e)
-  does not imply typed_attempt_evidence(e)
+record(rec) does not imply admissible_D(rec)
+
+projection(rec) ∨ log(rec) ∨ ui_state(rec)
+  does not imply admissible_D(rec)
 
 ApplyOutcome(q) = Applied(a', δ) | Rejected(reason)
 ```
 
 These gaps are recorded in the proof index. They should be addressed or
-acknowledged when implementing later carrier/diagnosis slices.
+acknowledged when implementing later carrier/surface/objective slices.
 
 ## Next Task
 
 Start here after compaction:
 
 ```text
-bounded-edit-surface-diagnosis-splice (7.2)
+bounded-edit-surface-choice-objective (7.3)
 ```
 
 Goal:
 
 ```text
-EvaluationPayload.surface_attempt
-  -> Diagnosis {
-       limiter: invalid_candidate_generation,
-       failure_kind: semantic_edit_resolution,
-       evidence_refs: ...,
-     }
+Diagnosis {
+  limiter: invalid_candidate_generation,
+  failure_kind: semantic_edit_resolution,
+  ...
+}
+  -> SurfaceChoice
+  -> EditObjective
 ```
 
 Required splice:
 
 ```text
-A': replay-shaped rejected edit-surface attempt payload
-B*: diagnosis classifier
-C': SurfaceChoice/EditObjective contract can consume the diagnosis
+A': semantic_edit_resolution Diagnosis with preserved evidence refs
+B*: route table / surface-objective constructor
+C': SurfaceChoice and EditObjective cite the diagnosis and constrain the harness task
 ```
 
 Required negative splice:
 
 ```text
-A': projection/log/TUI-local failure without typed surface_attempt evidence
-B*: diagnosis classifier
-C': no semantic_resolution diagnosis
+A': no Diagnosis, or a Diagnosis with an unrelated failure_kind
+B*: route table / surface-objective constructor
+C': no semantic resolver SurfaceChoice/EditObjective
 ```
 
-Do not implement surface choice or `EditObjective` yet unless the diagnosis
-contract requires a tiny downstream consumer fixture.
+Do not implement the real `ploke-tui` adapter yet. This slice should define the
+first route from diagnosis to surface/objective contract, not perform the edit.
+
+Later blocker before `bounded-edit-surface-tui-adapter (7.6)`:
+
+```text
+bounded-edit-surface-request-policy-receipt (7.5.1)
+bounded-edit-surface-generator-provenance (7.5.2)
+```
+
+Use a fake Router or deterministic harness to prove that proposal-producing
+Router calls return complete effective request-policy receipts, and that
+proposal admission rejects missing or incomplete receipts.
+
+Also prove that proposal records cite generator-surface versions from the
+parent Artifact before the real TUI adapter depends on mutable generator
+machinery.
 
 ## Suggested Sub-Agent Pattern
 
@@ -418,12 +531,12 @@ Good next scout prompt:
 Read docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md
 and docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md.
 
-Task: bounded-edit-surface-diagnosis-splice (7.2).
+Task: bounded-edit-surface-choice-objective (7.3).
 
-Inspect the current `EvaluationPayload.surface_attempt` path and propose the
-smallest location for a mechanistic diagnosis classifier that maps rejected
-edit-surface attempt evidence to
-invalid_candidate_generation / semantic_edit_resolution.
+Inspect the new `edit_surface::diagnosis::Diagnosis` path and propose the
+smallest location for the first route table / constructor that maps
+invalid_candidate_generation / semantic_edit_resolution to a `SurfaceChoice`
+and `EditObjective`.
 
 Return exact files, line ranges, test names, and one A' -> B* -> C' splice.
 ```
