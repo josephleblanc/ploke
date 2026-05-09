@@ -775,6 +775,7 @@ pub(crate) mod evidence;
 pub(crate) mod evidence_class;
 pub(crate) mod evidence_inventory;
 pub(crate) mod history;
+pub(crate) mod history_playback;
 pub(crate) mod history_preview;
 pub(crate) mod identity;
 pub(crate) mod inner;

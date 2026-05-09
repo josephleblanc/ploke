@@ -39,6 +39,7 @@ members = [
     "crates/ploke-protocol",
     "crates/ploke-records",
     "crates/ploke-tree",
+    "crates/ploke-tree-browser",
     "crates/ploke-eval",
     "crates/ploke-db",
     "crates/common",
@@ -77,6 +78,7 @@ ploke-core = { path = "crates/ploke-core" }
 ploke-protocol = { path = "crates/ploke-protocol" }
 ploke-records = { path = "crates/ploke-records" }
 ploke-tree = { path = "crates/ploke-tree" }
+ploke-tree-browser = { path = "crates/ploke-tree-browser" }
 syn-parser-macros = { path = "proc_macros/syn_parser/syn_parser_macros" }
 ploke-test-macros = { path = "proc_macros/syn_parser/ploke-test-macros" }
 derive-test-helpers = { path = "proc_macros/syn_parser/derive_test_helpers" }

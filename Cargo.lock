@@ -4699,6 +4699,7 @@ dependencies = [
  "ploke-protocol",
  "ploke-records",
  "ploke-test-utils",
+ "ploke-tree",
  "ploke-tui",
  "regex",
  "reqwest",
@@ -4899,6 +4900,15 @@ dependencies = [
  "ploke-records",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ploke-tree-browser"
+version = "0.1.0"
+dependencies = [
+ "ploke-records",
+ "ploke-tree",
+ "serde",
 ]
 
 [[package]]

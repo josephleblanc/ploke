@@ -2890,7 +2890,7 @@ impl SurfaceEvidence {
             });
         }
         self.proposal_producer
-            .verify_complete(&self.base.artifact_id)
+            .verify_complete(&self.base.artifact_id, &self.proposal_id, &self.run_id)
             .map_err(|detail| HistoryError::InvalidSelectionDecision { detail })?;
         if self.schema_version >= 2 && self.generator_surface.is_none() {
             return Err(HistoryError::InvalidSelectionDecision {

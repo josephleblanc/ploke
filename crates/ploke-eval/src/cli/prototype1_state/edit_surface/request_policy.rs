@@ -198,11 +198,85 @@ impl ObjectiveBinding {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub(crate) struct ProposalBinding {
+    pub(crate) proposal_id: String,
+    pub(crate) run_id: String,
+}
+
+impl ProposalBinding {
+    fn verify_matches(&self, proposal_id: &str, run_id: &str) -> Result<(), String> {
+        if self.proposal_id.trim().is_empty() {
+            return Err("request-policy receipt proposal_id is empty".to_string());
+        }
+        if self.run_id.trim().is_empty() {
+            return Err("request-policy receipt run_id is empty".to_string());
+        }
+        if self.proposal_id != proposal_id {
+            return Err(format!(
+                "request-policy receipt proposal_id '{}' does not match admitted proposal '{}'",
+                self.proposal_id, proposal_id
+            ));
+        }
+        if self.run_id != run_id {
+            return Err(format!(
+                "request-policy receipt run_id '{}' does not match admitted run '{}'",
+                self.run_id, run_id
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum PayloadHash {
+    Known { value: String },
+    Unknown { reason: String },
+}
+
+impl PayloadHash {
+    pub(crate) fn known(value: impl Into<String>) -> Self {
+        Self::Known {
+            value: value.into(),
+        }
+    }
+
+    pub(crate) fn unknown(reason: impl Into<String>) -> Self {
+        Self::Unknown {
+            reason: reason.into(),
+        }
+    }
+
+    fn verify(&self, label: &str) -> Result<(), String> {
+        match self {
+            Self::Known { value } => {
+                if value.trim().is_empty() {
+                    Err(format!("request-policy receipt {label} is empty"))
+                } else {
+                    Ok(())
+                }
+            }
+            Self::Unknown { reason } => {
+                if reason.trim().is_empty() {
+                    Err(format!(
+                        "request-policy receipt {label} unknown reason is empty"
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Receipt {
     pub(crate) schema_version: u32,
     pub(crate) base_artifact_id: ArtifactId,
     pub(crate) objective: ObjectiveBinding,
+    #[serde(default)]
+    pub(crate) proposal: ProposalBinding,
     pub(crate) router: String,
     pub(crate) model: Effective<String>,
     pub(crate) response_format: Effective<ResponseFormat>,
@@ -211,6 +285,10 @@ pub(crate) struct Receipt {
     pub(crate) parameters: ParameterPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) provider: Option<ProviderPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) request_payload_hash: Option<PayloadHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) response_payload_hash: Option<PayloadHash>,
     pub(crate) client_policy_hash: String,
 }
 
@@ -228,6 +306,7 @@ impl Receipt {
             schema_version: 1,
             base_artifact_id,
             objective: ObjectiveBinding::from_objective(objective),
+            proposal: ProposalBinding::default(),
             router: "openrouter".to_string(),
             model: Effective::new(
                 request.model.to_string(),
@@ -271,6 +350,8 @@ impl Receipt {
             ),
             parameters: ParameterPolicy::from_effective(request_params, default_params),
             provider: provider.map(ProviderPolicy::from_prefs),
+            request_payload_hash: None,
+            response_payload_hash: None,
             client_policy_hash: String::new(),
         };
         let client_policy_hash = receipt.compute_client_policy_hash();
@@ -280,7 +361,45 @@ impl Receipt {
         }
     }
 
-    pub(crate) fn verify_complete(&self) -> Result<(), String> {
+    pub(crate) fn bind_proposal(
+        mut self,
+        proposal_id: impl Into<String>,
+        run_id: impl Into<String>,
+    ) -> Self {
+        self.proposal = ProposalBinding {
+            proposal_id: proposal_id.into(),
+            run_id: run_id.into(),
+        };
+        self
+    }
+
+    pub(crate) fn with_request_payload_hash(mut self, request_payload_hash: PayloadHash) -> Self {
+        self.request_payload_hash = Some(request_payload_hash);
+        self
+    }
+
+    pub(crate) fn with_response_payload_hash(mut self, response_payload_hash: PayloadHash) -> Self {
+        self.response_payload_hash = Some(response_payload_hash);
+        self
+    }
+
+    pub(crate) fn verify_admission_binding(
+        &self,
+        proposal_id: &str,
+        run_id: &str,
+    ) -> Result<(), String> {
+        self.verify_current_client_policy_shape()?;
+        self.proposal.verify_matches(proposal_id, run_id)?;
+        verify_payload_hash(self.request_payload_hash.as_ref(), "request_payload_hash")?;
+        verify_payload_hash(self.response_payload_hash.as_ref(), "response_payload_hash")?;
+        Ok(())
+    }
+
+    /// Verifies the currently modeled client-side request-policy shape.
+    ///
+    /// This is not proof that a live outbound request receipt was captured; it
+    /// only validates the policy fields currently represented by `Receipt`.
+    pub(crate) fn verify_current_client_policy_shape(&self) -> Result<(), String> {
         if self.schema_version != 1 {
             return Err(format!(
                 "request-policy receipt has unsupported schema_version {}",
@@ -340,11 +459,16 @@ pub(crate) enum ProposalProducer {
 }
 
 impl ProposalProducer {
-    pub(crate) fn verify_complete(&self, base_artifact_id: &ArtifactId) -> Result<(), String> {
+    pub(crate) fn verify_complete(
+        &self,
+        base_artifact_id: &ArtifactId,
+        proposal_id: &str,
+        run_id: &str,
+    ) -> Result<(), String> {
         match self {
             Self::NonRouter => Ok(()),
             Self::Router { request_policy } => {
-                request_policy.verify_complete()?;
+                request_policy.verify_admission_binding(proposal_id, run_id)?;
                 if request_policy.base_artifact_id() != base_artifact_id {
                     return Err(format!(
                         "request-policy receipt base_artifact_id '{}' does not match checked base Artifact '{}'",
@@ -381,6 +505,15 @@ where
         values.sort();
         values
     })
+}
+
+fn verify_payload_hash(payload_hash: Option<&PayloadHash>, label: &str) -> Result<(), String> {
+    let payload_hash = payload_hash.ok_or_else(|| {
+        format!(
+            "request-policy receipt {label} is unset; set known/unknown explicitly before admission"
+        )
+    })?;
+    payload_hash.verify(label)
 }
 
 fn choose_value<T>(explicit: Option<T>, default: Option<T>) -> Option<Effective<T>> {
@@ -513,5 +646,138 @@ mod tests {
         );
 
         assert_ne!(left.client_policy_hash, right.client_policy_hash);
+    }
+
+    #[test]
+    fn router_receipt_rejects_missing_proposal_binding_for_admission() {
+        let receipt = Receipt::openrouter(
+            ArtifactId::new("artifact:base"),
+            &objective(),
+            &ChatCompReqCore::default(),
+            &ChatCompReqCore::default(),
+            &LLMParameters::default(),
+            &LLMParameters::default(),
+            None,
+        );
+
+        let err = receipt
+            .verify_admission_binding("proposal-1", "run-1")
+            .expect_err("missing proposal binding must reject");
+
+        assert!(err.contains("proposal_id is empty"));
+    }
+
+    #[test]
+    fn router_receipt_rejects_unset_payload_hashes_for_admission() {
+        let receipt = Receipt::openrouter(
+            ArtifactId::new("artifact:base"),
+            &objective(),
+            &ChatCompReqCore::default(),
+            &ChatCompReqCore::default(),
+            &LLMParameters::default(),
+            &LLMParameters::default(),
+            None,
+        )
+        .bind_proposal("proposal-live", "run-live");
+
+        let err = receipt
+            .verify_admission_binding("proposal-live", "run-live")
+            .expect_err("unset payload hashes must reject");
+
+        assert!(err.contains("request_payload_hash is unset"));
+    }
+
+    #[test]
+    fn router_receipt_accepts_bound_proposal_with_explicit_unknown_payload_hashes() {
+        let receipt = Receipt::openrouter(
+            ArtifactId::new("artifact:base"),
+            &objective(),
+            &ChatCompReqCore::default(),
+            &ChatCompReqCore::default(),
+            &LLMParameters::default(),
+            &LLMParameters::default(),
+            None,
+        )
+        .bind_proposal("proposal-live", "run-live")
+        .with_request_payload_hash(PayloadHash::unknown("request payload not exposed"))
+        .with_response_payload_hash(PayloadHash::unknown("response payload not exposed"));
+
+        receipt
+            .verify_admission_binding("proposal-live", "run-live")
+            .expect("explicit unknown payload hashes are admissible when binding matches");
+    }
+
+    #[test]
+    fn router_receipt_rejects_mismatched_proposal_binding_for_admission() {
+        let receipt = Receipt::openrouter(
+            ArtifactId::new("artifact:base"),
+            &objective(),
+            &ChatCompReqCore::default(),
+            &ChatCompReqCore::default(),
+            &LLMParameters::default(),
+            &LLMParameters::default(),
+            None,
+        )
+        .bind_proposal("proposal-live", "run-live")
+        .with_request_payload_hash(PayloadHash::unknown("live request payload not captured"))
+        .with_response_payload_hash(PayloadHash::unknown("live response payload not captured"));
+
+        let err = receipt
+            .verify_admission_binding("proposal-other", "run-live")
+            .expect_err("mismatched proposal binding must reject");
+
+        assert!(err.contains("does not match admitted proposal"));
+    }
+
+    #[test]
+    fn router_receipt_rejects_mismatched_run_binding_for_admission() {
+        let receipt = Receipt::openrouter(
+            ArtifactId::new("artifact:base"),
+            &objective(),
+            &ChatCompReqCore::default(),
+            &ChatCompReqCore::default(),
+            &LLMParameters::default(),
+            &LLMParameters::default(),
+            None,
+        )
+        .bind_proposal("proposal-live", "run-live")
+        .with_request_payload_hash(PayloadHash::unknown("live request payload not captured"))
+        .with_response_payload_hash(PayloadHash::unknown("live response payload not captured"));
+
+        let err = receipt
+            .verify_admission_binding("proposal-live", "run-other")
+            .expect_err("mismatched run binding must reject");
+
+        assert!(err.contains("does not match admitted run"));
+    }
+
+    #[test]
+    fn router_proposal_producer_rejects_mismatched_base_artifact_id() {
+        let producer = ProposalProducer::Router {
+            request_policy: Receipt::openrouter(
+                ArtifactId::new("artifact:base"),
+                &objective(),
+                &ChatCompReqCore::default(),
+                &ChatCompReqCore::default(),
+                &LLMParameters::default(),
+                &LLMParameters::default(),
+                None,
+            )
+            .bind_proposal("proposal-live", "run-live")
+            .with_request_payload_hash(PayloadHash::unknown("live request payload not captured"))
+            .with_response_payload_hash(PayloadHash::unknown("live response payload not captured")),
+        };
+
+        let err = producer
+            .verify_complete(
+                &ArtifactId::new("artifact:other"),
+                "proposal-live",
+                "run-live",
+            )
+            .expect_err("mismatched base artifact id must reject");
+
+        assert!(err.contains("base_artifact_id"));
+        assert!(err.contains("artifact:base"));
+        assert!(err.contains("artifact:other"));
     }
 }

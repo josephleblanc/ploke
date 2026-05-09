@@ -1,0 +1,11 @@
+[package]
+name = "ploke-tree-browser"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+description = "Renderer-neutral playback models for browsing Ploke run trees"
+
+[dependencies]
+ploke-records = { workspace = true }
+ploke-tree = { workspace = true }
+serde = { workspace = true, features = ["derive"] }

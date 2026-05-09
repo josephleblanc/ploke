@@ -801,31 +801,58 @@ requested_tui_surface_child_rejects_missing_generator_surface_provenance
 requested_tui_surface_child_rejects_mismatched_generator_surface_provenance
 ```
 
-7.5.1 is partially implemented but remains open. The local request-policy
-receipt carrier exists and has stable hash tests:
+7.5.1 is now closed for the current live-path proof shape. The request-policy
+receipt carrier binds explicit client-policy/proposal evidence to the live 7.6
+proposal shape without claiming deterministic replay or provider-side
+completeness:
 
 ```text
 request_policy_receipt_hash_is_stable_for_equivalent_effective_provider_policy
 request_policy_receipt_hash_changes_when_effective_policy_changes
 requested_tui_surface_child_rejects_router_backed_proposal_producer
+router_receipt_rejects_unset_payload_hashes_for_admission
+router_receipt_rejects_mismatched_run_binding_for_admission
+router_proposal_producer_rejects_mismatched_base_artifact_id
+live_tui_router_staged_proposal_lowers_to_checked_artifact_delta
 ```
 
-What remains for 7.5.1:
+The current receipt proves:
 
 ```text
 parent Artifact + Router config/defaults + EditObjective
-  -> live proposal-producing Router request builder
-  -> complete effective request-policy receipt
-  -> Router-backed proposal admission rejects missing/incomplete/mismatched receipts
+  -> live 7.6 proposal id/run id shape
+  -> explicit client-policy receipt
+  -> explicit PayloadHash::{Known, Unknown(reason)}
+  -> Router-backed proposal admission rejects missing/incomplete/mismatched
+     proposal/run/base-artifact binding
 ```
 
-Do not implement the real `ploke-tui` adapter yet. Do not move authority into
-`Harness`; it remains executor-only. The next blocker before
-`bounded-edit-surface-tui-adapter (7.6)` is:
+What remains is no longer the current 7.5.1 proof. It is deferred hardening
+tracked as `bounded-edit-surface-outbound-request-capture`:
 
 ```text
-bounded-edit-surface-request-policy-receipt (7.5.1)
+actual serialized outbound request digest
+normalized response digest
+tool schema digest
+provider route/metadata where available, or explicit unknowns
 ```
+
+Do not add a mock Router detour for this hardening. Live API tests are
+explicitly allowed and expected, gated by the repo's live-test controls.
+
+7.6 first live adapter slice is closed:
+
+```text
+live ploke-tui TestRuntime + OpenRouter x-ai/grok-4-fast / xai
+  -> real model/tool loop stages apply_code_edit proposal
+  -> staged WriteSnippetData lowers into eval touches
+  -> eval Grant::check
+  -> checked ArtifactDelta evidence
+```
+
+The live test intentionally records explicit current client-policy/proposal
+binding evidence. It must not be described as complete outbound request,
+tool-schema, provider-route, or deterministic replay coverage.
 
 ## Suggested Sub-Agent Pattern
 
@@ -837,28 +864,27 @@ Good next scout prompt:
 Read docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md
 and docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md.
 
-Task: bounded-edit-surface-request-policy-receipt (7.5.1).
+Task: bounded-edit-surface-mini-run (7.7).
 
-Inspect the next Router-backed provenance splice:
-  effective request-policy receipt
-  proposal admission
-  candidate artifact evidence
+Inspect how to connect the now-proven live TUI adapter evidence into the
+smallest Prototype 1 trampoline proof:
+  live bounded objective
+  checked TUI proposal / ArtifactDelta evidence
+  child materialization
+  child evaluation
+  History-backed selection visibility
 
-Find the smallest boundary where Router-backed proposals become admissible only
-with complete request-policy receipts. 7.5 already proves the narrow downstream
-child-plan acceptance splice. 7.5.2 already proves bounded generator-surface
-provenance in the deterministic/non-router path.
-
+Do not implement mock Router. Do not claim complete 7.5.1 replay receipts.
 Return exact files, line ranges, test names, and the smallest A -> B* -> C'
-splice test to add. Keep Harness executor-only.
+splice test or command to add.
 ```
 
 Useful sidecar scout, if needed:
 
 ```text
-Inspect edit_surface graph/surface/harness modules and propose the smallest
-type-level patch to represent R/W/F, Qr/Qw, and CheckedProposal without broad
-refactors. Return exact files and tests.
+Inspect the live request-policy path and identify where the partial client
+policy receipt could be bound to the actual outbound Router request without
+mocking Router. Return exact files and a deferred 7.5.1 patch plan only.
 ```
 
 Avoid asking agents to reread all evalnomicon docs. Point them to this handoff
@@ -875,6 +901,10 @@ cargo test -p ploke-eval edit_surface::tests -- --nocapture 2>&1 | tail -n 30
 Recent targeted commands from the 7.5.1/7.5.2 pass:
 
 ```bash
+cargo test -p ploke-eval real_tui_resolver_touch_is_checked_before_adapter_apply 2>&1 | tail -n 80
+cargo test -p ploke-eval tui_bounds_touches_requires_one_target_per_write 2>&1 | tail -n 60
+cargo test -p ploke-eval live_tui_router_staged_proposal_lowers_to_checked_artifact_delta 2>&1 | tail -n 100
+PLOKE_RUN_LIVE_TESTS=1 cargo test -p ploke-eval live_tui_router_staged_proposal_lowers_to_checked_artifact_delta -- --nocapture 2>&1 | tail -n 100
 cargo test -p ploke-eval request_policy_receipt_hash 2>&1 | tail -n 20
 cargo test -p ploke-eval edit_surface_bridge_rejects_mutated_generator_surface_provenance 2>&1 | tail -n 20
 cargo test -p ploke-eval requested_tui_surface_child_rejects_router_backed_proposal_producer 2>&1 | tail -n 20

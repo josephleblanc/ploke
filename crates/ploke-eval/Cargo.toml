@@ -21,6 +21,7 @@ ploke-core = { workspace = true }
 ploke-llm = { path = "../ploke-llm" }
 ploke-protocol = { workspace = true }
 ploke-records = { workspace = true }
+ploke-tree = { workspace = true }
 ploke-tui = { path = "../ploke-tui", features = ["test_harness"] }
 tracing = {workspace = true}
 tracing-appender = "0.2"
@@ -39,10 +40,11 @@ syn_parser = { workspace = true }
 ploke-error = { workspace = true }
 
 [features]
-default = ["convert_keyword_2015"]
+default = ["convert_keyword_2015", "live_api_tests"]
 convert_keyword_2015 = ["ploke-tui/convert_keyword_2015"]
 qwen_reasoning_fix = ["ploke-llm/qwen_reasoning_fix"]
 demo = ["ploke-tui/demo"]
+live_api_tests = ["ploke-tui/live_api_tests", "ploke-llm/live_api_tests"]
 
 [[bin]]
 name = "ploke-eval"

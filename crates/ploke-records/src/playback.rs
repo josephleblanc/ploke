@@ -1,6 +1,9 @@
 use std::marker::PhantomData;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EvidenceStrength {
     Projection,
     TypedRecord,
@@ -18,6 +21,9 @@ pub trait PlaybackGranularity {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Coarse;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Fine;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CoarseStep {
     pub id: String,
@@ -30,9 +36,56 @@ pub struct CoarseStepRef<'a> {
     pub evidence: EvidenceStrength,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FineStepKind {
+    ParentStarted,
+    EvaluationRecorded,
+    CandidateConsidered,
+    SuccessorSelected,
+    HistoryEntryAdmitted,
+    HistoryBlockSealed,
+    SuccessorReadyAck,
+    SuccessorCompletion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct FineOrder {
+    pub block_height: u64,
+    pub phase_rank: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FineStep {
+    pub id: String,
+    pub kind: FineStepKind,
+    pub evidence: EvidenceStrength,
+    pub order: FineOrder,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FineStepRef<'a> {
+    pub id: String,
+    pub kind: FineStepKind,
+    pub evidence: EvidenceStrength,
+    pub order: FineOrder,
+    pub label: Option<&'a str>,
+}
+
 impl PlaybackGranularity for Coarse {
     type Step = CoarseStep;
     type StepRef<'a> = CoarseStepRef<'a>;
+}
+
+impl PlaybackGranularity for Fine {
+    type Step = FineStep;
+    type StepRef<'a> = FineStepRef<'a>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,7 +188,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{CoarseStep, CoarseStepRef, EvidenceStrength, RunPlayback, RunPlaybackRef};
+    use super::{
+        CoarseStep, CoarseStepRef, EvidenceStrength, FineOrder, FineStep, FineStepKind,
+        FineStepRef, RunPlayback, RunPlaybackRef,
+    };
 
     #[test]
     fn run_playback_owned_iter_and_into_iter() {
@@ -179,5 +235,50 @@ mod tests {
 
         let by_ref_ids: Vec<&str> = (&playback).into_iter().map(|step| step.id).collect();
         assert_eq!(by_ref_ids, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn run_playback_fine_iterates_ordered_steps() {
+        let order = FineOrder {
+            block_height: 0,
+            phase_rank: 30,
+            entry_index: Some(0),
+            candidate_index: None,
+        };
+        let playback = RunPlayback::<super::Fine>::new(vec![FineStep {
+            id: "entry:a".to_string(),
+            kind: FineStepKind::HistoryEntryAdmitted,
+            evidence: EvidenceStrength::AdmittedHistory,
+            order,
+            label: Some("entry admitted".to_string()),
+        }]);
+
+        let step = playback.iter().next().expect("fine step");
+        assert_eq!(step.id, "entry:a");
+        assert_eq!(step.kind, FineStepKind::HistoryEntryAdmitted);
+        assert_eq!(step.order, order);
+    }
+
+    #[test]
+    fn run_playback_ref_fine_iterates_borrowed_steps() {
+        let order = FineOrder {
+            block_height: 1,
+            phase_rank: 60,
+            entry_index: None,
+            candidate_index: None,
+        };
+        let steps = [FineStepRef {
+            id: "block:hash-1".to_owned(),
+            kind: FineStepKind::HistoryBlockSealed,
+            evidence: EvidenceStrength::SealedHistory,
+            order,
+            label: Some("sealed"),
+        }];
+        let playback = RunPlaybackRef::<super::Fine>::new(&steps);
+
+        let step = playback.iter().next().expect("fine ref step");
+        assert_eq!(step.id, "block:hash-1");
+        assert_eq!(step.kind, FineStepKind::HistoryBlockSealed);
+        assert_eq!(step.order, order);
     }
 }

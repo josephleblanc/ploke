@@ -27,6 +27,7 @@ use crate::{
         Depth, HistoryCommand, HistorySubcommand, InspectOutputFormat,
         Prototype1CandidateGenerator, Prototype1ChildEvidenceCommand,
         Prototype1ChildScheduleMode as CliChildScheduleMode, Prototype1EditSurface,
+        Prototype1HistoryPlaybackCommand, Prototype1HistoryPlaybackGranularity,
         Prototype1HistoryPreviewCommand, Prototype1LoopCommand, Prototype1LoopStopAfter,
         Prototype1MetricsCommand, Prototype1MonitorPeekCommand, Prototype1MonitorTimingCommand,
         Prototype1MonitorWatchCommand, Prototype1ScoreCommand, Prototype1SelectionShowCommand,
@@ -1958,6 +1959,9 @@ impl HistoryCommand {
             HistorySubcommand::Preview(command) => {
                 run_history_preview(&campaign_id, &manifest_path, &command)
             }
+            HistorySubcommand::Playback(command) => {
+                run_history_playback(&campaign_id, &manifest_path, &command)
+            }
         }
     }
 }
@@ -2071,6 +2075,27 @@ fn run_history_preview(
     }
 
     Ok(())
+}
+
+fn run_history_playback(
+    campaign_id: &str,
+    manifest_path: &Path,
+    command: &Prototype1HistoryPlaybackCommand,
+) -> Result<(), PrepareError> {
+    let granularity = match command.granularity {
+        Prototype1HistoryPlaybackGranularity::Coarse => {
+            crate::cli::prototype1_state::history_playback::PlaybackGranularity::Coarse
+        }
+        Prototype1HistoryPlaybackGranularity::Fine => {
+            crate::cli::prototype1_state::history_playback::PlaybackGranularity::Fine
+        }
+    };
+    crate::cli::prototype1_state::history_playback::run(
+        campaign_id,
+        manifest_path,
+        command.format,
+        granularity,
+    )
 }
 
 struct PreviewSlice {
@@ -9622,6 +9647,11 @@ mod tests {
                                 target_metric: "invalid_edit_surface_candidates".to_string(),
                                 writable_intent: "semantic_resolution".to_string(),
                             },
+                        proposal:
+                            crate::cli::prototype1_state::edit_surface::request_policy::ProposalBinding {
+                                proposal_id: surface.proposal_id.clone(),
+                                run_id: surface.run_id.clone(),
+                            },
                         router: "openrouter".to_string(),
                         model:
                             crate::cli::prototype1_state::edit_surface::request_policy::Effective {
@@ -9651,6 +9681,16 @@ mod tests {
                         parameters:
                             crate::cli::prototype1_state::edit_surface::request_policy::ParameterPolicy::default(),
                         provider: None,
+                        request_payload_hash: Some(
+                            crate::cli::prototype1_state::edit_surface::request_policy::PayloadHash::unknown(
+                                "deterministic path does not capture router request payload",
+                            ),
+                        ),
+                        response_payload_hash: Some(
+                            crate::cli::prototype1_state::edit_surface::request_policy::PayloadHash::unknown(
+                                "deterministic path does not capture router response payload",
+                            ),
+                        ),
                         client_policy_hash: "not-checked-on-deterministic-path".to_string(),
                     },
             };

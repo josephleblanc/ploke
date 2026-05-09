@@ -16,6 +16,7 @@ mod playback;
 pub use playback::{
     CoarseHistorySpine, CoarseHistoryStep, CoarseHistoryWarning, build_coarse_history_spine,
     coarse_run_playback_from_sealed_history, coarse_run_playback_ref_steps_from_sealed_history,
+    fine_run_playback_from_sealed_history, fine_run_playback_ref_steps_from_sealed_history,
     project_coarse_history_spine,
 };
 
@@ -338,6 +339,16 @@ impl FsRunStore {
         Ok(blocks)
     }
 
+    pub fn load_transition_journal(&self) -> Result<TransitionJournal, FsRunStoreError> {
+        let path = self.run_root.join("transition-journal.jsonl");
+        if !path.is_file() {
+            return Ok(TransitionJournal::default());
+        }
+
+        let entries = self.read_jsonl_records::<JournalEntry>(&path)?;
+        Ok(TransitionJournal { entries })
+    }
+
     fn load_passive_evidence(&self) -> Result<PassiveEvidence, FsRunStoreError> {
         Ok(PassiveEvidence {
             branch_registry: self.load_branch_registry_evidence()?,
@@ -570,6 +581,40 @@ impl FsRunStore {
 
         Ok(evidence)
     }
+
+    fn read_jsonl_records<T>(&self, path: &Path) -> Result<Vec<JsonlRecord<T>>, FsRunStoreError>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        let file = fs::File::open(path).map_err(|source| FsRunStoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let mut records = Vec::new();
+
+        for (line_number, line) in io::BufReader::new(file).lines().enumerate() {
+            let line = line.map_err(|source| FsRunStoreError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let record =
+                serde_json::from_str::<T>(&line).map_err(|source| FsRunStoreError::JsonLine {
+                    path: path.to_path_buf(),
+                    line_number: line_number + 1,
+                    source,
+                })?;
+            records.push(JsonlRecord {
+                line_number: line_number + 1,
+                record,
+            });
+        }
+
+        Ok(records)
+    }
 }
 
 #[derive(Debug)]
@@ -580,6 +625,11 @@ pub enum FsRunStoreError {
     },
     Json {
         path: PathBuf,
+        source: serde_json::Error,
+    },
+    JsonLine {
+        path: PathBuf,
+        line_number: usize,
         source: serde_json::Error,
     },
 }
@@ -593,6 +643,18 @@ impl fmt::Display for FsRunStoreError {
             Self::Json { path, source } => {
                 write!(formatter, "failed to parse {}: {source}", path.display())
             }
+            Self::JsonLine {
+                path,
+                line_number,
+                source,
+            } => {
+                write!(
+                    formatter,
+                    "failed to parse {} line {}: {source}",
+                    path.display(),
+                    line_number
+                )
+            }
         }
     }
 }
@@ -602,6 +664,7 @@ impl Error for FsRunStoreError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Json { source, .. } => Some(source),
+            Self::JsonLine { source, .. } => Some(source),
         }
     }
 }
@@ -865,6 +928,33 @@ pub struct PassiveEvidence {
     pub evaluations: Option<EvaluationEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol_artifacts: Option<ProtocolArtifactsEvidence>,
+}
+
+/// Typed transition journal loaded in append order from `transition-journal.jsonl`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TransitionJournal {
+    pub entries: Vec<JsonlRecord<JournalEntry>>,
+}
+
+impl TransitionJournal {
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, JsonlRecord<JournalEntry>> {
+        self.entries.iter()
+    }
+}
+
+/// One parsed JSONL record with its source line preserved.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JsonlRecord<T> {
+    pub line_number: usize,
+    pub record: T,
 }
 
 /// Counts from a passive Prototype 1 branch registry.
@@ -1258,7 +1348,7 @@ mod tests {
         HistoryStateRoot, InstanceId, LineageId, RecordedAt, RuntimeId, SchedulerNodeId,
         SourceStateId,
     };
-    use ploke_records::playback::{EvidenceStrength, RunPlaybackRef};
+    use ploke_records::playback::{EvidenceStrength, FineStepKind, RunPlaybackRef};
     use ploke_records::selection::{Decision, Outcome};
 
     use super::*;
@@ -1521,7 +1611,7 @@ mod tests {
                 .all(|step| step.evidence == EvidenceStrength::SealedHistory)
         );
 
-        let ref_blocks = [block_two, block_zero];
+        let ref_blocks = [block_two.clone(), block_zero.clone()];
         let playback_ref_steps = coarse_run_playback_ref_steps_from_sealed_history(&ref_blocks);
         let playback_ref =
             RunPlaybackRef::<ploke_records::playback::Coarse>::new(playback_ref_steps.as_slice());
@@ -1531,6 +1621,47 @@ mod tests {
             playback_ref
                 .into_iter()
                 .all(|step| step.evidence == EvidenceStrength::SealedHistory)
+        );
+
+        let fine = fine_run_playback_from_sealed_history(&[block_zero.clone(), block_two.clone()]);
+        let kinds = fine.iter().map(|step| step.kind).collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                FineStepKind::CandidateConsidered,
+                FineStepKind::CandidateConsidered,
+                FineStepKind::SuccessorSelected,
+                FineStepKind::HistoryEntryAdmitted,
+                FineStepKind::HistoryBlockSealed,
+                FineStepKind::HistoryBlockSealed,
+            ]
+        );
+        assert!(
+            fine.iter()
+                .all(|step| step.evidence >= EvidenceStrength::AdmittedHistory)
+        );
+        assert!(
+            fine.iter()
+                .map(|step| step.order)
+                .collect::<Vec<_>>()
+                .windows(2)
+                .all(|pair| pair[0] <= pair[1]),
+            "fine playback must preserve causal order keys"
+        );
+
+        let fine_ref_steps = fine_run_playback_ref_steps_from_sealed_history(&ref_blocks);
+        let fine_ref =
+            RunPlaybackRef::<ploke_records::playback::Fine>::new(fine_ref_steps.as_slice());
+        assert_eq!(
+            fine_ref.iter().map(|step| step.kind).collect::<Vec<_>>(),
+            kinds
+        );
+        assert_eq!(
+            fine_ref
+                .iter()
+                .map(|step| step.id.as_str())
+                .collect::<Vec<_>>(),
+            fine.iter().map(|step| step.id.as_str()).collect::<Vec<_>>()
         );
     }
 
@@ -1740,6 +1871,67 @@ mod tests {
         );
         assert!(forest.passive_evidence.protocol_artifacts.is_none());
         assert_no_sealed_history_authority(&forest);
+
+        fs::remove_dir_all(root).expect("remove temp run");
+    }
+
+    #[test]
+    fn fs_run_store_loads_typed_transition_journal_in_append_order() {
+        let root = temp_run_root("typed-journal");
+        fs::create_dir_all(&root).expect("create run root");
+        fs::write(
+            root.join("transition-journal.jsonl"),
+            format!("{}\n\n{}\n", minimal_journal_line(), minimal_journal_line()),
+        )
+        .expect("write journal");
+
+        let journal = FsRunStore::new(&root)
+            .load_transition_journal()
+            .expect("load typed transition journal");
+
+        assert_eq!(journal.len(), 2);
+        assert_eq!(
+            journal
+                .iter()
+                .map(|entry| entry.line_number)
+                .collect::<Vec<_>>(),
+            vec![1, 3]
+        );
+        assert!(matches!(
+            journal.entries[0].record,
+            JournalEntry::Resource(_)
+        ));
+        assert!(matches!(
+            journal.entries[1].record,
+            JournalEntry::Resource(_)
+        ));
+
+        fs::remove_dir_all(root).expect("remove temp run");
+    }
+
+    #[test]
+    fn typed_transition_journal_reports_bad_source_line() {
+        let root = temp_run_root("typed-journal-error");
+        fs::create_dir_all(&root).expect("create run root");
+        fs::write(
+            root.join("transition-journal.jsonl"),
+            format!("{}\nnot-json\n", minimal_journal_line()),
+        )
+        .expect("write journal");
+
+        let err = FsRunStore::new(&root)
+            .load_transition_journal()
+            .expect_err("bad journal line should fail typed loading");
+
+        match err {
+            FsRunStoreError::JsonLine {
+                path, line_number, ..
+            } => {
+                assert_eq!(path, root.join("transition-journal.jsonl"));
+                assert_eq!(line_number, 2);
+            }
+            other => panic!("expected JsonLine error, got {other:?}"),
+        }
 
         fs::remove_dir_all(root).expect("remove temp run");
     }
@@ -2016,6 +2208,44 @@ mod tests {
         assert!(
             spine.warnings.is_empty(),
             "known fixture coarse history playback should not warn when sealed blocks link and selection payloads are present"
+        );
+
+        let fine = fine_run_playback_from_sealed_history(&blocks);
+        let fine_steps = fine.iter().collect::<Vec<_>>();
+        let candidate_steps = fine_steps
+            .iter()
+            .filter(|step| step.kind == FineStepKind::CandidateConsidered)
+            .count();
+        let selected_steps = fine_steps
+            .iter()
+            .filter(|step| step.kind == FineStepKind::SuccessorSelected)
+            .count();
+        let admitted_steps = fine_steps
+            .iter()
+            .filter(|step| step.kind == FineStepKind::HistoryEntryAdmitted)
+            .count();
+        let sealed_steps = fine_steps
+            .iter()
+            .filter(|step| step.kind == FineStepKind::HistoryBlockSealed)
+            .count();
+
+        println!(
+            "fine_history steps={} candidates={} selected={} admitted={} sealed={}",
+            fine_steps.len(),
+            candidate_steps,
+            selected_steps,
+            admitted_steps,
+            sealed_steps
+        );
+        assert_eq!(candidate_steps, 270);
+        assert_eq!(selected_steps, 12);
+        assert_eq!(admitted_steps, 12);
+        assert_eq!(sealed_steps, 12);
+        assert!(
+            fine_steps
+                .windows(2)
+                .all(|pair| pair[0].order <= pair[1].order),
+            "fine playback must preserve causal order keys"
         );
     }
 

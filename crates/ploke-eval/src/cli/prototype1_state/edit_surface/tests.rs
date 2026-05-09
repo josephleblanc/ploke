@@ -1,15 +1,19 @@
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use ploke_core::{EmbeddingData, TrackingHash};
 use ploke_db::NodeType;
+use ploke_llm::{ModelId, ProviderKey};
 use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db, workspace_root};
+use tokio::sync::oneshot;
+use tokio::time::{Duration, Instant, sleep, timeout};
 use uuid::Uuid;
 
 use crate::cli::prototype1_state::history::EvidenceRef;
 use crate::loop_graph::ArtifactId;
 
-use super::{diagnosis, graph, harness, surface, tui};
+use super::{diagnosis, graph, harness, request_policy, surface, tui};
 use graph::View;
 use harness::Harness;
 
@@ -88,6 +92,26 @@ fn broad_objective_spec(summary: &str) -> surface::ObjectiveSpec {
         surface::SuccessCriterion::ProtectedCoreUntouched,
     ])
     .with_requested_candidates(2)
+}
+
+#[cfg(feature = "live_api_tests")]
+fn live_openrouter_env_or_skip(test_name: &str) -> Option<ploke_tui::test_harness::OpenRouterEnv> {
+    let env = ploke_tui::test_harness::openrouter_env();
+    if env.is_none() {
+        let strict_live = std::env::var("PLOKE_RUN_LIVE_TESTS")
+            .ok()
+            .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"));
+        let message = format!(
+            "skipping {test_name}: no OpenRouter credentials found through ploke-tui \
+             test_harness::openrouter_env() (OPENROUTER_API_KEY process env or .env); \
+             live 7.6 Router path was not exercised"
+        );
+        if strict_live {
+            panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
+        }
+        eprintln!("{message}");
+    }
+    env
 }
 
 #[test]
@@ -1498,4 +1522,342 @@ fn tui_bounds_touches_requires_one_target_per_write() {
             writes: 1
         }
     ));
+}
+
+#[cfg(feature = "live_api_tests")]
+#[tokio::test(flavor = "multi_thread")]
+async fn live_tui_router_staged_proposal_lowers_to_checked_artifact_delta() {
+    use ploke_tui::AppEvent;
+    use ploke_tui::app::commands::harness::TestAppAccessor as _;
+    use ploke_tui::app_state::commands::StateCommand;
+    use ploke_tui::app_state::events::SystemEvent;
+
+    const TEST_NAME: &str = "live_tui_router_staged_proposal_lowers_to_checked_artifact_delta";
+    const MODEL_ID: &str = "x-ai/grok-4-fast";
+    const PROVIDER: &str = "xai";
+
+    if live_openrouter_env_or_skip(TEST_NAME).is_none() {
+        return;
+    }
+
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+    let fixture_root = workspace_root().join("tests/fixture_crates/fixture_nodes");
+    let runtime = ploke_tui::app::commands::harness::TestRuntime::new(&fixture_db)
+        .spawn_file_manager()
+        .spawn_state_manager()
+        .spawn_event_bus()
+        .spawn_llm_manager()
+        .spawn_observability();
+    runtime
+        .setup_loaded_standalone_crate(fixture_root.clone())
+        .await;
+    let state = runtime.state_arc();
+    let model_id = ModelId::from_str(MODEL_ID).expect("live model id");
+    let provider_key = ProviderKey::new(PROVIDER).expect("provider key");
+    {
+        let mut cfg = state.config.write().await;
+        cfg.active_model = model_id.clone();
+        cfg.model_registry
+            .select_model_provider(&model_id, Some(&provider_key));
+        cfg.llm_timeout_secs = 90;
+        cfg.chat_policy.tool_call_timeout_secs = 30;
+        cfg.chat_policy.tool_call_chain_limit = 4;
+        cfg.chat_policy.error_retry_limit = 1;
+        cfg.chat_policy.length_retry_limit = 0;
+    }
+
+    let events = runtime.events_builder().build_all();
+    let mut debug_rx = events
+        .app_actor_events
+        .debug_string_rx
+        .expect("debug receiver");
+    let mut realtime_rx = events.event_bus_events.realtime_tx_rx;
+    let mut background_rx = events.event_bus_events.background_tx_rx;
+    let app = runtime.into_app_with_state_pwd(fixture_root.clone()).await;
+    let cmd_tx = app.state_cmd_tx();
+
+    let expected_path = fixture_root.join("src/structs.rs");
+    let mut expected_nodes = ploke_db::helpers::graph_resolve_exact(
+        &fixture_db,
+        NodeType::Struct.relation_str(),
+        &expected_path,
+        &["crate".to_string(), "structs".to_string()],
+        "SampleStruct",
+    )
+    .expect("fixture struct resolves");
+    assert_eq!(expected_nodes.len(), 1, "fixture canonical must be unique");
+    let expected_node = expected_nodes.remove(0);
+    let expected_hash = href(&expected_node.file_tracking_hash.0.to_string());
+    let expected_target = graph::Target::new(expected_path.clone(), "SampleStruct");
+
+    let prompt = r#"Call the apply_code_edit tool exactly once. Do not call any other tool. Do not answer in prose before the tool call.
+Use exactly this JSON payload:
+{"edits":[{"file":"src/structs.rs","canon":"crate::structs::SampleStruct","node_type":"struct","code":"pub struct SampleStruct {\n    pub field: String,\n    pub live_router_7_6: bool,\n}"}],"confidence":0.99}"#;
+
+    let user_message_id = Uuid::new_v4();
+    let (completion_tx, completion_rx) = oneshot::channel();
+    let (scan_tx, scan_rx) = oneshot::channel();
+    cmd_tx
+        .send(StateCommand::AddUserMessage {
+            content: prompt.to_string(),
+            new_user_msg_id: user_message_id,
+            completion_tx,
+        })
+        .await
+        .expect("send user message");
+    cmd_tx
+        .send(StateCommand::ScanForChange { scan_tx })
+        .await
+        .expect("send scan request");
+    cmd_tx
+        .send(StateCommand::EmbedMessage {
+            new_msg_id: user_message_id,
+            completion_rx,
+            scan_rx,
+        })
+        .await
+        .expect("send embed request");
+
+    let mut saw_tool_request = false;
+    let mut completed_payload = None;
+    let mut terminal = None;
+    let mut terminal_seen_at = None;
+    let staged = timeout(Duration::from_secs(120), async {
+        let mut last_event = String::new();
+        loop {
+            if let Some(proposal) = {
+                let proposals = state.proposals.read().await;
+                proposals.values().next().cloned()
+            } {
+                return proposal;
+            }
+
+            if terminal_seen_at
+                .is_some_and(|seen_at: Instant| seen_at.elapsed() >= Duration::from_secs(1))
+            {
+                panic!(
+                    "live turn finished without staging proposal; terminal={terminal:?}; last_event={last_event}"
+                );
+            }
+
+            tokio::select! {
+                debug = debug_rx.recv() => {
+                    if let Some(debug) = debug {
+                        last_event = debug.as_str().to_string();
+                    }
+                }
+                realtime = realtime_rx.recv() => {
+                    match realtime {
+                        Ok(AppEvent::System(SystemEvent::ToolCallRequested { tool_call, .. })) => {
+                            saw_tool_request = true;
+                            last_event = format!("tool requested: {:?}", tool_call.function.name);
+                        }
+                        Ok(AppEvent::System(SystemEvent::ToolCallCompleted { content, .. })) => {
+                            completed_payload = Some(content.clone());
+                            last_event = format!("tool completed: {content}");
+                        }
+                        Ok(AppEvent::System(SystemEvent::ToolCallFailed { error, .. })) => {
+                            last_event = format!("tool failed: {error}");
+                        }
+                        Ok(AppEvent::System(SystemEvent::ChatTurnFinished { outcome, summary, .. })) => {
+                            terminal = Some((outcome, summary));
+                            terminal_seen_at = Some(Instant::now());
+                        }
+                        Ok(other) => {
+                            last_event = format!("{other:?}");
+                        }
+                        Err(_) => {}
+                    }
+                }
+                background = background_rx.recv() => {
+                    if let Ok(event) = background {
+                        last_event = format!("{event:?}");
+                    }
+                }
+                _ = sleep(Duration::from_millis(50)) => {}
+            }
+        }
+    })
+    .await
+    .expect("live turn should stage an edit proposal");
+
+    let post_stage_deadline = Instant::now() + Duration::from_secs(30);
+    while terminal.is_none() && Instant::now() < post_stage_deadline {
+        tokio::select! {
+            debug = debug_rx.recv() => {
+                let _ = debug;
+            }
+            realtime = realtime_rx.recv() => {
+                match realtime {
+                    Ok(AppEvent::System(SystemEvent::ToolCallRequested { .. })) => {
+                        saw_tool_request = true;
+                    }
+                    Ok(AppEvent::System(SystemEvent::ToolCallCompleted { content, .. })) => {
+                        completed_payload = Some(content);
+                    }
+                    Ok(AppEvent::System(SystemEvent::ChatTurnFinished { outcome, summary, .. })) => {
+                        terminal = Some((outcome, summary));
+                    }
+                    Ok(_) | Err(_) => {}
+                }
+            }
+            background = background_rx.recv() => {
+                let _ = background;
+            }
+            _ = sleep(Duration::from_millis(50)) => {}
+        }
+    }
+
+    assert!(saw_tool_request, "live Router turn did not request a tool");
+    assert!(
+        completed_payload
+            .as_deref()
+            .is_some_and(|payload| payload.contains("\"staged\":1")),
+        "expected staged apply_code_edit completion, got {completed_payload:?}"
+    );
+    assert!(
+        terminal.is_some(),
+        "live turn did not reach terminal event after staging"
+    );
+    assert!(staged.is_semantic, "live proposal must be semantic");
+    assert_eq!(staged.edits.len(), 1, "expected one live staged edit");
+    let write = &staged.edits[0];
+    assert_eq!(write.file_path, expected_path);
+    assert_eq!(write.expected_file_hash, expected_node.file_tracking_hash);
+    assert_eq!(write.start_byte, expected_node.start_byte);
+    assert_eq!(write.end_byte, expected_node.end_byte);
+
+    let artifact = surface::Artifact::new(
+        aref("artifact:live-base", "tree:live-base"),
+        [(expected_path.clone(), expected_hash.clone())],
+    );
+    let graph = graph::Mock::new(
+        vec![graph::Node::new(
+            expected_target.clone(),
+            expected_path.clone(),
+            expected_node.start_byte,
+            expected_node.end_byte,
+        )],
+        [],
+    );
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let graph_bounds = graph
+        .bounds(
+            &graph_projection,
+            &[graph::Rule::Include(expected_target.clone())],
+        )
+        .expect("derive bounds");
+    let projection = tui_projection(&graph_projection);
+    let bounds = tui::Bounds::new(projection.clone(), graph_bounds.clone()).expect("bounds");
+    let resolved = bounds
+        .touches(
+            &artifact,
+            std::slice::from_ref(&expected_target),
+            &staged.edits,
+        )
+        .expect("eval lowers live TUI writes into checked touches");
+    let touches = resolved.into_vec();
+    let grant = surface::Grant::new(
+        artifact.reference().clone(),
+        graph_bounds,
+        surface::Area::new(touches.iter().map(|touch| touch.span().clone())),
+    )
+    .expect("grant");
+
+    let objective = surface::EditObjective::new(
+        broad_objective_spec("live ploke-tui semantic edit proposal through Router"),
+        [],
+        [EvidenceRef::new("history:context:live-router-7-6")],
+    );
+    let request_core = ploke_llm::request::ChatCompReqCore::default().with_model(model_id.clone());
+    let default_core = ploke_llm::request::ChatCompReqCore::default();
+    let provider_preferences = {
+        let cfg = state.config.read().await;
+        cfg.model_registry
+            .models
+            .get(&model_id.key)
+            .and_then(|prefs| prefs.selected_provider_preferences())
+            .expect("selected provider preferences")
+    };
+    let params = ploke_llm::LLMParameters::default();
+    // The live TUI path still lacks full outbound request capture. Bind only
+    // the current client-policy shape plus explicit unknown payload hashes to
+    // the actual staged live proposal identity, without claiming replay or
+    // provider-side completeness.
+    let live_request_policy_receipt = request_policy::Receipt::openrouter(
+        artifact.reference().id().clone(),
+        &objective,
+        &request_core,
+        &default_core,
+        &params,
+        &params,
+        Some(&provider_preferences),
+    )
+    .bind_proposal(staged.proposal_id.to_string(), "run:live-router-7-6")
+    .with_request_payload_hash(request_policy::PayloadHash::unknown(
+        "live 7.6 path does not expose serialized outbound request payload",
+    ))
+    .with_response_payload_hash(request_policy::PayloadHash::unknown(
+        "live 7.6 path does not expose normalized response payload",
+    ));
+    live_request_policy_receipt
+        .verify_current_client_policy_shape()
+        .expect("reconstructed current client-policy shape should be internally consistent");
+    assert_eq!(
+        live_request_policy_receipt.base_artifact_id(),
+        artifact.reference().id(),
+        "live request-policy receipt remains tied to checked base Artifact"
+    );
+    request_policy::ProposalProducer::Router {
+        request_policy: live_request_policy_receipt.clone(),
+    }
+    .verify_complete(
+        artifact.reference().id(),
+        &staged.proposal_id.to_string(),
+        "run:live-router-7-6",
+    )
+    .expect("live Router proposal receipt should admit against the staged proposal");
+    let err = request_policy::ProposalProducer::Router {
+        request_policy: live_request_policy_receipt,
+    }
+    .verify_complete(
+        artifact.reference().id(),
+        "proposal:mismatch",
+        "run:live-router-7-6",
+    )
+    .expect_err("mismatched live proposal binding must reject");
+    assert!(err.contains("does not match admitted proposal"));
+
+    let after = aref("artifact:live-after", "tree:live-after");
+    let proposal = tui::Proposal::stage(tui::Stage {
+        proposal: &staged.proposal_id.to_string(),
+        run: "run:live-router-7-6",
+        base: artifact.reference(),
+        after: after.clone(),
+        projection: &projection,
+        touches: touches.clone(),
+        auto_apply: false,
+    })
+    .expect("stage eval proposal from TUI result");
+    let check = grant.check(proposal.draft()).expect("grant check");
+    let after_hash = href("file:live-after");
+    let reported = tui::Apply::from_results(
+        proposal,
+        check,
+        touches
+            .iter()
+            .map(|touch| tui::Write::applied(touch, after_hash.clone()))
+            .collect(),
+    )
+    .expect("apply evidence is admitted only after check");
+    let after_artifact = surface::Artifact::new(after.clone(), [(expected_path, after_hash)]);
+    let applied = reported
+        .validate(&after_artifact)
+        .expect("validated apply evidence");
+    let delta = applied.delta().expect("applied evidence yields delta");
+
+    assert_eq!(delta.base(), artifact.reference());
+    assert_eq!(delta.after(), &after);
+    assert_eq!(delta.touches(), touches.as_slice());
 }

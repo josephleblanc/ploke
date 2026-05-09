@@ -528,6 +528,8 @@ pub enum HistorySubcommand {
     SelectionShow(Prototype1SelectionShowCommand),
     /// Print a read-only History-shaped preview from current campaign records.
     Preview(Prototype1HistoryPreviewCommand),
+    /// Print read-only playback projected from sealed History blocks.
+    Playback(Prototype1HistoryPlaybackCommand),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
@@ -617,6 +619,22 @@ pub struct Prototype1HistoryPreviewCommand {
     /// Maximum diagnostics to include in the lightweight view.
     #[arg(long, value_name = "N")]
     pub diagnostics: Option<usize>,
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1HistoryPlaybackCommand {
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    #[arg(long, value_enum, default_value_t = Prototype1HistoryPlaybackGranularity::Fine)]
+    pub granularity: Prototype1HistoryPlaybackGranularity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1HistoryPlaybackGranularity {
+    Coarse,
+    Fine,
 }
 
 #[derive(Debug, Parser)]
@@ -12220,6 +12238,8 @@ mod tests {
             "child-evidence",
             "--format",
             "json",
+            "--granularity",
+            "fine",
         ])
         .expect("history child-evidence should parse");
 
@@ -12266,6 +12286,36 @@ mod tests {
                 assert_eq!(preview.entries, Some(3));
                 assert_eq!(preview.diagnostics, Some(2));
                 assert_eq!(preview.entry, Some(1));
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn history_playback_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "history",
+            "playback",
+            "--campaign",
+            "prototype1-campaign",
+            "--format",
+            "json",
+        ])
+        .expect("history playback should parse");
+
+        match parsed.command {
+            Command::History(HistoryCommand {
+                campaign,
+                command: HistorySubcommand::Playback(playback),
+                ..
+            }) => {
+                assert_eq!(campaign.as_deref(), Some("prototype1-campaign"));
+                assert_eq!(playback.format, InspectOutputFormat::Json);
+                assert_eq!(
+                    playback.granularity,
+                    Prototype1HistoryPlaybackGranularity::Fine
+                );
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

@@ -138,6 +138,10 @@ B*: Router-backed harness request construction
 C': complete EffectiveRequestPolicyReceipt with stable client_policy_hash
 ```
 
+For the current live 7.5.1 slice, `PayloadHash::Unknown` is admissible only
+when the client explicitly sets it as the evidence state with a reason. It is
+not a claim that complete replay receipt coverage exists.
+
 Negative counterpart not yet fully covered:
 
 ```text
@@ -968,6 +972,106 @@ with:
 Applied(a', δ) iff apply_a(q) = (a', δ)
 Rejected(reason) iff apply_a(q) is undefined or not total
 ```
+
+### `real_tui_resolver_touch_is_checked_before_adapter_apply`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval real_tui_resolver_touch_is_checked_before_adapter_apply -- --nocapture
+```
+
+Local splice:
+
+```text
+A': independent fixture authority + canonical ApplyCodeEditRequest
+B*: real ploke-tui resolver output lowers to per-write MaterialSpan / Touch
+C': eval Grant::check gates checked ArtifactDelta evidence
+```
+
+Formal meaning:
+
+```text
+Γ_a, g, and valid_a authority are established independently of resolver output
+ρ_a(q) = (Q_r, Q_w) is derived from real resolver evidence
+g ⊢ q ∧ valid_a(q) is required before apply_a(q) = (a', δ)
+```
+
+Why non-trivial:
+
+- Uses real `ploke-tui` semantic resolution, not a mock resolver.
+- Checks resolver output against independently constructed fixture authority
+  rather than letting the resolver define the authority it must satisfy.
+- Preserves plural write structure by requiring one target binding per write.
+
+Residual gap:
+
+- This proves the resolver/check/apply seam, not a live model-generated
+  proposal.
+
+### `live_tui_router_staged_proposal_lowers_to_checked_artifact_delta`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval live_tui_router_staged_proposal_lowers_to_checked_artifact_delta -- --nocapture
+PLOKE_RUN_LIVE_TESTS=1 cargo test -p ploke-eval live_tui_router_staged_proposal_lowers_to_checked_artifact_delta -- --nocapture
+```
+
+Live gate:
+
+```text
+feature: live_api_tests
+credential lookup: ploke_tui::test_harness::openrouter_env()
+strict mode: PLOKE_RUN_LIVE_TESTS=1 requires credentials
+model/provider: x-ai/grok-4-fast / xai
+```
+
+Local splice:
+
+```text
+A': live ploke-tui TestRuntime + bounded fixture objective
+B*: live OpenRouter/ploke-tui model-tool loop stages apply_code_edit proposal
+C': staged WriteSnippetData lowers into eval touches; Grant::check gates
+    checked ArtifactDelta evidence
+```
+
+Formal meaning:
+
+```text
+event e = live model/tool proposal generation
+record rec = staged TUI proposal/write evidence
+ρ_a(q) = (Q_r, Q_w) from staged WriteSnippetData
+g ⊢ q ∧ valid_a(q) is required before apply_a(q) = (a', δ)
+```
+
+Why non-trivial:
+
+- Proves the first live 7.6 adapter path: real Router call, real TUI tool loop,
+  staged semantic edit proposal, eval-owned check, then checked delta evidence.
+- Keeps TUI proposal state as evidence. `ploke-eval` still owns
+  authorization through `Grant::check`.
+- Confirms the preferred direction: live path first, then harden replay
+  receipts against that actual path.
+
+Residual gap:
+
+- The test records only partial/current client-policy receipt evidence. It does
+  not prove complete 7.5.1 outbound request, tool schema, provider route, or
+  replay receipt coverage. Explicit `Unknown` payload hashes remain a deliberate
+  client-side evidence state, not a complete replay claim.
 
 ## Current Formal Additions Needed
 

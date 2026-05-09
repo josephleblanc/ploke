@@ -189,8 +189,7 @@ opaque JSON fields in public records.
 
 ## Stop Conditions For Current Slice
 
-Do not move to UI, egui, WebAssembly, fine-grained journal replay, or scheduler
-context until:
+These are now met for the coarse sealed-History playback spine:
 
 - `RunPlaybackRef`/`RunPlayback` vocabulary compiles;
 - synthetic coarse History test passes;
@@ -198,6 +197,94 @@ context until:
 - `coarse_playback_real_run` confirms the known 12-block fixture shape;
 - warnings are visible and do not reorder playback;
 - no scheduler records are used for ordering.
+
+## 2026-05-09 Progress After Restart
+
+Real-run schema blocker:
+
+- Exact serde path was `entries[*].core.payload.traversal.strategy`.
+- Root cause: writer-side `TraversalEvidence.strategy` serializes as tagged
+  `StrategyKind`, while passive `ploke-records` expected `String`.
+- Fixed in `crates/ploke-records/src/history/payload.rs` with passive
+  `TraversalMetricInputsRecord` and `TraversalStrategyRecord`.
+- Added `serde_path_to_error` as a `ploke-records` dev-dependency.
+
+Coarse playback validation:
+
+- `coarse_playback_real_run` now passes against the known live fixture:
+  `blocks=12`, `steps=12`, `warnings=0`.
+- The prior test assertion requiring nonempty warnings was corrected. This
+  fixture is clean for currently implemented warning classes.
+- Synthetic warning coverage remains in `coarse_history_spine_orders_by_height_preserves_selection_and_emits_warnings`.
+
+Borrowed path:
+
+- `ploke-tree` now exposes
+  `coarse_run_playback_ref_steps_from_sealed_history`.
+- Owned and borrowed coarse playback step IDs both use sealed `block_hash`.
+
+Passive History fidelity:
+
+- `ploke-eval` test
+  `fs_block_store_history_segment_deserializes_as_passive_record` now writes a
+  real selection decision with traversal evidence, deserializes it through
+  `ploke-records`, and asserts nested selection/traversal fields.
+
+Debug projection:
+
+- Added `ploke-eval history playback --format table|json`.
+- CLI dispatch is thin; semantics come from `ploke-tree` sealed History
+  projection, not scheduler/projection records.
+- New module: `crates/ploke-eval/src/cli/prototype1_state/history_playback.rs`.
+
+Front-facing shell:
+
+- Added new renderer-neutral crate `crates/ploke-tree-browser`.
+- It depends on `ploke-tree` and `ploke-records`, not `ploke-eval`.
+- It exposes `PlaybackBrowserModel` and
+  `coarse_history_browser_model(_from_blocks)` as the first UI/WebAssembly
+  boundary without choosing egui/eframe/wasm tooling yet.
+
+Fine playback:
+
+- User chose `Fine` as the next granularity.
+- Added `Fine`, `FineStepKind`, `FineOrder`, `FineStep`, and `FineStepRef` in
+  `crates/ploke-records/src/playback.rs`.
+- Split `crates/ploke-tree/src/playback.rs` into:
+  - `crates/ploke-tree/src/playback/mod.rs`
+  - `crates/ploke-tree/src/playback/coarse.rs`
+  - `crates/ploke-tree/src/playback/fine.rs`
+- Added `fine_run_playback_from_sealed_history` and
+  `fine_run_playback_ref_steps_from_sealed_history`.
+- First Fine projection is sealed-History-derived only:
+  `CandidateConsidered`, `SuccessorSelected`, `HistoryEntryAdmitted`, and
+  `HistoryBlockSealed`.
+- Scheduler-only `ChildPlanned` remains excluded from the authoritative fine
+  stream. Journal/runtime phases are typed but still need a loader/index pass
+  before they can be joined.
+- Live fixture now reports:
+  `fine_history steps=306 candidates=270 selected=12 admitted=12 sealed=12`.
+- `ploke-eval history playback` now accepts `--granularity coarse|fine` and
+  defaults to `fine`.
+- `ploke-tree-browser` now exposes `fine_history_browser_model_from_blocks`.
+
+Latest bounded checks:
+
+```bash
+cargo test -p ploke-records playback 2>&1 | tail -n 80
+cargo test -p ploke-records sealed_block_record_roundtrips_as_passive_data 2>&1 | tail -n 80
+cargo test -p ploke-records traversal_evidence 2>&1 | tail -n 80
+cargo test -p ploke-eval fs_block_store_history_segment_deserializes_as_passive_record 2>&1 | tail -n 80
+cargo test -p ploke-eval history_playback_command_parses 2>&1 | tail -n 80
+cargo test -p ploke-eval table_render_handles_empty_spine 2>&1 | tail -n 80
+cargo test -p ploke-eval table_render_handles_empty_fine_playback 2>&1 | tail -n 80
+cargo test -p ploke-tree coarse_history 2>&1 | tail -n 80
+PLOKE_TREE_RUN_ROOT=/home/brasides/.ploke-eval/campaigns/p1-edit-surface-history-long-20260508-1/prototype1 cargo test -p ploke-tree coarse_playback_real_run -- --ignored --nocapture 2>&1 | tail -n 80
+cargo test -p ploke-tree-browser 2>&1 | tail -n 80
+cargo check -p ploke-eval 2>&1 | tail -n 80
+```
+
+All passed.
 
 ## Dirty Files To Be Aware Of
 
@@ -208,10 +295,24 @@ Playback-thread files currently touched:
 - `docs/active/agents/readme.md`
 - `docs/active/agents/2026-05-09_run-playback-typed-observability-plan.md`
 - `docs/active/agents/2026-05-09_run-playback-coarse-history-handoff.md`
+- `Cargo.lock`
+- `Cargo.toml`
+- `crates/ploke-eval/Cargo.toml`
+- `crates/ploke-eval/src/cli.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/history.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/history_playback.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
 - `crates/ploke-records/src/lib.rs`
+- `crates/ploke-records/src/history/payload.rs`
 - `crates/ploke-records/src/playback.rs`
 - `crates/ploke-tree/src/lib.rs`
 - `crates/ploke-tree/src/playback.rs`
+- `crates/ploke-tree/src/playback/mod.rs`
+- `crates/ploke-tree/src/playback/coarse.rs`
+- `crates/ploke-tree/src/playback/fine.rs`
+- `crates/ploke-tree-browser/Cargo.toml`
+- `crates/ploke-tree-browser/src/lib.rs`
 
 Other dirty files existed from adjacent threads and should not be casually
 rewritten or reverted.

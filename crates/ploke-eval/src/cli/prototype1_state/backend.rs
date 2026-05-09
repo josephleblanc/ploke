@@ -997,7 +997,7 @@ impl GitWorktreeBackend {
         let patch_id =
             text_replacement_patch_id(&target_relpath, &source_content, &proposed_content);
         proposal_producer
-            .verify_complete(&base_artifact_id)
+            .verify_complete(&base_artifact_id, &proposal_id, &run_id)
             .map_err(|detail| BackendError::EditSurfaceCheck { detail })?;
         let expected_generator_surface = self.generator_surface_for_proposed_touches(
             &target_relpath,
