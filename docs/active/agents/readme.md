@@ -25,6 +25,8 @@ The former `2026-05-06-prototype1-*` execution-surface inventory links that appe
 - [`2026-05-09_records-emission-clean-sweep-handoff.md`](2026-05-09_records-emission-clean-sweep-handoff.md) — restart spine for normalizing Prototype 1 persisted record emission around shared `ploke-records` schemas while preserving the clean-sweep rule against legacy projection-control reads.
 - [`2026-05-09_run-playback-coarse-history-handoff.md`](2026-05-09_run-playback-coarse-history-handoff.md) — restart spine for the coarse sealed-History playback slice, including implemented playback vocabulary/projection work and the current real-run `SealedBlockRecord` schema mismatch blocker.
 - [`2026-05-09_run-playback-typed-observability-plan.md`](2026-05-09_run-playback-typed-observability-plan.md) — plan for typed, iterable `RunPlayback` / `RunPlaybackRef` projections that can feed CLI debugging, `ploke-tree`, and a future UI/WebAssembly observability front end.
+- [`2026-05-09_egui-wasm-observability-plan.md`](2026-05-09_egui-wasm-observability-plan.md) — plan for building an interactive egui/WASM frontend. Phases 0-1 done, Phase 2 (egui crate) next.
+- [`2026-05-09_egui-wasm-observability-handoff.md`](2026-05-09_egui-wasm-observability-handoff.md) — cold-restart handoff for the egui/WASM observability thread.
 - [`open-questions.md`](open-questions.md) — agent-to-agent questions (not direct user prompts).
 - [`notable-inconsistencies.md`](notable-inconsistencies.md) — durable inconsistencies worth tracking.
 

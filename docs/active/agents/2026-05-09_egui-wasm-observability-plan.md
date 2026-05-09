@@ -19,7 +19,8 @@ to answer operator questions about Prototype 1 self-improvement loop runs.
   | Passive schemas | `ploke-records` | All record families typed, no public `serde_json::Value` |
   | Playback vocabulary | `ploke-records::playback` | `RunPlayback<G>`, `RunPlaybackRef<'a, G>`, `Coarse`, `Fine`, `EvidenceStrength` |
   | Projection engine | `ploke-tree::playback` | Coarse (by sealed block) and Fine (by entry/candidate) over sealed History |
-  | Renderer-neutral models | `ploke-tree-browser` | `PlaybackBrowserModel` with coarse/fine, serde-serializable |
+  | Renderer-neutral models | `ploke-tree-browser` | `PlaybackBrowserModel` enriched with evaluation/surface/protocol snapshots |
+  | CLI export | `ploke-eval history export-browser-model` | Produces enriched JSON from any campaign |
   | **egui/WASM UI** | — | **does not exist yet** |
 
 ### Overnight Run Data Snapshot (2026-05-09)
@@ -41,18 +42,23 @@ Two runs were launched targeting 20 generations of self-improvement on
 - 15 treatment branch dirs with BurntSushi__ripgrep-2209 instances
 - 1 baseline run with protocol-artifacts
 
-**Playback pipeline verified on run 2:**
-```
-coarse_history blocks=4 steps=4 warnings=0
-block 0 selected candidate:node-52e1449c2e9248d1:plan_index=5 candidates 6 warnings 0
-block 1 selected candidate:node-cf3d3023fe7433b9:plan_index=0 candidates 9 warnings 0
-block 2 selected candidate:node-66b0882c17912ae7:plan_index=0 candidates 12 warnings 0
-block 3 selected candidate:node-66b0882c17912ae7:plan_index=0 candidates 15 warnings 0
+### Enriched Export Verified (Phase 1 output)
+
+```bash
+cargo run -p ploke-eval -- history export-browser-model \
+  --campaign p1-bounded-surface-long-20260509-2 \
+  --output /tmp/browser-model.json
 ```
 
-The pipeline works. Playback is thin — block hashes, candidate counts, and
-selected successor ids — but the spine is solid and the typed records are
-parseable.
+Produces 54 fine steps with:
+- **46 steps with evaluation snapshots** (disposition, tool_calls_total, tool_calls_failed,
+  patch_attempted, patch_apply_state, nonempty_valid_patch, convergence, oracle_eligible,
+  aborted, reasons)
+- **46 steps with surface snapshots** (target_relpath, source_content_hash,
+  proposed_content_hash, source_state_id)
+- **Run summary** (node_count=16, generation_count=3, sealed_block_count=4,
+  evaluation_count=15, evaluations_kept=6, evaluations_rejected=9, journal_entry_count=280)
+- **Protocol snapshots**: not yet populated (need protocol_artifacts_dir wiring)
 
 ## Operator Questions the UI Must Answer
 
@@ -64,145 +70,131 @@ parseable.
 | Is the loop healthy? | History block chain, journal completeness | **Available** |
 | Did the loop exit with expected state or something else? | Terminal journal entry, last block state | **Available** |
 | How many children across how many generations? | Scheduler nodes + History blocks | **Available** |
-| What are the metrics telling us? (mechanical + LLM) | Evaluation payloads, protocol artifacts | **Available but not projected** |
+| What are the metrics telling us? (mechanical + LLM) | Evaluation payloads, protocol artifacts | **Available, now projected** |
 | What is the tree state and active ruler? | Scheduler + History blocks + successor records | **Partially available** |
 | Is the loop improving on metrics? | Trajectory over generations | **Needs aggregation** |
-| Are edits making sense? Is ploke-tui working? | Surface evidence records | **Available but not projected** |
+| Are edits making sense? Is ploke-tui working? | Surface evidence records | **Available, now projected** |
 | What went wrong and where are the logs? | Journal entries, diagnostics, protocol artifacts | **Available but scattered** |
-
-### Trajectory Questions (Aggregation Over Time)
-
-| Question | Status |
-|---|---|
-| Score distributions over generations | Needs joining evaluation payloads onto playback steps |
-| Tool failure probability distributions | Needs protocol artifact aggregation |
-| Timing bottlenecks per phase | **Broken — needs redevelopment on new record infra** |
-| Lineage attribution (which parent caused which improvement) | Needs surface evidence → evaluation score join |
 
 ## Architecture
 
-### Crate Boundary (from plan)
+### Crate Boundary
 
 ```
 ploke-records        passive schemas, playback vocabulary (no FS)
 ploke-tree           load records, join, build RunPlayback projections
-ploke-eval           emit authoritative records (not in WASM)
-ploke-tree-browser   renderer-neutral browser models (serde)
-ploke-tree-egui      egui/eframe app, WASM target (NEW)
+ploke-eval           emit authoritative records; CLI export command
+ploke-tree-browser   renderer-neutral browser models (serde); enrichment joins
+ploke-tree-egui      egui/eframe app, WASM target (NEXT — Phase 2)
 ```
 
-### Data Delivery Model for WASM
+### Data Delivery Model
 
-Three options, in order of implementation:
+**Option 1 (implemented): Static snapshot.** `ploke-eval history export-browser-model`
+produces enriched JSON. The egui app loads it. Works for post-hoc inspection.
 
-1. **Static snapshot (first slice)**: The WASM app loads a pre-serialized
-   `PlaybackBrowserModel` JSON bundle. The bundle is produced by a small CLI
-   command in `ploke-eval` or `ploke-tree` that loads a campaign through
-   `ploke-tree`, enriches the projection, and writes JSON. Simplest path to a
-   working interactive UI.
+**Option 2 (future): Local server + polling.** HTTP server serves JSON endpoints.
+WASM app polls. Enables live-ish updates.
 
-2. **Local server + polling (second slice)**: A small HTTP server serves JSON
-   endpoints backed by `ploke-tree`; the WASM app polls. Enables live-ish
-   updates. The server could be `ploke-eval` itself, emitting updated snapshots
-   as blocks seal.
+**Option 3 (deferred): Full `ploke-tree` in WASM.** Hard — filesystem, async, dep tree.
 
-3. **Full `ploke-tree` in WASM (deferred)**: Compile `ploke-tree` (with
-   `FsRunStore`) to WASM. Hard — filesystem access, async, large dependency
-   tree. Only pursue if static snapshots prove insufficient.
-
-For the first slice, we use option 1: a `ploke-eval export browser-model`
-command that produces a JSON file, and the egui app loads it.
-
-### What Views First
-
-The data wants progressive disclosure. A natural hierarchy:
+### What Views (in priority order)
 
 ```
 Run Dashboard
 ├── Summary bar (run id, status, generation count, total children, elapsed)
-├── Timeline view (coarse/fine steps with scores overlaid)
+├── Timeline view (fine steps with scores overlaid)
 │   └── Expand step → detail panel
 ├── Tree view (parent → children → successor chain)
 │   └── Select node → detail panel
 ├── Detail panel (drill into one candidate)
-│   ├── Evaluation scores (mechanical + LLM)
-│   ├── Protocol artifacts summary
+│   ├── Evaluation scores (mechanical)
 │   ├── Surface evidence (what was edited)
-│   └── Warnings / diagnostics
-└── Aggregation panel
-    ├── Score distribution over generations
-    ├── Tool failure rates
-    └── Timing breakdown (when redeveloped)
+│   └── Protocol artifacts summary
+└── Aggregation panel (score distributions, tool failure rates)
 ```
 
-Rule: **one semantic promise per slice**. First slice: **timeline + detail
-panel** because it maps directly onto `FineStep`/`CoarseStep` playback we
-already have.
-
-### egui Architecture
+### egui Architecture (Phase 2)
 
 An `eframe` app (`ploke-tree-egui`):
 
-- **Top bar**: Campaign/run selector (load JSON), metadata summary
+- **Top bar**: Load JSON button, campaign/run name display, run summary stats
 - **Central panel**: Scrollable timeline. Each fine step = a row showing
-  kind, evidence strength, block height, label. Click to expand.
+  kind, evidence strength, block height, label. Click to select.
 - **Side panel** (right): Selected step detail — evaluation scores,
-  protocol artifacts, surface evidence, raw record view.
+  surface evidence, protocol artifacts.
 - **Bottom panel**: Warnings/diagnostics strip.
 
-The app crate depends on `ploke-tree-browser` for `PlaybackBrowserModel`,
-`PlaybackBrowserStep`, and `BrowserGranularity`. It does not depend on
-`ploke-eval` or `ploke-tree` directly (those are used server-side to produce
-the JSON).
+Depends on `ploke-tree-browser` for all model types. Does NOT depend on
+`ploke-eval` or `ploke-tree` (JSON is produced server-side).
 
 ## Implementation Plan
 
-### Phase 0: Data Shape Verification (delegate, cheap)
+### ✅ Phase 0: Data Shape Verification
 
-Before writing egui code, verify the data shapes we'll need:
+**Done.** Inventory found:
+- 13 mechanical metrics in evaluation `RunMetrics`
+- 5 protocol artifact types with LLM assessments
+- Surface/edit evidence in transition journal `MaterializeBranch` entries
+- Join path: candidate label → short node_id → `node-NODEID` → journal MaterializeBranch → branch_id, candidate_id, target_relpath, hashes
+- Branch registry `instance_id` is the eval instance (`BurntSushi__ripgrep-2209`), NOT the node_id — wrong join key. Correct join is through journal.
 
-- [ ] Load the overnight run 2 through the existing `ploke-tree` projection and
-  serialize a real `PlaybackBrowserModel` JSON snapshot.
-- [ ] Inspect one evaluation JSON to see what score fields are available
-  (mechanical metrics, LLM-adjudicated metrics).
-- [ ] Inspect one protocol-artifacts dir to see what typed payloads exist.
-- [ ] Check whether surface evidence records (edits) are findable in the run
-  data and what shape they have.
-- [ ] Report: what fields exist in the real data that `PlaybackBrowserModel`
-  does not yet carry, and what would need to be added to `ploke-tree-browser`.
+### ✅ Phase 1: Enrich PlaybackBrowserModel
 
-Output: a compact inventory of available enrichment fields, so the browser
-model can be extended before the egui crate is built.
+**Done.** Changes:
 
-**Delegate to**: `gpt-5.4-mini` sub-agent.
+**`ploke-tree-browser/src/lib.rs`:**
+- Added `RunSummary` (campaign_id, node_count, generation_count, sealed_block_count,
+  evaluation_count, evaluations_kept, evaluations_rejected, journal_entry_count, terminal_status)
+- Added `EvaluationSnapshot` (disposition, tool_calls_total, tool_calls_failed,
+  patch_attempted, patch_apply_state, nonempty_valid_patch, convergence, oracle_eligible,
+  aborted, reasons)
+- Added `SurfaceSnapshot` (target_relpath, patch_id, source_content_hash,
+  proposed_content_hash, source_state_id)
+- Added `ProtocolSnapshot` (counts per artifact type, model_id, provider_slug)
+- Added `NodeBranchInfo` carrier (branch_id, candidate_id, target_relpath,
+  source_state_id, source_content_hash, proposed_content_hash, patch_id)
+- Added join key fields to `PlaybackBrowserStep`: node_id, branch_id, candidate_id
+- Added `enrich_fine_browser_model()` — joins through journal-derived
+  `BTreeMap<String, NodeBranchInfo>` keyed by `node-NODEID`
+- Added `build_run_summary()` helper
+- Added `extract_node_id_from_label()` — parses `candidate:node-NODEID:plan_index=N`
+  to extract short node_id
 
-### Phase 1: Enrich PlaybackBrowserModel
+**`ploke-eval/src/cli/prototype1_state/browser_export.rs` (NEW):**
+- `export_browser_model()` — loads History blocks, evaluations, transition journal;
+  builds node_branches map from `MaterializeBranch` entries; enriches model;
+  writes JSON
+- `build_node_branch_map()` — parses `transition-journal.jsonl`, extracts
+  `MaterializeBranch` entries into `BTreeMap<String, NodeBranchInfo>`
 
-Based on Phase 0 findings:
+**`ploke-eval/src/cli.rs`:**
+- Added `ExportBrowserModel(Prototype1ExportBrowserModelCommand)` variant to
+  `HistorySubcommand`
+- Added `Prototype1ExportBrowserModelCommand` struct with `--output` flag
 
-- [ ] Add evaluation score fields to `PlaybackBrowserStep` (mechanical metrics,
-  LLM metrics, disposition).
-- [ ] Add protocol artifact summary fields (intent count, review count,
-  tool calls?).
-- [ ] Add surface evidence fields (edited paths, patch status).
-- [ ] Add a `run_summary` field to `PlaybackBrowserModel` (node count, generation
-  count, evaluation counts, status).
-- [ ] Wire up `ploke-tree` to produce enriched models from real data.
-- [ ] Add a CLI export command: `ploke-eval export browser-model --campaign <name>`
-  that writes enriched JSON.
+**`ploke-eval/src/cli/prototype1_state/cli_facing.rs`:**
+- Wired `HistorySubcommand::ExportBrowserModel` dispatch to
+  `browser_export::export_browser_model()`
 
-### Phase 2: Create ploke-tree-egui Crate
+**Key bug found and fixed:** The initial enrichment used `branch_registry.source_nodes[].instance_id`
+as the join key, but `instance_id` is the eval instance name (`BurntSushi__ripgrep-2209`),
+not the node_id. The correct join is through the transition journal's
+`MaterializeBranch` entries, which carry `refs.node_id` (format `node-NODEID`).
+
+### ➡️ Phase 2: Create ploke-tree-egui Crate (NEXT)
 
 - [ ] Add `crates/ploke-tree-egui/Cargo.toml` with deps: `eframe`, `egui`,
   `ploke-tree-browser`, `serde`, `serde_json`.
 - [ ] Add to workspace `Cargo.toml` members.
 - [ ] Implement `PlokeTreeApp` struct with `eframe::App` trait.
-- [ ] **Top bar**: Load JSON button, campaign/run name display.
+- [ ] **Top bar**: Load JSON button, campaign/run name display, run summary.
 - [ ] **Timeline panel**: Scrollable list of fine playback steps. Each row
-  shows step kind icon, block height, label, evidence badge. Click to select.
+  shows step kind icon, block height, label, evidence badge, evaluation disposition.
+  Click to select.
 - [ ] **Detail panel**: Selected step detail. Shows evaluation scores,
-  protocol artifact summary, surface evidence if available.
-- [ ] **Summary bar**: Run metadata from `PlaybackBrowserModel`.
+  surface evidence, protocol artifact summary.
+- [ ] **Summary bar**: Run metadata from `PlaybackBrowserModel.run_summary`.
 
 ### Phase 3: WASM Target
 
@@ -220,17 +212,29 @@ Based on Phase 0 findings:
 
 ## Stop Conditions Per Phase
 
-Each phase stops when its one semantic promise is validated:
-
-**Phase 0**: Real data inventory is complete and gaps are documented.
-**Phase 1**: `ploke-eval export browser-model` produces enriched JSON that
-  contains evaluation scores, protocol summaries, and surface evidence for
-  the overnight run 2.
+**Phase 0**: ✅ Real data inventory complete, gaps documented.
+**Phase 1**: ✅ `ploke-eval history export-browser-model` produces enriched JSON
+  with evaluation scores and surface evidence for run 2.
 **Phase 2**: `ploke-tree-egui` native app renders timeline + detail panel from
   the exported JSON.
 **Phase 3**: WASM build runs in browser with the same data.
 **Phase 4**: Each new view (tree, aggregation) is implemented and validated
   against real data.
+
+## Key Files for Restart
+
+| File | Role |
+|---|---|
+| `crates/ploke-tree-browser/src/lib.rs` | `PlaybackBrowserModel`, `RunSummary`, `EvaluationSnapshot`, `SurfaceSnapshot`, `ProtocolSnapshot`, `NodeBranchInfo`, `enrich_fine_browser_model()`, `build_run_summary()` |
+| `crates/ploke-eval/src/cli/prototype1_state/browser_export.rs` | CLI export command: loads campaign, builds enriched model, writes JSON |
+| `crates/ploke-eval/src/cli.rs` | `Prototype1ExportBrowserModelCommand` and `HistorySubcommand::ExportBrowserModel` |
+| `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs` | Dispatch wiring for `ExportBrowserModel` |
+| `crates/ploke-records/src/playback.rs` | `RunPlayback`, `FineStep`, `FineStepKind`, `EvidenceStrength` |
+| `crates/ploke-tree/src/playback/fine.rs` | `fine_run_playback_from_sealed_history()` |
+| `crates/ploke-records/src/evaluation.rs` | `Artifact`, `RunMetrics`, `InstanceComparison` |
+| `crates/ploke-records/src/journal.rs` | `JournalEntry::MaterializeBranch(TransitionRecord)`, `Refs`, `Paths`, `Hashes` |
+| `crates/ploke-records/src/history.rs` | `SealedBlockRecord`, authority surface test (playback.rs excluded) |
+| `/tmp/browser-model.json` | Latest enriched export from run 2 (54 steps, 46 with eval+surface) |
 
 ## No-Goals
 
@@ -240,26 +244,35 @@ Each phase stops when its one semantic promise is validated:
 - Do not introduce a separate JSON format that diverges from typed record shape.
 - Do not add live filesystem watching in the first slice.
 
-## Open Questions
-
-- Should the browser model carry raw record data for "drill into raw JSON" views,
-  or only projected/typed fields?
-- How should multiple eval instances (when we add them) be displayed in the
-  detail panel — per-instance rows or aggregated?
-- Should the egui app support loading multiple runs for comparison, or single-run
-  first?
-- Should we add a "diff from baseline" view in the evaluation detail panel?
-
-## Verification Commands (Baseline)
-
-Before starting Phase 0, confirm everything still passes:
+## Verification Commands
 
 ```bash
+# Baseline tests
 cargo fmt --all
 cargo test -p ploke-records
 cargo test -p ploke-tree
 cargo test -p ploke-tree-browser
 cargo check -p ploke-eval
+
+# Real campaign load
 PLOKE_TREE_RUN_ROOT=/home/brasides/.ploke-eval/campaigns/p1-bounded-surface-long-20260509-2/prototype1 \
   cargo test -p ploke-tree fs_run_store_loads_real_campaign -- --ignored --nocapture 2>&1 | tail -n 40
+
+# Export enriched browser model
+cargo run -p ploke-eval -- history export-browser-model \
+  --campaign p1-bounded-surface-long-20260509-2 \
+  --output /tmp/browser-model.json
+
+# Inspect enrichment
+python3 -c "
+import json
+with open('/tmp/browser-model.json') as f:
+    m = json.load(f)
+eval_steps = [s for s in m['steps'] if s.get('evaluation')]
+surface_steps = [s for s in m['steps'] if s.get('surface')]
+print(f'steps: {m[\"step_count\"]}')
+print(f'with evaluation: {len(eval_steps)}')
+print(f'with surface: {len(surface_steps)}')
+print('run_summary:', json.dumps(m.get('run_summary'), indent=2))
+"
 ```
