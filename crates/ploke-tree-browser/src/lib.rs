@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use ploke_records::branch::{Disposition, Prototype1BranchRegistry};
+use ploke_records::branch::Disposition;
 use ploke_records::evaluation::Artifact as EvaluationArtifact;
 use ploke_records::history::SealedBlockRecord;
 use ploke_records::playback::{EvidenceStrength, FineOrder, FineStepKind};
@@ -129,6 +129,18 @@ pub struct ProtocolSnapshot {
     pub provider_slug: Option<String>,
 }
 
+/// Information about a node's branch, extracted from the transition journal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeBranchInfo {
+    pub branch_id: String,
+    pub candidate_id: String,
+    pub target_relpath: String,
+    pub source_state_id: String,
+    pub source_content_hash: Option<String>,
+    pub proposed_content_hash: Option<String>,
+    pub patch_id: Option<String>,
+}
+
 pub fn coarse_history_browser_model_from_blocks(
     blocks: &[SealedBlockRecord],
 ) -> PlaybackBrowserModel {
@@ -213,39 +225,15 @@ pub fn fine_history_browser_model_from_blocks(
 /// detail by joining against loaded records.
 ///
 /// `evaluations` is keyed by `branch_id`.
+/// `node_branches` maps `node-NODEID` → branch/surface info (built from the
+/// transition journal's `MaterializeBranch` entries).
 /// `protocol_artifacts` is keyed by a run-scoped artifact path.
-/// `branch_registry` provides the node→branch→candidate join chain.
 pub fn enrich_fine_browser_model(
     model: &mut PlaybackBrowserModel,
     evaluations: &BTreeMap<String, EvaluationArtifact>,
-    branch_registry: Option<&Prototype1BranchRegistry>,
+    node_branches: &BTreeMap<String, NodeBranchInfo>,
     protocol_artifacts: Option<&BTreeMap<String, ProtocolArtifact>>,
 ) {
-    // Build node_id → source_node lookup from branch registry.
-    let source_by_instance: BTreeMap<&str, &ploke_records::branch::InterventionSourceNode> =
-        if let Some(registry) = branch_registry {
-            registry
-                .source_nodes
-                .iter()
-                .map(|source| (source.instance_id.as_str(), source))
-                .collect()
-        } else {
-            BTreeMap::new()
-        };
-
-    // Build branch_id → branch_node lookup.
-    let branch_by_id: BTreeMap<&str, &ploke_records::branch::TreatmentBranchNode> =
-        if let Some(registry) = branch_registry {
-            registry
-                .source_nodes
-                .iter()
-                .flat_map(|source| source.branches.iter())
-                .map(|branch| (branch.branch_id.as_str(), branch))
-                .collect()
-        } else {
-            BTreeMap::new()
-        };
-
     // Build node_id → protocol artifact counts.
     let protocol_by_node: BTreeMap<&str, ProtocolCounts> =
         if let Some(artifacts) = protocol_artifacts {
@@ -273,31 +261,28 @@ pub fn enrich_fine_browser_model(
 
     for step in &mut model.steps {
         // Extract node_id from candidate label: "candidate:node-NODEID:plan_index=N"
-        let node_id = extract_node_id_from_label(step.label.as_deref());
-        step.node_id = node_id.clone();
+        let short_id = extract_node_id_from_label(step.label.as_deref());
+        step.node_id = short_id.clone();
 
-        // Join through branch registry to find branch_id and surface evidence.
-        if let Some(node_id) = &node_id {
-            // Look up source node by instance_id (which may match node_id pattern).
-            // The branch registry keys by instance_id; we try node_id as instance_id.
-            if let Some(source) = source_by_instance.get(node_id.as_str()) {
-                if let Some(selected) = &source.selected_branch_id {
-                    step.branch_id = Some(selected.clone());
-                    if let Some(branch) = branch_by_id.get(selected.as_str()) {
-                        step.candidate_id = Some(branch.candidate_id.clone());
-                        step.surface = Some(SurfaceSnapshot {
-                            target_relpath: source.target_relpath.to_string_lossy().into_owned(),
-                            patch_id: branch.patch_id.as_ref().map(|p| p.0.clone()),
-                            source_content_hash: Some(source.source_content_hash.clone()),
-                            proposed_content_hash: Some(branch.proposed_content_hash.clone()),
-                            source_state_id: Some(source.source_state_id.clone()),
-                        });
-                    }
-                }
+        // Build the full node_id key: "node-NODEID"
+        let full_node_id = short_id.as_ref().map(|id| format!("node-{id}"));
+
+        // Join through journal-derived node_branches map.
+        if let Some(ref full_id) = full_node_id {
+            if let Some(info) = node_branches.get(full_id) {
+                step.branch_id = Some(info.branch_id.clone());
+                step.candidate_id = Some(info.candidate_id.clone());
+                step.surface = Some(SurfaceSnapshot {
+                    target_relpath: info.target_relpath.clone(),
+                    patch_id: info.patch_id.clone(),
+                    source_content_hash: info.source_content_hash.clone(),
+                    proposed_content_hash: info.proposed_content_hash.clone(),
+                    source_state_id: Some(info.source_state_id.clone()),
+                });
             }
 
-            // Attach protocol snapshot.
-            if let Some(counts) = protocol_by_node.get(node_id.as_str()) {
+            // Attach protocol snapshot (keyed by subject_id which may be node-NODEID).
+            if let Some(counts) = protocol_by_node.get(full_id.as_str()) {
                 step.protocol = Some(ProtocolSnapshot {
                     intent_segmentation_count: counts.intent_segmentation_count,
                     tool_call_review_count: counts.tool_call_review_count,

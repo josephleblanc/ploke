@@ -762,6 +762,7 @@
 //!
 pub(crate) mod authority;
 pub(crate) mod backend;
+pub(crate) mod browser_export;
 pub(crate) mod c1;
 pub(crate) mod c2;
 pub(crate) mod c3;

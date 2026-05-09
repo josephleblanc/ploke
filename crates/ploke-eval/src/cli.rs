@@ -557,6 +557,8 @@ pub enum HistorySubcommand {
     Preview(Prototype1HistoryPreviewCommand),
     /// Print read-only playback projected from sealed History blocks.
     Playback(Prototype1HistoryPlaybackCommand),
+    /// Export an enriched browser model as JSON for the egui/WASM frontend.
+    ExportBrowserModel(Prototype1ExportBrowserModelCommand),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
@@ -655,6 +657,13 @@ pub struct Prototype1HistoryPlaybackCommand {
 
     #[arg(long, value_enum, default_value_t = Prototype1HistoryPlaybackGranularity::Fine)]
     pub granularity: Prototype1HistoryPlaybackGranularity,
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1ExportBrowserModelCommand {
+    /// Write output to this path instead of stdout.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]

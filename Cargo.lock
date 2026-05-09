@@ -4700,6 +4700,7 @@ dependencies = [
  "ploke-records",
  "ploke-test-utils",
  "ploke-tree",
+ "ploke-tree-browser",
  "ploke-tui",
  "regex",
  "reqwest",

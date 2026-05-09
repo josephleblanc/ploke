@@ -470,7 +470,7 @@ impl FsRunStore {
         Ok(Some(evidence))
     }
 
-    fn load_evaluation_evidence(&self) -> Result<Option<EvaluationEvidence>, FsRunStoreError> {
+    pub fn load_evaluation_evidence(&self) -> Result<Option<EvaluationEvidence>, FsRunStoreError> {
         let dir = self.run_root.join("evaluations");
         if !dir.is_dir() {
             return Ok(None);

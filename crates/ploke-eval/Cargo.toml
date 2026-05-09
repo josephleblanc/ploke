@@ -22,6 +22,7 @@ ploke-llm = { path = "../ploke-llm" }
 ploke-protocol = { workspace = true }
 ploke-records = { workspace = true }
 ploke-tree = { workspace = true }
+ploke-tree-browser = { workspace = true }
 ploke-tui = { path = "../ploke-tui", features = ["test_harness"] }
 tracing = {workspace = true}
 tracing-appender = "0.2"

@@ -1962,6 +1962,13 @@ impl HistoryCommand {
             HistorySubcommand::Playback(command) => {
                 run_history_playback(&campaign_id, &manifest_path, &command)
             }
+            HistorySubcommand::ExportBrowserModel(command) => {
+                crate::cli::prototype1_state::browser_export::export_browser_model(
+                    &campaign_id,
+                    &manifest_path,
+                    command.output.as_deref(),
+                )
+            }
         }
     }
 }
