@@ -208,4 +208,27 @@ mod tests {
         assert_eq!(model.step_count, 0);
         assert!(model.steps.is_empty());
     }
+
+    #[test]
+    #[ignore]
+    fn serialize_real_campaign_fine_browser_model_to_json() {
+        let run_root = std::env::var("PLOKE_TREE_RUN_ROOT")
+            .expect("set PLOKE_TREE_RUN_ROOT to a prototype1 run root");
+        let store = ploke_tree::FsRunStore::new(run_root);
+        let blocks = store.load_history_blocks().expect("load history blocks");
+        let model = fine_history_browser_model_from_blocks(&blocks);
+        let json = serde_json::to_string_pretty(&model).expect("serialize");
+        let lines: Vec<&str> = json.lines().collect();
+        let total_lines = lines.len();
+        let preview_lines = lines.iter().take(200).copied().collect::<Vec<_>>();
+        println!(
+            "=== FineHistory BrowserModel JSON (first 200 of {total_lines} lines) ===\n{}\n=== END PREVIEW ===",
+            preview_lines.join("\n")
+        );
+        // Write full JSON to a temp file for inspection
+        let out_path = std::path::PathBuf::from("/tmp/ploke-browser-model-fine.json");
+        std::fs::write(&out_path, &json).expect("write JSON");
+        println!("Full JSON written to {}", out_path.display());
+        assert!(total_lines > 0);
+    }
 }

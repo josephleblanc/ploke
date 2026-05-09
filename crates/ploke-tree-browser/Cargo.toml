@@ -9,3 +9,6 @@ description = "Renderer-neutral playback models for browsing Ploke run trees"
 ploke-records = { workspace = true }
 ploke-tree = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }
