@@ -37,8 +37,8 @@ use crate::intervention::{
 use crate::spec::PrepareError;
 
 pub(crate) use ploke_records::invocation::{
-    SUCCESSOR_COMPLETION_SCHEMA_VERSION, SUCCESSOR_READY_SCHEMA_VERSION,
-    SuccessorCompletionRecord, SuccessorCompletionStatus, SuccessorReadyRecord,
+    SUCCESSOR_COMPLETION_SCHEMA_VERSION, SUCCESSOR_READY_SCHEMA_VERSION, SuccessorCompletionRecord,
+    SuccessorCompletionStatus, SuccessorReadyRecord,
 };
 
 use super::{

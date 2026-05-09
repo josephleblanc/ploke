@@ -1539,7 +1539,7 @@ impl WorkspaceBackend for GitWorktreeBackend {
         }
 
         let branch = self.current_branch(active_parent_root)?;
-        if let Some(expected_branch) = identity.artifact_branch.as_deref() {
+        if let Some(expected_branch) = identity.artifact_branch() {
             if branch != expected_branch {
                 return Err(BackendError::ParentCheckoutMismatch {
                     path: active_parent_root.to_path_buf(),
@@ -1573,7 +1573,7 @@ impl WorkspaceBackend for GitWorktreeBackend {
             });
         }
 
-        if identity.generation == 0 {
+        if identity.generation() == 0 {
             if changed_paths.len() != 1 || changed_paths[0] != identity_relpath {
                 return Err(BackendError::ParentCheckoutMismatch {
                     path: active_parent_root.to_path_buf(),
@@ -1976,8 +1976,8 @@ mod tests {
         parse_worktree_list,
     };
     use crate::cli::prototype1_state::identity::{
-        PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity, parent_identity_commit_message,
-        parent_identity_relpath, write_parent_identity,
+        PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity, ParentIdentityRecord,
+        parent_identity_commit_message, parent_identity_relpath, write_parent_identity,
     };
     use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
     use std::fs;
@@ -2082,7 +2082,7 @@ mod tests {
     }
 
     fn identity(generation: u32, parent_id: &str, artifact_branch: &str) -> ParentIdentity {
-        ParentIdentity {
+        ParentIdentity::from_record_for_test(ParentIdentityRecord {
             schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
             campaign_id: "campaign-1".to_string(),
             parent_id: parent_id.to_string(),
@@ -2094,7 +2094,7 @@ mod tests {
             branch_id: format!("branch-{parent_id}"),
             artifact_branch: Some(artifact_branch.to_string()),
             created_at: "2026-04-26T00:00:00Z".to_string(),
-        }
+        })
     }
 
     #[test]

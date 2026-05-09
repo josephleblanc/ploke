@@ -1450,6 +1450,42 @@ mod tests {
     }
 
     #[test]
+    fn eval_scheduler_state_json_deserializes_into_passive_records() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+
+        let (scheduler, node, _request) = register_treatment_evaluation_node(
+            "test-campaign",
+            &manifest,
+            &resolved_branch_with_graph(),
+            2,
+            None,
+            tmp.path(),
+            false,
+        )
+        .expect("register node");
+
+        let scheduler_json = serde_json::to_value(&scheduler).expect("serialize eval scheduler");
+        let record: ploke_records::scheduler::SchedulerStateRecord =
+            serde_json::from_value(scheduler_json).expect("parse passive scheduler record");
+
+        assert_eq!(record.campaign_id.as_str(), "test-campaign");
+        assert_eq!(record.nodes.len(), 1);
+        assert_eq!(record.nodes[0].node_id.as_str(), node.node_id);
+        assert_eq!(record.nodes[0].branch_id.as_str(), node.branch_id);
+        assert_eq!(
+            record.nodes[0].base_artifact_id,
+            Some(ploke_records::ids::ArtifactId(
+                "git-tree:source".to_string()
+            ))
+        );
+        assert_eq!(
+            record.nodes[0].patch_id,
+            Some(ploke_records::ids::PatchId("patch:attempt-1".to_string()))
+        );
+    }
+
+    #[test]
     fn continuation_decision_stops_on_generation_limit_and_rejects_non_keep() {
         let tmp = tempdir().expect("tmp");
         let manifest = campaign_manifest_path(tmp.path());
@@ -1460,7 +1496,7 @@ mod tests {
             child_schedule_mode: Prototype1ChildScheduleMode::default(),
             stop_on_first_keep: false,
             require_keep_for_continuation: true,
-            explore_from_rejected: true,
+            explore_from_rejected: false,
         };
         let scheduler = update_scheduler_policy("test-campaign", &manifest, policy.clone())
             .expect("persist policy");

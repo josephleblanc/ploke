@@ -55,6 +55,16 @@
   - Parent/child protocol state should be modeled structurally, e.g. `Child<Ready>`, not as flattened event names such as `ChildReady`, `ChildProgress`, or `ChildHeartbeat`.
 - If a local Prototype 1 pattern conflicts with that model, patch toward the model. Do not preserve agent-created clutter for consistency.
 
+## Bounded Edit Surface Plan
+
+- Before implementing bounded edit-surface work, read `docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md`.
+- Treat `docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-harness-adapter-plan.md` as the active implementation plan for evidence-directed bounded `ploke-tui` edit surfaces.
+- Current first route: `invalid_candidate_generation -> semantic_edit_resolution -> ploke-tui semantic edit resolver surface`.
+- Use the stable core vocabulary from the orientation doc. Do not add slice-local nouns or objective-specific type families when a field, enum variant, module boundary, or existing carrier can express the structure.
+- Implement this plan through vertical slices with splice tests: `recorded/mock upstream output A' -> new implementation B* -> downstream consumer contract C'`.
+- For this plan, `ploke-eval` owns grants, checks, History admission, runtime hydration, and successor selection; `ploke-tui` is a harness/executor behind a trait boundary.
+- TUI proposal state, CLI output, logs, mutable reports, and monitor views are not source truth. A Parent may diagnose and choose surfaces only from typed evidence or explicitly admitted projections.
+
 ## Prototype 1 History Audit
 
 - Operational policy: audit the Prototype 1 History/Crown implementation at least once per week with combined human and LLM review.

@@ -23,6 +23,10 @@ into the main evalnomicon book.
 - [`2026-05-07-prototype1-edit-surface-model.md`](2026-05-07-prototype1-edit-surface-model.md)
   Draft model for bounded TUI/edit-surface wiring into Prototype 1; moved from
   the May 2026 agent archive for continued refinement.
+- [`2026-05-08-bounded-edit-harness-adapter-plan.md`](2026-05-08-bounded-edit-harness-adapter-plan.md)
+  Implementation brief for the bounded edit operation adapter: `ploke-eval`
+  owns grants/checks/admission while `ploke-tui` or another harness proposes
+  and applies checked edits behind a trait boundary.
 - [`prototype1-run-tree-browser-design.md`](prototype1-run-tree-browser-design.md)
   Draft `ploke-records` schema split and `ploke-tree` projection contract for a
   browser-viewable Prototype 1 run tree over typed evidence, liveness, metrics,

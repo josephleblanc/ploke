@@ -37,6 +37,63 @@ string_id! {
 }
 
 string_id! {
+    /// Identity for one persisted scheduler campaign.
+    CampaignId
+}
+
+string_id! {
+    /// Identity for one persisted scheduler node.
+    SchedulerNodeId
+}
+
+string_id! {
+    /// Identity for one intervention branch referenced by scheduler records.
+    BranchId
+}
+
+string_id! {
+    /// Identity for one treatment candidate referenced by scheduler records.
+    CandidateId
+}
+
+string_id! {
+    /// Identity for one input instance referenced by scheduler records.
+    InstanceId
+}
+
+string_id! {
+    /// Identity for the source state used by a scheduler record.
+    SourceStateId
+}
+
+macro_rules! passive_string_accessors {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            impl $name {
+                pub fn as_str(&self) -> &str {
+                    &self.0
+                }
+            }
+
+            impl std::fmt::Display for $name {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str(&self.0)
+                }
+            }
+        )+
+    };
+}
+
+passive_string_accessors!(
+    CampaignId,
+    SchedulerNodeId,
+    BranchId,
+    CandidateId,
+    InstanceId,
+    SourceStateId,
+);
+
+string_id! {
     /// Durable identity for one committed transition attempt.
     TransitionId
 }

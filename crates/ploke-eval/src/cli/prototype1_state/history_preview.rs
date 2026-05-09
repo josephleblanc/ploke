@@ -2028,16 +2028,16 @@ fn resource_sample(entry: &super::journal::resource::Sample) -> JournalProjectio
 fn parent_started(entry: &ParentStartedEntry) -> JournalProjection {
     JournalProjection {
         entry_kind: EntryKind::Transition,
-        subject: format!("parent:{}", entry.parent_identity.parent_id),
+        subject: format!("parent:{}", entry.parent_identity.parent_id()),
         executor: format!("process:pid:{}", entry.pid),
-        observer: format!("parent:{}", entry.parent_identity.parent_id),
+        observer: format!("parent:{}", entry.parent_identity.parent_id()),
         procedure_or_policy: "prototype1.parent.started".to_string(),
-        generation: Some(entry.parent_identity.generation),
+        generation: Some(entry.parent_identity.generation()),
         recorded_at: Some(entry.recorded_at),
         input_refs: vec![format!("repo_root:{}", entry.repo_root.display())],
         output_refs: vec![format!(
             "parent_identity:{}",
-            entry.parent_identity.parent_id
+            entry.parent_identity.parent_id()
         )],
         missing: vec!["runtime_id is absent from ParentStartedEntry".to_string()],
     }
@@ -2071,14 +2071,14 @@ fn active_checkout_advanced(entry: &ActiveCheckoutAdvancedEntry) -> JournalProje
         executor: parent_actor(entry.previous_parent_identity.as_ref()),
         observer: parent_actor(entry.previous_parent_identity.as_ref()),
         procedure_or_policy: "prototype1.checkout.advanced".to_string(),
-        generation: Some(entry.selected_parent_identity.generation),
+        generation: Some(entry.selected_parent_identity.generation()),
         recorded_at: Some(entry.recorded_at),
         input_refs: vec![format!("selected_branch:{}", entry.selected_branch)],
         output_refs: vec![
             format!("installed_commit:{}", entry.installed_commit),
             format!(
                 "selected_parent:{}",
-                entry.selected_parent_identity.parent_id
+                entry.selected_parent_identity.parent_id()
             ),
         ],
         missing: Vec::new(),
@@ -2317,7 +2317,7 @@ fn refs_from_transition(refs: &super::event::Refs, source_hash: &str) -> Vec<Str
 
 fn parent_actor(identity: Option<&super::identity::ParentIdentity>) -> String {
     identity
-        .map(|identity| format!("parent:{}", identity.parent_id))
+        .map(|identity| format!("parent:{}", identity.parent_id()))
         .unwrap_or_else(|| "parent:unknown".to_string())
 }
 
@@ -2986,10 +2986,12 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::cli::prototype1_state::identity::{PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity};
+    use crate::cli::prototype1_state::identity::{
+        PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity, ParentIdentityRecord,
+    };
 
     fn identity() -> ParentIdentity {
-        ParentIdentity {
+        ParentIdentity::from_record_for_test(ParentIdentityRecord {
             schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
             campaign_id: "campaign-a".to_string(),
             parent_id: "parent-0".to_string(),
@@ -3001,7 +3003,7 @@ mod tests {
             branch_id: "branch-0".to_string(),
             artifact_branch: Some("prototype1-parent-0".to_string()),
             created_at: "2026-04-28T00:00:00Z".to_string(),
-        }
+        })
     }
 
     #[test]

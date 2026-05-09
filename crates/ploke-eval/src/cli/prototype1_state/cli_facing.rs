@@ -258,10 +258,10 @@ fn prepare_prototype1_parent_setup(
         repo_root,
         artifact_branch,
         parent_identity_path,
-        parent_id: identity.parent_id,
-        node_id: identity.node_id,
-        generation: identity.generation,
-        branch_id: identity.branch_id,
+        parent_id: identity.parent_id().to_string(),
+        node_id: identity.node_id().to_string(),
+        generation: identity.generation(),
+        branch_id: identity.branch_id().to_string(),
         search_policy,
     })
 }
@@ -662,12 +662,12 @@ async fn run_legacy_parent_target_selection(
     let root_node = parent.node().clone();
     let prepared_instance =
         parent_identity
-            .instance_id
-            .clone()
+            .instance_id()
+            .map(str::to_string)
             .ok_or_else(|| PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "parent identity for '{}' is missing instance_id; target selection cannot read node projection files for this value",
-                    parent_identity.node_id
+                    parent_identity.node_id()
                 ),
             })?;
     let campaign = load_existing_prototype1_campaign(campaign_id)?;
@@ -686,7 +686,7 @@ async fn run_legacy_parent_target_selection(
         protocol_provider: None,
         search_policy: Prototype1SearchPolicy::default(),
         source_campaign: None,
-        source_branch_id: Some(parent_identity.branch_id.clone()),
+        source_branch_id: Some(parent_identity.branch_id().to_string()),
         source_parent: Some(parent_identity.clone()),
         repo_root: repo_root.to_path_buf(),
         trace_path: prototype1_trace_path(&campaign.manifest_path),
@@ -710,14 +710,14 @@ async fn run_legacy_parent_target_selection(
             return Err(error);
         }
     };
-    let expected_generation = parent_identity.generation + 1;
+    let expected_generation = parent_identity.generation() + 1;
     let valid_children = report
         .staged_children
         .iter()
         .filter(|child| {
             let node = child.node_record();
             node.generation == expected_generation
-                && node.parent_node_id.as_deref() == Some(parent_identity.node_id.as_str())
+                && node.parent_node_id.as_deref() == Some(parent_identity.node_id())
         })
         .count();
     if valid_children == 0 {
@@ -726,7 +726,8 @@ async fn run_legacy_parent_target_selection(
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "child plan did not stage any generation {} children for parent '{}'",
-                expected_generation, parent_identity.node_id
+                expected_generation,
+                parent_identity.node_id()
             ),
         });
     }
@@ -795,31 +796,31 @@ fn publish_tui_edit_surface_child_plan(
         &parent_identity,
         child_budget,
     )?;
-    let expected_generation = parent_identity.generation + 1;
+    let expected_generation = parent_identity.generation() + 1;
     let mut children = Vec::with_capacity(checked.len());
 
     for (index, checked) in checked.iter().enumerate() {
         let candidate_id = format!("tui-edit-surface-g{}-{:02}", expected_generation, index + 1);
         let branch_id = treatment_branch_id(
-            &parent_identity.branch_id,
+            &parent_identity.branch_id(),
             checked.target_relpath(),
             &candidate_id,
         );
         let provisional_node = Prototype1NodeRecord {
             schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
             node_id: prototype1_node_id(&branch_id, expected_generation),
-            parent_node_id: Some(parent_identity.node_id.clone()),
+            parent_node_id: Some(parent_identity.node_id().to_string()),
             generation: expected_generation,
             instance_id: parent_identity
-                .instance_id
-                .clone()
-                .unwrap_or_else(|| parent_identity.node_id.clone()),
-            source_state_id: parent_identity.branch_id.clone(),
+                .instance_id()
+                .map(str::to_string)
+                .unwrap_or_else(|| parent_identity.node_id().to_string()),
+            source_state_id: parent_identity.branch_id().to_string(),
             operation_target: None,
             base_artifact_id: None,
             patch_id: None,
             derived_artifact_id: None,
-            parent_branch_id: Some(parent_identity.branch_id.clone()),
+            parent_branch_id: Some(parent_identity.branch_id().to_string()),
             branch_id,
             candidate_id,
             target_relpath: checked.target_relpath().to_path_buf(),
@@ -838,7 +839,7 @@ fn publish_tui_edit_surface_child_plan(
             manifest_path,
             &resolved,
             expected_generation,
-            Some(parent_identity.node_id.as_str()),
+            Some(parent_identity.node_id()),
             repo_root,
             false,
         )?;
@@ -885,13 +886,13 @@ fn validate_and_write_tui_child_plan(
     path: &Path,
     body: &ChildPlanFiles,
 ) -> Result<(), PrepareError> {
-    let expected_generation = parent.generation + 1;
-    if body.parent_node_id() != parent.node_id {
+    let expected_generation = parent.generation() + 1;
+    if body.parent_node_id() != parent.node_id() {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "tui edit-surface child plan recipient '{}' did not match parent '{}'",
                 body.parent_node_id(),
-                parent.node_id
+                parent.node_id()
             ),
         });
     }
@@ -912,12 +913,13 @@ fn validate_and_write_tui_child_plan(
     for child in body.children() {
         let node = child.node_record();
         if node.generation != expected_generation
-            || node.parent_node_id.as_deref() != Some(parent.node_id.as_str())
+            || node.parent_node_id.as_deref() != Some(parent.node_id())
         {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "tui edit-surface child '{}' is not a direct child of parent '{}'",
-                    node.node_id, parent.node_id
+                    node.node_id,
+                    parent.node_id()
                 ),
             });
         }
@@ -1154,7 +1156,7 @@ fn produce_tui_edit_surface_candidates(
     }
     let max = child_budget.max as usize;
     let min = child_budget.min as usize;
-    let seed = format!("{}:{}", parent.node_id, parent.generation);
+    let seed = format!("{}:{}", parent.node_id(), parent.generation());
     let replacements = (0..max).map(|index| {
         format!(
             "\n// prototype1 edit-surface candidate {}:{}; next: replace deterministic direct-splice generation with LLM proposal production.\n",
@@ -1263,7 +1265,7 @@ fn receive_existing_child_plan(
     let parent_identity = parent.identity().clone();
     let at = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
         manifest_path.to_path_buf(),
-        parent_identity.node_id.clone(),
+        parent_identity.node_id().to_string(),
     ));
     let locked = Locked::<ChildPlan>::from_box(at, read_child_plan_message).map_err(|err| {
         let (_at, source) = err.into_parts();
@@ -1288,12 +1290,12 @@ fn receive_child_plan(
     planned: Parent<Planned>,
     locked: Locked<ChildPlan>,
 ) -> Result<ChildPlanReceipt, PrepareError> {
-    if planned.identity().node_id != parent_identity.node_id {
+    if planned.identity().node_id() != parent_identity.node_id() {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "planned parent '{}' did not match active parent '{}'",
-                planned.identity().node_id,
-                parent_identity.node_id
+                planned.identity().node_id(),
+                parent_identity.node_id()
             ),
         });
     }
@@ -1340,12 +1342,12 @@ fn validate_received_child_plan(
     node_id: &str,
 ) -> Result<(), PrepareError> {
     let files = plan.body();
-    if files.parent_node_id() != parent.node_id {
+    if files.parent_node_id() != parent.node_id() {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "received child plan recipient '{}' did not match parent '{}'",
                 files.parent_node_id(),
-                parent.node_id
+                parent.node_id()
             ),
         });
     }
@@ -1359,7 +1361,7 @@ fn validate_received_child_plan(
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "node '{node_id}' was not included in received child plan for parent '{}'; planned children: {listed}",
-                parent.node_id
+                parent.node_id()
             ),
         });
     }
@@ -1372,13 +1374,13 @@ fn validate_child_plan(
     files: &ChildPlanFiles,
 ) -> Result<(), PrepareError> {
     // Same direct-child lineage policy as resolve_next_child.
-    let expected_generation = parent.generation + 1;
-    if files.parent_node_id() != parent.node_id {
+    let expected_generation = parent.generation() + 1;
+    if files.parent_node_id() != parent.node_id() {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "child plan recipient '{}' did not match parent '{}'",
                 files.parent_node_id(),
-                parent.node_id
+                parent.node_id()
             ),
         });
     }
@@ -1397,7 +1399,7 @@ fn validate_child_plan(
         .filter(|child| {
             let node = child.node_record();
             node.generation == expected_generation
-                && node.parent_node_id.as_deref() == Some(parent.node_id.as_str())
+                && node.parent_node_id.as_deref() == Some(parent.node_id())
         })
         .count();
 
@@ -1405,7 +1407,8 @@ fn validate_child_plan(
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "child plan did not stage any generation {} children for parent '{}'",
-                expected_generation, parent.node_id
+                expected_generation,
+                parent.node_id()
             ),
         });
     }
@@ -1421,7 +1424,7 @@ fn validate_child_plan(
         .filter(|child| {
             let node = child.node_record();
             node.generation == expected_generation
-                && node.parent_node_id.as_deref() == Some(parent.node_id.as_str())
+                && node.parent_node_id.as_deref() == Some(parent.node_id())
         })
         .map(|child| child.node_id())
         .collect::<BTreeSet<_>>();
@@ -1429,7 +1432,9 @@ fn validate_child_plan(
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "child plan children did not match staged children for parent '{}': planned={:?} staged={:?}",
-                parent.node_id, planned, staged
+                parent.node_id(),
+                planned,
+                staged
             ),
         });
     }
@@ -1697,12 +1702,10 @@ async fn run_prototype1_loop_controller(
                         let generation = input
                             .source_parent
                             .as_ref()
-                            .map(|parent| parent.generation + 1)
+                            .map(|parent| parent.generation() + 1)
                             .unwrap_or(1);
-                        let parent_node_id = input
-                            .source_parent
-                            .as_ref()
-                            .map(|parent| parent.node_id.as_str());
+                        let parent_node_id =
+                            input.source_parent.as_ref().map(|parent| parent.node_id());
                         for resolved in resolved_branches
                             .into_iter()
                             .take(search_policy.child_budget.max as usize)
@@ -4699,8 +4702,8 @@ fn journal_entry_summary(entry: &JournalEntry) -> String {
             "{} campaign={} parent={} generation={} pid={}",
             "parent_started",
             entry.campaign_id,
-            entry.parent_identity.parent_id,
-            entry.parent_identity.generation,
+            entry.parent_identity.parent_id(),
+            entry.parent_identity.generation(),
             entry.pid
         ),
         JournalEntry::Resource(entry) => format!(
@@ -4730,8 +4733,8 @@ fn journal_entry_summary(entry: &JournalEntry) -> String {
         JournalEntry::ActiveCheckoutAdvanced(entry) => format!(
             "{} selected_parent={} generation={} branch={} commit={}",
             "active_checkout_advanced",
-            entry.selected_parent_identity.parent_id,
-            entry.selected_parent_identity.generation,
+            entry.selected_parent_identity.parent_id(),
+            entry.selected_parent_identity.generation(),
             entry.selected_branch,
             entry.installed_commit
         ),
@@ -4989,7 +4992,7 @@ fn exited_parent_state(
     };
     let Some((pid, node_id)) = entries.iter().rev().find_map(|entry| match entry {
         JournalEntry::ParentStarted(entry) => {
-            Some((entry.pid, entry.parent_identity.node_id.clone()))
+            Some((entry.pid, entry.parent_identity.node_id().to_string()))
         }
         _ => None,
     }) else {
@@ -5145,7 +5148,7 @@ fn current_dir_as_repo_root() -> Result<PathBuf, PrepareError> {
 
 fn infer_campaign_from_parent_identity(repo_root: &Path) -> Result<Option<String>, PrepareError> {
     load_parent_identity_optional(repo_root)
-        .map(|identity| identity.map(|identity| identity.campaign_id))
+        .map(|identity| identity.map(|identity| identity.campaign_id().to_string()))
 }
 
 fn record_active_prototype1_monitor_target(campaign_id: &str, repo_root: &Path) {
@@ -5294,16 +5297,16 @@ async fn resolve_child_plan(
         authority = "parent_broadcast_channel",
         transition = "Parent<Ready>->ChildPlan",
         campaign = %campaign_id,
-        parent_node_id = %parent_identity.node_id,
-        generation = parent_identity.generation,
+        parent_node_id = %parent_identity.node_id(),
+        generation = parent_identity.generation(),
         "resolving parent child-plan authority"
     );
     // Prototype 1 currently enforces direct-child lineage: Parent k may only
     // materialize candidates produced as generation k + 1.
-    let required_generation = parent_identity.generation + 1;
+    let required_generation = parent_identity.generation() + 1;
     let plan_at = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
         manifest_path.to_path_buf(),
-        parent_identity.node_id.clone(),
+        parent_identity.node_id().to_string(),
     ));
     let candidate_generation = CandidateGenerationConfig::from_command(command);
     let receipt = if plan_at.path().exists() {
@@ -5339,7 +5342,7 @@ async fn resolve_child_plan(
             .ok_or_else(|| PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "--node-id '{}' is not present in the received child plan for active parent '{}'",
-                    node_id, parent_identity.parent_id
+                    node_id, parent_identity.parent_id()
                 ),
             })?;
         let node = candidate.node_record();
@@ -5347,15 +5350,19 @@ async fn resolve_child_plan(
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "--node-id '{}' is generation {}, but parent '{}' can only materialize generation {} candidates",
-                    node_id, node.generation, parent_identity.parent_id, required_generation
+                    node_id,
+                    node.generation,
+                    parent_identity.parent_id(),
+                    required_generation
                 ),
             });
         }
-        if node.parent_node_id.as_deref() != Some(parent_identity.node_id.as_str()) {
+        if node.parent_node_id.as_deref() != Some(parent_identity.node_id()) {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "--node-id '{}' is not a child of active parent '{}'",
-                    node_id, parent_identity.parent_id
+                    node_id,
+                    parent_identity.parent_id()
                 ),
             });
         }
@@ -5373,9 +5380,9 @@ async fn resolve_child_plan(
         authority = "parent_broadcast_channel",
         transition = "ChildPlan->Parent<Selectable>",
         campaign = %campaign_id,
-        parent_id = %parent_identity.parent_id,
-        parent_node_id = %parent_identity.node_id,
-        generation = parent_identity.generation,
+        parent_id = %parent_identity.parent_id(),
+        parent_node_id = %parent_identity.node_id(),
+        generation = parent_identity.generation(),
         selected_children = children.len(),
         plan_children = receipt.plan.body().children().len(),
         "validated child-plan membership for active parent"
@@ -6121,8 +6128,8 @@ impl<'a> ParentSelection<'a> {
         skip(self),
         fields(
             evidence_boundary = "child_outcome_channel",
-            parent_node_id = %self.parent_identity.node_id,
-            generation = self.parent_identity.generation + 1,
+            parent_node_id = %self.parent_identity.node_id(),
+            generation = self.parent_identity.generation() + 1,
             child_count = self.child_outcomes.len(),
         )
     )]
@@ -6175,7 +6182,7 @@ impl<'a> ParentSelection<'a> {
         debug!(
             target: EXECUTION_DEBUG_TARGET,
             evidence_boundary = "child_outcome_channel",
-            parent_node_id = %self.parent_identity.node_id,
+            parent_node_id = %self.parent_identity.node_id(),
             considered_count = considered.len(),
             projection_failure_count = projection_failures.len(),
             "assembled current-generation selection payloads from typed child outcomes"
@@ -6192,7 +6199,7 @@ impl<'a> ParentSelection<'a> {
         strategy: ActiveSelectionStrategy,
     ) -> Result<Option<(SuccessorDecision, SelectionSealMaterial)>, PrepareError> {
         let current_scope =
-            <Self as ScopeFor<Generation>>::scope_for(self, self.parent_identity.generation + 1)
+            <Self as ScopeFor<Generation>>::scope_for(self, self.parent_identity.generation() + 1)
                 .into_selection_scope();
         let scope = match strategy.candidate_scope {
             SelectionCandidateScope::CurrentGeneration => current_scope.clone(),
@@ -6252,7 +6259,7 @@ impl ScopeFor<Generation> for ParentSelection<'_> {
     type Coordinate = u32;
 
     fn scope_for(&self, generation: Self::Coordinate) -> Scope<Generation> {
-        Scope::<Generation>::local(&self.parent_identity.node_id, generation)
+        Scope::<Generation>::local(&self.parent_identity.node_id(), generation)
     }
 }
 
@@ -6518,12 +6525,12 @@ fn acknowledge_prototype1_state_handoff(
             ),
         });
     }
-    if invocation.node_id() != identity.node_id {
+    if invocation.node_id() != identity.node_id() {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "handoff invocation node '{}' does not match parent identity node '{}'",
                 invocation.node_id(),
-                identity.node_id
+                identity.node_id()
             ),
         });
     }
@@ -6625,9 +6632,9 @@ fn append_parent_target_sample(
     let sample = journal::resource::Sample {
         recorded_at: RecordedAt::now(),
         campaign_id: campaign_id.to_string(),
-        parent_id: parent_identity.parent_id.clone(),
-        node_id: parent_identity.node_id.clone(),
-        generation: parent_identity.generation,
+        parent_id: parent_identity.parent_id().to_string(),
+        node_id: parent_identity.node_id().to_string(),
+        generation: parent_identity.generation(),
         runtime_id,
         subject: journal::resource::Subject::CargoTarget,
         phase,
@@ -6658,9 +6665,9 @@ fn append_parent_target_sample(
             target: EXECUTION_DEBUG_TARGET,
             event = "prototype1_resource_sample_record_failed",
             campaign = %campaign_id,
-            parent_id = %parent_identity.parent_id,
-            node_id = %parent_identity.node_id,
-            generation = parent_identity.generation,
+            parent_id = %parent_identity.parent_id(),
+            node_id = %parent_identity.node_id(),
+            generation = parent_identity.generation(),
             error = %source,
             "failed to append prototype1 resource sample"
         );
@@ -6735,14 +6742,14 @@ impl Prototype1StateCommand {
                 InspectOutputFormat::Table => {
                     println!("prototype1 parent identity");
                     println!("{}", "-".repeat(40));
-                    println!("campaign_id: {}", identity.campaign_id);
-                    println!("parent_id: {}", identity.parent_id);
-                    println!("node_id: {}", identity.node_id);
-                    println!("generation: {}", identity.generation);
-                    println!("branch_id: {}", identity.branch_id);
+                    println!("campaign_id: {}", identity.campaign_id());
+                    println!("parent_id: {}", identity.parent_id());
+                    println!("node_id: {}", identity.node_id());
+                    println!("generation: {}", identity.generation());
+                    println!("branch_id: {}", identity.branch_id());
                     println!(
                         "artifact_branch: {}",
-                        identity.artifact_branch.as_deref().unwrap_or("-")
+                        identity.artifact_branch().unwrap_or("-")
                     );
                 }
             }
@@ -6756,10 +6763,10 @@ impl Prototype1StateCommand {
             authority = "artifact_identity",
             transition = "active_checkout->ParentIdentity",
             campaign = %campaign_id,
-            parent_id = %parent_identity.parent_id,
-            node_id = %parent_identity.node_id,
-            generation = parent_identity.generation,
-            branch_id = %parent_identity.branch_id,
+            parent_id = %parent_identity.parent_id(),
+            node_id = %parent_identity.node_id(),
+            generation = parent_identity.generation(),
+            branch_id = %parent_identity.branch_id(),
             "resolved active parent identity"
         );
         let backend = GitWorktreeBackend;
@@ -6785,10 +6792,10 @@ impl Prototype1StateCommand {
             authority = "history_startup",
             transition = "Parent<Checked>->Parent<Ready>",
             campaign = %campaign_id,
-            parent_id = %parent_identity.parent_id,
-            node_id = %parent_identity.node_id,
-            generation = parent_identity.generation,
-            branch_id = %parent_identity.branch_id,
+            parent_id = %parent_identity.parent_id(),
+            node_id = %parent_identity.node_id(),
+            generation = parent_identity.generation(),
+            branch_id = %parent_identity.branch_id(),
             handoff_runtime_id = ?handoff_invocation.as_ref().map(|invocation| invocation.runtime_id()),
             "parent entered ready state for active turn"
         );
@@ -6820,8 +6827,8 @@ impl Prototype1StateCommand {
         debug!(
             target: EXECUTION_DEBUG_TARGET,
             campaign = %campaign_id,
-            parent_id = %parent_identity.parent_id,
-            generation = parent_identity.generation,
+            parent_id = %parent_identity.parent_id(),
+            generation = parent_identity.generation(),
             repo_root = %repo_root.display(),
             journal_path = %journal_path.display(),
             "starting typed prototype1 parent turn"
@@ -8169,6 +8176,7 @@ fn prototype1_trace_path(campaign_manifest_path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::prototype1_state::identity::ParentIdentityRecord;
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
     use tracing::{Event, Id, Subscriber};
@@ -8573,7 +8581,7 @@ mod tests {
                 &NoopBackend,
                 manifest_path,
                 Check {
-                    campaign_id: &identity.campaign_id,
+                    campaign_id: &identity.campaign_id(),
                     active_root: repo_root,
                 },
             )
@@ -8664,7 +8672,7 @@ mod tests {
         .expect("published child plan");
 
         let body = receipt.plan.body();
-        assert_eq!(receipt.parent.identity().node_id, "node-parent");
+        assert_eq!(receipt.parent.identity().node_id(), "node-parent");
         assert_eq!(body.children().len(), 3);
         assert_eq!(body.parent_node_id(), "node-parent");
         assert!(body.message().exists());
@@ -8791,7 +8799,7 @@ mod tests {
     }
 
     fn test_parent_identity() -> ParentIdentity {
-        ParentIdentity {
+        ParentIdentity::from_record_for_test(ParentIdentityRecord {
             schema_version: crate::cli::prototype1_state::identity::PARENT_IDENTITY_SCHEMA_VERSION
                 .to_string(),
             campaign_id: "campaign".to_string(),
@@ -8804,7 +8812,7 @@ mod tests {
             branch_id: "branch-parent".to_string(),
             artifact_branch: Some("prototype1-node-parent".to_string()),
             created_at: "2026-05-06T00:00:00Z".to_string(),
-        }
+        })
     }
 
     fn test_metrics(

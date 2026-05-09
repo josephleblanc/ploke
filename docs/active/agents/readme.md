@@ -19,6 +19,8 @@ The former `2026-05-06-prototype1-*` execution-surface inventory links that appe
 
 ## Still in this folder
 
+- [`2026-05-08_bounded-edit-surface-handoff.md`](2026-05-08_bounded-edit-surface-handoff.md) — restart spine for the current bounded edit-surface / parent-planning thread, including authoritative docs, blocker status, known code audits, and next questions.
+- [`2026-05-08_bounded-edit-surface-implementation-orientation.md`](2026-05-08_bounded-edit-surface-implementation-orientation.md) — short operational packet for sub-agents implementing the bounded edit-surface plan, with core docs, invariants, task-stack ids, and slice prompt pattern.
 - [`open-questions.md`](open-questions.md) — agent-to-agent questions (not direct user prompts).
 - [`notable-inconsistencies.md`](notable-inconsistencies.md) — durable inconsistencies worth tracking.
 

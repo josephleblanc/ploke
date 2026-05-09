@@ -813,9 +813,39 @@ selection.
 
 ## Trait Adapter Shape
 
-`ploke-eval` should not import `ploke-tui` internals into active authority
-paths. It should define a small adapter surface that can be implemented by a
-`ploke-tui` bridge, a mock harness in tests, or a later non-TUI editor.
+The adapter should encode the bounded edit operation interface, not the
+internal shape of `ploke-tui`.
+
+`ploke-eval` should define the operation it needs:
+
+```text
+given an Artifact, coordinate, grant, policy, and target intent:
+  produce a proposal and harness-run evidence;
+
+given a proposal that passed a `ploke-eval` surface check:
+  apply it and return material apply evidence.
+```
+
+`ploke-tui` is then one possible harness behind that interface. The same
+operation boundary should also admit a deterministic producer, a mock harness in
+tests, a direct semantic resolver, or a later non-TUI editor. This keeps
+`ploke-eval` organized around candidate creation and admission instead of
+reaching across half of the `ploke-tui` internal command, proposal, chat, and
+session machinery.
+
+The important dependency direction is:
+
+```text
+ploke-eval owns grants, checks, candidate admission, History evidence.
+EditHarness encodes the operation boundary.
+ploke-tui adapter implements that boundary using current TUI machinery.
+```
+
+This is not a claim that TUI staging cannot be reused. TUI staging can produce
+valuable proposal and preview evidence. The boundary is that staged TUI state is
+not authority: `AppState.proposals`, proposal status, user config persistence,
+chat/tool events, and `edit approve` are executor/session mechanics unless
+`ploke-eval` records them as evidence for an admitted transition.
 
 The code graph should be a separate adapter from the edit harness. The edit
 harness may depend on it, but the graph projection is independently useful for

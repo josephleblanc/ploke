@@ -5907,6 +5907,66 @@ mod tests {
     }
 
     #[test]
+    fn fs_block_store_history_segment_deserializes_as_passive_record() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+        let expected_state = store.lineage_state(&lineage).expect("read empty state");
+        let mut block = open_block_from_state(&expected_state, 0, Vec::new());
+        let admitted_entry_id = block
+            .admit(proposed_entry(), actor("admitter"))
+            .expect("admit entry");
+        let sealed = seal(block);
+        let expected_block_hash = sealed.block_hash().to_hex();
+        let expected_block_id =
+            serde_json::to_value(sealed.header().common.block_id).expect("serialize eval block id");
+        let expected_opened_from_state =
+            serde_json::to_value(expected_state.root()).expect("serialize eval state root");
+
+        let stored = store
+            .append(&expected_state, &sealed)
+            .expect("append sealed block");
+
+        let segment = std::fs::read_to_string(
+            tmp.path()
+                .join("history")
+                .join("blocks")
+                .join("segment-000000.jsonl"),
+        )
+        .expect("block segment");
+        let first_line = segment.lines().next().expect("first segment line");
+        let passive: ploke_records::history::SealedBlockRecord =
+            serde_json::from_str(first_line).expect("deserialize passive sealed block record");
+
+        assert_eq!(stored.location.line_index, 0);
+        assert_eq!(passive.state.header.block_hash.0, expected_block_hash);
+        assert_eq!(
+            serde_json::to_value(&passive.state.header.common.block_id)
+                .expect("serialize passive block id"),
+            expected_block_id
+        );
+        assert_eq!(
+            serde_json::to_value(&passive.state.header.common.opened_from_state)
+                .expect("serialize passive state root"),
+            expected_opened_from_state
+        );
+        assert_eq!(passive.state.header.common.lineage_id.0, lineage.as_str());
+        assert_eq!(
+            passive.state.header.common.block_height,
+            sealed.block_height()
+        );
+        assert_eq!(passive.state.header.common.parent_block_hashes, Vec::new());
+        assert_eq!(passive.state.header.entry_count, 1);
+        assert_eq!(passive.entries.len(), 1);
+        assert_eq!(
+            passive.entries[0].core.entry_id.0,
+            admitted_entry_id.to_string()
+        );
+        assert_eq!(passive.entries[0].state.lineage_id.0, lineage.as_str());
+        assert_eq!(passive.entries[0].state.block_height, sealed.block_height());
+    }
+
+    #[test]
     fn history_candidates_reads_cross_generation_selection_payloads_with_proofs() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let store = FsBlockStore::new(tmp.path().join("history"));

@@ -27,10 +27,10 @@ impl RuntimeTelemetry {
         Self {
             role: "parent",
             runtime_phase,
-            campaign_id: identity.campaign_id.clone(),
-            node_id: identity.node_id.clone(),
-            branch_id: identity.branch_id.clone(),
-            generation: identity.generation,
+            campaign_id: identity.campaign_id().to_string(),
+            node_id: identity.node_id().to_string(),
+            branch_id: identity.branch_id().to_string(),
+            generation: identity.generation(),
             runtime_id: None,
         }
     }

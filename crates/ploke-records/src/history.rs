@@ -227,7 +227,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::identity::{ParentIdentityRecord, PARENT_IDENTITY_SCHEMA_VERSION};
+    use crate::identity::{PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentityRecord};
     use crate::invocation::{InvocationRecord, Role};
 
     fn value(value: &str) -> JsonRecordValue {

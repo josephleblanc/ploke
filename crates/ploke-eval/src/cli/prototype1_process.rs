@@ -618,9 +618,9 @@ fn install_committed_successor_artifact(
     observe::Step::start(observe::span!(
         "prototype1.parent.checkout.advanced",
         campaign_id = %campaign_id,
-        selected_parent_id = %identity.parent_id,
-        selected_node_id = %identity.node_id,
-        selected_generation = identity.generation,
+        selected_parent_id = %identity.parent_id(),
+        selected_node_id = %identity.node_id(),
+        selected_generation = identity.generation(),
         selected_branch = %workspace.branch.0,
         installed_commit = %installed_commit.0,
         active_parent_root = %active_parent_root.display(),
@@ -1386,7 +1386,7 @@ fn handoff_block_fields(
 }
 
 fn parent_actor_ref(parent_identity: &ParentIdentity) -> ActorRef {
-    ActorRef::Process(format!("parent:{}", parent_identity.parent_id))
+    ActorRef::Process(format!("parent:{}", parent_identity.parent_id()))
 }
 
 fn history_prepare_error(

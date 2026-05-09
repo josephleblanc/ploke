@@ -113,11 +113,11 @@ impl ChildPlanFiles {
         children: Vec<ChildFiles>,
     ) -> Self {
         Self {
-            message: At::resolve((manifest_path.to_path_buf(), parent.node_id.clone())),
-            parent_node_id: parent.node_id.clone(),
+            message: At::resolve((manifest_path.to_path_buf(), parent.node_id().to_string())),
+            parent_node_id: parent.node_id().to_string(),
             // Prototype 1 direct-child policy: candidates produced by Parent k
             // are generation k + 1.
-            child_generation: parent.generation + 1,
+            child_generation: parent.generation() + 1,
             children,
         }
     }
@@ -147,16 +147,16 @@ impl ChildPlanFiles {
     }
 
     fn validate_receiver(&self, identity: &ParentIdentity) -> Result<(), ChildPlanReceiverError> {
-        if identity.node_id != self.parent_node_id {
+        if identity.node_id() != self.parent_node_id {
             return Err(ChildPlanReceiverError::ParentNode {
                 expected_parent_node_id: self.parent_node_id.clone(),
-                actual_parent_node_id: identity.node_id.clone(),
+                actual_parent_node_id: identity.node_id().to_string(),
             });
         }
 
         // Match the same direct-child lineage rule encoded when the candidate
         // set was written.
-        let actual_generation = identity.generation + 1;
+        let actual_generation = identity.generation() + 1;
         if actual_generation != self.child_generation {
             return Err(ChildPlanReceiverError::Generation {
                 expected_generation: self.child_generation,
@@ -382,36 +382,36 @@ fn parent_node_projection(manifest_path: &Path, identity: &ParentIdentity) -> Pr
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("prototype1");
-    let node_dir = prototype_root.join("nodes").join(&identity.node_id);
+    let node_dir = prototype_root.join("nodes").join(&identity.node_id());
     let binary_path = node_dir
         .join("bin")
         .join(format!("ploke-eval{}", std::env::consts::EXE_SUFFIX));
     Prototype1NodeRecord {
         schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
-        node_id: identity.node_id.clone(),
-        parent_node_id: identity.parent_node_id.clone(),
-        generation: identity.generation,
+        node_id: identity.node_id().to_string(),
+        parent_node_id: identity.parent_node_id().map(str::to_string),
+        generation: identity.generation(),
         instance_id: identity
-            .instance_id
-            .clone()
-            .unwrap_or_else(|| identity.node_id.clone()),
-        source_state_id: identity.branch_id.clone(),
+            .instance_id()
+            .map(str::to_string)
+            .unwrap_or_else(|| identity.node_id().to_string()),
+        source_state_id: identity.branch_id().to_string(),
         operation_target: None,
         base_artifact_id: None,
         patch_id: None,
         derived_artifact_id: None,
         parent_branch_id: None,
-        branch_id: identity.branch_id.clone(),
-        candidate_id: identity.node_id.clone(),
+        branch_id: identity.branch_id().to_string(),
+        candidate_id: identity.node_id().to_string(),
         target_relpath: super::identity::parent_identity_relpath(),
         node_dir: node_dir.clone(),
         workspace_root: PathBuf::new(),
         binary_path,
-        runner_request_path: prototype1_runner_request_path(manifest_path, &identity.node_id),
+        runner_request_path: prototype1_runner_request_path(manifest_path, &identity.node_id()),
         runner_result_path: node_dir.join("runner-result.json"),
         status: Prototype1NodeStatus::Running,
-        created_at: identity.created_at.clone(),
-        updated_at: identity.created_at.clone(),
+        created_at: identity.created_at().to_string(),
+        updated_at: identity.created_at().to_string(),
     }
 }
 
@@ -424,12 +424,12 @@ impl Parent<Unchecked> {
             role = "parent",
             authority = "artifact_identity",
             transition = "ParentIdentity->Parent<Unchecked>",
-            campaign_id = %identity.campaign_id,
-            parent_id = %identity.parent_id,
-            node_id = %identity.node_id,
-            generation = identity.generation,
-            branch_id = %identity.branch_id,
-            artifact_branch = ?identity.artifact_branch,
+            campaign_id = %identity.campaign_id(),
+            parent_id = %identity.parent_id(),
+            node_id = %identity.node_id(),
+            generation = identity.generation(),
+            branch_id = %identity.branch_id(),
+            artifact_branch = ?identity.artifact_branch(),
         )
     )]
     pub(crate) fn load(
@@ -442,11 +442,11 @@ impl Parent<Unchecked> {
             role = "parent",
             authority = "artifact_identity",
             transition = "ParentIdentity->Parent<Unchecked>",
-            campaign_id = %identity.campaign_id,
-            parent_id = %identity.parent_id,
-            node_id = %identity.node_id,
-            generation = identity.generation,
-            branch_id = %identity.branch_id,
+            campaign_id = %identity.campaign_id(),
+            parent_id = %identity.parent_id(),
+            node_id = %identity.node_id(),
+            generation = identity.generation(),
+            branch_id = %identity.branch_id(),
             "loaded parent runtime identity from active Artifact"
         );
         Ok(Self {
@@ -464,11 +464,11 @@ impl Parent<Unchecked> {
             role = "parent",
             authority = "artifact_backend",
             transition = "Parent<Unchecked>->Parent<Checked>",
-            campaign_id = %self.identity.campaign_id,
-            parent_id = %self.identity.parent_id,
-            node_id = %self.identity.node_id,
-            generation = self.identity.generation,
-            branch_id = %self.identity.branch_id,
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
             active_root = %check.active_root.display(),
         )
     )]
@@ -491,11 +491,11 @@ impl Parent<Unchecked> {
             role = "parent",
             authority = "artifact_backend",
             transition = "Parent<Unchecked>->Parent<Checked>",
-            campaign_id = %self.identity.campaign_id,
-            parent_id = %self.identity.parent_id,
-            node_id = %self.identity.node_id,
-            generation = self.identity.generation,
-            branch_id = %self.identity.branch_id,
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
             "validated parent checkout against artifact-carried identity"
         );
         Ok(Parent {
@@ -519,11 +519,11 @@ impl Parent<Checked> {
             role = "parent",
             authority = "history_startup",
             transition = "Parent<Checked>->Parent<Ready>",
-            campaign_id = %self.identity.campaign_id,
-            parent_id = %self.identity.parent_id,
-            node_id = %self.identity.node_id,
-            generation = self.identity.generation,
-            branch_id = %self.identity.branch_id,
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
         )
     )]
     pub(crate) fn ready(self, startup: Startup<Validated>) -> Result<Parent<Ready>, PrepareError> {
@@ -533,11 +533,11 @@ impl Parent<Checked> {
             role = "parent",
             authority = "history_startup",
             transition = "Parent<Checked>->Parent<Ready>",
-            campaign_id = %self.identity.campaign_id,
-            parent_id = %self.identity.parent_id,
-            node_id = %self.identity.node_id,
-            generation = self.identity.generation,
-            branch_id = %self.identity.branch_id,
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
             "admitted checked parent after startup authority validation"
         );
         Ok(Parent {
@@ -555,14 +555,14 @@ impl Startup<Genesis> {
     ) -> Result<Startup<Validated>, PrepareError> {
         let startup = observe::Step::start(observe::span!(
             "prototype1.parent.startup.genesis",
-            campaign_id = %identity.campaign_id,
-            parent_id = %identity.parent_id,
-            node_id = %identity.node_id,
-            generation = identity.generation,
+            campaign_id = %identity.campaign_id(),
+            parent_id = %identity.parent_id(),
+            node_id = %identity.node_id(),
+            generation = identity.generation(),
             manifest_path = %manifest_path.display(),
         ));
         let store = FsBlockStore::for_campaign_manifest(manifest_path);
-        let lineage_id = LineageId::new(identity.campaign_id.clone());
+        let lineage_id = LineageId::new(identity.campaign_id().to_string());
         let state = match store.lineage_state(&lineage_id) {
             Ok(state) => state,
             Err(source) => {
@@ -584,11 +584,12 @@ impl Startup<Genesis> {
         state: LineageState,
     ) -> Result<Startup<Validated>, PrepareError> {
         validate_startup_lineage(identity, &state)?;
-        if identity.generation != 0 {
+        if identity.generation() != 0 {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "genesis startup for parent '{}' requires generation 0, found generation {}",
-                    identity.node_id, identity.generation
+                    identity.node_id(),
+                    identity.generation()
                 ),
             });
         }
@@ -597,7 +598,7 @@ impl Startup<Genesis> {
             StoreHead::Present(head) => Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "genesis startup for parent '{}' found existing History head at height {}",
-                    identity.node_id,
+                    identity.node_id(),
                     head.block_height()
                 ),
             }),
@@ -613,15 +614,15 @@ impl Startup<Predecessor> {
     ) -> Result<Startup<Validated>, PrepareError> {
         let startup = observe::Step::start(observe::span!(
             "prototype1.parent.startup.predecessor",
-            campaign_id = %identity.campaign_id,
-            parent_id = %identity.parent_id,
-            node_id = %identity.node_id,
-            generation = identity.generation,
+            campaign_id = %identity.campaign_id(),
+            parent_id = %identity.parent_id(),
+            node_id = %identity.node_id(),
+            generation = identity.generation(),
             manifest_path = %manifest_path.display(),
             active_parent_root = %active_parent_root.display(),
         ));
         let store = FsBlockStore::for_campaign_manifest(manifest_path);
-        let lineage_id = LineageId::new(identity.campaign_id.clone());
+        let lineage_id = LineageId::new(identity.campaign_id().to_string());
         let state = match store.lineage_state(&lineage_id) {
             Ok(state) => state,
             Err(source) => {
@@ -637,7 +638,7 @@ impl Startup<Predecessor> {
                     phase: "prototype1_history_successor_startup",
                     detail: format!(
                         "successor startup for campaign '{}' has no sealed History head to verify",
-                        identity.campaign_id
+                        identity.campaign_id()
                     ),
                 };
                 startup.fail("missing_predecessor_head", &error);
@@ -701,11 +702,11 @@ impl Startup<Predecessor> {
         state: LineageState,
     ) -> Result<Startup<Validated>, PrepareError> {
         validate_startup_lineage(identity, &state)?;
-        if identity.generation == 0 {
+        if identity.generation() == 0 {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "predecessor startup for parent '{}' cannot enter generation 0",
-                    identity.node_id
+                    identity.node_id()
                 ),
             });
         }
@@ -718,7 +719,7 @@ impl Startup<Predecessor> {
             StoreHead::Absent { .. } => Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "predecessor startup for parent '{}' has no sealed History head",
-                    identity.node_id
+                    identity.node_id()
                 ),
             }),
         }
@@ -752,28 +753,30 @@ impl Startup<Validated> {
                 });
             }
         }
-        if self.lineage_id.as_str() != identity.campaign_id {
+        if self.lineage_id.as_str() != identity.campaign_id() {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "validated startup lineage '{}' does not match parent campaign '{}'",
                     self.lineage_id.as_str(),
-                    identity.campaign_id
+                    identity.campaign_id()
                 ),
             });
         }
-        if self.parent_node_id != identity.node_id {
+        if self.parent_node_id != identity.node_id() {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "validated startup parent '{}' does not match parent identity '{}'",
-                    self.parent_node_id, identity.node_id
+                    self.parent_node_id,
+                    identity.node_id()
                 ),
             });
         }
-        if self.generation != identity.generation {
+        if self.generation != identity.generation() {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "validated startup generation {} does not match parent generation {}",
-                    self.generation, identity.generation
+                    self.generation,
+                    identity.generation()
                 ),
             });
         }
@@ -788,9 +791,9 @@ impl<S> Startup<S> {
         kind: StartupKind,
     ) -> Startup<Validated> {
         Startup {
-            lineage_id: LineageId::new(identity.campaign_id.clone()),
-            parent_node_id: identity.node_id.clone(),
-            generation: identity.generation,
+            lineage_id: LineageId::new(identity.campaign_id().to_string()),
+            parent_node_id: identity.node_id().to_string(),
+            generation: identity.generation(),
             state,
             kind,
             _state: PhantomData,
@@ -802,13 +805,13 @@ fn validate_startup_lineage(
     identity: &ParentIdentity,
     state: &LineageState,
 ) -> Result<(), PrepareError> {
-    let expected = LineageId::new(identity.campaign_id.clone());
+    let expected = LineageId::new(identity.campaign_id().to_string());
     if state.head().lineage_id() != &expected {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "startup lineage '{}' does not match parent campaign '{}'",
                 state.head().lineage_id().as_str(),
-                identity.campaign_id
+                identity.campaign_id()
             ),
         });
     }
@@ -851,11 +854,11 @@ impl Parent<Ready> {
             role = "parent",
             authority = "parent_broadcast_channel",
             transition = "Parent<Ready>->Parent<Planned>",
-            campaign_id = %self.identity.campaign_id,
-            parent_id = %self.identity.parent_id,
-            node_id = %self.identity.node_id,
-            generation = self.identity.generation,
-            branch_id = %self.identity.branch_id,
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
         )
     )]
     pub(crate) fn planned_from_locked_child_plan(self) -> Parent<Planned> {
@@ -864,11 +867,11 @@ impl Parent<Ready> {
             role = "parent",
             authority = "parent_broadcast_channel",
             transition = "Parent<Ready>->Parent<Planned>",
-            campaign_id = %self.identity.campaign_id,
-            parent_id = %self.identity.parent_id,
-            node_id = %self.identity.node_id,
-            generation = self.identity.generation,
-            branch_id = %self.identity.branch_id,
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
             "locked parent child-plan broadcast"
         );
         self.cast()
@@ -894,11 +897,11 @@ impl Parent<Selectable> {
             role = "parent",
             authority = "crown_lineage_lock",
             transition = "Parent<Selectable>->Parent<Retired>",
-            campaign_id = %self.identity.campaign_id,
-            parent_id = %self.identity.parent_id,
-            node_id = %self.identity.node_id,
-            generation = self.identity.generation,
-            branch_id = %self.identity.branch_id,
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
         )
     )]
     pub(super) fn into_retired_and_lineage(self) -> (Parent<Retired>, LineageKey) {
@@ -907,14 +910,14 @@ impl Parent<Selectable> {
             role = "parent",
             authority = "crown_lineage_lock",
             transition = "Parent<Selectable>->Parent<Retired>",
-            campaign_id = %self.identity.campaign_id,
-            parent_id = %self.identity.parent_id,
-            node_id = %self.identity.node_id,
-            generation = self.identity.generation,
-            branch_id = %self.identity.branch_id,
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
             "parent locked lineage authority for successor handoff"
         );
-        let lineage = LineageKey::from_debug_value(self.identity.campaign_id.clone());
+        let lineage = LineageKey::from_debug_value(self.identity.campaign_id().to_string());
         (self.cast(), lineage)
     }
 }
@@ -939,9 +942,9 @@ fn identity_context(
 ) -> Prototype1ParentIdentityContext {
     Prototype1ParentIdentityContext {
         path: parent_identity_path(active_root),
-        node_id: identity.node_id.clone(),
-        generation: identity.generation,
-        branch_id: identity.branch_id.clone(),
+        node_id: identity.node_id().to_string(),
+        generation: identity.generation(),
+        branch_id: identity.branch_id().to_string(),
     }
 }
 
@@ -968,6 +971,7 @@ mod tests {
     use crate::{
         cli::prototype1_state::{
             history::{ActorRef, ArtifactRef, EvidenceRef, SealBlock, SuccessorRef},
+            identity::ParentIdentityRecord,
             inner::{LockCrown, Open},
         },
         intervention::{PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeStatus},
@@ -1076,7 +1080,7 @@ mod tests {
     }
 
     fn identity(node_id: &str, generation: u32) -> ParentIdentity {
-        ParentIdentity {
+        ParentIdentity::from_record_for_test(ParentIdentityRecord {
             schema_version: "prototype1-parent-identity.v1".to_string(),
             campaign_id: "campaign".to_string(),
             parent_id: node_id.to_string(),
@@ -1088,7 +1092,7 @@ mod tests {
             branch_id: format!("branch-{node_id}"),
             artifact_branch: Some(format!("artifact-{node_id}")),
             created_at: "2026-04-27T00:00:00Z".to_string(),
-        }
+        })
     }
 
     fn parent(node_id: &str, generation: u32) -> Parent<Ready> {
@@ -1171,7 +1175,7 @@ mod tests {
 
     fn child_files(parent: &ParentIdentity, child: Prototype1NodeRecord) -> ChildFiles {
         let resolved = resolved_for(&child);
-        ChildFiles::from_resolved(&parent.campaign_id, child, resolved, false)
+        ChildFiles::from_resolved(parent.campaign_id(), child, resolved, false)
     }
 
     #[test]
@@ -1216,7 +1220,7 @@ mod tests {
             .unwrap();
         let (selectable, received) = locked.unlock(planned).unwrap();
 
-        assert_eq!(selectable.identity().node_id, "parent-a");
+        assert_eq!(selectable.identity().node_id(), "parent-a");
         assert!(received.body().contains_child("child-1"));
     }
 
@@ -1246,7 +1250,7 @@ mod tests {
             crate::cli::prototype1_state::event::RecordedAt(30),
         ));
 
-        assert_eq!(retired.identity.node_id, "parent-a");
+        assert_eq!(retired.identity.node_id(), "parent-a");
         assert!(locked.lineage_key().matches_debug_str("campaign"));
     }
 
@@ -1260,7 +1264,7 @@ mod tests {
             Startup::<Genesis>::from_history(parent.identity(), &manifest_path).expect("startup");
         let ready = parent.ready(startup).expect("ready parent");
 
-        assert_eq!(ready.identity().node_id, "parent-a");
+        assert_eq!(ready.identity().node_id(), "parent-a");
     }
 
     #[test]

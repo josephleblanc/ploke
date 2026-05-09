@@ -13,33 +13,65 @@ use serde::{Deserialize, Serialize};
 use crate::intervention::Prototype1NodeRecord;
 use crate::spec::PrepareError;
 
-/// Stable repo-relative path for the parent identity artifact.
-pub(crate) const PARENT_IDENTITY_RELPATH: &str = ".ploke/prototype1/parent_identity.json";
-
-/// Durable schema version for parent identity artifacts.
-pub(crate) const PARENT_IDENTITY_SCHEMA_VERSION: &str = "prototype1-parent-identity.v1";
+pub(crate) use ploke_records::identity::{
+    PARENT_IDENTITY_RELPATH, PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentityRecord,
+};
 
 /// Parent identity committed into a parent Artifact checkout.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct ParentIdentity {
-    pub schema_version: String,
-    pub campaign_id: String,
-    pub parent_id: String,
-    pub node_id: String,
-    pub generation: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instance_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub previous_parent_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_node_id: Option<String>,
-    pub branch_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifact_branch: Option<String>,
-    pub created_at: String,
-}
+#[serde(transparent)]
+pub(crate) struct ParentIdentity(ParentIdentityRecord);
 
 impl ParentIdentity {
+    pub(crate) fn schema_version(&self) -> &str {
+        &self.0.schema_version
+    }
+
+    pub(crate) fn campaign_id(&self) -> &str {
+        &self.0.campaign_id
+    }
+
+    pub(crate) fn parent_id(&self) -> &str {
+        &self.0.parent_id
+    }
+
+    pub(crate) fn node_id(&self) -> &str {
+        &self.0.node_id
+    }
+
+    pub(crate) fn generation(&self) -> u32 {
+        self.0.generation
+    }
+
+    pub(crate) fn instance_id(&self) -> Option<&str> {
+        self.0.instance_id.as_deref()
+    }
+
+    pub(crate) fn previous_parent_id(&self) -> Option<&str> {
+        self.0.previous_parent_id.as_deref()
+    }
+
+    pub(crate) fn parent_node_id(&self) -> Option<&str> {
+        self.0.parent_node_id.as_deref()
+    }
+
+    pub(crate) fn branch_id(&self) -> &str {
+        &self.0.branch_id
+    }
+
+    pub(crate) fn artifact_branch(&self) -> Option<&str> {
+        self.0.artifact_branch.as_deref()
+    }
+
+    pub(crate) fn created_at(&self) -> &str {
+        &self.0.created_at
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_record_for_test(record: ParentIdentityRecord) -> Self {
+        Self(record)
+    }
+
     /// Construct the first parent identity from explicit bootstrap facts.
     pub(crate) fn root_bootstrap(
         campaign_id: impl Into<String>,
@@ -49,7 +81,7 @@ impl ParentIdentity {
         artifact_branch: Option<String>,
     ) -> Self {
         let node_id = node_id.into();
-        Self {
+        Self(ParentIdentityRecord {
             schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
             campaign_id: campaign_id.into(),
             parent_id: node_id.clone(),
@@ -61,7 +93,7 @@ impl ParentIdentity {
             branch_id: branch_id.into(),
             artifact_branch,
             created_at: Utc::now().to_rfc3339(),
-        }
+        })
     }
 
     /// Construct identity from the scheduler node mirror.
@@ -71,19 +103,19 @@ impl ParentIdentity {
         previous_parent: Option<&ParentIdentity>,
         artifact_branch: Option<String>,
     ) -> Self {
-        Self {
+        Self(ParentIdentityRecord {
             schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
             campaign_id: campaign_id.into(),
             parent_id: node.node_id.clone(),
             node_id: node.node_id.clone(),
             generation: node.generation,
             instance_id: Some(node.instance_id.clone()),
-            previous_parent_id: previous_parent.map(|identity| identity.parent_id.clone()),
+            previous_parent_id: previous_parent.map(|identity| identity.parent_id().to_string()),
             parent_node_id: node.parent_node_id.clone(),
             branch_id: node.branch_id.clone(),
             artifact_branch,
             created_at: Utc::now().to_rfc3339(),
-        }
+        })
     }
 
     /// Validate this identity against the active campaign/node expectation.
@@ -92,28 +124,30 @@ impl ParentIdentity {
         campaign_id: &str,
         command_node_id: Option<&str>,
     ) -> Result<(), PrepareError> {
-        if self.schema_version != PARENT_IDENTITY_SCHEMA_VERSION {
+        if self.schema_version() != PARENT_IDENTITY_SCHEMA_VERSION {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "parent identity schema '{}' is not supported",
-                    self.schema_version
+                    self.schema_version()
                 ),
             });
         }
-        if self.campaign_id != campaign_id {
+        if self.campaign_id() != campaign_id {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "parent identity campaign '{}' does not match command campaign '{}'",
-                    self.campaign_id, campaign_id
+                    self.campaign_id(),
+                    campaign_id
                 ),
             });
         }
         if let Some(node_id) = command_node_id {
-            if self.node_id != node_id {
+            if self.node_id() != node_id {
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: format!(
                         "parent identity node '{}' does not match command node '{}'",
-                        self.node_id, node_id
+                        self.node_id(),
+                        node_id
                     ),
                 });
             }
@@ -136,7 +170,8 @@ pub(crate) fn parent_identity_path(repo_root: &Path) -> PathBuf {
 pub(crate) fn parent_identity_commit_message(identity: &ParentIdentity) -> String {
     format!(
         "prototype1: initializing gen {} parent {}",
-        identity.generation, identity.parent_id
+        identity.generation(),
+        identity.parent_id()
     )
 }
 
@@ -189,7 +224,7 @@ mod tests {
     use super::*;
 
     fn identity() -> ParentIdentity {
-        ParentIdentity {
+        ParentIdentity::from_record_for_test(ParentIdentityRecord {
             schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
             campaign_id: "campaign-1".to_string(),
             parent_id: "node-1".to_string(),
@@ -201,7 +236,7 @@ mod tests {
             branch_id: "branch-1".to_string(),
             artifact_branch: Some("prototype1-parent-0".to_string()),
             created_at: "2026-04-26T00:00:00Z".to_string(),
-        }
+        })
     }
 
     #[test]

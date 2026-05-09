@@ -10,9 +10,12 @@
 //! crates may depend on these records to read evidence surfaces without gaining
 //! authority constructors.
 
+pub mod branch;
+pub mod channel;
 pub mod history;
 pub mod identity;
 pub mod ids;
 pub mod invocation;
 pub mod journal;
+pub mod scheduler;
 pub mod value;

@@ -2014,15 +2014,18 @@ fn journal_coordinates(entry: &JournalEntry) -> Coordinates {
     match entry {
         JournalEntry::ChildArtifactCommitted(entry) => Coordinates {
             node_id: Some(entry.node_id.clone()),
-            parent_node_id: entry.child_identity.parent_node_id.clone(),
+            parent_node_id: entry.child_identity.parent_node_id().map(str::to_string),
             generation: Some(entry.generation),
-            branch_id: Some(entry.child_identity.branch_id.clone()),
+            branch_id: Some(entry.child_identity.branch_id().to_string()),
             ..Coordinates::default()
         },
         JournalEntry::ActiveCheckoutAdvanced(entry) => Coordinates {
-            node_id: Some(entry.selected_parent_identity.node_id.clone()),
-            parent_node_id: entry.selected_parent_identity.parent_node_id.clone(),
-            generation: Some(entry.selected_parent_identity.generation),
+            node_id: Some(entry.selected_parent_identity.node_id().to_string()),
+            parent_node_id: entry
+                .selected_parent_identity
+                .parent_node_id()
+                .map(str::to_string),
+            generation: Some(entry.selected_parent_identity.generation()),
             branch_id: Some(entry.selected_branch.clone()),
             ..Coordinates::default()
         },

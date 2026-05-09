@@ -4891,6 +4891,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ploke-tree"
+version = "0.1.0"
+dependencies = [
+ "ploke-records",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ploke-tui"
 version = "0.1.0"
 dependencies = [
