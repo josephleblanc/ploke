@@ -75,6 +75,11 @@ admitted as `AdmissibleEvidence<Diagnosis>`.
 Current implementation vocabulary used by these tests:
 
 ```text
+EditObjective
+ProtectedCore
+EditableSurface
+surface::Grant
+surface::Error::Forbidden
 history::surface_attempt::Evidence
 history::surface_attempt::Outcome
 EvaluationPayload.surface_attempt
@@ -154,6 +159,148 @@ ArtifactDelta δ modifies GeneratorSurface T
 ```
 
 ## Test Index
+
+The current broad-surface tests prove local primitive behavior after their
+inputs are already constructed. They should not be read as a completed `7.3`
+route proof. The missing upstream splice is:
+
+```text
+A': real parent-time History/context evidence + graph projection +
+    protected-core policy
+B*: parent-side route/admission constructor
+C': EditObjective + EditableSurface with evidence refs and broad Grant
+```
+
+Until that exists, the tests below prove only the local surface/admission layer:
+
+```text
+explicit EditObjective + explicit ProtectedCore + explicit Γ_a
+  -> EditableSurface::broad
+  -> Grant::check
+```
+
+### `broad_surface_admits_writable_touch_outside_protected_core`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs:73
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval broad_surface_admits_writable_touch_outside_protected_core -- --nocapture
+```
+
+Local splice:
+
+```text
+A': explicit graph bounds Γ_a and explicit ProtectedCore F over one span
+B*: EditableSurface::broad builds Grant with W = Γ_a \ F
+C': Grant::check admits a Draft whose Q_w is outside F
+```
+
+Formal meaning:
+
+```text
+Q_w ⊆ W
+Q_w ∩ F = ∅
+g ⊢ q
+```
+
+Why non-trivial:
+
+- Proves the broad-parent route is permissive outside the protected core.
+- Prevents the broad surface from silently becoming a narrow route table.
+
+Residual gap:
+
+- This is a local surface/admission proof. It does not yet prove construction
+  from live History context or a real `ploke-tui` proposal.
+
+### `broad_surface_rejects_touch_inside_protected_core`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs:122
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval broad_surface_rejects_touch_inside_protected_core -- --nocapture
+```
+
+Local splice:
+
+```text
+A': explicit graph bounds Γ_a and explicit ProtectedCore F over one span
+B*: EditableSurface::broad builds Grant with F preserved
+C': Grant::check rejects a Draft whose Q_w intersects F
+```
+
+Formal meaning:
+
+```text
+Q_w ∩ F ≠ ∅
+g ⊬ q
+```
+
+Why non-trivial:
+
+- Proves natural-language protected-core instructions are backed by checked
+  surface authority rather than harness convention.
+- Establishes the first code-level guard for preserving `Φ` while allowing
+  broad changes to `Ω`.
+
+Residual gap:
+
+- `ProtectedCore` is still passed as explicit spans. Later slices must derive
+  it from Crown/History/spawn/oracle/capability surfaces.
+
+### `broad_surface_objective_records_context_without_diagnosis_specificity`
+
+Location:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs:165
+```
+
+Run:
+
+```bash
+cargo test -p ploke-eval broad_surface_objective_records_context_without_diagnosis_specificity -- --nocapture
+```
+
+Local splice:
+
+```text
+A': synthetic context/evidence refs without a narrow semantic-resolution Diagnosis
+B*: EditObjective records broad intent and context refs
+C': EditableSurface carries objective alongside broad Grant
+```
+
+Formal meaning:
+
+```text
+Diagnosis is context, not write authority.
+EditObjective may be constructed from admitted context refs without forcing a
+narrow failure-to-surface route.
+```
+
+Why non-trivial:
+
+- Aligns 7.3 with the broad ruling-parent direction instead of the older
+  `Diagnosis -> one narrow SurfaceChoice` route.
+- Preserves attribution hooks for what evidence/context justified the broad
+  editable surface.
+
+Residual gap:
+
+- This does not yet record an `ObservationTrace` or prove progressive
+  disclosure from real parent-time History records.
 
 ### `below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child_plan`
 

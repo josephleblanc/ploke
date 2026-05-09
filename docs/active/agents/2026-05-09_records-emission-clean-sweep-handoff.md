@@ -6,6 +6,30 @@ Restart handoff for the `ploke-records` / `ploke-tree` / `ploke-eval` record-emi
 
 Repo was clean at the start of this handoff.
 
+Pre-compaction update for the next pickup:
+
+- Record-emission work is committed through:
+  - `c7dce2dc Replace JsonRecordValue with typed Record trait`
+  - `a061ff88 Add records emission clean sweep handoff doc`
+- The committed record-emission state includes:
+  - typed removal of `JsonRecordValue` / `crates/ploke-records/src/value.rs`;
+  - passive `ploke_records::record::{Record, RecordFamily, RecordFormat}`;
+  - eval-owned `crates/ploke-eval/src/record_emission.rs`;
+  - first producer-normalization slice: scheduler `node.json` now emits
+    `ploke_records::scheduler::NodeRecord` through the eval-owned emitter.
+- Current branch at that checkpoint:
+  `prototype1-loop-test-20260426`, ahead of origin by 60 commits.
+- Current non-record-emission dirty files observed before this pre-compaction
+  update:
+  - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs`
+  - `docs/active/agents/2026-05-08_bounded-edit-surface-handoff.md`
+  - `docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md`
+- Treat those dirty files as bounded-edit-surface / other-thread work unless
+  the user explicitly reassigns them to this record-emission cleanup.
+- If this handoff is dirty after compaction, it is expected: this block was
+  added as the pre-compaction restart note.
+
 Post-compaction refresh:
 
 - The handoff remains the active restart spine for the record-emission
@@ -25,6 +49,8 @@ Post-compaction refresh:
 
 Recent relevant commits:
 
+- `a061ff88 Add records emission clean sweep handoff doc`
+- `c7dce2dc Replace JsonRecordValue with typed Record trait`
 - `7ad9aec3 Split protocol records module`
 - `0ddefaf2 Type protocol records for tree UI`
 
@@ -229,7 +255,8 @@ untyped payloads.
 
 ## Next Task
 
-Do not start with History. Start with the lowest-authority projection family and prove the pattern.
+Do not start with History. Continue the lowest-authority scheduler projection
+family and prove the pattern before moving to higher-authority records.
 
 Suggested first implementation slice:
 
@@ -253,6 +280,24 @@ Next producer-normalization slice:
    behavior has an explicit typed boundary; do not move scheduling decisions
    into `ploke-records`.
 
+Concrete restart command set for the next slice:
+
+```bash
+rg -n "fn save_runner_request|fn save_runner_result|write_runner_result_at|record_runner_result|load_runner_request|load_runner_result" crates/ploke-eval/src/intervention/scheduler.rs crates/ploke-eval/src/cli/prototype1_process.rs
+rg -n "pub struct RunnerRequestRecord|pub struct RunnerResultRecord|impl Record for Runner" crates/ploke-records/src/scheduler.rs
+```
+
+Expected implementation shape:
+
+- add `passive_runner_request_record` and `passive_runner_result_record` beside
+  `passive_node_record` in `crates/ploke-eval/src/intervention/scheduler.rs`;
+- route `save_runner_request` and `save_runner_result` through
+  `JsonRecordFile::emit`;
+- extend scheduler tests so emitted `runner-request.json` and
+  `runner-result.json` parse as shared passive records;
+- keep loader compatibility for existing files, but do not add a parallel
+  legacy writer.
+
 Avoid:
 
 - generic trait theater that does not replace a real write path
@@ -274,6 +319,17 @@ Last known good before this handoff:
 - `cargo check -p ploke-eval`
 
 `ploke-eval` still emits many existing warnings.
+
+Verification passed for the committed record-emission slice:
+
+- `cargo fmt --all`
+- `cargo check -p ploke-eval`
+- `cargo test -p ploke-records`
+- `cargo test -p ploke-tree`
+- `cargo test -p ploke-eval register_treatment_node_persists_scheduler_and_runner_request`
+- guard search for `JsonRecordValue`, `crate::value`, `pub mod value`, and
+  public `serde_json::Value` / `JsonRecordValue` surfaces in
+  `crates/ploke-records` and `crates/ploke-tree`
 
 ## Restart Reminder
 

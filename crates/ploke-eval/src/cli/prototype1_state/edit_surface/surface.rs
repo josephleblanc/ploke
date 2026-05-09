@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::cli::prototype1_state::history::EvidenceRef;
 use crate::loop_graph::ArtifactId;
 
 use super::graph;
@@ -77,6 +78,15 @@ impl Area {
         }
     }
 
+    fn contains(&self, span: &graph::Span) -> bool {
+        self.spans.iter().any(|covered| {
+            covered.path() == span.path()
+                && covered.start() <= span.start()
+                && covered.end() >= span.end()
+                && covered.hash() == span.hash()
+        })
+    }
+
     fn check(&self, span: &graph::Span) -> Result<(), Error> {
         let covering = self.spans.iter().find(|allowed| {
             allowed.path() == span.path()
@@ -123,10 +133,20 @@ pub(crate) struct Grant {
     artifact: Ref,
     graph: graph::Bounds,
     write: Area,
+    forbidden: Area,
 }
 
 impl Grant {
     pub(crate) fn new(artifact: Ref, graph: graph::Bounds, write: Area) -> Result<Self, Error> {
+        Self::with_forbidden(artifact, graph, write, Area::new([]))
+    }
+
+    pub(crate) fn with_forbidden(
+        artifact: Ref,
+        graph: graph::Bounds,
+        write: Area,
+        forbidden: Area,
+    ) -> Result<Self, Error> {
         if graph.artifact() != &artifact {
             return Err(Error::ArtifactMismatch);
         }
@@ -134,6 +154,7 @@ impl Grant {
             artifact,
             graph,
             write,
+            forbidden,
         })
     }
 
@@ -148,6 +169,7 @@ impl Grant {
             artifact: self.artifact.clone(),
             graph,
             write: self.write.clone(),
+            forbidden: self.forbidden.clone(),
         })
     }
 
@@ -158,6 +180,9 @@ impl Grant {
         for touch in draft.touches {
             if !self.graph.contains(touch.span()) {
                 return Err(Error::OutsideGraph(touch.span().target().clone()));
+            }
+            if self.forbidden.contains(touch.span()) {
+                return Err(Error::Forbidden(touch.span().clone()));
             }
             self.write.check(touch.span())?;
         }
@@ -204,6 +229,88 @@ impl Check {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EditObjective {
+    intent: String,
+    diagnosis_refs: Vec<EvidenceRef>,
+    context_refs: Vec<EvidenceRef>,
+}
+
+impl EditObjective {
+    pub(crate) fn new(
+        intent: impl Into<String>,
+        diagnosis_refs: impl IntoIterator<Item = EvidenceRef>,
+        context_refs: impl IntoIterator<Item = EvidenceRef>,
+    ) -> Self {
+        Self {
+            intent: intent.into(),
+            diagnosis_refs: diagnosis_refs.into_iter().collect(),
+            context_refs: context_refs.into_iter().collect(),
+        }
+    }
+
+    pub(crate) fn intent(&self) -> &str {
+        &self.intent
+    }
+
+    pub(crate) fn diagnosis_refs(&self) -> &[EvidenceRef] {
+        &self.diagnosis_refs
+    }
+
+    pub(crate) fn context_refs(&self) -> &[EvidenceRef] {
+        &self.context_refs
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProtectedCore {
+    forbidden: Area,
+}
+
+impl ProtectedCore {
+    pub(crate) fn new(spans: impl IntoIterator<Item = graph::Span>) -> Self {
+        Self {
+            forbidden: Area::new(spans),
+        }
+    }
+
+    fn contains(&self, span: &graph::Span) -> bool {
+        self.forbidden.contains(span)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EditableSurface {
+    objective: EditObjective,
+    grant: Grant,
+}
+
+impl EditableSurface {
+    pub(crate) fn broad(
+        objective: EditObjective,
+        artifact: Ref,
+        graph: graph::Bounds,
+        protected_core: ProtectedCore,
+    ) -> Result<Self, Error> {
+        let write = Area::new(
+            graph
+                .spans()
+                .filter(|span| !protected_core.contains(span))
+                .cloned(),
+        );
+        let grant = Grant::with_forbidden(artifact, graph, write, protected_core.forbidden)?;
+        Ok(Self { objective, grant })
+    }
+
+    pub(crate) fn objective(&self) -> &EditObjective {
+        &self.objective
+    }
+
+    pub(crate) fn grant(&self) -> &Grant {
+        &self.grant
+    }
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub(crate) enum Error {
     #[error("artifact identity did not match the granted surface")]
@@ -212,6 +319,8 @@ pub(crate) enum Error {
     Widens,
     #[error("target is outside graph bounds: {0:?}")]
     OutsideGraph(graph::Target),
+    #[error("span is inside forbidden protected core: {0:?}")]
+    Forbidden(graph::Span),
     #[error("span is outside material writable surface: {0:?}")]
     OutsideMaterial(graph::Span),
     #[error("expected file hash mismatch for {path}: expected {expected:?}, actual {actual:?}")]

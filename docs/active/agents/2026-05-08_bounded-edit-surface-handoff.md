@@ -351,7 +351,7 @@ invalid candidate generation / semantic edit resolution problem
   -> EditObjective for reducing invalid edit-surface candidates
 ```
 
-## Current Implementation Status: After Slice 7.2
+## Current Implementation Status: After Slice 7.2, During Slice 7.3
 
 Task-stack group:
 
@@ -365,6 +365,50 @@ Closed tasks:
 bounded-edit-surface-attempt-evidence (7.1)
 bounded-edit-surface-diagnosis-splice (7.2)
 ```
+
+Open task:
+
+```text
+bounded-edit-surface-choice-objective (7.3)
+```
+
+Partially implemented inside 7.3:
+
+- `EditObjective`
+- `ProtectedCore`
+- `EditableSurface::broad(...)`
+- `Grant::with_forbidden(...)`
+- `Grant::check(...)` rejection for protected/forbidden write touches
+
+Files changed by the 7.3 local primitive:
+
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs`
+- `docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md`
+
+Verification for the 7.3 local primitive:
+
+```bash
+cargo fmt --all
+cargo test -p ploke-eval edit_surface:: -- --nocapture 2>&1 | tail -n 80
+```
+
+Result from this thread:
+
+```text
+28 edit_surface tests passed
+```
+
+Important: these tests prove only the local primitive:
+
+```text
+explicit EditObjective + explicit ProtectedCore + explicit Γ_a
+  -> EditableSurface::broad
+  -> Grant::check
+```
+
+They do not prove the upstream route from real parent-time context/evidence
+into that primitive.
 
 What is now implemented from 7.1:
 
@@ -475,36 +519,107 @@ Start here after compaction:
 bounded-edit-surface-choice-objective (7.3)
 ```
 
-Goal:
+Corrected status:
 
 ```text
-Diagnosis {
-  limiter: invalid_candidate_generation,
-  failure_kind: semantic_edit_resolution,
-  ...
-}
-  -> SurfaceChoice
+7.3 is still open.
+
+Implemented local primitive:
+  explicit EditObjective + explicit ProtectedCore + explicit Γ_a
+    -> EditableSurface::broad
+    -> Grant::check
+
+Missing upstream splice:
+  real-ish parent-time History/context evidence + graph projection +
+  protected-core policy
+    -> parent-side route/admission constructor
+    -> EditObjective + EditableSurface with evidence refs and broad Grant
+```
+
+What changed since the previous handoff:
+
+```text
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs
+  - added EditObjective
+  - added ProtectedCore
+  - added EditableSurface::broad(...)
+  - added Grant::with_forbidden(...)
+  - Grant::check now rejects writes intersecting forbidden/protected spans
+
+crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs
+  - broad_surface_admits_writable_touch_outside_protected_core
+  - broad_surface_rejects_touch_inside_protected_core
+  - broad_surface_objective_records_context_without_diagnosis_specificity
+
+docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md
+  - indexes those tests as local primitive proofs only
+  - explicitly says they are not a completed 7.3 route proof
+```
+
+Important correction:
+
+```text
+Do not describe 7.3 as closed.
+The current tests prove B* -> C' for the local grant primitive.
+They do not prove A -> B* from real parent context/evidence.
+```
+
+The plan direction also changed. The current preferred first pass is no longer a
+narrow `Diagnosis -> one semantic resolver SurfaceChoice` route. It is the
+broad protected-core route:
+
+```text
+History/context evidence
   -> EditObjective
+  -> EditableSurface = Γ_a \ ProtectedCore
+  -> checked proposal must preserve Φ
 ```
 
-Required splice:
+Where:
 
 ```text
-A': semantic_edit_resolution Diagnosis with preserved evidence refs
-B*: route table / surface-objective constructor
-C': SurfaceChoice and EditObjective cite the diagnosis and constrain the harness task
+Φ(a) = framework form / protected contract
+Ω(a) = mutable object-level implementation and capabilities
 ```
 
-Required negative splice:
+Admitted children may improve `Ω`; ordinary child-producing transitions must
+preserve `Φ`. This avoids the wrong rule:
 
 ```text
-A': no Diagnosis, or a Diagnosis with an unrelated failure_kind
-B*: route table / surface-objective constructor
-C': no semantic resolver SurfaceChoice/EditObjective
+capabilities(child) ⊆ capabilities(parent)
 ```
 
-Do not implement the real `ploke-tui` adapter yet. This slice should define the
-first route from diagnosis to surface/objective contract, not perform the edit.
+The desired region is:
+
+```text
+Useful Transformations
+  ∩ Statically Checkable Properties
+  ∩ Sandbox-Enforceable Properties
+  ∩ Form-Preserving Transitions
+```
+
+Concrete next implementation target:
+
+```text
+bounded-edit-surface-choice-objective (7.3)
+
+A':
+  real-ish parent-time context/evidence fixture
+  plus graph projection
+  plus protected-core policy
+
+B*:
+  parent-side route/admission constructor
+
+C':
+  EditObjective carries context/evidence refs
+  EditableSurface::broad builds a broad Grant
+  ordinary writes remain allowed
+  protected-core writes remain forbidden
+```
+
+Do not implement the real `ploke-tui` adapter yet. Do not move authority into
+`Harness`; it remains executor-only.
 
 Later blocker before `bounded-edit-surface-tui-adapter (7.6)`:
 
@@ -533,12 +648,19 @@ and docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index
 
 Task: bounded-edit-surface-choice-objective (7.3).
 
-Inspect the new `edit_surface::diagnosis::Diagnosis` path and propose the
-smallest location for the first route table / constructor that maps
-invalid_candidate_generation / semantic_edit_resolution to a `SurfaceChoice`
-and `EditObjective`.
+Inspect the new edit_surface surface primitives:
+  EditObjective
+  ProtectedCore
+  EditableSurface::broad
+  Grant::with_forbidden
 
-Return exact files, line ranges, test names, and one A' -> B* -> C' splice.
+Find the smallest parent-side boundary where real-ish parent-time
+History/context evidence can be converted into an EditObjective and
+EditableSurface. The current tests hand-construct A; the missing splice is
+A -> B*.
+
+Return exact files, line ranges, test names, and the smallest A -> B* splice
+test to add. Keep Harness executor-only.
 ```
 
 Useful sidecar scout, if needed:

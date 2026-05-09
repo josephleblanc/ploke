@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use ploke_core::{EmbeddingData, TrackingHash};
 use uuid::Uuid;
 
+use crate::cli::prototype1_state::history::EvidenceRef;
 use crate::loop_graph::ArtifactId;
 
 use super::{graph, harness, surface, tui};
@@ -66,6 +67,145 @@ fn tui_projection(graph_projection: &graph::Projection) -> tui::Projection {
         )],
     )
     .project(graph_projection)
+}
+
+#[test]
+fn broad_surface_admits_writable_touch_outside_protected_core() {
+    let (artifact, graph, _, child, sibling) = fixture();
+    let projection = graph.project(&artifact).expect("project artifact");
+    let bounds = graph
+        .bounds(
+            &projection,
+            &[
+                graph::Rule::Include(child.clone()),
+                graph::Rule::Include(sibling.clone()),
+            ],
+        )
+        .expect("bounds");
+    let child_span = graph
+        .resolve(&projection, &bounds, &child)
+        .expect("resolve child");
+    let sibling_span = graph
+        .resolve(&projection, &bounds, &sibling)
+        .expect("resolve sibling");
+    let objective = surface::EditObjective::new(
+        "improve broad parent quality",
+        [],
+        [EvidenceRef::new("history:context:score-trend")],
+    );
+    let editable = surface::EditableSurface::broad(
+        objective,
+        artifact.reference().clone(),
+        bounds,
+        surface::ProtectedCore::new([child_span]),
+    )
+    .expect("editable surface");
+    let touch = surface::Touch::new(sibling_span, "fn sibling() {}");
+
+    let check = editable
+        .grant()
+        .check(surface::Draft {
+            proposal: "proposal:broad-allowed",
+            base: artifact.reference(),
+            after: &aref("artifact:after", "tree:after"),
+            touches: &[touch],
+        })
+        .expect("touch outside protected core should pass");
+
+    let (base, after, touches) = check.into_parts();
+    assert_eq!(base, artifact.reference().clone());
+    assert_eq!(after, aref("artifact:after", "tree:after"));
+    assert_eq!(touches.len(), 1);
+}
+
+#[test]
+fn broad_surface_rejects_touch_inside_protected_core() {
+    let (artifact, graph, _, child, sibling) = fixture();
+    let projection = graph.project(&artifact).expect("project artifact");
+    let bounds = graph
+        .bounds(
+            &projection,
+            &[
+                graph::Rule::Include(child.clone()),
+                graph::Rule::Include(sibling),
+            ],
+        )
+        .expect("bounds");
+    let child_span = graph
+        .resolve(&projection, &bounds, &child)
+        .expect("resolve child");
+    let objective = surface::EditObjective::new(
+        "improve broad parent quality",
+        [],
+        [EvidenceRef::new("history:context:score-trend")],
+    );
+    let editable = surface::EditableSurface::broad(
+        objective,
+        artifact.reference().clone(),
+        bounds,
+        surface::ProtectedCore::new([child_span.clone()]),
+    )
+    .expect("editable surface");
+    let touch = surface::Touch::new(child_span.clone(), "fn child() {}");
+
+    let err = editable
+        .grant()
+        .check(surface::Draft {
+            proposal: "proposal:broad-forbidden",
+            base: artifact.reference(),
+            after: &aref("artifact:after", "tree:after"),
+            touches: &[touch],
+        })
+        .expect_err("protected core touch must fail");
+
+    assert!(matches!(err, surface::Error::Forbidden(span) if span == child_span));
+}
+
+#[test]
+fn broad_surface_objective_records_context_without_diagnosis_specificity() {
+    let (artifact, graph, _, child, sibling) = fixture();
+    let projection = graph.project(&artifact).expect("project artifact");
+    let bounds = graph
+        .bounds(
+            &projection,
+            &[
+                graph::Rule::Include(child.clone()),
+                graph::Rule::Include(sibling),
+            ],
+        )
+        .expect("bounds");
+    let child_span = graph
+        .resolve(&projection, &bounds, &child)
+        .expect("resolve child");
+    let objective = surface::EditObjective::new(
+        "improve broad parent quality",
+        [],
+        [
+            EvidenceRef::new("history:context:score-trend"),
+            EvidenceRef::new("history:context:recent-attempts"),
+        ],
+    );
+    let editable = surface::EditableSurface::broad(
+        objective.clone(),
+        artifact.reference().clone(),
+        bounds,
+        surface::ProtectedCore::new([child_span]),
+    )
+    .expect("editable surface");
+
+    assert_eq!(
+        editable.objective().intent(),
+        "improve broad parent quality"
+    );
+    assert!(editable.objective().diagnosis_refs().is_empty());
+    assert_eq!(
+        editable.objective().context_refs(),
+        &[
+            EvidenceRef::new("history:context:score-trend"),
+            EvidenceRef::new("history:context:recent-attempts")
+        ]
+    );
+    assert_eq!(editable.objective(), &objective);
 }
 
 #[test]
