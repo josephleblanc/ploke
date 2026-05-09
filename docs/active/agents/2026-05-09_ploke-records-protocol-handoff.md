@@ -86,29 +86,45 @@ PLOKE_TREE_PROTOCOL_ARTIFACTS_DIR=/home/brasides/.ploke-eval/instances/prototype
 cargo test -p ploke-tree fs_run_store_loads_real_campaign -- --ignored --nocapture
 ```
 
-## File Size Check
+## Post-Compact Update
 
-`crates/ploke-records/src/protocol.rs` is now the largest file in `ploke-records` at roughly 663 lines. It should be split before adding more protocol schema.
+The protocol split has been completed. `crates/ploke-records/src/protocol.rs`
+was replaced by:
 
-Current rough line-count outliers:
+- `crates/ploke-records/src/protocol/mod.rs`: `Artifact`, `ArtifactBody`, constants, custom serde, public exports
+- `crates/ploke-records/src/protocol/artifacts.rs`: concrete procedure artifact mirror aliases and payloads
+- `crates/ploke-records/src/protocol/provenance.rs`: passive provenance and OpenAI response mirror types
+- `crates/ploke-records/src/protocol/tests.rs`: real-run protocol tests and round-trip print helper
 
-- `protocol.rs`: 663
+Current rough line-count outliers after the split:
+
 - `journal.rs`: 587
 - `scheduler.rs`: 443
 - `branch.rs`: 411
 - `history.rs`: 397
 - `evaluation.rs`: 392
+- `protocol/tests.rs`: 259
+- `protocol/mod.rs`: 214
+- `protocol/artifacts.rs`: 137
+- `protocol/provenance.rs`: 74
 
-## Next Task After Compact
+Verification repeated after the split:
 
-Split `ploke-records::protocol` into modules before extending it:
+```bash
+cargo fmt --all
+cargo test -p ploke-records
+cargo test -p ploke-tree
+cargo test -p ploke-records protocol::tests::all_artifacts_roundtrip -- --ignored
+cargo test -p ploke-records protocol::tests::typed_payloads -- --ignored
+PLOKE_TREE_RUN_ROOT=/home/brasides/.ploke-eval/campaigns/p1-edit-surface-history-long-20260508-1/prototype1 \
+PLOKE_TREE_PROTOCOL_ARTIFACTS_DIR=/home/brasides/.ploke-eval/instances/prototype1/p1-edit-surface-history-long-20260508-1/treatments/branch-01187cd17226d1a4/instances/BurntSushi__ripgrep-2209/runs/run-1778270575083-structured-current-policy-7a8e5b98/protocol-artifacts \
+cargo test -p ploke-tree fs_run_store_loads_real_campaign -- --ignored --nocapture
+cargo check -p ploke-eval
+```
 
-- `protocol/mod.rs`: `Artifact`, `ArtifactBody`, constants, custom serde, public exports
-- `protocol/provenance.rs`: passive provenance and OpenAI response mirror types
-- `protocol/artifacts.rs`: concrete procedure artifact mirror aliases and payloads
-- optional `protocol/tests.rs`: real-run tests if inline tests keep bloating `mod.rs`
+## Next Task
 
-Then revisit the `XMirror` naming pattern. Preferred direction:
+Revisit the `XMirror` naming pattern. Preferred direction:
 
 - Use module context to shorten names, e.g. `protocol::provenance::Llm`, `protocol::provenance::Mechanized`, `protocol::response::OpenAi`.
 - Add an explicit relationship to active types where useful from `ploke-records`, not from `ploke-protocol`, to avoid dependency cycles.
@@ -120,4 +136,3 @@ Then revisit the `XMirror` naming pattern. Preferred direction:
 - Private `serde_json::Value` in custom serde is acceptable only as parser machinery, not as a public record surface.
 - If a future artifact contains an unmodeled OpenAI/provider field, the mirror should fail deserialization and force an explicit type addition.
 - `cargo check -p ploke-eval` passes, but the crate still emits many existing warnings.
-- Worktree contains unrelated dirty files from another active thread. Do not revert or normalize those while continuing this handoff.
