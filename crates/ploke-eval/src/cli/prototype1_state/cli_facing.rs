@@ -53,12 +53,13 @@ use crate::{
             c4::{ObserveChild, ObservedChild},
             event::RecordedAt,
             history::{
-                CandidateArtifact, CandidateCoordinate, CandidateLifecycle, EvaluationPayload,
-                Generation, History, HistoryHash, ProcedureRef, Scope, ScopeFor,
-                SealedBranchEvidence, SealedCandidateEvidence, SealedComparedRunEvidence,
-                SealedEvaluationEvidence, SealedEvidenceCitation, SealedRuntimeEvidence,
-                SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
-                SelectionScope, SubjectRef, SurfaceArtifactRef, SurfaceEvidence, SurfaceTouch,
+                CandidateArtifact, CandidateCoordinate, CandidateLifecycle, CandidateMembershipId,
+                CandidateOccurrenceId, CandidateSetCommitment, EvaluationPayload, Generation,
+                History, HistoryHash, ProcedureRef, Scope, ScopeFor, SealedBranchEvidence,
+                SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvaluationEvidence,
+                SealedEvidenceCitation, SealedRuntimeEvidence, SelectionDecisionEntry,
+                SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope,
+                SubjectRef, SurfaceArtifactRef, SurfaceEvidence, SurfaceTouch,
                 TraversalCandidateSource, TraversalEvidence, surface_attempt,
             },
             identity::{
@@ -385,6 +386,8 @@ struct SelectionSealMaterial {
     procedure: ProcedureRef,
     scope: SelectionScope,
     selected_candidate: SubjectRef,
+    selected_occurrence_id: Option<CandidateOccurrenceId>,
+    selected_membership_id: Option<CandidateMembershipId>,
     considered: Vec<EvaluationPayload>,
     considered_sources: Vec<TraversalCandidateSource>,
     projection_failures: Vec<SelectionProjectionFailure>,
@@ -394,6 +397,23 @@ struct SelectionSealMaterial {
 
 impl SelectionSealMaterial {
     fn selected_payload(&self) -> Result<&EvaluationPayload, PrepareError> {
+        let candidate_set = self.candidate_set_commitment()?;
+        if let Some(membership_id) = self.selected_membership_id.as_ref() {
+            let membership = candidate_set
+                .membership_by_membership_id(membership_id)
+                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: "selected membership is absent from sealed considered set".to_string(),
+                })?;
+            return self.payload_by_hash(&membership.payload_hash);
+        }
+        if let Some(occurrence_id) = self.selected_occurrence_id.as_ref() {
+            let membership = candidate_set
+                .membership_by_occurrence_id(occurrence_id)
+                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: "selected occurrence is absent from sealed considered set".to_string(),
+                })?;
+            return self.payload_by_hash(&membership.payload_hash);
+        }
         self.considered
             .iter()
             .find(|payload| payload.candidate == self.selected_candidate)
@@ -403,6 +423,49 @@ impl SelectionSealMaterial {
                     self.selected_candidate.as_str()
                 ),
             })
+    }
+
+    fn candidate_set_commitment(&self) -> Result<CandidateSetCommitment, PrepareError> {
+        if self.considered_sources.is_empty() {
+            CandidateSetCommitment::from_payloads(&self.considered)
+        } else {
+            CandidateSetCommitment::from_payloads_with_sources(
+                &self.considered,
+                &self.considered_sources,
+            )
+        }
+        .map_err(|err| PrepareError::InvalidBatchSelection {
+            detail: format!("failed to reconstruct sealed considered set: {err}"),
+        })
+    }
+
+    fn payload_by_hash(
+        &self,
+        payload_hash: &HistoryHash,
+    ) -> Result<&EvaluationPayload, PrepareError> {
+        let matches = self
+            .considered
+            .iter()
+            .filter_map(|payload| {
+                payload
+                    .payload_hash()
+                    .ok()
+                    .filter(|hash| hash == payload_hash)
+                    .map(|_| payload)
+            })
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [payload] => Ok(*payload),
+            [] => Err(PrepareError::InvalidBatchSelection {
+                detail: "selected member has no payload in sealed considered set".to_string(),
+            }),
+            many => Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "selected member resolves to multiple sealed payloads: count={}",
+                    many.len()
+                ),
+            }),
+        }
     }
 
     fn selected_artifact(&self) -> Result<CandidateArtifact, PrepareError> {
@@ -420,20 +483,21 @@ impl SelectionSealMaterial {
         self,
         decision: SuccessorDecision,
     ) -> Result<SelectionDecisionEntry, PrepareError> {
-        let mut entry = SelectionDecisionEntry::new_with_traversal(
+        SelectionDecisionEntry::new_with_traversal_identity(
             self.procedure,
             self.scope,
             Some(self.selected_candidate),
+            self.selected_occurrence_id,
+            self.selected_membership_id,
             self.considered,
+            self.considered_sources,
             self.projection_failures,
             self.traversal,
             decision,
         )
         .map_err(|err| PrepareError::InvalidBatchSelection {
             detail: format!("failed to construct selection decision entry: {err}"),
-        })?;
-        entry.considered_sources = self.considered_sources;
-        Ok(entry)
+        })
     }
 }
 
@@ -6374,6 +6438,8 @@ impl<'a> ParentSelection<'a> {
             ),
             scope,
             selected_candidate: selection.selected_payload.candidate.clone(),
+            selected_occurrence_id: selection.selected_occurrence_id,
+            selected_membership_id: selection.selected_membership_id,
             considered: selection.considered,
             considered_sources: selection.considered_sources,
             projection_failures,
@@ -9779,6 +9845,8 @@ mod tests {
             ),
             scope: SelectionScope::all_admitted_candidates(),
             selected_candidate: selected,
+            selected_occurrence_id: None,
+            selected_membership_id: None,
             considered: vec![payload],
             considered_sources: Vec::new(),
             projection_failures: Vec::new(),
@@ -9855,6 +9923,8 @@ mod tests {
             ),
             scope: SelectionScope::all_admitted_candidates(),
             selected_candidate: selected,
+            selected_occurrence_id: None,
+            selected_membership_id: None,
             considered: vec![payload],
             considered_sources: Vec::new(),
             projection_failures: Vec::new(),
@@ -9927,6 +9997,8 @@ mod tests {
             ),
             scope: SelectionScope::all_admitted_candidates(),
             selected_candidate: selected,
+            selected_occurrence_id: None,
+            selected_membership_id: None,
             considered: vec![payload],
             considered_sources: Vec::new(),
             projection_failures: Vec::new(),

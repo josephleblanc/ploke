@@ -5,9 +5,13 @@ edition = "2024"
 rust-version.workspace = true
 description = "Renderer-neutral playback models for browsing Ploke run trees"
 
+[features]
+default = ["projection"]
+projection = ["dep:ploke-tree"]
+
 [dependencies]
 ploke-records = { workspace = true }
-ploke-tree = { workspace = true }
+ploke-tree = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]

@@ -17,11 +17,11 @@ use super::{
 use crate::{
     BranchDisposition,
     cli::prototype1_state::history::{
-        CandidateArtifact, CandidateSetCommitment, CandidateSetMembership, CandidateSetRoot,
-        EvaluationPayload, HistoryCandidate, HistoryCandidateSource, HistoryCandidates,
-        HistoryError, SealedCandidateEvidence, SealedComparedRunEvidence, SelectionDecisionEntry,
-        SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope, SubjectRef,
-        TraversalCandidateSource,
+        CandidateArtifact, CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
+        CandidateSetMembership, CandidateSetRoot, EvaluationPayload, HistoryCandidate,
+        HistoryCandidateSource, HistoryCandidates, HistoryError, SealedCandidateEvidence,
+        SealedComparedRunEvidence, SelectionDecisionEntry, SelectionProjectionFailure,
+        SelectionProjectionFailureKind, SelectionScope, SubjectRef, TraversalCandidateSource,
     },
     metric::{self, Summary},
 };
@@ -191,6 +191,8 @@ where
 pub(crate) struct Selection {
     pub(crate) decision: SuccessorDecision,
     pub(crate) selected_payload: EvaluationPayload,
+    pub(crate) selected_occurrence_id: Option<CandidateOccurrenceId>,
+    pub(crate) selected_membership_id: Option<CandidateMembershipId>,
     pub(crate) considered: Vec<EvaluationPayload>,
     pub(crate) considered_sources: Vec<TraversalCandidateSource>,
     pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
@@ -288,6 +290,8 @@ pub(crate) fn replay_score_child_prop(
         .map(|payload| Item {
             payload,
             source: Source::SealedDecisionReplay,
+            candidate_set_root: None,
+            candidate_set_membership: None,
         })
         .collect::<Vec<_>>();
     let child_counts = successful_child_counts(&entry.considered);
@@ -352,10 +356,9 @@ where
         let mut failures = Vec::new();
 
         for candidate in self.candidates {
-            let source = candidate.source.clone();
             match decision_grade(candidate)? {
-                CandidateGrade::Eligible(payload) => {
-                    items.push(Item { payload, source });
+                CandidateGrade::Eligible(item) => {
+                    items.push(item);
                 }
                 CandidateGrade::Excluded(failure) => failures.push(failure),
             }
@@ -388,6 +391,8 @@ where
         Ok(Some(Selection {
             decision,
             selected_payload: selection.chosen.payload,
+            selected_occurrence_id: selection.chosen.selected_occurrence_id,
+            selected_membership_id: selection.chosen.selected_membership_id,
             considered,
             considered_sources,
             projection_failures: failures,
@@ -419,11 +424,18 @@ impl Candidates {
         scope: SelectionScope,
         payloads: Vec<EvaluationPayload>,
     ) -> Result<Self, HistoryError> {
-        let candidate_set = CandidateSetCommitment::from_payloads(&payloads)?;
+        let sources = vec![TraversalCandidateSource::CurrentGeneration; payloads.len()];
+        let candidate_set =
+            CandidateSetCommitment::from_payloads_with_sources(&payloads, &sources)?;
         let root = candidate_set.root.clone();
         for payload in payloads {
             let payload_hash = payload.payload_hash()?;
-            let membership = candidate_set.membership(&payload.candidate).cloned();
+            let membership = candidate_set
+                .membership_for_payload(
+                    &payload,
+                    TraversalCandidateSource::CurrentGeneration.candidate_source_class(),
+                )?
+                .cloned();
             self.candidates.push(Candidate {
                 source: Source::CurrentGeneration {
                     scope: scope.clone(),
@@ -455,6 +467,8 @@ pub(crate) struct Candidate {
 pub(crate) struct Item {
     pub(crate) payload: EvaluationPayload,
     pub(crate) source: Source,
+    pub(crate) candidate_set_root: Option<CandidateSetRoot>,
+    pub(crate) candidate_set_membership: Option<CandidateSetMembership>,
 }
 
 impl From<HistoryCandidate> for Candidate {
@@ -691,7 +705,7 @@ impl<'a> CandidateCaseBuilder<'a> {
 }
 
 enum CandidateGrade {
-    Eligible(EvaluationPayload),
+    Eligible(Item),
     Excluded(SelectionProjectionFailure),
 }
 
@@ -760,7 +774,12 @@ fn decision_grade(candidate: Candidate) -> Result<CandidateGrade, HistoryError> 
         );
     }
 
-    Ok(CandidateGrade::Eligible(candidate.payload))
+    Ok(CandidateGrade::Eligible(Item {
+        payload: candidate.payload,
+        source: candidate.source,
+        candidate_set_root: candidate.candidate_set_root,
+        candidate_set_membership: candidate.candidate_set_membership,
+    }))
 }
 
 fn traversal_decision(case: &CandidateCase<'_>) -> Option<SuccessorDecision> {
@@ -870,6 +889,8 @@ struct ChosenPayload {
     payload: EvaluationPayload,
     decision: SuccessorDecision,
     source: Source,
+    selected_occurrence_id: Option<CandidateOccurrenceId>,
+    selected_membership_id: Option<CandidateMembershipId>,
 }
 
 fn select_frontier_max(
@@ -907,6 +928,7 @@ fn select_frontier_max(
             tie,
             decision: selected,
             source: item.source.clone(),
+            candidate_set_membership: item.candidate_set_membership.clone(),
         };
         if best
             .as_ref()
@@ -933,6 +955,13 @@ fn select_frontier_max(
                 payload: best.payload,
                 decision: best.decision,
                 source: best.source,
+                selected_occurrence_id: best
+                    .candidate_set_membership
+                    .as_ref()
+                    .and_then(|membership| membership.occurrence_id.clone()),
+                selected_membership_id: best
+                    .candidate_set_membership
+                    .and_then(|membership| membership.membership_id),
             },
             rationale,
         }
@@ -977,6 +1006,14 @@ fn select_score_child_prop(
         payload,
         decision: weight.decision.clone(),
         source: items[selected].source.clone(),
+        selected_occurrence_id: items[selected]
+            .candidate_set_membership
+            .as_ref()
+            .and_then(|membership| membership.occurrence_id.clone()),
+        selected_membership_id: items[selected]
+            .candidate_set_membership
+            .as_ref()
+            .and_then(|membership| membership.membership_id.clone()),
     };
     let lambda = lambda_millis as f64 / 1_000.0;
     let rationale = vec![
@@ -1194,6 +1231,7 @@ struct ScoredPayload {
     tie: [u8; 32],
     decision: SuccessorDecision,
     source: Source,
+    candidate_set_membership: Option<CandidateSetMembership>,
 }
 
 impl ScoredPayload {
@@ -1743,7 +1781,8 @@ mod tests {
                 .as_ref()
                 .map(|commitment| commitment.root.clone()),
             candidate_set_membership: entry
-                .candidate_set_membership(&entry.considered[0].candidate)
+                .candidate_set_membership_for_payload(0, &entry.considered[0])
+                .expect("candidate set membership lookup")
                 .cloned(),
         }
     }
@@ -1754,6 +1793,8 @@ mod tests {
             source: Source::CurrentGeneration {
                 scope: SelectionScope::new("generation_local:test"),
             },
+            candidate_set_root: None,
+            candidate_set_membership: None,
         }
     }
 

@@ -30,6 +30,9 @@ into the main evalnomicon book.
 - [`2026-05-08-bounded-edit-surface-proof-index.md`](2026-05-08-bounded-edit-surface-proof-index.md)
   Test-to-formal-proof index for the bounded edit-surface plan, mapping splice
   tests to formal judgments and naming gaps exposed by the tests.
+- [`2026-05-09-candidate-occurrence-selection-plan.md`](2026-05-09-candidate-occurrence-selection-plan.md)
+  Plan to replace string-based successor selection identity with
+  content-addressed candidate occurrence and membership identifiers.
 - [`prototype1-run-tree-browser-design.md`](prototype1-run-tree-browser-design.md)
   Draft `ploke-records` schema split and `ploke-tree` projection contract for a
   browser-viewable Prototype 1 run tree over typed evidence, liveness, metrics,

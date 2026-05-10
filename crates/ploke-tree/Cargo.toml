@@ -6,6 +6,6 @@ rust-version.workspace = true
 description = "Read-only run tree projections over passive Ploke records"
 
 [dependencies]
-ploke-records = { workspace = true }
+ploke-records = { workspace = true, features = ["protocol"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

@@ -406,9 +406,13 @@
 //!   generation attempt by a specific Runtime over a specific target Artifact.
 //!   Records should keep those identities separate when the information is
 //!   available.
-//! - Scheduler reports are not authority. A continuation or successor handoff
-//!   should be represented by an immutable attempt-scoped selection record, not
-//!   by the latest mutable scheduler field.
+//! - Scheduler reports are not authority. `scheduler.json` is now mostly a
+//!   vestigial mutable projection from earlier controller implementations:
+//!   useful for join keys, labels, path discovery, and operator context, but
+//!   not for deciding selection, continuation, History admission, or successor
+//!   causality. A continuation or successor handoff should be represented by an
+//!   immutable attempt-scoped selection record, not by the latest mutable
+//!   scheduler field.
 //! - Parent authority is actor-scoped, not campaign-global. The first live path
 //!   may enforce one active parent as policy, but persisted leases and handoff
 //!   records should be shaped so multiple parent actors can later advance
@@ -649,8 +653,12 @@
 //! The main durable files and directories there are:
 //!
 //! - `scheduler.json`
-//!   Scheduler frontier, completed/failed node ids, node summaries, and search
-//!   policy.
+//!   Legacy scheduler projection: frontier, completed/failed node ids, node
+//!   summaries, and search policy from earlier controller paths. Treat it as
+//!   context and path/index metadata only. It may be stale or incomplete
+//!   relative to sealed History, transition journals, channel messages, and
+//!   node-level records, and must not be used as decision-making evidence for
+//!   selection, continuation, History admission, or playback causality.
 //! - `branches.json`
 //!   Synthesized branch registry for one source state, including proposed
 //!   content, apply ids, and latest evaluation summaries.

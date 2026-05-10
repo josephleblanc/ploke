@@ -21,7 +21,7 @@ to answer operator questions about Prototype 1 self-improvement loop runs.
   | Projection engine | `ploke-tree::playback` | Coarse (by sealed block) and Fine (by entry/candidate) over sealed History |
   | Renderer-neutral models | `ploke-tree-browser` | `PlaybackBrowserModel` enriched with evaluation/surface/protocol snapshots |
   | CLI export | `ploke-eval history export-browser-model` | Produces enriched JSON from any campaign |
-  | **egui/WASM UI** | — | **does not exist yet** |
+  | **egui/WASM UI** | `ploke-tree-egui` | Native viewer exists; WASM compile support exists; browser serve/manual test next |
 
 ### Overnight Run Data Snapshot (2026-05-09)
 
@@ -56,9 +56,10 @@ Produces 54 fine steps with:
   aborted, reasons)
 - **46 steps with surface snapshots** (target_relpath, source_content_hash,
   proposed_content_hash, source_state_id)
+- **43 steps with protocol snapshots** (protocol artifact counts, model_id,
+  provider_slug) joined through each branch evaluation's treatment run
 - **Run summary** (node_count=16, generation_count=3, sealed_block_count=4,
   evaluation_count=15, evaluations_kept=6, evaluations_rejected=9, journal_entry_count=280)
-- **Protocol snapshots**: not yet populated (need protocol_artifacts_dir wiring)
 
 ## Operator Questions the UI Must Answer
 
@@ -85,7 +86,7 @@ ploke-records        passive schemas, playback vocabulary (no FS)
 ploke-tree           load records, join, build RunPlayback projections
 ploke-eval           emit authoritative records; CLI export command
 ploke-tree-browser   renderer-neutral browser models (serde); enrichment joins
-ploke-tree-egui      egui/eframe app, WASM target (NEXT — Phase 2)
+ploke-tree-egui      egui/eframe app, native viewer done; WASM compile support added
 ```
 
 ### Data Delivery Model
@@ -182,26 +183,54 @@ as the join key, but `instance_id` is the eval instance name (`BurntSushi__ripgr
 not the node_id. The correct join is through the transition journal's
 `MaterializeBranch` entries, which carry `refs.node_id` (format `node-NODEID`).
 
-### ➡️ Phase 2: Create ploke-tree-egui Crate (NEXT)
+### ✅ Phase 2: Create ploke-tree-egui Crate
 
-- [ ] Add `crates/ploke-tree-egui/Cargo.toml` with deps: `eframe`, `egui`,
+**Done.** Changes:
+
+- [x] Add `crates/ploke-tree-egui/Cargo.toml` with deps: `eframe`, `egui`,
   `ploke-tree-browser`, `serde`, `serde_json`.
-- [ ] Add to workspace `Cargo.toml` members.
-- [ ] Implement `PlokeTreeApp` struct with `eframe::App` trait.
-- [ ] **Top bar**: Load JSON button, campaign/run name display, run summary.
-- [ ] **Timeline panel**: Scrollable list of fine playback steps. Each row
+- [x] Add to workspace `Cargo.toml` members and dependencies.
+- [x] Implement `PlokeTreeApp` struct with `eframe::App` trait.
+- [x] **Top bar**: Load JSON button, campaign/run name display, run summary.
+- [x] **Timeline panel**: Scrollable list of fine playback steps. Each row
   shows step kind icon, block height, label, evidence badge, evaluation disposition.
   Click to select.
-- [ ] **Detail panel**: Selected step detail. Shows evaluation scores,
+- [x] **Detail panel**: Selected step detail. Shows evaluation scores,
   surface evidence, protocol artifact summary.
-- [ ] **Summary bar**: Run metadata from `PlaybackBrowserModel.run_summary`.
+- [x] **Summary bar**: Run metadata from `PlaybackBrowserModel.run_summary`.
+- [x] `PlaybackBrowserModel.schema_version` changed from `&'static str` to
+  owned `String` so exported JSON can be loaded without leaking the input buffer.
 
-### Phase 3: WASM Target
+### ✅ Phase 2.1: Native UI Cleanup + Protocol Enrichment
 
-- [ ] Add `wasm-bindgen` and configure `eframe` for WASM build.
-- [ ] Add `index.html` and build script.
-- [ ] Verify with `trunk serve`.
-- [ ] Test with the overnight run 2 JSON snapshot.
+**Done.** Changes:
+
+- [x] Made the selected-step detail panel scrollable.
+- [x] Promoted operator-facing fields in the default detail view:
+  evaluation disposition, tool-call counts, patch state, convergence, oracle
+  eligibility, aborted, reasons, and surface `target_relpath`.
+- [x] Moved raw ids and hashes behind collapsed Advanced/Provenance sections.
+- [x] Replaced raw missing-data counts with applicability-aware diagnostics.
+- [x] Wired `ProtocolSnapshot` during `history export-browser-model` by joining
+  each branch evaluation to its treatment run's persisted protocol artifacts.
+- [x] Preserved the read-only projection boundary; egui still depends only on
+  `ploke-tree-browser`.
+
+### ⏳ Phase 3: WASM Target
+
+- [x] Add `wasm-bindgen` and configure `eframe` for WASM build.
+- [x] Add `index.html` for Trunk.
+- [x] Add root `Trunk.toml` so `trunk build` can be run from the workspace root.
+- [x] Add browser-side JSON loading through pasted text or dropped files.
+- [x] Keep browser DTOs backed by `ploke-records` passive types; do not duplicate
+  record enums in `ploke-tree-browser`.
+- [x] Feature-gate native-only dependency edges:
+  - `ploke-core/cozo` gates Cozo ID conversion impls.
+  - `ploke-records/protocol` gates protocol artifact payloads and avoids
+    pulling `ploke-protocol`/`ploke-llm` into the WASM viewer.
+- [x] Verify `cargo check -p ploke-tree-egui --target wasm32-unknown-unknown`.
+- [ ] Verify with `trunk serve` or `trunk build` from the workspace root.
+- [ ] Test with the overnight run 2 JSON snapshot in a browser.
 
 ### Phase 4: Enrichment Iteration
 
@@ -215,9 +244,10 @@ not the node_id. The correct join is through the transition journal's
 **Phase 0**: ✅ Real data inventory complete, gaps documented.
 **Phase 1**: ✅ `ploke-eval history export-browser-model` produces enriched JSON
   with evaluation scores and surface evidence for run 2.
-**Phase 2**: `ploke-tree-egui` native app renders timeline + detail panel from
+**Phase 2**: ✅ `ploke-tree-egui` native app renders timeline + detail panel from
   the exported JSON.
-**Phase 3**: WASM build runs in browser with the same data.
+**Phase 3**: WASM compile path exists; done when the app runs in browser with
+  the same exported JSON.
 **Phase 4**: Each new view (tree, aggregation) is implemented and validated
   against real data.
 
@@ -234,6 +264,8 @@ not the node_id. The correct join is through the transition journal's
 | `crates/ploke-records/src/evaluation.rs` | `Artifact`, `RunMetrics`, `InstanceComparison` |
 | `crates/ploke-records/src/journal.rs` | `JournalEntry::MaterializeBranch(TransitionRecord)`, `Refs`, `Paths`, `Hashes` |
 | `crates/ploke-records/src/history.rs` | `SealedBlockRecord`, authority surface test (playback.rs excluded) |
+| `crates/ploke-tree-egui/src/main.rs` | Native/WASM egui viewer for exported `PlaybackBrowserModel` JSON |
+| `crates/ploke-tree-egui/index.html` | Trunk entrypoint for the WASM viewer |
 | `/tmp/browser-model.json` | Latest enriched export from run 2 (54 steps, 46 with eval+surface) |
 
 ## No-Goals
@@ -252,6 +284,8 @@ cargo fmt --all
 cargo test -p ploke-records
 cargo test -p ploke-tree
 cargo test -p ploke-tree-browser
+cargo check -p ploke-tree-egui
+cargo check -p ploke-tree-egui --target wasm32-unknown-unknown
 cargo check -p ploke-eval
 
 # Real campaign load
@@ -270,9 +304,11 @@ with open('/tmp/browser-model.json') as f:
     m = json.load(f)
 eval_steps = [s for s in m['steps'] if s.get('evaluation')]
 surface_steps = [s for s in m['steps'] if s.get('surface')]
+protocol_steps = [s for s in m['steps'] if s.get('protocol')]
 print(f'steps: {m[\"step_count\"]}')
 print(f'with evaluation: {len(eval_steps)}')
 print(f'with surface: {len(surface_steps)}')
+print(f'with protocol: {len(protocol_steps)}')
 print('run_summary:', json.dumps(m.get('run_summary'), indent=2))
 "
 ```

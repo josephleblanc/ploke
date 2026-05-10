@@ -112,6 +112,21 @@ line numbers remain valid. Start with these anchors:
 - `crates/ploke-core/src/io_types.rs`
   `EmbeddingData`, `ResolvedEdgeData`, `WriteSnippetData`.
 
+## Scheduler Status
+
+Do not use `scheduler.json` as decision-making evidence for current Prototype 1
+work. It is a misleadingly named legacy projection from earlier controller
+implementations. It can still provide join keys, labels, node paths, and rough
+operator context, but it may be stale or incomplete after History-backed
+selection, transition journals, channel records, and node-level evidence have
+advanced.
+
+For selection, continuation, History admission, successor causality, and
+playback ordering, prefer sealed History entries, append-only transition
+journals, channel messages, invocation/completion records, and typed evaluation
+payloads. Treat scheduler/node records as optional context attached to those
+surfaces, not as the source of truth.
+
 ## Core Invariants
 
 - Every checkout is an Artifact.

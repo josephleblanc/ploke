@@ -171,6 +171,14 @@ Projection text, raw logs, monitor views, and TUI-local state may be records,
 but they are not automatically admissible for `Diagnosis`, `Selection`,
 `SurfaceCheck`, or `HistoryAdmission`.
 
+`scheduler.json` belongs in the same low-authority projection category. Despite
+its name, it is now mostly vestigial from older Prototype 1 controller paths.
+Use it for join keys, labels, path discovery, and rough operator context only.
+Do not rely on it for selection, continuation, History admission, successor
+causality, or run playback ordering; those must come from sealed History,
+append-only transition journals, channel records, invocation/completion
+records, and typed evaluation payloads.
+
 Router/model calls that materially shape a harness proposal need an additional
 receipt before the real `ploke-tui` adapter is admitted:
 

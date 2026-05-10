@@ -10,6 +10,19 @@
 - Requirement: when running `cargo test`, bound the default output to the useful tail or a targeted error filter, such as `cargo test -p <crate> <test-filter> -- <test-args> 2>&1 | tail -n 20`, `cargo test -p <crate> ... 2>&1 | rg 'E[0-9]+'`, or `cargo test -p <crate> ... 2>&1 | rg '<regex>'`.
 - Use fuller `cargo test` output only when the bounded output is insufficient to diagnose the failure, and make that expansion explicit.
 
+## Context Budget / Large File Guardrails
+
+- Context explosion counter:
+  - Total incidents: 1
+  - Last context explosion: 2026-05-09
+  - Days since last context explosion: 0
+
+- Requirement: do not read large logs, journals, generated artifacts, or long documents directly. Before opening any unknown-size file, use metadata guardrails such as `wc -l` and `ls -lh` to estimate both line count and byte size.
+- Requirement: for JSONL, journals, traces, or other record-oriented files, a small line count is not enough. Lines may be huge, so content reads must cap both record count and record width, for example `rg -n '<pattern>' <file> | head -n 5 | cut -c 1-400`, `sed -n 'start,endp' <file> | cut -c 1-400`, or `tail -n 3 <file> | cut -c 1-400`.
+- Requirement: do not read `transition-journal.jsonl` or similar run/history journals wholesale. Query them only with narrow `rg` patterns, bounded line ranges, or very small tails, always with a width cap such as `cut -c 1-400`, unless the user explicitly asks for a full read.
+- Requirement: docs are not exempt from context discipline. When consulting a doc, first identify the needed section with `rg` or inspect a bounded range; avoid dumping whole planning documents into context.
+- If a bounded read is insufficient, state what extra range or pattern is needed before expanding it, and keep the expansion targeted.
+
 ## Token Budget / Sub-Agent Model Routing
 
 - Prefer fewer sub-agents first. A cheaper sub-agent still spends tokens if it reads too broadly or duplicates work already done in the main thread.

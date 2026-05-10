@@ -942,6 +942,8 @@ impl History {
                         }
                     }
                     let payload_hash = payload.payload_hash()?;
+                    let candidate_set_membership =
+                        selection.candidate_set_membership_for_payload(index, payload)?;
                     candidates.push(HistoryCandidate {
                         source: HistoryCandidateSource {
                             block_hash,
@@ -950,15 +952,13 @@ impl History {
                             entry_id: entry.entry_id(),
                         },
                         decision_scope: selection.scope.clone(),
-                        selected_by_decision: selection.selected_candidate.as_ref()
-                            == Some(&payload.candidate),
+                        selected_by_decision: selection
+                            .payload_selected_by_decision(candidate_set_membership, payload),
                         candidate_set_root: selection
                             .candidate_set
                             .as_ref()
                             .map(|commitment| commitment.root.clone()),
-                        candidate_set_membership: selection
-                            .candidate_set_membership(&payload.candidate)
-                            .cloned(),
+                        candidate_set_membership: candidate_set_membership.cloned(),
                         payload_hash,
                         payload: payload.clone(),
                     });
@@ -2569,6 +2569,59 @@ pub(crate) struct CandidateCoordinate {
     pub(crate) primary_runtime_id: Option<String>,
 }
 
+/// Source class for one observed candidate occurrence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CandidateSourceClass {
+    History,
+    CurrentGeneration,
+}
+
+/// Typed preimage for one observed candidate occurrence.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub(crate) struct CandidateOccurrencePreimage<'a> {
+    pub(crate) coordinate: &'a CandidateCoordinate,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) lineage_id: Option<&'a LineageId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) artifact: Option<&'a ArtifactRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) runtime: Option<&'a ActorRef>,
+    pub(crate) source: CandidateSourceClass,
+}
+
+impl<'a> CandidateOccurrencePreimage<'a> {
+    pub(crate) fn new(source: CandidateSourceClass, coordinate: &'a CandidateCoordinate) -> Self {
+        Self {
+            coordinate,
+            lineage_id: None,
+            artifact: None,
+            runtime: None,
+            source,
+        }
+    }
+}
+
+/// Durable identity for one observed candidate occurrence.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct CandidateOccurrenceId(HistoryHash);
+
+impl CandidateOccurrenceId {
+    pub(crate) fn from_preimage(
+        preimage: CandidateOccurrencePreimage<'_>,
+    ) -> Result<Self, HistoryError> {
+        Ok(Self(HistoryHash::of_domain_json(
+            "prototype1.history.candidate_occurrence.v1",
+            &preimage,
+        )?))
+    }
+
+    pub(crate) fn hash(&self) -> &HistoryHash {
+        &self.0
+    }
+}
+
 /// Lifecycle outcome labels from the planner and persisted node status.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CandidateLifecycle {
@@ -3019,6 +3072,20 @@ impl EvaluationPayload {
         HistoryHash::of_domain_json("prototype1.history.evaluation_payload.v1", self)
     }
 
+    pub(crate) fn occurrence_id(
+        &self,
+        source: CandidateSourceClass,
+    ) -> Result<Option<CandidateOccurrenceId>, HistoryError> {
+        let Some(sealed) = self.sealed_evidence.as_ref() else {
+            return Ok(None);
+        };
+        CandidateOccurrenceId::from_preimage(CandidateOccurrencePreimage::new(
+            source,
+            &sealed.coordinate,
+        ))
+        .map(Some)
+    }
+
     /// Confirms `selection_input_hash` matches a recomputed digest of
     /// `selection_input` when both are present.
     pub(crate) fn verify_selection_input_binding(&self) -> Result<bool, HistoryError> {
@@ -3287,6 +3354,38 @@ impl CandidateSetRoot {
     }
 }
 
+/// Typed preimage binding a candidate occurrence to one candidate-set root.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub(crate) struct CandidateMembershipPreimage<'a> {
+    pub(crate) occurrence_id: &'a HistoryHash,
+    pub(crate) candidate_set_root: &'a CandidateSetRoot,
+}
+
+/// Durable identity for one occurrence's membership in a sealed candidate set.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct CandidateMembershipId(HistoryHash);
+
+impl CandidateMembershipId {
+    pub(crate) fn new(
+        occurrence_id: &CandidateOccurrenceId,
+        candidate_set_root: &CandidateSetRoot,
+    ) -> Result<Self, HistoryError> {
+        let preimage = CandidateMembershipPreimage {
+            occurrence_id: occurrence_id.hash(),
+            candidate_set_root,
+        };
+        Ok(Self(HistoryHash::of_domain_json(
+            "prototype1.history.candidate_membership.v1",
+            &preimage,
+        )?))
+    }
+
+    pub(crate) fn hash(&self) -> &HistoryHash {
+        &self.0
+    }
+}
+
 /// Sparse-Merkle membership proof for one candidate payload under a candidate-set root.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CandidateSetProof {
@@ -3313,6 +3412,10 @@ impl CandidateSetProof {
 pub(crate) struct CandidateSetMembership {
     pub(crate) candidate: SubjectRef,
     pub(crate) payload_hash: HistoryHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) occurrence_id: Option<CandidateOccurrenceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) membership_id: Option<CandidateMembershipId>,
     pub(crate) proof: CandidateSetProof,
 }
 
@@ -3332,13 +3435,43 @@ pub(crate) struct CandidateSetCommitment {
 
 impl CandidateSetCommitment {
     pub(crate) fn from_payloads(considered: &[EvaluationPayload]) -> Result<Self, HistoryError> {
-        candidate_set::commit(considered)
+        candidate_set::commit(considered, None)
+    }
+
+    pub(crate) fn from_payloads_with_sources(
+        considered: &[EvaluationPayload],
+        sources: &[TraversalCandidateSource],
+    ) -> Result<Self, HistoryError> {
+        if considered.len() != sources.len() {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "candidate-set source count mismatch: considered={}, sources={}",
+                    considered.len(),
+                    sources.len()
+                ),
+            });
+        }
+        let source_classes = sources
+            .iter()
+            .map(|source| source.candidate_source_class())
+            .collect::<Vec<_>>();
+        candidate_set::commit(considered, Some(&source_classes))
     }
 
     pub(crate) fn verify(&self) -> Result<bool, HistoryError> {
         for membership in &self.memberships {
             if !membership.proof.verify(&self.root)? {
                 return Ok(false);
+            }
+            match (&membership.occurrence_id, &membership.membership_id) {
+                (Some(occurrence_id), Some(membership_id)) => {
+                    let expected = CandidateMembershipId::new(occurrence_id, &self.root)?;
+                    if expected.hash() != membership_id.hash() {
+                        return Ok(false);
+                    }
+                }
+                (None, None) => {}
+                _ => return Ok(false),
             }
         }
         Ok(true)
@@ -3348,6 +3481,37 @@ impl CandidateSetCommitment {
         self.memberships
             .iter()
             .find(|membership| &membership.candidate == candidate)
+    }
+
+    pub(crate) fn membership_by_occurrence_id(
+        &self,
+        occurrence_id: &CandidateOccurrenceId,
+    ) -> Option<&CandidateSetMembership> {
+        self.memberships
+            .iter()
+            .find(|membership| membership.occurrence_id.as_ref() == Some(occurrence_id))
+    }
+
+    pub(crate) fn membership_by_membership_id(
+        &self,
+        membership_id: &CandidateMembershipId,
+    ) -> Option<&CandidateSetMembership> {
+        self.memberships
+            .iter()
+            .find(|membership| membership.membership_id.as_ref() == Some(membership_id))
+    }
+
+    pub(crate) fn membership_for_payload(
+        &self,
+        payload: &EvaluationPayload,
+        source: CandidateSourceClass,
+    ) -> Result<Option<&CandidateSetMembership>, HistoryError> {
+        if let Some(occurrence_id) = payload.occurrence_id(source)? {
+            if let Some(membership) = self.membership_by_occurrence_id(&occurrence_id) {
+                return Ok(Some(membership));
+            }
+        }
+        Ok(self.membership(&payload.candidate))
     }
 }
 
@@ -3382,6 +3546,8 @@ mod candidate_set {
     struct KeyPreimage<'a> {
         candidate: &'a SubjectRef,
         #[serde(skip_serializing_if = "Option::is_none")]
+        occurrence_id: Option<&'a HistoryHash>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         node_id: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         branch_id: Option<&'a str>,
@@ -3399,17 +3565,34 @@ mod candidate_set {
         key_bytes: [u8; 32],
         value: H256,
         value_hash: HistoryHash,
+        occurrence_id: Option<CandidateOccurrenceId>,
     }
 
     pub(super) fn commit(
         considered: &[EvaluationPayload],
+        source_classes: Option<&[CandidateSourceClass]>,
     ) -> Result<CandidateSetCommitment, HistoryError> {
         let mut tree = Tree::default();
         let mut seen_keys = BTreeSet::<[u8; 32]>::new();
+        let mut seen_occurrences = BTreeSet::<CandidateOccurrenceId>::new();
         let mut inputs = Vec::with_capacity(considered.len());
 
-        for payload in considered {
-            let key_hash = key_hash(payload)?;
+        for (index, payload) in considered.iter().enumerate() {
+            let source = source_classes
+                .and_then(|sources| sources.get(index).copied())
+                .unwrap_or_else(|| source_class(payload));
+            let occurrence_id = payload.occurrence_id(source)?;
+            if let Some(occurrence_id) = occurrence_id.as_ref()
+                && !seen_occurrences.insert(occurrence_id.clone())
+            {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "duplicate candidate occurrence id for candidate {}",
+                        payload.candidate.as_str()
+                    ),
+                });
+            }
+            let key_hash = key_hash(payload, occurrence_id.as_ref())?;
             let key_bytes = key_hash.to_digest_bytes().map_err(|detail| {
                 HistoryError::InvalidSelectionDecision {
                     detail: format!("candidate-set key is not a 32-byte digest: {detail}"),
@@ -3444,6 +3627,7 @@ mod candidate_set {
                 key_bytes,
                 value,
                 value_hash,
+                occurrence_id,
             });
         }
 
@@ -3466,9 +3650,19 @@ mod candidate_set {
                 .map_err(|source| HistoryError::InvalidSelectionDecision {
                     detail: format!("candidate-set proof construction failed: {source}"),
                 })?;
+            let membership_id = input
+                .occurrence_id
+                .as_ref()
+                .map(|occurrence_id| CandidateMembershipId::new(occurrence_id, &root))
+                .transpose()?;
+            if let Some(membership_id) = &membership_id {
+                debug_assert_eq!(membership_id.hash().as_str().len(), 64);
+            }
             memberships.push(CandidateSetMembership {
                 candidate: input.candidate,
                 payload_hash: input.value_hash,
+                membership_id,
+                occurrence_id: input.occurrence_id,
                 proof: CandidateSetProof {
                     key: input.key_bytes,
                     value: input.value.into(),
@@ -3480,13 +3674,17 @@ mod candidate_set {
         Ok(CandidateSetCommitment { root, memberships })
     }
 
-    fn key_hash(payload: &EvaluationPayload) -> Result<HistoryHash, HistoryError> {
+    fn key_hash(
+        payload: &EvaluationPayload,
+        occurrence_id: Option<&CandidateOccurrenceId>,
+    ) -> Result<HistoryHash, HistoryError> {
         let coordinate = payload
             .sealed_evidence
             .as_ref()
             .map(|sealed| &sealed.coordinate);
         let preimage = KeyPreimage {
             candidate: &payload.candidate,
+            occurrence_id: occurrence_id.map(|id| id.hash()),
             node_id: coordinate.map(|coord| coord.node_id.as_str()),
             branch_id: coordinate.and_then(|coord| coord.branch_id.as_deref()),
             generation: coordinate.and_then(|coord| coord.generation),
@@ -3494,6 +3692,14 @@ mod candidate_set {
             primary_runtime_id: coordinate.and_then(|coord| coord.primary_runtime_id.as_deref()),
         };
         HistoryHash::of_domain_json("prototype1.history.candidate_set.key.v1", &preimage)
+    }
+
+    pub(super) fn source_class(payload: &EvaluationPayload) -> CandidateSourceClass {
+        if payload.artifact.is_some() || payload.surface_attempt.is_some() {
+            CandidateSourceClass::CurrentGeneration
+        } else {
+            CandidateSourceClass::History
+        }
     }
 }
 
@@ -3659,6 +3865,14 @@ pub(crate) struct SelectionDecisionEntry {
     /// Selected candidate coordinate, or `None` when no admissible candidate exists.
     pub(crate) selected_candidate: Option<SubjectRef>,
 
+    /// Selected concrete candidate occurrence, when sealed by occurrence-aware traversal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_occurrence_id: Option<CandidateOccurrenceId>,
+
+    /// Selected membership in this decision's candidate set, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_membership_id: Option<CandidateMembershipId>,
+
     /// The ordered evaluation payloads the decision considered.
     ///
     /// Inline-first behavior can include *all* candidates considered under the scope.
@@ -3713,6 +3927,15 @@ pub(crate) enum TraversalCandidateSource {
     CurrentGeneration,
 }
 
+impl TraversalCandidateSource {
+    pub(crate) fn candidate_source_class(self) -> CandidateSourceClass {
+        match self {
+            Self::History => CandidateSourceClass::History,
+            Self::CurrentGeneration => CandidateSourceClass::CurrentGeneration,
+        }
+    }
+}
+
 impl SelectionDecisionEntry {
     pub(crate) fn new(
         procedure_or_policy: ProcedureRef,
@@ -3742,9 +3965,50 @@ impl SelectionDecisionEntry {
         traversal: Option<TraversalEvidence>,
         decision: crate::successor_selection::SuccessorDecision,
     ) -> Result<Self, HistoryError> {
+        Self::new_with_traversal_identity(
+            procedure_or_policy,
+            scope,
+            selected_candidate,
+            None,
+            None,
+            considered,
+            Vec::new(),
+            projection_failures,
+            traversal,
+            decision,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_traversal_identity(
+        procedure_or_policy: ProcedureRef,
+        scope: SelectionScope,
+        selected_candidate: Option<SubjectRef>,
+        selected_occurrence_id: Option<CandidateOccurrenceId>,
+        selected_membership_id: Option<CandidateMembershipId>,
+        considered: Vec<EvaluationPayload>,
+        considered_sources: Vec<TraversalCandidateSource>,
+        projection_failures: Vec<SelectionProjectionFailure>,
+        traversal: Option<TraversalEvidence>,
+        decision: crate::successor_selection::SuccessorDecision,
+    ) -> Result<Self, HistoryError> {
+        let candidate_set = Some(Self::candidate_set_for_considered(
+            &considered,
+            &considered_sources,
+        )?);
+        let selected_candidate = Self::selected_candidate_projection(
+            selected_candidate,
+            selected_occurrence_id.as_ref(),
+            selected_membership_id.as_ref(),
+            candidate_set.as_ref().expect("candidate set"),
+            &considered,
+        )?;
         Self::validate_decision(
             &procedure_or_policy,
             selected_candidate.as_ref(),
+            selected_occurrence_id.as_ref(),
+            selected_membership_id.as_ref(),
+            candidate_set.as_ref().expect("candidate set"),
             &considered,
             &decision,
         )?;
@@ -3752,14 +4016,20 @@ impl SelectionDecisionEntry {
             "prototype1.history.selection_considered_order.v1",
             &Self::considered_order_preimage(&considered)?,
         )?;
-        let candidate_set = Some(CandidateSetCommitment::from_payloads(&considered)?);
         Ok(Self {
-            schema_version: 2,
+            schema_version: if selected_occurrence_id.is_some() || selected_membership_id.is_some()
+            {
+                3
+            } else {
+                2
+            },
             procedure_or_policy,
             scope,
             selected_candidate,
+            selected_occurrence_id,
+            selected_membership_id,
             considered,
-            considered_sources: Vec::new(),
+            considered_sources,
             considered_order_hash,
             candidate_set,
             projection_failures,
@@ -3779,6 +4049,9 @@ impl SelectionDecisionEntry {
     fn validate_decision(
         procedure_or_policy: &ProcedureRef,
         selected_candidate: Option<&SubjectRef>,
+        selected_occurrence_id: Option<&CandidateOccurrenceId>,
+        selected_membership_id: Option<&CandidateMembershipId>,
+        candidate_set: &CandidateSetCommitment,
         considered: &[EvaluationPayload],
         decision: &crate::successor_selection::SuccessorDecision,
     ) -> Result<(), HistoryError> {
@@ -3815,38 +4088,59 @@ impl SelectionDecisionEntry {
             }
         }
 
-        let Some(selected_candidate) = selected_candidate else {
-            if matches!(
-                decision.outcome,
-                crate::successor_selection::decision::SuccessorOutcome::Accepted
-                    | crate::successor_selection::decision::SuccessorOutcome::ExploreFrom
-            ) {
-                return Err(invalid(format!(
-                    "decision outcome {:?} requires selected_candidate",
-                    decision.outcome
-                )));
-            }
-            return Ok(());
-        };
+        let selected_payload_by_identity = Self::selected_payload_by_identity(
+            selected_occurrence_id,
+            selected_membership_id,
+            candidate_set,
+            considered,
+        )?;
 
-        let selected_payloads = considered
-            .iter()
-            .filter(|payload| &payload.candidate == selected_candidate)
-            .collect::<Vec<_>>();
-        let selected_payload = match selected_payloads.as_slice() {
-            [payload] => *payload,
-            [] => {
-                return Err(invalid(format!(
-                    "selected_candidate {} is absent from considered payloads",
-                    selected_candidate.as_str()
-                )));
+        let selected_payload = match (selected_payload_by_identity, selected_candidate) {
+            (Some(payload), Some(selected_candidate)) => {
+                if &payload.candidate != selected_candidate {
+                    return Err(invalid(format!(
+                        "selected_candidate projection mismatch: occurrence={}, selected_candidate={}",
+                        payload.candidate.as_str(),
+                        selected_candidate.as_str()
+                    )));
+                }
+                payload
             }
-            many => {
-                return Err(invalid(format!(
-                    "selected_candidate {} is ambiguous in considered payloads: count={}",
-                    selected_candidate.as_str(),
-                    many.len()
-                )));
+            (Some(payload), None) => payload,
+            (None, Some(selected_candidate)) => {
+                let selected_payloads = considered
+                    .iter()
+                    .filter(|payload| &payload.candidate == selected_candidate)
+                    .collect::<Vec<_>>();
+                match selected_payloads.as_slice() {
+                    [payload] => *payload,
+                    [] => {
+                        return Err(invalid(format!(
+                            "selected_candidate {} is absent from considered payloads",
+                            selected_candidate.as_str()
+                        )));
+                    }
+                    many => {
+                        return Err(invalid(format!(
+                            "selected_candidate {} is ambiguous in considered payloads: count={}",
+                            selected_candidate.as_str(),
+                            many.len()
+                        )));
+                    }
+                }
+            }
+            (None, None) => {
+                if matches!(
+                    decision.outcome,
+                    crate::successor_selection::decision::SuccessorOutcome::Accepted
+                        | crate::successor_selection::decision::SuccessorOutcome::ExploreFrom
+                ) {
+                    return Err(invalid(format!(
+                        "decision outcome {:?} requires selected occurrence, membership, or selected_candidate",
+                        decision.outcome
+                    )));
+                }
+                return Ok(());
             }
         };
 
@@ -3889,6 +4183,116 @@ impl SelectionDecisionEntry {
         Ok(())
     }
 
+    fn candidate_set_for_considered(
+        considered: &[EvaluationPayload],
+        considered_sources: &[TraversalCandidateSource],
+    ) -> Result<CandidateSetCommitment, HistoryError> {
+        if considered_sources.is_empty() {
+            CandidateSetCommitment::from_payloads(considered)
+        } else {
+            CandidateSetCommitment::from_payloads_with_sources(considered, considered_sources)
+        }
+    }
+
+    fn selected_candidate_projection(
+        selected_candidate: Option<SubjectRef>,
+        selected_occurrence_id: Option<&CandidateOccurrenceId>,
+        selected_membership_id: Option<&CandidateMembershipId>,
+        candidate_set: &CandidateSetCommitment,
+        considered: &[EvaluationPayload],
+    ) -> Result<Option<SubjectRef>, HistoryError> {
+        let selected_payload = Self::selected_payload_by_identity(
+            selected_occurrence_id,
+            selected_membership_id,
+            candidate_set,
+            considered,
+        )?;
+        match (selected_candidate, selected_payload) {
+            (Some(candidate), Some(payload)) if candidate != payload.candidate => {
+                Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "selected_candidate projection mismatch: occurrence={}, selected_candidate={}",
+                        payload.candidate.as_str(),
+                        candidate.as_str()
+                    ),
+                })
+            }
+            (Some(candidate), _) => Ok(Some(candidate)),
+            (None, Some(payload)) => Ok(Some(payload.candidate.clone())),
+            (None, None) => Ok(None),
+        }
+    }
+
+    fn selected_payload_by_identity<'a>(
+        selected_occurrence_id: Option<&CandidateOccurrenceId>,
+        selected_membership_id: Option<&CandidateMembershipId>,
+        candidate_set: &CandidateSetCommitment,
+        considered: &'a [EvaluationPayload],
+    ) -> Result<Option<&'a EvaluationPayload>, HistoryError> {
+        let membership = match (selected_occurrence_id, selected_membership_id) {
+            (Some(occurrence_id), Some(membership_id)) => {
+                let occurrence_member = candidate_set
+                    .membership_by_occurrence_id(occurrence_id)
+                    .ok_or_else(|| HistoryError::InvalidSelectionDecision {
+                        detail: "selected occurrence is absent from candidate set".to_string(),
+                    })?;
+                let membership_member = candidate_set
+                    .membership_by_membership_id(membership_id)
+                    .ok_or_else(|| HistoryError::InvalidSelectionDecision {
+                        detail: "selected membership is absent from candidate set".to_string(),
+                    })?;
+                if occurrence_member.membership_id != membership_member.membership_id {
+                    return Err(HistoryError::InvalidSelectionDecision {
+                        detail: "selected occurrence and membership refer to different candidates"
+                            .to_string(),
+                    });
+                }
+                Some(occurrence_member)
+            }
+            (Some(occurrence_id), None) => Some(
+                candidate_set
+                    .membership_by_occurrence_id(occurrence_id)
+                    .ok_or_else(|| HistoryError::InvalidSelectionDecision {
+                        detail: "selected occurrence is absent from candidate set".to_string(),
+                    })?,
+            ),
+            (None, Some(membership_id)) => Some(
+                candidate_set
+                    .membership_by_membership_id(membership_id)
+                    .ok_or_else(|| HistoryError::InvalidSelectionDecision {
+                        detail: "selected membership is absent from candidate set".to_string(),
+                    })?,
+            ),
+            (None, None) => None,
+        };
+
+        let Some(membership) = membership else {
+            return Ok(None);
+        };
+        let payloads = considered
+            .iter()
+            .filter_map(|payload| {
+                payload
+                    .payload_hash()
+                    .ok()
+                    .filter(|hash| hash == &membership.payload_hash)
+                    .map(|_| payload)
+            })
+            .collect::<Vec<_>>();
+        match payloads.as_slice() {
+            [payload] => Ok(Some(*payload)),
+            [] => Err(HistoryError::InvalidSelectionDecision {
+                detail: "selected candidate-set member has no considered payload".to_string(),
+            }),
+            many => Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "selected candidate-set member resolves to multiple payloads: count={}",
+                    many.len()
+                ),
+            }),
+        }
+    }
+
     fn considered_order_preimage(
         considered: &[EvaluationPayload],
     ) -> Result<Vec<HistoryHash>, HistoryError> {
@@ -3915,14 +4319,16 @@ impl SelectionDecisionEntry {
         let Some(candidate_set) = &self.candidate_set else {
             return Ok(None);
         };
-        let expected = CandidateSetCommitment::from_payloads(&self.considered)?;
+        let expected =
+            Self::candidate_set_for_considered(&self.considered, &self.considered_sources)?;
         if expected.root != candidate_set.root
             || expected.memberships.len() != candidate_set.memberships.len()
         {
             return Ok(Some(false));
         }
         for expected_member in expected.memberships {
-            let Some(member) = candidate_set.membership(&expected_member.candidate) else {
+            let Some(member) = Self::matching_candidate_set_member(candidate_set, &expected_member)
+            else {
                 return Ok(Some(false));
             };
             if member.payload_hash != expected_member.payload_hash {
@@ -3940,6 +4346,54 @@ impl SelectionDecisionEntry {
         candidate: &SubjectRef,
     ) -> Option<&CandidateSetMembership> {
         self.candidate_set.as_ref()?.membership(candidate)
+    }
+
+    pub(crate) fn candidate_set_membership_for_payload(
+        &self,
+        index: usize,
+        payload: &EvaluationPayload,
+    ) -> Result<Option<&CandidateSetMembership>, HistoryError> {
+        let Some(candidate_set) = self.candidate_set.as_ref() else {
+            return Ok(None);
+        };
+        if let Some(source) = self.considered_sources.get(index).copied() {
+            return candidate_set.membership_for_payload(payload, source.candidate_source_class());
+        }
+        if let Some(occurrence_id) = payload.occurrence_id(candidate_set::source_class(payload))?
+            && let Some(membership) = candidate_set.membership_by_occurrence_id(&occurrence_id)
+        {
+            return Ok(Some(membership));
+        }
+        Ok(candidate_set.membership(&payload.candidate))
+    }
+
+    fn matching_candidate_set_member<'a>(
+        candidate_set: &'a CandidateSetCommitment,
+        expected: &CandidateSetMembership,
+    ) -> Option<&'a CandidateSetMembership> {
+        if let Some(membership_id) = expected.membership_id.as_ref() {
+            return candidate_set.membership_by_membership_id(membership_id);
+        }
+        if let Some(occurrence_id) = expected.occurrence_id.as_ref() {
+            return candidate_set.membership_by_occurrence_id(occurrence_id);
+        }
+        candidate_set.membership(&expected.candidate)
+    }
+
+    fn payload_selected_by_decision(
+        &self,
+        membership: Option<&CandidateSetMembership>,
+        payload: &EvaluationPayload,
+    ) -> bool {
+        if let Some(selected_membership_id) = self.selected_membership_id.as_ref() {
+            return membership.and_then(|member| member.membership_id.as_ref())
+                == Some(selected_membership_id);
+        }
+        if let Some(selected_occurrence_id) = self.selected_occurrence_id.as_ref() {
+            return membership.and_then(|member| member.occurrence_id.as_ref())
+                == Some(selected_occurrence_id);
+        }
+        self.selected_candidate.as_ref() == Some(&payload.candidate)
     }
 }
 
@@ -5688,6 +6142,120 @@ mod tests {
         .build()
     }
 
+    fn occurrence_coordinate(
+        node_id: &str,
+        branch_id: &str,
+        plan_index: u32,
+    ) -> CandidateCoordinate {
+        CandidateCoordinate {
+            node_id: node_id.to_string(),
+            parent_node_id: Some("parent-a".to_string()),
+            branch_id: Some(branch_id.to_string()),
+            generation: Some(2),
+            plan_index: Some(plan_index),
+            primary_runtime_id: Some("runtime:primary".to_string()),
+        }
+    }
+
+    fn runtime_actor(value: u128) -> ActorRef {
+        ActorRef::Runtime(RuntimeId(uuid::Uuid::from_u128(value)))
+    }
+
+    #[test]
+    fn candidate_occurrence_id_is_deterministic_for_same_preimage() {
+        let lineage = LineageId::new("lineage:a");
+        let coordinate = occurrence_coordinate("node-a", "branch-a", 0);
+        let artifact = ArtifactRef::new("artifact:a");
+        let runtime = runtime_actor(1);
+        let first = CandidateOccurrenceId::from_preimage(CandidateOccurrencePreimage {
+            lineage_id: Some(&lineage),
+            artifact: Some(&artifact),
+            runtime: Some(&runtime),
+            ..CandidateOccurrencePreimage::new(CandidateSourceClass::CurrentGeneration, &coordinate)
+        })
+        .expect("occurrence id");
+        let second = CandidateOccurrenceId::from_preimage(CandidateOccurrencePreimage {
+            lineage_id: Some(&lineage),
+            artifact: Some(&artifact),
+            runtime: Some(&runtime),
+            ..CandidateOccurrencePreimage::new(CandidateSourceClass::CurrentGeneration, &coordinate)
+        })
+        .expect("occurrence id");
+
+        assert_eq!(first, second);
+        assert_eq!(first.hash().as_str().len(), 64);
+    }
+
+    #[test]
+    fn candidate_occurrence_id_changes_with_runtime_or_coordinate() {
+        let lineage = LineageId::new("lineage:a");
+        let coordinate = occurrence_coordinate("node-a", "branch-a", 0);
+        let changed_coordinate = occurrence_coordinate("node-a", "branch-a", 1);
+        let runtime = runtime_actor(1);
+        let changed_runtime = runtime_actor(2);
+        let base = CandidateOccurrenceId::from_preimage(CandidateOccurrencePreimage {
+            lineage_id: Some(&lineage),
+            runtime: Some(&runtime),
+            ..CandidateOccurrencePreimage::new(CandidateSourceClass::History, &coordinate)
+        })
+        .expect("occurrence id");
+        let by_runtime = CandidateOccurrenceId::from_preimage(CandidateOccurrencePreimage {
+            lineage_id: Some(&lineage),
+            runtime: Some(&changed_runtime),
+            ..CandidateOccurrencePreimage::new(CandidateSourceClass::History, &coordinate)
+        })
+        .expect("occurrence id");
+        let by_coordinate = CandidateOccurrenceId::from_preimage(CandidateOccurrencePreimage {
+            lineage_id: Some(&lineage),
+            runtime: Some(&runtime),
+            ..CandidateOccurrencePreimage::new(CandidateSourceClass::History, &changed_coordinate)
+        })
+        .expect("occurrence id");
+
+        assert_ne!(base, by_runtime);
+        assert_ne!(base, by_coordinate);
+    }
+
+    #[test]
+    fn candidate_membership_id_changes_with_candidate_set_root() {
+        let coordinate = occurrence_coordinate("node-a", "branch-a", 0);
+        let occurrence_id = CandidateOccurrenceId::from_preimage(CandidateOccurrencePreimage::new(
+            CandidateSourceClass::CurrentGeneration,
+            &coordinate,
+        ))
+        .expect("occurrence id");
+        let first_root = CandidateSetRoot(HistoryHash::of_bytes(b"candidate-set:first"));
+        let second_root = CandidateSetRoot(HistoryHash::of_bytes(b"candidate-set:second"));
+        let first = CandidateMembershipId::new(&occurrence_id, &first_root)
+            .expect("candidate membership id");
+        let second = CandidateMembershipId::new(&occurrence_id, &second_root)
+            .expect("candidate membership id");
+
+        assert_ne!(first, second);
+        assert_eq!(first.hash().as_str().len(), 64);
+    }
+
+    #[test]
+    fn same_subject_ref_can_have_different_runtime_occurrences() {
+        let subject = SubjectRef::new("candidate:shared:plan_index=0");
+        let coordinate = occurrence_coordinate("node-a", "branch-a", 0);
+        let first_runtime = runtime_actor(1);
+        let second_runtime = runtime_actor(2);
+        let first = CandidateOccurrenceId::from_preimage(CandidateOccurrencePreimage {
+            runtime: Some(&first_runtime),
+            ..CandidateOccurrencePreimage::new(CandidateSourceClass::CurrentGeneration, &coordinate)
+        })
+        .expect("occurrence id");
+        let second = CandidateOccurrenceId::from_preimage(CandidateOccurrencePreimage {
+            runtime: Some(&second_runtime),
+            ..CandidateOccurrencePreimage::new(CandidateSourceClass::CurrentGeneration, &coordinate)
+        })
+        .expect("occurrence id");
+
+        assert_eq!(subject, SubjectRef::new("candidate:shared:plan_index=0"));
+        assert_ne!(first, second);
+    }
+
     fn test_sealed_evaluation(branch_id: &str) -> SealedEvaluationEvidence {
         SealedEvaluationEvidence {
             branch_id: branch_id.to_string(),
@@ -6857,6 +7425,118 @@ mod tests {
                     .expect("membership proof verifies")
             );
         }
+    }
+
+    #[test]
+    fn selection_decision_entry_allows_same_subject_ref_with_selected_occurrence() {
+        let subject = SubjectRef::new("candidate:child-a:plan_index=0");
+        let mut first = evaluation_payload("child-a", "branch-a", 0);
+        first.candidate = subject.clone();
+        first
+            .sealed_evidence
+            .as_mut()
+            .expect("sealed evidence")
+            .coordinate
+            .primary_runtime_id = Some("runtime:first".to_string());
+        let mut second = evaluation_payload("child-a", "branch-a", 0);
+        second.candidate = subject.clone();
+        second
+            .sealed_evidence
+            .as_mut()
+            .expect("sealed evidence")
+            .coordinate
+            .primary_runtime_id = Some("runtime:second".to_string());
+        let selected_occurrence = second
+            .occurrence_id(CandidateSourceClass::CurrentGeneration)
+            .expect("occurrence id")
+            .expect("selected occurrence");
+
+        let entry = SelectionDecisionEntry::new_with_traversal_identity(
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            SelectionScope::new("generation_local:test"),
+            Some(subject.clone()),
+            Some(selected_occurrence.clone()),
+            None,
+            vec![first, second],
+            vec![
+                TraversalCandidateSource::CurrentGeneration,
+                TraversalCandidateSource::CurrentGeneration,
+            ],
+            Vec::new(),
+            None,
+            selection_decision("child-a", "branch-a"),
+        )
+        .expect("selection entry should use selected occurrence to disambiguate");
+
+        assert_eq!(entry.selected_candidate, Some(subject));
+        assert_eq!(entry.selected_occurrence_id, Some(selected_occurrence));
+        assert_eq!(
+            entry
+                .verify_candidate_set_commitment()
+                .expect("candidate set verifies"),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn selection_decision_entry_rejects_duplicate_occurrence_ids() {
+        let first = evaluation_payload("child-a", "branch-a", 0);
+        let mut second = evaluation_payload("child-b", "branch-b", 1);
+        second.sealed_evidence = first.sealed_evidence.clone();
+
+        let err = SelectionDecisionEntry::new_with_traversal_identity(
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            SelectionScope::new("generation_local:test"),
+            Some(first.candidate.clone()),
+            first
+                .occurrence_id(CandidateSourceClass::CurrentGeneration)
+                .expect("occurrence id"),
+            None,
+            vec![first, second],
+            vec![
+                TraversalCandidateSource::CurrentGeneration,
+                TraversalCandidateSource::CurrentGeneration,
+            ],
+            Vec::new(),
+            None,
+            selection_decision("child-a", "branch-a"),
+        )
+        .expect_err("duplicate occurrence ids should be rejected");
+
+        assert!(matches!(err, HistoryError::InvalidSelectionDecision { .. }));
+        assert!(
+            err.to_string()
+                .contains("duplicate candidate occurrence id")
+        );
+    }
+
+    #[test]
+    fn selection_decision_entry_rejects_selected_membership_for_wrong_root() {
+        let considered = vec![evaluation_payload("child-a", "branch-a", 0)];
+        let occurrence = considered[0]
+            .occurrence_id(CandidateSourceClass::CurrentGeneration)
+            .expect("occurrence id")
+            .expect("occurrence");
+        let wrong_root = CandidateSetRoot(HistoryHash::of_bytes(b"wrong-candidate-set-root"));
+        let wrong_membership =
+            CandidateMembershipId::new(&occurrence, &wrong_root).expect("wrong membership id");
+
+        let err = SelectionDecisionEntry::new_with_traversal_identity(
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            SelectionScope::new("generation_local:test"),
+            Some(considered[0].candidate.clone()),
+            Some(occurrence),
+            Some(wrong_membership),
+            considered,
+            vec![TraversalCandidateSource::CurrentGeneration],
+            Vec::new(),
+            None,
+            selection_decision("child-a", "branch-a"),
+        )
+        .expect_err("wrong-root selected membership should be rejected");
+
+        assert!(matches!(err, HistoryError::InvalidSelectionDecision { .. }));
+        assert!(err.to_string().contains("selected membership is absent"));
     }
 
     #[test]

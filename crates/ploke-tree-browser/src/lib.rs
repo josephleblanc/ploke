@@ -5,22 +5,22 @@
 //! authority. Callers provide typed records or `ploke-tree` projections; this
 //! crate shapes them for visual browsing.
 
-use std::collections::BTreeMap;
-
 use ploke_records::branch::Disposition;
-use ploke_records::evaluation::Artifact as EvaluationArtifact;
-use ploke_records::history::SealedBlockRecord;
 use ploke_records::playback::{EvidenceStrength, FineOrder, FineStepKind};
-use ploke_records::protocol::Artifact as ProtocolArtifact;
+#[cfg(feature = "projection")]
+use ploke_records::{evaluation::Artifact as EvaluationArtifact, history::SealedBlockRecord};
+#[cfg(feature = "projection")]
 use ploke_tree::{
     CoarseHistorySpine, CoarseHistoryWarning, build_coarse_history_spine,
     fine_run_playback_from_sealed_history,
 };
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "projection")]
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlaybackBrowserModel {
-    pub schema_version: &'static str,
+    pub schema_version: String,
     pub granularity: BrowserGranularity,
     pub step_count: usize,
     pub warning_count: usize,
@@ -141,12 +141,14 @@ pub struct NodeBranchInfo {
     pub patch_id: Option<String>,
 }
 
+#[cfg(feature = "projection")]
 pub fn coarse_history_browser_model_from_blocks(
     blocks: &[SealedBlockRecord],
 ) -> PlaybackBrowserModel {
     coarse_history_browser_model(&build_coarse_history_spine(blocks))
 }
 
+#[cfg(feature = "projection")]
 pub fn coarse_history_browser_model(spine: &CoarseHistorySpine) -> PlaybackBrowserModel {
     let steps = spine
         .steps
@@ -174,7 +176,7 @@ pub fn coarse_history_browser_model(spine: &CoarseHistorySpine) -> PlaybackBrows
         .collect::<Vec<_>>();
 
     PlaybackBrowserModel {
-        schema_version: "ploke-tree-browser.playback.v1",
+        schema_version: "ploke-tree-browser.playback.v1".to_owned(),
         granularity: BrowserGranularity::CoarseHistory,
         step_count: steps.len(),
         warning_count: spine.warnings.len(),
@@ -183,6 +185,7 @@ pub fn coarse_history_browser_model(spine: &CoarseHistorySpine) -> PlaybackBrows
     }
 }
 
+#[cfg(feature = "projection")]
 pub fn fine_history_browser_model_from_blocks(
     blocks: &[SealedBlockRecord],
 ) -> PlaybackBrowserModel {
@@ -212,7 +215,7 @@ pub fn fine_history_browser_model_from_blocks(
         .collect::<Vec<_>>();
 
     PlaybackBrowserModel {
-        schema_version: "ploke-tree-browser.playback.v1",
+        schema_version: "ploke-tree-browser.playback.v1".to_owned(),
         granularity: BrowserGranularity::FineHistory,
         step_count: steps.len(),
         warning_count: 0,
@@ -227,38 +230,15 @@ pub fn fine_history_browser_model_from_blocks(
 /// `evaluations` is keyed by `branch_id`.
 /// `node_branches` maps `node-NODEID` → branch/surface info (built from the
 /// transition journal's `MaterializeBranch` entries).
-/// `protocol_artifacts` is keyed by a run-scoped artifact path.
+/// `protocol_snapshots` is keyed by `branch_id`; export code builds it from
+/// the treatment run path in each branch evaluation artifact.
+#[cfg(feature = "projection")]
 pub fn enrich_fine_browser_model(
     model: &mut PlaybackBrowserModel,
     evaluations: &BTreeMap<String, EvaluationArtifact>,
     node_branches: &BTreeMap<String, NodeBranchInfo>,
-    protocol_artifacts: Option<&BTreeMap<String, ProtocolArtifact>>,
+    protocol_snapshots: Option<&BTreeMap<String, ProtocolSnapshot>>,
 ) {
-    // Build node_id → protocol artifact counts.
-    let protocol_by_node: BTreeMap<&str, ProtocolCounts> =
-        if let Some(artifacts) = protocol_artifacts {
-            artifacts
-                .values()
-                .fold(BTreeMap::new(), |mut acc, artifact| {
-                    let entry = acc.entry(artifact.subject_id.as_str()).or_default();
-                    match artifact.procedure_name.as_str() {
-                        "tool_call_intent_segmentation" => entry.intent_segmentation_count += 1,
-                        "tool_call_review" => entry.tool_call_review_count += 1,
-                        "tool_call_segment_review" => entry.segment_review_count += 1,
-                        "intervention_issue_detection" => entry.issue_detection_count += 1,
-                        "intervention_synthesis" => entry.synthesis_count += 1,
-                        _ => {}
-                    }
-                    if entry.model_id.is_none() {
-                        entry.model_id = artifact.model_id.clone();
-                        entry.provider_slug = artifact.provider_slug.clone();
-                    }
-                    acc
-                })
-        } else {
-            BTreeMap::new()
-        };
-
     for step in &mut model.steps {
         // Extract node_id from candidate label: "candidate:node-NODEID:plan_index=N"
         let short_id = extract_node_id_from_label(step.label.as_deref());
@@ -280,23 +260,16 @@ pub fn enrich_fine_browser_model(
                     source_state_id: Some(info.source_state_id.clone()),
                 });
             }
-
-            // Attach protocol snapshot (keyed by subject_id which may be node-NODEID).
-            if let Some(counts) = protocol_by_node.get(full_id.as_str()) {
-                step.protocol = Some(ProtocolSnapshot {
-                    intent_segmentation_count: counts.intent_segmentation_count,
-                    tool_call_review_count: counts.tool_call_review_count,
-                    segment_review_count: counts.segment_review_count,
-                    issue_detection_count: counts.issue_detection_count,
-                    synthesis_count: counts.synthesis_count,
-                    model_id: counts.model_id.clone(),
-                    provider_slug: counts.provider_slug.clone(),
-                });
-            }
         }
 
         // Attach evaluation snapshot by branch_id.
         if let Some(branch_id) = &step.branch_id {
+            if let Some(protocol) =
+                protocol_snapshots.and_then(|snapshots| snapshots.get(branch_id))
+            {
+                step.protocol = Some(protocol.clone());
+            }
+
             if let Some(eval) = evaluations.get(branch_id.as_str()) {
                 let metrics: Option<&ploke_records::evaluation::RunMetrics> = eval
                     .compared_instances
@@ -325,17 +298,7 @@ pub fn enrich_fine_browser_model(
     }
 }
 
-#[derive(Debug, Default)]
-struct ProtocolCounts {
-    intent_segmentation_count: usize,
-    tool_call_review_count: usize,
-    segment_review_count: usize,
-    issue_detection_count: usize,
-    synthesis_count: usize,
-    model_id: Option<String>,
-    provider_slug: Option<String>,
-}
-
+#[cfg(feature = "projection")]
 fn extract_node_id_from_label(label: Option<&str>) -> Option<String> {
     let label = label?;
     // Format: "candidate:node-NODEID:plan_index=N"
@@ -347,6 +310,7 @@ fn extract_node_id_from_label(label: Option<&str>) -> Option<String> {
 }
 
 /// Build a `RunSummary` from loaded evidence counts.
+#[cfg(feature = "projection")]
 pub fn build_run_summary(
     campaign_id: String,
     node_count: usize,
@@ -368,6 +332,7 @@ pub fn build_run_summary(
     }
 }
 
+#[cfg(feature = "projection")]
 fn block_hash_from_fine_step(id: &str) -> Option<String> {
     if id.contains(":entry:") || id.contains(":successor-selected") {
         return id.split(':').nth(2).map(ToOwned::to_owned);
@@ -375,6 +340,7 @@ fn block_hash_from_fine_step(id: &str) -> Option<String> {
     Some(id.to_owned())
 }
 
+#[cfg(feature = "projection")]
 fn warnings_for_block(warnings: &[CoarseHistoryWarning], block_height: u64) -> usize {
     warnings
         .iter()
@@ -391,6 +357,7 @@ fn warnings_for_block(warnings: &[CoarseHistoryWarning], block_height: u64) -> u
         .count()
 }
 
+#[cfg(all(test, feature = "projection"))]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -19,6 +19,7 @@ pub mod ids;
 pub mod invocation;
 pub mod journal;
 pub mod playback;
+#[cfg(feature = "protocol")]
 pub mod protocol;
 pub mod record;
 pub mod scheduler;

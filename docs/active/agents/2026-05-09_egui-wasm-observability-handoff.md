@@ -10,7 +10,8 @@ self-improvement loop runs.
 1. Read this handoff.
 2. Read the plan: [`2026-05-09_egui-wasm-observability-plan.md`](2026-05-09_egui-wasm-observability-plan.md).
 3. Run the verification commands below to confirm everything still compiles.
-4. Start Phase 2.
+4. Continue Phase 3 browser serving/manual test unless manual testing finds
+   another native UI blocker.
 
 ## Where We Are
 
@@ -18,16 +19,16 @@ We are on **Track 2** (Records / Playback / Observability). Track 1 (Bounded
 Edit Surface / `ploke-tui`) is a separate thread — see
 [`2026-05-08_bounded-edit-surface-handoff.md`](2026-05-08_bounded-edit-surface-handoff.md).
 
-**Phases 0 and 1 are complete.** The typed record pipeline is built, enriched,
-and exportable:
+**Phases 0, 1, 2, and 2.1 are complete.** The typed record pipeline is built,
+enriched, exportable, and viewable in the native egui app:
 
 ```
 ploke-records ──→ ploke-tree ──→ ploke-tree-browser ──→ CLI export ──→ JSON
 (passive schemas)  (projection)   (enriched models)      (browser_export.rs)
 ```
 
-**Phase 2 is next:** Create `crates/ploke-tree-egui` — an `eframe`/`egui` app
-that loads the exported JSON and renders an interactive timeline + detail panel.
+**Phase 3 is in progress:** the WASM compile path exists. Next is serving the
+Trunk app and testing the same exported JSON in a browser.
 
 ## What We Built in Phase 1
 
@@ -76,7 +77,7 @@ cargo run -p ploke-eval -- history export-browser-model \
 ```
 
 Produces enriched JSON. Verified: 46 of 54 fine steps have evaluation and
-surface snapshots populated.
+surface snapshots populated, and 43 of 54 have protocol snapshots populated.
 
 ### Key Bug Fixed
 
@@ -85,11 +86,10 @@ but `instance_id` is the eval instance name (`BurntSushi__ripgrep-2209`), not
 the node_id. The correct join is through the transition journal's
 `MaterializeBranch` entries (`refs.node_id` in `node-NODEID` format).
 
-## What's Next: Phase 2 — ploke-tree-egui Crate
+## What We Built in Phase 2
 
-### Goal
-
-A native `eframe` app that loads the exported JSON and renders:
+`crates/ploke-tree-egui` is now a native `eframe` app that loads the exported
+JSON and renders:
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -115,59 +115,121 @@ A native `eframe` app that loads the exported JSON and renders:
 └─────────────────────────────────────────────────────┘
 ```
 
-### Steps
+Implemented:
 
-1. Create `crates/ploke-tree-egui/Cargo.toml`:
-   ```toml
-   [package]
-   name = "ploke-tree-egui"
-   version = "0.1.0"
-   edition = "2024"
-   rust-version.workspace = true
-   description = "egui/eframe UI for browsing Ploke run playback"
+- `crates/ploke-tree-egui/Cargo.toml` with `eframe`, `egui`,
+  `ploke-tree-browser`, `serde`, and `serde_json`.
+- Workspace registration in `Cargo.toml`.
+- `src/main.rs` with `PlokeTreeApp`:
+  - path input defaulting to `/tmp/browser-model.json`
+  - load button and status/error message
+  - top summary from `PlaybackBrowserModel.run_summary`
+  - scrollable timeline rows with kind, block height, label, evidence,
+    disposition, and join ids
+  - selectable rows feeding a right-side detail panel
+  - bottom diagnostics strip with warning and missing-data counts
+- `PlaybackBrowserModel.schema_version` is now an owned `String`, matching the
+  persisted-record pattern and avoiding an egui-side JSON buffer leak.
 
-   [dependencies]
-   ploke-tree-browser = { workspace = true }
-   eframe = "0.31"
-   egui = "0.31"
-   serde = { workspace = true, features = ["derive"] }
-   serde_json = { workspace = true }
-   ```
+Run it natively with:
 
-2. Add to workspace `Cargo.toml`:
-   - Add `"crates/ploke-tree-egui"` to `members`
-   - Add `ploke-tree-egui = { path = "crates/ploke-tree-egui" }` to
-     `[workspace.dependencies]`
+```bash
+cargo run -p ploke-tree-egui
+```
 
-3. Implement `src/main.rs`:
-   - `PlokeTreeApp` struct holding `model: Option<PlaybackBrowserModel>`,
-     `selected_step: Option<usize>`, `file_path: String`
-   - `eframe::App::update()` rendering:
-     - Top panel: file path input, load button, run summary stats
-     - Central: `egui::ScrollArea` with step rows
-     - Side: detail panel for selected step
-     - Bottom: warning count
+### Manual Test Findings (2026-05-09)
 
-4. Each timeline row shows:
-   - Step kind as colored text (CandidateConsidered=blue, SuccessorSelected=green,
-     HistoryEntryAdmitted=gray, HistoryBlockSealed=purple)
-   - Block height, label (candidate id or block hash), evidence badge
-   - If evaluation exists: disposition badge (keep=green, reject=red)
-   - Click to select → populates detail panel
+Verified manually:
 
-5. Detail panel shows:
-   - Evaluation section: all metrics in a grid
-   - Surface section: target_relpath, content hashes
-   - Protocol section: artifact counts (will be empty until wired)
+- Loading `/tmp/browser-model.json` works.
+- Bad paths fail gracefully, clear the display, and show a small useful error
+  under the load path.
+- Timeline hover makes rows feel interactive.
+- Candidate rows show keep/reject.
+- Candidate surface sections show the target path.
+- Non-candidate rows do not look broken just because evaluation/surface data is
+  absent.
+
+Limitations found and addressed in Phase 2.1:
+
+- The right detail panel can overrun the visible viewport and needs its own
+  scroll area.
+- Hashes and raw ids are visually noisy. They are provenance/audit handles, not
+  first-order operator signals, and should move behind an Advanced/Provenance
+  section unless there is a copy/open/search affordance.
+- `target_relpath` is useful and should remain promoted in the Surface section.
+- The footer's `missing eval`, `missing surface`, and `missing protocol` counts
+  are too coarse. They conflate "not applicable" with "expected but absent".
+- Fine granularity means the playback is decomposed into fine History-derived
+  steps; it does not mean every row should have every evidence family. The UI
+  should make that distinction explicit through applicability-aware diagnostics.
+- Protocol snapshots now populate when the branch evaluation points to a
+  treatment run with persisted protocol artifacts. For the run 2 fixture this is
+  currently 43 of 54 fine steps.
+
+## What We Built in Phase 2.1
+
+Native UI cleanup and upstream protocol enrichment are done:
+
+- The selected-step detail panel is scrollable.
+- Evaluation disposition, tool-call counts, patch state, convergence, oracle
+  eligibility, aborted, reasons, and surface `target_relpath` are promoted.
+- Raw ids and hashes are behind collapsed Advanced/Provenance sections.
+- Footer diagnostics distinguish not applicable, expected absent, and unavailable
+  upstream evidence instead of showing one coarse missing count.
+- `history export-browser-model` now builds `ProtocolSnapshot` values from each
+  branch evaluation's treatment run protocol artifacts.
+
+## What We Built in Phase 3 So Far
+
+WASM compile support is wired, but browser serving/manual test is still open:
+
+- `ploke-tree-egui` has a `wasm32` startup path using `eframe::WebRunner`.
+- The browser UI loads JSON by pasted text or dropped JSON files instead of
+  filesystem paths.
+- `crates/ploke-tree-egui/index.html` is present for Trunk.
+- Root `Trunk.toml` points `trunk build` at the egui crate entrypoint.
+- `ploke-tree-browser` keeps browser DTO fields backed by `ploke-records`
+  passive types. Do not duplicate record enums for the WASM path.
+- Native-only dependency edges are gated:
+  - `ploke-core/cozo` gates Cozo ID conversion impls.
+  - `ploke-records/protocol` gates protocol artifact payloads so the WASM
+    viewer does not pull `ploke-protocol`/`ploke-llm`/Tokio networking.
+- Verified: `cargo check -p ploke-tree-egui --target wasm32-unknown-unknown`.
+- Not yet verified: `trunk build`/`trunk serve` from the workspace root and browser loading of
+  `/tmp/browser-model.json`. A plain `trunk build` hit Trunk's `NO_COLOR=1`
+  parsing issue in this shell; do not work around it by setting env without
+  user approval.
+
+### Phase 2.1 UI Cleanup (DONE)
+
+- [x] Make the selected-step detail panel scrollable.
+- [x] Promote operator-facing fields:
+  - evaluation disposition
+  - tool calls total/failed
+  - patch attempted/apply state
+  - convergence, oracle eligibility, aborted
+  - reasons
+  - surface `target_relpath`
+- [x] Move raw ids and hashes into collapsed Advanced/Provenance sections.
+- [x] Replace footer missing counts with applicability-aware diagnostics:
+  - not applicable
+  - expected but absent
+  - unavailable upstream enrichment
+- [x] Keep the UI read-only and projection-only.
+- [x] Do not add visible explanatory copy for protocol enrichment absence yet; the
+  code comment near the protocol diagnostics is the reminder for the next patch.
 
 ### Design Constraints
 
 - The egui crate depends ONLY on `ploke-tree-browser`. It does NOT depend on
   `ploke-eval` or `ploke-tree`.
-- JSON is loaded at runtime via a file picker or path input.
+- JSON is loaded at runtime via a native path input, or in WASM via pasted text
+  / dropped JSON file.
 - All model types come from `ploke_tree_browser::*`.
 - Keep it simple — one file (`main.rs`) is fine for the first slice.
-- The app should work as a native binary first. WASM comes in Phase 3.
+- The app works as a native binary first. The WASM compile path is present;
+  browser serving/manual test remains.
 
 ## Key Files
 
@@ -182,6 +244,9 @@ A native `eframe` app that loads the exported JSON and renders:
 | `crates/ploke-records/src/journal.rs` | `JournalEntry::MaterializeBranch(TransitionRecord)`, `Refs`, `Paths`, `Hashes` |
 | `crates/ploke-records/src/history.rs` | `SealedBlockRecord`, authority surface test (playback.rs excluded at line ~533) |
 | `crates/ploke-tree/src/playback/fine.rs` | `fine_run_playback_from_sealed_history()` |
+| `crates/ploke-tree-egui/src/main.rs` | Native/WASM egui viewer for exported `PlaybackBrowserModel` JSON |
+| `crates/ploke-tree-egui/index.html` | Trunk entrypoint for the WASM viewer |
+| `Trunk.toml` | Workspace-root Trunk config targeting the egui WASM entrypoint |
 | `/tmp/browser-model.json` | Latest enriched export from run 2 |
 
 ## Overnight Run Fixture
@@ -202,6 +267,8 @@ cargo fmt --all
 cargo check -p ploke-records
 cargo check -p ploke-tree
 cargo check -p ploke-tree-browser
+cargo check -p ploke-tree-egui
+cargo check -p ploke-tree-egui --target wasm32-unknown-unknown
 cargo check -p ploke-eval
 
 # Tests
@@ -221,8 +288,10 @@ with open('/tmp/browser-model.json') as f:
     m = json.load(f)
 eval_steps = [s for s in m['steps'] if s.get('evaluation')]
 surface_steps = [s for s in m['steps'] if s.get('surface')]
+protocol_steps = [s for s in m['steps'] if s.get('protocol')]
 assert len(eval_steps) == 46, f'expected 46 eval steps, got {len(eval_steps)}'
 assert len(surface_steps) == 46, f'expected 46 surface steps, got {len(surface_steps)}'
+assert len(protocol_steps) == 43, f'expected 43 protocol steps, got {len(protocol_steps)}'
 print('OK: enrichment verified')
 print('run_summary:', json.dumps(m.get('run_summary'), indent=2))
 "

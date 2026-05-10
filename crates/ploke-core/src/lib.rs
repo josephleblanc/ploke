@@ -120,6 +120,7 @@ mod ids {
     // Import TypeKind into the ids module scope
     use crate::{IdConversionError, TypeKind}; // Add IdConversionError
 
+    #[cfg(feature = "cozo")]
     use cozo::{DataValue, UuidWrapper};
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
@@ -436,30 +437,35 @@ mod ids {
     }
 
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for TypeId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for &TypeId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for TrackingHash {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.0))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for CanonId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for PubPathId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))
