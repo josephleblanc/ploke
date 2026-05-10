@@ -5,7 +5,7 @@
 // `candidate`, `score`, and `history` so new scoring sources do not turn this
 // file into another flattened catch-all.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, marker::PhantomData};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -25,6 +25,34 @@ use crate::{
     },
     metric::{self, Summary},
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SourceSet {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DecisionSet {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Membership<S> {
+    inner: CandidateSetMembership,
+    _set: PhantomData<fn() -> S>,
+}
+
+pub(crate) type SourceMembership = Membership<SourceSet>;
+type DecisionMembership = Membership<DecisionSet>;
+
+impl<S> Membership<S> {
+    fn new(inner: CandidateSetMembership) -> Self {
+        Self {
+            inner,
+            _set: PhantomData,
+        }
+    }
+
+    fn as_inner(&self) -> &CandidateSetMembership {
+        &self.inner
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -191,12 +219,25 @@ where
 pub(crate) struct Selection {
     pub(crate) decision: SuccessorDecision,
     pub(crate) selected_payload: EvaluationPayload,
-    pub(crate) selected_occurrence_id: Option<CandidateOccurrenceId>,
-    pub(crate) selected_membership_id: Option<CandidateMembershipId>,
+    selected_decision_membership: Option<DecisionMembership>,
     pub(crate) considered: Vec<EvaluationPayload>,
     pub(crate) considered_sources: Vec<TraversalCandidateSource>,
     pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
     pub(crate) selected_from_current_generation: bool,
+}
+
+impl Selection {
+    pub(crate) fn selected_occurrence_id(&self) -> Option<CandidateOccurrenceId> {
+        self.selected_decision_membership
+            .as_ref()
+            .and_then(|membership| membership.as_inner().occurrence_id.clone())
+    }
+
+    pub(crate) fn selected_membership_id(&self) -> Option<CandidateMembershipId> {
+        self.selected_decision_membership
+            .as_ref()
+            .and_then(|membership| membership.as_inner().membership_id.clone())
+    }
 }
 
 #[cfg(test)]
@@ -377,6 +418,8 @@ where
         let Some(selection) = strategy.select(&items, &child_counts, seed)? else {
             return Ok(None);
         };
+        let decision_membership =
+            decision_membership_for_chosen(&considered, &considered_sources, &selection.chosen)?;
 
         let mut decision = selection.chosen.decision;
         decision.procedure_id = HISTORY_TRAVERSAL_PROCEDURE_ID.to_string();
@@ -391,14 +434,31 @@ where
         Ok(Some(Selection {
             decision,
             selected_payload: selection.chosen.payload,
-            selected_occurrence_id: selection.chosen.selected_occurrence_id,
-            selected_membership_id: selection.chosen.selected_membership_id,
+            selected_decision_membership: decision_membership,
             considered,
             considered_sources,
             projection_failures: failures,
             selected_from_current_generation: selection.chosen.source.is_current_generation(),
         }))
     }
+}
+
+fn decision_membership_for_chosen(
+    considered: &[EvaluationPayload],
+    considered_sources: &[TraversalCandidateSource],
+    chosen: &ChosenPayload,
+) -> Result<Option<DecisionMembership>, HistoryError> {
+    let candidate_set =
+        CandidateSetCommitment::from_payloads_with_sources(considered, considered_sources)?;
+    candidate_set
+        .membership_for_payload(
+            &chosen.payload,
+            chosen
+                .source
+                .traversal_candidate_source()
+                .candidate_source_class(),
+        )
+        .map(|membership| membership.cloned().map(DecisionMembership::new))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -445,7 +505,7 @@ impl Candidates {
                 payload,
                 payload_hash,
                 candidate_set_root: Some(root.clone()),
-                candidate_set_membership: membership,
+                candidate_set_membership: membership.map(SourceMembership::new),
             });
         }
         Ok(self)
@@ -460,7 +520,7 @@ pub(crate) struct Candidate {
     pub(crate) payload: EvaluationPayload,
     pub(crate) payload_hash: crate::cli::prototype1_state::history::HistoryHash,
     pub(crate) candidate_set_root: Option<CandidateSetRoot>,
-    pub(crate) candidate_set_membership: Option<CandidateSetMembership>,
+    pub(crate) candidate_set_membership: Option<SourceMembership>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -468,7 +528,7 @@ pub(crate) struct Item {
     pub(crate) payload: EvaluationPayload,
     pub(crate) source: Source,
     pub(crate) candidate_set_root: Option<CandidateSetRoot>,
-    pub(crate) candidate_set_membership: Option<CandidateSetMembership>,
+    pub(crate) candidate_set_membership: Option<SourceMembership>,
 }
 
 impl From<HistoryCandidate> for Candidate {
@@ -482,7 +542,9 @@ impl From<HistoryCandidate> for Candidate {
             payload: candidate.payload,
             payload_hash: candidate.payload_hash,
             candidate_set_root: candidate.candidate_set_root,
-            candidate_set_membership: candidate.candidate_set_membership,
+            candidate_set_membership: candidate
+                .candidate_set_membership
+                .map(SourceMembership::new),
         }
     }
 }
@@ -751,6 +813,7 @@ fn decision_grade(candidate: Candidate) -> Result<CandidateGrade, HistoryError> 
             "traversal: missing candidate-set membership proof".to_string(),
         );
     };
+    let membership = membership.as_inner();
     if membership.candidate != candidate.payload.candidate
         || membership.payload_hash != candidate.payload_hash
     {
@@ -889,8 +952,6 @@ struct ChosenPayload {
     payload: EvaluationPayload,
     decision: SuccessorDecision,
     source: Source,
-    selected_occurrence_id: Option<CandidateOccurrenceId>,
-    selected_membership_id: Option<CandidateMembershipId>,
 }
 
 fn select_frontier_max(
@@ -928,7 +989,6 @@ fn select_frontier_max(
             tie,
             decision: selected,
             source: item.source.clone(),
-            candidate_set_membership: item.candidate_set_membership.clone(),
         };
         if best
             .as_ref()
@@ -955,13 +1015,6 @@ fn select_frontier_max(
                 payload: best.payload,
                 decision: best.decision,
                 source: best.source,
-                selected_occurrence_id: best
-                    .candidate_set_membership
-                    .as_ref()
-                    .and_then(|membership| membership.occurrence_id.clone()),
-                selected_membership_id: best
-                    .candidate_set_membership
-                    .and_then(|membership| membership.membership_id),
             },
             rationale,
         }
@@ -1006,14 +1059,6 @@ fn select_score_child_prop(
         payload,
         decision: weight.decision.clone(),
         source: items[selected].source.clone(),
-        selected_occurrence_id: items[selected]
-            .candidate_set_membership
-            .as_ref()
-            .and_then(|membership| membership.occurrence_id.clone()),
-        selected_membership_id: items[selected]
-            .candidate_set_membership
-            .as_ref()
-            .and_then(|membership| membership.membership_id.clone()),
     };
     let lambda = lambda_millis as f64 / 1_000.0;
     let rationale = vec![
@@ -1231,7 +1276,6 @@ struct ScoredPayload {
     tie: [u8; 32],
     decision: SuccessorDecision,
     source: Source,
-    candidate_set_membership: Option<CandidateSetMembership>,
 }
 
 impl ScoredPayload {
@@ -1450,6 +1494,87 @@ mod tests {
 
         assert_eq!(selection.decision.candidate_node_id, "current-strong");
         assert!(selection.selected_from_current_generation);
+    }
+
+    #[test]
+    fn traversal_seals_membership_from_final_decision_set() {
+        let historical = candidate_from_payload(decision_grade_payload(
+            "history-strong",
+            "branch-history-strong",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        let source_membership_id = historical
+            .candidate_set_membership
+            .as_ref()
+            .and_then(|membership| membership.membership_id.clone())
+            .expect("source membership id");
+        let history = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![historical],
+        };
+        let current = decision_grade_payload(
+            "current-weak",
+            "branch-current-weak",
+            None,
+            1,
+            BranchDisposition::Reject,
+            metrics(false, false, 5),
+        );
+
+        let candidates = Candidates::from_history(history)
+            .with_current_generation(
+                SelectionScope::new("generation_local:current"),
+                vec![current],
+            )
+            .expect("current generation candidates");
+        let selection = select(candidates, 0, StrategyKind::default())
+            .expect("traversal")
+            .expect("selection");
+        let decision_set = CandidateSetCommitment::from_payloads_with_sources(
+            &selection.considered,
+            &selection.considered_sources,
+        )
+        .expect("final decision candidate set");
+        let selected_membership_id = selection
+            .selected_membership_id()
+            .expect("selected decision-set membership id");
+
+        assert_eq!(selection.decision.candidate_node_id, "history-strong");
+        assert_ne!(
+            &selected_membership_id, &source_membership_id,
+            "source-set membership must not be reused as final decision-set membership"
+        );
+        assert!(
+            decision_set
+                .membership_by_membership_id(&selected_membership_id)
+                .is_some(),
+            "selected membership must resolve in the final decision set"
+        );
+
+        let entry = SelectionDecisionEntry::new_with_traversal_identity(
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            SelectionScope::all_admitted_candidates(),
+            Some(selection.selected_payload.candidate.clone()),
+            selection.selected_occurrence_id(),
+            selection.selected_membership_id(),
+            selection.considered,
+            selection.considered_sources,
+            Vec::new(),
+            None,
+            selection.decision,
+        )
+        .expect("mixed traversal output must be sealable");
+        assert_eq!(
+            entry
+                .verify_candidate_set_commitment()
+                .expect("candidate set commitment verifies"),
+            Some(true)
+        );
     }
 
     #[test]

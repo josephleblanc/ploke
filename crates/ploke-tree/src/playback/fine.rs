@@ -1,4 +1,7 @@
-use ploke_records::history::{EntryPayloadRecord, SealedBlockRecord};
+use ploke_records::history::{
+    CandidateSetMembershipRecord, EntryPayloadRecord, SealedBlockRecord,
+    SelectionDecisionEntryRecord,
+};
 use ploke_records::playback::{
     EvidenceStrength, Fine, FineOrder, FineStep, FineStepKind, FineStepRef, RunPlayback,
 };
@@ -38,9 +41,21 @@ pub fn fine_run_playback_from_sealed_history(blocks: &[SealedBlockRecord]) -> Ru
         for (entry_index, entry) in block.entries.iter().enumerate() {
             if let EntryPayloadRecord::SelectionDecision(selection) = &entry.core.payload {
                 for (candidate_index, candidate) in selection.considered.iter().enumerate() {
+                    let membership = candidate_membership(selection, candidate_index);
+                    let occurrence_id = membership
+                        .and_then(|membership| membership.occurrence_id.as_ref())
+                        .map(|id| id.0.clone());
+                    let membership_id = membership
+                        .and_then(|membership| membership.membership_id.as_ref())
+                        .map(|id| id.0.clone());
                     steps.push(FineStep {
-                        id: format!(
-                            "history:{block_height}:{block_hash}:entry:{entry_index}:candidate:{candidate_index}"
+                        id: fine_candidate_step_id(
+                            block_height,
+                            block_hash,
+                            entry_index,
+                            candidate_index,
+                            occurrence_id.as_deref(),
+                            membership_id.as_deref(),
                         ),
                         kind: FineStepKind::CandidateConsidered,
                         evidence: EvidenceStrength::AdmittedHistory,
@@ -51,12 +66,27 @@ pub fn fine_run_playback_from_sealed_history(blocks: &[SealedBlockRecord]) -> Ru
                             candidate_index: Some(candidate_index),
                         },
                         label: Some(candidate.candidate.value.clone()),
+                        occurrence_id,
+                        membership_id,
                     });
                 }
 
                 if let Some(selected) = selection.selected_candidate.as_ref() {
+                    let occurrence_id = selection
+                        .selected_occurrence_id
+                        .as_ref()
+                        .map(|id| id.0.clone());
+                    let membership_id = selection
+                        .selected_membership_id
+                        .as_ref()
+                        .map(|id| id.0.clone());
                     steps.push(FineStep {
-                        id: format!("history:{block_height}:{block_hash}:successor-selected"),
+                        id: fine_selected_step_id(
+                            block_height,
+                            block_hash,
+                            occurrence_id.as_deref(),
+                            membership_id.as_deref(),
+                        ),
                         kind: FineStepKind::SuccessorSelected,
                         evidence: EvidenceStrength::AdmittedHistory,
                         order: FineOrder {
@@ -66,6 +96,8 @@ pub fn fine_run_playback_from_sealed_history(blocks: &[SealedBlockRecord]) -> Ru
                             candidate_index: None,
                         },
                         label: Some(selected.value.clone()),
+                        occurrence_id,
+                        membership_id,
                     });
                 }
             }
@@ -84,6 +116,8 @@ pub fn fine_run_playback_from_sealed_history(blocks: &[SealedBlockRecord]) -> Ru
                     candidate_index: None,
                 },
                 label: Some(entry.core.subject.value.clone()),
+                occurrence_id: None,
+                membership_id: None,
             });
         }
 
@@ -98,6 +132,8 @@ pub fn fine_run_playback_from_sealed_history(blocks: &[SealedBlockRecord]) -> Ru
                 candidate_index: None,
             },
             label: Some(block.state.header.selected_successor.artifact.value.clone()),
+            occurrence_id: None,
+            membership_id: None,
         });
     }
 
@@ -135,9 +171,21 @@ pub fn fine_run_playback_ref_steps_from_sealed_history<'a>(
         for (entry_index, entry) in block.entries.iter().enumerate() {
             if let EntryPayloadRecord::SelectionDecision(selection) = &entry.core.payload {
                 for (candidate_index, candidate) in selection.considered.iter().enumerate() {
+                    let membership = candidate_membership(selection, candidate_index);
+                    let occurrence_id = membership
+                        .and_then(|membership| membership.occurrence_id.as_ref())
+                        .map(|id| id.0.as_str());
+                    let membership_id = membership
+                        .and_then(|membership| membership.membership_id.as_ref())
+                        .map(|id| id.0.as_str());
                     steps.push(FineStepRef {
-                        id: format!(
-                            "history:{block_height}:{block_hash}:entry:{entry_index}:candidate:{candidate_index}"
+                        id: fine_candidate_step_id(
+                            block_height,
+                            block_hash,
+                            entry_index,
+                            candidate_index,
+                            occurrence_id,
+                            membership_id,
                         ),
                         kind: FineStepKind::CandidateConsidered,
                         evidence: EvidenceStrength::AdmittedHistory,
@@ -148,12 +196,27 @@ pub fn fine_run_playback_ref_steps_from_sealed_history<'a>(
                             candidate_index: Some(candidate_index),
                         },
                         label: Some(candidate.candidate.value.as_str()),
+                        occurrence_id,
+                        membership_id,
                     });
                 }
 
                 if let Some(selected) = selection.selected_candidate.as_ref() {
+                    let occurrence_id = selection
+                        .selected_occurrence_id
+                        .as_ref()
+                        .map(|id| id.0.as_str());
+                    let membership_id = selection
+                        .selected_membership_id
+                        .as_ref()
+                        .map(|id| id.0.as_str());
                     steps.push(FineStepRef {
-                        id: format!("history:{block_height}:{block_hash}:successor-selected"),
+                        id: fine_selected_step_id(
+                            block_height,
+                            block_hash,
+                            occurrence_id,
+                            membership_id,
+                        ),
                         kind: FineStepKind::SuccessorSelected,
                         evidence: EvidenceStrength::AdmittedHistory,
                         order: FineOrder {
@@ -163,6 +226,8 @@ pub fn fine_run_playback_ref_steps_from_sealed_history<'a>(
                             candidate_index: None,
                         },
                         label: Some(selected.value.as_str()),
+                        occurrence_id,
+                        membership_id,
                     });
                 }
             }
@@ -181,6 +246,8 @@ pub fn fine_run_playback_ref_steps_from_sealed_history<'a>(
                     candidate_index: None,
                 },
                 label: Some(entry.core.subject.value.as_str()),
+                occurrence_id: None,
+                membership_id: None,
             });
         }
 
@@ -203,8 +270,56 @@ pub fn fine_run_playback_ref_steps_from_sealed_history<'a>(
                     .value
                     .as_str(),
             ),
+            occurrence_id: None,
+            membership_id: None,
         });
     }
 
     steps
+}
+
+fn candidate_membership(
+    selection: &SelectionDecisionEntryRecord,
+    candidate_index: usize,
+) -> Option<&CandidateSetMembershipRecord> {
+    selection
+        .candidate_set
+        .as_ref()
+        .and_then(|set| set.memberships.get(candidate_index))
+}
+
+fn fine_candidate_step_id(
+    block_height: u64,
+    block_hash: &str,
+    entry_index: usize,
+    candidate_index: usize,
+    occurrence_id: Option<&str>,
+    membership_id: Option<&str>,
+) -> String {
+    if let Some(membership_id) = membership_id {
+        return format!(
+            "history:{block_height}:{block_hash}:entry:{entry_index}:candidate-membership:{membership_id}"
+        );
+    }
+    if let Some(occurrence_id) = occurrence_id {
+        return format!(
+            "history:{block_height}:{block_hash}:entry:{entry_index}:candidate-occurrence:{occurrence_id}"
+        );
+    }
+    format!("history:{block_height}:{block_hash}:entry:{entry_index}:candidate:{candidate_index}")
+}
+
+fn fine_selected_step_id(
+    block_height: u64,
+    block_hash: &str,
+    occurrence_id: Option<&str>,
+    membership_id: Option<&str>,
+) -> String {
+    if let Some(membership_id) = membership_id {
+        return format!("history:{block_height}:{block_hash}:successor-selected:{membership_id}");
+    }
+    if let Some(occurrence_id) = occurrence_id {
+        return format!("history:{block_height}:{block_hash}:successor-selected:{occurrence_id}");
+    }
+    format!("history:{block_height}:{block_hash}:successor-selected")
 }

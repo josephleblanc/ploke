@@ -67,6 +67,10 @@ pub struct FineStep {
     pub order: FineOrder,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -76,6 +80,8 @@ pub struct FineStepRef<'a> {
     pub evidence: EvidenceStrength,
     pub order: FineOrder,
     pub label: Option<&'a str>,
+    pub occurrence_id: Option<&'a str>,
+    pub membership_id: Option<&'a str>,
 }
 
 impl PlaybackGranularity for Coarse {
@@ -251,6 +257,8 @@ mod tests {
             evidence: EvidenceStrength::AdmittedHistory,
             order,
             label: Some("entry admitted".to_string()),
+            occurrence_id: None,
+            membership_id: None,
         }]);
 
         let step = playback.iter().next().expect("fine step");
@@ -273,6 +281,8 @@ mod tests {
             evidence: EvidenceStrength::SealedHistory,
             order,
             label: Some("sealed"),
+            occurrence_id: None,
+            membership_id: None,
         }];
         let playback = RunPlaybackRef::<super::Fine>::new(&steps);
 

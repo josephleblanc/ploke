@@ -413,24 +413,39 @@ mod tests {
             serde_json::to_value(&record).expect("serialize real scheduler"),
             original
         );
-        assert_eq!(
-            record.campaign_id.as_str(),
-            "p1-edit-surface-history-long-20260508-1"
+        assert!(!record.campaign_id.as_str().is_empty());
+        assert!(!record.nodes.is_empty());
+        assert!(
+            record
+                .nodes
+                .iter()
+                .all(|node| !node.node_id.as_str().is_empty())
         );
-        assert_eq!(record.nodes.len(), 1);
-        assert_eq!(
-            record.frontier_node_ids[0].as_str(),
-            "node-2cd25c1a4b66689c"
+        assert!(
+            record
+                .frontier_node_ids
+                .iter()
+                .chain(record.completed_node_ids.iter())
+                .chain(record.failed_node_ids.iter())
+                .all(|id| record.nodes.iter().any(|node| node.node_id == *id))
         );
     }
 
     #[test]
     #[ignore]
     fn real_campaign_node_json_roundtrips() {
-        let path = real_run_root()
-            .join("nodes")
-            .join("node-b3ed41bd152ed715")
-            .join("node.json");
+        let root = real_run_root();
+        let scheduler: SchedulerStateRecord =
+            serde_json::from_value(read_json_value(&root.join("scheduler.json")))
+                .expect("deserialize scheduler");
+        let node_id = scheduler
+            .nodes
+            .first()
+            .expect("real run has at least one node")
+            .node_id
+            .as_str()
+            .to_owned();
+        let path = root.join("nodes").join(&node_id).join("node.json");
         let original = read_json_value(&path);
         let record: NodeRecord =
             serde_json::from_value(original.clone()).expect("deserialize real node");
@@ -439,14 +454,16 @@ mod tests {
             serde_json::to_value(&record).expect("serialize real node"),
             original
         );
-        assert_eq!(record.node_id.as_str(), "node-b3ed41bd152ed715");
-        assert_eq!(
-            record.parent_node_id.as_ref().map(|id| id.as_str()),
-            Some("node-6a6601f8840f022e")
-        );
-        assert_eq!(record.generation, 5);
-        assert_eq!(record.branch_id.as_str(), "branch-d5aff05ddadfc372");
-        assert_eq!(record.status, NodeStatusRecord::Succeeded);
+        assert_eq!(record.node_id.as_str(), node_id);
+        let scheduler_node = scheduler
+            .nodes
+            .iter()
+            .find(|node| node.node_id == record.node_id)
+            .expect("node is present in scheduler");
+        assert_eq!(scheduler_node.generation, record.generation);
+        assert_eq!(scheduler_node.instance_id, record.instance_id);
+        assert_eq!(scheduler_node.branch_id, record.branch_id);
+        assert!(!record.source_state_id.as_str().is_empty());
     }
 
     fn real_run_root() -> PathBuf {

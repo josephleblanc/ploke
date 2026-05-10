@@ -11,6 +11,10 @@ pub struct CoarseHistoryStep {
     pub selected_successor: SuccessorRefRecord,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_candidate: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_occurrence_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_membership_id: Option<String>,
     pub considered_candidate_count: usize,
 }
 
@@ -112,6 +116,12 @@ pub fn build_coarse_history_spine(blocks: &[SealedBlockRecord]) -> CoarseHistory
             selected_candidate: selection
                 .and_then(|selection| selection.selected_candidate.as_ref())
                 .map(|subject| subject.value.clone()),
+            selected_occurrence_id: selection
+                .and_then(|selection| selection.selected_occurrence_id.as_ref())
+                .map(|id| id.0.clone()),
+            selected_membership_id: selection
+                .and_then(|selection| selection.selected_membership_id.as_ref())
+                .map(|id| id.0.clone()),
             considered_candidate_count: selection.map_or(0, |selection| selection.considered.len()),
         });
     }

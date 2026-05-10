@@ -49,6 +49,19 @@
 - Prefer names that describe the domain result, not the inspection mechanism: `stop_reason`, `changed_paths`, `summary`, `snapshot`, `entry_kind`.
 - Do not preserve intent by adding prefixes. Preserve intent with structure: modules, types, enums, traits, and explicit state carriers.
 
+### Structural Naming Bug Ledger
+
+Maintain this list when a bug is discovered that would have been prevented by preserving role/state or relation structure in names and types. These are not style complaints. They are type-system failures caused by collapsed names. Each entry must name the bug report, the affected files, the collapsed name/shape, the missing structure that should have been modeled, and the type constraint that would have made the invalid state unrepresentable.
+
+- `docs/active/bugs/2026-05-09-prototype1-history-traversal-membership-mismatch.md`
+  - Affected files:
+    - `crates/ploke-eval/src/successor_selection/traversal.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/history.rs`
+  - Collapsed shape: `candidate_set_membership` / `selected_membership_id` treated source-set membership and final decision-set membership as the same relation.
+  - Missing structure: source candidate-set membership vs sealed decision candidate-set membership should be distinct role/state carriers, e.g. `Membership<SourceSet>` and `Membership<DecisionSet>`, or equivalent module/type boundaries.
+  - Preventing type constraint: traversal may carry `Membership<SourceSet>` only as evidence; sealed selection constructors must require `Membership<DecisionSet>` minted or resolved from the final candidate set. No API may accept a bare membership id where the set role is not encoded.
+
 ## Anti-Blob Guardrails
 
 - Requirement: do not satisfy a request by piling up ad hoc report, view, info, status, or helper types when the underlying semantic object has not been named. Avoid new `*View`, `*Report`, `*Info`, `*Status`, and `*Output` carriers unless they are downstream projections of an already-defined domain object.

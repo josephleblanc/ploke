@@ -75,6 +75,10 @@ pub struct PlaybackBrowserStep {
     pub branch_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub candidate_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership_id: Option<String>,
     // ── detail snapshots (populated by enriched projections) ──
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluation: Option<EvaluationSnapshot>,
@@ -169,6 +173,8 @@ pub fn coarse_history_browser_model(spine: &CoarseHistorySpine) -> PlaybackBrows
             node_id: None,
             branch_id: None,
             candidate_id: None,
+            occurrence_id: step.selected_occurrence_id.clone(),
+            membership_id: step.selected_membership_id.clone(),
             evaluation: None,
             surface: None,
             protocol: None,
@@ -208,6 +214,8 @@ pub fn fine_history_browser_model_from_blocks(
             node_id: None,
             branch_id: None,
             candidate_id: None,
+            occurrence_id: step.occurrence_id.clone(),
+            membership_id: step.membership_id.clone(),
             evaluation: None,
             surface: None,
             protocol: None,
@@ -378,6 +386,8 @@ mod tests {
                     },
                 },
                 selected_candidate: Some("candidate:a".to_owned()),
+                selected_occurrence_id: Some("occurrence-a".to_owned()),
+                selected_membership_id: Some("membership-a".to_owned()),
                 considered_candidate_count: 5,
             }],
             warnings: vec![CoarseHistoryWarning::MissingSelectionDecisionPayload {
@@ -394,6 +404,14 @@ mod tests {
         assert_eq!(model.steps[0].id, "hash-3");
         assert_eq!(model.steps[0].warning_count, 1);
         assert_eq!(model.steps[0].evidence, EvidenceStrength::SealedHistory);
+        assert_eq!(
+            model.steps[0].occurrence_id.as_deref(),
+            Some("occurrence-a")
+        );
+        assert_eq!(
+            model.steps[0].membership_id.as_deref(),
+            Some("membership-a")
+        );
     }
 
     #[test]
@@ -410,6 +428,8 @@ mod tests {
                     },
                 },
                 selected_candidate: None,
+                selected_occurrence_id: None,
+                selected_membership_id: None,
                 considered_candidate_count: 0,
             }],
             warnings: Vec::new(),

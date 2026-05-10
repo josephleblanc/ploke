@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use super::{ActorRefRecord, EvidenceRefRecord, ProcedureRefRecord, SubjectRefRecord};
 use crate::branch::ResolvedTreatmentBranch;
 use crate::evaluation::{EvalSet, Evaluator, RunMetrics};
-use crate::ids::{ArtifactId, BlockHash, BlockId, HistoryHash, LineageId, PatchId, RecordedAt};
+use crate::ids::{
+    ArtifactId, BlockHash, BlockId, CandidateMembershipId, CandidateOccurrenceId, HistoryHash,
+    LineageId, PatchId, RecordedAt,
+};
 use crate::scheduler::NodeRecord;
 use crate::selection;
 
@@ -415,6 +418,10 @@ pub struct CandidateSetProofRecord {
 pub struct CandidateSetMembershipRecord {
     pub candidate: SubjectRefRecord,
     pub payload_hash: HistoryHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence_id: Option<CandidateOccurrenceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership_id: Option<CandidateMembershipId>,
     pub proof: CandidateSetProofRecord,
 }
 
@@ -488,6 +495,10 @@ pub struct SelectionDecisionEntryRecord {
     pub scope: SelectionScopeRecord,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_candidate: Option<SubjectRefRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_occurrence_id: Option<CandidateOccurrenceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_membership_id: Option<CandidateMembershipId>,
     #[serde(default)]
     pub considered: Vec<EvaluationPayloadRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -508,8 +519,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        TraversalCandidateSourceRecord, TraversalEvidenceRecord, TraversalMetricInputsRecord,
-        TraversalStrategyRecord,
+        SelectionDecisionEntryRecord, TraversalCandidateSourceRecord, TraversalEvidenceRecord,
+        TraversalMetricInputsRecord, TraversalStrategyRecord,
     };
 
     #[test]
@@ -539,6 +550,82 @@ mod tests {
         assert_eq!(
             parsed.selected_source,
             Some(TraversalCandidateSourceRecord::CurrentGeneration)
+        );
+    }
+
+    #[test]
+    fn selection_decision_accepts_occurrence_membership_identity_shape() {
+        let occurrence_id = "a".repeat(64);
+        let membership_id = "b".repeat(64);
+        let payload_hash = "c".repeat(64);
+        let root = "d".repeat(64);
+        let considered_order_hash = "e".repeat(64);
+        let value = json!({
+            "schema_version": 3,
+            "procedure_or_policy": {"value": "prototype1.successor_selection.history_traversal.v1"},
+            "scope": "history",
+            "selected_candidate": {"value": "candidate:node-a:plan_index=0"},
+            "selected_occurrence_id": occurrence_id,
+            "selected_membership_id": membership_id,
+            "considered": [{
+                "schema_version": 1,
+                "candidate": {"value": "candidate:node-a:plan_index=0"},
+                "procedure": {"value": "prototype1.successor_selection.v1"}
+            }],
+            "considered_sources": ["current_generation"],
+            "considered_order_hash": considered_order_hash,
+            "candidate_set": {
+                "root": root,
+                "memberships": [{
+                    "candidate": {"value": "candidate:node-a:plan_index=0"},
+                    "payload_hash": payload_hash,
+                    "occurrence_id": "a".repeat(64),
+                    "membership_id": "b".repeat(64),
+                    "proof": {
+                        "key": vec![0; 32],
+                        "value": vec![1; 32],
+                        "program": []
+                    }
+                }]
+            },
+            "decision": {
+                "procedure_id": "prototype1.successor_selection.history_traversal.v1",
+                "candidate_node_id": "node-a",
+                "selected_branch_id": "branch-a",
+                "branch_disposition": "keep",
+                "outcome": "accepted"
+            }
+        });
+
+        let parsed: SelectionDecisionEntryRecord =
+            serde_json::from_value(value).expect("parse occurrence-aware selection decision");
+        assert_eq!(parsed.schema_version, 3);
+        assert_eq!(
+            parsed
+                .selected_occurrence_id
+                .as_ref()
+                .map(|id| id.0.as_str()),
+            Some(occurrence_id.as_str())
+        );
+        assert_eq!(
+            parsed
+                .selected_membership_id
+                .as_ref()
+                .map(|id| id.0.as_str()),
+            Some(membership_id.as_str())
+        );
+        let member = parsed
+            .candidate_set
+            .as_ref()
+            .and_then(|set| set.memberships.first())
+            .expect("membership");
+        assert_eq!(
+            member.occurrence_id.as_ref().map(|id| id.0.as_str()),
+            Some(occurrence_id.as_str())
+        );
+        assert_eq!(
+            member.membership_id.as_ref().map(|id| id.0.as_str()),
+            Some(membership_id.as_str())
         );
     }
 

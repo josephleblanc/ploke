@@ -109,6 +109,16 @@ string_id! {
 }
 
 string_id! {
+    /// Durable identity for one observed candidate occurrence in History.
+    CandidateOccurrenceId
+}
+
+string_id! {
+    /// Durable identity for one occurrence's membership in a candidate set.
+    CandidateMembershipId
+}
+
+string_id! {
     /// History entry identity as it appears in persisted records.
     EntryId
 }

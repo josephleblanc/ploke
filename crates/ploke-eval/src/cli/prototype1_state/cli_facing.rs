@@ -6430,6 +6430,8 @@ impl<'a> ParentSelection<'a> {
         else {
             return Ok(None);
         };
+        let selected_occurrence_id = selection.selected_occurrence_id();
+        let selected_membership_id = selection.selected_membership_id();
         let mut projection_failures = current.projection_failures;
         projection_failures.extend(selection.projection_failures);
         let material = SelectionSealMaterial {
@@ -6438,8 +6440,8 @@ impl<'a> ParentSelection<'a> {
             ),
             scope,
             selected_candidate: selection.selected_payload.candidate.clone(),
-            selected_occurrence_id: selection.selected_occurrence_id,
-            selected_membership_id: selection.selected_membership_id,
+            selected_occurrence_id,
+            selected_membership_id,
             considered: selection.considered,
             considered_sources: selection.considered_sources,
             projection_failures,
