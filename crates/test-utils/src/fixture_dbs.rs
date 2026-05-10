@@ -346,7 +346,7 @@ pub const CORPUS_MEMCHR_TYPE_GRAPH: FixtureDb = FixtureDb {
 
 pub const CORPUS_GENERIC_ARRAY_TYPE_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_generic_array_type_graph",
-    rel_path: "tests/backup_dbs/corpus_generic_array_type_graph_2026-05-06.sqlite",
+    rel_path: "tests/backup_dbs/corpus_generic_array_type_graph_2026-05-10.sqlite",
     parsed_targets: &["github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
@@ -361,13 +361,13 @@ pub const CORPUS_GENERIC_ARRAY_TYPE_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-05-06",
+    last_updated: "2026-05-10",
     notes: "Corpus-backed type graph contract fixture for const-generic alias and GenericArray traversal.",
 };
 
 pub const CORPUS_CHRONO_TYPE_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_chrono_type_graph",
-    rel_path: "tests/backup_dbs/corpus_chrono_type_graph_2026-05-06.sqlite",
+    rel_path: "tests/backup_dbs/corpus_chrono_type_graph_2026-05-10.sqlite",
     parsed_targets: &["github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
@@ -382,7 +382,7 @@ pub const CORPUS_CHRONO_TYPE_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-05-06",
+    last_updated: "2026-05-10",
     notes: "Corpus-backed type graph contract fixture for LocalResult/MappedLocalTime and timezone generic traversal.",
 };
 

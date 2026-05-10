@@ -28,6 +28,8 @@ pub enum TypeUseRole {
     TraitSuper,
     ConstType,
     StaticType,
+    GenericBound,
+    GenericParamBound,
 }
 
 impl TypeUseRole {
@@ -44,6 +46,8 @@ impl TypeUseRole {
             Self::TraitSuper => "TraitSuper",
             Self::ConstType => "ConstType",
             Self::StaticType => "StaticType",
+            Self::GenericBound => "GenericBound",
+            Self::GenericParamBound => "GenericParamBound",
         }
     }
 
@@ -60,6 +64,8 @@ impl TypeUseRole {
             "TraitSuper" => Ok(Self::TraitSuper),
             "ConstType" => Ok(Self::ConstType),
             "StaticType" => Ok(Self::StaticType),
+            "GenericBound" => Ok(Self::GenericBound),
+            "GenericParamBound" => Ok(Self::GenericParamBound),
             other => Err(DbError::Cozo(format!("unknown type-use role {other:?}"))),
         }
     }

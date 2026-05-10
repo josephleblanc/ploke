@@ -14,6 +14,8 @@ pub fn generic_shadow<T>(value: T) {}
 
 pub trait LocalTrait {}
 
+pub struct LocallyBound<T: LocalTrait>(T);
+
 pub struct UsesTrait;
 
 impl LocalTrait for UsesTrait {}

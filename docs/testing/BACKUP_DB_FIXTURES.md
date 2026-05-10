@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
 Last reviewed: 2026-05-06
-Last updated: 2026-05-06
+Last updated: 2026-05-10
 
 This document is the current inventory for backup database fixtures under
 `tests/backup_dbs/`. It records which source targets produced each fixture,
@@ -97,8 +97,8 @@ Test isolation note:
 | `ws_fixture_01_member_single_2026-05-06.sqlite` | `tests/fixture_workspace/ws_fixture_01/member_root` | single-member slice of workspace fixture | 2026-05-06 |
 | `corpus_semver_type_graph_2026-05-06.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | typed graphRAG type traversal corpus backup | 2026-05-06 |
 | `corpus_memchr_type_graph_2026-05-06.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | typed graphRAG type traversal corpus backup | 2026-05-06 |
-| `corpus_generic_array_type_graph_2026-05-06.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | typed graphRAG type traversal corpus backup | 2026-05-06 |
-| `corpus_chrono_type_graph_2026-05-06.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | typed graphRAG type traversal corpus backup | 2026-05-06 |
+| `corpus_generic_array_type_graph_2026-05-10.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | typed graphRAG type traversal corpus backup | 2026-05-10 |
+| `corpus_chrono_type_graph_2026-05-10.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | typed graphRAG type traversal corpus backup | 2026-05-10 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
 ## `fixture_nodes_canonical_2026-05-06.sqlite`
@@ -264,10 +264,10 @@ backup imports with the current schema.
   - later traversal from iterator self types to `Iterator` and
     `DoubleEndedIterator` impl surfaces
 
-### `corpus_generic_array_type_graph_2026-05-06.sqlite`
+### `corpus_generic_array_type_graph_2026-05-10.sqlite`
 
 - Status: typed type graph
-- File: `tests/backup_dbs/corpus_generic_array_type_graph_2026-05-06.sqlite`
+- File: `tests/backup_dbs/corpus_generic_array_type_graph_2026-05-10.sqlite`
 - Parsed target: `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23`
 - Checkout slug: `tests/fixture_github_clones/corpus/fizyk20__generic-array`
 - Expected DB config:
@@ -279,10 +279,10 @@ backup imports with the current schema.
   - traversal from const-generic aliases to `GenericArray`
   - later traversal through const-generic bounds and associated impls
 
-### `corpus_chrono_type_graph_2026-05-06.sqlite`
+### `corpus_chrono_type_graph_2026-05-10.sqlite`
 
 - Status: typed type graph
-- File: `tests/backup_dbs/corpus_chrono_type_graph_2026-05-06.sqlite`
+- File: `tests/backup_dbs/corpus_chrono_type_graph_2026-05-10.sqlite`
 - Parsed target: `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be`
 - Checkout slug: `tests/fixture_github_clones/corpus/chronotope__chrono`
 - Expected DB config:

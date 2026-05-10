@@ -85,6 +85,10 @@ pub enum TypeUseSourceSlot {
     TraitSuper(usize),
     ConstType,
     StaticType,
+    GenericParamBound {
+        param_index: usize,
+        bound_index: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -688,6 +692,27 @@ impl<'a> FixtureGraphView<'a> {
                     .find(|static_node| static_node.id == id)
                     .expect("static owner should exist");
                 Ok(SourceSlotRoot::Ordinary(static_node.type_id))
+            }
+            TypeUseSourceSlot::GenericParamBound {
+                param_index,
+                bound_index,
+            } => {
+                let generic_params = self.generic_params_for_owner(owner);
+                let generic_param = generic_params.get(param_index).unwrap_or_else(|| {
+                    panic!(
+                        "generic param index {param_index} out of bounds for owner {owner:?}; param count {}",
+                        generic_params.len()
+                    )
+                });
+                let bounds = generic_param.kind.bounds().unwrap_or_else(|| {
+                    panic!("generic param {generic_param:?} does not have trait bounds")
+                });
+                Ok(SourceSlotRoot::Trait(*bounds.get(bound_index).unwrap_or_else(|| {
+                    panic!(
+                        "bound index {bound_index} out of bounds for generic param {generic_param:?}; bound count {}",
+                        bounds.len()
+                    )
+                })))
             }
         }
     }

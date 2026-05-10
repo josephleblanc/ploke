@@ -81,7 +81,14 @@ is visible without reading the full note.
 - deferred: **N/A**
 - resolved: **N/A**
 
-**KL-008+** — *placeholder* — assign the next free id when adding a new limitation;
+**KL-008** — [`KL-008-typed-type-graph-constraint-surfaces.md`](KL-008-typed-type-graph-constraint-surfaces.md)
+
+- discovered: **2026-05-10** (typed type graph real-corpus contract expansion)
+- reproduced: **2026-05-10** ([`corpus_contracts.rs`](../../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs), `constraint_surfaces_red`)
+- deferred: **N/A**
+- resolved: **N/A**
+
+**KL-009+** — *placeholder* — assign the next free id when adding a new limitation;
 update this readme in the same PR.
 
 ---

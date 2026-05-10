@@ -2,7 +2,8 @@ use ploke_db::{DbError, TypeUseRole, TypeUseRoot};
 
 use super::common::{
     function_id_by_name, function_id_by_name_in_module, function_param_type_by_name,
-    function_return_type_by_name_in_module, setup_typed_fixture_db, type_alias_row_by_name,
+    function_return_type_by_name_in_module, generic_type_param_id_by_owner_name,
+    setup_typed_fixture_db, struct_id_by_name, type_alias_row_by_name,
 };
 
 /// Elementary contract: the DB API should expose direct owner-to-root type-use
@@ -78,5 +79,37 @@ fn type_alias_target_root_type_use_is_queryable() -> Result<(), DbError> {
         }),
         "expected type alias root type use for Mapping; roots: {roots:#?}"
     );
+    Ok(())
+}
+
+/// Generic declaration bounds should be queryable both from the containing item
+/// and from the precise generic parameter declaration.
+#[test]
+fn generic_bound_roots_are_queryable_from_item_and_param_owners() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let owner_id = struct_id_by_name(&db, "LocallyBound")?;
+    let generic_param_id = generic_type_param_id_by_owner_name(&db, owner_id, "T")?;
+
+    let owner_roots = db.type_uses_for_owner(owner_id)?;
+    let generic_param_roots = db.type_uses_for_owner(generic_param_id)?;
+
+    let owner_bound = owner_roots
+        .iter()
+        .find(|root| root.role == TypeUseRole::GenericBound)
+        .copied()
+        .unwrap_or_else(|| {
+            panic!("expected LocallyBound to expose a GenericBound root; roots: {owner_roots:#?}")
+        });
+
+    assert!(
+        generic_param_roots.contains(&TypeUseRoot {
+            owner_id: generic_param_id,
+            root_type_id: owner_bound.root_type_id,
+            role: TypeUseRole::GenericParamBound,
+            slot_index: Some(0),
+        }),
+        "expected LocallyBound::T to expose the same bound root as GenericParamBound; roots: {generic_param_roots:#?}"
+    );
+
     Ok(())
 }

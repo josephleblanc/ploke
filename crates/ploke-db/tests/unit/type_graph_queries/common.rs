@@ -288,6 +288,180 @@ pub(super) fn field_id_by_owner_index(
     )
 }
 
+pub(super) fn generic_type_param_id_by_owner_name(
+    db: &Database,
+    owner_id: Uuid,
+    name: &str,
+) -> Result<Uuid, DbError> {
+    exactly_one_uuid(
+        db,
+        &format!(
+            r#"?[generic_id] :=
+                *generic_type {{
+                    id: generic_id,
+                    owner_id: to_uuid("{owner_id}"),
+                    name: "{name}" @ 'NOW'
+                }}"#
+        ),
+        0,
+    )
+}
+
+pub(super) fn method_id_by_impl_self_type_name(
+    db: &Database,
+    self_type_name: &str,
+    method_name: &str,
+) -> Result<Uuid, DbError> {
+    exactly_one_uuid(
+        db,
+        &format!(
+            r#"?[method_id] :=
+                *method {{ id: method_id, name: "{method_name}", owner_id: impl_id @ 'NOW' }},
+                *impl {{ id: impl_id @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: self_type_id,
+                    role: "ImplSelf" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: self_type_id,
+                    target_id: self_target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                }},
+                *struct {{ id: self_target_id, name: "{self_type_name}" @ 'NOW' }}"#
+        ),
+        0,
+    )
+}
+
+pub(super) fn impl_id_by_trait_and_self_type_names(
+    db: &Database,
+    trait_name: &str,
+    self_type_name: &str,
+) -> Result<Uuid, DbError> {
+    exactly_one_uuid(
+        db,
+        &format!(
+            r#"?[impl_id] :=
+                *impl {{ id: impl_id @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: self_type_id,
+                    role: "ImplSelf" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: self_type_id,
+                    target_id: self_target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                }},
+                *struct {{ id: self_target_id, name: "{self_type_name}" @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: trait_type_id,
+                    role: "ImplTrait" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: trait_type_id,
+                    target_id: trait_target_id,
+                    relation_kind: "Trait" @ 'NOW'
+                }},
+                *trait {{ id: trait_target_id, name: "{trait_name}" @ 'NOW' }}"#
+        ),
+        0,
+    )
+}
+
+pub(super) fn method_id_by_impl_trait_and_self_type_names(
+    db: &Database,
+    trait_name: &str,
+    self_type_name: &str,
+    method_name: &str,
+) -> Result<Uuid, DbError> {
+    exactly_one_uuid(
+        db,
+        &format!(
+            r#"?[method_id] :=
+                *method {{ id: method_id, name: "{method_name}", owner_id: impl_id @ 'NOW' }},
+                *impl {{ id: impl_id @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: self_type_id,
+                    role: "ImplSelf" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: self_type_id,
+                    target_id: self_target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                }},
+                *struct {{ id: self_target_id, name: "{self_type_name}" @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: trait_type_id,
+                    role: "ImplTrait" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: trait_type_id,
+                    target_id: trait_target_id,
+                    relation_kind: "Trait" @ 'NOW'
+                }},
+                *trait {{ id: trait_target_id, name: "{trait_name}" @ 'NOW' }}"#
+        ),
+        0,
+    )
+}
+
+pub(super) fn const_id_by_name_in_file_suffix(
+    db: &Database,
+    file_suffix: &str,
+    name: &str,
+) -> Result<Uuid, DbError> {
+    item_id_by_name_in_file_suffix(db, "const", file_suffix, name)
+}
+
+pub(super) fn static_id_by_name_in_file_suffix(
+    db: &Database,
+    file_suffix: &str,
+    name: &str,
+) -> Result<Uuid, DbError> {
+    item_id_by_name_in_file_suffix(db, "static", file_suffix, name)
+}
+
+fn item_id_by_name_in_file_suffix(
+    db: &Database,
+    relation: &str,
+    file_suffix: &str,
+    name: &str,
+) -> Result<Uuid, DbError> {
+    let rows = db.raw_query(&format!(
+        r#"?[id, file_path] :=
+            *{relation} {{ id, name: "{name}" @ 'NOW' }},
+            *syntax_edge {{
+                source_id: module_id,
+                target_id: id,
+                relation_kind: "Contains" @ 'NOW'
+            }},
+            *file_mod {{ owner_id: module_id, file_path @ 'NOW' }}"#
+    ))?;
+    let matching: Vec<_> = rows
+        .rows
+        .iter()
+        .filter_map(|row| {
+            let file_path = match &row[1] {
+                DataValue::Str(path) => path.as_str(),
+                _ => return None,
+            };
+            file_path.ends_with(file_suffix).then(|| row[0].clone())
+        })
+        .collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one {relation} named {name} in file suffix {file_suffix}; rows: {:#?}",
+        rows.rows
+    );
+    to_uuid(&matching[0])
+}
+
 pub(super) fn assert_owner_reaches_target(
     db: &Database,
     owner_id: Uuid,

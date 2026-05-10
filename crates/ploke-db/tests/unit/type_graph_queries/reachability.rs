@@ -2,8 +2,8 @@ use ploke_db::{DbError, TypeRelationKind, TypeTargetPath};
 
 use super::common::{
     exactly_one_uuid, function_id_by_name, function_id_by_name_in_module,
-    function_param_type_by_name, setup_typed_fixture_db, struct_id_by_name,
-    trait_id_by_name_in_module,
+    function_param_type_by_name, generic_type_param_id_by_owner_name, setup_typed_fixture_db,
+    struct_id_by_name, trait_id_by_name_in_module,
 };
 
 /// Medium resolution contract: direct root resolution should compose owner
@@ -119,5 +119,30 @@ fn reachable_targets_include_multiple_terminals_from_one_root() -> Result<(), Db
             "expected tuple return traversal to reach target {target_id}; reachable: {reachable:#?}"
         );
     }
+    Ok(())
+}
+
+/// Generic declaration bounds should participate in ordinary reachability from
+/// both graphRAG-friendly item owners and precise generic-param owners.
+#[test]
+fn reachable_targets_include_generic_declaration_bound_trait() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let owner_id = struct_id_by_name(&db, "LocallyBound")?;
+    let generic_param_id = generic_type_param_id_by_owner_name(&db, owner_id, "T")?;
+    let trait_id = trait_id_by_name_in_module(&db, &["crate"], "LocalTrait")?;
+
+    for source_owner_id in [owner_id, generic_param_id] {
+        let reachable = db.type_targets_reachable_from_owner(source_owner_id)?;
+        assert!(
+            reachable.iter().any(|path| {
+                path.owner_id == source_owner_id
+                    && path.target_id == trait_id
+                    && path.relation_kind == TypeRelationKind::Trait
+                    && path.depth == 0
+            }),
+            "expected owner {source_owner_id} to reach LocalTrait through generic declaration bound; reachable: {reachable:#?}"
+        );
+    }
+
     Ok(())
 }

@@ -7,6 +7,7 @@ We are using rust version 2024 in all crates.
 - When the user asks you to create a new document, you should use the `docs/active/agents` directory, unless directed otherwise.
 - Shared agent documents are in `docs/active/agents`
 - See `docs/active/agents/readme.md` for naming conventions of files and directories, and further details.
+- Current type-resolution handoff docs are indexed at `docs/active/agents/2026-05-10_tt-expr-core_type-resolution-handoff/README.md`; check these before resuming `typed_type_graph` or import/type-resolution work on this branch.
 
 ## Reading Logs
 When the user asks you to "check the logs", "read the logs", "look into the logs", or similar:

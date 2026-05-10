@@ -106,3 +106,27 @@ handling, or an explicit feature-aware corpus parse mode.
 - `hyperium/hyper`: `src/client/dispatch.rs::channel` exists, but is gated
   behind macro-wrapped `client` and `dispatch` module declarations. The current
   typed graph corpus test uses reachable `src/common/watch.rs::channel` instead.
+
+---
+
+## L7 — Typed type graph constraint surfaces are not emitted as reachable relations
+
+**KL index:** [KL-008](known_limitations/KL-008-typed-type-graph-constraint-surfaces.md).
+
+**Symptom:** Real-corpus `typed_type_graph` DB contracts can select both the
+owner and target rows, but `type_targets_reachable_from_owner` returns no path
+for generic declaration bounds, generic-param-owned bounds, qualified associated
+type projections, and associated type bounds.
+
+**Cause:** The v2 type graph currently emits `type_use` roots for ordinary item
+type slots, but generic bounds/defaults, where predicates, projection
+qualifiers, and associated type/const items are not yet represented as
+traversable `type_use -> type_contains -> type_relation` surfaces.
+
+**Workarounds (future):** Add first-class typed graph roots for generic bounds
+and where predicates, preserve `<T as Trait>::Assoc` qualifiers as trait-position
+sources, and parse associated type/const items as precise owners.
+
+**Repro tests / fixtures** (`ploke-db`, with `typed_type_graph`):
+
+- `type_graph_queries::corpus_contracts::constraint_surfaces_red::*`

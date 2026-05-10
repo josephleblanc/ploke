@@ -19,9 +19,9 @@ use syn_parser::{
 
 use crate::common::build_tree_for_tests;
 use crate::common::type_relation_resolution::{
-    FieldSelector, TypeUseSourceSlot, impl_block, impl_selector, item, method, named,
-    ordinary_item, ordinary_relation, ordinary_source, ordinary_type_param, root, struct_field,
-    trait_item, trait_relation, trait_source,
+    FieldSelector, TypeUseSourceSlot, enum_variant_field, impl_block, impl_selector, item, method,
+    named, ordinary_item, ordinary_relation, ordinary_source, ordinary_type_param, root,
+    struct_field, trait_item, trait_relation, trait_source, union_field,
 };
 use crate::{type_relation_cases, type_relations_present_case};
 
@@ -73,6 +73,17 @@ type_relation_cases!(
             trait_source(
                 item(&["crate"], "ChildTrait", ItemKind::Trait),
                 TypeUseSourceSlot::TraitSuper(0),
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        v2_resolves_generic_declaration_bound => trait_relation(
+            trait_source(
+                item(&["crate"], "LocallyBound", ItemKind::Struct),
+                TypeUseSourceSlot::GenericParamBound {
+                    param_index: 0,
+                    bound_index: 0
+                },
                 root()
             ),
             trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
@@ -246,6 +257,57 @@ type_relation_cases!(
                 root()
             ),
             ordinary_item(item(&["crate", "const_static"], "MyInt", ItemKind::TypeAlias))
+        ),
+        fixture_nodes_v2_generic_struct_field_type_param => ordinary_relation(
+            ordinary_source(
+                struct_field(&["crate", "structs"], "GenericStruct", FieldSelector::Index(0)),
+                TypeUseSourceSlot::FieldType,
+                root()
+            ),
+            ordinary_type_param(item(&["crate", "structs"], "GenericStruct", ItemKind::Struct), "T")
+        ),
+        fixture_nodes_v2_enum_variant_field_type_param => ordinary_relation(
+            ordinary_source(
+                enum_variant_field(
+                    &["crate", "enums"],
+                    "JustTypeGeneric",
+                    "VariantA",
+                    FieldSelector::Index(0)
+                ),
+                TypeUseSourceSlot::FieldType,
+                root()
+            ),
+            ordinary_type_param(item(&["crate", "enums"], "JustTypeGeneric", ItemKind::Enum), "A")
+        ),
+        fixture_nodes_v2_generic_union_field_nested_type_param => ordinary_relation(
+            ordinary_source(
+                union_field(&["crate", "unions"], "GenericUnion", FieldSelector::Index(0)),
+                TypeUseSourceSlot::FieldType,
+                named(&["T"])
+            ),
+            ordinary_type_param(item(&["crate", "unions"], "GenericUnion", ItemKind::Union), "T")
+        ),
+        fixture_nodes_v2_trait_impl_method_param_type_param => ordinary_relation(
+            ordinary_source(
+                method(
+                    impl_selector(
+                        &["crate", "impls"],
+                        &["GenericStruct"],
+                        Some(&["GenericTrait"])
+                    ),
+                    "generic_trait_method"
+                ),
+                TypeUseSourceSlot::MethodParam(1),
+                root()
+            ),
+            ordinary_type_param(
+                impl_block(
+                    &["crate", "impls"],
+                    &["GenericStruct"],
+                    Some(&["GenericTrait"])
+                ),
+                "T"
+            )
         ),
     ]
 );

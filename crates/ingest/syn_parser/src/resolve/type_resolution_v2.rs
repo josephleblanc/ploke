@@ -772,6 +772,7 @@ enum TypeResolutionRoot<'a> {
 
 #[derive(Debug, Clone, Copy)]
 struct MethodIterState {
+    generic_state: GenericBoundIterState,
     param_idx: usize,
     yielded_return: bool,
 }
@@ -779,8 +780,24 @@ struct MethodIterState {
 impl MethodIterState {
     fn new() -> Self {
         Self {
+            generic_state: GenericBoundIterState::new(),
             param_idx: 0,
             yielded_return: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GenericBoundIterState {
+    param_idx: usize,
+    bound_idx: usize,
+}
+
+impl GenericBoundIterState {
+    fn new() -> Self {
+        Self {
+            param_idx: 0,
+            bound_idx: 0,
         }
     }
 }
@@ -795,27 +812,32 @@ enum DirectTypeUseIter<'a> {
     Struct {
         node: &'a crate::parser::nodes::StructNode,
         module: Option<ModuleNodeId>,
+        generic_state: GenericBoundIterState,
         field_idx: usize,
     },
     Enum {
         node: &'a crate::parser::nodes::EnumNode,
         module: Option<ModuleNodeId>,
+        generic_state: GenericBoundIterState,
         variant_idx: usize,
         field_idx: usize,
     },
     TypeAlias {
         node: &'a crate::parser::nodes::TypeAliasNode,
         module: Option<ModuleNodeId>,
+        generic_state: GenericBoundIterState,
         yielded: bool,
     },
     Union {
         node: &'a crate::parser::nodes::UnionNode,
         module: Option<ModuleNodeId>,
+        generic_state: GenericBoundIterState,
         field_idx: usize,
     },
     Trait {
         node: &'a crate::parser::nodes::TraitNode,
         module: Option<ModuleNodeId>,
+        generic_state: GenericBoundIterState,
         super_idx: usize,
         method_idx: usize,
         method_state: MethodIterState,
@@ -823,6 +845,7 @@ enum DirectTypeUseIter<'a> {
     Impl {
         node: &'a crate::parser::nodes::ImplNode,
         module: Option<ModuleNodeId>,
+        generic_state: GenericBoundIterState,
         yielded_self: bool,
         yielded_trait: bool,
         method_idx: usize,
@@ -857,6 +880,7 @@ impl<'a> DirectTypeUseIter<'a> {
                     Self::Struct {
                         node,
                         module: resolver.containing_module(owner),
+                        generic_state: GenericBoundIterState::new(),
                         field_idx: 0,
                     }
                 }
@@ -865,6 +889,7 @@ impl<'a> DirectTypeUseIter<'a> {
                     Self::Enum {
                         node,
                         module: resolver.containing_module(owner),
+                        generic_state: GenericBoundIterState::new(),
                         variant_idx: 0,
                         field_idx: 0,
                     }
@@ -874,6 +899,7 @@ impl<'a> DirectTypeUseIter<'a> {
                     Self::TypeAlias {
                         node,
                         module: resolver.containing_module(owner),
+                        generic_state: GenericBoundIterState::new(),
                         yielded: false,
                     }
                 }
@@ -882,6 +908,7 @@ impl<'a> DirectTypeUseIter<'a> {
                     Self::Union {
                         node,
                         module: resolver.containing_module(owner),
+                        generic_state: GenericBoundIterState::new(),
                         field_idx: 0,
                     }
                 }
@@ -891,6 +918,7 @@ impl<'a> DirectTypeUseIter<'a> {
                 Self::Trait {
                     node,
                     module: resolver.containing_module(owner),
+                    generic_state: GenericBoundIterState::new(),
                     super_idx: 0,
                     method_idx: 0,
                     method_state: MethodIterState::new(),
@@ -901,6 +929,7 @@ impl<'a> DirectTypeUseIter<'a> {
                 Self::Impl {
                     node,
                     module: resolver.containing_module(owner),
+                    generic_state: GenericBoundIterState::new(),
                     yielded_self: false,
                     yielded_trait: false,
                     method_idx: 0,
@@ -939,6 +968,7 @@ impl Iterator for DirectTypeUseIter<'_> {
             } => next_callable_type_use(
                 node.id.as_any(),
                 *module,
+                &node.generic_params,
                 &node.parameters,
                 node.return_type,
                 method_state,
@@ -946,8 +976,17 @@ impl Iterator for DirectTypeUseIter<'_> {
             Self::Struct {
                 node,
                 module,
+                generic_state,
                 field_idx,
             } => {
+                if let Some(site) = next_generic_bound_type_use(
+                    node.id.as_any(),
+                    *module,
+                    &node.generic_params,
+                    generic_state,
+                ) {
+                    return Some(site);
+                }
                 let field = node.fields.get(*field_idx)?;
                 *field_idx += 1;
                 Some(ordinary_type_use_site(
@@ -959,9 +998,18 @@ impl Iterator for DirectTypeUseIter<'_> {
             Self::Enum {
                 node,
                 module,
+                generic_state,
                 variant_idx,
                 field_idx,
             } => loop {
+                if let Some(site) = next_generic_bound_type_use(
+                    node.id.as_any(),
+                    *module,
+                    &node.generic_params,
+                    generic_state,
+                ) {
+                    return Some(site);
+                }
                 let variant = node.variants.get(*variant_idx)?;
                 if let Some(field) = variant.fields.get(*field_idx) {
                     *field_idx += 1;
@@ -977,8 +1025,17 @@ impl Iterator for DirectTypeUseIter<'_> {
             Self::TypeAlias {
                 node,
                 module,
+                generic_state,
                 yielded,
             } => {
+                if let Some(site) = next_generic_bound_type_use(
+                    node.id.as_any(),
+                    *module,
+                    &node.generic_params,
+                    generic_state,
+                ) {
+                    return Some(site);
+                }
                 if *yielded {
                     return None;
                 }
@@ -992,8 +1049,17 @@ impl Iterator for DirectTypeUseIter<'_> {
             Self::Union {
                 node,
                 module,
+                generic_state,
                 field_idx,
             } => {
+                if let Some(site) = next_generic_bound_type_use(
+                    node.id.as_any(),
+                    *module,
+                    &node.generic_params,
+                    generic_state,
+                ) {
+                    return Some(site);
+                }
                 let field = node.fields.get(*field_idx)?;
                 *field_idx += 1;
                 Some(ordinary_type_use_site(
@@ -1005,10 +1071,19 @@ impl Iterator for DirectTypeUseIter<'_> {
             Self::Trait {
                 node,
                 module,
+                generic_state,
                 super_idx,
                 method_idx,
                 method_state,
             } => {
+                if let Some(site) = next_generic_bound_type_use(
+                    node.id.as_any(),
+                    *module,
+                    &node.generic_params,
+                    generic_state,
+                ) {
+                    return Some(site);
+                }
                 if let Some(type_id) = node.super_traits.get(*super_idx).copied() {
                     *super_idx += 1;
                     return Some(trait_type_use_site(node.id.as_any(), *module, type_id));
@@ -1018,6 +1093,7 @@ impl Iterator for DirectTypeUseIter<'_> {
                     if let Some(site) = next_callable_type_use(
                         method.id.as_any(),
                         *module,
+                        &method.generic_params,
                         &method.parameters,
                         method.return_type,
                         method_state,
@@ -1031,11 +1107,20 @@ impl Iterator for DirectTypeUseIter<'_> {
             Self::Impl {
                 node,
                 module,
+                generic_state,
                 yielded_self,
                 yielded_trait,
                 method_idx,
                 method_state,
             } => {
+                if let Some(site) = next_generic_bound_type_use(
+                    node.id.as_any(),
+                    *module,
+                    &node.generic_params,
+                    generic_state,
+                ) {
+                    return Some(site);
+                }
                 if !*yielded_self {
                     *yielded_self = true;
                     return Some(ordinary_type_use_site(
@@ -1055,6 +1140,7 @@ impl Iterator for DirectTypeUseIter<'_> {
                     if let Some(site) = next_callable_type_use(
                         method.id.as_any(),
                         *module,
+                        &method.generic_params,
                         &method.parameters,
                         method.return_type,
                         method_state,
@@ -1102,10 +1188,20 @@ impl Iterator for DirectTypeUseIter<'_> {
 fn next_callable_type_use(
     resolution_context_owner: AnyNodeId,
     module: Option<ModuleNodeId>,
+    generic_params: &[GenericParamNode],
     parameters: &[crate::parser::nodes::ParamData],
     return_type: Option<OrdinaryTypeUseId>,
     state: &mut MethodIterState,
 ) -> Option<TypeUseSite> {
+    if let Some(site) = next_generic_bound_type_use(
+        resolution_context_owner,
+        module,
+        generic_params,
+        &mut state.generic_state,
+    ) {
+        return Some(site);
+    }
+
     if let Some(param) = parameters.get(state.param_idx) {
         state.param_idx += 1;
         return Some(ordinary_type_use_site(
@@ -1125,6 +1221,29 @@ fn next_callable_type_use(
         }
     }
     None
+}
+
+fn next_generic_bound_type_use(
+    resolution_context_owner: AnyNodeId,
+    module: Option<ModuleNodeId>,
+    generic_params: &[GenericParamNode],
+    state: &mut GenericBoundIterState,
+) -> Option<TypeUseSite> {
+    loop {
+        let param = generic_params.get(state.param_idx)?;
+        if let GenericParamKind::Type { bounds, .. } = &param.kind {
+            if let Some(type_id) = bounds.get(state.bound_idx).copied() {
+                state.bound_idx += 1;
+                return Some(trait_type_use_site(
+                    resolution_context_owner,
+                    module,
+                    type_id,
+                ));
+            }
+        }
+        state.param_idx += 1;
+        state.bound_idx = 0;
+    }
 }
 
 fn ordinary_type_use_site(
