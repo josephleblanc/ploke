@@ -160,8 +160,14 @@ impl Generation {
     }
 
     pub(crate) fn edit_surface(self) -> Prototype1EditSurface {
-        match self.surface.unwrap_or(GenerationSurface::PlokeTuiTools) {
+        match self
+            .surface
+            .unwrap_or(GenerationSurface::WorkspaceExceptPlokeEval)
+        {
             GenerationSurface::PlokeTuiTools => Prototype1EditSurface::PlokeTuiTools,
+            GenerationSurface::WorkspaceExceptPlokeEval => {
+                Prototype1EditSurface::WorkspaceExceptPlokeEval
+            }
         }
     }
 }
@@ -186,6 +192,7 @@ pub(crate) enum GenerationSource {
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum GenerationSurface {
     PlokeTuiTools,
+    WorkspaceExceptPlokeEval,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -516,7 +523,7 @@ explore_from_rejected = true
 
 [generation]
 source = "edit-surface"
-surface = "ploke-tui-tools"
+surface = "workspace-except-ploke-eval"
 
 [selection]
 strategy = "history-score-child-prop"

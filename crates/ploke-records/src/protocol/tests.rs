@@ -7,6 +7,43 @@ use ploke_protocol::{Confidence, IntentLabel, OverallVerdict, SegmentStatus};
 use super::*;
 
 #[test]
+fn malformed_known_payload_returns_typed_failure_record() {
+    let source = r#"{
+        "schema_version": "protocol-artifact.v1",
+        "procedure_name": "tool_call_review",
+        "subject_id": "subject-1",
+        "run_id": "run-1",
+        "created_at_ms": 42,
+        "model_id": "model-1",
+        "provider_slug": "provider-1",
+        "input": {},
+        "output": {},
+        "artifact": {}
+    }"#;
+
+    let failure =
+        decode_artifact_str(source, None).expect_err("malformed payload should return failure");
+
+    assert_eq!(
+        failure.expected_payload_kind,
+        Some(ArtifactPayloadKind::ToolCallReview)
+    );
+    let coordinate = failure.coordinate.expect("coordinate");
+    assert_eq!(coordinate.schema_version, SCHEMA_V1);
+    assert_eq!(coordinate.procedure_name, TOOL_CALL_REVIEW);
+    assert_eq!(coordinate.subject_id, "subject-1");
+    assert_eq!(coordinate.run_id, "run-1");
+    assert_eq!(coordinate.created_at_ms, 42);
+    assert_eq!(coordinate.model_id.as_deref(), Some("model-1"));
+    assert_eq!(coordinate.provider_slug.as_deref(), Some("provider-1"));
+    assert!(
+        failure.error.contains("missing field"),
+        "unexpected error: {}",
+        failure.error
+    );
+}
+
+#[test]
 #[ignore]
 fn all_artifacts_roundtrip() {
     let dir = protocol_artifacts_dir();
@@ -20,10 +57,13 @@ fn all_artifacts_roundtrip() {
     let mut counts = BTreeMap::<String, usize>::new();
 
     for path in &paths {
-        let original = read_json_value(path);
-        let artifact: Artifact = serde_json::from_value(original.clone()).unwrap_or_else(|err| {
-            panic!("deserialize protocol artifact {}: {err}", path.display())
-        });
+        let original_text = read_json_text(path);
+        let original: serde_json::Value = serde_json::from_str(&original_text)
+            .unwrap_or_else(|err| panic!("parse protocol artifact {}: {err}", path.display()));
+        let artifact =
+            decode_artifact_str(&original_text, Some(path.clone())).unwrap_or_else(|err| {
+                panic!("deserialize protocol artifact {}: {err:?}", path.display())
+            });
         let serialized = serde_json::to_value(&artifact)
             .unwrap_or_else(|err| panic!("serialize protocol artifact {}: {err}", path.display()));
         assert_eq!(
@@ -67,9 +107,14 @@ fn typed_payloads() {
         .find(|path| path.to_string_lossy().contains(TOOL_CALL_REVIEW))
         .expect("review artifact path");
 
-    let segmentation_value = read_json_value(segmentation);
-    let segmentation_artifact: Artifact = serde_json::from_value(segmentation_value)
-        .unwrap_or_else(|err| panic!("deserialize segmentation {}: {err}", segmentation.display()));
+    let segmentation_text = read_json_text(segmentation);
+    let segmentation_artifact = decode_artifact_str(&segmentation_text, Some(segmentation.clone()))
+        .unwrap_or_else(|err| {
+            panic!(
+                "deserialize segmentation {}: {err:?}",
+                segmentation.display()
+            )
+        });
 
     assert_eq!(segmentation_artifact.schema_version, SCHEMA_V1);
     assert_eq!(
@@ -88,9 +133,9 @@ fn typed_payloads() {
         TOOL_CALL_INTENT_SEGMENTATION
     );
 
-    let review_value = read_json_value(review);
-    let review_artifact: Artifact = serde_json::from_value(review_value)
-        .unwrap_or_else(|err| panic!("deserialize review {}: {err}", review.display()));
+    let review_text = read_json_text(review);
+    let review_artifact = decode_artifact_str(&review_text, Some(review.clone()))
+        .unwrap_or_else(|err| panic!("deserialize review {}: {err:?}", review.display()));
     assert_eq!(review_artifact.procedure_name, TOOL_CALL_REVIEW);
     let review_payload = match review_artifact.typed_payload() {
         Some(ArtifactBody::ToolCallReview(payload)) => payload,
@@ -120,14 +165,16 @@ fn typed_payloads() {
         .iter()
         .find(|path| path.to_string_lossy().contains(TOOL_CALL_SEGMENT_REVIEW))
         .expect("segment review artifact path");
-    let segment_review_value = read_json_value(segment_review);
-    let segment_review_artifact: Artifact = serde_json::from_value(segment_review_value)
-        .unwrap_or_else(|err| {
-            panic!(
-                "deserialize segment review {}: {err}",
-                segment_review.display()
-            )
-        });
+    let segment_review_text = read_json_text(segment_review);
+    let segment_review_artifact =
+        decode_artifact_str(&segment_review_text, Some(segment_review.clone())).unwrap_or_else(
+            |err| {
+                panic!(
+                    "deserialize segment review {}: {err:?}",
+                    segment_review.display()
+                )
+            },
+        );
     let segment_review_payload = match segment_review_artifact.body() {
         Some(ArtifactBody::ToolCallSegmentReview(payload)) => payload,
         other => panic!("expected segment-review payload, got {other:?}"),
@@ -248,11 +295,16 @@ fn protocol_artifacts_dir() -> PathBuf {
 }
 
 fn read_json_value(path: &Path) -> serde_json::Value {
+    let text = read_json_text(path);
+    serde_json::from_str(&text).expect("parse protocol artifact JSON value")
+}
+
+fn read_json_text(path: &Path) -> String {
     let text = fs::read_to_string(path).unwrap_or_else(|err| {
         panic!(
             "read protocol artifact {} (set PLOKE_RECORDS_REAL_PROTOCOL_ARTIFACTS_DIR to override): {err}",
             path.display()
         )
     });
-    serde_json::from_str(&text).expect("parse protocol artifact JSON value")
+    text
 }

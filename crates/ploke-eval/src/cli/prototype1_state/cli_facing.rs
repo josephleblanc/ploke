@@ -45,8 +45,8 @@ use crate::{
         },
         prototype1_state::{
             backend::{
-                CheckedSurfaceEdit, EditProposal, GitWorktreeBackend, ProposedTouch,
-                WorkspaceBackend,
+                CheckedSurfaceEdit, EVAL_CORE_SURFACE_ROOT, EditProposal, GitWorktreeBackend,
+                ProposedTouch, WorkspaceBackend, edit_surface_paths,
             },
             c1::{C1, MaterializeBranch},
             c2::BuildChild,
@@ -1053,7 +1053,6 @@ async fn run_tui_edit_surface_parent_target_selection(
     )
 }
 
-const TUI_EDIT_SURFACE_TARGET: &str = "crates/ploke-tui/src/tools/code_edit.rs";
 const TUI_EDIT_SURFACE_PRODUCER_ID: &str = "prototype1:tui-edit-surface:deterministic-v1";
 
 fn publish_tui_edit_surface_child_plan(
@@ -1306,7 +1305,7 @@ fn validate_surface_evidence_binding(
             ),
         });
     }
-    let expected_policy = serde_name(&Prototype1EditSurface::PlokeTuiTools);
+    let expected_policy = serde_name(&Prototype1EditSurface::WorkspaceExceptPlokeEval);
     if surface.policy != expected_policy {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -1511,7 +1510,8 @@ fn produce_tui_edit_surface_candidates(
             index + 1
         )
     });
-    let proposals = direct_splice_proposals(repo_root, edit_surface, replacements, min, max)?;
+    let proposals =
+        deterministic_surface_proposals(repo_root, edit_surface, &seed, replacements, min, max)?;
     let backend = GitWorktreeBackend;
     let mut checked = Vec::with_capacity(proposals.len());
     let mut rejected_attempts = Vec::new();
@@ -1523,7 +1523,7 @@ fn produce_tui_edit_surface_candidates(
                 .touches
                 .first()
                 .map(|touch| touch.relpath.clone())
-                .unwrap_or_else(|| PathBuf::from(TUI_EDIT_SURFACE_TARGET));
+                .unwrap_or_else(|| PathBuf::from("."));
             surface_attempt::Evidence::rejected(
                 TUI_EDIT_SURFACE_PRODUCER_ID,
                 proposal.proposal_id.clone(),
@@ -1561,28 +1561,16 @@ fn produce_tui_edit_surface_candidates(
     })
 }
 
-fn direct_splice_proposals(
+fn deterministic_surface_proposals(
     repo_root: &Path,
     edit_surface: Prototype1EditSurface,
+    seed: &str,
     replacements: impl IntoIterator<Item = String>,
     min: usize,
     max: usize,
 ) -> Result<Vec<EditProposal>, PrepareError> {
-    let relpath = PathBuf::from(TUI_EDIT_SURFACE_TARGET);
-    let target = repo_root.join(&relpath);
-    if !target.exists() {
-        return Err(CandidateGenerationError::MissingEditSurfaceTarget {
-            surface: edit_surface,
-            path: relpath,
-        }
-        .into_prepare());
-    }
-    let source = fs::read_to_string(&target).map_err(|source| PrepareError::ReadManifest {
-        path: target.clone(),
-        source,
-    })?;
-    let base_hash = format!("{:x}", Sha256::digest(source.as_bytes()));
-    let start = source.len();
+    let targets = deterministic_surface_targets(repo_root, edit_surface)?;
+    let offset = deterministic_target_offset(seed, targets.len());
     let mut proposals = Vec::new();
     let mut proposed_hashes = BTreeSet::new();
 
@@ -1590,6 +1578,15 @@ fn direct_splice_proposals(
         if proposals.len() >= max {
             break;
         }
+        let relpath = targets[(offset + index) % targets.len()].clone();
+        let target = repo_root.join(&relpath);
+        let source = fs::read_to_string(&target).map_err(|source| PrepareError::ReadManifest {
+            path: target.clone(),
+            source,
+        })?;
+        let base_hash = format!("{:x}", Sha256::digest(source.as_bytes()));
+        let start = source.len();
+        let replacement = comment_replacement_for(&relpath, replacement);
         let proposed_hash = format!("{:x}", Sha256::digest(format!("{source}{replacement}")));
         if !proposed_hashes.insert(proposed_hash) {
             continue;
@@ -1632,6 +1629,56 @@ fn direct_splice_proposals(
     }
 
     Ok(proposals)
+}
+
+fn deterministic_surface_targets(
+    repo_root: &Path,
+    edit_surface: Prototype1EditSurface,
+) -> Result<Vec<PathBuf>, PrepareError> {
+    let mut targets = edit_surface_paths(repo_root, edit_surface)
+        .map_err(|source| {
+            CandidateGenerationError::EvidenceProjection {
+                detail: source.to_string(),
+            }
+            .into_prepare()
+        })?
+        .into_iter()
+        .filter(|path| supported_text_surface_target(path))
+        .collect::<Vec<_>>();
+    targets.sort();
+    targets.dedup();
+    if targets.is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "candidate-generator=tui-edit-surface found no writable text targets for edit-surface={edit_surface:?}; protected root '{}'",
+                EVAL_CORE_SURFACE_ROOT
+            ),
+        });
+    }
+    Ok(targets)
+}
+
+fn supported_text_surface_target(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("rs" | "md" | "toml" | "txt")
+    )
+}
+
+fn deterministic_target_offset(seed: &str, len: usize) -> usize {
+    debug_assert!(len > 0);
+    let digest = Sha256::digest(seed.as_bytes());
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    (u64::from_be_bytes(bytes) as usize) % len
+}
+
+fn comment_replacement_for(relpath: &Path, body: String) -> String {
+    match relpath.extension().and_then(|ext| ext.to_str()) {
+        Some("md") => format!("\n<!-- {} -->\n", body.trim()),
+        Some("toml" | "txt") => format!("\n# {}\n", body.trim()),
+        _ => body,
+    }
 }
 
 fn receive_existing_child_plan(
@@ -9083,7 +9130,7 @@ mod tests {
             successor_selection_seed: 0,
             successor_selection_metrics: Prototype1TraversalMetrics::Operational,
             candidate_generator: Prototype1CandidateGenerator::Legacy,
-            edit_surface: Prototype1EditSurface::PlokeTuiTools,
+            edit_surface: Prototype1EditSurface::WorkspaceExceptPlokeEval,
             format: InspectOutputFormat::Table,
         }
     }
@@ -9100,12 +9147,14 @@ mod tests {
     fn candidate_generation_config_dispatches_tui_edit_surface() {
         let mut command = state_command_without_ids();
         command.candidate_generator = Prototype1CandidateGenerator::TuiEditSurface;
-        command.edit_surface = Prototype1EditSurface::PlokeTuiTools;
+        command.edit_surface = Prototype1EditSurface::WorkspaceExceptPlokeEval;
         let config = CandidateGenerationConfig::from_command(&command);
 
         assert_eq!(
             config.path(),
-            CandidateGenerationPath::TuiEditSurface(Prototype1EditSurface::PlokeTuiTools)
+            CandidateGenerationPath::TuiEditSurface(
+                Prototype1EditSurface::WorkspaceExceptPlokeEval
+            )
         );
     }
 
@@ -9128,7 +9177,7 @@ explore_from_rejected = true
 
 [generation]
 source = "edit-surface"
-surface = "ploke-tui-tools"
+surface = "workspace-except-ploke-eval"
 
 [selection]
 strategy = "history-score-child-prop"
@@ -9154,7 +9203,9 @@ stop_after = "complete"
 
         assert_eq!(
             shape.candidate_generation.path(),
-            CandidateGenerationPath::TuiEditSurface(Prototype1EditSurface::PlokeTuiTools)
+            CandidateGenerationPath::TuiEditSurface(
+                Prototype1EditSurface::WorkspaceExceptPlokeEval
+            )
         );
         assert_eq!(
             shape.successor_selection_metrics,
@@ -9175,7 +9226,7 @@ stop_after = "complete"
             .validate_edit_surface_candidate(
                 tmp.path(),
                 crate::cli::prototype1_state::backend::EditProposal {
-                    surface: Prototype1EditSurface::PlokeTuiTools,
+                    surface: Prototype1EditSurface::WorkspaceExceptPlokeEval,
                     proposal_id: "proposal-1".to_string(),
                     run_id: "run-1".to_string(),
                     proposal_producer:
@@ -9215,7 +9266,7 @@ stop_after = "complete"
 
         let child = child_files_from_checked_edit(
             "campaign",
-            Prototype1EditSurface::PlokeTuiTools,
+            Prototype1EditSurface::WorkspaceExceptPlokeEval,
             node,
             &checked,
             false,
@@ -9245,7 +9296,7 @@ stop_after = "complete"
         assert_eq!(surface.producer_id, TUI_EDIT_SURFACE_PRODUCER_ID);
         assert_eq!(surface.proposal_id, "proposal-1");
         assert_eq!(surface.run_id, "run-1");
-        assert_eq!(surface.policy, "ploke_tui_tools");
+        assert_eq!(surface.policy, "workspace_except_ploke_eval");
         assert_eq!(surface.target_relpath, relpath);
         assert_eq!(&surface.base.artifact_id, checked.base_artifact_id());
         assert_eq!(&surface.after.artifact_id, checked.derived_artifact_id());
@@ -9408,10 +9459,52 @@ stop_after = "complete"
         }
     }
 
-    fn write_tui_surface_target(repo_root: &Path, content: &str) {
-        let target = repo_root.join(TUI_EDIT_SURFACE_TARGET);
+    fn init_indexed_repo(repo_root: &Path) {
+        fs::create_dir_all(repo_root).expect("create repo root");
+        let status = std::process::Command::new("git")
+            .current_dir(repo_root)
+            .arg("init")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git init");
+        assert!(status.success(), "git init failed");
+    }
+
+    fn index_repo(repo_root: &Path) {
+        let status = std::process::Command::new("git")
+            .current_dir(repo_root)
+            .args(["add", "--all"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git add");
+        assert!(status.success(), "git add failed");
+    }
+
+    fn write_surface_target(repo_root: &Path, relpath: &Path, content: &str) {
+        let target = repo_root.join(relpath);
         fs::create_dir_all(target.parent().expect("target parent")).expect("create target dir");
         fs::write(target, content).expect("write target");
+    }
+
+    fn write_broad_surface_targets(repo_root: &Path) -> Vec<PathBuf> {
+        init_indexed_repo(repo_root);
+        let allowed = vec![
+            PathBuf::from("crates/ploke-core/src/lib.rs"),
+            PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"),
+            PathBuf::from("docs/operator-note.md"),
+        ];
+        for relpath in &allowed {
+            write_surface_target(repo_root, relpath, "pub fn sentinel() {}\n");
+        }
+        write_surface_target(
+            repo_root,
+            Path::new("crates/ploke-eval/src/lib.rs"),
+            "pub fn protected() {}\n",
+        );
+        index_repo(repo_root);
+        allowed
     }
 
     fn ready_parent_for_test(manifest_path: &Path, repo_root: &Path) -> Parent<Ready> {
@@ -9436,12 +9529,12 @@ stop_after = "complete"
     #[test]
     fn tui_edit_surface_producer_creates_default_checked_candidates() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        write_tui_surface_target(tmp.path(), "pub fn sentinel() {}\n");
+        let allowed = write_broad_surface_targets(tmp.path());
         let parent = test_parent_identity();
 
         let generated = produce_tui_edit_surface_candidates(
             tmp.path(),
-            Prototype1EditSurface::PlokeTuiTools,
+            Prototype1EditSurface::WorkspaceExceptPlokeEval,
             &parent,
             Prototype1SearchPolicy::default().child_budget,
         )
@@ -9457,24 +9550,30 @@ stop_after = "complete"
             .collect::<BTreeSet<_>>();
         assert_eq!(hashes.len(), checked.len());
         assert!(checked.iter().all(|candidate| {
-            candidate.surface() == Prototype1EditSurface::PlokeTuiTools
-                && candidate.target_relpath() == Path::new(TUI_EDIT_SURFACE_TARGET)
+            candidate.surface() == Prototype1EditSurface::WorkspaceExceptPlokeEval
+                && allowed
+                    .iter()
+                    .any(|allowed| allowed == candidate.target_relpath())
+                && !candidate
+                    .target_relpath()
+                    .starts_with(EVAL_CORE_SURFACE_ROOT)
         }));
     }
 
     #[test]
-    fn direct_splice_producer_dedupes_duplicate_proposed_contents() {
+    fn deterministic_surface_producer_dedupes_duplicate_proposed_contents() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        write_tui_surface_target(tmp.path(), "pub fn sentinel() {}\n");
+        write_broad_surface_targets(tmp.path());
         let replacements = vec![
             "\n// duplicate candidate\n".to_string(),
             "\n// duplicate candidate\n".to_string(),
             "\n// distinct candidate\n".to_string(),
         ];
 
-        let proposals = direct_splice_proposals(
+        let proposals = deterministic_surface_proposals(
             tmp.path(),
-            Prototype1EditSurface::PlokeTuiTools,
+            Prototype1EditSurface::WorkspaceExceptPlokeEval,
+            "seed",
             replacements.clone(),
             1,
             3,
@@ -9482,9 +9581,10 @@ stop_after = "complete"
         .expect("deduped proposals");
         assert_eq!(proposals.len(), 2);
 
-        let error = direct_splice_proposals(
+        let error = deterministic_surface_proposals(
             tmp.path(),
-            Prototype1EditSurface::PlokeTuiTools,
+            Prototype1EditSurface::WorkspaceExceptPlokeEval,
+            "seed",
             replacements,
             3,
             3,
@@ -9501,7 +9601,7 @@ stop_after = "complete"
         let tmp = tempfile::tempdir().expect("tempdir");
         let manifest_path = tmp.path().join("campaign.json");
         let repo_root = tmp.path().join("repo");
-        write_tui_surface_target(&repo_root, "pub fn sentinel() {}\n");
+        write_broad_surface_targets(&repo_root);
         let parent = ready_parent_for_test(&manifest_path, &repo_root);
         let budget = Prototype1ChildBudget { min: 2, max: 3 };
 
@@ -9510,7 +9610,7 @@ stop_after = "complete"
             &manifest_path,
             &repo_root,
             parent,
-            Prototype1EditSurface::PlokeTuiTools,
+            Prototype1EditSurface::WorkspaceExceptPlokeEval,
             budget,
         )
         .expect("published child plan");
@@ -9526,7 +9626,7 @@ stop_after = "complete"
             let node = child.node_record();
             assert_eq!(node.parent_node_id.as_deref(), Some("node-parent"));
             assert_eq!(node.generation, 1);
-            assert_eq!(node.target_relpath, PathBuf::from(TUI_EDIT_SURFACE_TARGET));
+            assert!(!node.target_relpath.starts_with(EVAL_CORE_SURFACE_ROOT));
             assert_eq!(
                 child.resolved().branch.synthesized_spec_id,
                 TUI_EDIT_SURFACE_PRODUCER_ID
@@ -9541,13 +9641,13 @@ stop_after = "complete"
         let tmp = tempfile::tempdir().expect("tempdir");
         let manifest_path = tmp.path().join("campaign.json");
         let repo_root = tmp.path().join("repo");
-        write_tui_surface_target(&repo_root, "pub fn sentinel() {}\n");
+        write_broad_surface_targets(&repo_root);
         let rejected = surface_attempt::Evidence::rejected(
             TUI_EDIT_SURFACE_PRODUCER_ID,
             "proposal-rejected",
             "run-rejected",
-            "ploke_tui_tools",
-            PathBuf::from(TUI_EDIT_SURFACE_TARGET),
+            "workspace_except_ploke_eval",
+            PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"),
             "backend rejected deterministic proposal",
         );
 
@@ -10037,7 +10137,7 @@ stop_after = "complete"
             TUI_EDIT_SURFACE_PRODUCER_ID,
             "proposal-test",
             "run-test",
-            "ploke_tui_tools",
+            "workspace_except_ploke_eval",
             target_relpath.clone(),
             SurfaceArtifactRef {
                 artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-test"),
@@ -10265,8 +10365,8 @@ stop_after = "complete"
             TUI_EDIT_SURFACE_PRODUCER_ID,
             "proposal-rejected",
             "run-rejected",
-            "ploke_tui_tools",
-            PathBuf::from(TUI_EDIT_SURFACE_TARGET),
+            "workspace_except_ploke_eval",
+            PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"),
             "one or more touched spans were rejected",
         );
         let parent_selection = ParentSelection::new(
@@ -10305,7 +10405,7 @@ stop_after = "complete"
             TUI_EDIT_SURFACE_PRODUCER_ID,
             "proposal-rejected",
             "run-rejected",
-            "ploke_tui_tools",
+            "workspace_except_ploke_eval",
             PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"),
             "one or more touched spans were rejected",
         ))

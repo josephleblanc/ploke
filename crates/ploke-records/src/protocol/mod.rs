@@ -10,6 +10,7 @@ use ploke_protocol::{
     LocalAnalysisAssessment, SegmentReviewSubject, SegmentedToolCallSequence, ToolCallNeighborhood,
     ToolCallSequence,
 };
+use serde::de::IgnoredAny;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -50,6 +51,33 @@ pub struct ArtifactFile {
     pub artifact: Artifact,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArtifactCoordinate {
+    pub schema_version: String,
+    pub procedure_name: String,
+    pub subject_id: String,
+    pub run_id: String,
+    pub created_at_ms: u64,
+    pub model_id: Option<String>,
+    pub provider_slug: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArtifactDecodeFailureRecord {
+    pub path: Option<PathBuf>,
+    pub coordinate: Option<ArtifactCoordinate>,
+    pub expected_payload_kind: Option<ArtifactPayloadKind>,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactPayloadKind {
+    ToolCallIntentSegmentation,
+    ToolCallReview,
+    ToolCallSegmentReview,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArtifactBody {
     ToolCallIntentSegmentation(IntentSegmentationPayload),
@@ -71,6 +99,18 @@ impl Artifact {
     pub fn typed_payload(&self) -> Option<ArtifactBody> {
         self.body()
     }
+}
+
+pub fn decode_artifact_str(
+    source: &str,
+    path: Option<PathBuf>,
+) -> Result<Artifact, ArtifactDecodeFailureRecord> {
+    serde_json::from_str(source).map_err(|err| ArtifactDecodeFailureRecord {
+        path,
+        coordinate: artifact_coordinate(source).ok(),
+        expected_payload_kind: expected_payload_kind(source),
+        error: err.to_string(),
+    })
 }
 
 impl Serialize for Artifact {
@@ -118,9 +158,8 @@ impl<'de> Deserialize<'de> for Artifact {
     {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
-        struct RawArtifact {
+        struct RawIntentSegmentationArtifact {
             schema_version: String,
-            procedure_name: String,
             subject_id: String,
             run_id: String,
             created_at_ms: u64,
@@ -128,94 +167,143 @@ impl<'de> Deserialize<'de> for Artifact {
             model_id: Option<String>,
             #[serde(default)]
             provider_slug: Option<String>,
-            input: serde_json::Value,
-            output: serde_json::Value,
-            artifact: serde_json::Value,
+            input: ToolCallSequence,
+            output: SegmentedToolCallSequence,
+            artifact: IntentSegmentationArtifactMirror,
         }
 
-        let raw = RawArtifact::deserialize(deserializer)?;
-        let body = decode_payload_from_values(
-            raw.procedure_name.as_str(),
-            raw.input,
-            raw.output,
-            raw.artifact,
-        )
-        .map_err(serde::de::Error::custom)?;
-        Ok(Self {
-            schema_version: raw.schema_version,
-            procedure_name: raw.procedure_name,
-            subject_id: raw.subject_id,
-            run_id: raw.run_id,
-            created_at_ms: raw.created_at_ms,
-            model_id: raw.model_id,
-            provider_slug: raw.provider_slug,
-            body,
-        })
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawToolCallReviewArtifact {
+            schema_version: String,
+            subject_id: String,
+            run_id: String,
+            created_at_ms: u64,
+            #[serde(default)]
+            model_id: Option<String>,
+            #[serde(default)]
+            provider_slug: Option<String>,
+            input: ToolCallNeighborhood,
+            output: LocalAnalysisAssessment,
+            artifact: ToolCallReviewArtifactMirror,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawToolCallSegmentReviewArtifact {
+            schema_version: String,
+            subject_id: String,
+            run_id: String,
+            created_at_ms: u64,
+            #[serde(default)]
+            model_id: Option<String>,
+            #[serde(default)]
+            provider_slug: Option<String>,
+            input: SegmentReviewSubject,
+            output: LocalAnalysisAssessment,
+            artifact: ToolCallSegmentReviewArtifactMirror,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(tag = "procedure_name")]
+        enum RawArtifact {
+            #[serde(rename = "tool_call_intent_segmentation")]
+            ToolCallIntentSegmentation(RawIntentSegmentationArtifact),
+            #[serde(rename = "tool_call_review")]
+            ToolCallReview(RawToolCallReviewArtifact),
+            #[serde(rename = "tool_call_segment_review")]
+            ToolCallSegmentReview(RawToolCallSegmentReviewArtifact),
+        }
+
+        match RawArtifact::deserialize(deserializer)? {
+            RawArtifact::ToolCallIntentSegmentation(raw) => Ok(Self {
+                schema_version: raw.schema_version,
+                procedure_name: TOOL_CALL_INTENT_SEGMENTATION.to_string(),
+                subject_id: raw.subject_id,
+                run_id: raw.run_id,
+                created_at_ms: raw.created_at_ms,
+                model_id: raw.model_id,
+                provider_slug: raw.provider_slug,
+                body: ArtifactBody::ToolCallIntentSegmentation(IntentSegmentationPayload {
+                    input: raw.input,
+                    output: raw.output,
+                    artifact: raw.artifact,
+                }),
+            }),
+            RawArtifact::ToolCallReview(raw) => Ok(Self {
+                schema_version: raw.schema_version,
+                procedure_name: TOOL_CALL_REVIEW.to_string(),
+                subject_id: raw.subject_id,
+                run_id: raw.run_id,
+                created_at_ms: raw.created_at_ms,
+                model_id: raw.model_id,
+                provider_slug: raw.provider_slug,
+                body: ArtifactBody::ToolCallReview(ToolCallReviewPayload {
+                    input: raw.input,
+                    output: raw.output,
+                    artifact: raw.artifact,
+                }),
+            }),
+            RawArtifact::ToolCallSegmentReview(raw) => Ok(Self {
+                schema_version: raw.schema_version,
+                procedure_name: TOOL_CALL_SEGMENT_REVIEW.to_string(),
+                subject_id: raw.subject_id,
+                run_id: raw.run_id,
+                created_at_ms: raw.created_at_ms,
+                model_id: raw.model_id,
+                provider_slug: raw.provider_slug,
+                body: ArtifactBody::ToolCallSegmentReview(ToolCallSegmentReviewPayload {
+                    input: raw.input,
+                    output: raw.output,
+                    artifact: raw.artifact,
+                }),
+            }),
+        }
     }
 }
 
-fn decode_payload_from_values(
-    procedure_name: &str,
-    input: serde_json::Value,
-    output: serde_json::Value,
-    artifact: serde_json::Value,
-) -> Result<ArtifactBody, String> {
+fn expected_payload_kind(source: &str) -> Option<ArtifactPayloadKind> {
+    artifact_coordinate(source).ok().and_then(|coordinate| {
+        match coordinate.procedure_name.as_str() {
+            TOOL_CALL_INTENT_SEGMENTATION => Some(ArtifactPayloadKind::ToolCallIntentSegmentation),
+            TOOL_CALL_REVIEW => Some(ArtifactPayloadKind::ToolCallReview),
+            TOOL_CALL_SEGMENT_REVIEW => Some(ArtifactPayloadKind::ToolCallSegmentReview),
+            _ => None,
+        }
+    })
+}
+
+fn artifact_coordinate(source: &str) -> Result<ArtifactCoordinate, serde_json::Error> {
     #[derive(Deserialize)]
-    struct RawPayload<TIn, TOut, TArtifact> {
-        input: TIn,
-        output: TOut,
-        artifact: TArtifact,
+    #[serde(deny_unknown_fields)]
+    struct CoordinateProbe {
+        schema_version: String,
+        procedure_name: String,
+        subject_id: String,
+        run_id: String,
+        created_at_ms: u64,
+        #[serde(default)]
+        model_id: Option<String>,
+        #[serde(default)]
+        provider_slug: Option<String>,
+        #[serde(rename = "input")]
+        _input: IgnoredAny,
+        #[serde(rename = "output")]
+        _output: IgnoredAny,
+        #[serde(rename = "artifact")]
+        _artifact: IgnoredAny,
     }
 
-    let payload_value = serde_json::json!({
-        "input": input,
-        "output": output,
-        "artifact": artifact
-    });
-    match procedure_name {
-        TOOL_CALL_INTENT_SEGMENTATION => serde_json::from_value::<
-            RawPayload<
-                ToolCallSequence,
-                SegmentedToolCallSequence,
-                IntentSegmentationArtifactMirror,
-            >,
-        >(payload_value)
-        .map(|payload| {
-            ArtifactBody::ToolCallIntentSegmentation(IntentSegmentationPayload {
-                input: payload.input,
-                output: payload.output,
-                artifact: payload.artifact,
-            })
-        })
-        .map_err(|err| format!("decode {TOOL_CALL_INTENT_SEGMENTATION}: {err}")),
-        TOOL_CALL_REVIEW => serde_json::from_value::<
-            RawPayload<ToolCallNeighborhood, LocalAnalysisAssessment, ToolCallReviewArtifactMirror>,
-        >(payload_value)
-        .map(|payload| {
-            ArtifactBody::ToolCallReview(ToolCallReviewPayload {
-                input: payload.input,
-                output: payload.output,
-                artifact: payload.artifact,
-            })
-        })
-        .map_err(|err| format!("decode {TOOL_CALL_REVIEW}: {err}")),
-        TOOL_CALL_SEGMENT_REVIEW => serde_json::from_value::<
-            RawPayload<
-                SegmentReviewSubject,
-                LocalAnalysisAssessment,
-                ToolCallSegmentReviewArtifactMirror,
-            >,
-        >(payload_value)
-        .map(|payload| {
-            ArtifactBody::ToolCallSegmentReview(ToolCallSegmentReviewPayload {
-                input: payload.input,
-                output: payload.output,
-                artifact: payload.artifact,
-            })
-        })
-        .map_err(|err| format!("decode {TOOL_CALL_SEGMENT_REVIEW}: {err}")),
-        other => Err(format!("unknown procedure_name '{other}'")),
-    }
+    let probe: CoordinateProbe = serde_json::from_str(source)?;
+    Ok(ArtifactCoordinate {
+        schema_version: probe.schema_version,
+        procedure_name: probe.procedure_name,
+        subject_id: probe.subject_id,
+        run_id: probe.run_id,
+        created_at_ms: probe.created_at_ms,
+        model_id: probe.model_id,
+        provider_slug: probe.provider_slug,
+    })
 }
 
 #[cfg(test)]

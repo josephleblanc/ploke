@@ -443,6 +443,7 @@ pub enum Prototype1CandidateGenerator {
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1EditSurface {
     PlokeTuiTools,
+    WorkspaceExceptPlokeEval,
 }
 
 #[derive(Debug, Parser)]
@@ -496,7 +497,7 @@ pub struct Prototype1StateCommand {
     pub candidate_generator: Prototype1CandidateGenerator,
 
     /// Bounded edit surface used by edit-surface candidate generation.
-    #[arg(long, value_enum, default_value_t = Prototype1EditSurface::PlokeTuiTools)]
+    #[arg(long, value_enum, default_value_t = Prototype1EditSurface::WorkspaceExceptPlokeEval)]
     pub edit_surface: Prototype1EditSurface,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -12159,7 +12160,7 @@ mod tests {
             "--candidate-generator",
             "tui-edit-surface",
             "--edit-surface",
-            "ploke-tui-tools",
+            "workspace-except-ploke-eval",
         ])
         .expect("loop prototype1-state should parse");
 
@@ -12178,7 +12179,10 @@ mod tests {
                     cmd.candidate_generator,
                     Prototype1CandidateGenerator::TuiEditSurface
                 );
-                assert_eq!(cmd.edit_surface, Prototype1EditSurface::PlokeTuiTools);
+                assert_eq!(
+                    cmd.edit_surface,
+                    Prototype1EditSurface::WorkspaceExceptPlokeEval
+                );
             }
             other => panic!("unexpected command shape: {:?}", other),
         }
@@ -12226,7 +12230,10 @@ mod tests {
                     cmd.candidate_generator,
                     Prototype1CandidateGenerator::Legacy
                 );
-                assert_eq!(cmd.edit_surface, Prototype1EditSurface::PlokeTuiTools);
+                assert_eq!(
+                    cmd.edit_surface,
+                    Prototype1EditSurface::WorkspaceExceptPlokeEval
+                );
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

@@ -26,6 +26,8 @@ use super::history::{
 };
 use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
 
+pub(crate) const EVAL_CORE_SURFACE_ROOT: &str = "crates/ploke-eval";
+
 /// Git branch name for one backend-managed child lineage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GitBranch(pub String);
@@ -1962,19 +1964,49 @@ fn ploke_tui_tool_files() -> Vec<PathBuf> {
 }
 
 fn mutated_surface_paths(worktree_root: &Path) -> Result<Vec<PathBuf>, BackendError> {
-    let mut paths = tool_description_paths();
-    paths.extend(ploke_tui_tool_files());
-    let tool_paths = tracked_paths(worktree_root, "crates/ploke-tui/src/tools")?;
-    if tool_paths.is_empty() {
-        return Err(BackendError::EmptySurfacePathspec {
-            root: worktree_root.to_path_buf(),
-            pathspec: "crates/ploke-tui/src/tools".to_string(),
-        });
-    }
-    paths.extend(tool_paths);
+    let mut paths = edit_surface_paths(
+        worktree_root,
+        Prototype1EditSurface::WorkspaceExceptPlokeEval,
+    )?;
+    paths.extend(tool_description_paths());
     paths.sort();
     paths.dedup();
     Ok(paths)
+}
+
+pub(crate) fn edit_surface_paths(
+    worktree_root: &Path,
+    surface: Prototype1EditSurface,
+) -> Result<Vec<PathBuf>, BackendError> {
+    match surface {
+        Prototype1EditSurface::PlokeTuiTools => {
+            let mut paths = ploke_tui_tool_files();
+            let tool_paths = tracked_paths(worktree_root, "crates/ploke-tui/src/tools")?;
+            if tool_paths.is_empty() {
+                return Err(BackendError::EmptySurfacePathspec {
+                    root: worktree_root.to_path_buf(),
+                    pathspec: "crates/ploke-tui/src/tools".to_string(),
+                });
+            }
+            paths.extend(tool_paths);
+            paths.sort();
+            paths.dedup();
+            Ok(paths)
+        }
+        Prototype1EditSurface::WorkspaceExceptPlokeEval => {
+            let paths = tracked_paths(worktree_root, ".")?
+                .into_iter()
+                .filter(|path| !path.starts_with(EVAL_CORE_SURFACE_ROOT))
+                .collect::<Vec<_>>();
+            if paths.is_empty() {
+                return Err(BackendError::EmptySurfacePathspec {
+                    root: worktree_root.to_path_buf(),
+                    pathspec: format!(". excluding {EVAL_CORE_SURFACE_ROOT}"),
+                });
+            }
+            Ok(paths)
+        }
+    }
 }
 
 fn is_allowed_edit_surface_path(surface: Prototype1EditSurface, path: &Path) -> bool {
@@ -1982,6 +2014,9 @@ fn is_allowed_edit_surface_path(surface: Prototype1EditSurface, path: &Path) -> 
         Prototype1EditSurface::PlokeTuiTools => {
             path.starts_with("crates/ploke-tui/src/tools")
                 || ploke_tui_tool_files().iter().any(|allowed| allowed == path)
+        }
+        Prototype1EditSurface::WorkspaceExceptPlokeEval => {
+            !path.starts_with(EVAL_CORE_SURFACE_ROOT)
         }
     }
 }

@@ -423,7 +423,7 @@ fn replay_shaped_rejected_surface_attempt_admits_semantic_edit_surface_request()
             "prototype1:tui-edit-surface:deterministic-v1",
             "proposal-rejected",
             "run-rejected",
-            "ploke_tui_tools",
+            "workspace_except_ploke_eval",
             PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"),
             "one or more touched spans were rejected",
         ),
