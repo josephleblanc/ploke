@@ -419,6 +419,8 @@ use uuid::Uuid;
 
 use super::event::{RecordedAt, RuntimeId};
 use super::identity::ParentIdentity;
+#[cfg(test)]
+use super::identity::{PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentityRecord};
 use crate::OperationalRunMetrics;
 use crate::loop_graph::{ArtifactId, PatchId};
 use crate::metric;
@@ -4969,6 +4971,23 @@ pub(crate) struct SealBlock {
     pub(crate) sealed_at: RecordedAt,
 }
 
+#[cfg(test)]
+fn test_parent_identity() -> ParentIdentity {
+    ParentIdentity::from_record_for_test(ParentIdentityRecord {
+        schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
+        campaign_id: "campaign:test".to_string(),
+        parent_id: "node:successor".to_string(),
+        node_id: "node:successor".to_string(),
+        generation: 0,
+        instance_id: Some("instance:successor".to_string()),
+        previous_parent_id: None,
+        parent_node_id: None,
+        branch_id: "branch:successor".to_string(),
+        artifact_branch: Some("artifact-branch:successor".to_string()),
+        created_at: "2026-05-06T00:00:00Z".to_string(),
+    })
+}
+
 impl SealBlock {
     /// Compatibility constructor for the live successor handoff seam.
     ///
@@ -5001,13 +5020,7 @@ impl SealBlock {
                 ActorRef::Process("successor".to_string()),
                 ArtifactRef::new("artifact:successor"),
             ),
-            ParentIdentity::root_bootstrap(
-                "campaign:test",
-                "node:successor",
-                "instance:successor",
-                "branch:successor",
-                Some("artifact-branch:successor".to_string()),
-            ),
+            test_parent_identity(),
             ArtifactRef::new("artifact:successor"),
             RecordedAt(30),
         )
@@ -6591,13 +6604,7 @@ mod tests {
                 actor("successor"),
                 ArtifactRef::new("artifact:successor"),
             ),
-            selected_parent_identity: ParentIdentity::root_bootstrap(
-                "campaign:test",
-                "node:successor",
-                "instance:successor",
-                "branch:successor",
-                Some("artifact-branch:successor".to_string()),
-            ),
+            selected_parent_identity: test_parent_identity(),
             active_artifact: ArtifactRef::new("artifact:successor"),
             claims,
             sealed_at: at(30),
