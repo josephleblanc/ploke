@@ -4987,7 +4987,7 @@ fn journal_entry_summary(entry: &JournalEntry) -> String {
             entry.generation,
             entry.child_branch,
             entry.target_commit,
-            entry.identity_commit
+            entry.identity_commit.as_deref().unwrap_or("none")
         ),
         JournalEntry::ActiveCheckoutAdvanced(entry) => format!(
             "{} selected_parent={} generation={} branch={} commit={}",
@@ -5659,6 +5659,7 @@ fn run_planned_child(
     manifest_path: PathBuf,
     repo_root: PathBuf,
     journal_path: PathBuf,
+    parent_identity: ParentIdentity,
     stop_after: Prototype1StateStopAfter,
     plan_index: usize,
     child: ChildFiles,
@@ -5780,6 +5781,7 @@ fn run_planned_child(
                     &campaign_id,
                     &manifest_path,
                     &repo_root,
+                    &parent_identity,
                     c3.node(),
                     c3.resolved(),
                 )?);
@@ -5937,6 +5939,7 @@ async fn run_child_fanout(
     manifest_path: &Path,
     repo_root: &Path,
     journal_path: &Path,
+    parent_identity: &ParentIdentity,
     stop_after: Prototype1StateStopAfter,
     child_schedule_mode: Prototype1ChildScheduleMode,
     child_budget: Prototype1ChildBudget,
@@ -5986,12 +5989,14 @@ async fn run_child_fanout(
             let manifest_path = manifest_path.to_path_buf();
             let repo_root = repo_root.to_path_buf();
             let journal_path = journal_path.to_path_buf();
+            let parent_identity = parent_identity.clone();
             join_set.spawn_blocking(move || {
                 run_planned_child(
                     campaign_id,
                     manifest_path,
                     repo_root,
                     journal_path,
+                    parent_identity,
                     stop_after,
                     plan_index,
                     child,
@@ -6083,6 +6088,7 @@ async fn run_adaptive_child_fanout(
             manifest_path,
             repo_root,
             journal_path,
+            parent_identity,
             Prototype1StateStopAfter::Complete,
             Prototype1ChildScheduleMode::FullBatch,
             child_budget,
@@ -6839,13 +6845,21 @@ fn resolve_prototype1_parent_identity(
 fn acknowledge_prototype1_state_handoff(
     command: &Prototype1StateCommand,
     campaign_id: &str,
-    parent: Parent<Checked>,
+    parent: Parent<Unchecked>,
     manifest_path: &Path,
     repo_root: &Path,
 ) -> Result<(Parent<Ready>, Option<SuccessorInvocation>), PrepareError> {
-    let identity = parent.identity();
     let Some(invocation_path) = command.handoff_invocation.as_deref() else {
-        let startup = Startup::<Genesis>::from_history(identity, manifest_path)?;
+        let backend = GitWorktreeBackend;
+        let parent = parent.check(
+            &backend,
+            manifest_path,
+            Check {
+                campaign_id,
+                active_root: repo_root,
+            },
+        )?;
+        let startup = Startup::<Genesis>::from_history(parent.identity(), manifest_path)?;
         return Ok((parent.ready(startup)?, None));
     };
     let invocation = match invocation::load_executable(invocation_path)? {
@@ -6859,6 +6873,7 @@ fn acknowledge_prototype1_state_handoff(
             });
         }
     };
+    let identity = parent.identity();
 
     if invocation.campaign_id() != campaign_id {
         return Err(PrepareError::InvalidBatchSelection {
@@ -6897,8 +6912,17 @@ fn acknowledge_prototype1_state_handoff(
         });
     }
 
-    validate_prototype1_successor_continuation(&invocation, manifest_path)?;
+    let sealed_identity = validate_prototype1_successor_continuation(&invocation, manifest_path)?;
+    if &sealed_identity != identity {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "sealed successor parent identity for node '{}' does not match loaded parent identity",
+                invocation.node_id()
+            ),
+        });
+    }
     let startup = Startup::<Predecessor>::from_history(identity, manifest_path, repo_root)?;
+    let parent = parent.ready_from_predecessor_startup(startup)?;
     let ready = record_prototype1_successor_ready(&invocation)?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
@@ -6910,7 +6934,7 @@ fn acknowledge_prototype1_state_handoff(
         active_parent_root = %active_parent_root.display(),
         "prototype1 successor acknowledged handoff before entering typed parent run"
     );
-    Ok((parent.ready(startup)?, Some(invocation)))
+    Ok((parent, Some(invocation)))
 }
 
 fn record_failed_successor_turn(invocation_path: &Path, error: &PrepareError) {
@@ -7101,12 +7125,28 @@ impl Prototype1StateCommand {
             return Ok(());
         }
 
-        let parent_identity = resolve_prototype1_parent_identity(&campaign_id, &repo_root)?;
+        let parent_identity = if let Some(invocation_path) = self.handoff_invocation.as_deref() {
+            match invocation::load_executable(invocation_path)? {
+                InvocationAuthority::Successor(invocation) => {
+                    validate_prototype1_successor_continuation(&invocation, &manifest_path)?
+                }
+                InvocationAuthority::Child(_) => {
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "handoff invocation '{}' is a child invocation, expected successor",
+                            invocation_path.display()
+                        ),
+                    });
+                }
+            }
+        } else {
+            resolve_prototype1_parent_identity(&campaign_id, &repo_root)?
+        };
         info!(
             target: EXECUTION_DEBUG_TARGET,
             role = "parent",
-            authority = "artifact_identity",
-            transition = "active_checkout->ParentIdentity",
+            authority = if self.handoff_invocation.is_some() { "successor_invocation" } else { "artifact_identity" },
+            transition = if self.handoff_invocation.is_some() { "SuccessorInvocation->ParentIdentity" } else { "active_checkout->ParentIdentity" },
             campaign = %campaign_id,
             parent_id = %parent_identity.parent_id(),
             node_id = %parent_identity.node_id(),
@@ -7114,15 +7154,7 @@ impl Prototype1StateCommand {
             branch_id = %parent_identity.branch_id(),
             "resolved active parent identity"
         );
-        let backend = GitWorktreeBackend;
-        let parent = Parent::<Unchecked>::load(&manifest_path, parent_identity)?.check(
-            &backend,
-            &manifest_path,
-            Check {
-                campaign_id: &campaign_id,
-                active_root: &repo_root,
-            },
-        )?;
+        let parent = Parent::<Unchecked>::load(&manifest_path, parent_identity)?;
         let (parent, handoff_invocation) = acknowledge_prototype1_state_handoff(
             &self,
             &campaign_id,
@@ -7255,6 +7287,7 @@ impl Prototype1StateCommand {
                 &manifest_path,
                 &repo_root,
                 &journal_path,
+                &parent_identity,
                 run_shape.stop_after,
                 child_schedule_mode,
                 child_budget,

@@ -144,10 +144,7 @@ use crate::cli::prototype1_state::history::{
     ProcedureRef, Proposal, Regime, SealBlock, StoreHead, SubjectRef, SuccessorRef,
     SurfaceCommitment, TreeKeyHash,
 };
-use crate::cli::prototype1_state::identity::{
-    ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
-    parent_identity_relpath, write_parent_identity,
-};
+use crate::cli::prototype1_state::identity::{ParentIdentity, parent_identity_relpath};
 use crate::cli::prototype1_state::inner::LockCrown;
 use crate::cli::prototype1_state::journal::{
     ActiveCheckoutAdvancedEntry, ChildArtifactCommittedEntry, JournalEntry, PrototypeJournal,
@@ -333,7 +330,7 @@ pub(crate) fn record_prototype1_successor_completion(
 pub(crate) fn validate_prototype1_successor_continuation(
     invocation: &SuccessorInvocation,
     manifest_path: &Path,
-) -> Result<(), PrepareError> {
+) -> Result<ParentIdentity, PrepareError> {
     let store = FsBlockStore::for_campaign_manifest(manifest_path);
     let lineage_id = LineageId::new(invocation.campaign_id().to_string());
     let state = store
@@ -372,7 +369,9 @@ pub(crate) fn validate_prototype1_successor_continuation(
             ),
         });
     }
-    Ok(())
+    let identity = sealed.selected_parent_identity().clone();
+    identity.validate_for_command(invocation.campaign_id(), Some(invocation.node_id()))?;
+    Ok(identity)
 }
 
 pub(crate) fn validate_child_surface(
@@ -435,9 +434,14 @@ fn prepare_prototype1_active_successor_runtime(
     _manifest_path: &Path,
     selected: &selection::Selection<selection::Artifact>,
     active_parent_root: &Path,
+    current_parent: &ParentIdentity,
 ) -> Result<(PathBuf, InstalledSuccessorArtifact), PrepareError> {
-    let installed =
-        install_prototype1_successor_artifact(campaign_id, active_parent_root, selected)?;
+    let installed = install_prototype1_successor_artifact(
+        campaign_id,
+        active_parent_root,
+        selected,
+        current_parent,
+    )?;
     let binary = build_prototype1_active_successor_binary(active_parent_root)?;
     Ok((binary, installed))
 }
@@ -446,6 +450,7 @@ fn install_prototype1_successor_artifact(
     campaign_id: &str,
     active_parent_root: &Path,
     selected: &selection::Selection<selection::Artifact>,
+    current_parent: &ParentIdentity,
 ) -> Result<InstalledSuccessorArtifact, PrepareError> {
     let backend = GitWorktreeBackend;
     let current_surface = backend
@@ -463,7 +468,12 @@ fn install_prototype1_successor_artifact(
             phase: "prototype1_successor_artifact_prepare",
             detail: source.to_string(),
         })?;
-    let previous_parent = load_parent_identity_optional(active_parent_root)?;
+    let selected_parent_identity = ParentIdentity::from_node(
+        campaign_id.to_string(),
+        node,
+        Some(current_parent),
+        Some(workspace.branch.0.clone()),
+    );
 
     if node.workspace_root.exists() {
         let message = format!(
@@ -474,20 +484,6 @@ fn install_prototype1_successor_artifact(
             .persist_workspace_target(&workspace, &resolved.target_relpath, &message)
             .map_err(|source| PrepareError::DatabaseSetup {
                 phase: "prototype1_successor_artifact_commit",
-                detail: source.to_string(),
-            })?;
-        let identity = ParentIdentity::from_node(
-            campaign_id.to_string(),
-            node,
-            previous_parent.as_ref(),
-            Some(workspace.branch.0.clone()),
-        );
-        let _ = write_parent_identity(&workspace.root, &identity)?;
-        let identity_message = parent_identity_commit_message(&identity);
-        let _ = backend
-            .persist_workspace_files(&workspace, &[parent_identity_relpath()], &identity_message)
-            .map_err(|source| PrepareError::DatabaseSetup {
-                phase: "prototype1_successor_parent_identity_commit",
                 detail: source.to_string(),
             })?;
         backend
@@ -504,7 +500,8 @@ fn install_prototype1_successor_artifact(
             selected,
             workspace,
             current_surface,
-            previous_parent,
+            selected_parent_identity,
+            Some(current_parent.clone()),
         )
     } else {
         install_committed_successor_artifact(
@@ -513,7 +510,8 @@ fn install_prototype1_successor_artifact(
             selected,
             workspace,
             current_surface,
-            previous_parent,
+            selected_parent_identity,
+            Some(current_parent.clone()),
         )
     }
 }
@@ -523,6 +521,7 @@ struct InstalledSuccessorArtifact {
     artifact_ref: ArtifactRef,
     artifact_key: TreeKeyHash,
     surface: SurfaceCommitment,
+    parent_identity: ParentIdentity,
 }
 
 fn install_committed_successor_artifact(
@@ -531,6 +530,7 @@ fn install_committed_successor_artifact(
     selected: &selection::Selection<selection::Artifact>,
     workspace: crate::cli::prototype1_state::backend::Workspace,
     current_surface: ArtifactSurface,
+    selected_parent_identity: ParentIdentity,
     previous_parent: Option<ParentIdentity>,
 ) -> Result<InstalledSuccessorArtifact, PrepareError> {
     let backend = GitWorktreeBackend;
@@ -585,15 +585,7 @@ fn install_committed_successor_artifact(
                 return Err(error);
             }
         };
-    let identity =
-        crate::cli::prototype1_state::identity::load_parent_identity(active_parent_root)?;
-    identity.validate_for_command(campaign_id, Some(&node.node_id))?;
-    backend
-        .validate_parent_checkout(active_parent_root, &identity)
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_successor_parent_checkout",
-            detail: source.to_string(),
-        })?;
+    selected_parent_identity.validate_for_command(campaign_id, Some(&node.node_id))?;
     append_prototype1_journal_entry(
         &manifest_path,
         JournalEntry::Successor(SuccessorRecord::checkout(
@@ -612,7 +604,7 @@ fn install_committed_successor_artifact(
             recorded_at: RecordedAt::now(),
             campaign_id: campaign_id.to_string(),
             previous_parent_identity: previous_parent,
-            selected_parent_identity: identity.clone(),
+            selected_parent_identity: selected_parent_identity.clone(),
             active_parent_root: active_parent_root.to_path_buf(),
             selected_branch: workspace.branch.0.clone(),
             installed_commit: installed_commit.0.clone(),
@@ -622,9 +614,9 @@ fn install_committed_successor_artifact(
     observe::Step::start(observe::span!(
         "prototype1.parent.checkout.advanced",
         campaign_id = %campaign_id,
-        selected_parent_id = %identity.parent_id(),
-        selected_node_id = %identity.node_id(),
-        selected_generation = identity.generation(),
+        selected_parent_id = %selected_parent_identity.parent_id(),
+        selected_node_id = %selected_parent_identity.node_id(),
+        selected_generation = selected_parent_identity.generation(),
         selected_branch = %workspace.branch.0,
         installed_commit = %installed_commit.0,
         active_parent_root = %active_parent_root.display(),
@@ -650,6 +642,7 @@ fn install_committed_successor_artifact(
         artifact_ref: artifact.artifact_ref().clone(),
         artifact_key: selected_surface.tree_key().clone(),
         surface,
+        parent_identity: selected_parent_identity,
     })
 }
 
@@ -765,6 +758,7 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
     campaign_id: &str,
     campaign_manifest_path: &Path,
     active_parent_root: &Path,
+    current_parent: &ParentIdentity,
     node: &crate::intervention::Prototype1NodeRecord,
     resolved: &ResolvedTreatmentBranch,
 ) -> Result<ArtifactSurface, PrepareError> {
@@ -785,21 +779,12 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
             phase: "prototype1_child_artifact_commit",
             detail: source.to_string(),
         })?;
-    let previous_parent = load_parent_identity_optional(active_parent_root)?;
     let identity = ParentIdentity::from_node(
         campaign_id.to_string(),
         node,
-        previous_parent.as_ref(),
+        Some(current_parent),
         Some(workspace.branch.0.clone()),
     );
-    let _ = write_parent_identity(&workspace.root, &identity)?;
-    let identity_message = parent_identity_commit_message(&identity);
-    let identity_commit = backend
-        .persist_workspace_files(&workspace, &[parent_identity_relpath()], &identity_message)
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_parent_identity_commit",
-            detail: source.to_string(),
-        })?;
     let surface = validate_child_surface(
         active_parent_root,
         &workspace.root,
@@ -827,14 +812,14 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
         JournalEntry::ChildArtifactCommitted(ChildArtifactCommittedEntry {
             recorded_at: RecordedAt::now(),
             campaign_id: campaign_id.to_string(),
-            parent_identity: previous_parent,
+            parent_identity: Some(current_parent.clone()),
             child_identity: identity,
             node_id: node.node_id.clone(),
             generation: node.generation,
             target_relpath: node.target_relpath.clone(),
             child_branch: workspace.branch.0.clone(),
             target_commit: target_commit.0,
-            identity_commit: identity_commit.0,
+            identity_commit: None,
         }),
         "prototype1_child_artifact_journal",
     )?;
@@ -1031,6 +1016,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         &manifest_path,
         &selected,
         active_parent_root,
+        parent.identity(),
     )?;
     let runtime_id = RuntimeId::new();
     let successor_artifact = installed.artifact_ref.clone();
@@ -1040,6 +1026,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     let seal = SealBlock::from_handoff(
         EvidenceRef::new(format!("prototype1:successor-handoff:{runtime_id}")),
         SuccessorRef::new(ActorRef::Runtime(runtime_id), successor_artifact.clone()),
+        installed.parent_identity.clone(),
         successor_artifact.clone(),
         RecordedAt::now(),
     );

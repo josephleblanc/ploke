@@ -432,6 +432,10 @@ fn parent_node_projection(manifest_path: &Path, identity: &ParentIdentity) -> Pr
 }
 
 impl Parent<Unchecked> {
+    pub(crate) fn identity(&self) -> &ParentIdentity {
+        &self.identity
+    }
+
     #[instrument(
         target = "ploke_exec",
         level = "info",
@@ -513,6 +517,45 @@ impl Parent<Unchecked> {
             generation = self.identity.generation(),
             branch_id = %self.identity.branch_id(),
             "validated parent checkout against artifact-carried identity"
+        );
+        Ok(Parent {
+            identity: self.identity,
+            node: self.node,
+            _state: PhantomData,
+        })
+    }
+
+    #[instrument(
+        target = "ploke_exec",
+        level = "info",
+        skip(self, startup),
+        fields(
+            role = "parent",
+            authority = "history_successor_startup",
+            transition = "Parent<Unchecked>->Parent<Ready>",
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
+        )
+    )]
+    pub(crate) fn ready_from_predecessor_startup(
+        self,
+        startup: Startup<Validated>,
+    ) -> Result<Parent<Ready>, PrepareError> {
+        startup.validate_parent(&self.identity)?;
+        info!(
+            target: "ploke_exec",
+            role = "parent",
+            authority = "history_successor_startup",
+            transition = "Parent<Unchecked>->Parent<Ready>",
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
+            "admitted successor parent after sealed History startup validation"
         );
         Ok(Parent {
             identity: self.identity,
@@ -669,6 +712,17 @@ impl Startup<Predecessor> {
                 return Err(error);
             }
         };
+        if sealed.selected_parent_identity() != identity {
+            let error = PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor startup identity for node '{}' does not match sealed History successor identity '{}'",
+                    identity.node_id(),
+                    sealed.selected_parent_identity().node_id()
+                ),
+            };
+            startup.fail("selected_parent_identity", &error);
+            return Err(error);
+        }
         let current_artifact = match GitWorktreeBackend.clean_tree_key(active_parent_root) {
             Ok(key) => match key.tree_key_hash() {
                 Ok(hash) => hash,
@@ -1291,6 +1345,13 @@ mod tests {
             SuccessorRef::new(
                 ActorRef::Process("successor".to_string()),
                 ArtifactRef::new("artifact:successor"),
+            ),
+            ParentIdentity::root_bootstrap(
+                "campaign-1",
+                "child-1",
+                "instance-child-1",
+                "branch-child-1",
+                Some("artifact-branch-child-1".to_string()),
             ),
             ArtifactRef::new("artifact:successor"),
             crate::cli::prototype1_state::event::RecordedAt(30),

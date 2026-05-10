@@ -418,6 +418,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::event::{RecordedAt, RuntimeId};
+use super::identity::ParentIdentity;
 use crate::OperationalRunMetrics;
 use crate::loop_graph::{ArtifactId, PatchId};
 use crate::metric;
@@ -4962,6 +4963,7 @@ struct BlockCommon {
 pub(crate) struct SealBlock {
     pub(crate) crown_lock_transition: EvidenceRef,
     pub(crate) selected_successor: SuccessorRef,
+    pub(crate) selected_parent_identity: ParentIdentity,
     pub(crate) active_artifact: ArtifactRef,
     pub(crate) claims: block::Claims,
     pub(crate) sealed_at: RecordedAt,
@@ -4977,12 +4979,14 @@ impl SealBlock {
     pub(crate) fn from_handoff(
         crown_lock_transition: EvidenceRef,
         selected_successor: SuccessorRef,
+        selected_parent_identity: ParentIdentity,
         active_artifact: ArtifactRef,
         sealed_at: RecordedAt,
     ) -> Self {
         Self {
             crown_lock_transition,
             selected_successor,
+            selected_parent_identity,
             active_artifact,
             claims: block::Claims::empty_unchecked(),
             sealed_at,
@@ -4996,6 +5000,13 @@ impl SealBlock {
             SuccessorRef::new(
                 ActorRef::Process("successor".to_string()),
                 ArtifactRef::new("artifact:successor"),
+            ),
+            ParentIdentity::root_bootstrap(
+                "campaign:test",
+                "node:successor",
+                "instance:successor",
+                "branch:successor",
+                Some("artifact-branch:successor".to_string()),
             ),
             ArtifactRef::new("artifact:successor"),
             RecordedAt(30),
@@ -5156,6 +5167,7 @@ pub(crate) struct SealedBlockHeader {
     common: BlockCommon,
     crown_lock_transition: EvidenceRef,
     selected_successor: SuccessorRef,
+    selected_parent_identity: ParentIdentity,
     active_artifact: ArtifactRef,
     claims: block::Claims,
     sealed_at: RecordedAt,
@@ -5169,6 +5181,7 @@ struct SealedBlockPreimage {
     common: BlockCommon,
     crown_lock_transition: EvidenceRef,
     selected_successor: SuccessorRef,
+    selected_parent_identity: ParentIdentity,
     active_artifact: ArtifactRef,
     claims: block::Claims,
     sealed_at: RecordedAt,
@@ -5334,6 +5347,7 @@ impl Block<block::Open> {
             common: self.state.common.clone(),
             crown_lock_transition: fields.crown_lock_transition,
             selected_successor: fields.selected_successor,
+            selected_parent_identity: fields.selected_parent_identity,
             active_artifact: fields.active_artifact,
             claims: fields.claims,
             sealed_at: fields.sealed_at,
@@ -5348,6 +5362,7 @@ impl Block<block::Open> {
             common: preimage.common,
             crown_lock_transition: preimage.crown_lock_transition,
             selected_successor: preimage.selected_successor,
+            selected_parent_identity: preimage.selected_parent_identity,
             active_artifact: preimage.active_artifact,
             claims: preimage.claims,
             sealed_at: preimage.sealed_at,
@@ -5411,6 +5426,10 @@ impl Block<block::Sealed> {
         &self.header().selected_successor
     }
 
+    pub(crate) fn selected_parent_identity(&self) -> &ParentIdentity {
+        &self.header().selected_parent_identity
+    }
+
     pub(crate) fn active_artifact(&self) -> &ArtifactRef {
         &self.header().active_artifact
     }
@@ -5439,6 +5458,7 @@ impl Block<block::Sealed> {
             common: header.common.clone(),
             crown_lock_transition: header.crown_lock_transition.clone(),
             selected_successor: header.selected_successor.clone(),
+            selected_parent_identity: header.selected_parent_identity.clone(),
             active_artifact: header.active_artifact.clone(),
             claims: header.claims.clone(),
             sealed_at: header.sealed_at,
@@ -6570,6 +6590,13 @@ mod tests {
             selected_successor: SuccessorRef::new(
                 actor("successor"),
                 ArtifactRef::new("artifact:successor"),
+            ),
+            selected_parent_identity: ParentIdentity::root_bootstrap(
+                "campaign:test",
+                "node:successor",
+                "instance:successor",
+                "branch:successor",
+                Some("artifact-branch:successor".to_string()),
             ),
             active_artifact: ArtifactRef::new("artifact:successor"),
             claims,

@@ -2058,7 +2058,10 @@ fn child_artifact_committed(entry: &ChildArtifactCommittedEntry) -> JournalProje
         ],
         output_refs: vec![
             format!("target_commit:{}", entry.target_commit),
-            format!("identity_commit:{}", entry.identity_commit),
+            format!(
+                "identity_commit:{}",
+                entry.identity_commit.as_deref().unwrap_or("none")
+            ),
         ],
         missing: Vec::new(),
     }

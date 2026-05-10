@@ -295,7 +295,8 @@ pub struct ChildArtifactCommittedRecord {
     pub target_relpath: PathBuf,
     pub child_branch: String,
     pub target_commit: String,
-    pub identity_commit: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_commit: Option<String>,
 }
 
 /// Legacy storage label for active checkout advancement in the parent handoff path.

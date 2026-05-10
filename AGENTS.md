@@ -70,6 +70,14 @@ Maintain this list when a bug is discovered that would have been prevented by pr
   - Collapsed shape: bare `SurfaceCommitment` and `active_parent_root` let the handoff path treat previous-parent surface roots and selected-successor surface roots as the same relation.
   - Missing structure: the selected Artifact tree key and selected Artifact surface commitment should be one carrier minted by the install/materialize transition, e.g. `SelectedArtifactCommitment` or `SurfaceTransition<CurrentParentBefore, SelectedArtifactAfter>`.
   - Preventing type constraint: History sealing must require a selected-Artifact commitment that bundles Artifact identity, tree key, and surface roots from the same backend transition. No API may seal `ArtifactRef`, `TreeKeyHash`, and `SurfaceCommitment` as independent arguments.
+- `docs/active/bugs/2026-05-10-prototype1-successor-hydration-surface-mismatch.md`
+  - Affected files:
+    - `crates/ploke-eval/src/cli/prototype1_process.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/history.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/identity.rs`
+  - Collapsed shape: bare `ArtifactSurface` / `selected_surface` / `InstalledSuccessorArtifact` let the handoff path compare selected-child Artifact surface evidence to the hydrated successor Parent checkout after `parent_identity.json` was committed.
+  - Missing structure: selected-child Artifact surface and hydrated-successor Parent surface should be distinct role/state carriers, e.g. `ArtifactSurface<SelectedChild>` and `ArtifactSurface<HydratedSuccessorParent>`, connected only by a `SuccessorHydration<SelectedChild, HydratedSuccessorParent>` transition.
+  - Preventing type constraint: selected-child surface validation must happen before parent hydration; post-hydration startup surface must be minted by the hydration transition. No API may compare or seal a bare `ArtifactSurface` without encoding which artifact/parent state it measures.
 
 ## Anti-Blob Guardrails
 

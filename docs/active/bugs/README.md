@@ -35,3 +35,5 @@ for near-term implementation planning.
   Prototype 1 History traversal can select a membership that is absent from the final sealed considered set.
 - [`2026-05-10-prototype1-historical-successor-surface-root-mismatch.md`](./2026-05-10-prototype1-historical-successor-surface-root-mismatch.md)
   Prototype 1 can seal a historical successor Artifact with the previous parent's mutated surface root.
+- [`2026-05-10-prototype1-successor-hydration-surface-mismatch.md`](./2026-05-10-prototype1-successor-hydration-surface-mismatch.md)
+  Prototype 1 compares selected-child Artifact surface evidence against the hydrated successor Parent checkout after parent identity is committed.
