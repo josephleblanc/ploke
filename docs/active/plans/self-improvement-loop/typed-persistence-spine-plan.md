@@ -150,10 +150,16 @@ Read first:
 
 Output:
 - survey row using the plan schema;
+- JSONL report path allocated by the main thread, with collision status;
 - exact production Value/stringly JSON sites found;
 - files changed;
 - tests added or the smallest missing tests;
 - one bounded verification command.
+
+Report safety:
+- Write only to the exact report path assigned by the main thread.
+- Before writing, check whether the path exists.
+- If it exists, do not overwrite it; write the next `-vN` filename and report the collision.
 ```
 
 ## Completion Bar

@@ -14,6 +14,8 @@ Shared planning area for Prototype 1 records, playback, loop evaluation, and fro
   Coverage report for Prototype 1 persisted data typed deserialization, including nested payload gaps.
 - [`typed-persistence-spine-plan.md`](typed-persistence-spine-plan.md)
   Repeatable lane for replacing owned JSON parsing with typed records and building full replay/UI drilldown.
+- [`typed-persistence-survey-orchestration.md`](typed-persistence-survey-orchestration.md)
+  JSONL-based sub-agent workflow for surveying typed persistence surfaces without overloading the main context.
 - [`long-run-evaluation.md`](long-run-evaluation.md)
   Safe route for evaluating a recent long loop run without relying on `scheduler.json`.
 - [`frontend-questions.md`](frontend-questions.md)
